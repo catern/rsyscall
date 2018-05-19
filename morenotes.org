@@ -1,0 +1,552 @@
+* revised plan
+  I'll write a statically-linked Rust binary which exposes the capnproto server over a pre-established connection passed in.
+
+  I'll use TwoPartyVatNetwork to do it, because apparently that's what you use when you have a single connection.
+
+  Fork then requires an fd to be passed in to serve the connection.
+  And clone (to start a new thread) in general requires an fd to be passed in, to serve the new syscall server connection.
+
+  I'll focus on a capnproto based interface, rather than making a traditional C interface,
+  because that way you get a nice completion-notification API for Unix,
+  instead of a readiness-notification API, which is harder for me to implement anyway.
+
+  I'll move my internal fds to a high fd so they don't get overwritten by dup2.
+
+  I'll have an API that just takes raw integers, and requires the user to close fds themselves.
+  This allows me to duck on the issue of making everything anywhere that might be an fd, into an fd.
+  Also the issue of things getting overwritten by dup2 and erroneously closed.
+* dup2
+wait, dup2 is actually really hard!
+
+The library might allocate fds internally!
+So how do we dup2 to arbitrary fds, when they might be already occupied?
+
+I guess maybe we'll dup them away if they're occupied?
+that's one thing we could do, hmm.
+
+Oh we'll just move our internal fds to high fds.
+* readiness-focused interface
+
+Wrapping a readiness interface over the completion interface.
+How could I do this?
+
+Well, it's easy and automatic.
+The trick is just to, um.
+Wrap the remote calls in something that just forces them.
+
+Then I just need a readiness indicator.
+Which is the connection fd.
+
+Wait no that's not quite right.
+
+I need something that will represent an epollfd,
+and tell me (by readability) when I can call epoll_wait without blocking.
+
+So the easy way to do that is to,
+always have an epoll_wait open and,
+independently process the epollfd for the entire library which will,
+service the connection and get the result of the epoll_wait and,
+use that to make an fd which is readable exactly when the epoll_wait completes,
+then someone sees that fd is readable and calls,
+do_monitored_epoll_wait which reads a bit from the file and calls the epoll_wait and is done,
+presumably looping on epoll_wait?
+and re-engages the epoll_wait promise.
+
+so really the user should loop on the epoll_wait.
+they essentially just need to complete the thing by saying,
+reengage_remote_epoll_monitor,
+which will read a bit from the file and then reengage the promise.
+
+oh hm
+
+maybe we could background it?
+
+eh wait no
+
+oh I see
+
+we'll do a select on the epollfd
+then when it returns,
+we'll set a readability bit
+
+and when we're done,
+we'll call reengage_remote_epoll_monitor,
+which will read the bit off,
+and start the select again.
+
+it would be nice if we could somehow automatically make it not readable.
+like, make it edge triggered I guess?
+
+but it's tricky anyway so i'll skip it.
+it's awkward that it isn't perfectly backwards compatible
+* asyncness
+A C interface that exposes traditional syscalls and traditional epoll would allow users to build their own async stuff on top.
+
+But, if you embrace the capnproto interface, then you need no async stuff on top.
+
+Hmm.
+
+Well, you still need the async stuff under the hood of the capnproto interface.
+You need to drive capnproto.
+
+Although.
+
+If you just make syscalls synchronously?
+No wait, you need a scheduler for the promises or something.
+
+I guess you still need some kind of local thing.
+
+I'm not going to throw away trio, anyway.
+
+Anyway, even if you're synchronously working on this stuff.
+
+You still need an asynchronous stuff library that provides the thread abstraction, and lets you send messages.
+
+So I'd still want that.
+
+Well, in an ultimate performance scenario (scheduler activations or something),
+you'd send a message to the scheduler thread,
+and then sleep,
+and then you'd be woken up by the scheduler thread when it has data for you.
+
+And in that scenario you'd be embracing the capnproto interface.
+
+So I guess in either scenario you're embracing the capnproto interface.
+
+Except if you make a C interface that gives you a file descriptor and epoll_wait.
+What's the difference between that and a capnproto message-based async thing?
+
+So the C interface is essentially...
+I express interest in something,
+and I get notified when I can get it fast.
+Then I serialize a message to get the thing,
+and send it and get a response fast. (without blocking?)
+
+The capnproto is more,
+I serialize a message to get the thing,
+and I block on it.
+
+I suppose essentially I'm building an IOCP style interface in Unix.
+
+What would the corresponding fast readiness-interface be?
+
+There's readiness-interface,
+there's completion-interface,
+and then there's overlapping IO.
+
+The readiness interface essentially is a level-triggered thing.
+Essentially it's a way to check whether the system is good or not.
+How do we map that into passing messages around?
+
+Well.
+Essentially we make a function call and it "completes" when something is ready.
+Then we use that information to set things up...
+
+Read and all that are easy to do if they don't have to split up their stack.
+Implementation simplicity, it's all implementation simplicity.
+
+So the readiness interface.
+A typed way would be,
+essentially it would give us a function that doesn't perform the blocking effect when we call it.
+
+Instead of calling a function that may block,
+we call a function that may block,
+which returns a function that does not block.
+
+That's an intriguing split-up.
+That sounds kind of like concurrent ML.
+
+And, anyway, then on top,
+we can provide an interface that is just a single function that blocks?
+But what if we don't want such scheduling?
+
+If our native interface is "functions which block",
+then we can't really do much scheduling.
+Well, we could do scheduling on top of that.
+But, yeah, how do we know how many functions are in progress at a time?
+We need to track it.
+
+But if instead our native interface is to block until we have a function that can be run without blocking,
+then to return that function.
+
+Then we can run that function on a thread I guess.
+
+I guess we can do priority scheduling stuff.
+
+I mean, yeah.
+When someone submits their requests, they're out of our control in how they are scheduled, I guess.
+
+But if we know when we can run them, maybe that's more powerful?
+
+So how would we recreate that same power remotely?
+Well, I guess the remote thing can handle queueing.
+
+In fact we could handle queueing even when someone submits their requests.
+Well, if the interface is just,
+"submit your requests and we'll do them",
+then we don't have the chance for smarts in the scheduler under there.
+but we can maybe have smarts in the scheduler above there?
+
+If a request shows up midway through...
+
+Well okay what would a syscall server based on readiness look like?
+We'd essentially call poll in the other threads???
+Or rather, we'd submit polls?
+And then decide when to run the function?
+
+
+what even...
+what is a datastructure server based on readiness like??
+We send a message asking if we can access it,
+then it says okay,
+then we do it?
+But possibly we fail and retry?
+Sounds kind of like a lock.
+Like a spinlock, but instead of spinning, it blocks until it can try the cmpxchg.
+
+Ok this is hard and dubious, I'll go with the completion-focused interface.
+* rust question
+Is it a good idea to do this in Rust?
+
+I saw there was a bug about failure to send multiple file descriptors over a Unix socket...
+
+And Nix doesn't support timerfd...
+
+And there doesn't seem to be an easy way to take a RawFd and turn it into something implementing AsyncRead or AsyncWrite...
+
+blah but doing it in C++ requires me to figure out how to wrap a promise around inotify, say
+
+OK Rust I guess. Really otherwise I'll be infuriated.
+* captp
+> an RPC library should only support direct two-party connections,
+> three-vat introduction should be handled at a higher/lower/different level
+<dash> Why
+> because three-vat introduction should be a seriously difficult SDN problem
+> also because it's decoupling of concerns
+> I guess this sacrifices not caring what connection you access an object over?
+> or something like that
+<dash> Connections aren't a fundamental networking idea, no reason we have to preserve that abstraction
+<dash> What's difficult about it
+> ok sure of course an RPC library could support more strang network transports
+> that doesn't mean the RPC library should handle connection establishment etc
+> or identifying the characteristics of the transports available or whatever
+> well it's not difficult right now because we have Baby's First Network: IP
+<dash> It should if it needs connections.
+> if it needs connections it should use a library that provides a connection interface
+<dash> IP doesn't have connections.
+> and that should be a completely separate layer
+> IP makes it a lot easier to have connections than it would otherwise be, since it has flat addressing and all that
+<dash> ???
+> but I don't want to debate about that, imagine I said TCP/IP
+> yeah so
+> RPC library should take a connection interface (such as say two file descriptors) and go with that
+> none of this networking business
+<dash> Why
+> modularity is good
+<dash> What's the benefit?
+> implementation simplicity
+> also it's possible to do it at the user-level not in the kernel so it *should* be done in the user-level
+> also the network is actually not flat, also objects/resources actually do exist in specific locations
+> also this seems like a good candidate for why captp style stuff hasn't taken off
+> also capnproto hasn't figured out how to do anything more than this, so it's hard, so we shouldn't do it
+> hash tag new jersey
+
+> Also, 100% seriously, I don't think it's defensible to say that a point-to-point RPC library should handle connection establishment
+> Maybe a full captp implementation should, but if we've got something that's only able to talk to a single peer, than it should accept passed-in already-established connections. not sure if you were disagreeing with that
+* what to do
+  
+  Hmm.
+  So the TwoPartyServer seems to assume it will be passed a listener.
+
+  Rather than an already-connected socket.
+
+  I guess perhaps I'll hack it by just passing in a,
+  one-shot listener,
+  that has one connection inside it and that's all it ever does.
+
+  hmmmm maybe I should actually use Rust.
+  and make a static binary...
+
+  And that's fine, because also it's possible to run a Rust library in another thread,
+  to achieve the async syscall RPC stuff I wanted to do.
+
+  It sure would be nice to write it in Rust, I think, if I remember how good Rust was.
+  And I'd use tokio and all that stuff, which would be a nice learning experience.
+
+  I can still write a C client or something?
+  Or do it directly from Python, I think that should be possible maybe, using trio threads stuff.
+
+  OK fine... Rust...
+
+  That will increase my hip factor anyway
+* multiple connections
+  The interface for clone must be changed.
+
+  When we create a new process or a new thread,
+  we need to run the syscall server in that new process or thread,
+  and we get an fd that we control that process or thread by.
+
+  For convenience and pragmatism, we'll pass in that fd,
+  rather that getting a new fd out.
+  Though really we should get an fd out..
+  but we can't publish an fd on a network interface or something, so it doesn't really work.
+* Old Plan
+  So we'll build a C library
+  which accepts a file descriptor
+  and sends requests over it.
+
+  Is that the simplest way?
+
+  We also want a C interface to, like, remote pipes.
+  
+
+  Okay I'll make a in_to_remote_out
+  Which takes a connection to a server on stdout
+  And reads stdin and RPCs to the server's stdout.
+
+  And a server which can inherit some file descriptors
+
+  listening on a unix socket seems fine for now
+  I want to listen on a pair of fds eventually though
+
+  Hmm.
+  Duplicating an interfacing to the Process
+
+  Can I do that with a special low level interface?
+
+  I say,
+  "hey start serving inside the process on this fd you have, ok?"
+
+  That would be better.
+  I'll do that.
+
+  Pair of fds it is then.
+
+  and I definitely want to do that, because then I can have different sources of connections,
+  all going to the same process.
+
+  Is that really in the spirit of what I'm trying to do?
+
+  Also theoretically I could have a TwoPartyServer that runs in the same thread,
+  and which I can feed multiple connections to, I guess.
+* the kj async io interface is very nice and cap-sec-ish
+  I like it :D
+
+  in particular it has a Network object and a NetworkAddress object!
+  and kenton quotes his singleton article to say not to treat it as a singleton!
+  beautiful!
+* multihost socketpair
+  socketpair(Host, Host, Type) -> Sock, Sock
+
+  hmm.
+
+  // The RPC implementation sits on top of an implementation of `VatNetwork`.  The `VatNetwork`
+  // determines how to form connections between vats -- specifically, two-way, private, reliable,
+  // sequenced datagram connections.  The RPC implementation determines how to use such connections
+  // to manage object references and make method calls.
+
+  vatnetwork eh
+
+  maybe I could reuse that for my bidirectional connections between hosts?
+
+  I guess a single host is conceptually a vat?
+  Or I guess maybe a process is a vat but the vatnetwork knows to distinguish between different-host and same-host processes
+
+  and they only have twopartyvatnetwork for now
+  no vatnetwork for the internet.
+
+  yeah, so you could have a a vatnetwork for the internet,
+  or a vatnetwork for an SDN,
+  or whatever
+
+  and that's a lot like what I am interested in making.
+  but I want something that SUPPORTS TRADITIONAL UNIX VALUES GORRAM IT
+  in particular returning file descriptors
+
+  so I wouldn't get too into vatnetwork,
+  since I need to make my own thing.
+
+  capnproto is just an RPC transport for me.
+  it's not an important mechanism.
+  it might be used alongside SDN and RDMA techniques.
+
+  Oh hey, and VatNetwork doesn't provide a distributed socketpair interface anyway.
+  It provides an interface of,
+  "I call connect to connect somewhere, or I can call accept to accept a connection, blah blah"
+* sandstorm
+  I wonder if Sandstorm's deployment stuff (its cluster functionality, Blackrock?) has any kind of cap-sec orchestration?
+
+  One perspective: Sandstorm failed because it was too idealized,
+  all I care about is providing a good centralized view on a pragmatic world,
+  not converting the world.
+  I'm O(1), sandstorm is O(n).
+  I'm not boiling the ocean.
+* trio integration
+  Maybe I just need to make a capnproto-event-loop compatible event loop that exposes an epollfd?
+* effects as capabilities
+  oh.
+  the way to prevent closure being a problem,
+  is to get rid of mutability,
+  and pass the new version right back out.
+
+  passing all around.
+
+  capability-based confinement is only achievable by having pure (aka linear?) capabilities.
+
+  linearity and purity have a very interesting relationship.
+  and it's all positive.
+
+  ultimately, capabilities have got to end up being linearly typed
+  that's the clean and simple way to solve the confinement problem
+
+
+  I see, linearity is how you enforce purity on other resources,
+  resources that aren't just copyable
+* replacing monads with effects
+  Hmm.
+
+  virtual kj::Promise<kj::Maybe<kj::Own<IncomingRpcMessage>>> receiveIncomingMessage() override = 0;
+
+  You can replace the promise with an effect easily.
+  The Maybe can be replaced with an effect, slightly more weirdly, more like exceptions but whatever, you can enforce the handler. (with a passed down cap to a handler?? a None continuation??)
+  But can the Own be replaced with an effect?
+* root on hosts
+  I don't see why I should make it harder for me to do the right thing, just so it becomes easier for others to do the wrong thing.
+
+  Making it harder for others to do the wrong thing, makes it easier for me to do the right thing.
+
+  I don't see why I should make it easier for others to commit evils,
+  especially when it makes it harder for me to do the right thing.
+
+  Hence I will enslave the population forever.
+
+> that sounds like something a villain would utter in a gritty drama 'v'
+> a morally ambiguous villain in a morally ambiguous drama, that is
+> in defense of their plan to enslave the population or something
+> or some Randian hero
+> or a cynical antihero
+* stuff
+** simple syscall interface
+   promise pipelining is easy with this interface wooo
+
+   So I think a separate side channel would be better.
+   Rather than trying to multiplex over the single fd interface.
+
+   one reason is,
+   it seems I can't get splice to work properly?
+
+   having some kind of "way to establish a connection",
+   or better yet, having a connection already established for me,
+   would be ideal.
+
+   hm. how could I establish a connection with remote cat?
+   er, wait, remote cat doesn't require a connection.
+   remote in to local out cat, I mean, then.
+
+
+   several possible avenues to focus on.
+
+   I could focus on the "rsyscall" call,
+   which adds an additional argumenta to the traditional syscall function.
+
+   I could focus on the stub process/server, which is a reduced form of a process.
+** channels
+   So, how could I establish a connection with local in to remote out cat?
+
+   I have the remote system and I can run arbitrary syscalls.
+   And I have the local system.
+
+   Both are under my complete control.
+
+   And I want to establish an additional connection.
+
+   Maybe that's an interface that is built in?
+   Like.
+   Since I have access to the remote process,
+   maybe that necessarily means I have a channel?
+   Nah, not so, not so.
+
+   So I do need some kind of way to express,
+   make a channel between two things.
+   Rendevouz the two of them.
+
+   nah, I'll do all that in Python.
+
+   So! the next step is to add the python library wrapper.
+   With trio!
+** reinvent the world
+   basically need to re-wrap all the syscalls
+   and make my own event loop
+
+   theoretically this works on windows
+   and on pypy and whatever other arbitrary runtime
+
+   also, maybe I can vfork twice and set up supervise in the middle, awesomely?
+** oh yeah  
+   that other super-static language stuff, what about that
+   with enforced continuation-passing style and no closures.
+
+   how static can you get,
+   should "goto with arguments" be replaced with "goto without arguments" and using some dynamic scope?
+
+   I guess dynamic scope is a decent replacement for arguments :)
+
+   but wait that doesn't make much sense
+* pipelining
+  We need to keep an explicit list of file descriptors to be able
+  to predict at what number the next file descriptor will be
+  allocated at.
+
+  Hmm, but if a file descriptor is allocated ahead of time, due to
+  pipelining, what do we do?
+
+  We essentially detect the error,
+  abort any pending pipelining,
+  and roll back?
+
+  Yeah, I guess we need some kind of transactional semantics.
+  Though there's the chance of partial failure.
+
+  Although, when we partial succeed,
+  we would update the previous things.
+
+  But there's a possiblity we chain A -> B -> C,
+  and A fails, but B succeeds.
+
+  Is that really a concern?
+  Maybe I'd have some list of pending FDs
+  And possibly some division between PendingFileDescriptor and FileDescriptor?
+
+  I can be like soft updates, and avoid transactions.
+* io library
+
+  The low level interface can't just be syscall() alone,
+  because at the very least we need to be able to allocate memory for calling syscalls.
+
+  And also, reading and writing from fds can be done much more efficiently by splice,
+  rather than reading and writing memory.
+  So that's another thing for the low level interface.
+
+  Also, we need a memory allocator.
+  But should that memory allocator be inside the low level interface?
+  Or outside?
+
+  Could I use the python GC for this?
+  it's probably micro-optimized to heck already and written in C.
+
+  a simple stop and delete allocator would be fine.
+
+  my memory usage will be, in general, short lived.
+  and I alwys want my memory to be zero'd.
+  so I can just allocate a big chunk of zeroed memory,
+  and allocate smaller bits out of that.
+
+  for local stuff I can use native python memory?
+  eh, there's no need to do that.
+  I might as well use my own allocator even locally.
+
+  so therefore I can have the allocator be outside the low level interface
+
+  okay so all that seems sufficient
+
+  let's implement?

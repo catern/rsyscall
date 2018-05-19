@@ -1,0 +1,418 @@
+* stuff
+so do we really actually just one a single thread,
+per connection,
+which just blocks on calls,
+can only support one call at a time,
+easy, simple to implement.
+
+doable in C even.
+with a C interface
+
+so okay
+suppose we had this.
+then the question is thrown into sharp relief:
+how do we multiplex over multiple processes/hosts???
+
+duh
+we have a file descriptor interface
+
+which is readable
+when the thread
+is runnable/has returned a value
+
+also, I *could* pipeline them:
+I could send multiple at once,
+and get them back one by one.
+(In the same order? Yes)
+But let's not focus on that, that is not that important and also maybe bad.
+
+this is nice and simple
+
+so this is kinda translating a completion interface into a readiness interface
+
+
+anyway so I have some file descriptor,
+which allows me to run any system call over it,
+and it's readable when it's done
+(vn one at a time ofc?)
+
+okay is it just as simple as
+I have a C library
+
+with void read_call(stuff)
+and stuff read_response(void)
+
+then I don't have to expose any serialization stuff.
+i can just use structs internally
+
+actually more like
+
+error read_call(int procfd, int fd, size_t count);
+int read_response(int procfd, char* buf, size_t bufsize);
+
+oh and conveniently I can just completely avoid defining my own headers and enums and structs and such,
+since i'll just pass things through blindly
+
+ugh although pointers are difficult, scatter-gather IO is tricky (though actually probably I should just not support that)
+
+look for documented linux syscall interface
+think I heard about that for fuzzing
+
+writing this by hand really doesn't seem that bad
+
+consider the simplest scenario which is where we don't care about being nonblocking across host
+we just have the interface be,
+exactly the syscall interface but with an extra sargument for the procfd
+the sysfd
+
+also there are multiple ways to achieve the goal of asynchronicitiy
+
+we could have ujst epoll_wait be asynchronous and monitorabel by readiness for completion
+we cuold have a generic way to await on readability of any fd on the remote side
+bridging them, that is
+
+what about cancellation?
+
+we might call an epoll_wait,
+and then readiness tells us completion,
+but what if we want to make another call in the meantime on this system?
+
+we need to be able to do that
+so having syscalls be cancellable seems not very generic
+
+also calling epoll_wait is not right, we should call that in "userspace",
+and only see readiness in the main interface
+
+okay, if I wasn't asynchronous.
+i'd just,
+
+the calls would all look like normal calls,
+with an extra argument.
+and we'd just have some internal serialization,
+very normal.
+
+maybe to monitor readability I need another connection?
+that way I don't have cancellability?
+
+but what if I want to monitor readability of a bunch of different fds? i'll allocate and never free connections.
+
+so the ability to make a call then monitor for readability to see when it's done, seems good and easy.
+just splitting up epoll wait into two calls achieves it automatically.
+but, it's not cancellable!
+
+what would this be in a protocol level?
+if i had a stream dedicated for readability notifications...
+
+having all calls block, means I nicely have to explicitly allocate new threads,
+through my previously-thought-of mechanism of clone passing an fd. nice.
+
+it's like an interrupt?
+I get an interrupt for readability?
+
+oh and what if I want to get readability notifications while in the middle of another syscall?
+well, impossible.
+
+resume me when this guy is readable
+seems reasonable.
+extensible to,
+send me a message when this guy is readable,
+which is,
+be readable when this guy is readable.
+
+readability really is easiest for the kernel to implement.
+the kernel just translates interrupts into wakeups of blocked threads.
+easy peasy
+all we need is some way to indicate what interrupts we're interested in receiving
+
+when we enter an epoll_wait on some set of fds
+we say we want interrupts for all of them.
+
+to do the same for my syscall fd,
+we need to explicitly request interrupts before waiting.
+then un-request interrupts after we're done waiting?
+
+but in practice the way we get an interrupt is by getting completion notification for a syscall.
+so isn't it best to have that be the central conceit?
+
+maybe, maybe.
+
+what other ways could we be notified?
+
+(really the notification/interrupt is the resumption of the thread on the other side.)
+
+still wonder what this is at the protocol level
+
+okay but, if we get a completion notification for a syscall,
+we need to be able to cancel that syscall.
+
+i mean, maybe we just have two threads.
+one for readiness and the other for actual syscalls 
+
+oh, i really can't have an all-blocking interface, because, the network hop is so expensive. it will be weird...
+
+so
+i could have a separate connection/thread for readability notification
+and just, i open/close those threads as I want
+
+ugh having a separate thread is inconvenient
+
+maybe i can just have a separate mode
+
+okay so I guess readiness wakeup/readiness notification is just,
+a bridge between the interrupts of the remote side and the local side.
+you'd want the same with futexes or whatever
+
+also you should return the thing to await on
+(or maybe not)
+
+so the ideal is then:
+an asynchronous syscall interface,
+taking an opaque thing and returning an opaque thing to wait on,
+(maybe)
+augmented by a cancellable readiness notification registration thing.
+* notes
+C library interface with a bespoke protocol underneath
+two issues: defining custom logic for each syscall, and defining a custom serialization/protocol for the stuff.
+
+
+It would be nice to instead have a protocol interface
+no, no, there's no need for that.
+I can just poll on the fd and do the operations.
+
+no.
+a protocol is better because then the user can handle IO,
+*and* handle retrying on partial reads, and all that stuff.
+
+so all I want to get in my library, is a stream of data in,
+which eventually leads to a fully parsed response.
+
+i could just use capnproto serialization.
+
+audit and seccomp-bpf aren't suitable because they don't actually look at the pointers.
+
+
+nice rqusetest b 
+
+* HAHAHA
+vfork!
+implementing the cancellable readiness thing with select!
+write memory, read memory!
+
+RETURNING FROM EXEC/EXIT LMAO YES BEAUTIFUL
+
+wonder if the registers change
+
+
+now what I need to do is, call syscalls *really* directly so glibc doesn't get in the way with this errno stuff.
+
+
+exec makes a new stack for you that the process will run on, so you don't have to make your own stack.
+but clone for threads, you have to manually creattoeac
+
+
+to ask on irc:
+why SHOULDN'T i vfork all the time?
+and, how CAN i make syscalls directly without errno, without assembly
+
+
+also can I get rid of the read/write by just,
+reading and writing from the connection file descriptor?
+
+MSG_WAITALL does the write part, as an argument to recv...
+and send just alwys blocks, for the read part!
+
+then i'm down to a single function call in a loop
+
+recv MSG_WAITALL on stdin, cast to syscall struct, make syscall, write response.
+
+does splice write all the stuff? without blocking?
+
+maybe I don't even need to go through local memory?
+
+and I guess I'll just use the exact interface of seccomp trap to userspace?
+
+you could implement filesystems with seccomp trap to userspace.
+the BPF filter could even make it efficient, kinda!
+
+conceptually, it would be nice if things were just modeled as,
+we have a pipe full of systemcalls from the user,
+and we have a BPF program attached to that which filters it,
+and we process the ones it sends us...
+and sometimes it just kicks them back to the user program to be run there.
+but I guess that's close enough to what we have.
+
+ 
+* syscaller musings
+Hmm.
+I'm tempted to have the syscaller be a separate structure,
+and have separate notions of a pure ProcessContext with associated FileDescriptors
+(which don't by themselves let me do operations in that process)
+and some means of accessing a ProcessContext, which any individual IO structure will use.
+
+No, that is absurd. We wouldn't be able to actually own and close the fds!
+To properly do this we need ownership. Which means a given FD must be tied to a ProcessConnection.
+So an FD holds a reference to a... Syscaller? or a LowLevelIOInterface? Hmm...
+to close we only actually need the IOInterface.
+but to do further operations we need a Syscaller.
+so it seems like the basic thing should just have the IOInterface,
+while more stuff has the syscaller.
+Maybe we should just state that every connection has an associated page of memory.
+Therefore it is already fully-functioning.
+But isn't there more stateful stuff?
+Like pipes, say!
+To do a splice, I need a pipe!
+And pipelining demands still more sophistication.
+Although I can only pipeline through one process connection at a time, since the pipelining will cause problems otherwise..
+I guess pipelining is controlled at the ProcessContext level.
+Remember what I originally wanted, when I was planning on using serialization: A simple way to do remote syscalls
+Now I have to resort to pipelining for good performance, I guess.
+Or do I? Let's just stick to something simple:
+Each fd is associated with a SyscallConnection or something,
+which contains all the resources needed to make any syscall.
+Likewise with each piece of memory? But then what of the syscall buffer and the remote sides of the syscall and data pipes?
+We'll just require the syscall buffer to exist, and the remote sides of the syscall and data pipes are internal details.
+Wait, I think that circular reference is fine.
+It will require use of with to preform orderly destruction, but that's OK
+OK, so all memory and fds can have a reference to this Connection thing, including the internal ones.
+
+Maybe if my abstract interface is just, perform any syscall?
+Should I abstract over memory?
+Obviously yes.
+Should I abstract over fds, and only provide owned ones?
+can't really do that in general.
+also, what if I wanted to use memory in the remote place?
+I guess I should only abstract over *memory involved in the system call*.
+but er no sometimes I might want to pass a specific pointer to read into *remotely*. for the side effect.
+well maybe read() can take an optional buffer argument that is either a local buffer or a remote buffer.
+guess that could be good.
+nah forget it I don't think I'd ever actually want to deal in memory in the near term.
+so let's just abstract over memory completely.
+and that'll be my interface!
+a buncha methods returning ints!
+with memory completely handled.
+and then i'll build my common fd abstractions on top of that.
+
+What about concurrency?
+What about nonblockingness?
+Above or below?
+
+well ideally when we call this thing it would only block the current task.
+and other tasks would be left free.
+but, note that the object is still "globally" blocked.
+we can only have one person calling one of these syscalls at a time.
+so there's all the same deadlock issues within a single "process"
+so maybe it's therefore not so bad that a native Syscaller would hard-block when we call it?
+it's a protection against anyone else interfering with its process, y'know...
+could we make it truly async? not without some effort.
+to make it truly async would require using a native IO library.
+ultimately we'll have to make a blocking call in our thread.
+I think it is fine that they are marked async. It demonstrates that they may block.
+And shows the silliness of an explicit marking for async? though it's a nice effect system...
+
+man. a nice serializable thing which is automatically nonblocking would be exactly what I want,
+since it would be a cross-language IO library.
+bah! oh well! we have no cross-language type system, so we can't
+computer science is not yet advanced to perform such feats.
+also it's dubious because we can't really re-expose exactly the syscall interface.
+
+so, anyway, handling concurrency above the interface is the right thing, I think.
+even though it leaves this weirdness of tasks marked async, hard-blocking.
+but ultimately we need to block, so...
+
+ah, and how do we bridge this into the native trio thing?
+the remote syscalls work fine, I can just do a select and it's good.
+good-ish...
+I'd need a nice queue underneath the syscall interface...
+to link up call/response...
+since multiple people need to call at once actually...
+
+note: try to perform IO first, and only select if it returns EAGAIN
+
+so anyway, briding into the native trio thing works fine with remote syscalls,
+since the object is truly async,
+and doesn't block other tasks.
+
+but the native calls! aie!
+I guess I'd have some thing where I, uh.
+I forward epoll_wait to trio so that it really does not block other tasks?
+then I rely on the EAGAINing of everything else?
+I want to interrupt the blocker guy if I need to block on something.
+I really like the "make a syscall to wake it up" thing, it should Just Work.
+
+actually okay, maybe I do need to just expose a wait_readable call.
+because I can't do the select hack in userspace...
+and it returns either "readable" or "EAGAIN" though I guess the fd could be closed under me, eh.
+no wait it can't because of blocking, eh.
+
+so okay sure I'll expose the wait_readable call, whatever.
+since I can't expose the file descriptor number of the remote thingy fd in userspace.
+but wait, I need to do that to avoid it when dup2ing...
+
+well, even with local syscall I need to cleanly handle dup2
+ok, I will avoid dup2 problems by making the remote syscall and data fds be high numbers.
+local dup2s don't have any serious problems, if I overwrite something, oh well.
+
+hey neat, when I vfork the exceptions in the subprocess propagate back to the main process.
+
+oh anyway so when I call wait_readable with remote calls,
+I can also make a syscall at the same time (like with native),
+and it will interrupt the wait_readable (not like with native)
+but I can make it like that for native. just cancel the wait under the hood?
+
+when I make another syscall, it interrupts wait_readable automatically.
+then the async layer will not wait_readable again until it's finished performing other IO.
+
+I guess that's a nice invariant.
+
+okay, we'll just have wait_readable only return when the underlying FD really is readable.
+And the conceptual reason to call wait_readable: It doesn't take the lock on the object.
+Other syscalls can go through while we're calling it.
+That will be nice and uniform with native.
+And we need to have such a wait_readable call as a primitive to avoid deadlocks.
+
+That is, a deadlock where we call some blocking syscall, and it blocks, but
+then we realize we need to call some other syscall to make it
+unblock.
+
+Right, the reason we need the primitive isn't because we want to get asyncness in there,
+it's because we don't want to take the lock on the object.
+which is conceptually the same as not globally blocking
+
+* naming vfork thing
+So the real system call wouldn't be clone, it would be... unshare?
+
+Well, vfork is the best way to view it I think. It's just a vfork that doesn't return twice.
+
+Meh, I'll call it sfork.
+
+* 
+if syscalls were RPCs
+
+you could set up the new process/do the exec stuff in a remote process
+
+it would be nice to have an exec that creates a thread in the same way as clone
+
+but really clone doesn't need to take a stack argument, does it?
+why can't you just conditionally return?
+
+yeah and I mean, why can't I just say, start thread running with these registers
+
+exec and clone are kind of the same thing
+
+
+anyway if I could RPC to another process space, I could set up its memory with mmap just fine.
+then kick it off and let it run.
+
+adding RPC to another process space...
+targeted, surgical interventions that massively increase power
+
+anyway if syscalls were RPCs,
+and you could just start with an empty address space and map a bunch of things inside it,
+then start a thread inside it,
+then that would be real cool y'know
+
+unshare
+* accessing the environment and args over rsyscall
+okay so args and env are at the base of the stack. hm.
+so we could access them that way.
+that's a bit silly though, let's just get it externally
