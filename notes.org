@@ -416,3 +416,12 @@ unshare
 okay so args and env are at the base of the stack. hm.
 so we could access them that way.
 that's a bit silly though, let's just get it externally
+* handling entering the child process
+  I guess it seems fine.
+  Maybe I'll wrap the SyscallInterface in something more structured and nice.
+* important design notes
+  dup2 takes a file descriptor object and never ever takes a number
+  subproc has a method to convert objects from the parent process to the child process
+  cloexec is on by default, and unset manually when creating a new process
+
+  wait_readable only returns when the underlying FD really is readable - it doesn't take the lock on the object

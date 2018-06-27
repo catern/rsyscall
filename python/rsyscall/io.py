@@ -4,6 +4,7 @@ import os
 import typing as t
 import trio
 import signal
+import sfork
 from async_generator import asynccontextmanager
 
 class ProcessContext:
@@ -75,21 +76,19 @@ class LocalSyscall(SyscallInterface):
 
     # TODO support setting child_stack so we can create threads
     async def clone(self, flags: int, deathsig: t.Optional[signal.Signals]) -> int:
+        print("clone", deathsig)
         if deathsig is not None:
             flags |= deathsig
-        return (await self.syscall(lib.SYS_clone, flags, 0, 0, 0, 0))
+        return sfork.clone(flags)
 
     async def exit(self, status: int) -> int:
         print("exit", status)
-        return (await self.syscall(lib.SYS_exit, status))
+        return sfork.exit(status)
 
-    async def execveat(self, dirfd: int, path: bytes,
-                       argv: t.List[bytes], envp: t.List[bytes],
-                       flags: int) -> int:
-        return (await self.syscall(lib.SYS_execveat, dirfd, ffi.buffer(path),
-                                   _to_char_star_array(argv),
-                                   _to_char_star_array(envp),
-                                   flags))
+    async def execveat(self, pathname: bytes, argv: t.List[bytes], envp: t.List[bytes], flags: int,
+                       *, dirfd: t.Optional[int]=None) -> int:
+        print("execveat", pathname)
+        return sfork.execveat(pathname, argv, envp, flags, dirfd=dirfd)
 
 class FileDescriptor(trio.abc.AsyncResource):
     "A file descriptor."
@@ -108,52 +107,59 @@ class WritableFileDescriptor(FileDescriptor):
     async def write(self, buf: bytes) -> int:
         return (await self.syscall.write(self.number, buf))
 
-@asynccontextmanager
-async def allocate_pipe(syscall: SyscallInterface) -> t.Any:
+class Pipe(trio.abc.AsyncResource):
+    def __init__(self, rfd: ReadableFileDescriptor, wfd: WritableFileDescriptor) -> None:
+        self.rfd = rfd
+        self.wfd = wfd
+
+    async def aclose(self):
+        await self.rfd.aclose()
+        await self.wfd.aclose()
+
+async def allocate_pipe(syscall: SyscallInterface) -> Pipe:
     r, w = await syscall.pipe()
-    rfd, wfd = ReadableFileDescriptor(syscall, r), WritableFileDescriptor(syscall, w)
-    async with rfd, wfd:
-        yield rfd, wfd
+    return Pipe(ReadableFileDescriptor(syscall, r), WritableFileDescriptor(syscall, w))
 
 class SubprocessContext:
-    def __init__(self, process: ProcessContext, syscall: SyscallInterface) -> None:
-        self.process = process
+    def __init__(self, syscall: SyscallInterface, process: ProcessContext, parent_process: ProcessContext) -> None:
         self.syscall = syscall
-        self.left = False
+        self.process = process
+        self.parent_process = parent_process
+        self.pid: t.Optional[int] = None
 
-    # so we need to make sure when we call exit or exec,
-    # that we're the active pid/process for this SyscallInterface.
-    # oh yeah, hmm, essentially when we vfork we point the syscallinterface at a new processcontext.
-    # 
-    def _get_syscall(self) -> SyscallInterface:
+    def _can_syscall(self) -> None:
         if self.syscall.process is not self.process:
             raise Exception("My syscall interface is not currently operating on my process, "
                             "did you fork again and call exit/exec out of order?")
-        return self.syscall
+        if self.pid is not None:
+            raise Exception("Already left this process")
 
-    async def exit(self, status: int, syscall) -> None:
-        my_pid = await syscall.exit(status)
-        self.left = True
-        return None
-        # the pid is useless now.
-        # exit and exec should return a Subprocess. or something.
-        # er, just exec, I guess
+    async def exit(self, status: int) -> None:
+        self._can_syscall()
+        self.pid = await self.syscall.exit(status)
+        self.syscall.process = self.parent_process
+
+    async def exec(self, pathname: os.PathLike, argv: t.List[t.Union[str, bytes]],
+             *, envp: t.Optional[t.Dict[str, str]]=None) -> None:
+        self._can_syscall()
+        if envp is None:
+            envp = os.environ
+        self.pid = await self.syscall.execveat(to_bytes(os.fspath(pathname)), [to_bytes(arg) for arg in argv],
+                                               serialize_environ(**envp), flags=0)
+        self.syscall.process = self.parent_process
 
 @asynccontextmanager
-async def make_subprocess(syscall: SyscallInterface) -> t.Any:
-    # saved for later
+async def subprocess(syscall: SyscallInterface) -> t.Any:
+    # this is really contextvar-ish. but I guess it's inside an
+    # explicitly passed around object in the rsyscall case. but it's
+    # still the same kind of behavior. by what name is this known?
     parent_process = syscall.process
     await syscall.clone(lib.CLONE_VFORK|lib.CLONE_VM, deathsig=None)
-    child_process = ProcessContext()
-    # this syscall interface now operates on the child process
-    syscall.process = child_process
-    context = SubprocessContext(child_process, syscall)
+    current_process = ProcessContext()
+    syscall.process = current_process
+    context = SubprocessContext(syscall, current_process, parent_process)
     try:
         yield context
     finally:
-        if not context.left:
-            print("forcibly exiting process")
+        if context.pid is None:
             await context.exit(0)
-        # this syscall interface has left the child process and is now
-        # back to operating on the parent
-        syscall.process = parent_process
