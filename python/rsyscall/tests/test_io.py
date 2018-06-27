@@ -1,5 +1,5 @@
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.io import ProcessContext, SubprocessContext
+from rsyscall.io import ProcessContext, SubprocessContext, Task, FilesNamespace, MemoryNamespace, ReadableFileDescriptor, WritableFileDescriptor
 import unittest
 import supervise_api
 import trio
@@ -9,11 +9,14 @@ import os
 
 class TestIO(unittest.TestCase):
     def setUp(self):
-        self.syscall = rsyscall.io.LocalSyscall(trio.hazmat.wait_readable)
+        self.task = Task(rsyscall.io.LocalSyscall(trio.hazmat.wait_readable), FilesNamespace(), MemoryNamespace())
+        self.stdin = ReadableFileDescriptor(self.task, self.task.files, 0)
+        self.stdout = WritableFileDescriptor(self.task, self.task.files, 1)
+        self.stderr = WritableFileDescriptor(self.task, self.task.files, 2)
 
     def test_pipe(self):
         async def test() -> None:
-            async with (await rsyscall.io.allocate_pipe(self.syscall)) as pipe:
+            async with (await rsyscall.io.allocate_pipe(self.task)) as pipe:
                 in_data = b"hello"
                 await pipe.wfd.write(in_data)
                 out_data = await pipe.rfd.read(len(in_data))
@@ -22,15 +25,29 @@ class TestIO(unittest.TestCase):
 
     def test_subprocess(self):
         async def test() -> None:
-            async with rsyscall.io.subprocess(self.syscall) as subproc:
+            async with rsyscall.io.subprocess(self.task) as subproc:
                 await subproc.exit(0)
         trio.run(test)
 
     def test_subprocess_nested(self):
         async def test() -> None:
-            async with rsyscall.io.subprocess(self.syscall):
-                async with rsyscall.io.subprocess(syscall) as subproc:
+            async with rsyscall.io.subprocess(self.task):
+                async with rsyscall.io.subprocess(self.task) as subproc:
                     await subproc.exit(0)
+        trio.run(test)
+
+    def test_cat(self):
+        async def test() -> None:
+            async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
+                async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
+                    async with rsyscall.io.subprocess(self.task) as subproc:
+                        await subproc.translate(pipe_in.rfd).dup2(subproc.translate(self.stdin))
+                        await subproc.translate(pipe_out.wfd).dup2(subproc.translate(self.stdout))
+                        await subproc.exec("/bin/sh", ['sh', '-c', 'cat'])
+                    in_data = b"hello"
+                    await pipe_in.wfd.write(in_data)
+                    out_data = await pipe_out.rfd.read(len(in_data))
+                    self.assertEqual(in_data, out_data)
         trio.run(test)
 
 if __name__ == '__main__':

@@ -6,6 +6,76 @@ import trio
 import signal
 import sfork
 from async_generator import asynccontextmanager
+import logging
+logger = logging.getLogger(__name__)
+
+class SyscallInterface:
+    async def pipe(self, flags=os.O_NONBLOCK) -> t.Tuple[int, int]: ...
+    async def close(self, fd: int) -> None: ...
+    # TODO add optional offset argument?
+    # TODO figure out how to allow preadv2 flags?
+    async def read(self, fd: int, count: int) -> bytes: ...
+    async def write(self, fd: int, buf: bytes) -> int: ...
+    async def dup2(self, oldfd: int, newfd: int) -> int: ...
+    async def wait_readable(self, fd: int) -> None: ...
+    async def clone(self, flags: int, deathsig: t.Optional[signal.Signals]) -> int: ...
+    async def exit(self, status: int) -> int: ...
+    async def execveat(self, dirfd: int, path: bytes,
+                       argv: t.List[bytes], envp: t.List[bytes],
+                       flags: int) -> int: ...
+
+class LocalSyscall(SyscallInterface):
+    def __init__(self, wait_readable) -> None:
+        self._wait_readable = wait_readable
+
+    async def pipe(self, flags=os.O_CLOEXEC) -> t.Tuple[int, int]:
+        logger.debug("pipe(%s)", flags)
+        return os.pipe2(flags)
+
+    async def close(self, fd: int) -> None:
+        logger.debug("close(%d)", fd)
+        return os.close(fd)
+
+    # TODO allow setting offset?
+    async def read(self, fd: int, count: int) -> bytes:
+        logger.debug("read(%d, %d)", fd, count)
+        return os.read(fd, count)
+
+    async def write(self, fd: int, buf: bytes) -> int:
+        logger.debug("write(%d, len(buf) == %d)", fd, len(buf))
+        return os.write(fd, buf)
+
+    async def dup2(self, oldfd: int, newfd: int) -> int:
+        logger.debug("dup2(%d, %d)", oldfd, newfd)
+        return os.dup2(oldfd, newfd)
+
+    # TODO support setting child_stack so we can create threads
+    async def clone(self, flags: int, deathsig: t.Optional[signal.Signals]) -> int:
+        logger.debug("clone(%d, %s)", flags, deathsig)
+        if deathsig is not None:
+            flags |= deathsig
+        return sfork.clone(flags)
+
+    async def exit(self, status: int) -> int:
+        logger.debug("exit(%d)", status)
+        return sfork.exit(status)
+
+    async def execveat(self, pathname: bytes, argv: t.List[bytes], envp: t.List[bytes], flags: int,
+                       *, dirfd: t.Optional[int]=None) -> int:
+        logger.debug("execveat(%s)", pathname)
+        return sfork.execveat(pathname, argv, envp, flags, dirfd=dirfd)
+
+class FilesNamespace:
+    pass
+
+class MemoryNamespace:
+    pass
+
+class Task:
+    def __init__(self, syscall: SyscallInterface, files: FilesNamespace, memory: MemoryNamespace) -> None:
+        self.syscall = syscall
+        self.memory = memory
+        self.files = files
 
 class ProcessContext:
     """A Linux process with associated resources.
@@ -15,91 +85,65 @@ class ProcessContext:
 
     Eventually, when we support pipelining file descriptor creation, we'll need some
     kind of transactional interface, or a list of "pending" fds.
+
+    This also contains a fixed SyscallInterface that is used to access this process.
     """
-    pass
-
-local_process = ProcessContext()
-
-class SyscallInterface:
-    process: ProcessContext
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int: ...
-    async def pipe(self, flags=os.O_NONBLOCK) -> t.Tuple[int, int]: ...
-    async def close(self, fd: int) -> None: ...
-    # TODO add optional offset argument?
-    # TODO figure out how to allow preadv2 flags?
-    async def read(self, fd: int, count: int) -> bytes: ...
-    async def write(self, fd: int, buf: bytes) -> int: ...
-    async def wait_readable(self, fd: int) -> None: ...
-    async def clone(self, flags: int, deathsig: t.Optional[signal.Signals]) -> int: ...
-    async def exit(self, status: int) -> int: ...
-    async def execveat(self, dirfd: int, path: bytes,
-                       argv: t.List[bytes], envp: t.List[bytes],
-                       flags: int) -> int: ...
-
-def _to_char_star_array(args: t.List[bytes]) -> t.Any:
-    argv = ffi.new('char *const[]', len(args) + 1)
-    for i, arg in enumerate(args):
-        argv[i] = ffi.from_buffer(arg)
-    return argv
-
-class LocalSyscall(SyscallInterface):
-    def __init__(self, wait_readable) -> None:
-        self.process = local_process
-        self._wait_readable = wait_readable
-
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        print("before", number, arg1, arg2, arg3, arg4, arg5, arg6)
-        val = lib.my_syscall(number, arg1, arg2, arg3, arg4, arg5)
-        print("returning", val)
-        print("after", number, arg1, arg2, arg3, arg4, arg5, arg6)
-        if (val == -1):
-            err = ffi.errno
-            raise OSError(err, os.strerror(err))
-        return val
-
-    async def pipe(self, flags=os.O_NONBLOCK) -> t.Tuple[int, int]:
-        print("pipe", flags)
-        return os.pipe2(flags)
-
-    async def close(self, fd: int) -> None:
-        print("close", fd)
-        return os.close(fd)
-
-    # TODO allow setting offset?
-    async def read(self, fd: int, count: int) -> bytes:
-        print("read", fd, count)
-        return os.read(fd, count)
-
-    async def write(self, fd: int, buf: bytes) -> int:
-        print("write", fd, buf)
-        return os.write(fd, buf)
-
-    # TODO support setting child_stack so we can create threads
-    async def clone(self, flags: int, deathsig: t.Optional[signal.Signals]) -> int:
-        print("clone", deathsig)
-        if deathsig is not None:
-            flags |= deathsig
-        return sfork.clone(flags)
-
-    async def exit(self, status: int) -> int:
-        print("exit", status)
-        return sfork.exit(status)
-
-    async def execveat(self, pathname: bytes, argv: t.List[bytes], envp: t.List[bytes], flags: int,
-                       *, dirfd: t.Optional[int]=None) -> int:
-        print("execveat", pathname)
-        return sfork.execveat(pathname, argv, envp, flags, dirfd=dirfd)
+    def __init__(self, syscall_interface: SyscallInterface) -> None:
+        self.syscall = syscall_interface
 
 class FileDescriptor(trio.abc.AsyncResource):
     "A file descriptor."
-    def __init__(self, syscall: SyscallInterface, number: int) -> None:
-        self.syscall = syscall
+    def __init__(self, task: Task, files: FilesNamespace, number: int) -> None:
+        self.task = task
+        self.files = files
         self.number = number
+        self.open = True
+
+    @property
+    def syscall(self) -> SyscallInterface:
+        if self.task.files != self.files:
+            raise Exception("Can't call syscalls on FD when my Task has moved out of my FilesNamespaces")
+        return self.task.syscall
+
+    async def dup2(self, target: 'FileDescriptor') -> 'FileDescriptor':
+        """Make a copy of this file descriptor at target.number
+
+        TODO: The type annotation should represent that this returns
+        the same type as self.
+
+        """
+        if self.files != target.files:
+            raise Exception("two fds are not in the same FilesNamespace")
+        if self is target:
+            return self
+        owned_target = target.release()
+        await self.syscall.dup2(self.number, owned_target.number)
+        owned_target.open = False
+        return type(self)(self.task, self.files, owned_target.number)
+
+    def release(self) -> 'FileDescriptor':
+        """Disassociate the file descriptor from this object
+
+        TODO: The type annotation should represent that this returns
+        the same type as self.
+
+        """
+        if self.open:
+            self.open = False
+            return type(self)(self.task, self.files, self.number)
+        else:
+            raise Exception("file descriptor already closed")
 
     async def aclose(self):
-        await self.syscall.close(self.number)
+        if self.open:
+            await self.syscall.close(self.number)
+            self.open = False
+        else:
+            raise Exception("file descriptor already closed")
 
 class ReadableFileDescriptor(FileDescriptor):
+    # TODO we need to send this read through an epoll thingy.
+    # that's a shared resource, hum hom herm
     async def read(self, count: int=4096) -> bytes:
         return (await self.syscall.read(self.number, count))
 
@@ -116,50 +160,91 @@ class Pipe(trio.abc.AsyncResource):
         await self.rfd.aclose()
         await self.wfd.aclose()
 
-async def allocate_pipe(syscall: SyscallInterface) -> Pipe:
-    r, w = await syscall.pipe()
-    return Pipe(ReadableFileDescriptor(syscall, r), WritableFileDescriptor(syscall, w))
+async def allocate_pipe(task: Task) -> Pipe:
+    r, w = await task.syscall.pipe()
+    return Pipe(ReadableFileDescriptor(task, task.files, r), WritableFileDescriptor(task, task.files, w))
+
+class EpollEvent:
+    # should improve the accuracy of these.
+    events: int
+    data: int
+
+class EpollFileDescriptor(FileDescriptor):
+    async def add(self, fd: FileDescriptor, event: EpollEvent) -> None:
+        pass
+
+    async def delete(self, fd: FileDescriptor) -> None:
+        pass
+
+    async def modify(self, fd: FileDescriptor, event: EpollEvent) -> None:
+        pass
+
+    async def wait(self, maxevents: int=10) -> t.List[EpollEvent]:
+        pass
 
 class SubprocessContext:
-    def __init__(self, syscall: SyscallInterface, process: ProcessContext, parent_process: ProcessContext) -> None:
-        self.syscall = syscall
-        self.process = process
-        self.parent_process = parent_process
+    def __init__(self, task: Task, child_files: FilesNamespace, parent_files: FilesNamespace) -> None:
+        self.task = task
+        self.child_files = child_files
+        self.parent_files = parent_files
         self.pid: t.Optional[int] = None
 
-    def _can_syscall(self) -> None:
-        if self.syscall.process is not self.process:
-            raise Exception("My syscall interface is not currently operating on my process, "
-                            "did you fork again and call exit/exec out of order?")
+    def translate(self, fd: FileDescriptor) -> FileDescriptor:
+        """Translate FDs from the parent's FilesNS to the child's FilesNS
+
+        Any file descriptor created by my task in parent_files is now
+        also present in child_files, so we're able to translate them
+        to child_files.
+
+        This only works for fds created by my task because fds from
+        other tasks may have been created after the fork, through
+        concurrent execution. To translate fds from other tasks,
+        provide them as arguments at fork time.
+
+        TODO: The type should take any class inheriting from FD, and
+        return the same class. Not sure how to represent that in mypy.
+
+        """
+        if self.pid is not None:
+            raise Exception("Already left the subprocess")
+        if fd.files != self.parent_files:
+            raise Exception("Can't translate an fd not coming from my parent's FilesNamespace")
+        if fd.task != self.task:
+            raise Exception("Can't translate an fd not coming from my Task; it could have been created after the fork.")
+        return type(fd)(fd.task, self.child_files, fd.number)
+
+    @property
+    def syscall(self) -> SyscallInterface:
         if self.pid is not None:
             raise Exception("Already left this process")
+        return self.task.syscall
 
     async def exit(self, status: int) -> None:
-        self._can_syscall()
         self.pid = await self.syscall.exit(status)
-        self.syscall.process = self.parent_process
+        self.task.files = self.parent_files
 
     async def exec(self, pathname: os.PathLike, argv: t.List[t.Union[str, bytes]],
              *, envp: t.Optional[t.Dict[str, str]]=None) -> None:
-        self._can_syscall()
         if envp is None:
             envp = os.environ
-        self.pid = await self.syscall.execveat(to_bytes(os.fspath(pathname)), [to_bytes(arg) for arg in argv],
-                                               serialize_environ(**envp), flags=0)
-        self.syscall.process = self.parent_process
+        self.pid = await self.syscall.execveat(sfork.to_bytes(os.fspath(pathname)), [sfork.to_bytes(arg) for arg in argv],
+                                               sfork.serialize_environ(**envp), flags=0)
+        self.task.files = self.parent_files
 
 @asynccontextmanager
-async def subprocess(syscall: SyscallInterface) -> t.Any:
+async def subprocess(task: Task) -> t.Any:
     # this is really contextvar-ish. but I guess it's inside an
-    # explicitly passed around object in the rsyscall case. but it's
-    # still the same kind of behavior. by what name is this known?
-    parent_process = syscall.process
-    await syscall.clone(lib.CLONE_VFORK|lib.CLONE_VM, deathsig=None)
-    current_process = ProcessContext()
-    syscall.process = current_process
-    context = SubprocessContext(syscall, current_process, parent_process)
+    # explicitly passed around object. but it's still the same kind of
+    # behavior. by what name is this known?
+
+    parent_files = task.files
+    await task.syscall.clone(lib.CLONE_VFORK|lib.CLONE_VM, deathsig=None)
+    child_files = FilesNamespace()
+    task.files = child_files
+    context = SubprocessContext(task, child_files, parent_files)
     try:
         yield context
     finally:
         if context.pid is None:
             await context.exit(0)
+        

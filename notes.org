@@ -419,6 +419,95 @@ that's a bit silly though, let's just get it externally
 * handling entering the child process
   I guess it seems fine.
   Maybe I'll wrap the SyscallInterface in something more structured and nice.
+* what does the FD hold
+  Currently it holds a SyscallInterface.
+
+  And since we mutate the SyscallInterface when we change process...
+
+  There's nothing to update/convert in the child process.
+
+  but wait so, this also means that if I open things in the child process,
+  then when the SI reverts back,
+  I won't be able to see that they are bad.
+
+  I think I should not be mutating the SyscallInterface, but rather creating a new wrapper thing.
+
+  Yeah, and then I should mutate the ProcessContext to indicate that its SyscallInterface has stopped working.
+
+  Technically the processcontext should support multiple syscallinterfaces.
+  argh. so it's desirable that, uh...
+
+  OK, so maybe I should have a single TaskContext,
+  which references the Process it runs within,
+  and has a single fixed syscallinterface.
+
+  why can't FDs just have both a syscaller and a process?
+
+  well what happens when the syscaller switches what it's referencing.
+  or rather what process it operates within.
+
+  I guess one concept is that, um.
+  our task moves to another process.
+  so er.
+
+  but argh, how do we then prevent other things using that syscaller while in the child process?
+  when it will be wrong?
+
+  okay so maybe I have this notion Task,
+  which holds the syscall immutably,
+  and mutates what context it's in.
+
+  and then each FD holds a reference to both a Task and a FileDescriptorTable.
+  and before doing anything,
+  checks that the Task and FDTable match.
+
+  That makes sense.
+  Task is, then, essentially the same thing as SI,
+  just a slightly friendlier presentation.
+  well, a nice wrapper anyway.
+* epoll/asynchronicity
+  Now I need to decide how to handle this.
+
+  Maybe have another wrapper for fds?
+
+  I guess the epoll guy has to own the fd since it has to remove it
+
+  Don't forget to read/write first and only on EAGAIN start blocking.
+
+  Should the epoller be tied to the task?
+
+  I don't see why.
+
+  Well, of course an epoller holds a task, of course,
+  because it needs to be able to syscall.
+
+  FDs can be switched between tasks easily though. Or should be able to anyway.
+
+  Maybe an epoller should inherit from fd?
+  Can you actually read from an epollfd?
+
+  Oh, I certainly should have an epoll file descriptor in any case.
+
+  And then I have a thing which owns that...
+
+  Maybe release() should return a copy of the FD object instead of an int?
+  It's just a way to mutate the object into giving up the fd?
+
+  OK so the question of whether I have an epoll fd that is just known on the other side,
+  or whether I have a wait_readable call.
+  
+  Hm.
+  I guess I can just epoll_wait anyway.
+  As long as no-one else is using the thread/epollfd...
+  Then can't I just make blocking calls?
+  If there's no other tasks waiting on things other than in my world?
+
+  Of course, the epoll_wait needs to be interruptable.
+  So that other tasks can cause a call.
+  For example, some task has an FD become readable, I read it,
+  and then I want to write that data to another task.
+
+  Tricky, tricky.
 * important design notes
   dup2 takes a file descriptor object and never ever takes a number
   subproc has a method to convert objects from the parent process to the child process
