@@ -182,6 +182,51 @@ class EpollFileDescriptor(FileDescriptor):
     async def wait(self, maxevents: int=10) -> t.List[EpollEvent]:
         pass
 
+# oh! this should be a generic wrapper type around a FileDescriptor.
+# that way we can still see the underlying type right.
+# and... maybe it can have different specializations?
+# depending on the underlying...
+# with extra methods...
+# no that's dumb...
+# but we do want to be able to read right or whatever...
+# oh! we'll have another function which takes the specialized version and calls on it!
+# hmm, extra methods depending on the underlying type doesn't seem infinitely bad.
+# since you can easily achieve it in standalone functions
+# oh because how do we even dispatch on the type
+# hm
+# okay, standalone functions that take a specialization are fine then.
+# oh, I guess they could be staticmethods. or even... real methods... urgh...
+# so this is yet another question for mypy people:
+# can I make self be required to be a specific specialization?
+# in the meantime I will just use methods then
+# aha it's all possible, thank you mypy stuff
+
+# can I have an EpollableFD that I inherit from multiple of?
+# what if.. the constructors don't match in their type?
+# aaaa
+# forget it, just use free functions!
+# no okay don't use free functions, but be aware it's weird.
+# or maybe I should just use free functions aaa
+class EpollRegisteredFD(trio.AsyncResource):
+    epoller: 'Epoller'
+    underlying: FileDescriptor
+    # wait no we are supposed to do the IO first, then wait if it fails
+    # hmmm....
+    # not sure where to put such a helper method
+    async def wait_readable(self):
+        pass
+
+    async def wait_writable(self):
+        pass
+
+    async def aclose(self):
+        await self.epoller.delete(self.underlying)
+        await self.underlying.aclose()
+
+class Epoller:
+    def convert(self, fd: FileDescriptor) -> EpollRegisteredFD:
+        pass
+
 class SubprocessContext:
     def __init__(self, task: Task, child_files: FilesNamespace, parent_files: FilesNamespace) -> None:
         self.task = task

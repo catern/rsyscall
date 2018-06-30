@@ -508,9 +508,89 @@ that's a bit silly though, let's just get it externally
   and then I want to write that data to another task.
 
   Tricky, tricky.
+* file descriptor .release()
+  release() allows some kind of linear movement of types through the system,
+  so we ensure they get closed.
+
+  man a linear typed language would be such an improvement for resource tracking.
+  blargh
 * important design notes
   dup2 takes a file descriptor object and never ever takes a number
   subproc has a method to convert objects from the parent process to the child process
   cloexec is on by default, and unset manually when creating a new process
 
   wait_readable only returns when the underlying FD really is readable - it doesn't take the lock on the object
+* multiplexing without depending on event-loop specifics
+is single-prompt yield not powerful enough to do multiplexing without control over the prompt?
+
+how about multi-prompt yield?
+
+well, if I had a multiprompt yield.
+then I could have a prompt for my specific multiplexer
+and I'd want the user to be able to just call into me without themselves having to be within some handler
+
+so they do it
+but
+oh even with a wrapping a function around the prompt to get the continuation, I only get the cont under the prompt, derp
+
+a message passing perspective
+
+yield to specific prompt (that's the cap they call on)
+then it's good
+so multi-prompt yield with first class prompts would be fine, assuming we could keep the handler on the stack.
+
+maybe I could implement multi-prompt yield in python
+
+it wouldn't be slow:
+we'd have a separate stack, essentially, for each yield thing. which is fast.
+
+and it would be in direct style.
+when someone yields back up to us,
+we'd see that as a response to a send into them.
+
+and we'd be able to continue on and mess with them.
+
+but, I feel like that must be too powerful for the simple use case of wanting to multiplex access to a single resource
+(aka: taking requests in, submitting them to the resource, and sending the responses back out, possible in a different order)
+I feel like there must be a simpler way to think about multiplexing access to a single resource than that..
+
+well that sounds like message passing
+which is equally powerful
+
+so really that's just exactly what it is...
+is it *exactly* what it is?
+
+in a sense, yes.
+
+is it REALLY what it is?
+
+what other ways to multiplex are there
+
+well exokernels have embedded code
+i could poll at user level
+i could have it wake up everything
+maybe there's some relevance of passing down an fd...
+
+if I have it wake up everything then I could handle it in user code.
+but how would I wake up multiple things???
+they'd all wait for one thing
+and when it happens they return
+
+ho hum hee
+
+if wait_readable is my only primitive, can I do it?
+
+I guess this is related to the whole question of,
+what is the syscaller interface? how wide is it? etc
+
+hmm, I just realized that I think this is essentially the same question as another question that I have previously deferred until later
+(that other question being, "do I really need to expose wait_readable in my interface-to-native-system-calls? maybe there's something more naturally ~Linuxy~ I could expose")
+
+hmm, actually it just occurred to me that this question is essentially the same as an earlier question I was pondering and deferred until later, so I guess I'll just defer this one too, and be trio-specific for now
+(the earlier question was whether to expose wait_readable in the system call interface which abstracts over making system calls in the current thread vs. in another thread, or to expose some other primitive async mechanism, or do something else, or whatever)
+* cool feature: context manager container
+  I can start a container with a contextmanager and spin it off by returning.
+
+  hey, and supervise is a nice pid1 to run inside the container
+
+  neat neat neat neaaat
