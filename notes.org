@@ -761,7 +761,21 @@ that's a bit silly though, let's just get it externally
 
    And, I guess the FileObject would be the one carrying all the capability flags.
    Actually it's interesting that this kind of makes capsicum support hard,
-   if there's ever fd-level refinement...
+   if there's ever fd-level attenuation of caps.
+
+   but I think this FileObject-primary approach is good
+
+   And I guess we can make references to FDs and pass them around and such.
+
+   And an FD also has the syscall interface, so it's the whole entirety of the reference.
+
+   OK and also we'll be able to wrap the EpollOwnedFDs directly around the underlying FileObject.
+
+   Should Exclusive and Shared inherit from the same FD class?
+
+   yeah
+
+   both for the interface, and for implementation sharing.
 ** things which operate on file descriptions
 *** Open file description locks
 *** File offsets
@@ -778,6 +792,19 @@ that's a bit silly though, let's just get it externally
   that's... that's... that's implicit parameters :(((((
   looking up things by type :((((
   but I hate dependency injection!!!
+
+  urgh, I've just had a terrible thought
+  a typeclass can be modeled as an additional argument that is automatically looked in a table indexed by type, right?
+
+  well it's just occurred to me that there's another practice that is like that,
+  where an implementation of some functionality is looked up in a table indexed by type,
+  common in a certain primitive language.
+
+  and it's a practice that has reviled and disgusted me,
+  so it's terrible to think that they could be the same
+
+  how can you achieve coherence without global uniqueness of instances?
+  just error if there's ambiguity or whatever
 * multiplexing without depending on event-loop specifics
 is single-prompt yield not powerful enough to do multiplexing without control over the prompt?
 
