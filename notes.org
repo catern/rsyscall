@@ -501,6 +501,7 @@ that's a bit silly though, let's just get it externally
   As long as no-one else is using the thread/epollfd...
   Then can't I just make blocking calls?
   If there's no other tasks waiting on things other than in my world?
+  Which is probably the case?
 
   Of course, the epoll_wait needs to be interruptable.
   So that other tasks can cause a call.
@@ -508,6 +509,50 @@ that's a bit silly though, let's just get it externally
   and then I want to write that data to another task.
 
   Tricky, tricky.
+
+  Except it's not really the case that I'm the only thing in this world.
+  Both native and through rsyscall.
+  Others are waiting and might cause me to want to do something in a task.
+
+  Tasks, tasks, tasks
+
+  Single language runtime, multiple tasks,
+  freely scheduling on any task,
+  tasks tasks tasks
+
+  Tricky, tricky.
+
+  tasks.
+
+  Essentially we're providing a way to work with multiple Linux tasks,
+  as objects inside a single-threaded language runtime.
+
+  But when we call a function on one of them, it locks the object.
+
+  We want to be able to interrupt those functions.
+
+  Ideally this would be implemented by,
+  when we perform the call to an epoll_wait,
+  there's an additional thing that can wake us up:
+
+  More people calling into the object.
+
+  Ho hum he...
+
+  I guess this is an issue of multiplexing?
+
+  We could write a nice API where we run each system call on a different task.
+  The ole, allocate thread pool and run syscalls on them, approach.
+
+  But instead we want to multiplex a bunch of system calls on a single task.
+  And in some sense, we want to get notified when they return successfully,
+  but we still want to be able to send new system calls...
+
+  wait_readable does seem fairly good.
+
+  OKay so I'll stick to wait_readable being abstracted by the interface,
+  I'll code using trio-only libraries,
+  and, yeah!
 * file descriptor .release()
   release() allows some kind of linear movement of types through the system,
   so we ensure they get closed.
@@ -520,6 +565,188 @@ that's a bit silly though, let's just get it externally
   cloexec is on by default, and unset manually when creating a new process
 
   wait_readable only returns when the underlying FD really is readable - it doesn't take the lock on the object
+* concerns
+  okay so...
+  what the heck
+
+  if I pass an fd into a subprocess, does it then get the ability to change my own nonblock status of that file description?
+
+  fml
+
+  how to test, hm...
+
+  guess I can just test fcntl
+
+  okay so the internet suggests it really does work that way
+  even for stdin/out/err
+
+  fml fml fml
+
+  is there a nice clean Linux-specific solution?
+
+  so I just realized that since struct file is shared between file descriptors,
+  O_NONBLOCK can't be really set on file descriptors that might point to shared (non-owned) struct files...
+
+  argh okay so let's think about how we could model this if we have to.
+
+  also terrifying is the prospect that it's not just shared across dup'd fds,
+  but also across separate opens of a fifo, as that one guy said. but that seems dubious
+
+  so we need some way to represent whether it has
+  extra references that are outside my set of fds
+
+  and also when my set of fds passes outside my control??
+  no I guess I don't need that, that will just be a stray files/task thing
+
+  okay so
+* file object management
+  we'll have FDs point to a FileObject
+
+  And we'll have FOs have a list of FDs?
+
+  And we'll use this to implement something like Rust's cell system?
+  A runtime borrow checker?
+
+  If we have an exclusive FD to something, we can perform FO mutations.
+  Otherwise we can't.
+
+  And we'll also have a flag on FO, "leaked".
+
+  Or wait...
+  I guess when we pass something to a subprocess, a file descriptor will be left behind that is open.
+
+  Oh god
+  When we create a subprocess we create a bunch of new references to a FO.
+  So we add them when we translate, right?
+
+  But, ones that are marked cloexec are closed once we leave, right?
+  So, we shouldn't make references to them.
+
+  I guess we would want to manually... implement... cloexec...
+  Track whether each FD is cloexec...
+
+  We'd want to have the FD table maintained for each FilesNamespace
+  Christ almighty
+  Why can't we just use the underlying data for this, again?
+
+  I wonder if CRIU people do any of this
+
+  So okay let's talk again about what we'd want to do.
+  We want to detect when file descriptors are closed by cloexec.
+  It's a nice automatic feature but our tracking needs to know about it making it useless.
+
+  Maybe I should just not use cloexec?
+
+  Why do I need to know when fds are closed again?
+
+  Well, to know when the FileObjects are not shared.
+  Oh, god...
+
+  In a linear type system,
+  I'd hand out a reference to a FileObject,
+  and the subprocess would not return.
+  Er hm. Even if it returns it's still leakedL forever I guess.
+
+  Ok so I don't need much big stuff, I just need a FileObject with a shared flag, and unsetting cloexec can set the shared flag.
+  And it'll be initialized as either shared or not.
+
+  But the issue then is how I actually handle changing flags on the FileObject
+
+  For example, what if, like... I want to leak do some aio on it, then leak it down?
+
+  I guess I move it into the epoller, which sets nonblock, move it out again, which unsets nonblock, and leak it down.
+
+  But what if I want to leak it while using it?
+  well obviously that's bad.
+
+  But what if I want to set a file object flag through one FD,
+  while another FD is using the O_NONBLOCKness of the FileObject?
+
+  ok, so there's also open file description locks, which also operate on the file description level.
+  oh and there's also file offsets but who cares about those lol.
+
+  it's kind of beginning to feel like maybe there should be some kind of syscall to duplicate an open file description.
+
+  Ok so that would be stupid and couldn't work in general,
+  because the struct file for sockets, for example, can't be duplicated.
+
+  probably can't, anyway.
+  nor for pipes.
+  probably.
+
+  okay, so is there *any* reason that I would *ever* want to share FileObjects between FDs?
+** benefits
+   Hey I don't think I need to pass in ownership of the FD to the Epoller anymore
+
+   Because it's IMPOSSIBLE FUG
+
+   oh wait i still need to do that actually
+
+   uh, hm.
+   let's think about it actually.
+
+   so we still clearly need to take ownership, right? so that we can close it...
+
+   but we can't "take ownership" of the FileObject, eh
+
+   well
+
+   okay, so technically we could not pass in ownership of the FD to the epoller
+
+   just register the FileObject, *HEAVILY CONDITIONAL* on the FileObject being exclusively owned by us forever.
+   otherwise it'll be leaked hardcore in that epollfd.
+
+   then when we close the last fd, we'll be good.
+
+   I guess in this kind of scenario we'd only really need one epollfd per...
+   FileObjectNamespace or whatever...
+   aka kernel...
+   
+   and we can unregister the FileObject using any other FD to the FO, I guess.
+
+   jeese.
+
+   okay...
+
+   so file descriptors actually suck??? :(
+   not really, they're still an excellent dependency injection thing
+   but they aren't really that cap-secure since they are actually keys to an underlying mutable object.
+
+   so maybe I should take file objects as primary?
+
+   And have a way to manage, file object vs shared file object differences?
+
+   I can even have, like...
+   shared file object reference thing
+   and real file object
+
+   and have file descriptor numbers exist only under the hood
+
+   aaaaaaaaaaaaaaaaa
+
+   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+   okay okay
+
+   I guess this may be the right way to go
+
+   let's, seriously, defer this, though
+** things which operate on file descriptions
+*** Open file description locks
+*** File offsets
+*** O_NONBLOCK!!!! and other file description flags
+    ugh EPOLLET really very much requires O_NONBLOCk to be set, otherwise you can't tell when to stop reading
+    (though for streams (as the manpage says) you can detect partial reads)
+* criu
+  I feel like I have a bunch in common with criu
+
+  They are manipulating and preparing tasks as objects,
+  and I'm doing the same thing
+* unrelated thought
+  dependency injection is autoresolving dependencies by type???
+  that's... that's... that's implicit parameters :(((((
+  looking up things by type :((((
+  but I hate dependency injection!!!
 * multiplexing without depending on event-loop specifics
 is single-prompt yield not powerful enough to do multiplexing without control over the prompt?
 

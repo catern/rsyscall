@@ -23,6 +23,13 @@ class SyscallInterface:
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> int: ...
+    # we can do the same with ioctl
+    # but not with prctl. what a mistake prctl is!
+    async def fcntl(self, fd: int, cmd: int, arg: t.Union[bytes, int]=0) -> t.Union[bytes, int]:
+        "This follows the same protocol as fcntl.fcntl."
+        ...
+    # for prctl we will have a separate method for each usage mode;
+    # its interface is too diverse to do anything else and still abstract over the details of memory
 
 class LocalSyscall(SyscallInterface):
     def __init__(self, wait_readable) -> None:
@@ -65,6 +72,15 @@ class LocalSyscall(SyscallInterface):
         logger.debug("execveat(%s)", pathname)
         return sfork.execveat(pathname, argv, envp, flags, dirfd=dirfd)
 
+    # should we pull the file status flags when we create fhe file?
+    # yyyyes theoretically.
+    # should we store it in the FileDescriptor?
+    # hah, no, we should have a FileObject...
+    async def fcntl(self, fd: int, cmd: int, arg: t.Union[bytes, int]=0) -> t.Union[bytes, int]:
+        "This follows the same protocol as fcntl.fcntl."
+        logger.debug("fcntl(%d, %d, %s)", fd, cmd, arg)
+        return fcntl.fcntl(fd, cmd, arg)
+
 class FilesNamespace:
     pass
 
@@ -91,6 +107,22 @@ class ProcessContext:
     def __init__(self, syscall_interface: SyscallInterface) -> None:
         self.syscall = syscall_interface
 
+T = t.TypeVar('T')
+class FileObject:
+    """This is the underlying file object referred to by a file descriptor.
+
+    Often, multiple file descriptors in multiple processes can refer
+    to the same file object. For example, the stdin/stdout/stderr file
+    descriptors will typically all refer to the same file object
+    across several processes started by the same shell.
+
+    This is unfortunate, because there are some useful mutations (in
+    particular, setting O_NONBLOCK) which we'd like to perform to
+    FileObjects, but which might break other users.
+
+    """
+    pass
+
 class FileDescriptor(trio.abc.AsyncResource):
     "A file descriptor."
     def __init__(self, task: Task, files: FilesNamespace, number: int) -> None:
@@ -105,11 +137,8 @@ class FileDescriptor(trio.abc.AsyncResource):
             raise Exception("Can't call syscalls on FD when my Task has moved out of my FilesNamespaces")
         return self.task.syscall
 
-    async def dup2(self, target: 'FileDescriptor') -> 'FileDescriptor':
+    async def dup2(self: T, target: 'FileDescriptor') -> T:
         """Make a copy of this file descriptor at target.number
-
-        TODO: The type annotation should represent that this returns
-        the same type as self.
 
         """
         if self.files != target.files:
@@ -121,11 +150,13 @@ class FileDescriptor(trio.abc.AsyncResource):
         owned_target.open = False
         return type(self)(self.task, self.files, owned_target.number)
 
-    def release(self) -> 'FileDescriptor':
-        """Disassociate the file descriptor from this object
+    async def make_nonblock(self) -> None:
+        """Set the O_NONBLOCK flag on this file descriptor
+        """
+        pass
 
-        TODO: The type annotation should represent that this returns
-        the same type as self.
+    def release(self: T) -> T:
+        """Disassociate the file descriptor from this object
 
         """
         if self.open:
@@ -140,6 +171,9 @@ class FileDescriptor(trio.abc.AsyncResource):
             self.open = False
         else:
             raise Exception("file descriptor already closed")
+
+T_fd = t.TypeVar('T_fd', bound=FileDescriptor)
+T_fd_co = t.TypeVar('T_fd', bound=FileDescriptor, covariant=True)
 
 class ReadableFileDescriptor(FileDescriptor):
     # TODO we need to send this read through an epoll thingy.
@@ -207,9 +241,22 @@ class EpollFileDescriptor(FileDescriptor):
 # forget it, just use free functions!
 # no okay don't use free functions, but be aware it's weird.
 # or maybe I should just use free functions aaa
-class EpollRegisteredFD(trio.AsyncResource):
+class EpollWrapper(trio.AsyncResource, t.Generic[T_fd_co]):
+    """A class that encapsulates an O_NONBLOCK fd registered with epoll.
+
+    Theoretically you might want to register with epoll and set
+    O_NONBLOCK separately.  But that would mean you'd have to track
+    them each with separate wrapper types, which would be too much
+    overhead.
+
+    """
+
     epoller: 'Epoller'
-    underlying: FileDescriptor
+    underlying: T_fd_co
+    def __init__(self, epoller: 'Epoller', fd: T_fd_co) -> None:
+        self.epoller = epoller
+        self.underlying = fd
+
     # wait no we are supposed to do the IO first, then wait if it fails
     # hmmm....
     # not sure where to put such a helper method
@@ -223,8 +270,13 @@ class EpollRegisteredFD(trio.AsyncResource):
         await self.epoller.delete(self.underlying)
         await self.underlying.aclose()
 
+    async def read(self: 'EpollRegisteredFD[ReadableFileDescriptor]'):
+        underling.read
+        pass
+
 class Epoller:
-    def convert(self, fd: FileDescriptor) -> EpollRegisteredFD:
+    def wrap(self, fd: T_fd) -> EpollRegisteredFD[T_fd]:
+        # TODO mark underlying as nonblocking
         pass
 
 class SubprocessContext:
@@ -234,7 +286,7 @@ class SubprocessContext:
         self.parent_files = parent_files
         self.pid: t.Optional[int] = None
 
-    def translate(self, fd: FileDescriptor) -> FileDescriptor:
+    def translate(self, fd: T_fd) -> T_fd:
         """Translate FDs from the parent's FilesNS to the child's FilesNS
 
         Any file descriptor created by my task in parent_files is now
@@ -245,9 +297,6 @@ class SubprocessContext:
         other tasks may have been created after the fork, through
         concurrent execution. To translate fds from other tasks,
         provide them as arguments at fork time.
-
-        TODO: The type should take any class inheriting from FD, and
-        return the same class. Not sure how to represent that in mypy.
 
         """
         if self.pid is not None:

@@ -29,6 +29,12 @@ class TestIO(unittest.TestCase):
                 await subproc.exit(0)
         trio.run(test)
 
+    def test_subprocess_fcntl(self):
+        async def test() -> None:
+            async with rsyscall.io.subprocess(self.task) as subproc:
+                await subproc.exit(0)
+        trio.run(test)
+
     def test_subprocess_nested(self):
         async def test() -> None:
             async with rsyscall.io.subprocess(self.task):
