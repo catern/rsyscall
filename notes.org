@@ -731,6 +731,37 @@ that's a bit silly though, let's just get it externally
    I guess this may be the right way to go
 
    let's, seriously, defer this, though
+** file object design
+   So really file descriptors are references to file objects
+
+   I'm tempted towards a design which looks like:
+
+   UniqueFD<FileObject>
+   SharedFD<FileObject>
+
+   With a one-way conversion allowed from unique to shared.
+
+   Then on top of that you can have references to the uniqueFD.
+
+   You convert to SharedFD whenever you want to pass an FD to someone else.
+   It doesn't necessarily set CLOEXEC, because you might just be passing it over a socket, say.
+
+   UniqueFD is for resources that we have exclusive ownership of.
+
+   We can't implement FD proxying (it would be too high-overhead anyway),
+   so the only option is SharedFD to share something.
+   But I think we'd need SharedFD anyway.
+   We'd want to represent whether the proxy is exclusive or shared before sending it out, of course.
+
+   O... kay.
+
+   And also, FileObjects are also just references,
+   in some cases to things which can be opened a second time and mutably messed with more,
+   but that's just application logic, whatever
+
+   And, I guess the FileObject would be the one carrying all the capability flags.
+   Actually it's interesting that this kind of makes capsicum support hard,
+   if there's ever fd-level refinement...
 ** things which operate on file descriptions
 *** Open file description locks
 *** File offsets
