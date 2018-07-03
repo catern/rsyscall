@@ -123,13 +123,16 @@ class FileObject:
     """
     pass
 
+T_file = t.TypeVar('T_file', bound=FileObject)
 T_file_co = t.TypeVar('T_file_co', bound=FileObject, covariant=True)
 
 class ReadableFileObject(FileObject):
     pass
+ReadableFile = ReadableFileObject
 
 class WritableFileObject(FileObject):
     pass
+WritableFile = WritableFileObject
 
 class FileDescriptor(trio.abc.AsyncResource, t.Generic[T_file_co]):
     "A file descriptor."
@@ -166,7 +169,12 @@ class FileDescriptor(trio.abc.AsyncResource, t.Generic[T_file_co]):
             self.open = False
         else:
             raise Exception("file descriptor already closed")
-    
+
+    async def read(self: 'FileDescriptor[ReadableFileObject]', count: int=4096) -> bytes:
+        return (await self.syscall.read(self.number, count))
+
+    async def write(self: 'FileDescriptor[WritableFileObject]', buf: bytes) -> int:
+        return (await self.syscall.write(self.number, buf))
 
 class SharedFileDescriptor(FileDescriptor[T_file_co]):
     "A file descriptor, referencing some file object that is also referenced by other FDs and processes."
@@ -188,9 +196,14 @@ class SharedFileDescriptor(FileDescriptor[T_file_co]):
 
     async def disable_cloexec(self) -> None:
         raise NotImplementedError
+SharedFD = SharedFileDescriptor
 
 class UniqueFileDescriptor(FileDescriptor[T_file_co]):
     """A file descriptor, uniquely referencing some specific file object.
+
+    In other words, only our program has this file object, I guess. It
+    doesn't necessarily mean that there's only one file descriptor
+    pointing to that file object.
 
     All such FDs should have CLOEXEC set.
 
@@ -203,71 +216,34 @@ class UniqueFileDescriptor(FileDescriptor[T_file_co]):
     async def convert_to_shared(self) -> SharedFileDescriptor[T_file_co]:
         ret = type(self)(self.task, self.files, self.number)
         self.open = False
+UniqueFD = UniqueFileDescriptor
 
-class FileDescriptor(trio.abc.AsyncResource):
-    "A file descriptor."
-    def __init__(self, task: Task, files: FDNamespace, number: int) -> None:
-        self.task = task
-        self.files = files
-        self.number = number
-        self.open = True
+def create_current_task() -> Task:
+    return Task(LocalSyscall(trio.hazmat.wait_readable),
+                FDNamespace(), MemoryNamespace())
 
-    @property
-    def syscall(self) -> SyscallInterface:
-        if self.task.files != self.files:
-            raise Exception("Can't call syscalls on FD when my Task has moved out of my FDNamespaces")
-        return self.task.syscall
+class StandardStreams:
+    stdin: SharedFileDescriptor[ReadableFileObject]
+    stdout: SharedFileDescriptor[WritableFileObject]
+    stderr: SharedFileDescriptor[WritableFileObject]
 
-    async def dup2(self: T, target: 'FileDescriptor') -> T:
-        """Make a copy of this file descriptor at target.number
+    def __init__(self,
+                 stdin: SharedFileDescriptor[ReadableFileObject],
+                 stdout: SharedFileDescriptor[WritableFileObject],
+                 stderr: SharedFileDescriptor[WritableFileObject]):
+        self.stdin = stdin
+        self.stdout = stdout
+        self.stderr = stderr
 
-        """
-        if self.files != target.files:
-            raise Exception("two fds are not in the same FDNamespace")
-        if self is target:
-            return self
-        owned_target = target.release()
-        await self.syscall.dup2(self.number, owned_target.number)
-        owned_target.open = False
-        return type(self)(self.task, self.files, owned_target.number)
-
-    async def make_nonblock(self) -> None:
-        """Set the O_NONBLOCK flag on this file descriptor
-        """
-        pass
-
-    def release(self: T) -> T:
-        """Disassociate the file descriptor from this object
-
-        """
-        if self.open:
-            self.open = False
-            return type(self)(self.task, self.files, self.number)
-        else:
-            raise Exception("file descriptor already closed")
-
-    async def aclose(self):
-        if self.open:
-            await self.syscall.close(self.number)
-            self.open = False
-        else:
-            raise Exception("file descriptor already closed")
-
-T_fd = t.TypeVar('T_fd', bound=FileDescriptor)
-T_fd_co = t.TypeVar('T_fd', bound=FileDescriptor, covariant=True)
-
-class ReadableFileDescriptor(FileDescriptor):
-    # TODO we need to send this read through an epoll thingy.
-    # that's a shared resource, hum hom herm
-    async def read(self, count: int=4096) -> bytes:
-        return (await self.syscall.read(self.number, count))
-
-class WritableFileDescriptor(FileDescriptor):
-    async def write(self, buf: bytes) -> int:
-        return (await self.syscall.write(self.number, buf))
+def wrap_stdin_out_err(task: Task) -> StandardStreams:
+    stdin = SharedFD(ReadableFile(), task, task.files, 0)
+    stdout = SharedFD(WritableFile(), task, task.files, 1)
+    stderr = SharedFD(WritableFile(), task, task.files, 2)
+    return StandardStreams(stdin, stdout, stderr)
 
 class Pipe(trio.abc.AsyncResource):
-    def __init__(self, rfd: ReadableFileDescriptor, wfd: WritableFileDescriptor) -> None:
+    def __init__(self, rfd: UniqueFD[ReadableFile],
+                 wfd: UniqueFD[WritableFile]) -> None:
         self.rfd = rfd
         self.wfd = wfd
 
@@ -277,14 +253,15 @@ class Pipe(trio.abc.AsyncResource):
 
 async def allocate_pipe(task: Task) -> Pipe:
     r, w = await task.syscall.pipe()
-    return Pipe(ReadableFileDescriptor(task, task.files, r), WritableFileDescriptor(task, task.files, w))
+    return Pipe(UniqueFD(ReadableFile(), task, task.files, r),
+                UniqueFD(WritableFile(), task, task.files, r))
 
 class EpollEvent:
     # should improve the accuracy of these.
     events: int
     data: int
 
-class EpollFileDescriptor(FileDescriptor):
+class EpollFileObject(FileObject):
     async def add(self, fd: FileDescriptor, event: EpollEvent) -> None:
         pass
 
@@ -322,7 +299,7 @@ class EpollFileDescriptor(FileDescriptor):
 # forget it, just use free functions!
 # no okay don't use free functions, but be aware it's weird.
 # or maybe I should just use free functions aaa
-class EpollWrapper(trio.AsyncResource, t.Generic[T_file_co]):
+class EpollWrapper(trio.abc.AsyncResource, t.Generic[T_file_co]):
     """A class that encapsulates an O_NONBLOCK fd registered with epoll.
 
     Theoretically you might want to register with epoll and set
@@ -351,16 +328,16 @@ class EpollWrapper(trio.AsyncResource, t.Generic[T_file_co]):
         await self.epoller.delete(self.underlying)
         await self.underlying.aclose()
 
-    async def read(self: 'EpollRegisteredFD[ReadableFileObject]', count: int=4096) -> bytes:
+    async def read(self: 'EpollWrapper[ReadableFileObject]', count: int=4096) -> bytes:
         # TODO
         try:
             await self.underlying.read()
         except:
             # if EAGAIN, 
             await self.wait_readable()
-
+ 
 class Epoller:
-    def wrap(self, fd: UniqueFileDescriptor[T_file]) -> EpollWrapper[T_file]:
+    async def wrap(self, fd: UniqueFileDescriptor[T_file]) -> EpollWrapper[T_file]:
         await fd.set_nonblock()
         return EpollWrapper(self, fd)
 
@@ -371,7 +348,7 @@ class SubprocessContext:
         self.parent_files = parent_files
         self.pid: t.Optional[int] = None
 
-    def translate(self, fd: T_fd) -> T_fd:
+    def translate(self, fd: SharedFileDescriptor[T_file]) -> SharedFileDescriptor[T_file]:
         """Translate FDs from the parent's FilesNS to the child's FilesNS
 
         Any file descriptor created by my task in parent_files is now

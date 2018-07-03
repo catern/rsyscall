@@ -1,5 +1,5 @@
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.io import ProcessContext, SubprocessContext, Task, FilesNamespace, MemoryNamespace, ReadableFileDescriptor, WritableFileDescriptor
+from rsyscall.io import ProcessContext, SubprocessContext, create_current_task, wrap_stdin_out_err
 import unittest
 import supervise_api
 import trio
@@ -9,10 +9,11 @@ import os
 
 class TestIO(unittest.TestCase):
     def setUp(self):
-        self.task = Task(rsyscall.io.LocalSyscall(trio.hazmat.wait_readable), FilesNamespace(), MemoryNamespace())
-        self.stdin = ReadableFileDescriptor(self.task, self.task.files, 0)
-        self.stdout = WritableFileDescriptor(self.task, self.task.files, 1)
-        self.stderr = WritableFileDescriptor(self.task, self.task.files, 2)
+        self.task = create_current_task()
+        streams = wrap_stdin_out_err(self.task)
+        self.stdin = streams.stdin
+        self.stdout = streams.stdout
+        self.stderr = streams.stderr
 
     def test_pipe(self):
         async def test() -> None:
