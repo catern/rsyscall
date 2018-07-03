@@ -807,6 +807,30 @@ that's a bit silly though, let's just get it externally
 
    okay! whatever! I have to do the file object thing, practically!
    there are probably other use cases and stuff!
+** wait okay
+   Why am I seperating FD and FileObject again?
+   I don't need to know when two FDs point to the same FileObject.
+   Why don't I just have a single type that represents a file object, which contains the fd used to access it,
+   and has a boolean flag about whether it's exclusive or not?
+
+   Oh the issue is that I want the type to tell me when it's exclusive
+
+   Well, I could have the FileObject take a type parameter which tells me whether it's exclusive or not.
+
+   How would I do this in a proper typed system?
+
+
+   Hmm.
+
+   The file object really is just a marker to make sure you don't mess up.
+
+   Free functions... seem fine for this?
+
+   I just like how ergonomic methods are, since they're self-namespacing.
+
+   hmmmmmm
+
+   having them be methods seems fine really
 ** things which operate on file objects
 *** Open file description locks
     urgh how do these work

@@ -6,6 +6,9 @@ import trio
 import trio.hazmat
 import rsyscall.io
 import os
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
 
 class TestIO(unittest.TestCase):
     def setUp(self):
@@ -43,11 +46,12 @@ class TestIO(unittest.TestCase):
                     await subproc.exit(0)
         trio.run(test)
 
-    def test_cat(self):
+    def test_cat(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
                 async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
                     async with rsyscall.io.subprocess(self.task) as subproc:
+                        subproc.asepfsaf()
                         await subproc.translate(pipe_in.rfd).dup2(subproc.translate(self.stdin))
                         await subproc.translate(pipe_out.wfd).dup2(subproc.translate(self.stdout))
                         await subproc.exec("/bin/sh", ['sh', '-c', 'cat'])

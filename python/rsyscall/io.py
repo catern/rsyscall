@@ -7,6 +7,7 @@ import signal
 import sfork
 from async_generator import asynccontextmanager
 import logging
+import fcntl
 logger = logging.getLogger(__name__)
 
 class SyscallInterface:
@@ -54,7 +55,8 @@ class LocalSyscall(SyscallInterface):
 
     async def dup2(self, oldfd: int, newfd: int) -> int:
         logger.debug("dup2(%d, %d)", oldfd, newfd)
-        return os.dup2(oldfd, newfd)
+        os.dup2(oldfd, newfd)
+        return newfd
 
     # TODO support setting child_stack so we can create threads
     async def clone(self, flags: int, deathsig: t.Optional[signal.Signals]) -> int:
@@ -67,10 +69,11 @@ class LocalSyscall(SyscallInterface):
         logger.debug("exit(%d)", status)
         return sfork.exit(status)
 
-    async def execveat(self, pathname: bytes, argv: t.List[bytes], envp: t.List[bytes], flags: int,
-                       *, dirfd: t.Optional[int]=None) -> int:
-        logger.debug("execveat(%s)", pathname)
-        return sfork.execveat(pathname, argv, envp, flags, dirfd=dirfd)
+    async def execveat(self, dirfd: int, path: bytes,
+                       argv: t.List[bytes], envp: t.List[bytes],
+                       flags: int) -> int:
+        logger.debug("execveat(%s)", path)
+        return sfork.execveat(dirfd, path, argv, envp, flags)
 
     # should we pull the file status flags when we create fhe file?
     # yyyyes theoretically.
@@ -127,14 +130,17 @@ T_file = t.TypeVar('T_file', bound=FileObject)
 T_file_co = t.TypeVar('T_file_co', bound=FileObject, covariant=True)
 
 class ReadableFileObject(FileObject):
-    pass
+    async def read(self, fd: 'FileDescriptor[ReadableFileObject]', count: int=4096) -> bytes:
+        return (await fd.syscall.read(fd.number, count))
 ReadableFile = ReadableFileObject
 
 class WritableFileObject(FileObject):
-    pass
+    async def write(self, fd: 'FileDescriptor[WritableFileObject]', buf: bytes) -> int:
+        return (await fd.syscall.write(fd.number, buf))
 WritableFile = WritableFileObject
 
-class FileDescriptor(trio.abc.AsyncResource, t.Generic[T_file_co]):
+T_fd = t.TypeVar('T_fd', bound='FileDescriptor')
+class FileDescriptor(t.Generic[T_file_co]):
     "A file descriptor."
     file: T_file_co
     task: Task
@@ -149,19 +155,9 @@ class FileDescriptor(trio.abc.AsyncResource, t.Generic[T_file_co]):
 
     @property
     def syscall(self) -> SyscallInterface:
-        if self.task.files != self.files:
+        if self.task.files != self.fd_namespace:
             raise Exception("Can't call syscalls on FD when my Task has moved out of my FDNamespaces")
         return self.task.syscall
-
-    def release(self: T) -> T:
-        """Disassociate the file descriptor from this object
-
-        """
-        if self.open:
-            self.open = False
-            return type(self)(self.task, self.files, self.number)
-        else:
-            raise Exception("file descriptor already closed")
 
     async def aclose(self):
         if self.open:
@@ -170,26 +166,43 @@ class FileDescriptor(trio.abc.AsyncResource, t.Generic[T_file_co]):
         else:
             raise Exception("file descriptor already closed")
 
+    async def __aenter__(self: T_fd) -> T_fd:
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.aclose()
+
+    def release(self: T_fd) -> T_fd:
+        """Disassociate the file descriptor from this object
+
+        """
+        if self.open:
+            self.open = False
+            return self.__class__(self.file, self.task, self.fd_namespace, self.number) 
+        else:
+            raise Exception("file descriptor already closed")
+
+    # These are just helper methods which forward to the method on the underlying file object.
     async def read(self: 'FileDescriptor[ReadableFileObject]', count: int=4096) -> bytes:
-        return (await self.syscall.read(self.number, count))
+        return (await self.file.read(self, count))
 
     async def write(self: 'FileDescriptor[WritableFileObject]', buf: bytes) -> int:
-        return (await self.syscall.write(self.number, buf))
+        return (await self.file.write(self, buf))
 
 class SharedFileDescriptor(FileDescriptor[T_file_co]):
     "A file descriptor, referencing some file object that is also referenced by other FDs and processes."
-    async def dup2(self: T, target: 'FileDescriptor') -> T:
+    async def dup2(self: 'SharedFileDescriptor[T_file]', target: 'FileDescriptor') -> 'SharedFileDescriptor[T_file]':
         """Make a copy of this file descriptor at target.number
 
         """
-        if self.files != target.files:
+        if self.fd_namespace != target.fd_namespace:
             raise Exception("two fds are not in the same FDNamespace")
         if self is target:
             return self
         owned_target = target.release()
         await self.syscall.dup2(self.number, owned_target.number)
         owned_target.open = False
-        return type(self)(self.task, self.files, owned_target.number)
+        return type(self)(self.file, self.task, self.fd_namespace, owned_target.number)
 
     async def enable_cloexec(self) -> None:
         raise NotImplementedError
@@ -214,14 +227,17 @@ class UniqueFileDescriptor(FileDescriptor[T_file_co]):
         raise NotImplementedError
 
     async def convert_to_shared(self) -> SharedFileDescriptor[T_file_co]:
-        ret = type(self)(self.task, self.files, self.number)
+        ret = SharedFileDescriptor(self.file, self.task, self.fd_namespace, self.number)
         self.open = False
+        return ret
+
 UniqueFD = UniqueFileDescriptor
 
 def create_current_task() -> Task:
     return Task(LocalSyscall(trio.hazmat.wait_readable),
                 FDNamespace(), MemoryNamespace())
 
+# TODO we should have a ProcessLaunchBootstrap which has these standard streams along with args/env and one task
 class StandardStreams:
     stdin: SharedFileDescriptor[ReadableFileObject]
     stdout: SharedFileDescriptor[WritableFileObject]
@@ -230,7 +246,7 @@ class StandardStreams:
     def __init__(self,
                  stdin: SharedFileDescriptor[ReadableFileObject],
                  stdout: SharedFileDescriptor[WritableFileObject],
-                 stderr: SharedFileDescriptor[WritableFileObject]):
+                 stderr: SharedFileDescriptor[WritableFileObject]) -> None:
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
@@ -241,7 +257,7 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
     stderr = SharedFD(WritableFile(), task, task.files, 2)
     return StandardStreams(stdin, stdout, stderr)
 
-class Pipe(trio.abc.AsyncResource):
+class Pipe:
     def __init__(self, rfd: UniqueFD[ReadableFile],
                  wfd: UniqueFD[WritableFile]) -> None:
         self.rfd = rfd
@@ -251,10 +267,16 @@ class Pipe(trio.abc.AsyncResource):
         await self.rfd.aclose()
         await self.wfd.aclose()
 
+    async def __aenter__(self) -> 'Pipe':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.aclose()
+
 async def allocate_pipe(task: Task) -> Pipe:
     r, w = await task.syscall.pipe()
     return Pipe(UniqueFD(ReadableFile(), task, task.files, r),
-                UniqueFD(WritableFile(), task, task.files, r))
+                UniqueFD(WritableFile(), task, task.files, w))
 
 class EpollEvent:
     # should improve the accuracy of these.
@@ -330,11 +352,12 @@ class EpollWrapper(trio.abc.AsyncResource, t.Generic[T_file_co]):
 
     async def read(self: 'EpollWrapper[ReadableFileObject]', count: int=4096) -> bytes:
         # TODO
-        try:
-            await self.underlying.read()
-        except:
-            # if EAGAIN, 
-            await self.wait_readable()
+        while True:
+            try:
+                return (await self.underlying.read())
+            except:
+                # if EAGAIN, 
+                await self.wait_readable()
  
 class Epoller:
     async def wrap(self, fd: UniqueFileDescriptor[T_file]) -> EpollWrapper[T_file]:
@@ -363,11 +386,11 @@ class SubprocessContext:
         """
         if self.pid is not None:
             raise Exception("Already left the subprocess")
-        if fd.files != self.parent_files:
+        if fd.fd_namespace != self.parent_files:
             raise Exception("Can't translate an fd not coming from my parent's FDNamespace")
         if fd.task != self.task:
             raise Exception("Can't translate an fd not coming from my Task; it could have been created after the fork.")
-        return type(fd)(fd.task, self.child_files, fd.number)
+        return type(fd)(fd.file, fd.task, self.child_files, fd.number)
 
     @property
     def syscall(self) -> SyscallInterface:
@@ -382,8 +405,9 @@ class SubprocessContext:
     async def exec(self, pathname: os.PathLike, argv: t.List[t.Union[str, bytes]],
              *, envp: t.Optional[t.Dict[str, str]]=None) -> None:
         if envp is None:
-            envp = os.environ
-        self.pid = await self.syscall.execveat(sfork.to_bytes(os.fspath(pathname)), [sfork.to_bytes(arg) for arg in argv],
+            envp = dict(**os.environ)
+        self.pid = await self.syscall.execveat(sfork.AT_FDCWD,
+                                               sfork.to_bytes(os.fspath(pathname)), [sfork.to_bytes(arg) for arg in argv],
                                                sfork.serialize_environ(**envp), flags=0)
         self.task.files = self.parent_files
 
@@ -404,3 +428,4 @@ async def subprocess(task: Task) -> t.Any:
         if context.pid is None:
             await context.exit(0)
         
+L
