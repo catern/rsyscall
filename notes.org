@@ -776,9 +776,42 @@ that's a bit silly though, let's just get it externally
    yeah
 
    both for the interface, and for implementation sharing.
-** things which operate on file descriptions
+** sharing
+   So technically stdin/stdout are exclusive for the lifetime of my process, aren't they?
+
+   So I should be able to set them to a nonblocking mode.
+
+   stderr is still shared though, innit
+
+   I can have a pipeline and, each of the things,
+   they all,
+   write to it.
+
+   Oh but stdin/stdout aren't exclusive, consider backgrounding.
+   That takes away ownership.
+   Maybe the shell should save and restore the flags on stdin/stdout when doing that.
+
+   stderr tho
+
+   Urgh, given this blocking problem,
+   and given that an async read from the filesystem would require a separate thread,
+   wait no it wouldn't, that's only if I want to parallelize it, which I don't really care about.
+
+   Well, I was wondering if maybe I should support easy creation of additional threads/SyscallInterfaces.
+
+   that would make rsyscall a hard dep, if we were using it in the core.
+
+   hmm I guess there's no disadvantage in RWF_NOWAIT being both for pipes and things and files
+
+   since we can't otherwise wait for files
+
+   okay! whatever! I have to do the file object thing, practically!
+   there are probably other use cases and stuff!
+** things which operate on file objects
 *** Open file description locks
+    urgh how do these work
 *** File offsets
+    but I can explicitly specify the offset.
 *** O_NONBLOCK!!!! and other file description flags
     ugh EPOLLET really very much requires O_NONBLOCk to be set, otherwise you can't tell when to stop reading
     (though for streams (as the manpage says) you can detect partial reads)
