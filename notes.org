@@ -831,6 +831,11 @@ that's a bit silly though, let's just get it externally
    hmmmmmm
 
    having them be methods seems fine really
+** open file description
+   OK, clearly passing down shared open file descriptions is bad.
+
+   And terminals, terminals are bad too.
+   So, yeah, it's fine.
 ** no unique shared fd types
    It's too much overhead.
 ** TODO create epoll wrapper

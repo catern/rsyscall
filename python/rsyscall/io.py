@@ -347,8 +347,78 @@ class EpollWrapper(t.Generic[T_file_co]):
         self.epoller = epoller
         self.underlying = fd
 
+    # ok time to implement this guy
+    # alright well I guess I'll just go ahead and um..
+    # I guess we want/need an event cache of some kind
+    # ok so we run epoll
+    # and we get a bunch of events back
+    # and we store them all
+    # and later people call wait_readable and it consumes the stored event
+    # ugh.
+    # how about just using a trio.Event?
+    # we'll have some kind of data storage for each individual file object
+    # we'll consume readability indicators...
+    # a queue, I guess, of readability tokens
+    # and a given task consumes one
+    # I guess we just wait for the edge to go up?
+    # meh heh heh...
+    # we can't really do edge triggered if we want to allow the user to control reading
+    # meh meh meh
+    # what's the semantics we want?
+    # we'd prefer that wait_readable just return immediately if the level is "readable",
+    # and block otherwise.
+    # we can't cache "the level is readable", or check it otherwise.
+    # so we always need to call into epoll_wait.
+    # when we call wait_readable,
+    # we should check to see if we're already waiting for the level:
+    # which would mean an Event already exists.
+    # if one already exists, we wait on that.
+    # if none exists, we create one and add our fd to the epfd.
+    # then we check if someone is already waiting on the epfd.
+    # if someone is, we wait for their results
+    # if no-one is, we make an event for it and we start waiting on the epfd ourselves and set the Event when done.
+    # once we have the results, we look through them to find our fd.
+    # if we're in there, with the event type we want, we clear the field, set the Event, and return.
     async def wait_readable(self):
-        raise NotImplementedError
+        # totally not multi-task-safe, also not safe for waiting for
+        # both write and read at the same time.
+        # hmm.
+        # if we do the modification,
+        # and we can immediately write,
+        # then other things will start spinning
+        # hmmm...
+        # it feels like poll would actually be better.
+        # if we could just say, hey here are the things we want to listen for on this epoll call.
+        # can't we just model it as, we interrupt the call, and we resume it?
+        # because, that's what it is...
+        # yeah, so...
+        # or alternatively, we call into thing and it returns up ehhh
+        await self.modify(EpollEvent.make(42, in_=True))
+        while True:
+            results = await self.epoller.multiwait()
+            if results[self.registered_event.data].in_:
+                break
+        await self.modify(EpollEvent.make(42, in_=False))
+        # unset self.registered_event.in_
+        if self.wait_readable_event:
+            await self.wait_readable_event
+        else:
+            event = trio.Event()
+            self.wait_readable_event = event
+            while True:
+                # TODO add fd to epoll
+                # but, ugh, that conflicts with others possibly waiting at the same time
+                # so we should actually just, um
+                # check what we are currently registered for, and update it if necessary?
+                results = await self.epoller.wait_for_epoll()
+                if self.underlying in results:
+                    if results[self.underlying].in_:
+                        self.wait_readable_event = None
+                        event.set()
+                        return
+            
+            # n
+            raise NotImplementedError
 
     async def wait_writable(self):
         raise NotImplementedError

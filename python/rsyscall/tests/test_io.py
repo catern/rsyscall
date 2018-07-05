@@ -71,6 +71,22 @@ class TestIO(unittest.TestCase):
                     self.assertEqual(in_data, out_data)
         trio.run(test)
 
+    def test_cat_epoll(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.allocate_epoller(self.task)) as epoller:
+                async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
+                    async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
+                        async with rsyscall.io.subprocess(self.task) as subproc:
+                            await subproc.translate(pipe_in.rfd).dup2(subproc.translate(self.stdin))
+                            await subproc.translate(pipe_out.wfd).dup2(subproc.translate(self.stdout))
+                            await subproc.exec("/bin/sh", ['sh', '-c', 'cat'])
+                        in_data = b"hello"
+                        await pipe_in.wfd.write(in_data)
+                        pipe_rfd_wrapped = await epoller.wrap(pipe_out.rfd)
+                        out_data = await pipe_rfd_wrapped.read(len(in_data))
+                        self.assertEqual(in_data, out_data)
+        trio.run(test)
+
 if __name__ == '__main__':
     import unittest
     unittest.main()
