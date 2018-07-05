@@ -13,56 +13,26 @@ ffibuilder.set_source(
 #include <sys/socket.h>
 #include <sys/syscall.h>   /* For SYS_xxx definitions */
 #include <sys/mman.h>
+#include <sys/epoll.h>
 #include <string.h>
 #include <sched.h>
 #include <setjmp.h>
 
-static __thread jmp_buf exec_exit_jmp_buf;
-
-int my_vfork() {
-    int ret = vfork();
-    printf("pid %d, vfork returned %d, buf %p\\n", getpid(), ret, &exec_exit_jmp_buf);
-    if (ret > 0) {
-	longjmp(exec_exit_jmp_buf, ret);
-    } else {
-        return ret;
-    }
-}
-
-int my_exit(int status) {
-    int ret = setjmp(exec_exit_jmp_buf);
-    printf("pid %d, setjmp returned %d, buf %p\\n", getpid(), ret, &exec_exit_jmp_buf);
-    if (ret > 0) {
-	return ret;
-    } else {
-	_exit(status);
-    }
-}
-
-long my_clone(unsigned long flags, void *child_stack,
-           int *ptid, int *ctid,
-           unsigned long newtls) {
-    return syscall(SYS_clone, flags, child_stack,
-                   ptid, ctid, newtls);
-}
-
-int syscall_exit(int status) {
-    return syscall(SYS_exit, status);
-}
-
-long my_syscall(long number, long arg1, long arg2, long arg3, long arg4, long arg5) {
-    return syscall(number, arg1, arg2, arg3, arg4, arg5);
-}
-
 """, **rsyscall)
 ffibuilder.cdef("""
-long my_clone(unsigned long flags, void *child_stack,
-           int *ptid, int *ctid,
-           unsigned long newtls);
-void my_vfork();
-int my_exit(int status);
-int vfork();
-int syscall_exit(int status);
+int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
+int epoll_create1(int flags);
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+
+
+typedef union epoll_data {
+    uint64_t u64;
+} epoll_data_t;
+
+struct epoll_event {
+  uint32_t     events;
+  epoll_data_t data;
+};
 
 #define SYS_splice ...
 #define SYS_pipe2 ...
@@ -90,7 +60,6 @@ int syscall_exit(int status);
 #define MAP_SHARED ...
 #define MAP_ANONYMOUS ...
 
-long my_syscall(long number, long arg1, long arg2, long arg3, long arg4, long arg5);
 void *memcpy(void *dest, const void *src, size_t n);
 
 struct sockaddr_in { ...; };
