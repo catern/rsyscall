@@ -51,13 +51,23 @@ class TestIO(unittest.TestCase):
             async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
                 async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
                     async with rsyscall.io.subprocess(self.task) as subproc:
-                        subproc.asepfsaf()
                         await subproc.translate(pipe_in.rfd).dup2(subproc.translate(self.stdin))
                         await subproc.translate(pipe_out.wfd).dup2(subproc.translate(self.stdout))
                         await subproc.exec("/bin/sh", ['sh', '-c', 'cat'])
                     in_data = b"hello"
                     await pipe_in.wfd.write(in_data)
                     out_data = await pipe_out.rfd.read(len(in_data))
+                    self.assertEqual(in_data, out_data)
+        trio.run(test)
+
+    def test_pipe_epoll(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                async with (await rsyscall.io.allocate_pipe(self.task)) as pipe:
+                    in_data = b"hello"
+                    await pipe.wfd.write(in_data)
+                    pipe_rfd_wrapped = await epoll.wrap(pipe.rfd)
+                    out_data = await pipe_rfd_wrapped.read(len(in_data))
                     self.assertEqual(in_data, out_data)
         trio.run(test)
 

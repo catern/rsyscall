@@ -8,6 +8,7 @@ import sfork
 from async_generator import asynccontextmanager
 import logging
 import fcntl
+import errno
 logger = logging.getLogger(__name__)
 
 class SyscallInterface:
@@ -24,6 +25,14 @@ class SyscallInterface:
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> int: ...
+
+    # epoll operations
+    async def epoll_create(self, flags: int) -> int: ...
+    async def epoll_ctl_add(self, epfd: int, fd: int, event: EpollEvent) -> None: ...
+    async def epoll_ctl_mod(self, epfd: int, fd: int, event: EpollEvent) -> None ...
+    async def epoll_ctl_del(self, epfd: int, fd: int) -> None ...
+    async def epoll_wait(self, epfd: int, maxevents: int, timeout: int) -> t.List[EpollEvent]: ...
+
     # we can do the same with ioctl
     # but not with prctl. what a mistake prctl is!
     async def fcntl(self, fd: int, cmd: int, arg: t.Union[bytes, int]=0) -> t.Union[bytes, int]:
@@ -123,8 +132,18 @@ class FileObject:
     particular, setting O_NONBLOCK) which we'd like to perform to
     FileObjects, but which might break other users.
 
+    We store whether the FileObject is shared with others with
+    "shared". If it is, we can't mutate it.
+
     """
-    pass
+    shared: bool
+    def __init__(self, shared: bool, flags: int=None) -> None:
+        self.shared = shared
+
+    async def set_nonblock(self, fd: 'FileDescriptor[FileObject]') -> None:
+        if self.shared:
+            raise Exception("file object is shared and can't be mutated")
+        await fd.syscall.fcntl(fd.number, fcntl.F_SETFL, os.O_NONBLOCK)
 
 T_file = t.TypeVar('T_file', bound=FileObject)
 T_file_co = t.TypeVar('T_file_co', bound=FileObject, covariant=True)
@@ -139,7 +158,6 @@ class WritableFileObject(FileObject):
         return (await fd.syscall.write(fd.number, buf))
 WritableFile = WritableFileObject
 
-T_fd = t.TypeVar('T_fd', bound='FileDescriptor')
 class FileDescriptor(t.Generic[T_file_co]):
     "A file descriptor."
     file: T_file_co
@@ -164,15 +182,15 @@ class FileDescriptor(t.Generic[T_file_co]):
             await self.syscall.close(self.number)
             self.open = False
         else:
-            raise Exception("file descriptor already closed")
+            pass
 
-    async def __aenter__(self: T_fd) -> T_fd:
+    async def __aenter__(self) -> 'FileDescriptor[T_file_co]':
         return self
 
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
 
-    def release(self: T_fd) -> T_fd:
+    def release(self) -> 'FileDescriptor[T_file_co]':
         """Disassociate the file descriptor from this object
 
         """
@@ -182,16 +200,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         else:
             raise Exception("file descriptor already closed")
 
-    # These are just helper methods which forward to the method on the underlying file object.
-    async def read(self: 'FileDescriptor[ReadableFileObject]', count: int=4096) -> bytes:
-        return (await self.file.read(self, count))
-
-    async def write(self: 'FileDescriptor[WritableFileObject]', buf: bytes) -> int:
-        return (await self.file.write(self, buf))
-
-class SharedFileDescriptor(FileDescriptor[T_file_co]):
-    "A file descriptor, referencing some file object that is also referenced by other FDs and processes."
-    async def dup2(self: 'SharedFileDescriptor[T_file]', target: 'FileDescriptor') -> 'SharedFileDescriptor[T_file]':
+    async def dup2(self, target: 'FileDescriptor') -> 'FileDescriptor[T_file_co]':
         """Make a copy of this file descriptor at target.number
 
         """
@@ -199,67 +208,80 @@ class SharedFileDescriptor(FileDescriptor[T_file_co]):
             raise Exception("two fds are not in the same FDNamespace")
         if self is target:
             return self
-        owned_target = target.release()
+        owned_target: FileDescriptor = target.release()
         await self.syscall.dup2(self.number, owned_target.number)
         owned_target.open = False
-        return type(self)(self.file, self.task, self.fd_namespace, owned_target.number)
+        new_fd = type(self)(self.file, self.task, self.fd_namespace, owned_target.number)
+        # dup2 unsets cloexec on the new copy, so:
+        self.file.shared = True
+        return new_fd
 
     async def enable_cloexec(self) -> None:
+        self.file.shared = True
         raise NotImplementedError
 
     async def disable_cloexec(self) -> None:
         raise NotImplementedError
-SharedFD = SharedFileDescriptor
 
-class UniqueFileDescriptor(FileDescriptor[T_file_co]):
-    """A file descriptor, uniquely referencing some specific file object.
-
-    In other words, only our program has this file object, I guess. It
-    doesn't necessarily mean that there's only one file descriptor
-    pointing to that file object.
-
-    All such FDs should have CLOEXEC set.
-
-    """
-    async def set_nonblock(self) -> None:
+    # These are just helper methods which forward to the method on the underlying file object.
+    async def set_nonblock(self: 'FileDescriptor[FileObject]') -> None:
         "Set the O_NONBLOCK flag on the underlying file object"
-        # TODO first I need to have the file flags stored...
-        raise NotImplementedError
+        await self.file.set_nonblock(self)
 
-    async def convert_to_shared(self) -> SharedFileDescriptor[T_file_co]:
-        ret = SharedFileDescriptor(self.file, self.task, self.fd_namespace, self.number)
-        self.open = False
-        return ret
+    async def read(self: 'FileDescriptor[ReadableFileObject]', count: int=4096) -> bytes:
+        return (await self.file.read(self, count))
 
-UniqueFD = UniqueFileDescriptor
+    async def write(self: 'FileDescriptor[WritableFileObject]', buf: bytes) -> int:
+        return (await self.file.write(self, buf))
+
+class EpollEvent:
+    # should improve the accuracy of these.
+    events: int
+    data: int
+
+class EpollFileObject(FileObject):
+    async def add(self, epfd: FileDescriptor['EpollFileObject'],
+                  fd: FileDescriptor, event: EpollEvent) -> None:
+        pass
+
+    async def delete(self, epfd: FileDescriptor['EpollFileObject'], fd: FileDescriptor) -> None:
+        pass
+
+    async def modify(self, epfd: FileDescriptor['EpollFileObject'],
+                     fd: FileDescriptor, event: EpollEvent) -> None:
+        pass
+
+    async def wait(self, epfd: FileDescriptor['EpollFileObject'], maxevents: int=10) -> t.List[EpollEvent]:
+        pass
 
 def create_current_task() -> Task:
     return Task(LocalSyscall(trio.hazmat.wait_readable),
                 FDNamespace(), MemoryNamespace())
 
-# TODO we should have a ProcessLaunchBootstrap which has these standard streams along with args/env and one task
+# TODO we should have a ProcessLaunchBootstrap which has these
+# standard streams along with args/env and one task
 class StandardStreams:
-    stdin: SharedFileDescriptor[ReadableFileObject]
-    stdout: SharedFileDescriptor[WritableFileObject]
-    stderr: SharedFileDescriptor[WritableFileObject]
+    stdin: FileDescriptor[ReadableFileObject]
+    stdout: FileDescriptor[WritableFileObject]
+    stderr: FileDescriptor[WritableFileObject]
 
     def __init__(self,
-                 stdin: SharedFileDescriptor[ReadableFileObject],
-                 stdout: SharedFileDescriptor[WritableFileObject],
-                 stderr: SharedFileDescriptor[WritableFileObject]) -> None:
+                 stdin: FileDescriptor[ReadableFileObject],
+                 stdout: FileDescriptor[WritableFileObject],
+                 stderr: FileDescriptor[WritableFileObject]) -> None:
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
 
 def wrap_stdin_out_err(task: Task) -> StandardStreams:
-    stdin = SharedFD(ReadableFile(), task, task.files, 0)
-    stdout = SharedFD(WritableFile(), task, task.files, 1)
-    stderr = SharedFD(WritableFile(), task, task.files, 2)
+    stdin = FileDescriptor(ReadableFile(shared=True), task, task.files, 0)
+    stdout = FileDescriptor(WritableFile(shared=True), task, task.files, 1)
+    stderr = FileDescriptor(WritableFile(shared=True), task, task.files, 2)
     return StandardStreams(stdin, stdout, stderr)
 
 class Pipe:
-    def __init__(self, rfd: UniqueFD[ReadableFile],
-                 wfd: UniqueFD[WritableFile]) -> None:
+    def __init__(self, rfd: FileDescriptor[ReadableFile],
+                 wfd: FileDescriptor[WritableFile]) -> None:
         self.rfd = rfd
         self.wfd = wfd
 
@@ -275,53 +297,10 @@ class Pipe:
 
 async def allocate_pipe(task: Task) -> Pipe:
     r, w = await task.syscall.pipe()
-    return Pipe(UniqueFD(ReadableFile(), task, task.files, r),
-                UniqueFD(WritableFile(), task, task.files, w))
+    return Pipe(FileDescriptor(ReadableFile(shared=False), task, task.files, r),
+                FileDescriptor(WritableFile(shared=False), task, task.files, w))
 
-class EpollEvent:
-    # should improve the accuracy of these.
-    events: int
-    data: int
-
-class EpollFileObject(FileObject):
-    async def add(self, fd: FileDescriptor, event: EpollEvent) -> None:
-        pass
-
-    async def delete(self, fd: FileDescriptor) -> None:
-        pass
-
-    async def modify(self, fd: FileDescriptor, event: EpollEvent) -> None:
-        pass
-
-    async def wait(self, maxevents: int=10) -> t.List[EpollEvent]:
-        pass
-
-# oh! this should be a generic wrapper type around a FileDescriptor.
-# that way we can still see the underlying type right.
-# and... maybe it can have different specializations?
-# depending on the underlying...
-# with extra methods...
-# no that's dumb...
-# but we do want to be able to read right or whatever...
-# oh! we'll have another function which takes the specialized version and calls on it!
-# hmm, extra methods depending on the underlying type doesn't seem infinitely bad.
-# since you can easily achieve it in standalone functions
-# oh because how do we even dispatch on the type
-# hm
-# okay, standalone functions that take a specialization are fine then.
-# oh, I guess they could be staticmethods. or even... real methods... urgh...
-# so this is yet another question for mypy people:
-# can I make self be required to be a specific specialization?
-# in the meantime I will just use methods then
-# aha it's all possible, thank you mypy stuff
-
-# can I have an EpollableFD that I inherit from multiple of?
-# what if.. the constructors don't match in their type?
-# aaaa
-# forget it, just use free functions!
-# no okay don't use free functions, but be aware it's weird.
-# or maybe I should just use free functions aaa
-class EpollWrapper(trio.abc.AsyncResource, t.Generic[T_file_co]):
+class EpollWrapper(t.Generic[T_file_co]):
     """A class that encapsulates an O_NONBLOCK fd registered with epoll.
 
     Theoretically you might want to register with epoll and set
@@ -332,37 +311,54 @@ class EpollWrapper(trio.abc.AsyncResource, t.Generic[T_file_co]):
     """
 
     epoller: 'Epoller'
-    underlying: UniqueFileDescriptor[T_file_co]
-    def __init__(self, epoller: 'Epoller', fd: UniqueFileDescriptor[T_file_co]) -> None:
+    underlying: FileDescriptor[T_file_co]
+    def __init__(self, epoller: 'Epoller', fd: FileDescriptor[T_file_co]) -> None:
         self.epoller = epoller
         self.underlying = fd
 
-    # wait no we are supposed to do the IO first, then wait if it fails
-    # hmmm....
-    # not sure where to put such a helper method
     async def wait_readable(self):
-        pass
+        raise NotImplementedError
 
     async def wait_writable(self):
-        pass
+        raise NotImplementedError
 
     async def aclose(self):
         await self.epoller.delete(self.underlying)
         await self.underlying.aclose()
 
+    async def __aenter__(self) -> 'EpollWrapper[T_file_co]':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.aclose()
+
     async def read(self: 'EpollWrapper[ReadableFileObject]', count: int=4096) -> bytes:
-        # TODO
         while True:
             try:
                 return (await self.underlying.read())
-            except:
-                # if EAGAIN, 
-                await self.wait_readable()
- 
+            except OSError as e:
+                if e.errno == errno.EAGAIN:
+                    await self.wait_readable()
+                else:
+                    raise
+
 class Epoller:
-    async def wrap(self, fd: UniqueFileDescriptor[T_file]) -> EpollWrapper[T_file]:
+    epfd: FileDescriptor[EpollFileObject]
+    async def delete(self, epwrap: EpollWrapper) -> None:
+        await self.epfd.file.delete(self.epfd, epwrap.underlying)
+
+    async def wrap(self, fd: FileDescriptor[T_file]) -> EpollWrapper[T_file]:
         await fd.set_nonblock()
-        return EpollWrapper(self, fd)
+        return EpollWrapper(self, fd.release())
+
+    async def __aenter__(self) -> 'Epoller':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        pass
+
+async def allocate_epoll(task: Task) -> Epoller:
+    return Epoller()
 
 class SubprocessContext:
     def __init__(self, task: Task, child_files: FDNamespace, parent_files: FDNamespace) -> None:
@@ -371,7 +367,7 @@ class SubprocessContext:
         self.parent_files = parent_files
         self.pid: t.Optional[int] = None
 
-    def translate(self, fd: SharedFileDescriptor[T_file]) -> SharedFileDescriptor[T_file]:
+    def translate(self, fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
         """Translate FDs from the parent's FilesNS to the child's FilesNS
 
         Any file descriptor created by my task in parent_files is now
@@ -428,4 +424,4 @@ async def subprocess(task: Task) -> t.Any:
         if context.pid is None:
             await context.exit(0)
         
-L
+

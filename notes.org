@@ -831,6 +831,14 @@ that's a bit silly though, let's just get it externally
    hmmmmmm
 
    having them be methods seems fine really
+** no unique shared fd types
+   It's too much overhead.
+** TODO create epoll wrapper
+   This has two advantages:
+   can pass arbitrary data into epoll
+   can pass weird epoll flags
+
+   no wait the only weird epoll flags go in the event mask and I can already pass all those from python
 ** things which operate on file objects
 *** Open file description locks
     urgh how do these work
