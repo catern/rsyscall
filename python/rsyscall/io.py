@@ -1,4 +1,6 @@
 from rsyscall._raw import ffi, lib # type: ignore
+from rsyscall.epoll import EpollEvent, EPOLL_CLOEXEC
+import rsyscall.epoll
 import abc
 import os
 import typing as t
@@ -29,8 +31,8 @@ class SyscallInterface:
     # epoll operations
     async def epoll_create(self, flags: int) -> int: ...
     async def epoll_ctl_add(self, epfd: int, fd: int, event: EpollEvent) -> None: ...
-    async def epoll_ctl_mod(self, epfd: int, fd: int, event: EpollEvent) -> None ...
-    async def epoll_ctl_del(self, epfd: int, fd: int) -> None ...
+    async def epoll_ctl_mod(self, epfd: int, fd: int, event: EpollEvent) -> None: ...
+    async def epoll_ctl_del(self, epfd: int, fd: int) -> None: ...
     async def epoll_wait(self, epfd: int, maxevents: int, timeout: int) -> t.List[EpollEvent]: ...
 
     # we can do the same with ioctl
@@ -83,6 +85,26 @@ class LocalSyscall(SyscallInterface):
                        flags: int) -> int:
         logger.debug("execveat(%s)", path)
         return sfork.execveat(dirfd, path, argv, envp, flags)
+
+    async def epoll_create(self, flags: int) -> int:
+        logger.debug("epoll_create(%s)", flags)
+        return rsyscall.epoll.epoll_create(flags)
+
+    async def epoll_ctl_add(self, epfd: int, fd: int, event: EpollEvent) -> None:
+        logger.debug("epoll_ctl_add(%d, %d, %s)", epfd, fd, event)
+        rsyscall.epoll.epoll_ctl_add(epfd, fd, event)
+
+    async def epoll_ctl_mod(self, epfd: int, fd: int, event: EpollEvent) -> None:
+        logger.debug("epoll_ctl_mod(%d, %d, %s)", epfd, fd, event)
+        rsyscall.epoll.epoll_ctl_mod(epfd, fd, event)
+
+    async def epoll_ctl_del(self, epfd: int, fd: int) -> None:
+        logger.debug("epoll_ctl_del(%d, %d)", epfd, fd)
+        rsyscall.epoll.epoll_ctl_del(epfd, fd)
+
+    async def epoll_wait(self, epfd: int, maxevents: int, timeout: int) -> t.List[EpollEvent]:
+        logger.debug("epoll_wait(%d, maxevents=%d, timeout=%d)", epfd, maxevents, timeout)
+        return rsyscall.epoll.epoll_wait(epfd, maxevents, timeout)
 
     # should we pull the file status flags when we create fhe file?
     # yyyyes theoretically.
@@ -137,7 +159,7 @@ class FileObject:
 
     """
     shared: bool
-    def __init__(self, shared: bool, flags: int=None) -> None:
+    def __init__(self, shared: bool=False, flags: int=None) -> None:
         self.shared = shared
 
     async def set_nonblock(self, fd: 'FileDescriptor[FileObject]') -> None:
@@ -196,7 +218,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         """
         if self.open:
             self.open = False
-            return self.__class__(self.file, self.task, self.fd_namespace, self.number) 
+            return self.__class__(self.file, self.task, self.fd_namespace, self.number)
         else:
             raise Exception("file descriptor already closed")
 
@@ -234,25 +256,34 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def write(self: 'FileDescriptor[WritableFileObject]', buf: bytes) -> int:
         return (await self.file.write(self, buf))
 
-class EpollEvent:
-    # should improve the accuracy of these.
-    events: int
-    data: int
+    async def add(self: 'FileDescriptor[EpollFileObject]', fd: 'FileDescriptor', event: EpollEvent) -> None:
+        await self.file.add(self, fd, event)
+
+    async def modify(self: 'FileDescriptor[EpollFileObject]', fd: 'FileDescriptor', event: EpollEvent) -> None:
+        await self.file.modify(self, fd, event)
+
+    async def delete(self: 'FileDescriptor[EpollFileObject]', fd: 'FileDescriptor') -> None:
+        await self.file.delete(self, fd)
+
+    async def wait(self: 'FileDescriptor[EpollFileObject]', maxevents: int=10, timeout: int=-1) -> t.List[EpollEvent]:
+        await epfd.syscall.epoll_wait(epfd.number, maxevents, timeout)
 
 class EpollFileObject(FileObject):
-    async def add(self, epfd: FileDescriptor['EpollFileObject'],
-                  fd: FileDescriptor, event: EpollEvent) -> None:
-        pass
+    async def add(self, epfd: FileDescriptor['EpollFileObject'], fd: FileDescriptor, event: EpollEvent) -> None:
+        await epfd.syscall.epoll_ctl_add(epfd.number, fd.number, event)
+
+    async def modify(self, epfd: FileDescriptor['EpollFileObject'], fd: FileDescriptor, event: EpollEvent) -> None:
+        await epfd.syscall.epoll_ctl_mod(epfd.number, fd.number, event)
 
     async def delete(self, epfd: FileDescriptor['EpollFileObject'], fd: FileDescriptor) -> None:
-        pass
+        await epfd.syscall.epoll_ctl_del(epfd.number, fd.number)
 
-    async def modify(self, epfd: FileDescriptor['EpollFileObject'],
-                     fd: FileDescriptor, event: EpollEvent) -> None:
-        pass
+    async def wait(self, epfd: FileDescriptor['EpollFileObject'], maxevents: int=10, timeout: int=-1) -> t.List[EpollEvent]:
+        return (await epfd.syscall.epoll_wait(epfd.number, maxevents, timeout))
 
-    async def wait(self, epfd: FileDescriptor['EpollFileObject'], maxevents: int=10) -> t.List[EpollEvent]:
-        pass
+async def allocate_epoll(task: Task) -> FileDescriptor[EpollFileObject]:
+    epfd = await task.syscall.epoll_create(EPOLL_CLOEXEC)
+    return FileDescriptor(EpollFileObject(), task, task.files, epfd)
 
 def create_current_task() -> Task:
     return Task(LocalSyscall(trio.hazmat.wait_readable),
@@ -344,6 +375,9 @@ class EpollWrapper(t.Generic[T_file_co]):
 
 class Epoller:
     epfd: FileDescriptor[EpollFileObject]
+    def __init__(self, epfd: FileDescriptor[EpollFileObject]):
+        self.epfd = epfd
+
     async def delete(self, epwrap: EpollWrapper) -> None:
         await self.epfd.file.delete(self.epfd, epwrap.underlying)
 
@@ -355,10 +389,11 @@ class Epoller:
         return self
 
     async def __aexit__(self, *args, **kwargs):
-        pass
+        await self.epfd.aclose()
 
-async def allocate_epoll(task: Task) -> Epoller:
-    return Epoller()
+async def allocate_epoller(task: Task) -> Epoller:
+    epoll = await allocate_epoll(task)
+    return Epoller(epoll)
 
 class SubprocessContext:
     def __init__(self, task: Task, child_files: FDNamespace, parent_files: FDNamespace) -> None:
@@ -423,5 +458,3 @@ async def subprocess(task: Task) -> t.Any:
     finally:
         if context.pid is None:
             await context.exit(0)
-        
-

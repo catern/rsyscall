@@ -62,11 +62,11 @@ class TestIO(unittest.TestCase):
 
     def test_pipe_epoll(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+            async with (await rsyscall.io.allocate_epoller(self.task)) as epoller:
                 async with (await rsyscall.io.allocate_pipe(self.task)) as pipe:
                     in_data = b"hello"
                     await pipe.wfd.write(in_data)
-                    pipe_rfd_wrapped = await epoll.wrap(pipe.rfd)
+                    pipe_rfd_wrapped = await epoller.wrap(pipe.rfd)
                     out_data = await pipe_rfd_wrapped.read(len(in_data))
                     self.assertEqual(in_data, out_data)
         trio.run(test)

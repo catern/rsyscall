@@ -20,19 +20,26 @@ ffibuilder.set_source(
 
 """, **rsyscall)
 ffibuilder.cdef("""
-int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
-int epoll_create1(int flags);
-int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
-
-
 typedef union epoll_data {
     uint64_t u64;
 } epoll_data_t;
-
+""")
+ffibuilder.cdef("""
 struct epoll_event {
   uint32_t     events;
   epoll_data_t data;
 };
+""", packed=True)
+ffibuilder.cdef("""
+int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
+int epoll_create1(int flags);
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+
+#define EPOLL_CTL_ADD ...
+#define EPOLL_CTL_MOD ...
+#define EPOLL_CTL_DEL ...
+
+#define EPOLL_CLOEXEC ...
 
 #define SYS_splice ...
 #define SYS_pipe2 ...
