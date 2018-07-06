@@ -836,6 +836,142 @@ that's a bit silly though, let's just get it externally
 
    And terminals, terminals are bad too.
    So, yeah, it's fine.
+** epoll wrapper approach
+   I'll be led to a good design by trying to implement a multiplexer for epoll
+
+
+   So let's assume that they only want to block once they have polled and failed for every reader.
+
+   right?
+
+   hmm there is a contention that the only right way to do it is,
+   to read until eagain
+
+   although I guess I can translate the edge into some status on my side.
+   the edge is raised, we save it, we can then read until we get eagain, and then we lower the edge
+   and if we want to read again after that then we have to block
+
+   we really need to get the eagain information i guess
+
+   also how does this relate to getting edge/level notification over the network?
+
+   so anyway we return when the level goes high,
+   and then we should call again when the level goes low.
+
+   and i guess all we can get over the network is,
+   "hey the level is high"
+   "do a bunch of stuff"
+   and when the level goes low maybe we need to say "ok the level's low, let's block on receiving a high-notification"
+
+   I guess that's a much more stream-oriented approach.
+   We could actually emulate that on top of pipes.
+   Which makes it much better!
+
+   I see, I see, so edge triggered is much better.
+   It's like reading off notifications from a pipe.
+
+   And the notification is, "hey this is readable now".
+   And we get the "hey this isn't readable now" notification from EAGAIN.
+
+   And, we could get multiple "hey this is readable now" events,
+   as a result of efficient implementation that doesn't require storing data.
+   Really we could get such events every time something becomes readable.
+   And they'd get coalesced automatically I guess, for efficiency.
+
+   Okay, okay, so this makes a lot of sense.
+
+   Then the multiplexer is simple:
+   It's just a proxy for pipes, to direct things to the correct destination.
+   They register for events,
+   and they get them sent to them.
+   So that seems really quite simple.
+
+   And there's no need for EPOLLONESHOT either
+
+   So the real low level interface is this stream of readable events.
+   And, we can wait for one to appear,
+   but then it's not safe to keep waiting for another one to appear on that same channel,
+   we need to go do IO until it's exhausted.
+
+   It's kind of a weird dual-channel thing.
+   The readability stream is like a control channel,
+   and the data fd is like the data channel.
+   Except the data channel also has notification of its own exhaustion, hm
+
+   wait_readable is definitely not the right interface.
+
+   What's a safe interface?
+
+   Maybe some kind of, "local level"?
+   We can wait for it to be high,
+   but how do we make sure we mark it low?
+
+   I guess it's not safe.
+
+   The raw interface is certainly the edges.
+   But how do we make that safe?
+** general question
+   I have a boolean variable.
+   One source will tell me when it goes from low to high.
+   Another source will tell me when it goes from high to low, among other things.
+
+   The only actual uses for it involve messing with the latter source.
+   There are two sources of things that change it?
+
+   Obvious solution: Wrap all access to the sources
+
+   But, the sources have a bunch of functionality that I don't want to wrap.
+
+   Another obvious solution: Have the source know about the boolean variable and update it.
+
+   Well... that's essentially the same as wrapping.
+
+   I think probably we do want to just wrap.
+
+   Oh, here's the real issue:
+   We don't know how many of the sources there are.
+   Many different things can possibly cause the variable to change.
+   How do we ensure that the user appropriately detects the variable-changing event,
+   and appropriately changes the variable?
+
+   Well, the event throws an exception.
+   Or, perhaps, can be linearly typed.
+
+   I mean, when we get an EAGAIN...
+   That's not really an error. It's a return value saying,
+   "hey yo, I don't have anything more to give you right now, come back later, ya dig?"
+
+   But still.
+
+   If there's many sources and they all change the variable, well
+   The obvious solution is still to wrap all the sources.
+   Though, we don't necessarily have to wrap them to know about the variable.
+
+   We can have the sources return a value that must be consumed by the variable.
+   Though that requires a bunch of types.
+
+   I think the best model for Python is to just have the EpollWrapper wrap every method.
+   And update the readability status thing when it gets EAGAIN
+** type-directed model
+   We could have some operation on an fd,
+   consume the fd,
+   and either return the fd and some data,
+   or an EAGAIN wrapping the fd, of some specific type.
+
+   No we'd have to work with fd-operation pairs.
+   Well, in any case, that's the basic model.
+   Let's call the fd-operation pair just an "operation".
+
+   So we have an operation.
+   Operation -> Either (Operation,Data) (EAGAIN::Read Operation)
+
+   We consume it and either get data and the operation back, or no data back and the operation wrapped in an EAGAIN.
+
+   To unwrap the EAGAIN, we need to get a read posedge on the source.
+
+   But, the read posedge has to come after the operation has been done.
+   Tricky.
+
 ** no unique shared fd types
    It's too much overhead.
 ** TODO create epoll wrapper

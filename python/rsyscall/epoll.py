@@ -23,7 +23,7 @@ class EpollEvent:
     data: int
     in_ = BitField(select.EPOLLIN)
     out = BitField(select.EPOLLOUT)
-    rdhup = BitField(select.EPOLLRDHUP)
+    rdhup = BitField(select.EPOLLRDHUP) # type: ignore
     pri = BitField(select.EPOLLPRI)
     err = BitField(select.EPOLLERR)
     hup = BitField(select.EPOLLHUP)
@@ -32,7 +32,7 @@ class EpollEvent:
         self.events = events
 
     @classmethod
-    def make(cls, data: int, *, in_=False, out=False, rdhup=False, pri=False, err=False, hup=False) -> None:
+    def make(cls, data: int, *, in_=False, out=False, rdhup=False, pri=False, err=False, hup=False) -> 'EpollEvent':
         ret = cls(data, 0)
         ret.in_ = in_
         ret.out = out

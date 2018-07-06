@@ -266,7 +266,10 @@ class FileDescriptor(t.Generic[T_file_co]):
         await self.file.delete(self, fd)
 
     async def wait(self: 'FileDescriptor[EpollFileObject]', maxevents: int=10, timeout: int=-1) -> t.List[EpollEvent]:
-        await epfd.syscall.epoll_wait(epfd.number, maxevents, timeout)
+        return (await self.file.wait(self, maxevents, timeout))
+
+    async def wait_readable(self) -> None:
+        return (await self.syscall.wait_readable(self.number))
 
 class EpollFileObject(FileObject):
     async def add(self, epfd: FileDescriptor['EpollFileObject'], fd: FileDescriptor, event: EpollEvent) -> None:
@@ -284,6 +287,146 @@ class EpollFileObject(FileObject):
 async def allocate_epoll(task: Task) -> FileDescriptor[EpollFileObject]:
     epfd = await task.syscall.epoll_create(EPOLL_CLOEXEC)
     return FileDescriptor(EpollFileObject(), task, task.files, epfd)
+
+class RawEpollWrapper:
+    raw_epoller: 'RawEpoller'
+    underlying: FileDescriptor
+    def __init__(self, raw_epoller: 'RawEpoller', underlying: FileDescriptor) -> None:
+        self.raw_epoller = raw_epoller
+        self.underlying = underlying
+
+    async def modify(self, event: EpollEvent) -> None:
+        await self.raw_epoller.epfd.modify(self.underlying, event)
+
+    async def aclose(self) -> None:
+        await self.raw_epoller.epfd.delete(self.underlying)
+        await self.underlying.aclose()
+
+    async def __aenter__(self) -> 'RawEpollWrapper':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.aclose()
+
+class RawEpoller:
+    def __init__(self, epfd: FileDescriptor[EpollFileObject]) -> None:
+        self.epfd = epfd
+
+    async def add(self, fd: FileDescriptor, event: EpollEvent) -> RawEpollWrapper:
+        await self.epfd.add(fd, event)
+        return RawEpollWrapper(self, fd)
+
+    async def wait(self, maxevents: int=10, block: bool=True) -> t.List[EpollEvent]:
+        if block:
+            await self.epfd.wait_readable()
+        return (await self.epfd.wait(maxevents=maxevents, timeout=0))
+
+    async def aclose(self) -> None:
+        await self.epfd.aclose()
+
+    async def __aenter__(self) -> 'RawEpoller':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.aclose()
+
+async def allocate_raw_epoller(task: Task) -> RawEpoller:
+    return RawEpoller(await allocate_epoll(task))
+
+class EpollMultiplexer:
+    def __init__(self, epoller) -> None:
+        self.epoller = epoller
+        self.dispatch: t.Dict[int, t.Tuple['Epollet', 'EpollWrapper']] = {}
+        self.next_id = 1
+        self.running_wait: t.Optional[trio.Event] = None
+
+    def make(self) -> 'Epollet':
+        return Epollet(self)
+
+    async def add(self, epollet: 'Epollet', fd: FileDescriptor, event: EpollEvent) -> 'EpollWrapper':
+        underlying_data = self.next_id
+        self.next_id += 1
+        user_data = event.data
+        underlying = await self.epoller.add(fd, EpollEvent(data=underlying_data, events=event.events))
+        wrapper = EpollWrapper(underlying_data, user_data, underlying, self)
+        self.dispatch[underlying_data] = (epollet, wrapper)
+        return wrapper
+
+    async def do_wait(self) -> None:
+        events = await self.epoller.wait()
+        for event in events:
+            epollet, wrapper = self.dispatch[event.data]
+            epollet.queue.put_nowait(EpollEvent(data=wrapper.user_data, events=event.events))
+
+    async def maybe_do_wait(self) -> None:
+        if self.running_wait is not None:
+            await self.running_wait
+        else:
+            running_wait = trio.Event()
+            self.running_wait = running_wait
+            await self.do_wait()
+            self.running_wait = None
+            running_wait.set()
+
+class EpollWrapper:
+    def __init__(self, underlying_data, user_data, underlying, multiplexer) -> None:
+        self.underlying_data = underlying_data
+        self.user_data = user_data
+        self.underlying = underlying
+        self.multiplexer = multiplexer
+
+    async def modify(self, event: EpollEvent) -> None:
+        await self.underlying.modify(EpollEvent(data=self.underlying_data, events=event.events))
+        self.user_data = event.data
+
+    async def aclose(self) -> None:
+        await self.underlying.aclose()
+        del self.multiplexer.dispatch[self.underlying_data]
+
+class Epollet:
+    def __init__(self, multiplexer: EpollMultiplexer) -> None:
+        self.multiplexer = multiplexer
+        self.queue = trio.hazmat.UnboundedQueue()
+
+    # We need to take ownership of an FD, I guess.
+    # urgh, because of the need to take ownership, multiplexing becomes rather silly
+    # I guess at the time we take ownership, we'll also add the fd.
+    # so add and delete become useless
+    # modify is the only relevant one, and that is on the EpollWrapper
+    async def add(self, fd: FileDescriptor, event: EpollEvent) -> EpollWrapper:
+        return (await self.multiplexer.add(self, fd, event))
+
+    # so the primary/sole functionality of this Epollet is to filter down EpollEvents
+    async def wait(self, block: bool=True) -> t.List[EpollEvent]:
+        # TODO okay so this is the hard part now.
+        # we need to call wait or somefin
+        # and then filter the result
+        # can we filter it somehow?
+        # can we maintain a set of the underlying data?
+        # oh, we need to have the map from underlying to user data.
+        # we have to transform the EpollEvents before rturning them, too, not just filter them.
+        # what if we stick the dispatch thingy into this epollet?
+        # nah we can't, since we also need to look up this epollet.
+        # so ok
+        # what if we just have a queue of epoll events in this thing?
+        # and have the main epoll wrapper just put events in that queue?
+        # then this wait just waits on that queue?
+        # the annoying thing is having to run that guy in the background all the time.
+        # although we can run it on demand I guess, pretty easily
+        # hmm so when:
+        # thread A runs do_wait
+        # thread B shows up in the meantime
+        # thread A finishes do_wait
+        # thread A gets the events it wanted
+        # then thread B needs to take over running do_wait
+        while True:
+            try:
+                return self.queue.get_batch_nowait()
+            except trio.WouldBlock:
+                if block:
+                    await self.multiplexer.maybe_do_wait()
+                else:
+                    return []
 
 def create_current_task() -> Task:
     return Task(LocalSyscall(trio.hazmat.wait_readable),
@@ -331,7 +474,7 @@ async def allocate_pipe(task: Task) -> Pipe:
     return Pipe(FileDescriptor(ReadableFile(shared=False), task, task.files, r),
                 FileDescriptor(WritableFile(shared=False), task, task.files, w))
 
-class EpollWrapper(t.Generic[T_file_co]):
+class BigEpollWrapper(t.Generic[T_file_co]):
     """A class that encapsulates an O_NONBLOCK fd registered with epoll.
 
     Theoretically you might want to register with epoll and set
@@ -427,13 +570,13 @@ class EpollWrapper(t.Generic[T_file_co]):
         await self.epoller.delete(self.underlying)
         await self.underlying.aclose()
 
-    async def __aenter__(self) -> 'EpollWrapper[T_file_co]':
+    async def __aenter__(self) -> 'BigEpollWrapper[T_file_co]':
         return self
 
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
 
-    async def read(self: 'EpollWrapper[ReadableFileObject]', count: int=4096) -> bytes:
+    async def read(self: 'BigEpollWrapper[ReadableFileObject]', count: int=4096) -> bytes:
         while True:
             try:
                 return (await self.underlying.read())
@@ -445,15 +588,15 @@ class EpollWrapper(t.Generic[T_file_co]):
 
 class Epoller:
     epfd: FileDescriptor[EpollFileObject]
-    def __init__(self, epfd: FileDescriptor[EpollFileObject]):
+    def __init__(self, epfd: FileDescriptor[EpollFileObject]) -> None:
         self.epfd = epfd
 
-    async def delete(self, epwrap: EpollWrapper) -> None:
+    async def delete(self, epwrap: BigEpollWrapper) -> None:
         await self.epfd.file.delete(self.epfd, epwrap.underlying)
 
-    async def wrap(self, fd: FileDescriptor[T_file]) -> EpollWrapper[T_file]:
+    async def wrap(self, fd: FileDescriptor[T_file]) -> BigEpollWrapper[T_file]:
         await fd.set_nonblock()
-        return EpollWrapper(self, fd.release())
+        return BigEpollWrapper(self, fd.release())
 
     async def __aenter__(self) -> 'Epoller':
         return self
