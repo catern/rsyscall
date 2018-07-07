@@ -1,7 +1,7 @@
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.io import ProcessContext, SubprocessContext, create_current_task, wrap_stdin_out_err
-from rsyscall.io import EpollMultiplexer
-from rsyscall.epoll import EpollEvent
+from rsyscall.io import Epoller, allocate_epoll
+from rsyscall.epoll import EpollEvent, EpollEventMask
 import unittest
 import supervise_api
 import trio
@@ -64,11 +64,12 @@ class TestIO(unittest.TestCase):
 
     def test_pipe_epoll(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_epoller(self.task)) as epoller:
+            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                epoller = Epoller(epoll)
                 async with (await rsyscall.io.allocate_pipe(self.task)) as pipe:
                     in_data = b"hello"
                     await pipe.wfd.write(in_data)
-                    pipe_rfd_wrapped = await epoller.wrap(pipe.rfd)
+                    pipe_rfd_wrapped = await epoller.add(pipe.rfd)
                     out_data = await pipe_rfd_wrapped.read(len(in_data))
                     self.assertEqual(in_data, out_data)
         trio.run(test)
@@ -89,40 +90,39 @@ class TestIO(unittest.TestCase):
                         self.assertEqual(in_data, out_data)
         trio.run(test)
 
-    async def do_epoll_things(self, epoller, num=42) -> None:
+    async def do_epoll_things(self, epoller) -> None:
         async with (await rsyscall.io.allocate_pipe(self.task)) as pipe:
-            pipe_rfd_wrapped = await epoller.add(pipe.rfd, EpollEvent.make(num, in_=True))
-            await trio.sleep(0)
-            result = await epoller.wait(block=False)
-            self.assertEqual(result, [])
-            await pipe.wfd.write(b"data")
-            events = await epoller.wait()
-            self.assertEqual(len(events), 1)
-            self.assertEqual(events[0].data, num)
-            self.assertTrue(events[0].in_)
+            pipe_rfd_wrapped = await epoller.add(pipe.rfd, EpollEventMask.make(in_=True))
+            async def stuff():
+                events = await pipe_rfd_wrapped.wait()
+                self.assertEqual(len(events), 1)
+                self.assertTrue(events[0].in_)
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(stuff)
+                await trio.sleep(0)
+                await pipe.wfd.write(b"data")
 
-    def test_raw_epoll(self) -> None:
+    def test_epoll(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_raw_epoller(self.task)) as raw_epoller:
-                await self.do_epoll_things(raw_epoller)
+            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                epoller = Epoller(epoll)
+                await self.do_epoll_things(epoller)
         trio.run(test)
 
-    def test_epollet(self) -> None:
+    def test_epoll_multi(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_raw_epoller(self.task)) as raw_epoller:
-                epoll_multiplexer = EpollMultiplexer(raw_epoller)
-                epollet = epoll_multiplexer.make()
-                await self.do_epoll_things(epollet)
-        trio.run(test)
-
-    def test_epollet_multi(self) -> None:
-        async def test() -> None:
-            async with (await rsyscall.io.allocate_raw_epoller(self.task)) as raw_epoller:
-                epoll_multiplexer = EpollMultiplexer(raw_epoller)
-                epollet = epoll_multiplexer.make()
+            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                epoller = Epoller(epoll)
                 async with trio.open_nursery() as nursery:
                     for i in range(5):
-                        nursery.start_soon(self.do_epoll_things, epollet, i)
+                        nursery.start_soon(self.do_epoll_things, epoller)
+        trio.run(test)
+
+    def test_async(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                epoller = Epoller(epoll)
+                # TODO!
         trio.run(test)
 
 if __name__ == '__main__':

@@ -10,30 +10,28 @@ class BitField:
         self.bitval = bitval
 
     def __get__(self, instance, owner) -> bool:
-        return bool(instance.events & self.bitval)
+        return bool(instance.raw & self.bitval)
 
     def __set__(self, instance, value: bool) -> None:
         if value:
-            instance.events |= self.bitval
+            instance.raw |= self.bitval
         else:
-            instance.events &= ~self.bitval
+            instance.raw &= ~self.bitval
 
-class EpollEvent:
-    events: int
-    data: int
+class EpollEventMask:
+    raw: int
     in_ = BitField(select.EPOLLIN)
     out = BitField(select.EPOLLOUT)
     rdhup = BitField(select.EPOLLRDHUP) # type: ignore
     pri = BitField(select.EPOLLPRI)
     err = BitField(select.EPOLLERR)
     hup = BitField(select.EPOLLHUP)
-    def __init__(self, data: int, events: int) -> None:
-        self.data = data
-        self.events = events
+    def __init__(self, raw: int) -> None:
+        self.raw = raw
 
     @classmethod
-    def make(cls, data: int, *, in_=False, out=False, rdhup=False, pri=False, err=False, hup=False) -> 'EpollEvent':
-        ret = cls(data, 0)
+    def make(cls, *, in_=False, out=False, rdhup=False, pri=False, err=False, hup=False) -> 'EpollEventMask':
+        ret = cls(0)
         ret.in_ = in_
         ret.out = out
         ret.rdhup = rdhup
@@ -41,6 +39,16 @@ class EpollEvent:
         ret.err = err
         ret.hup = hup
         return ret
+
+    def __str__(self) -> str:
+        return f"EpollEventMask({self.raw})"
+
+class EpollEvent:
+    events: EpollEventMask
+    data: int
+    def __init__(self, data: int, events: EpollEventMask) -> None:
+        self.data = data
+        self.events = events
 
     def __str__(self) -> str:
         return f"EpollEvent({self.data}, {self.events})"
@@ -56,7 +64,7 @@ def epoll_create(flags: int) -> int:
     return throw_on_error(lib.epoll_create1(flags))
 
 def epoll_ctl(epfd: int, op: int, fd: int, event: EpollEvent) -> None:
-    c_event = ffi.new('struct epoll_event const*', (event.events, (event.data,)))
+    c_event = ffi.new('struct epoll_event const*', (event.events.raw, (event.data,)))
     throw_on_error(lib.epoll_ctl(epfd, op, fd, c_event))
 
 def epoll_ctl_add(epfd: int, fd: int, event: EpollEvent) -> None:
@@ -73,5 +81,5 @@ def epoll_wait(epfd: int, maxevents: int, timeout: int) -> t.List[EpollEvent]:
     count = throw_on_error(lib.epoll_wait(epfd, c_events, maxevents, timeout))
     ret = []
     for ev in c_events[0:count]:
-        ret.append(EpollEvent(ev.data.u64, ev.events))
+        ret.append(EpollEvent(ev.data.u64, EpollEventMask(ev.events)))
     return ret
