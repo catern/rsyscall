@@ -1,6 +1,6 @@
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.io import ProcessContext, SubprocessContext, create_current_task, wrap_stdin_out_err
-from rsyscall.io import Epoller, allocate_epoll
+from rsyscall.io import Epoller, allocate_epoll, AsyncFileDescriptor
 from rsyscall.epoll import EpollEvent, EpollEventMask
 import unittest
 import supervise_api
@@ -62,31 +62,21 @@ class TestIO(unittest.TestCase):
                     self.assertEqual(in_data, out_data)
         trio.run(test)
 
-    def test_pipe_epoll(self) -> None:
+    def test_cat(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
                 epoller = Epoller(epoll)
-                async with (await rsyscall.io.allocate_pipe(self.task)) as pipe:
-                    in_data = b"hello"
-                    await pipe.wfd.write(in_data)
-                    pipe_rfd_wrapped = await epoller.add(pipe.rfd)
-                    out_data = await pipe_rfd_wrapped.read(len(in_data))
-                    self.assertEqual(in_data, out_data)
-        trio.run(test)
-
-    def test_cat_epoll(self) -> None:
-        async def test() -> None:
-            async with (await rsyscall.io.allocate_epoller(self.task)) as epoller:
                 async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
                     async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
                         async with rsyscall.io.subprocess(self.task) as subproc:
                             await subproc.translate(pipe_in.rfd).dup2(subproc.translate(self.stdin))
                             await subproc.translate(pipe_out.wfd).dup2(subproc.translate(self.stdout))
                             await subproc.exec("/bin/sh", ['sh', '-c', 'cat'])
-                        in_data = b"hello"
-                        await pipe_in.wfd.write(in_data)
-                        pipe_rfd_wrapped = await epoller.wrap(pipe_out.rfd)
-                        out_data = await pipe_rfd_wrapped.read(len(in_data))
+                        async_cat_rfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
+                        async_cat_wfd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
+                        in_data = b"hello world"
+                        await async_cat_wfd.write(in_data)
+                        out_data = await async_cat_rfd.read()
                         self.assertEqual(in_data, out_data)
         trio.run(test)
 
@@ -118,11 +108,33 @@ class TestIO(unittest.TestCase):
                         nursery.start_soon(self.do_epoll_things, epoller)
         trio.run(test)
 
+    async def do_async_things(self, epoller) -> None:
+        async with (await rsyscall.io.allocate_pipe(self.task)) as pipe:
+            async_pipe_rfd = await AsyncFileDescriptor.make(epoller, pipe.rfd)
+            async_pipe_wfd = await AsyncFileDescriptor.make(epoller, pipe.wfd)
+            data = b"hello world"
+            async def stuff():
+                result = await async_pipe_rfd.read()
+                self.assertEqual(result, data)
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(stuff)
+                await trio.sleep(0)
+                await async_pipe_wfd.write(data)
+
     def test_async(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
                 epoller = Epoller(epoll)
-                # TODO!
+                await self.do_async_things(epoller)
+        trio.run(test)
+
+    def test_async_multi(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                epoller = Epoller(epoll)
+                async with trio.open_nursery() as nursery:
+                    for i in range(5):
+                        nursery.start_soon(self.do_async_things, epoller)
         trio.run(test)
 
 if __name__ == '__main__':

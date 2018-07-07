@@ -344,7 +344,7 @@ class Epoller:
             self.running_wait = running_wait
 
             await self.epfd.wait_readable()
-            received_events = await self.epfd.wait(maxevents=32, timeout=50)
+            received_events = await self.epfd.wait(maxevents=32, timeout=-1)
             for event in received_events:
                 queue = self.fd_map[event.data].queue
                 queue.put_nowait(event.events)
@@ -368,7 +368,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     @staticmethod
     async def make(epoller: Epoller, fd: FileDescriptor[T_file]) -> 'AsyncFileDescriptor[T_file]':
         await fd.set_nonblock()
-        epolled = await epoller.add(fd, EpollEventMask.make(in_=True, out=True))
+        epolled = await epoller.add(fd, EpollEventMask.make(in_=True, out=True, et=True))
         return AsyncFileDescriptor(epolled)
 
     def __init__(self, epolled: EpolledFileDescriptor[T_file_co]) -> None:
@@ -384,7 +384,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             running_wait = trio.Event()
             self.running_wait = running_wait
 
-            events = self.epolled.wait()
+            events = await self.epolled.wait()
             for event in events:
                 if event.in_: self.is_readable = True
                 if event.out: self.is_writable = True
@@ -401,6 +401,19 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 if e.errno == errno.EAGAIN:
                     self.is_readable = False
                     while not self.is_readable:
+                        await self._wait_once()
+                else:
+                    raise
+
+    async def write(self: 'AsyncFileDescriptor[WritableFileObject]', buf: bytes) -> None:
+        while len(buf) > 0:
+            try:
+                written = await self.epolled.underlying.write(buf)
+                buf = buf[written:]
+            except OSError as e:
+                if e.errno == errno.EAGAIN:
+                    self.is_writable = False
+                    while not self.is_writable:
                         await self._wait_once()
                 else:
                     raise
@@ -460,48 +473,6 @@ async def allocate_pipe(task: Task) -> Pipe:
     return Pipe(FileDescriptor(ReadableFile(shared=False), task, task.files, r),
                 FileDescriptor(WritableFile(shared=False), task, task.files, w))
 
-class BigEpollWrapper(t.Generic[T_file_co]):
-    """A class that encapsulates an O_NONBLOCK fd registered with epoll.
-
-    Theoretically you might want to register with epoll and set
-    O_NONBLOCK separately.  But that would mean you'd have to track
-    them each with separate wrapper types, which would be too much
-    overhead.
-
-    """
-
-    epoller: 'Epoller'
-    underlying: FileDescriptor[T_file_co]
-    def __init__(self, epoller: 'Epoller', fd: FileDescriptor[T_file_co]) -> None:
-        self.epoller = epoller
-        self.underlying = fd
-
-    async def wait_readable(self):
-        raise NotImplementedError
-
-    async def wait_writable(self):
-        raise NotImplementedError
-
-    async def aclose(self):
-        await self.epoller.delete(self.underlying)
-        await self.underlying.aclose()
-
-    async def __aenter__(self) -> 'BigEpollWrapper[T_file_co]':
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.aclose()
-
-    async def read(self: 'BigEpollWrapper[ReadableFileObject]', count: int=4096) -> bytes:
-        while True:
-            try:
-                return (await self.underlying.read())
-            except OSError as e:
-                if e.errno == errno.EAGAIN:
-                    await self.wait_readable()
-                else:
-                    raise
-
 class SubprocessContext:
     def __init__(self, task: Task, child_files: FDNamespace, parent_files: FDNamespace) -> None:
         self.task = task
@@ -551,9 +522,10 @@ class SubprocessContext:
 
 @asynccontextmanager
 async def subprocess(task: Task) -> t.Any:
-    # this is really contextvar-ish. but I guess it's inside an
-    # explicitly passed around object. but it's still the same kind of
-    # behavior. by what name is this known?
+    # the way we are setting a variable to a new thing, then resetting
+    # it back to an old thing, is really contextvar-ish. but it's
+    # inside an explicitly passed around object. but it's still the
+    # same kind of behavior. by what name is this known?
 
     parent_files = task.files
     await task.syscall.clone(lib.CLONE_VFORK|lib.CLONE_VM, deathsig=None)
@@ -565,3 +537,20 @@ async def subprocess(task: Task) -> t.Any:
     finally:
         if context.pid is None:
             await context.exit(0)
+
+class Process:
+    def __init__(self, killfd: FileDescriptor[WritableFile],
+                 waitfd: FileDescriptor[ReadableFile]) -> None:
+        self.killfd = killfd
+        self.waitfd = waitfd
+
+    async def check(self) -> None:
+        pass
+
+
+@asynccontextmanager
+async def clonefd(task: Task) -> t.Any:
+    supervise = 
+    async with subprocess(task) as supervise_proc:
+        async with subprocess(task) as user_proc:
+            yield user_proc

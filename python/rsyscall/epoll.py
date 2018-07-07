@@ -26,11 +26,12 @@ class EpollEventMask:
     pri = BitField(select.EPOLLPRI)
     err = BitField(select.EPOLLERR)
     hup = BitField(select.EPOLLHUP)
+    et = BitField(select.EPOLLET)
     def __init__(self, raw: int) -> None:
         self.raw = raw
 
     @classmethod
-    def make(cls, *, in_=False, out=False, rdhup=False, pri=False, err=False, hup=False) -> 'EpollEventMask':
+    def make(cls, *, in_=False, out=False, rdhup=False, pri=False, err=False, hup=False, et=False) -> 'EpollEventMask':
         ret = cls(0)
         ret.in_ = in_
         ret.out = out
@@ -38,6 +39,7 @@ class EpollEventMask:
         ret.pri = pri
         ret.err = err
         ret.hup = hup
+        ret.et = et
         return ret
 
     def __str__(self) -> str:

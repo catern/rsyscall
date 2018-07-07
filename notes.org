@@ -952,6 +952,8 @@ that's a bit silly though, let's just get it externally
 
    I think the best model for Python is to just have the EpollWrapper wrap every method.
    And update the readability status thing when it gets EAGAIN
+
+   It works! Yay
 ** type-directed model
    We could have some operation on an fd,
    consume the fd,
@@ -988,6 +990,9 @@ that's a bit silly though, let's just get it externally
 *** O_NONBLOCK!!!! and other file description flags
     ugh EPOLLET really very much requires O_NONBLOCk to be set, otherwise you can't tell when to stop reading
     (though for streams (as the manpage says) you can detect partial reads)
+** next up: supervise
+   I could maybe do clever things to support multiple children in one supervise.
+   But let's do the simple one child case first to see how it works first
 * criu
   I feel like I have a bunch in common with criu
 
