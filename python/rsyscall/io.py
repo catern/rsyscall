@@ -1,6 +1,10 @@
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.epoll import EpollEvent, EpollEventMask, EPOLL_CLOEXEC
 import rsyscall.epoll
+from rsyscall.stat import StatxResult
+import rsyscall.stat
+import supervise_api as supervise
+import prctl
 import abc
 import os
 import typing as t
@@ -22,11 +26,14 @@ class SyscallInterface:
     async def write(self, fd: int, buf: bytes) -> int: ...
     async def dup2(self, oldfd: int, newfd: int) -> int: ...
     async def wait_readable(self, fd: int) -> None: ...
+
+    # task manipulation
     async def clone(self, flags: int, deathsig: t.Optional[signal.Signals]) -> int: ...
     async def exit(self, status: int) -> int: ...
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> int: ...
+    async def getpid(self) -> int: ...
 
     # epoll operations
     async def epoll_create(self, flags: int) -> int: ...
@@ -40,8 +47,11 @@ class SyscallInterface:
     async def fcntl(self, fd: int, cmd: int, arg: t.Union[bytes, int]=0) -> t.Union[bytes, int]:
         "This follows the same protocol as fcntl.fcntl."
         ...
+
     # for prctl we will have a separate method for each usage mode;
     # its interface is too diverse to do anything else and still abstract over the details of memory
+    async def prctl_set_child_subreaper(self, flag: bool) -> None: ...
+    async def statx(self, dirfd: int, pathname: bytes, flags: int, mask: int) -> StatxResult: ...
 
 class LocalSyscall(SyscallInterface):
     def __init__(self, wait_readable) -> None:
@@ -90,6 +100,9 @@ class LocalSyscall(SyscallInterface):
         logger.debug("execveat(%s)", path)
         return sfork.execveat(dirfd, path, argv, envp, flags)
 
+    async def getpid(self) -> int:
+        return os.getpid()
+
     async def epoll_create(self, flags: int) -> int:
         logger.debug("epoll_create(%s)", flags)
         return rsyscall.epoll.epoll_create(flags)
@@ -113,11 +126,17 @@ class LocalSyscall(SyscallInterface):
     # should we pull the file status flags when we create fhe file?
     # yyyyes theoretically.
     # should we store it in the FileDescriptor?
-    # hah, no, we should have a FileObject...
+    # hah, no, we should have a File...
     async def fcntl(self, fd: int, cmd: int, arg: t.Union[bytes, int]=0) -> t.Union[bytes, int]:
         "This follows the same protocol as fcntl.fcntl."
         logger.debug("fcntl(%d, %d, %s)", fd, cmd, arg)
         return fcntl.fcntl(fd, cmd, arg)
+
+    async def prctl_set_child_subreaper(self, flag: bool) -> None:
+        prctl.set_child_subreaper(flag)
+
+    async def statx(self, dirfd: int, pathname: bytes, flags: int, mask: int) -> StatxResult:
+        return rsyscall.stat.statx(dirfd, pathname, flags, mask)
 
 class FDNamespace:
     pass
@@ -125,11 +144,19 @@ class FDNamespace:
 class MemoryNamespace:
     pass
 
+class MountNamespace:
+    pass
+
 class Task:
-    def __init__(self, syscall: SyscallInterface, files: FDNamespace, memory: MemoryNamespace) -> None:
+    def __init__(self, syscall: SyscallInterface,
+                 files: FDNamespace,
+                 memory: MemoryNamespace,
+                 fs: MountNamespace,
+    ) -> None:
         self.syscall = syscall
         self.memory = memory
         self.files = files
+        self.mount = mount
 
 class ProcessContext:
     """A Linux process with associated resources.
@@ -146,7 +173,7 @@ class ProcessContext:
         self.syscall = syscall_interface
 
 T = t.TypeVar('T')
-class FileObject:
+class File:
     """This is the underlying file object referred to by a file descriptor.
 
     Often, multiple file descriptors in multiple processes can refer
@@ -156,9 +183,9 @@ class FileObject:
 
     This is unfortunate, because there are some useful mutations (in
     particular, setting O_NONBLOCK) which we'd like to perform to
-    FileObjects, but which might break other users.
+    Files, but which might break other users.
 
-    We store whether the FileObject is shared with others with
+    We store whether the File is shared with others with
     "shared". If it is, we can't mutate it.
 
     """
@@ -166,23 +193,21 @@ class FileObject:
     def __init__(self, shared: bool=False, flags: int=None) -> None:
         self.shared = shared
 
-    async def set_nonblock(self, fd: 'FileDescriptor[FileObject]') -> None:
+    async def set_nonblock(self, fd: 'FileDescriptor[File]') -> None:
         if self.shared:
             raise Exception("file object is shared and can't be mutated")
         await fd.syscall.fcntl(fd.number, fcntl.F_SETFL, os.O_NONBLOCK)
 
-T_file = t.TypeVar('T_file', bound=FileObject)
-T_file_co = t.TypeVar('T_file_co', bound=FileObject, covariant=True)
+T_file = t.TypeVar('T_file', bound=File)
+T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
-class ReadableFileObject(FileObject):
-    async def read(self, fd: 'FileDescriptor[ReadableFileObject]', count: int=4096) -> bytes:
+class ReadableFile(File):
+    async def read(self, fd: 'FileDescriptor[ReadableFile]', count: int=4096) -> bytes:
         return (await fd.syscall.read(fd.number, count))
-ReadableFile = ReadableFileObject
 
-class WritableFileObject(FileObject):
-    async def write(self, fd: 'FileDescriptor[WritableFileObject]', buf: bytes) -> int:
+class WritableFile(File):
+    async def write(self, fd: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
         return (await fd.syscall.write(fd.number, buf))
-WritableFile = WritableFileObject
 
 class FileDescriptor(t.Generic[T_file_co]):
     "A file descriptor."
@@ -234,10 +259,9 @@ class FileDescriptor(t.Generic[T_file_co]):
             raise Exception("two fds are not in the same FDNamespace")
         if self is target:
             return self
-        owned_target: FileDescriptor = target.release()
-        await self.syscall.dup2(self.number, owned_target.number)
-        owned_target.open = False
-        new_fd = type(self)(self.file, self.task, self.fd_namespace, owned_target.number)
+        await self.syscall.dup2(self.number, target.number)
+        target.open = False
+        new_fd = type(self)(self.file, self.task, self.fd_namespace, target.number)
         # dup2 unsets cloexec on the new copy, so:
         self.file.shared = True
         return new_fd
@@ -250,47 +274,47 @@ class FileDescriptor(t.Generic[T_file_co]):
         raise NotImplementedError
 
     # These are just helper methods which forward to the method on the underlying file object.
-    async def set_nonblock(self: 'FileDescriptor[FileObject]') -> None:
+    async def set_nonblock(self: 'FileDescriptor[File]') -> None:
         "Set the O_NONBLOCK flag on the underlying file object"
         await self.file.set_nonblock(self)
 
-    async def read(self: 'FileDescriptor[ReadableFileObject]', count: int=4096) -> bytes:
+    async def read(self: 'FileDescriptor[ReadableFile]', count: int=4096) -> bytes:
         return (await self.file.read(self, count))
 
-    async def write(self: 'FileDescriptor[WritableFileObject]', buf: bytes) -> int:
+    async def write(self: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
         return (await self.file.write(self, buf))
 
-    async def add(self: 'FileDescriptor[EpollFileObject]', fd: 'FileDescriptor', event: EpollEvent) -> None:
+    async def add(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor', event: EpollEvent) -> None:
         await self.file.add(self, fd, event)
 
-    async def modify(self: 'FileDescriptor[EpollFileObject]', fd: 'FileDescriptor', event: EpollEvent) -> None:
+    async def modify(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor', event: EpollEvent) -> None:
         await self.file.modify(self, fd, event)
 
-    async def delete(self: 'FileDescriptor[EpollFileObject]', fd: 'FileDescriptor') -> None:
+    async def delete(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor') -> None:
         await self.file.delete(self, fd)
 
-    async def wait(self: 'FileDescriptor[EpollFileObject]', maxevents: int=10, timeout: int=-1) -> t.List[EpollEvent]:
+    async def wait(self: 'FileDescriptor[EpollFile]', maxevents: int=10, timeout: int=-1) -> t.List[EpollEvent]:
         return (await self.file.wait(self, maxevents, timeout))
 
     async def wait_readable(self) -> None:
         return (await self.syscall.wait_readable(self.number))
 
-class EpollFileObject(FileObject):
-    async def add(self, epfd: FileDescriptor['EpollFileObject'], fd: FileDescriptor, event: EpollEvent) -> None:
+class EpollFile(File):
+    async def add(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: EpollEvent) -> None:
         await epfd.syscall.epoll_ctl_add(epfd.number, fd.number, event)
 
-    async def modify(self, epfd: FileDescriptor['EpollFileObject'], fd: FileDescriptor, event: EpollEvent) -> None:
+    async def modify(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: EpollEvent) -> None:
         await epfd.syscall.epoll_ctl_mod(epfd.number, fd.number, event)
 
-    async def delete(self, epfd: FileDescriptor['EpollFileObject'], fd: FileDescriptor) -> None:
+    async def delete(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor) -> None:
         await epfd.syscall.epoll_ctl_del(epfd.number, fd.number)
 
-    async def wait(self, epfd: FileDescriptor['EpollFileObject'], maxevents: int=10, timeout: int=-1) -> t.List[EpollEvent]:
+    async def wait(self, epfd: FileDescriptor['EpollFile'], maxevents: int=10, timeout: int=-1) -> t.List[EpollEvent]:
         return (await epfd.syscall.epoll_wait(epfd.number, maxevents, timeout))
 
-async def allocate_epoll(task: Task) -> FileDescriptor[EpollFileObject]:
+async def allocate_epoll(task: Task) -> FileDescriptor[EpollFile]:
     epfd = await task.syscall.epoll_create(EPOLL_CLOEXEC)
-    return FileDescriptor(EpollFileObject(), task, task.files, epfd)
+    return FileDescriptor(EpollFile(), task, task.files, epfd)
 
 class EpolledFileDescriptor(t.Generic[T_file_co]):
     epoller: 'Epoller'
@@ -322,14 +346,16 @@ class EpolledFileDescriptor(t.Generic[T_file_co]):
         await self.aclose()
 
 class Epoller:
-    def __init__(self, epfd: FileDescriptor[EpollFileObject]) -> None:
+    def __init__(self, epfd: FileDescriptor[EpollFile]) -> None:
         self.epfd = epfd
         self.fd_map: t.Dict[int, EpolledFileDescriptor] = {}
         self.running_wait: t.Optional[trio.Event] = None
 
-    async def add(self, fd: FileDescriptor[T_file], events: EpollEventMask=None) -> EpolledFileDescriptor:
+    async def add(self, fd: FileDescriptor[T_file], events: EpollEventMask=None
+    ) -> EpolledFileDescriptor:
         if events is None:
-            events = EpollEventMask()
+            events = EpollEventMask.make()
+        fd = fd.release()
         queue = trio.hazmat.UnboundedQueue()
         wrapper = EpolledFileDescriptor(self, fd, queue)
         self.fd_map[fd.number] = wrapper
@@ -393,7 +419,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             self.running_wait = None
             running_wait.set()
 
-    async def read(self: 'AsyncFileDescriptor[ReadableFileObject]', count: int=4096) -> bytes:
+    async def read(self: 'AsyncFileDescriptor[ReadableFile]', count: int=4096) -> bytes:
         while True:
             try:
                 return (await self.epolled.underlying.read())
@@ -405,7 +431,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 else:
                     raise
 
-    async def write(self: 'AsyncFileDescriptor[WritableFileObject]', buf: bytes) -> None:
+    async def write(self: 'AsyncFileDescriptor[WritableFile]', buf: bytes) -> None:
         while len(buf) > 0:
             try:
                 written = await self.epolled.underlying.write(buf)
@@ -434,14 +460,14 @@ def create_current_task() -> Task:
 # TODO we should have a ProcessLaunchBootstrap which has these
 # standard streams along with args/env and one task
 class StandardStreams:
-    stdin: FileDescriptor[ReadableFileObject]
-    stdout: FileDescriptor[WritableFileObject]
-    stderr: FileDescriptor[WritableFileObject]
+    stdin: FileDescriptor[ReadableFile]
+    stdout: FileDescriptor[WritableFile]
+    stderr: FileDescriptor[WritableFile]
 
     def __init__(self,
-                 stdin: FileDescriptor[ReadableFileObject],
-                 stdout: FileDescriptor[WritableFileObject],
-                 stderr: FileDescriptor[WritableFileObject]) -> None:
+                 stdin: FileDescriptor[ReadableFile],
+                 stdout: FileDescriptor[WritableFile],
+                 stderr: FileDescriptor[WritableFile]) -> None:
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
@@ -451,6 +477,69 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
     stdout = FileDescriptor(WritableFile(shared=True), task, task.files, 1)
     stderr = FileDescriptor(WritableFile(shared=True), task, task.files, 2)
     return StandardStreams(stdin, stdout, stderr)
+
+class UnixProcessArgs:
+    """The arguments traditionally given to a process on startup in Unix.
+
+    """
+    stdstreams: StandardStreams
+    task: Task
+    argv: t.List[bytes]
+    environ: t.Dict[bytes, bytes]
+
+class Path:
+    task: Task
+    path: bytes
+    mount: MountNamespace
+    def __init__(self, task: Task, path: t.Union[str, bytes], mount: MountNamespace=None) -> None:
+        self.task = task
+        self.path = sfork.to_bytes(path)
+        if mount is None:
+            self.mount = self.task.mount
+        else:
+            self.mount = mount
+
+    async def stat(self) -> None:
+        pass
+
+    def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
+        # TODO we should canonicalize it I guess???
+        # remove elements when we ..?
+        path_element: bytes = sfork.to_bytes(path_element)
+        return Path(self.task, self.path + b"/" + path_element)
+
+class PathCache:
+    def __init__(self, paths: t.List[Path]):
+        # all these Paths should be in the same mount namespace otherwise it'll get crazy
+        # actually I guess that's fine
+        # and I guess we'll open the path in advance and fexecve it so whatever
+        # though we need to think carefully about how to handle it, should we mark it CLOEXEC?
+        # i guess if we're opening it anyway there's not too much overhead in just reading two bytes?
+        # but also there's no way to know for sure whether it's a script program
+        self.paths = paths
+        self.cache: t.Dict[bytes, Path] = {}
+
+    async def uncached_lookup(self, name: bytes) -> Path:
+        for path in self.paths:
+            # we have to handle relative paths, maybe?
+            # no, if it's relative we don't get it at all
+            # i.e. if it contains a / at all, we won't get it
+            filename = path/name
+            # stat this filename and see if it exists and is an executable file
+            # hmm I don't want to do this by hand, let's write the path class we need.
+            # hmm we want to make sure the stat is happening in the expected mount namespace
+            # I guess Path should have a mount namespace baked into it
+            pass
+
+    async def lookup(self, name: t.Union[str, bytes]) -> Path:
+        # name should be a single path element without any / present
+        name: bytes = sfork.to_bytes(name)
+        if name in self.cache:
+            return self.cache[name]
+        else:
+            result = await self.uncached_lookup(name)
+            self.cache[name] = result
+            return result
 
 class Pipe:
     def __init__(self, rfd: FileDescriptor[ReadableFile],
@@ -515,9 +604,10 @@ class SubprocessContext:
              *, envp: t.Optional[t.Dict[str, str]]=None) -> None:
         if envp is None:
             envp = dict(**os.environ)
-        self.pid = await self.syscall.execveat(sfork.AT_FDCWD,
-                                               sfork.to_bytes(os.fspath(pathname)), [sfork.to_bytes(arg) for arg in argv],
-                                               sfork.serialize_environ(**envp), flags=0)
+        self.pid = await self.syscall.execveat(
+            sfork.AT_FDCWD, sfork.to_bytes(os.fspath(pathname)),
+            [sfork.to_bytes(arg) for arg in argv],
+            sfork.serialize_environ(**envp), flags=0)
         self.task.files = self.parent_files
 
 @asynccontextmanager
@@ -539,18 +629,118 @@ async def subprocess(task: Task) -> t.Any:
             await context.exit(0)
 
 class Process:
-    def __init__(self, killfd: FileDescriptor[WritableFile],
-                 waitfd: FileDescriptor[ReadableFile]) -> None:
+    """A single process addressed with a killfd and waitfd"""
+    def __init__(self, killfd: AsyncFileDescriptor[WritableFile],
+                 waitfd: AsyncFileDescriptor[ReadableFile],
+                 pid: int) -> None:
         self.killfd = killfd
         self.waitfd = waitfd
+        self.pid = pid
+        self.child_event_buffer = supervise.ChildEventBuffer()
+
+    async def close(self) -> None:
+        await self.killfd.aclose()
+        await self.waitfd.aclose()
+
+    async def events(self) -> t.Any:
+        while True:
+            ret = await self.waitfd.read()
+            if len(ret) == 0:
+                # EOF
+                return
+            self.child_event_buffer.feed(ret)
+            while True:
+                event = self.child_event_buffer.consume()
+                if event:
+                    yield event
+                else:
+                    break
 
     async def check(self) -> None:
-        pass
+        async for event in self.events():
+            if event.pid != self.pid:
+                continue
+            if event.died():
+                return event.check()
+        raise supervise.UncleanExit()
 
+    async def send_signal(self, signum: signal.Signals):
+        """Send this signal to the main child process."""
+        if not isinstance(signum, int):
+            raise TypeError("signum must be an integer: {}".format(signum))
+        msg = supervise.ffi.new('struct supervise_send_signal*', {'pid':self.pid, 'signal':signum})
+        buf = bytes(ffi.buffer(msg))
+        await self.killfd.write(buf)
+
+    async def terminate(self):
+        """Terminate the main child process with SIGTERM.
+
+        Note that this does not kill all descendent processes.
+        For that, call close().
+        """
+        await self.send_signal(signal.SIGTERM)
+
+    async def kill(self):
+        """Kill the main child process with SIGKILL.
+
+        Note that this does not kill all descendent processes.
+        For that, call close().
+        """
+        await self.send_signal(signal.SIGKILL)
+
+class RawProcess:
+    def __init__(self, killfd: FileDescriptor[WritableFile],
+                 waitfd: FileDescriptor[ReadableFile],
+                 pid: int) -> None:
+        self.killfd = killfd
+        self.waitfd = waitfd
+        self.pid = pid
+
+    async def make_async(self, epoller: Epoller) -> Process:
+        async_killfd = await AsyncFileDescriptor.make(epoller, self.killfd)
+        async_waitfd = await AsyncFileDescriptor.make(epoller, self.waitfd)
+        return Process(async_killfd, async_waitfd, self.pid)
+
+class SupervisedSubprocessContext:
+    def __init__(self, super_subproc: SubprocessContext, user_subproc: SubprocessContext) -> None:
+        self.super_subproc = super_subproc
+        self.user_subproc = user_subproc
+        self.raw_proc: t.Optional[RawProcess] = None
+
+    def translate(self, fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
+        return self.super_subproc.translate(self.user_subproc.translate(fd))
+
+    async def exit(self, status: int) -> None:
+        await self.user_subproc.exit(status)
+
+    async def exec(self, pathname: os.PathLike, argv: t.List[t.Union[str, bytes]],
+                   *, envp: t.Optional[t.Dict[str, str]]=None) -> None:
+        await self.user_subproc.exec(pathname, argv, envp=envp)
 
 @asynccontextmanager
-async def clonefd(task: Task) -> t.Any:
-    supervise = 
-    async with subprocess(task) as supervise_proc:
-        async with subprocess(task) as user_proc:
-            yield user_proc
+async def clonefd(task: Task, stdstreams: StandardStreams) -> t.Any:
+    async with (await allocate_pipe(task)) as pipe_in:
+        async with (await allocate_pipe(task)) as pipe_out:
+            async with subprocess(task) as super_proc:
+                os.setsid()
+                prctl.set_child_subreaper(True)
+                try:
+                    async with subprocess(task) as user_proc:
+                        supervised_subproc = SupervisedSubprocessContext(super_proc, user_proc)
+                        yield supervised_subproc
+                finally:
+                    # we launch supervise regardless of whether an exception is thrown,
+                    # to clean up child processes.
+                    await super_proc.translate(pipe_in.rfd).dup2(
+                        super_proc.translate(stdstreams.stdin))
+                    await super_proc.translate(pipe_out.wfd).dup2(
+                        super_proc.translate(stdstreams.stdout))
+                    await super_proc.exec(supervise.supervise_utility_location, [], envp={})
+            supervised_subproc.raw_proc = RawProcess(
+                pipe_in.wfd.release(), pipe_out.rfd.release(), user_proc.pid)
+
+
+
+
+
+

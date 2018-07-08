@@ -5,6 +5,7 @@ buildPythonPackage {
   name = "rsyscall";
   src = ./.;
   checkInputs = [ mypy ];
-  propagatedBuildInputs = [ (import ../c) supervise_api trio cffi pkgconfig sfork ];
+  propagatedBuildInputs = [ (import ../c) (import ../../supervise/python)
+      trio cffi pkgconfig sfork python-prctl ];
 }
 

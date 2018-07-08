@@ -3,7 +3,7 @@ from rsyscall.io import ProcessContext, SubprocessContext, create_current_task, 
 from rsyscall.io import Epoller, allocate_epoll, AsyncFileDescriptor
 from rsyscall.epoll import EpollEvent, EpollEventMask
 import unittest
-import supervise_api
+import supervise_api as supervise
 import trio
 import trio.hazmat
 import rsyscall.io
@@ -15,10 +15,10 @@ logging.basicConfig(level=logging.DEBUG)
 class TestIO(unittest.TestCase):
     def setUp(self):
         self.task = create_current_task()
-        streams = wrap_stdin_out_err(self.task)
-        self.stdin = streams.stdin
-        self.stdout = streams.stdout
-        self.stderr = streams.stderr
+        self.stdstreams = wrap_stdin_out_err(self.task)
+        self.stdin = self.stdstreams.stdin
+        self.stdout = self.stdstreams.stdout
+        self.stderr = self.stdstreams.stderr
 
     def test_pipe(self):
         async def test() -> None:
@@ -62,7 +62,7 @@ class TestIO(unittest.TestCase):
                     self.assertEqual(in_data, out_data)
         trio.run(test)
 
-    def test_cat(self) -> None:
+    def test_cat_async(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
                 epoller = Epoller(epoll)
@@ -135,6 +135,19 @@ class TestIO(unittest.TestCase):
                 async with trio.open_nursery() as nursery:
                     for i in range(5):
                         nursery.start_soon(self.do_async_things, epoller)
+        trio.run(test)
+
+    def test_clonefd(self) -> None:
+        async def test() -> None:
+            async with rsyscall.io.clonefd(self.task, self.stdstreams) as subproc:
+                await subproc.exec("/bin/sh", ['-c', 'sleep inf'])
+            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                epoller = Epoller(epoll)
+                process = await subproc.raw_proc.make_async(epoller)
+                await process.terminate()
+                with self.assertRaises(supervise.UncleanExit):
+                    await process.check()
+                await process.close()
         trio.run(test)
 
 if __name__ == '__main__':

@@ -993,6 +993,41 @@ that's a bit silly though, let's just get it externally
 ** next up: supervise
    I could maybe do clever things to support multiple children in one supervise.
    But let's do the simple one child case first to see how it works first
+** only on one thread thing
+   I find myself frequently wanting to do a thing in only one thread calling into an object.
+
+   Once the thing is done, all the callers can return.
+   But, just, only one of them needs to actually do it.
+
+   I find myself frequently wanting to do:
+   "here is an async method. multiple tasks can call this async method at once. "
+
+I find myself frequently wanting to perform some function in only one task calling a method,
+and have the other tasks just wait until that function is done.
+
+   It's kind of like picking a task to schedule some processing on,
+   and then if other tasks call the method too, they just have to wait until the processing is done.
+** resource issues
+   many resource leakage issues are resolved by the fact that resources are local to a task
+   and the task can be destructed all at once.
+** fd leak on script interpreters with execveat(fd)
+so thereotically we should just never cloexec it
+always let it pass through
+in which case,
+the interpreter will get an argument of the form /dev/fd/N
+well, the interpreter should really know to just use that as an fd!
+and I could just send patches to bash and python to fix them...
+if they get an argument like /dev/fd/N, they should just use that fd instead of reopening
+especially because the permissions might be tricky on, say, memfds or whatever
+though, both of them can support running scripts from stdin.
+i guess the real issue is that the filename is provided as a path not stdin?
+well, if it was provided on stdin then stdin would be used up, argh.
+yeah so providing as an fd argument is best
+I'll code around that for now,
+and use it to test...
+well no
+I'll write a minimal C program that execs into something via open and execveat
+also this works for sending the script once??? over a pipe??? not over stdin??
 * criu
   I feel like I have a bunch in common with criu
 
