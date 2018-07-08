@@ -150,6 +150,20 @@ class TestIO(unittest.TestCase):
                 await process.close()
         trio.run(test)
 
+    def test_path_cache(self) -> None:
+        async def test() -> None:
+            # we need to build a hierarchy of directories
+            # and create files within them that are executable
+            # so we need mkdirat, openat
+            # and an auto-closing temp directory thing
+            # some kind of recursive removal?
+            # probably cheaper to exec rm -r so we'll do that instead of implementing walking
+            # and I guess mkdirat we'll do with Path objects?
+
+            # so we'll add a write_text method?
+            pass
+        trio.run(test)
+
 if __name__ == '__main__':
     import unittest
     unittest.main()

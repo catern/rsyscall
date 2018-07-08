@@ -17,16 +17,20 @@ class ModeFileType:
         self.check_func = check_func
 
     def __get__(self, instance, owner) -> bool:
-        return bool(instance.raw & self.bitval)
+        return self.check_func(instance.raw)
 
 class Mode:
     raw: int
+    # this doesn't need to be mutable
+    # but maybe let's make it mutable anyway
     # file type and mode
     pass
 
 class FileTypeMode:
-    # have a separate mode property to extract just the mode
+    # have a separate mode GETTER to extract just the mode
     raw: int
+    def get_mode(self) -> Mode:
+        pass
 
 nanoseconds_in_second = 1000*1000*1000
 
@@ -34,41 +38,23 @@ class StatxTimestamp:
     sec: int
     nsec: int
     def nanoseconds_since_epoch(self) -> int:
-        return (self.sec*nanoseconds_since_epoch) + self.nsec
+        return (self.sec*nanoseconds_in_second) + self.nsec
 
 # maybe the syscall should just return bytes?
 # then I parse it in userspace?
 # getting fully realized class back?
-class StatResult:
+class StatxResult:
     blksize: int
     attributes: int
     nlink: int
     uid: int
     gid: int
-    mode: int
     ino: int
     size: int
     blocks: int
-    attributes_mask: int
     # so each attribute has three possibilities: true, false, unsupported
-
-
-               /* The following fields are file timestamps */
-               struct statx_timestamp stx_atime;  /* Last access */
-               struct statx_timestamp stx_btime;  /* Creation */
-               struct statx_timestamp stx_ctime;  /* Last status change */
-               struct statx_timestamp stx_mtime;  /* Last modification */
-
-               /* If this file represents a device, then the next two
-                  fields contain the ID of the device */
-               __u32 stx_rdev_major;  /* Major ID */
-               __u32 stx_rdev_minor;  /* Minor ID */
-
-               /* The next two fields contain the ID of the device
-                  containing the filesystem where the file resides */
-               __u32 stx_dev_major;   /* Major ID */
-               __u32 stx_dev_minor;   /* Minor ID */
-    mode: Mode
+    attributes_mask: int
+    mode: FileTypeMode
     pass
 
 def throw_on_error(ret: int) -> None:
@@ -76,8 +62,12 @@ def throw_on_error(ret: int) -> None:
         err = ffi.errno
         raise OSError(err, os.strerror(err))
 
-def statx(dirfd: int, pathname: bytes, flags: int, mask: int) -> StatxResult:
+def statx(dirfd: int, pathname: bytes, flags: int, mask: int) -> bytes:
     pathname = ffi.new('char[]', pathname)
     statxbuf = ffi.new('struct statx*')
-    throw_on_error(lib.fstatat(dirfd, pathname, statbuf, flags, mask, statxbuf))
-    pass
+    throw_on_error(lib.statx(dirfd, pathname, flags, mask, statxbuf))
+    return bytes(ffi.buffer(statxbuf))
+
+def faccessat(dirfd: int, pathname: bytes, mode: int) -> None:
+    pathname = ffi.new('char[]', pathname)
+    throw_on_error(lib.fstatat(dirfd, pathname, mode, 0))

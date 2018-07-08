@@ -51,7 +51,11 @@ class SyscallInterface:
     # for prctl we will have a separate method for each usage mode;
     # its interface is too diverse to do anything else and still abstract over the details of memory
     async def prctl_set_child_subreaper(self, flag: bool) -> None: ...
-    async def statx(self, dirfd: int, pathname: bytes, flags: int, mask: int) -> StatxResult: ...
+
+    # statx returns a fixed-sized buffer which we parse outside the SyscallInterface
+    async def statx(self, dirfd: int, pathname: bytes, flags: int, mask: int) -> bytes: ...
+
+    async def faccessat(self, dirfd: int, pathname: bytes, mode: int) -> None: ...
 
 class LocalSyscall(SyscallInterface):
     def __init__(self, wait_readable) -> None:
@@ -135,8 +139,8 @@ class LocalSyscall(SyscallInterface):
     async def prctl_set_child_subreaper(self, flag: bool) -> None:
         prctl.set_child_subreaper(flag)
 
-    async def statx(self, dirfd: int, pathname: bytes, flags: int, mask: int) -> StatxResult:
-        return rsyscall.stat.statx(dirfd, pathname, flags, mask)
+    async def faccessat(self, dirfd: int, pathname: bytes, mode: int) -> None:
+        rsyscall.stat.faccessat(dirfd, pathname, mode)
 
 class FDNamespace:
     pass
@@ -151,7 +155,7 @@ class Task:
     def __init__(self, syscall: SyscallInterface,
                  files: FDNamespace,
                  memory: MemoryNamespace,
-                 fs: MountNamespace,
+                 mount: MountNamespace,
     ) -> None:
         self.syscall = syscall
         self.memory = memory
@@ -208,6 +212,9 @@ class ReadableFile(File):
 class WritableFile(File):
     async def write(self, fd: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
         return (await fd.syscall.write(fd.number, buf))
+
+class ReadableWritableFile(ReadableFile, WritableFile):
+    pass
 
 class FileDescriptor(t.Generic[T_file_co]):
     "A file descriptor."
@@ -455,7 +462,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
 
 def create_current_task() -> Task:
     return Task(LocalSyscall(trio.hazmat.wait_readable),
-                FDNamespace(), MemoryNamespace())
+                FDNamespace(), MemoryNamespace(), MountNamespace())
 
 # TODO we should have a ProcessLaunchBootstrap which has these
 # standard streams along with args/env and one task
@@ -491,6 +498,7 @@ class Path:
     task: Task
     path: bytes
     mount: MountNamespace
+    maybe_dirfd: t.Optional[FileDescriptor]
     def __init__(self, task: Task, path: t.Union[str, bytes], mount: MountNamespace=None) -> None:
         self.task = task
         self.path = sfork.to_bytes(path)
@@ -498,18 +506,75 @@ class Path:
             self.mount = self.task.mount
         else:
             self.mount = mount
+        self.maybe_dirfd = None
 
-    async def stat(self) -> None:
-        pass
+    @property
+    def dirfd(self) -> int:
+        if self.maybe_dirfd is not None:
+            return self.maybe_dirfd.number
+        else:
+            return sfork.AT_FDCWD
+
+    @property
+    def syscall(self) -> SyscallInterface:
+        if self.task.mount != self.mount:
+            raise Exception("Can't call syscalls on FD when my Task has moved out of my FDNamespaces")
+        return self.task.syscall
+
+    async def mkdir(self, mode=0o777) -> Path:
+        await self.syscall.mkdir(self.dirfd, self.path, mode)
+        return self
+
+    async def open(self, flags: int, mode=0o644) -> FileDescriptor:
+        if flags & os.O_RDONLY:
+            file = ReadableFile()
+        elif flags & os.O_WRONLY:
+            file = WritableFile()
+        else:
+            file = ReadableWritableFile()
+        files = self.task.files
+        fd = await self.syscall.openat(self.dirfd, self.path, flags, mode)
+        return FileDescriptor(file, self.task, files, fd)
+
+    async def write_text(self, text: t.Union[str, bytes]) -> Path:
+        async with (await self.open(os.O_WRONLY|os.O_CREAT|os.O_TRUNC)) as fd:
+            # hmm wat if it blocks...
+            # what if we need to retry...
+            # this is really a business for an AsyncFileDescriptor
+            # but how will we get the epoller we need?
+            # perhaps we should just force the user to do this
+            await fd.write(text)
+
+    async def access(self, *, read=False, write=False, execute=False) -> bool:
+        mode = 0
+        if read:
+            mode |= os.R_OK
+        if write:
+            mode |= os.W_OK
+        if execute:
+            mode |= os.X_OK
+        # default to os.F_OK
+        if mode == 0:
+            mode = os.F_OK
+        try:
+            await self.syscall.faccessat(self.dirfd, self.path, mode)
+            return True
+        except OSError:
+            return False
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
         # TODO we should canonicalize it I guess???
         # remove elements when we ..?
-        path_element: bytes = sfork.to_bytes(path_element)
-        return Path(self.task, self.path + b"/" + path_element)
+        element: bytes = sfork.to_bytes(path_element)
+        return Path(self.task, self.path + b"/" + element)
 
 class PathCache:
-    def __init__(self, paths: t.List[Path]):
+    """Cache path lookups
+
+    It would be nice if we could just execveat everything.
+
+    """
+    def __init__(self, paths: t.List[Path]) -> None:
         # all these Paths should be in the same mount namespace otherwise it'll get crazy
         # actually I guess that's fine
         # and I guess we'll open the path in advance and fexecve it so whatever
@@ -519,7 +584,7 @@ class PathCache:
         self.paths = paths
         self.cache: t.Dict[bytes, Path] = {}
 
-    async def uncached_lookup(self, name: bytes) -> Path:
+    async def uncached_lookup(self, name: bytes) -> t.Optional[Path]:
         for path in self.paths:
             # we have to handle relative paths, maybe?
             # no, if it's relative we don't get it at all
@@ -529,16 +594,20 @@ class PathCache:
             # hmm I don't want to do this by hand, let's write the path class we need.
             # hmm we want to make sure the stat is happening in the expected mount namespace
             # I guess Path should have a mount namespace baked into it
-            pass
+            if (await filename.access(read=True, execute=True)):
+                return filename
+        return None
 
-    async def lookup(self, name: t.Union[str, bytes]) -> Path:
+    async def lookup(self, name: t.Union[str, bytes]) -> t.Optional[Path]:
         # name should be a single path element without any / present
-        name: bytes = sfork.to_bytes(name)
-        if name in self.cache:
-            return self.cache[name]
+        basename: bytes = sfork.to_bytes(name)
+        if basename in self.cache:
+            return self.cache[basename]
         else:
-            result = await self.uncached_lookup(name)
-            self.cache[name] = result
+            result = await self.uncached_lookup(basename)
+            # don't cache negative lookups
+            if result is not None:
+                self.cache[basename] = result
             return result
 
 class Pipe:
