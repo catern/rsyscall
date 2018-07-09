@@ -161,6 +161,7 @@ class TestIO(unittest.TestCase):
             # and I guess mkdirat we'll do with Path objects?
 
             # so we'll add a write_text method?
+            # and we need a tempdir maker thingy
             pass
         trio.run(test)
 
