@@ -3,6 +3,11 @@ import os
 import typing as t
 import enum
 
+AT_REMOVEDIR = lib.AT_REMOVEDIR
+AT_EMPTY_PATH = lib.AT_EMPTY_PATH
+AT_SYMLINK_NOFOLLOW = lib.AT_SYMLINK_NOFOLLOW
+AT_SYMLINK_FOLLOW = lib.AT_SYMLINK_FOLLOW
+
 # maybe just make something compatible with os.stat_result but not the same as it?
 # or just don't? make it object oriented instead?
 # maybe have a mode type? for use with chmod too?
@@ -64,15 +69,16 @@ def throw_on_error(ret: int) -> int:
         raise OSError(err, os.strerror(err))
     return ret
 
+def null_terminated(data: bytes):
+    return ffi.new('char[]', data)
+
 def statx(dirfd: int, pathname: bytes, flags: int, mask: int) -> bytes:
-    pathname = ffi.new('char[]', pathname)
     statxbuf = ffi.new('struct statx*')
-    throw_on_error(lib.statx(dirfd, pathname, flags, mask, statxbuf))
+    throw_on_error(lib.statx(dirfd, null_terminated(pathname), flags, mask, statxbuf))
     return bytes(ffi.buffer(statxbuf))
 
 def faccessat(dirfd: int, pathname: bytes, mode: int) -> None:
-    pathname = ffi.new('char[]', pathname)
-    throw_on_error(lib.faccessat(dirfd, pathname, mode, 0))
+    throw_on_error(lib.faccessat(dirfd, null_terminated(pathname), mode, 0))
 
 class DType(enum.Enum):
     BLK = lib.DT_BLK # This is a block device.
@@ -88,14 +94,48 @@ class Dirent:
     inode: int
     offset: int # the offset to seek to to see the next dirent
     type: DType
-    name: str
+    name: bytes
+    def __init__(self, inode: int,
+                 offset: int,
+                 type: DType,
+                 name: bytes) -> None:
+        self.inode = inode
+        self.offset = offset
+        self.type = type
+        self.name = name
+
+    def __repr__(self) -> str:
+        return f"Dirent({self.inode}, {self.offset}, {self.type}, {self.name})"
+
+    def __str__(self) -> str:
+        return f"Dirent({self.type}, {self.name})"
 
 def getdents64(fd: int, count: int) -> t.List[Dirent]:
     buf = ffi.new('char[]', count)
-    ret = throw_on_error(lib.getdents64(fd, buf, count))
+    ret = throw_on_error(lib.getdents64(fd, ffi.cast('struct linux_dirent64*', buf), count))
+    cur = ffi.cast('char*', buf)
+    end = ffi.cast('char*', buf+ret)
     entries = []
-    cur = ffi.cast('struct linux_dirent64*', buf)
-    while True:
-        entries.append(cur)
-        ffi.cast('struct linux_dirent64*', buf+d_ino
-    pass
+    while cur < end:
+        record = ffi.cast('struct linux_dirent64*', cur)
+        cur += record.d_reclen
+        # the name is padded with null bytes to make the dirent
+        # aligned, so we have to use strlen to find the end
+        name_size = lib.strlen(record.d_name)
+        name = bytes(ffi.buffer(record.d_name, name_size))
+        entries.append(Dirent(inode=record.d_ino, offset=record.d_off, type=DType(record.d_type), name=name))
+    return entries
+
+def unlinkat(dirfd: int, pathname: bytes, flags: int) -> None:
+    throw_on_error(lib.unlinkat(dirfd, null_terminated(pathname), flags))
+
+def linkat(olddirfd: int, oldpath: bytes, newdirfd: int, newpath: bytes, flags: int) -> None:
+    throw_on_error(lib.linkat(olddirfd, null_terminated(oldpath), newdirfd, null_terminated(newpath), flags))
+
+def symlinkat(target: bytes, newdirfd: int, newpath: bytes) -> None:
+    throw_on_error(lib.symlinkat(null_terminated(target), newdirfd, null_terminated(newpath)))
+
+def readlinkat(dirfd: int, pathname: bytes, bufsiz: int) -> bytes:
+    buf = ffi.new('char[]', bufsiz)
+    ret = throw_on_error(lib.readlinkat(dirfd, null_terminated(pathname), buf, bufsiz))
+    return bytes(ffi.buffer(buf, ret))

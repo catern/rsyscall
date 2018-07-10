@@ -2,6 +2,7 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.epoll import EpollEvent, EpollEventMask, EPOLL_CLOEXEC
 import rsyscall.epoll
 from rsyscall.stat import StatxResult
+from rsyscall.stat import Dirent
 import rsyscall.stat
 import supervise_api as supervise
 import random
@@ -64,9 +65,14 @@ class SyscallInterface:
     async def chdir(self, path: bytes) -> None: ...
     async def fchdir(self, fd: int) -> None: ...
 
-    async def mkdirat(self, dirfd: int, pathname: bytes, mode: int) -> None: ...
     async def openat(self, dirfd: int, pathname: bytes, flags: int, mode: int) -> int: ...
-    async def getdents64(self, fd: int, count: int) -> t.List[Dirent]: ...
+    async def mkdirat(self, dirfd: int, pathname: bytes, mode: int) -> None: ...
+    async def getdents(self, fd: int, count: int) -> t.List[Dirent]: ...
+    async def lseek(self, fd: int, offset: int, whence: int) -> int: ...
+    async def unlinkat(self, dirfd: int, pathname: bytes, flags: int) -> None: ...
+    async def linkat(self, olddirfd: int, oldpath: bytes, newdirfd: int, newpath: bytes, flags: int) -> None: ...
+    async def symlinkat(self, target: bytes, newdirfd: int, newpath: bytes) -> None: ...
+    async def readlinkat(self, dirfd: int, pathname: bytes, bufsiz: int) -> bytes: ...
 
 class LocalSyscall(SyscallInterface):
     def __init__(self, wait_readable) -> None:
@@ -90,7 +96,7 @@ class LocalSyscall(SyscallInterface):
         return os.read(fd, count)
 
     async def write(self, fd: int, buf: bytes) -> int:
-        logger.debug("write(%d, len(buf) == %d)", fd, len(buf))
+        logger.debug("write(%d, %s)", fd, buf)
         return os.write(fd, buf)
 
     async def dup2(self, oldfd: int, newfd: int) -> int:
@@ -171,6 +177,30 @@ class LocalSyscall(SyscallInterface):
         logger.debug("openat(%s, %s, %s, %s)", dirfd, pathname, flags, mode)
         return os.open(pathname, flags, mode=mode, dir_fd=dirfd)
 
+    async def getdents(self, fd: int, count: int) -> t.List[Dirent]:
+        logger.debug("getdents(%s, %s)", fd, count)
+        return rsyscall.stat.getdents64(fd, count)
+
+    async def lseek(self, fd: int, offset: int, whence: int) -> int:
+        logger.debug("lseek(%s, %s, %s)", fd, offset, whence)
+        return os.lseek(fd, offset, whence)
+
+    async def unlinkat(self, dirfd: int, pathname: bytes, flags: int) -> None:
+        logger.debug("unlinkat(%s, %s, %s)", dirfd, pathname, flags)
+        rsyscall.stat.unlinkat(dirfd, pathname, flags)
+
+    async def linkat(self, olddirfd: int, oldpath: bytes, newdirfd: int, newpath: bytes, flags: int) -> None:
+        logger.debug("linkat(%s, %s, %s, %s, %s)", olddirfd, oldpath, newdirfd, newpath, flags)
+        rsyscall.stat.linkat(olddirfd, oldpath, newdirfd, newpath, flags)
+
+    async def symlinkat(self, target: bytes, newdirfd: int, newpath: bytes) -> None:
+        logger.debug("symlinkat(%s, %s, %s)", target, newdirfd, newpath)
+        rsyscall.stat.symlinkat(target, newdirfd, newpath)
+
+    async def readlinkat(self, dirfd: int, pathname: bytes, bufsiz: int) -> bytes:
+        logger.debug("readlinkat(%s, %s, %s)", dirfd, pathname, bufsiz)
+        return rsyscall.stat.readlinkat(dirfd, pathname, bufsiz)
+
 class FDNamespace:
     pass
 
@@ -242,12 +272,19 @@ class WritableFile(File):
     async def write(self, fd: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
         return (await fd.syscall.write(fd.number, buf))
 
+class SeekableFile(File):
+    async def lseek(self, fd: 'FileDescriptor[SeekableFile]', offset: int, whence: int) -> int:
+        return (await fd.syscall.lseek(fd.number, offset, whence))
+
 class ReadableWritableFile(ReadableFile, WritableFile):
     pass
 
-class DirectoryFile(File):
-    # TODO we should support getdents here
-    async def getdents(self, fd: 'FileDescriptor[DirectoryFile]', count: int) -> t.List[LinuxDirent]:
+class DirectoryFile(SeekableFile):
+    # this is a fallback if we need to serialize this dirfd out
+    raw_path: bytes
+    def __init__(self, raw_path: bytes) -> None:
+        self.raw_path = raw_path
+    async def getdents(self, fd: 'FileDescriptor[DirectoryFile]', count: int) -> t.List[Dirent]:
         return (await fd.syscall.getdents(fd.number, count))
 
 class FileDescriptor(t.Generic[T_file_co]):
@@ -336,6 +373,12 @@ class FileDescriptor(t.Generic[T_file_co]):
 
     async def wait(self: 'FileDescriptor[EpollFile]', maxevents: int=10, timeout: int=-1) -> t.List[EpollEvent]:
         return (await self.file.wait(self, maxevents, timeout))
+
+    async def getdents(self: 'FileDescriptor[DirectoryFile]', count: int=4096) -> t.List[Dirent]:
+        return (await self.file.getdents(self, count))
+
+    async def lseek(self: 'FileDescriptor[SeekableFile]', offset: int, whence: int) -> int:
+        return (await self.file.lseek(self, offset, whence))
 
     async def wait_readable(self) -> None:
         return (await self.syscall.wait_readable(self.number))
@@ -511,11 +554,12 @@ class PathBase:
     def dirfd_num(self) -> int: ...
     @abc.abstractproperty
     def path_prefix(self) -> bytes: ...
-    task: Task
+    @abc.abstractproperty
+    def task(self) -> Task: ...
 
 class DirfdPathBase(PathBase):
-    dirfd: FileDescriptor
-    def __init__(self, dirfd: FileDescriptor) -> None:
+    dirfd: FileDescriptor[DirectoryFile]
+    def __init__(self, dirfd: FileDescriptor[DirectoryFile]) -> None:
         self.dirfd = dirfd
     @property
     def dirfd_num(self) -> int:
@@ -533,28 +577,33 @@ class DirfdPathBase(PathBase):
         return f"Dirfd({self.dirfd.number})"
 
 class RootPathBase(PathBase):
-    task: Task
     def __init__(self, task: Task) -> None:
-        self.task = task
+        self._task = task
     @property
     def dirfd_num(self) -> int:
         return sfork.AT_FDCWD
     @property
     def path_prefix(self) -> bytes:
         return b"/"
+    @property
+    def task(self) -> Task:
+        return self._task
     def __str__(self) -> str:
         return "[ROOT]"
 
 class CurrentWorkingDirectoryPathBase(PathBase):
     task: Task
     def __init__(self, task: Task) -> None:
-        self.task = task
+        self._task = task
     @property
     def dirfd_num(self) -> int:
         return sfork.AT_FDCWD
     @property
     def path_prefix(self) -> bytes:
         return b""
+    @property
+    def task(self) -> Task:
+        return self._task
     def __str__(self) -> str:
         return "[CWD]"
 
@@ -565,6 +614,10 @@ class Path:
     def __init__(self, base: PathBase, path: t.Union[str, bytes]) -> None:
         self.base = base
         self.path = sfork.to_bytes(path)
+        if len(self.path) == 0:
+            # readlink, and possibly other syscalls, behave differently when given an empty path and a dirfd
+            # in general an empty path is probably not good
+            raise Exception("empty paths not allowed")
 
     @staticmethod
     def from_bytes(task: Task, path: bytes) -> 'Path':
@@ -576,6 +629,13 @@ class Path:
     @property
     def _full_path(self) -> bytes:
         return self.base.path_prefix + self.path
+
+    @property
+    def _raw_path(self) -> bytes:
+        if isinstance(self.base, DirfdPathBase):
+            return self.base.dirfd.file.raw_path + b"/" + self.path
+        else:
+            return self._full_path
 
     @property
     def syscall(self) -> SyscallInterface:
@@ -609,14 +669,15 @@ class Path:
         Note that this can block forever if we're opening a FIFO
 
         """
-        if flags & os.O_WRONLY:
+        file: File
+        if flags & os.O_PATH:
+            file = File()
+        elif flags & os.O_WRONLY:
             file = WritableFile()
         elif flags & os.O_RDWR:
             file = ReadableWritableFile()
         elif flags & os.O_DIRECTORY:
-            file = DirectoryFile()
-        elif flags & os.O_PATH:
-            file = File()
+            file = DirectoryFile(self._raw_path)
         else:
             # os.O_RDONLY is 0, so if we don't have any of the rest, then...
             file = ReadableFile()
@@ -648,6 +709,27 @@ class Path:
             return True
         except OSError:
             return False
+
+    async def unlink(self, flags: int=0) -> None:
+        await self.syscall.unlinkat(self.base.dirfd_num, self._full_path, flags)
+
+    async def rmdir(self) -> None:
+        await self.syscall.unlinkat(self.base.dirfd_num, self._full_path, rsyscall.stat.AT_REMOVEDIR)
+
+    async def link_to(self, oldpath: 'Path', flags: int=0) -> 'Path':
+        "Create a hardlink at Path 'self' to the file at Path 'oldpath'"
+        await self.syscall.linkat(oldpath.base.dirfd_num, oldpath._full_path,
+                                  self.base.dirfd_num, self._full_path,
+                                  flags)
+        return self
+
+    async def symlink_to(self, target: bytes) -> 'Path':
+        "Create a symlink at Path 'self' pointing to the passed-in target"
+        await self.syscall.symlinkat(target, self.base.dirfd_num, self._full_path)
+        return self
+
+    async def readlink(self, bufsiz: int=4096) -> bytes:
+        return (await self.syscall.readlinkat(self.base.dirfd_num, self._full_path, bufsiz))
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
         element: bytes = sfork.to_bytes(path_element)
@@ -799,15 +881,50 @@ async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
     return path
 
 @asynccontextmanager
-async def mkdtemp(root: Path, rm_location: Path, prefix: str="mkdtemp") -> t.AsyncGenerator[Path, None]:
+async def mkdtemp(root: Path, rm_location: Path, prefix: str="mkdtemp"
+) -> t.AsyncGenerator[t.Tuple[FileDescriptor[DirectoryFile], Path], None]:
     random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
     basename = prefix+"."+random_suffix
     path = root/basename
     await path.mkdir(mode=0o700)
-    async with (await path.open(os.O_DIRECTORY|os.O_PATH)) as dirfd:
-        yield Path(DirfdPathBase(dirfd), b".")
+    async with (await path.open(os.O_DIRECTORY)) as dirfd:
+        yield dirfd, Path(DirfdPathBase(dirfd), b".")
         async with subprocess(root.base.task) as rm_proc:
             await root.chdir()
+            # TODO we should convert this to use supervise, and wait on it
+            # wait no. we can skip that.
+            # we should be able to wait on children natively.
+            # that requires, eh, signalfd, and, eh...
+            # yeah, just signalfd, right?
+            # we get a signalfd,
+            # then we loop on waitid,
+            # and we dispatch events out to the children.
+            # we don't necessarily need supervise for this.
+            # possibly dispatch events out over a pipe?
+            # childfd, loop wait, write each event to pipe?
+            # and allow signaling only our children?
+            # essentially implement the same logic as supervise?
+            # the nice thing, though, with supervise, is that even if we terminate uncleanly,
+            # it kills everything off.
+            # how do we achieve that same behavior? we can't?
+            # it's an unnecessary, weird feature.
+            # if Linux properly had the ability to close the child group so nothing could escape,
+            # and did the cleanup for me,
+            # it would not be necessary.
+            # but because it doesn't close the child group,
+            # I can exploit that to have my supervise process outlive me, and clean up in response to me exiting.
+            # given that, um...
+            # well, anyway, we still want to be signal-safe, right?
+            # so do we want to clean processes up manually?
+            # what about the idea of a process which cleans up a temp directory when we exit?
+            # hmm hmm this is all intriguing
+            # wouldn't it still be good to implement the same pipe-of-child-events-in, signals-out thing as supervise?
+            # the only issue is the autocleanup is missing.
+            # so when my process dies, there's no safe way to kill my children, because they all get reparented to init
+            # the autocleanup thus depends on keeping a separate process alive to provide that stuff.
+            # the autocleanup is slow anyway...
+            # I think implementing the event-driven in-process child process management thing is a good idea.
+            # that will reduce my dependency on supervise and general weirdness...
             await rm_proc.exec(rm_location, ["rm", "-r", basename])
 
 class Pipe:

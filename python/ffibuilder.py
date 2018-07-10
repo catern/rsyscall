@@ -20,6 +20,7 @@ ffibuilder.set_source(
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <dirent.h>
 
 struct linux_dirent64 {
     ino64_t        d_ino;    /* 64-bit inode number */
@@ -56,11 +57,25 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
 
 #define AT_EMPTY_PATH ...
 #define AT_SYMLINK_NOFOLLOW ...
+#define AT_SYMLINK_FOLLOW ...
+#define AT_REMOVEDIR ...
+
+int unlinkat(int dirfd, const char *pathname, int flags);
+int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags);
 
 #define EPOLL_CLOEXEC ...
 
 typedef unsigned... ino64_t;
 typedef signed... off64_t;
+
+#define DT_BLK ... // This is a block device.
+#define DT_CHR ... // This is a character device.
+#define DT_DIR ... // This is a directory.
+#define DT_FIFO ... // This is a named pipe (FIFO).
+#define DT_LNK ... // This is a symbolic link.
+#define DT_REG ... // This is a regular file.
+#define DT_SOCK ... // This is a UNIX domain socket.
+#define DT_UNKNOWN ... // The file type is unknown.
 
 struct linux_dirent64 {
     ino64_t        d_ino;    /* 64-bit inode number */
@@ -70,8 +85,11 @@ struct linux_dirent64 {
     char           d_name[]; /* Filename (null-terminated) */
 };
 
-int faccessat(int dirfd, const char *pathname, int mode, int flags);
 int getdents64(unsigned int fd, struct linux_dirent64 *dirp, unsigned int count);
+// needed to determine true length of the null-terminated filenames, which are null-padded
+size_t strlen(const char *s);
+
+int faccessat(int dirfd, const char *pathname, int mode, int flags);
 
 #define SYS_splice ...
 #define SYS_pipe2 ...

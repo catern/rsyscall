@@ -169,17 +169,37 @@ class TestIO(unittest.TestCase):
     def test_unix_environment(self) -> None:
         async def test() -> None:
             env = await rsyscall.io.build_unix_environment(self.bootstrap)
-            print(env.utilities.rm)
         trio.run(test)
 
     def test_mkdtemp(self) -> None:
         async def test() -> None:
             env = await rsyscall.io.build_unix_environment(self.bootstrap)
-            async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as path:
+            async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as (dirfd, path):
+                self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..'])
                 text = b"Hello world!"
-                hello_path = await rsyscall.io.spit(path/"hello", text)
+                name = b"hello"
+                hello_path = await rsyscall.io.spit(path/name, text)
                 async with (await hello_path.open(os.O_RDONLY)) as readable:
                     self.assertEqual(await readable.read(), text)
+                await dirfd.lseek(0, os.SEEK_SET)
+                self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..', name])
+
+                new_path = await (path/"foo").mkdir()
+                async with (await new_path.open(os.O_DIRECTORY)) as new_dirfd:
+                    await new_path.rmdir()
+                    print(await new_dirfd.getdents())
+        trio.run(test)
+
+    def test_getdents_noent(self) -> None:
+        "getdents on a removed directory throws FileNotFoundError"
+        async def test() -> None:
+            env = await rsyscall.io.build_unix_environment(self.bootstrap)
+            async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as (dirfd, path):
+                new_path = await (path/"foo").mkdir()
+                async with (await new_path.open(os.O_DIRECTORY)) as new_dirfd:
+                    await new_path.rmdir()
+                    with self.assertRaises(FileNotFoundError):
+                        await new_dirfd.getdents()
         trio.run(test)
 
 if __name__ == '__main__':

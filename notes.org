@@ -1040,6 +1040,90 @@ argh
 should we just dispatch based on whether it's a #!?
 
 blargh I guess we can't execveat for now
+** process stuff
+   pids are mostly terrible but only mostly
+
+   as long as you only kill your children, you can work with them in a race-free manner
+
+   I need to implement process management stuff (wait, sigchld, kill) in Python, not just rely on supervise.
+   This way is less racy (can be certain I'm killing the thing I expect, while supervise can pid loop and I can kill the wrong child)
+   And it reduces my dependence on weird stuff (supervise)
+   and that weird stuff, I'm having trouble figuring out how to represent anyway.
+
+   should I set subreaper? maaaybe? meh I'll figure that out later
+
+   So, OK.
+
+   I'll have some multiplexing on top of a sigchildfd,
+   which then does a wait,
+   and dispatches events,
+   and sees what it sees.
+
+   And kill on top of that.
+
+   Essentially it's the same multiplexing as for epoll.
+
+   so we'll have a Process object?
+   which represents an existing standalone process?
+
+   maybe it should be a task object instead?
+   so we can accurately represent pseudo-threads and pseudo-processes and all that stuff?
+
+   ChildTask, perhaps?
+   Representing a standalone task that is a child of ours?
+
+   Only direct children can be safely killed, since grandchildren can be collected.
+
+   So ChildTask is only for direct children.
+
+   What if we double fork?
+
+   Well...
+
+   Well, what if we double fork and then take ownership of the intermediate task?
+   We want to support that.
+
+   I guess we have some kind of ChildGroup thing
+   Or like, some kind of TaskId thing which points ChildTask points to as its parent?
+
+   And a task's TaskId can't really change..
+   but our Task structure thing can.
+   Well, actually we should really model it as a thread, not a task.
+   Since the TaskId can change and thereby change what Linux task we're operating within.
+
+   Thread makes more sense really...
+   It's sfork that allows us to change our taskid.
+
+   Fork too, kinda. But let us not speak of fork, that forbidden syscall.
+
+   So sfork lets us change our taskid.
+   But really it pushes our taskid on to a stack.
+   We should make sure to explicitly model the fact that it changes our taskid.
+
+   It would be unrealistic to pretend that it doesn't change our taskid.
+   Since it's visibly different - children have a different parent.
+
+   What happens to children when you change process namespace?
+
+   We'll have a Thread, which contains a Task (which changes) and a SyscallInterface (which does not)
+
+   We can consume a Task to produce a ChildTask, namely a thing thing.
+   That's exec.
+
+   A Task, I guess, has another blocked Task inside it.
+   That's the Task that will be resumed when it sforks.
+
+   I think it's best to have it look like that.
+   That's realistic, though not necessarily exactly what the interface will look like when it gets into the kernel.
+
+   So eh...
+
+   A ChildTask contains a parent: Task
+
+   And I guess also a Thread?
+   And we can only kill it when thread.task == parent?
+
+
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 
