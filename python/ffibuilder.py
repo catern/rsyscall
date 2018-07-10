@@ -19,8 +19,19 @@ ffibuilder.set_source(
 #include <setjmp.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 
+struct linux_dirent64 {
+    ino64_t        d_ino;    /* 64-bit inode number */
+    off64_t        d_off;    /* 64-bit offset to next structure */
+    unsigned short d_reclen; /* Size of this dirent */
+    unsigned char  d_type;   /* File type */
+    char           d_name[]; /* Filename (null-terminated) */
+};
 
+int getdents64(unsigned int fd, struct linux_dirent64 *dirp, unsigned int count) {
+    return syscall(SYS_getdents64, fd, dirp, count);
+};
 
 """, **rsyscall)
 ffibuilder.cdef("""
@@ -48,7 +59,19 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
 
 #define EPOLL_CLOEXEC ...
 
+typedef unsigned... ino64_t;
+typedef signed... off64_t;
+
+struct linux_dirent64 {
+    ino64_t        d_ino;    /* 64-bit inode number */
+    off64_t        d_off;    /* 64-bit offset to next structure */
+    unsigned short d_reclen; /* Size of this dirent */
+    unsigned char  d_type;   /* File type */
+    char           d_name[]; /* Filename (null-terminated) */
+};
+
 int faccessat(int dirfd, const char *pathname, int mode, int flags);
+int getdents64(unsigned int fd, struct linux_dirent64 *dirp, unsigned int count);
 
 #define SYS_splice ...
 #define SYS_pipe2 ...

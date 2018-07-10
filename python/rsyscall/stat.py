@@ -1,6 +1,7 @@
 from rsyscall._raw import lib, ffi # type: ignore
 import os
 import typing as t
+import enum
 
 # maybe just make something compatible with os.stat_result but not the same as it?
 # or just don't? make it object oriented instead?
@@ -57,10 +58,11 @@ class StatxResult:
     mode: FileTypeMode
     pass
 
-def throw_on_error(ret: int) -> None:
+def throw_on_error(ret: int) -> int:
     if ret < 0:
         err = ffi.errno
         raise OSError(err, os.strerror(err))
+    return ret
 
 def statx(dirfd: int, pathname: bytes, flags: int, mask: int) -> bytes:
     pathname = ffi.new('char[]', pathname)
@@ -71,3 +73,29 @@ def statx(dirfd: int, pathname: bytes, flags: int, mask: int) -> bytes:
 def faccessat(dirfd: int, pathname: bytes, mode: int) -> None:
     pathname = ffi.new('char[]', pathname)
     throw_on_error(lib.faccessat(dirfd, pathname, mode, 0))
+
+class DType(enum.Enum):
+    BLK = lib.DT_BLK # This is a block device.
+    CHR = lib.DT_CHR # This is a character device.
+    DIR = lib.DT_DIR # This is a directory.
+    FIFO = lib.DT_FIFO # This is a named pipe (FIFO).
+    LNK = lib.DT_LNK # This is a symbolic link.
+    REG = lib.DT_REG # This is a regular file.
+    SOCK = lib.DT_SOCK # This is a UNIX domain socket.
+    UNKNOWN = lib.DT_UNKNOWN # The file type is unknown.
+
+class Dirent:
+    inode: int
+    offset: int # the offset to seek to to see the next dirent
+    type: DType
+    name: str
+
+def getdents64(fd: int, count: int) -> t.List[Dirent]:
+    buf = ffi.new('char[]', count)
+    ret = throw_on_error(lib.getdents64(fd, buf, count))
+    entries = []
+    cur = ffi.cast('struct linux_dirent64*', buf)
+    while True:
+        entries.append(cur)
+        ffi.cast('struct linux_dirent64*', buf+d_ino
+    pass

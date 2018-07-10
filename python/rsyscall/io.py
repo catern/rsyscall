@@ -66,6 +66,7 @@ class SyscallInterface:
 
     async def mkdirat(self, dirfd: int, pathname: bytes, mode: int) -> None: ...
     async def openat(self, dirfd: int, pathname: bytes, flags: int, mode: int) -> int: ...
+    async def getdents64(self, fd: int, count: int) -> t.List[Dirent]: ...
 
 class LocalSyscall(SyscallInterface):
     def __init__(self, wait_readable) -> None:
@@ -246,7 +247,8 @@ class ReadableWritableFile(ReadableFile, WritableFile):
 
 class DirectoryFile(File):
     # TODO we should support getdents here
-    pass
+    async def getdents(self, fd: 'FileDescriptor[DirectoryFile]', count: int) -> t.List[LinuxDirent]:
+        return (await fd.syscall.getdents(fd.number, count))
 
 class FileDescriptor(t.Generic[T_file_co]):
     "A file descriptor."
