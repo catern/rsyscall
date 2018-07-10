@@ -1,5 +1,5 @@
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.io import ProcessContext, SubprocessContext, create_current_task, wrap_stdin_out_err
+from rsyscall.io import ProcessContext, SubprocessContext, gather_local_bootstrap, wrap_stdin_out_err
 from rsyscall.io import Epoller, allocate_epoll, AsyncFileDescriptor
 from rsyscall.epoll import EpollEvent, EpollEventMask
 import unittest
@@ -14,8 +14,9 @@ logging.basicConfig(level=logging.DEBUG)
 
 class TestIO(unittest.TestCase):
     def setUp(self):
-        self.task = create_current_task()
-        self.stdstreams = wrap_stdin_out_err(self.task)
+        self.bootstrap = gather_local_bootstrap()
+        self.task = self.bootstrap.task
+        self.stdstreams = self.bootstrap.stdstreams
         self.stdin = self.stdstreams.stdin
         self.stdout = self.stdstreams.stdout
         self.stderr = self.stdstreams.stderr
@@ -163,6 +164,22 @@ class TestIO(unittest.TestCase):
             # so we'll add a write_text method?
             # and we need a tempdir maker thingy
             pass
+        trio.run(test)
+
+    def test_unix_environment(self) -> None:
+        async def test() -> None:
+            env = await rsyscall.io.build_unix_environment(self.bootstrap)
+            print(env.utilities.rm)
+        trio.run(test)
+
+    def test_mkdtemp(self) -> None:
+        async def test() -> None:
+            env = await rsyscall.io.build_unix_environment(self.bootstrap)
+            async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as path:
+                text = b"Hello world!"
+                hello_path = await rsyscall.io.spit(path/"hello", text)
+                async with (await hello_path.open(os.O_RDONLY)) as readable:
+                    self.assertEqual(await readable.read(), text)
         trio.run(test)
 
 if __name__ == '__main__':

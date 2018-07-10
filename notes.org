@@ -1028,6 +1028,24 @@ and use it to test...
 well no
 I'll write a minimal C program that execs into something via open and execveat
 also this works for sending the script once??? over a pipe??? not over stdin??
+
+oh this doesn't work because normal executables will have to close the fd too
+but then how does the dynamic linker work??
+
+argh, the program is already loaded into memory by the time the dynamic linker runs
+hmm so how can we handle this for ELF binaries?
+for elf the fd is loaded into memory and isn't needed.
+
+argh
+should we just dispatch based on whether it's a #!?
+
+blargh I guess we can't execveat for now
+** what to do
+   Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
+
+   i.e. immediately upon finishing the basic stuff
+
+   My goal: configuring/running nginx.
 * criu
   I feel like I have a bunch in common with criu
 

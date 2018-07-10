@@ -4,8 +4,12 @@ import rsyscall.epoll
 from rsyscall.stat import StatxResult
 import rsyscall.stat
 import supervise_api as supervise
+import random
+import string
+import abc
 import prctl
 import abc
+import sys
 import os
 import typing as t
 import trio
@@ -60,6 +64,9 @@ class SyscallInterface:
     async def chdir(self, path: bytes) -> None: ...
     async def fchdir(self, fd: int) -> None: ...
 
+    async def mkdirat(self, dirfd: int, pathname: bytes, mode: int) -> None: ...
+    async def openat(self, dirfd: int, pathname: bytes, flags: int, mode: int) -> int: ...
+
 class LocalSyscall(SyscallInterface):
     def __init__(self, wait_readable) -> None:
         self._wait_readable = wait_readable
@@ -104,7 +111,7 @@ class LocalSyscall(SyscallInterface):
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> int:
-        logger.debug("execveat(%s)", path)
+        logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
         return sfork.execveat(dirfd, path, argv, envp, flags)
 
     async def getpid(self) -> int:
@@ -140,16 +147,28 @@ class LocalSyscall(SyscallInterface):
         return fcntl.fcntl(fd, cmd, arg)
 
     async def prctl_set_child_subreaper(self, flag: bool) -> None:
+        logger.debug("prctl_set_child_subreaper(%s)", flag)
         prctl.set_child_subreaper(flag)
 
     async def faccessat(self, dirfd: int, pathname: bytes, mode: int) -> None:
+        logger.debug("faccessat(%s, %s, %s)", dirfd, pathname, mode)
         rsyscall.stat.faccessat(dirfd, pathname, mode)
 
     async def chdir(self, path: bytes) -> None:
+        logger.debug("chdir(%s)", path)
         os.chdir(path)
 
     async def fchdir(self, fd: int) -> None:
+        logger.debug("fchdir(%s)", fd)
         os.fchdir(fd)
+
+    async def mkdirat(self, dirfd: int, pathname: bytes, mode: int) -> None:
+        logger.debug("mkdirat(%s, %s, %s)", dirfd, pathname, mode)
+        os.mkdir(pathname, mode, dir_fd=dirfd)
+
+    async def openat(self, dirfd: int, pathname: bytes, flags: int, mode: int) -> int:
+        logger.debug("openat(%s, %s, %s, %s)", dirfd, pathname, flags, mode)
+        return os.open(pathname, flags, mode=mode, dir_fd=dirfd)
 
 class FDNamespace:
     pass
@@ -162,13 +181,13 @@ class MountNamespace:
 
 class Task:
     def __init__(self, syscall: SyscallInterface,
-                 files: FDNamespace,
+                 fd_namespace: FDNamespace,
                  memory: MemoryNamespace,
                  mount: MountNamespace,
     ) -> None:
         self.syscall = syscall
         self.memory = memory
-        self.files = files
+        self.fd_namespace = fd_namespace
         self.mount = mount
 
 class ProcessContext:
@@ -225,6 +244,10 @@ class WritableFile(File):
 class ReadableWritableFile(ReadableFile, WritableFile):
     pass
 
+class DirectoryFile(File):
+    # TODO we should support getdents here
+    pass
+
 class FileDescriptor(t.Generic[T_file_co]):
     "A file descriptor."
     file: T_file_co
@@ -240,7 +263,7 @@ class FileDescriptor(t.Generic[T_file_co]):
 
     @property
     def syscall(self) -> SyscallInterface:
-        if self.task.files != self.fd_namespace:
+        if self.task.fd_namespace != self.fd_namespace:
             raise Exception("Can't call syscalls on FD when my Task has moved out of my FDNamespaces")
         return self.task.syscall
 
@@ -330,7 +353,7 @@ class EpollFile(File):
 
 async def allocate_epoll(task: Task) -> FileDescriptor[EpollFile]:
     epfd = await task.syscall.epoll_create(EPOLL_CLOEXEC)
-    return FileDescriptor(EpollFile(), task, task.files, epfd)
+    return FileDescriptor(EpollFile(), task, task.fd_namespace, epfd)
 
 class EpolledFileDescriptor(t.Generic[T_file_co]):
     epoller: 'Epoller'
@@ -469,121 +492,114 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
 
-def create_current_task() -> Task:
-    return Task(LocalSyscall(trio.hazmat.wait_readable),
-                FDNamespace(), MemoryNamespace(), MountNamespace())
 
-# TODO we should have a ProcessLaunchBootstrap which has these
-# standard streams along with args/env and one task
-class StandardStreams:
-    stdin: FileDescriptor[ReadableFile]
-    stdout: FileDescriptor[WritableFile]
-    stderr: FileDescriptor[WritableFile]
+class PathBase:
+    """These are possible bases for Paths.
 
-    def __init__(self,
-                 stdin: FileDescriptor[ReadableFile],
-                 stdout: FileDescriptor[WritableFile],
-                 stderr: FileDescriptor[WritableFile]) -> None:
-        self.stdin = stdin
-        self.stdout = stdout
-        self.stderr = stderr
+    A path can be interpreted relative to three different things:
+    - A directory file descriptor
+    - The task's root directory
+    - The task's current working directory
 
-def wrap_stdin_out_err(task: Task) -> StandardStreams:
-    stdin = FileDescriptor(ReadableFile(shared=True), task, task.files, 0)
-    stdout = FileDescriptor(WritableFile(shared=True), task, task.files, 1)
-    stderr = FileDescriptor(WritableFile(shared=True), task, task.files, 2)
-    return StandardStreams(stdin, stdout, stderr)
-
-class UnixProcessArgs:
-    """The arguments traditionally given to a process on startup in Unix.
+    The latter two can change location, both by chdir and chroot, and
+    by changing mount namespace.
 
     """
-    stdstreams: StandardStreams
+    @abc.abstractproperty
+    def dirfd_num(self) -> int: ...
+    @abc.abstractproperty
+    def path_prefix(self) -> bytes: ...
     task: Task
-    argv: t.List[bytes]
-    environ: t.Dict[bytes, bytes]
 
-# mabe a distinction between linux process args and posix ones?
+class DirfdPathBase(PathBase):
+    dirfd: FileDescriptor
+    def __init__(self, dirfd: FileDescriptor) -> None:
+        self.dirfd = dirfd
+    @property
+    def dirfd_num(self) -> int:
+        return self.dirfd.number
+    @property
+    def path_prefix(self) -> bytes:
+        return b""
+    @property
+    def task(self) -> Task:
+        if self.dirfd.task.fd_namespace != self.dirfd.fd_namespace:
+            raise Exception("Can't call syscalls on dirfd when my Task has moved out of my FDNamespaces")
+        return self.dirfd.task
 
-class KernelArgs:
-    # these are guaranteed
+    def __str__(self) -> str:
+        return f"Dirfd({self.dirfd.number})"
+
+class RootPathBase(PathBase):
     task: Task
-    argv: t.List[bytes]
-    environ: t.List[bytes]
+    def __init__(self, task: Task) -> None:
+        self.task = task
+    @property
+    def dirfd_num(self) -> int:
+        return sfork.AT_FDCWD
+    @property
+    def path_prefix(self) -> bytes:
+        return b"/"
+    def __str__(self) -> str:
+        return "[ROOT]"
 
-class BasicArgs:
-    # these are very likely
+class CurrentWorkingDirectoryPathBase(PathBase):
     task: Task
-    argv: t.List[bytes]
-    environ: t.Dict[bytes, bytes]
-    stdstreams: StandardStreams
-
-class UnixArgs:
-    # these are probable but not guaranteed
-    task: Task
-    argv: t.List[bytes]
-    environ: t.Dict[bytes, bytes]
-    stdstreams: StandardStreams
-    # some environment variables
-    executable_lookup_path: ExecutableLookupPath
-    tmpdir: TempDir
-    homedir: HomeDir
-    locale: Locale
-    # utilities are from PATH
-    utilities: PosixUtilities
-
-class UnixEnvironment:
-    # various things picked up by environment variables
-    executable_lookup_path: ExecutableLookupPath
-    tmpdir: TempDir
-    # utilities are from PATH
-    utilities: PosixUtilities
-
-class PosixProcess:
-    "The userspace functionality provided by POSIX"
-    pass
-
-class PosixUtilities:
-    "The paths of all kinds of useful POSIX utilities"
-    pass
+    def __init__(self, task: Task) -> None:
+        self.task = task
+    @property
+    def dirfd_num(self) -> int:
+        return sfork.AT_FDCWD
+    @property
+    def path_prefix(self) -> bytes:
+        return b""
+    def __str__(self) -> str:
+        return "[CWD]"
 
 class Path:
     "This is our entry point to any syscall that takes a path argument."
-    task: Task
+    base: PathBase
     path: bytes
-    mount: MountNamespace
-    maybe_dirfd: t.Optional[FileDescriptor]
-    def __init__(self, task: Task, path: t.Union[str, bytes], *,
-                 mount: MountNamespace=None, dirfd: t.Optional[FileDescriptor]=None) -> None:
-        self.task = task
+    def __init__(self, base: PathBase, path: t.Union[str, bytes]) -> None:
+        self.base = base
         self.path = sfork.to_bytes(path)
-        if mount is None:
-            self.mount = self.task.mount
+
+    @staticmethod
+    def from_bytes(task: Task, path: bytes) -> 'Path':
+        if path.startswith(b"/"):
+            return Path(RootPathBase(task), path[1:])
         else:
-            self.mount = mount
-        self.maybe_dirfd = dirfd
+            return Path(CurrentWorkingDirectoryPathBase(task), path)
 
     @property
-    def dirfd(self) -> int:
-        if self.maybe_dirfd is not None:
-            return self.maybe_dirfd.number
-        else:
-            return sfork.AT_FDCWD
+    def _full_path(self) -> bytes:
+        return self.base.path_prefix + self.path
 
     @property
     def syscall(self) -> SyscallInterface:
-        if self.task.mount != self.mount:
-            raise Exception("Can't call syscalls on FD when my Task has moved out of my FDNamespaces")
-        return self.task.syscall
+        return self.base.task.syscall
 
-    async def mkdir(self, mode=0o777) -> Path:
-        await self.syscall.mkdir(self.dirfd, self.path, mode)
+    async def mkdir(self, mode=0o777) -> 'Path':
+        await self.syscall.mkdirat(self.base.dirfd_num, self._full_path, mode)
         return self
 
+    async def execve(self, argv: t.List[t.Union[str, bytes]], envp: t.Mapping[str, t.Union[str, bytes]]) -> int:
+        # let's not worry too much about what execveat actually does in an sfork situation vs not sfork...
+        # in sfork: starts new thread in current namespaces, returns current thread to stashed namespaces
+        # out of sfork: starts new thread in current namespaces, destroys current thread
+        ret = await self.syscall.execveat(
+            self.base.dirfd_num, self._full_path,
+            [sfork.to_bytes(arg) for arg in argv],
+            sfork.serialize_environ(**envp), flags=0)
+        return ret
+
     async def chdir(self) -> None:
-        if self.maybe_dirfd is not None:
-            await self.syscall.fchdir(self.maybe_dirfd.number)
-        await self.syscall.chdir(self.path)
+        "Mutate the underlying task under this Path, changing its CWD to something new."
+        if isinstance(self.base, DirfdPathBase):
+            await self.syscall.fchdir(self.base.dirfd.number)
+            await self.syscall.chdir(self.path)
+        else:
+            await self.syscall.chdir(self._full_path)
 
     async def open(self, flags: int, mode=0o644) -> FileDescriptor:
         """Open a path
@@ -591,21 +607,28 @@ class Path:
         Note that this can block forever if we're opening a FIFO
 
         """
-        if flags & os.O_RDONLY:
-            file = ReadableFile()
-        elif flags & os.O_WRONLY:
+        if flags & os.O_WRONLY:
             file = WritableFile()
-        else:
+        elif flags & os.O_RDWR:
             file = ReadableWritableFile()
-        files = self.task.files
-        fd = await self.syscall.openat(self.dirfd, self.path, flags, mode)
-        return FileDescriptor(file, self.task, files, fd)
+        elif flags & os.O_DIRECTORY:
+            file = DirectoryFile()
+        elif flags & os.O_PATH:
+            file = File()
+        else:
+            # os.O_RDONLY is 0, so if we don't have any of the rest, then...
+            file = ReadableFile()
+        # hmm hmmm we need a task I guess, not just a syscall
+        # so we can find the files
+        fd_namespace = self.base.task.fd_namespace
+        fd = await self.syscall.openat(self.base.dirfd_num, self._full_path, flags, mode)
+        return FileDescriptor(file, self.base.task, fd_namespace, fd)
 
     async def creat(self, mode=0o644) -> FileDescriptor[WritableFile]:
         file = WritableFile()
-        files = self.task.files
-        fd = await self.syscall.openat(self.dirfd, self.path, os.O_WRONLY|os.O_CREAT|os.O_TRUNC, mode)
-        return FileDescriptor(file, self.task, files, fd)
+        fd_namespace = self.base.task.fd_namespace
+        fd = await self.syscall.openat(self.base.dirfd_num, self._full_path, os.O_WRONLY|os.O_CREAT|os.O_TRUNC, mode)
+        return FileDescriptor(file, self.base.task, fd_namespace, fd)
 
     async def access(self, *, read=False, write=False, execute=False) -> bool:
         mode = 0
@@ -619,89 +642,170 @@ class Path:
         if mode == 0:
             mode = os.F_OK
         try:
-            await self.syscall.faccessat(self.dirfd, self.path, mode)
+            await self.syscall.faccessat(self.base.dirfd_num, self._full_path, mode)
             return True
         except OSError:
             return False
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
-        # TODO we should canonicalize it I guess???
-        # remove elements when the path element is ..?
         element: bytes = sfork.to_bytes(path_element)
-        return Path(self.task, self.path + b"/" + element)
+        if b"/" in element:
+            raise Exception("no / allowed in path elements, do it one by one")
+        return Path(self.base, self.path + b"/" + element)
 
-async def spit(path: Path, text: t.Union[str, bytes]) -> None:
-    "Probably shouldn't use this on FIFOs or anything"
-    data = sfork.to_bytes(text)
-    async with (await path.creat()) as fd:
-        while len(data) > 0:
-            ret = await fd.write(data)
-            data = data[ret:]
+    def __str__(self) -> str:
+        return f"Path({self.base}, {self.path})"
 
-class PathCache:
-    """Cache path lookups
+class StandardStreams:
+    stdin: FileDescriptor[ReadableFile]
+    stdout: FileDescriptor[WritableFile]
+    stderr: FileDescriptor[WritableFile]
 
-    It would be nice if we could just execveat everything.
+    def __init__(self,
+                 stdin: FileDescriptor[ReadableFile],
+                 stdout: FileDescriptor[WritableFile],
+                 stderr: FileDescriptor[WritableFile]) -> None:
+        self.stdin = stdin
+        self.stdout = stdout
+        self.stderr = stderr
+
+class UnixBootstrap:
+    """The resources traditionally given to a process on startup in Unix.
+
+    These are not absolutely guaranteed; environ and stdstreams are
+    both userspace conventions. Still, we will rely on this for our
+    tasks.
 
     """
+    task: Task
+    argv: t.List[bytes]
+    environ: t.Mapping[bytes, bytes]
+    stdstreams: StandardStreams
+    def __init__(self,
+                 task: Task,
+                 argv: t.List[bytes],
+                 environ: t.Mapping[bytes, bytes],
+                 stdstreams: StandardStreams) -> None:
+        self.task = task
+        self.argv = argv
+        self.environ = environ
+        self.stdstreams = stdstreams
+
+def wrap_stdin_out_err(task: Task) -> StandardStreams:
+    stdin = FileDescriptor(ReadableFile(shared=True), task, task.fd_namespace, 0)
+    stdout = FileDescriptor(WritableFile(shared=True), task, task.fd_namespace, 1)
+    stderr = FileDescriptor(WritableFile(shared=True), task, task.fd_namespace, 2)
+    return StandardStreams(stdin, stdout, stderr)
+
+def gather_local_bootstrap() -> UnixBootstrap:
+    task = Task(LocalSyscall(trio.hazmat.wait_readable),
+                FDNamespace(), MemoryNamespace(), MountNamespace())
+    argv = [arg.encode() for arg in sys.argv]
+    environ = {key.encode(): value.encode() for key, value in os.environ.items()}
+    stdstreams = wrap_stdin_out_err(task)
+    return UnixBootstrap(task, argv, environ, stdstreams)
+
+
+class ExecutableLookupCache:
+    "Find executables by name, with a cache for the lookups"
     def __init__(self, paths: t.List[Path]) -> None:
-        # all these Paths should be in the same mount namespace otherwise it'll get crazy
-        # actually I guess that's fine
-        # and I guess we'll open the path in advance and fexecve it so whatever
-        # though we need to think carefully about how to handle it, should we mark it CLOEXEC?
-        # i guess if we're opening it anyway there's not too much overhead in just reading two bytes?
-        # but also there's no way to know for sure whether it's a script program
+        # we don't enforce that the paths are in the same mount
+        # namespace or even the same host. that might lead to some
+        # interesting/weird functionality.
+        # execveat(fd) might be helpful here.
         self.paths = paths
         self.cache: t.Dict[bytes, Path] = {}
 
     async def uncached_lookup(self, name: bytes) -> t.Optional[Path]:
+        if b"/" in name:
+            raise Exception("name should be a single path element without any / present")
         for path in self.paths:
-            # we have to handle relative paths, maybe?
-            # no, if it's relative we don't get it at all
-            # i.e. if it contains a / at all, we won't get it
             filename = path/name
-            # stat this filename and see if it exists and is an executable file
-            # hmm I don't want to do this by hand, let's write the path class we need.
-            # hmm we want to make sure the stat is happening in the expected mount namespace
-            # I guess Path should have a mount namespace baked into it
             if (await filename.access(read=True, execute=True)):
                 return filename
         return None
 
-    async def lookup(self, name: t.Union[str, bytes]) -> t.Optional[Path]:
-        # name should be a single path element without any / present
+    async def lookup(self, name: t.Union[str, bytes]) -> Path:
         basename: bytes = sfork.to_bytes(name)
         if basename in self.cache:
             return self.cache[basename]
         else:
             result = await self.uncached_lookup(basename)
-            # don't cache negative lookups
-            if result is not None:
-                self.cache[basename] = result
+            if result is None:
+                raise Exception(f"couldn't find {name}")
+            # we don't cache negative lookups
+            self.cache[basename] = result
             return result
 
+class UnixUtilities:
+    rm: Path
+    def __init__(self, rm: Path) -> None:
+        self.rm = rm
+
+async def build_unix_utilities(exec_cache: ExecutableLookupCache) -> UnixUtilities:
+    rm = await exec_cache.lookup("rm")
+    return UnixUtilities(rm=rm)
+
+class UnixEnvironment:
+    """The utilities provided by a standard Unix userspace.
+
+    These are primarily built from various environment variables.
+
+    """
+    # various things picked up by environment variables
+    executable_lookup_cache: ExecutableLookupCache
+    tmpdir: Path
+    # utilities are eagerly looked up in PATH
+    utilities: UnixUtilities
+    # locale?
+    # home directory?
+    def __init__(self,
+                 executable_lookup_cache: ExecutableLookupCache,
+                 tmpdir: Path,
+                 utilities: UnixUtilities,
+    ) -> None:
+        self.executable_lookup_cache = executable_lookup_cache
+        self.tmpdir = tmpdir
+        self.utilities = utilities
+
+async def build_unix_environment(bootstrap: UnixBootstrap) -> UnixEnvironment:
+    executable_dirs: t.List[Path] = []
+    for prefix in bootstrap.environ[b"PATH"].split(b":"):
+        executable_dirs.append(Path.from_bytes(bootstrap.task, prefix))
+    executable_lookup_cache = ExecutableLookupCache(executable_dirs)
+    tmpdir = Path.from_bytes(bootstrap.task, bootstrap.environ[b"TMPDIR"])
+    utilities = await build_unix_utilities(executable_lookup_cache)
+    return UnixEnvironment(
+        executable_lookup_cache=executable_lookup_cache,
+        tmpdir=tmpdir,
+        utilities=utilities,
+    )
+
+async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
+    """Open a file, creating and truncating it, and write the passed text to it
+
+    Probably shouldn't use this on FIFOs or anything.
+
+    Returns the passed-in Path so this serves as a nice pseudo-constructor.
+
+    """
+    data = sfork.to_bytes(text)
+    async with (await path.creat()) as fd:
+        while len(data) > 0:
+            ret = await fd.write(data)
+            data = data[ret:]
+    return path
+
 @asynccontextmanager
-async def mkdtemp(root: Path, rm_location: Path, prefix: str="mkdtemp") -> Path:
-    # first make a random path with template, I guess
-    # and make a directory
-    # and??? open it???
-    # and return a path with it???
-    # that would be cool yeah
-    random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=N))
+async def mkdtemp(root: Path, rm_location: Path, prefix: str="mkdtemp") -> t.AsyncGenerator[Path, None]:
+    random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
     basename = prefix+"."+random_suffix
     path = root/basename
     await path.mkdir(mode=0o700)
-    async with (await path.open(O_DIRECTORY|O_PATH)) as dirfd:
-        yield Path(path.task, b"", dirfd=dirfd)
-        async with subprocess(path.task) as rm_proc:
+    async with (await path.open(os.O_DIRECTORY|os.O_PATH)) as dirfd:
+        yield Path(DirfdPathBase(dirfd), b".")
+        async with subprocess(root.base.task) as rm_proc:
             await root.chdir()
-            # i should exec directly with a file descriptor I guess?
-            # exec should have two modes, one which takes a path/dirfd combo (a Path),
-            # and one which takes an fd directly
-            # I should pull rm out of some UnixProcess object with some coreutils thing
-            # posix guarantees the existence of rm...
-            # some PosixUtilities thing maybe
-            # and this can be a member of a big ole PosixProcess thing
             await rm_proc.exec(rm_location, ["rm", "-r", basename])
 
 class Pipe:
@@ -722,8 +826,8 @@ class Pipe:
 
 async def allocate_pipe(task: Task) -> Pipe:
     r, w = await task.syscall.pipe()
-    return Pipe(FileDescriptor(ReadableFile(shared=False), task, task.files, r),
-                FileDescriptor(WritableFile(shared=False), task, task.files, w))
+    return Pipe(FileDescriptor(ReadableFile(shared=False), task, task.fd_namespace, r),
+                FileDescriptor(WritableFile(shared=False), task, task.fd_namespace, w))
 
 class SubprocessContext:
     def __init__(self, task: Task, child_files: FDNamespace, parent_files: FDNamespace) -> None:
@@ -733,7 +837,7 @@ class SubprocessContext:
         self.pid: t.Optional[int] = None
 
     def translate(self, fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
-        """Translate FDs from the parent's FilesNS to the child's FilesNS
+        """Translate FDs from the parent's FDNamespace to the child's FDNamespace
 
         Any file descriptor created by my task in parent_files is now
         also present in child_files, so we're able to translate them
@@ -761,32 +865,29 @@ class SubprocessContext:
 
     async def exit(self, status: int) -> None:
         self.pid = await self.syscall.exit(status)
-        self.task.files = self.parent_files
+        self.task.fd_namespace = self.parent_files
 
-    async def exec(self, pathname: os.PathLike, argv: t.List[t.Union[str, bytes]],
-             *, envp: t.Optional[t.Dict[str, str]]=None) -> None:
+    async def exec(self, path: Path, argv: t.List[t.Union[str, bytes]],
+             *, envp: t.Optional[t.Mapping[str, str]]=None) -> None:
         if envp is None:
+            # TODO os.environ should actually be pulled from, er... somewhere
             envp = dict(**os.environ)
-        self.pid = await self.syscall.execveat(
-            sfork.AT_FDCWD, sfork.to_bytes(os.fspath(pathname)),
-            [sfork.to_bytes(arg) for arg in argv],
-            sfork.serialize_environ(**envp), flags=0)
-        self.task.files = self.parent_files
+        # this is too restrictive but whatever
+        if path.base.task != self.task:
+            raise Exception("can't exec a path from another task")
+        self.pid = await path.execve(argv, envp)
+        self.task.fd_namespace = self.parent_files
 
     async def fexec(self, fd: FileDescriptor, argv: t.List[t.Union[str, bytes]],
                     *, envp: t.Optional[t.Dict[str, str]]=None) -> None:
         if envp is None:
             envp = dict(**os.environ)
-        # TODO need to unset cloexec on fd.number
-        # waaaait unsetting cloexec won't work/help
-        # because then normal applications would also need to close their open fd!
-        # daaang
-        # wait then how does the dynamic linker work?
+        # TODO this won't work for scripts since cloexec needs to be unset
         self.pid = await self.syscall.execveat(
             fd.number, b"",
             [sfork.to_bytes(arg) for arg in argv],
-            sfork.serialize_environ(**envp), flags=AT_EMPTY_PATH)
-        self.task.files = self.parent_files
+            sfork.serialize_environ(**envp), flags=rsyscall.epoll.AT_EMPTY_PATH)
+        self.task.fd_namespace = self.parent_files
 
 @asynccontextmanager
 async def subprocess(task: Task) -> t.Any:
@@ -795,10 +896,10 @@ async def subprocess(task: Task) -> t.Any:
     # inside an explicitly passed around object. but it's still the
     # same kind of behavior. by what name is this known?
 
-    parent_files = task.files
+    parent_files = task.fd_namespace
     await task.syscall.clone(lib.CLONE_VFORK|lib.CLONE_VM, deathsig=None)
     child_files = FDNamespace()
-    task.files = child_files
+    task.fd_namespace = child_files
     context = SubprocessContext(task, child_files, parent_files)
     try:
         yield context
@@ -891,9 +992,9 @@ class SupervisedSubprocessContext:
     async def exit(self, status: int) -> None:
         await self.user_subproc.exit(status)
 
-    async def exec(self, pathname: os.PathLike, argv: t.List[t.Union[str, bytes]],
+    async def exec(self, path: Path, argv: t.List[t.Union[str, bytes]],
                    *, envp: t.Optional[t.Dict[str, str]]=None) -> None:
-        await self.user_subproc.exec(pathname, argv, envp=envp)
+        await self.user_subproc.exec(path, argv, envp=envp)
 
 @asynccontextmanager
 async def clonefd(task: Task, stdstreams: StandardStreams) -> t.Any:

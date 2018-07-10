@@ -4,6 +4,8 @@ import select
 import typing as t
 
 EPOLL_CLOEXEC=lib.EPOLL_CLOEXEC
+AT_EMPTY_PATH=lib.AT_EMPTY_PATH
+AT_SYMLINK_NOFOLLOW=lib.AT_SYMLINK_NOFOLLOW
 
 class BitField:
     def __init__(self, bitval):

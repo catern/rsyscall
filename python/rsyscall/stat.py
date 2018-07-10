@@ -70,4 +70,4 @@ def statx(dirfd: int, pathname: bytes, flags: int, mask: int) -> bytes:
 
 def faccessat(dirfd: int, pathname: bytes, mode: int) -> None:
     pathname = ffi.new('char[]', pathname)
-    throw_on_error(lib.fstatat(dirfd, pathname, mode, 0))
+    throw_on_error(lib.faccessat(dirfd, pathname, mode, 0))
