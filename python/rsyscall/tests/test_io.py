@@ -214,24 +214,39 @@ class TestIO(unittest.TestCase):
                 msg = b"hello"
                 await mapping.write(msg)
                 self.assertEqual(await mapping.read(len(msg)), msg)
-                print("about to cast")
-                addr = int(ffi.cast('long', ffi.addressof(lib, 'rsyscall_server_trampoline')))
-                msgbuf = ffi.from_buffer(msg)
-                arg1 = int(ffi.cast('long', msgbuf))
-                arg2 = len(msg)
-                print(addr, arg1, arg2)
-                stack = struct.pack("=qqq", addr, arg1, arg2)
-                print(stack)
-                stack_offset = len(stack)
-                print(stack_offset)
-                await mapping.write(stack)
-                print(mapping.address)
-                self.assertEqual(await mapping.read(len(stack)), stack)
-                ret = await self.task.syscall.clone2(lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_SIGHAND,
-                                                     mapping.address,
-                                                     0, 0, 0)
-                print("tid is", ret)
-                await trio.sleep(100000)
+        trio.run(test)
+
+    def test_mmap_clone(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.make_stack_space(self.task)) as mapping:
+                async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
+                    async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
+                        stack_struct = ffi.new('struct rsyscall_trampoline_stack*')
+                        stack_struct.rdi = pipe_in.rfd.number
+                        stack_struct.rsi = pipe_out.wfd.number
+                        stack_struct.function = ffi.addressof(lib, 'rsyscall_server')
+                        stack = bytes(ffi.buffer(stack_struct))
+                        trampoline_addr = int(ffi.cast('long', ffi.addressof(lib, 'rsyscall_trampoline')))
+                        packed_trampoline_addr = struct.pack('Q', trampoline_addr)
+                        stack = packed_trampoline_addr + stack
+                        await mapping.write(stack)
+                        print(mapping.address)
+                        self.assertEqual(await mapping.read(len(stack)), stack)
+                        # hmmmmmm
+                        # the procedure linkage table. my nemesis.
+                        # why aren't the addresses known at compile time, let alone link time??
+                        ret = await self.task.syscall.clone2(lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_SIGHAND,
+                                                             mapping.address,
+                                                             0, 0, 0)
+                        # okay so we are successfully running this stuff on the thread through the trampoline
+                        # let's now start the server and do calls?
+                        # should we start by running the server in a separate process?
+                        # and maybe even use native Python subprocess to start it?
+                        # that's a BIT silly but let's do it
+                        # er wait, we won't be able to use the same thing as we've got right now.
+                        # okay so NO we won't do that lol
+                        print("tid is", ret)
+                        await trio.sleep(100000)
         trio.run(test)
 
 if __name__ == '__main__':

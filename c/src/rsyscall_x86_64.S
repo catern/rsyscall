@@ -10,14 +10,27 @@ rsyscall_raw_syscall:
 	syscall
 	ret
 
-.globl rsyscall_server_trampoline
-rsyscall_server_trampoline:
-	movq $2, %rdi
+.globl rsyscall_trampoline
+rsyscall_trampoline:
+	// load argument registers from the stack
+	pop %rdi
         pop %rsi
-        pop %rdx
+	pop %rdx
+        pop %rcx
+        pop %r8
+        pop %r9
+	// load function to call from stack
+	pop %rax
+	// call function
+	call *%rax
+	// store return value on stack
+	push %rax
+	// exit thread cleanly
+	movq $0, %rdi
+        movq $0, %rsi
+	movq $0, %rdx
         movq $0, %r10
         movq $0, %r8
         movq $0, %r9
-	movq $__NR_write, %rax
+	movq $__NR_exit, %rax
         syscall
-        ud2

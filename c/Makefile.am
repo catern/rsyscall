@@ -1,5 +1,6 @@
 ## Process this file with automake to produce Makefile.in
-AM_CFLAGS = -Wall -Werror
+AM_CFLAGS = -Wall -Werror -Wl,-znow -fno-plt
+AM_LDFLAGS =  -Wl,-znow
 
 # Library
 pkgconfig_DATA = rsyscall.pc

@@ -147,7 +147,17 @@ int faccessat(int dirfd, const char *pathname, int mode, int flags);
 #define MAP_STACK ...
 
 void *memcpy(void *dest, const void *src, size_t n);
-void rsyscall_server_trampoline(void);
+void rsyscall_server(const int infd, const int outfd);
+void rsyscall_trampoline(void);
+struct rsyscall_trampoline_stack {
+    int64_t rdi;
+    int64_t rsi;
+    int64_t rdx;
+    int64_t rcx;
+    int64_t r8;
+    int64_t r9;
+    void* function;
+};
 
 struct sockaddr_in { ...; };
 

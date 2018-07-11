@@ -1385,6 +1385,42 @@ blargh I guess we can't execveat for now
    probably not?
 
    okay so I need mmap now
+
+   hmm apparently I can't do such fancy relocations in assembly.
+   so I can't directly call rsyscall_server
+
+   so probably I should instead call some kinda gadget that will call something of my choice.
+   so, syscalls.
+   stash all registers,
+   pop all registers.
+   hum hum.
+   if we did that then I guess we'd be good.
+   but like, most of the time our registers don't change
+   so it's pointless
+
+   we would only be doing that to support the fact that our stack can change
+   
+   okay, so we can have a generic gadget for turning stack args into register args,
+   so we can call an arbitrary C function.
+
+   this will be useful: it will allow us to call (in a separate thread) any C function in our address space.
+
+   we can possibly use that to call dynamic linker functions to load libraries.
+
+   it would be nice if status was a full int, but oh well.
+
+   can we figure out a way to get a return value at low cost?
+
+   maybe after we call, we move eax to someplace?
+   maybe the base of the stack? :)
+
+   that would be cute.
+
+   so I guess clone is our "call arbitrary function remotely" entry point.
+   just has to be combined with a gadget
+
+   of course, we are relying on the "immediate ret after syscall" behavior.
+   can we do better?
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 
