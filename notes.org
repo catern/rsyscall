@@ -1364,6 +1364,27 @@ blargh I guess we can't execveat for now
    OK so we'll start off with just replacing io.py with cffi to async do_syscall.
 
    Then we can replace the async do_syscall with a thread-remote one.
+
+   Replacing clone will have to come last.
+   Since we'll need to be able to do all rsyscalls remotely first,
+   and refactor the interface.
+   Also can't do execveat too, because sfork clone needs it to work.
+
+   But can do everything else
+   Then add the new interface and test it
+   (with a new syscall kinda thing maybe)
+
+   Then replace the old interface
+
+   OK so I converted things.
+   Now let's add a clone2 which will do the stuff!
+
+   hm
+   should I just pass bytes for the stack
+
+   probably not?
+
+   okay so I need mmap now
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 

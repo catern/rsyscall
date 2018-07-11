@@ -60,7 +60,7 @@ class SyscallInterface:
     # statx returns a fixed-sized buffer which we parse outside the SyscallInterface
     async def statx(self, dirfd: int, pathname: bytes, flags: int, mask: int) -> bytes: ...
 
-    async def faccessat(self, dirfd: int, pathname: bytes, mode: int) -> None: ...
+    async def faccessat(self, dirfd: int, pathname: bytes, mode: int, flags: int) -> None: ...
 
     async def chdir(self, path: bytes) -> None: ...
     async def fchdir(self, fd: int) -> None: ...
@@ -74,9 +74,28 @@ class SyscallInterface:
     async def symlinkat(self, target: bytes, newdirfd: int, newpath: bytes) -> None: ...
     async def readlinkat(self, dirfd: int, pathname: bytes, bufsiz: int) -> bytes: ...
 
+async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
+    "Make a syscall directly in the current thread."
+    args = (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
+            ffi.cast('long', arg4), ffi.cast('long', arg5), ffi.cast('long', arg6),
+            number)
+    ret = lib.rsyscall_raw_syscall(*args)
+    return ret
+
+def null_terminated(data: bytes):
+    return ffi.new('char[]', data)
+
 class LocalSyscall(SyscallInterface):
-    def __init__(self, wait_readable) -> None:
+    def __init__(self, wait_readable, do_syscall) -> None:
         self._wait_readable = wait_readable
+        self._do_syscall = do_syscall
+
+    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        ret = await self._do_syscall(number, arg1=arg1, arg2=arg2, arg3=arg3, arg4=arg4, arg5=arg5, arg6=arg6)
+        if ret < 0:
+            err = -ret
+            raise OSError(err, os.strerror(err))
+        return ret
 
     async def wait_readable(self, fd: int) -> None:
         logger.debug("wait_readable(%s)", fd)
@@ -84,27 +103,31 @@ class LocalSyscall(SyscallInterface):
 
     async def pipe(self, flags=os.O_CLOEXEC) -> t.Tuple[int, int]:
         logger.debug("pipe(%s)", flags)
-        return os.pipe2(flags)
+        buf = ffi.new('int[2]')
+        await self.syscall(lib.SYS_pipe2, buf, flags)
+        return (buf[0], buf[1])
 
     async def close(self, fd: int) -> None:
         logger.debug("close(%d)", fd)
-        return os.close(fd)
+        await self.syscall(lib.SYS_close, fd)
 
-    # TODO allow setting offset?
+    # I could switch to preadv2 as my primitive; I can avoid overhead
+    # by storing the iovec and data as a single big buffer.
     async def read(self, fd: int, count: int) -> bytes:
         logger.debug("read(%d, %d)", fd, count)
-        return os.read(fd, count)
+        buf = ffi.new('char[]', count)
+        ret = await self.syscall(lib.SYS_read, fd, buf, count)
+        return bytes(ffi.buffer(buf, ret))
 
     async def write(self, fd: int, buf: bytes) -> int:
         logger.debug("write(%d, %s)", fd, buf)
-        return os.write(fd, buf)
+        ret = await self.syscall(lib.SYS_write, fd, ffi.from_buffer(buf), len(buf))
+        return ret
 
     async def dup2(self, oldfd: int, newfd: int) -> int:
         logger.debug("dup2(%d, %d)", oldfd, newfd)
-        os.dup2(oldfd, newfd)
-        return newfd
+        return (await self.syscall(lib.SYS_dup2, oldfd, newfd))
 
-    # TODO support setting child_stack so we can create threads
     async def clone(self, flags: int, deathsig: t.Optional[signal.Signals]) -> int:
         logger.debug("clone(%d, %s)", flags, deathsig)
         if deathsig is not None:
@@ -121,85 +144,115 @@ class LocalSyscall(SyscallInterface):
         logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
         return sfork.execveat(dirfd, path, argv, envp, flags)
 
+    async def mmap(self, addr: int, length: int, prot: int, flags: int, fd: int, offset: int) -> int:
+        logger.debug("mmap(%s, %s, %s, %s, %s, %s)", addr, length, prot, flags, fd, offset)
+        return (await self.syscall(lib.SYS_mmap, addr, length, prot, flags, fd, offset))
+
+    async def munmap(self, addr: int, length: int) -> int:
+        logger.debug("munmap(%s, %s)", addr, length)
+        return (await self.syscall(lib.SYS_munmap, addr, length))
+
+    # newstyle task manipulation
+    async def clone2(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int:
+        logger.debug("clone(%s, %s, %s, %s, %s)", flags, child_stack, ptid, ctid, newtls)
+        return (await self.syscall(lib.SYS_clone, flags, child_stack, ptid, ctid, newtls))
+
+    async def exit2(self, status: int) -> None:
+        logger.debug("exit(%d)", status)
+        await self.syscall(lib.SYS_exit, status)
+
+    async def exit_group(self, status: int) -> None:
+        logger.debug("exit(%d)", status)
+        await self.syscall(lib.SYS_exit_group, status)
+
     async def getpid(self) -> int:
-        return os.getpid()
+        logger.debug("getpid()")
+        return (await self.syscall(lib.SYS_getpid))
 
     async def epoll_create(self, flags: int) -> int:
         logger.debug("epoll_create(%s)", flags)
-        return rsyscall.epoll.epoll_create(flags)
+        return (await self.syscall(lib.SYS_epoll_create1, flags))
 
     async def epoll_ctl_add(self, epfd: int, fd: int, event: EpollEvent) -> None:
         logger.debug("epoll_ctl_add(%d, %d, %s)", epfd, fd, event)
-        rsyscall.epoll.epoll_ctl_add(epfd, fd, event)
+        await self.syscall(lib.SYS_epoll_ctl, epfd, lib.EPOLL_CTL_ADD, fd, event.to_bytes())
 
     async def epoll_ctl_mod(self, epfd: int, fd: int, event: EpollEvent) -> None:
         logger.debug("epoll_ctl_mod(%d, %d, %s)", epfd, fd, event)
-        rsyscall.epoll.epoll_ctl_mod(epfd, fd, event)
+        await self.syscall(lib.SYS_epoll_ctl, epfd, lib.EPOLL_CTL_MOD, fd, event.to_bytes())
 
     async def epoll_ctl_del(self, epfd: int, fd: int) -> None:
         logger.debug("epoll_ctl_del(%d, %d)", epfd, fd)
-        rsyscall.epoll.epoll_ctl_del(epfd, fd)
+        await self.syscall(lib.SYS_epoll_ctl, epfd, lib.EPOLL_CTL_DEL, fd)
 
     async def epoll_wait(self, epfd: int, maxevents: int, timeout: int) -> t.List[EpollEvent]:
         logger.debug("epoll_wait(%d, maxevents=%d, timeout=%d)", epfd, maxevents, timeout)
-        return rsyscall.epoll.epoll_wait(epfd, maxevents, timeout)
+        c_events = ffi.new('struct epoll_event[]', maxevents)
+        count = await self.syscall(lib.SYS_epoll_wait, epfd, c_events, maxevents, timeout)
+        ret = []
+        for ev in c_events[0:count]:
+            ret.append(EpollEvent(ev.data.u64, EpollEventMask(ev.events)))
+        return ret
 
-    # should we pull the file status flags when we create fhe file?
-    # yyyyes theoretically.
-    # should we store it in the FileDescriptor?
-    # hah, no, we should have a File...
     async def fcntl(self, fd: int, cmd: int, arg: t.Union[bytes, int]=0) -> t.Union[bytes, int]:
         "This follows the same protocol as fcntl.fcntl."
         logger.debug("fcntl(%d, %d, %s)", fd, cmd, arg)
+        # TODO this guy
         return fcntl.fcntl(fd, cmd, arg)
 
     async def prctl_set_child_subreaper(self, flag: bool) -> None:
         logger.debug("prctl_set_child_subreaper(%s)", flag)
+        # TODO also this guy
         prctl.set_child_subreaper(flag)
 
-    async def faccessat(self, dirfd: int, pathname: bytes, mode: int) -> None:
+    async def faccessat(self, dirfd: int, pathname: bytes, mode: int, flags: int) -> None:
         logger.debug("faccessat(%s, %s, %s)", dirfd, pathname, mode)
-        rsyscall.stat.faccessat(dirfd, pathname, mode)
+        await self.syscall(lib.SYS_faccessat, dirfd, null_terminated(pathname), mode, flags)
 
     async def chdir(self, path: bytes) -> None:
         logger.debug("chdir(%s)", path)
-        os.chdir(path)
+        await self.syscall(lib.SYS_chdir, null_terminated(path))
 
     async def fchdir(self, fd: int) -> None:
         logger.debug("fchdir(%s)", fd)
-        os.fchdir(fd)
+        await self.syscall(lib.SYS_fchdir, fd)
 
     async def mkdirat(self, dirfd: int, pathname: bytes, mode: int) -> None:
         logger.debug("mkdirat(%s, %s, %s)", dirfd, pathname, mode)
-        os.mkdir(pathname, mode, dir_fd=dirfd)
+        await self.syscall(lib.SYS_mkdirat, dirfd, null_terminated(pathname), mode)
 
     async def openat(self, dirfd: int, pathname: bytes, flags: int, mode: int) -> int:
         logger.debug("openat(%s, %s, %s, %s)", dirfd, pathname, flags, mode)
-        return os.open(pathname, flags, mode=mode, dir_fd=dirfd)
+        ret = await self.syscall(lib.SYS_openat, dirfd, null_terminated(pathname), flags, mode)
+        return ret
 
     async def getdents(self, fd: int, count: int) -> t.List[Dirent]:
-        logger.debug("getdents(%s, %s)", fd, count)
-        return rsyscall.stat.getdents64(fd, count)
+        logger.debug("getdents64(%s, %s)", fd, count)
+        buf = ffi.new('char[]', count)
+        ret = await self.syscall(lib.SYS_getdents64, fd, buf, count)
+        return rsyscall.stat.getdents64_parse(ffi.buffer(buf, ret))
 
     async def lseek(self, fd: int, offset: int, whence: int) -> int:
         logger.debug("lseek(%s, %s, %s)", fd, offset, whence)
-        return os.lseek(fd, offset, whence)
+        return (await self.syscall(lib.SYS_lseek, fd, offset, whence))
 
     async def unlinkat(self, dirfd: int, pathname: bytes, flags: int) -> None:
         logger.debug("unlinkat(%s, %s, %s)", dirfd, pathname, flags)
-        rsyscall.stat.unlinkat(dirfd, pathname, flags)
+        await self.syscall(lib.SYS_unlinkat, dirfd, null_terminated(pathname), flags)
 
     async def linkat(self, olddirfd: int, oldpath: bytes, newdirfd: int, newpath: bytes, flags: int) -> None:
         logger.debug("linkat(%s, %s, %s, %s, %s)", olddirfd, oldpath, newdirfd, newpath, flags)
-        rsyscall.stat.linkat(olddirfd, oldpath, newdirfd, newpath, flags)
+        await self.syscall(lib.SYS_linkat, olddirfd, null_terminated(oldpath), newdirfd, null_terminated(newpath), flags)
 
     async def symlinkat(self, target: bytes, newdirfd: int, newpath: bytes) -> None:
         logger.debug("symlinkat(%s, %s, %s)", target, newdirfd, newpath)
-        rsyscall.stat.symlinkat(target, newdirfd, newpath)
+        await self.syscall(lib.SYS_symlinkat, null_terminated(target), newdirfd, newpath)
 
     async def readlinkat(self, dirfd: int, pathname: bytes, bufsiz: int) -> bytes:
         logger.debug("readlinkat(%s, %s, %s)", dirfd, pathname, bufsiz)
-        return rsyscall.stat.readlinkat(dirfd, pathname, bufsiz)
+        buf = ffi.new('char[]', bufsiz)
+        await self.syscall(lib.SYS_readlinkat, dirfd, null_terminated(pathname), bufsiz)
+        return ffi.buffer(bufsiz)
 
 class FDNamespace:
     pass
@@ -538,6 +591,53 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
         await self.aclose()
 
 
+class MemoryMapping:
+    task: Task
+    address: int
+    length: int
+
+    @property
+    def syscall(self) -> SyscallInterface:
+        # A task can't change address space, so this will always be a
+        # valid SyscallInterface for operating on this mapping.
+        return self.task.syscall
+
+    def __init__(self, 
+                 task: Task,
+                 address: int,
+                 length: int,
+    ) -> None:
+        self.task = task
+        self.address = address
+        self.length = length
+
+    async def write(self, data: bytes) -> None:
+        if len(data) > self.length:
+            raise Exception("length of data to write is longer than length of mapping :(")
+        lib.memcpy(ffi.cast('void*', self.address), ffi.from_buffer(data), len(data))
+
+    async def read(self, size: int) -> bytes:
+        if size > self.length:
+            raise Exception("length of data to read is longer than length of mapping :(")
+        return bytes(ffi.buffer(ffi.cast('void*', self.address), size))
+
+    async def unmap(self) -> None:
+        await self.syscall.munmap(self.address, self.length)
+
+    async def __aenter__(self) -> 'MemoryMapping':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.unmap()
+
+async def make_stack_space(task: Task) -> MemoryMapping:
+    size = 4096
+    ret = await task.syscall.mmap(0, size, lib.PROT_READ|lib.PROT_WRITE,
+                                  lib.MAP_PRIVATE|lib.MAP_ANONYMOUS|lib.MAP_GROWSDOWN|lib.MAP_STACK,
+                                  -1, 0)
+    return MemoryMapping(task, ret, size)
+
+
 class PathBase:
     """These are possible bases for Paths.
 
@@ -705,7 +805,7 @@ class Path:
         if mode == 0:
             mode = os.F_OK
         try:
-            await self.syscall.faccessat(self.base.dirfd_num, self._full_path, mode)
+            await self.syscall.faccessat(self.base.dirfd_num, self._full_path, mode, 0)
             return True
         except OSError:
             return False
@@ -782,7 +882,7 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
     return StandardStreams(stdin, stdout, stderr)
 
 def gather_local_bootstrap() -> UnixBootstrap:
-    task = Task(LocalSyscall(trio.hazmat.wait_readable),
+    task = Task(LocalSyscall(trio.hazmat.wait_readable, direct_syscall),
                 FDNamespace(), MemoryNamespace(), MountNamespace())
     argv = [arg.encode() for arg in sys.argv]
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}

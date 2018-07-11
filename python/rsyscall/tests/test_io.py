@@ -2,6 +2,7 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.io import ProcessContext, SubprocessContext, gather_local_bootstrap, wrap_stdin_out_err
 from rsyscall.io import Epoller, allocate_epoll, AsyncFileDescriptor
 from rsyscall.epoll import EpollEvent, EpollEventMask
+import struct
 import unittest
 import supervise_api as supervise
 import trio
@@ -109,6 +110,13 @@ class TestIO(unittest.TestCase):
                         nursery.start_soon(self.do_epoll_things, epoller)
         trio.run(test)
 
+    def test_epoll_read(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                with self.assertRaises(OSError):
+                    await self.task.syscall.read(epoll.number, 4096)
+        trio.run(test)
+
     async def do_async_things(self, epoller) -> None:
         async with (await rsyscall.io.allocate_pipe(self.task)) as pipe:
             async_pipe_rfd = await AsyncFileDescriptor.make(epoller, pipe.rfd)
@@ -195,6 +203,35 @@ class TestIO(unittest.TestCase):
                     await new_path.rmdir()
                     with self.assertRaises(FileNotFoundError):
                         await new_dirfd.getdents()
+        trio.run(test)
+
+    def test_mmap(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.make_stack_space(self.task)) as mapping:
+                # how do we portably operate on this memory???
+                # I guess we can add a write_address and read_address.
+                # mmm
+                msg = b"hello"
+                await mapping.write(msg)
+                self.assertEqual(await mapping.read(len(msg)), msg)
+                print("about to cast")
+                addr = int(ffi.cast('long', ffi.addressof(lib, 'rsyscall_server_trampoline')))
+                msgbuf = ffi.from_buffer(msg)
+                arg1 = int(ffi.cast('long', msgbuf))
+                arg2 = len(msg)
+                print(addr, arg1, arg2)
+                stack = struct.pack("=qqq", addr, arg1, arg2)
+                print(stack)
+                stack_offset = len(stack)
+                print(stack_offset)
+                await mapping.write(stack)
+                print(mapping.address)
+                self.assertEqual(await mapping.read(len(stack)), stack)
+                ret = await self.task.syscall.clone2(lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_SIGHAND,
+                                                     mapping.address,
+                                                     0, 0, 0)
+                print("tid is", ret)
+                await trio.sleep(100000)
         trio.run(test)
 
 if __name__ == '__main__':

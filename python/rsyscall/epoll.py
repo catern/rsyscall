@@ -57,33 +57,5 @@ class EpollEvent:
     def __str__(self) -> str:
         return f"EpollEvent({self.data}, {self.events})"
 
-def throw_on_error(ret) -> int:
-    if ret < 0:
-        err = ffi.errno
-        raise OSError(err, os.strerror(err))
-    else:
-        return ret
-
-def epoll_create(flags: int) -> int:
-    return throw_on_error(lib.epoll_create1(flags))
-
-def epoll_ctl(epfd: int, op: int, fd: int, event: EpollEvent) -> None:
-    c_event = ffi.new('struct epoll_event const*', (event.events.raw, (event.data,)))
-    throw_on_error(lib.epoll_ctl(epfd, op, fd, c_event))
-
-def epoll_ctl_add(epfd: int, fd: int, event: EpollEvent) -> None:
-    epoll_ctl(epfd, lib.EPOLL_CTL_ADD, fd, event)
-
-def epoll_ctl_mod(epfd: int, fd: int, event: EpollEvent) -> None:
-    epoll_ctl(epfd, lib.EPOLL_CTL_MOD, fd, event)
-
-def epoll_ctl_del(epfd: int, fd: int) -> None:
-    throw_on_error(lib.epoll_ctl(epfd, lib.EPOLL_CTL_DEL, fd, ffi.NULL))
-
-def epoll_wait(epfd: int, maxevents: int, timeout: int) -> t.List[EpollEvent]:
-    c_events = ffi.new('struct epoll_event[]', maxevents)
-    count = throw_on_error(lib.epoll_wait(epfd, c_events, maxevents, timeout))
-    ret = []
-    for ev in c_events[0:count]:
-        ret.append(EpollEvent(ev.data.u64, EpollEventMask(ev.events)))
-    return ret
+    def to_bytes(self) -> bytes:
+        return ffi.new('struct epoll_event const*', (self.events.raw, (self.data,)))

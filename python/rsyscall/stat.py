@@ -77,9 +77,6 @@ def statx(dirfd: int, pathname: bytes, flags: int, mask: int) -> bytes:
     throw_on_error(lib.statx(dirfd, null_terminated(pathname), flags, mask, statxbuf))
     return bytes(ffi.buffer(statxbuf))
 
-def faccessat(dirfd: int, pathname: bytes, mode: int) -> None:
-    throw_on_error(lib.faccessat(dirfd, null_terminated(pathname), mode, 0))
-
 class DType(enum.Enum):
     BLK = lib.DT_BLK # This is a block device.
     CHR = lib.DT_CHR # This is a character device.
@@ -110,32 +107,14 @@ class Dirent:
     def __str__(self) -> str:
         return f"Dirent({self.type}, {self.name})"
 
-def getdents64(fd: int, count: int) -> t.List[Dirent]:
-    buf = ffi.new('char[]', count)
-    ret = throw_on_error(lib.getdents64(fd, ffi.cast('struct linux_dirent64*', buf), count))
-    cur = ffi.cast('char*', buf)
-    end = ffi.cast('char*', buf+ret)
+def getdents64_parse(data: bytes) -> t.List[Dirent]:
     entries = []
-    while cur < end:
-        record = ffi.cast('struct linux_dirent64*', cur)
-        cur += record.d_reclen
+    while len(data) > 0:
+        record = ffi.cast('struct linux_dirent64*', ffi.from_buffer(data))
         # the name is padded with null bytes to make the dirent
         # aligned, so we have to use strlen to find the end
         name_size = lib.strlen(record.d_name)
         name = bytes(ffi.buffer(record.d_name, name_size))
         entries.append(Dirent(inode=record.d_ino, offset=record.d_off, type=DType(record.d_type), name=name))
+        data = data[record.d_reclen:]
     return entries
-
-def unlinkat(dirfd: int, pathname: bytes, flags: int) -> None:
-    throw_on_error(lib.unlinkat(dirfd, null_terminated(pathname), flags))
-
-def linkat(olddirfd: int, oldpath: bytes, newdirfd: int, newpath: bytes, flags: int) -> None:
-    throw_on_error(lib.linkat(olddirfd, null_terminated(oldpath), newdirfd, null_terminated(newpath), flags))
-
-def symlinkat(target: bytes, newdirfd: int, newpath: bytes) -> None:
-    throw_on_error(lib.symlinkat(null_terminated(target), newdirfd, null_terminated(newpath)))
-
-def readlinkat(dirfd: int, pathname: bytes, bufsiz: int) -> bytes:
-    buf = ffi.new('char[]', bufsiz)
-    ret = throw_on_error(lib.readlinkat(dirfd, null_terminated(pathname), buf, bufsiz))
-    return bytes(ffi.buffer(buf, ret))
