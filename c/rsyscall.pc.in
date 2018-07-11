@@ -7,4 +7,5 @@ Name: rsyscall
 Description: Make syscalls remotely
 Version: @VERSION@
 Cflags: -I${includedir}
+Libs: -L${libdir} -lrsyscall
 

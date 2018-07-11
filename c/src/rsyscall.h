@@ -1,11 +1,8 @@
 #include <stdint.h>
 
 struct syscall {
-        int sys;
-        uint64_t args[6];
+    int64_t sys;
+    int64_t args[6];
 };
 
-struct syscall_response {
-        int64_t ret;
-        uint32_t err;
-};
+noreturn void rsyscall_server(const int infd, const int outfd);

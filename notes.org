@@ -1123,6 +1123,232 @@ blargh I guess we can't execveat for now
    And I guess also a Thread?
    And we can only kill it when thread.task == parent?
 
+   soooooo
+   okaaaay
+
+   it's not really a collection of registers and an address space.
+
+   the address space, you know, is actually an attribute of the task.
+   and the registers don't even matter
+
+   it's actually really truly just a wrapper around a syscallinterface
+   and the task it corresponds to, can change.
+
+   how would we even represent this in the kernel, sigh
+
+   I guess we can't?
+   what does it really mean to have continuity here?
+
+   it's an illusion
+   we copy our thread and we think we're the same
+
+   but we're actually a copy
+
+   are there any other means of having a syscallinterface other than "syscall" and "fd"?
+
+   well we could do it over shared memory.
+
+   and, doing it over shared memory...
+
+   well, we'd have a task which we sfork inside, to create a new task,
+   which is still listening to the same syscallinterface.
+
+   so... we just want to track what task is currently active on the other side.
+
+   could multiple tasks be on the other side?
+
+   like, we send a syscall and,
+   we can send another and,
+   how do we determine which task gets which syscall?
+
+   do we want the syscall interface to somehow give us some kind of token?
+
+   which we can use to make a syscall on a specific task? ha ha.
+   that's exactly the same as the current syscall interface.
+
+   and anyway it doesn't work for a specific task,
+   but rather a specific thread whatever thingy.
+
+   cuz when we sfork inside a task
+   it pushes the task on a stack and makes a new one.
+
+   so this is kind of a "mobile thread".
+   it's a thread that can move between tasks.
+   and move between processes.
+
+   who knows, maybe it could even move between hosts?
+   well it can certainly move between containers
+
+   hmm it sure would be nicer if sfork didn't create a new task
+
+   exec after sfork I guess, as always, does three things:
+   creates a new task with a new tid in the current namespaces,
+   makes that tid have a new address space,
+   returns us to the parent,
+   blurgh
+
+   wait a second, exec probably also creates a new file descriptor space, to cloexec in?
+   blah
+
+   well, okay, so.
+   all this would be complicated.
+
+   what if we just accept that sfork does create new tasks,
+   it does create a stack of tasks,
+   and exec is just the normal thing.
+
+   then all that I'm doing is,
+   having a single thread of execution move between tasks.
+   the new task starts up with new registers,
+   and the old task gets the new task's registers when it execs.
+
+   so I guess this is pretty unnatural
+   generally a task and a thread are identical
+
+   so how would I do it otherwise?
+
+   I guess
+
+   I would just start up a task with a new SyscallInterface
+
+   And in that way avoid the problems of "a thread that moves between tasks".
+
+   Actually, for that matter,
+   I would even be able to double-fork and start supervise?
+   No no I wouldn't
+
+   Wait, yes I would!
+   Through the subreaper thing!
+   Since it would inherit great-grand children.
+
+   Huh.
+
+   I could even do a CLONE_PARENT to have supervise directly become the parent of the great-grand-children.
+   (haha, that would be so crazy)
+
+   So okay, blah blah blah,
+   I guess the best thing to do is to use clone to create new SyscallInterfaces.
+
+   So, then, how do I...
+
+   wait, argh.
+
+   To use clone to do this, I would need to start using rsyscall immediately.
+   Even for local, shared memory stuff.
+
+   Although I guess I can directly write to the shared address space.
+
+   Maybe I will indeed just do that, have a shared memory rsyscall.
+
+   So okay, I will also need to set up the child stack right.
+   
+   I guess that I could probably have a C routine to do that, for now, with the one-process model.
+
+   Oh, I guess I can have a C routine which returns a buffer or something?
+
+   I can get the bytes that need to go on the stack,
+   and then pick how I put them there.
+
+   Yeah, yeah, sfork is weird, making tasks on the fly is better.
+
+   Let's be sure we can do this right with remote rsyscall though.
+
+   I would need to prepare the stack.
+   But I guess I can prepare the stack just fine.
+   It's just a little (a lot) weird.
+
+   Though I wonder if I can leave child_stack NULL?
+   Probably not, I do have to change the fds that I use.
+
+   And no matter what, it would loop and then they would both read from the same fd.
+   hmmmmmmmmmmmm
+
+   OK I think building the stack is fine
+
+   Doing this with rsyscall is just clearly better.
+
+   So that's my next project.
+   In-process rsyscall so that threads work.
+
+   Yeah, just making more tasks is clearly better.
+
+   Oh, also this means I no longer segfault if I don't use sfork :)
+
+   Oh, let's just have a C function that starts an rsyscall thread in the current space.
+
+   Er wait no that's not right, we need to control the clone args.
+
+   hmm I guess we could use CHILD_CLEARTID and futexes as a way to get notified on child process exit :)
+
+   oh wait no, exec will wipe that out
+
+   okay I see, clone_child_cleartid and settid have to be there because
+   uhhh, probably posix reasons
+   oh, cleartid is how notification of child process exit happens.
+   and I guess wait can't be used because, er, tricky posix reasons?
+   whatevs
+
+   oh also let's have the task have its own fd space, so we can get easy termination notification still
+   er, probably.
+   maybe.
+
+   haha this use of CLONE_PARENT will be great
+   well, maybe
+
+   okay so it does seem pretty useful to have in-process rsyscall things I guess
+   which I communicate with using file descriptors so they can be polled on
+
+   oh, so!
+   ptid, ctid, and newtls can all be ignored for our use case.
+
+   we'll get notification of exit through fd hangup, I guess.
+   possibly through __WCLONE if we must
+
+   I don't think we need to or want to specify CLONE_THREAD
+   although maybe we do
+
+   all we need to specify is the flags, and the child_stack, and possibly the child signal
+
+   we'll build the child_stack ourselves, hum hum...
+
+   will we mmap it?
+   instead of mallocing it?
+   probably? that's the most common with a totally remote thing.
+
+   we'll still do direct memory writing to it I guess
+
+   oh, to kill a task, we'll, er
+   close the infd,
+   wait on the outfd,
+   unmap the memory.
+
+   okay so the role for C is just to build the stack
+
+   what will the stack even look like?
+   I guess we have some assembly routine which loads registers from the stack,
+   then calls...
+
+   oh wait, oh no
+
+   clone continues from the point of the call??
+
+   how do we fix this then...
+
+   so I guess in a low level implementation of syscall,
+   we'll call the system call,
+   then ret.
+
+   the ret will allow us to jump to an arbitrary location by manipulating the stack.
+   okay, seems reasonable.
+
+   so we'll write that component of rsyscall in assembly
+
+   and skip the whole errno drag too
+
+   hm.
+   newtls, that's tricky.
+
+   I'll avoid it. I'll make my syscalls directly instead, with no deps on glibc, so I'm totally freestanding.
 
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.

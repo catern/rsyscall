@@ -55,12 +55,17 @@ long rsyscall(struct remote_connection remote, long number,
         if (ret < 0) err(1, "write(remote.tofd, &request, sizeof(request))");
         if (ret != sizeof(request)) errx(1, "write(remote.tofd, &request, sizeof(request)) partial write");
 
-        struct syscall_response response;
+        int64_t response;
         ret = read(remote.fromfd, &response, sizeof(response));
         if (ret < 0) err(1, "read(remote.fromfd, &response, sizeof(response)) failed");
         if (ret != sizeof(response)) err(1, "read(remote.fromfd, &response, sizeof(response)) partial read");
-        errno = response.err;
-        return response.ret;
+
+        if (response < 0) {
+            errno = -response;
+            return -1;
+        } else {
+            return response;
+        }
 }
 
 void do_remote_splice(struct remote_connection remote, int infd, int outfd) {
