@@ -62,6 +62,7 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
 
 int unlinkat(int dirfd, const char *pathname, int flags);
 int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags);
+long rsyscall_raw_syscall(long arg1, long arg2, long arg3, long arg4, long arg5, long arg6, long sys);
 
 #define EPOLL_CLOEXEC ...
 
@@ -122,7 +123,6 @@ void *memcpy(void *dest, const void *src, size_t n);
 struct sockaddr_in { ...; };
 
 struct syscall { ...; };
-struct syscall_response { ...; };
 """)
 # TODO need to get the struct definition
 # TODO need to get the syscall numbers

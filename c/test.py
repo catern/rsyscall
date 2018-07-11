@@ -20,8 +20,8 @@ class StubProcess:
     def __exit__(self, *args):
         self.close()
         ret = self.process.wait()
-        if ret != 0:
-            raise Exception("bad exit", ret)
+        ret.check()
+        self.process.close()
 
     def close(self):
         os.close(self.tofd)
@@ -40,8 +40,8 @@ class RemoteCat:
 
     def __exit__(self, *args):
         ret = self.process.wait()
-        if ret != 0:
-            raise Exception("bad exit", ret)
+        ret.check()
+        self.process.close()
 
 
 def remote_cat(stub: StubProcess, infd, outfd) -> supervise_api.Process:
@@ -49,7 +49,7 @@ def remote_cat(stub: StubProcess, infd, outfd) -> supervise_api.Process:
     os.close(infd)
     os.close(outfd)
 
-class TestThingsg(unittest.TestCase):
+class TestRsyscall(unittest.TestCase):
     def test_run_stub(self):
         with StubProcess() as stub:
             pass            

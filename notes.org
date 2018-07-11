@@ -1350,6 +1350,20 @@ blargh I guess we can't execveat for now
 
    I'll avoid it. I'll make my syscalls directly instead, with no deps on glibc, so I'm totally freestanding.
 
+   So, let's do all the syscall wrapping in Python.
+   We'll have a class that provides a syscall interface and takes a function to do raw syscalls.
+   Which uses cffi to do memory access.
+   And we can wrap that class in either a syscall to thread or not.
+
+   That's so type-unsafe it's not even funny lol.
+
+   I guess I can write standalone Python functions that take do_syscall and are type safe.
+
+   It's like assembly from Python.
+
+   OK so we'll start off with just replacing io.py with cffi to async do_syscall.
+
+   Then we can replace the async do_syscall with a thread-remote one.
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 

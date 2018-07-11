@@ -1,11 +1,10 @@
 with import <nixpkgs> {};
 
 let
-python = python3.withPackages (ps: [ps.supervise_api]);
+myPython = python3.withPackages (ps: [(import ../../supervise/python)]);
 in
 stdenv.mkDerivation {
   name = "rsyscall";
   src = ./.;
-  propogatedBuildInputs = [ python ];
-  buildInputs = [ autoreconfHook autoconf automake libtool pkgconfig ];
+  buildInputs = [ autoreconfHook autoconf automake libtool pkgconfig myPython (import ../../supervise/c)];
 }

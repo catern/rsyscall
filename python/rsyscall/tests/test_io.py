@@ -183,11 +183,6 @@ class TestIO(unittest.TestCase):
                     self.assertEqual(await readable.read(), text)
                 await dirfd.lseek(0, os.SEEK_SET)
                 self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..', name])
-
-                new_path = await (path/"foo").mkdir()
-                async with (await new_path.open(os.O_DIRECTORY)) as new_dirfd:
-                    await new_path.rmdir()
-                    print(await new_dirfd.getdents())
         trio.run(test)
 
     def test_getdents_noent(self) -> None:
