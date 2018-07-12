@@ -1439,6 +1439,216 @@ blargh I guess we can't execveat for now
    Automatic cleanup is the tricky part.
    We don't get fd-based cleanup since we share an fd space.
    Could we run supervise in the middle to clean up our threads?
+
+   That does seem possibly viable.
+
+   Oh wait no!
+   supervise won't help either because it won't get notified by the fd closing.
+   Hm!
+
+   I could resort to PDEATHSIG to notify supervise.
+   That would work perhaps.
+
+   The nice thing about thread groups is that they offer a guarantee.
+
+   They are not nestable though
+
+   There are too many task cleanup things in Linux, and all of them suck!
+
+   I could also PDEATHSIG to kill the child threads.
+
+   classic problem, classic problem
+
+   I guess supervise + PDEATHSIG is fine.
+
+   But I still don't like the fact that I don't have race-free-ness!
+
+   I'm not killing my direct children...
+
+   To have a cleanup task, my children must be theirs...
+
+   Hmm, could I do an arrangement like...
+
+   me -> supervise (with subreaper) -> childspawnerwaiter -> [all children]
+
+   Then when I die, supervise is notified, and kills childspawner and all other children.
+
+   Hmmmmmmm curious, curious.
+
+   Alternatively, I guess I could wrap around me instead.
+   Then I could spawn and wait on children directly.
+
+   supervise -> me -> [all children]
+
+   Like... treat me as something which can be sigkill'd?
+
+   Essentially externalizing the cleanup?
+
+   The fact that my children share my fd space makes this all tricky.
+
+   I could just PDEATHSIG them too I suppose.
+   
+   Well... hmm. Then if someone sigkills supervise, things break.
+
+   Oh wait, does SIGHAND just negate this whole problem?
+   Does it mean that a signal to one, causes all to die?
+
+   We should check that.
+
+   OK yeah
+
+   If I set PDEATHSIG for everything
+   And have threads/tasks I control be direct children,
+   and have uncontrolled things run under supervise to clean them up,
+   everything will be good.
+
+   This does suggest I can't exec in a direct child to something uncontrolled.
+   Unless I can figure out a way to..
+
+   Oh!
+   I'll just fork off a child of my direct child
+   and exec supervise in my direct child.
+
+   So this seems... really good and clean!
+
+   Direct children (such as supervise and rsyscall) can be trusted to terminate when I SIGTERM
+
+   Indirect children (under supervise) get a harser approach, being SIGKILL'd by supervise.
+
+   so it will look like
+
+   me -> rsyscall, rsyscall, rsyscall, [supervise -> [nginx -> worker, worker, worker]]
+
+   And PDEATHSIG will ensure cleanup.
+
+   We don't really have to set PDEATHSIG on supervise since...
+   well actually we do have to, because we could have:
+   me -> rsyscall -> supervise -> rsyscall
+
+   And fd sharing between 1,2 and 4.
+   (presumably only temporarily, while execing in 4)
+
+   Then we'd need supervise to be killed when 2 dies,
+   because the fds wouldn't be closed until 4 dies.
+
+   What would the kernel support look like then?
+
+   ¯\_(ツ)_/¯
+
+   It's not clear yet whether supervise will be doing child monitoring?
+
+   I guess we can do:
+**** me
+***** rsyscall
+***** rsyscall
+***** supervise
+****** rsyscall
+       Here we will monitor child processes and stuff.
+
+       It seems like it would be better for the thread to exit by raising a signal.
+       That way it can be handled.
+
+       And we could have a signal handler that does filicide and terminates.
+
+       That would allow removing supervise from the picture
+******* nginx
+******** worker
+******** worker
+******** worker
+*** continuation
+    but wait, how does this interact with the remote use case?
+
+    I guess it's pretty hard to load a library remotely
+
+    Although actually I guess it could be pretty simple.
+
+    So let's assume we can do a remote library load.
+
+    Then we'd have our daemonized rsyscall process,
+    which is controlled by its fds.
+
+    When we shut down, we terminate the connection and its fds close.
+
+    It reacts by raising a signal.
+
+    That calls filicide if the signal handler is registered, but either way it terminates rsyscall.
+
+    That results in PDEATHSIG terminating all immediate children.
+
+    That all seems sensible.
+
+    Oh wait, I can even load the library remotely through using clone-to-run-function hacks!
+    What a cool hack that is.
+    I just need to run it through ld.so or something, so that the dynamic linker appears in my address space.
+
+    For now let's just put supervise in the middle.
+
+    In this model, supervise does basically nothing at all:
+    It just provides a process that calls filicide on exit.
+
+    It's like a hack around the fact that I can't load libraries to get a function to register as a signal handler.
+
+    So yeah, this all seems good.
+
+    supervise then is really a simple utility.
+    It does basically nothing.
+    And is useful generically, and from the shell.
+    well no not really, since it doesn't exec for you :)
+
+    we're just using rsyscall or other magics to handle the child status reporting below it, if we care about that.
+
+    seems great!
+*** ways to clean up tasks
+    thread groups
+
+    process groups
+
+    controlling ttys
+
+    pid namespaces
+
+    control groups
+
+    PDEATHSIG
+
+    I guess the ultimate way is to have a separate cleanup task.
+    Which I don't SIGKILL.
+
+    And I guess I'll use PDEATHSIG to notify it, shrug!
+
+    We can also clear pdeathsig if we want to detach.
+
+    So PDEATHSIG is a decent thing. I guess we'll keep it.
+
+    filicide, then, is what we need. It needs to be in the kernel so it's robust to SIGKILL
+
+    It's a thing which sigkills all transitive child processes when your process exits.
+
+    I guess essentially it just SIGKILLs all children until there are no more children
+
+    subreaper is required I guess.
+
+    essentially we want a parent-level attribute that specifies the signal to send to all our children when we die.
+    that way our children can't turn it off.
+
+    and we want to keep sending it as we get more children reparented to us, I guess.
+
+*** how did LinuxThreads do it??
+    how did they manage to have SIGKILL to one thread, kill all threads?
+
+    probably by pdeathsig or somefin
+** implementing the child status monitoring thingy
+   so I'll allocate a sigchld signalfd
+
+   then attach it to an epoller
+
+   then wrap it in a multiplexer
+
+   to dispatch waits to the right associated ChildTask
+
+   note well that subreaper means I'll get wakeups for unknown children.
+
+   rsyscall[reap]
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 

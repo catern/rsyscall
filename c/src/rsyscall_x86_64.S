@@ -25,12 +25,23 @@ rsyscall_trampoline:
 	call *%rax
 	// store return value on stack
 	push %rax
-	// exit thread cleanly
+	// get my tid
 	movq $0, %rdi
         movq $0, %rsi
 	movq $0, %rdx
         movq $0, %r10
         movq $0, %r8
         movq $0, %r9
+	movq $__NR_gettid, %rax
+	syscall
+	// SIGTERM myself
+	movq %rax, %rdi
+        movq $15, %rsi
+	movq $__NR_tkill, %rax
+	syscall
+	// should not return, but if it does:
+	// exit thread uncleanly
+	movq $1, %rdi
+        movq $0, %rsi
 	movq $__NR_exit, %rax
         syscall

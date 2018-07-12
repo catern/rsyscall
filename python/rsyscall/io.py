@@ -20,7 +20,25 @@ from async_generator import asynccontextmanager
 import logging
 import fcntl
 import errno
+import enum
 logger = logging.getLogger(__name__)
+
+class Siginfo:
+    pass
+
+def siginfo_parse(data: bytes) -> Siginfo:
+    return Siginfo()
+
+class Rusage:
+    pass
+
+def rusage_parse(data: bytes) -> Rusage:
+    return Rusage()
+
+class IdType(enum.IntEnum):
+    PID = lib.P_PID # Wait for the child whose process ID matches id.
+    PGID = lib.P_PGID # Wait for any child whose process group ID matches id.
+    ALL = lib.P_ALL # Wait for any child; id is ignored.
 
 class SyscallInterface:
     async def pipe(self, flags=os.O_NONBLOCK) -> t.Tuple[int, int]: ...
@@ -39,6 +57,9 @@ class SyscallInterface:
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> int: ...
     async def getpid(self) -> int: ...
+
+    async def mmap(self, addr: int, length: int, prot: int, flags: int, fd: int, offset: int) -> int: ...
+    async def munmap(self, addr: int, length: int) -> int: ...
 
     # epoll operations
     async def epoll_create(self, flags: int) -> int: ...
@@ -73,6 +94,7 @@ class SyscallInterface:
     async def linkat(self, olddirfd: int, oldpath: bytes, newdirfd: int, newpath: bytes, flags: int) -> None: ...
     async def symlinkat(self, target: bytes, newdirfd: int, newpath: bytes) -> None: ...
     async def readlinkat(self, dirfd: int, pathname: bytes, bufsiz: int) -> bytes: ...
+    async def waitid(self, idtype: IdType, id: int, options: int, *, want_siginfo: bool, want_rusage: bool) -> t.Tuple[t.Union[int, Siginfo], t.Optional[Rusage]]: ...
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
@@ -253,6 +275,28 @@ class LocalSyscall(SyscallInterface):
         buf = ffi.new('char[]', bufsiz)
         await self.syscall(lib.SYS_readlinkat, dirfd, null_terminated(pathname), bufsiz)
         return ffi.buffer(bufsiz)
+
+    async def waitid(self, idtype: IdType, id: int, options: int, *, want_siginfo: bool, want_rusage: bool
+    ) -> t.Tuple[t.Union[int, Siginfo], t.Optional[Rusage]]:
+        logger.debug("waitid(%s, %s, %s, want_siginfo=%s, want_rusage=%s)", idtype, id, options, want_siginfo, want_rusage)
+        if want_siginfo:
+            siginfo = ffi.new('siginfo_t*')
+        else:
+            siginfo = ffi.NULL
+        if want_rusage:
+            rusage = ffi.new('struct rusage*')
+        else:
+            rusage = ffi.NULL
+        ret = await self.syscall(lib.SYS_waitid, idtype, id, siginfo, options, rusage)
+        if want_siginfo:
+            parsed_siginfo: t.Union[int, Siginfo] = siginfo_parse(ffi.buffer(siginfo))
+        else:
+            parsed_siginfo = ret
+        if want_rusage:
+            parsed_rusage: t.Optional[Rusage] = rusage_parse(ffi.buffer(rusage))
+        else:
+            parsed_rusage = None
+        return parsed_siginfo, parsed_rusage
 
 class FDNamespace:
     pass

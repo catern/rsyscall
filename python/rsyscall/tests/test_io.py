@@ -11,6 +11,7 @@ import trio.hazmat
 import rsyscall.io
 import os
 import logging
+import signal
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -232,11 +233,11 @@ class TestIO(unittest.TestCase):
                         stack_address -= len(stack)
                         await mapping.write(stack_address, stack)
                         self.assertEqual(await mapping.read(stack_address, len(stack)), stack)
-                        ret = await self.task.syscall.clone2(
-                            lib.CLONE_VM|lib.CLONE_FILES|lib.CLONE_SIGHAND,
+                        tid = await self.task.syscall.clone2(
+                            lib.CLONE_VM|lib.CLONE_FILES|lib.CLONE_SIGHAND|signal.SIGCHLD,
                             stack_address,
                             0, 0, 0)
-                        print("tid is", ret)
+                        print("tid is", tid)
                         # okay, now we want to close the pipes and see it exit
                         # hmmmmmm
                         # we can't see it exit through EOF
@@ -258,7 +259,15 @@ class TestIO(unittest.TestCase):
                         # executed in the thread group leader.
                         # so no clone_thread, so we'll stick with what we've got
 
-                        await trio.sleep(100000)
+                        # let's just directly wait?
+                        await pipe_in.wfd.aclose()
+                        await pipe_out.rfd.aclose()
+                        ret = await self.task.syscall.waitid(rsyscall.io.IdType.PID, tid, lib._WALL|lib.WEXITED,
+                                                             want_siginfo=False, want_rusage=False)
+                        # okay so we need a sigchld signalfd and a waitid loop.
+                        # I guess child handling in Linux is fine after all, huh... IF you're the only one doing it in the process
+                        # we should borrow a lot of stuff from supervise
+                        print("waitid ret is", ret)
         trio.run(test)
 
 if __name__ == '__main__':
