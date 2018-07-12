@@ -22,6 +22,7 @@ ffibuilder.set_source(
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/signal.h>
+#include <sys/signalfd.h>
 #include <dirent.h>
 
 struct linux_dirent64 {
@@ -110,6 +111,38 @@ int faccessat(int dirfd, const char *pathname, int mode, int flags);
 #define P_PID ...
 #define P_PGID ...
 #define P_ALL ...
+
+#define SYS_signalfd4 ...
+
+#define SFD_NONBLOCK ...
+#define SFD_CLOEXEC ...
+
+#define SYS_rt_sigprocmask ...
+
+#define SIG_BLOCK ...
+#define SIG_UNBLOCK ...
+#define SIG_SETMASK ...
+
+
+struct signalfd_siginfo {
+    uint32_t ssi_signo;    /* Signal number */
+    int32_t  ssi_errno;    /* Error number (unused) */
+    int32_t  ssi_code;     /* Signal code */
+    uint32_t ssi_pid;      /* PID of sender */
+    uint32_t ssi_uid;      /* Real UID of sender */
+    int32_t  ssi_fd;       /* File descriptor (SIGIO) */
+    uint32_t ssi_tid;      /* Kernel timer ID (POSIX timers)
+    uint32_t ssi_band;     /* Band event (SIGIO) */
+    uint32_t ssi_overrun;  /* POSIX timer overrun count */
+    uint32_t ssi_trapno;   /* Trap number that caused signal */
+    int32_t  ssi_status;   /* Exit status or signal (SIGCHLD) */
+    int32_t  ssi_int;      /* Integer sent by sigqueue(3) */
+    uint64_t ssi_ptr;      /* Pointer sent by sigqueue(3) */
+    uint64_t ssi_utime;    /* User CPU time consumed (SIGCHLD) */
+    uint64_t ssi_stime;    /* System CPU time consumed
+                              (SIGCHLD) */
+    ...;
+};
 
 #define SYS_splice ...
 #define SYS_mmap ...

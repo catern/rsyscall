@@ -40,6 +40,17 @@ class IdType(enum.IntEnum):
     PGID = lib.P_PGID # Wait for any child whose process group ID matches id.
     ALL = lib.P_ALL # Wait for any child; id is ignored.
 
+class SigprocmaskHow(enum.IntEnum):
+    BLOCK = lib.SIG_BLOCK
+    UNBLOCK = lib.SIG_UNBLOCK
+    SETMASK = lib.SIG_SETMASK
+
+def bits(n):
+    while n:
+        b = n & (~n+1)
+        yield b
+        n ^= b
+
 class SyscallInterface:
     async def pipe(self, flags=os.O_NONBLOCK) -> t.Tuple[int, int]: ...
     async def close(self, fd: int) -> None: ...
@@ -95,6 +106,8 @@ class SyscallInterface:
     async def symlinkat(self, target: bytes, newdirfd: int, newpath: bytes) -> None: ...
     async def readlinkat(self, dirfd: int, pathname: bytes, bufsiz: int) -> bytes: ...
     async def waitid(self, idtype: IdType, id: int, options: int, *, want_siginfo: bool, want_rusage: bool) -> t.Tuple[t.Union[int, Siginfo], t.Optional[Rusage]]: ...
+    async def signalfd(self, fd: int, signals: t.List[signal.Signals], flags: int) -> int: ...
+    async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.List[signal.Signals]]) -> t.List[signal.Signals]: ...
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
@@ -298,6 +311,28 @@ class LocalSyscall(SyscallInterface):
             parsed_rusage = None
         return parsed_siginfo, parsed_rusage
 
+    async def signalfd(self, fd: int, mask: t.List[signal.Signals], flags: int) -> int:
+        logger.debug("signalfd(%s, %s, %s)", fd, mask, flags)
+        # sigset_t is just a 64bit bitmask of signals, I don't need the manipulation macros.
+        set_integer = 0
+        for sig in mask:
+            set_integer |= 1 << (sig-1)
+        set_data = ffi.new('unsigned long*', set_integer)
+        return (await self.syscall(lib.SYS_signalfd4, fd, set_data, ffi.sizeof('unsigned long'), flags))
+
+    async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.List[signal.Signals]]) -> t.List[signal.Signals]:
+        logger.debug("rt_sigprocmask(%s, %s)", how, set)
+        old_set = ffi.new('unsigned long*')
+        if set is None:
+            await self.syscall(lib.SYS_rt_sigprocmask, how, ffi.NULL, old_set, ffi.sizeof('unsigned long'))
+        else:
+            set_integer = 0
+            for sig in set:
+                set_integer |= 1 << (sig-1)
+            new_set = ffi.new('unsigned long*', set_integer)
+            await self.syscall(lib.SYS_rt_sigprocmask, how, new_set, old_set, ffi.sizeof('unsigned long'))
+        return [signal.Signals(bit) for bit in bits(old_set[0])]
+
 class FDNamespace:
     pass
 
@@ -376,11 +411,21 @@ class SeekableFile(File):
 class ReadableWritableFile(ReadableFile, WritableFile):
     pass
 
+class SignalFile(ReadableFile):
+    def __init__(self, mask: t.List[signal.Signals], shared=False):
+        super().__init__(shared=shared)
+        self.mask = mask
+
+    async def signalfd(self, fd: 'FileDescriptor[SignalFile]', mask: t.List[signal.Signals]) -> None:
+        await fd.syscall.signalfd(fd.number, mask, 0)
+        self.mask = mask
+
 class DirectoryFile(SeekableFile):
     # this is a fallback if we need to serialize this dirfd out
     raw_path: bytes
     def __init__(self, raw_path: bytes) -> None:
         self.raw_path = raw_path
+
     async def getdents(self, fd: 'FileDescriptor[DirectoryFile]', count: int) -> t.List[Dirent]:
         return (await fd.syscall.getdents(fd.number, count))
 
@@ -409,6 +454,9 @@ class FileDescriptor(t.Generic[T_file_co]):
             self.open = False
         else:
             pass
+
+    def __str__(self) -> str:
+        return f'FD({self.number}, {self.file}, {self.task})'
 
     async def __aenter__(self) -> 'FileDescriptor[T_file_co]':
         return self

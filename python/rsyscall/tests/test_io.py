@@ -233,6 +233,14 @@ class TestIO(unittest.TestCase):
                         stack_address -= len(stack)
                         await mapping.write(stack_address, stack)
                         self.assertEqual(await mapping.read(stack_address, len(stack)), stack)
+
+                        mask = [signal.SIGCHLD]
+                        ret = await self.task.syscall.rt_sigprocmask(rsyscall.io.SigprocmaskHow.BLOCK, mask)
+                        print(ret)
+                        sigfd_num = await self.task.syscall.signalfd(-1, mask, 0)
+                        sigfd = rsyscall.io.FileDescriptor(rsyscall.io.SignalFile(mask), self.task, self.task.fd_namespace, sigfd_num)
+                        print(sigfd)
+
                         tid = await self.task.syscall.clone2(
                             lib.CLONE_VM|lib.CLONE_FILES|lib.CLONE_SIGHAND|signal.SIGCHLD,
                             stack_address,
@@ -259,9 +267,16 @@ class TestIO(unittest.TestCase):
                         # executed in the thread group leader.
                         # so no clone_thread, so we'll stick with what we've got
 
-                        # let's just directly wait?
                         await pipe_in.wfd.aclose()
                         await pipe_out.rfd.aclose()
+
+                        async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                            epoller = Epoller(epoll)
+                            async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd)
+                            ret = await async_sigfd.read()
+                            print(ret)
+                            # now we make a class that uses this async sigfd to 
+
                         ret = await self.task.syscall.waitid(rsyscall.io.IdType.PID, tid, lib._WALL|lib.WEXITED,
                                                              want_siginfo=False, want_rusage=False)
                         # okay so we need a sigchld signalfd and a waitid loop.

@@ -1649,6 +1649,14 @@ blargh I guess we can't execveat for now
    note well that subreaper means I'll get wakeups for unknown children.
 
    rsyscall[reap]
+
+   so handling sigchld and manipulating child processes isn't so bad after all
+   IF you're the only one in the process doing it
+
+   actually no, just: if you don't have to stick to posix semantics
+
+   hmm.
+   aren't privilege level changes in Linux threading libraries inherently racy since one thread has to change before the others?
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 
@@ -1752,3 +1760,11 @@ hmm, actually it just occurred to me that this question is essentially the same 
   hey, and supervise is a nice pid1 to run inside the container
 
   neat neat neat neaaat
+* portability things
+** assuming there are 64 signals so sigset_t is an 8-byte integer
+   I think you can probably compile the kernel with more signals?
+   But maybe not because it looks like it's hardcoded in a header somewhere.
+** rsyscall assembly code
+** building a stack manually to pass to rsyscall trampoline
+** architecture-specific syscalls
+   clone at least is arch-specific in its argument order
