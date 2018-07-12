@@ -147,7 +147,7 @@ int faccessat(int dirfd, const char *pathname, int mode, int flags);
 #define MAP_STACK ...
 
 void *memcpy(void *dest, const void *src, size_t n);
-void rsyscall_server(const int infd, const int outfd);
+void (*const rsyscall_server)(const int infd, const int outfd);
 void rsyscall_trampoline(void);
 struct rsyscall_trampoline_stack {
     int64_t rdi;

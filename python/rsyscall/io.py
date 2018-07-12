@@ -610,15 +610,23 @@ class MemoryMapping:
         self.address = address
         self.length = length
 
-    async def write(self, data: bytes) -> None:
-        if len(data) > self.length:
-            raise Exception("length of data to write is longer than length of mapping :(")
-        lib.memcpy(ffi.cast('void*', self.address), ffi.from_buffer(data), len(data))
+    def in_bounds(self, ptr: int, length: int) -> bool:
+        if ptr < self.address:
+            return False
+        offset = self.address - ptr
+        if (self.length - offset) < length:
+            return False
+        return True
 
-    async def read(self, size: int) -> bytes:
-        if size > self.length:
-            raise Exception("length of data to read is longer than length of mapping :(")
-        return bytes(ffi.buffer(ffi.cast('void*', self.address), size))
+    async def write(self, ptr: int, data: bytes) -> None:
+        if not self.in_bounds(ptr, len(data)):
+            raise Exception("pointer and data not in bounds of mapping")
+        lib.memcpy(ffi.cast('void*', ptr), ffi.from_buffer(data), len(data))
+
+    async def read(self, ptr: int, size: int) -> bytes:
+        if not self.in_bounds(ptr, size):
+            raise Exception("pointer and size not in bounds of mapping")
+        return bytes(ffi.buffer(ffi.cast('void*', ptr), size))
 
     async def unmap(self) -> None:
         await self.syscall.munmap(self.address, self.length)
@@ -629,14 +637,13 @@ class MemoryMapping:
     async def __aexit__(self, *args, **kwargs):
         await self.unmap()
 
-async def make_stack_space(task: Task) -> MemoryMapping:
+async def allocate_memory(task: Task, size: int=4096) -> MemoryMapping:
     size = 4096
     # it seems like MAP_GROWSDOWN does nothing, otherwise I would be using it...
     ret = await task.syscall.mmap(0, size, lib.PROT_READ|lib.PROT_WRITE,
-                                  lib.MAP_PRIVATE|lib.MAP_ANONYMOUS|lib.MAP_GROWSDOWN,
+                                  lib.MAP_PRIVATE|lib.MAP_ANONYMOUS,
                                   -1, 0)
     return MemoryMapping(task, ret, size)
-
 
 class PathBase:
     """These are possible bases for Paths.

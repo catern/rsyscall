@@ -1421,6 +1421,24 @@ blargh I guess we can't execveat for now
 
    of course, we are relying on the "immediate ret after syscall" behavior.
    can we do better?
+** child task monitoring thing
+   I'll have some multiplexing on top of a sigchildfd,
+   which then does a wait,
+   and dispatches events,
+   and sees what it sees.
+
+   And kill on top of that.
+
+   Essentially it's the same multiplexing as for epoll.
+
+   This will be a Task object
+   Which also implements ChildTask?
+
+   Or maybe I just get back a ChildTask object and a Task object when launching a thread.
+
+   Automatic cleanup is the tricky part.
+   We don't get fd-based cleanup since we share an fd space.
+   Could we run supervise in the middle to clean up our threads?
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 

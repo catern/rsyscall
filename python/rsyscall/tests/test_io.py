@@ -208,48 +208,56 @@ class TestIO(unittest.TestCase):
 
     def test_mmap(self) -> None:
         async def test() -> None:
-            time.sleep(10)
-            print("about to map")
-            async with (await rsyscall.io.make_stack_space(self.task)) as mapping:
-                # how do we portably operate on this memory???
-                # I guess we can add a write_address and read_address.
-                # mmm
-                print(hex(mapping.address))
-                time.sleep(500000)
+            async with (await rsyscall.io.allocate_memory(self.task)) as mapping:
                 msg = b"hello"
-                await mapping.write(msg)
-                self.assertEqual(await mapping.read(len(msg)), msg)
+                await mapping.write(mapping.address, msg)
+                self.assertEqual(await mapping.read(mapping.address, len(msg)), msg)
         trio.run(test)
 
     def test_mmap_clone(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.make_stack_space(self.task)) as mapping:
+            async with (await rsyscall.io.allocate_memory(self.task)) as mapping:
                 async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
                     async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
                         stack_struct = ffi.new('struct rsyscall_trampoline_stack*')
                         stack_struct.rdi = pipe_in.rfd.number
                         stack_struct.rsi = pipe_out.wfd.number
-                        stack_struct.function = ffi.addressof(lib, 'rsyscall_server')
+                        print(lib.rsyscall_server)
+                        stack_struct.function = lib.rsyscall_server
                         stack = bytes(ffi.buffer(stack_struct))
                         trampoline_addr = int(ffi.cast('long', ffi.addressof(lib, 'rsyscall_trampoline')))
                         packed_trampoline_addr = struct.pack('Q', trampoline_addr)
                         stack = packed_trampoline_addr + stack
-                        await mapping.write(stack)
-                        print(mapping.address)
-                        self.assertEqual(await mapping.read(len(stack)), stack)
-                        # ok so now i'm getting segfaults when pushing hmm
-                        # so i guess i get the address of a place where I can't push at all
-                        # but I can pop as much as I want
-                        # so I should...
-                        # add 4096...
-                        # allocate down on it...
-                        # the thing labeled [stack] is defined by the binary we're executing.
-                        # so no worries that it isn't right.
-                        ret = await self.task.syscall.clone2(lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_SIGHAND,
-                                                             mapping.address,
-                                                             0, 0, 0)
+                        stack_address = mapping.address + mapping.length
+                        stack_address -= len(stack)
+                        await mapping.write(stack_address, stack)
+                        self.assertEqual(await mapping.read(stack_address, len(stack)), stack)
+                        ret = await self.task.syscall.clone2(
+                            lib.CLONE_VM|lib.CLONE_FILES|lib.CLONE_SIGHAND,
+                            stack_address,
+                            0, 0, 0)
                         print("tid is", ret)
-                        time.sleep(500000)
+                        # okay, now we want to close the pipes and see it exit
+                        # hmmmmmm
+                        # we can't see it exit through EOF
+                        # because it's in our some fd space
+                        # so its end of the pipe isn't closed
+                        # but if we do a CLONE_FILES and close on our sithen it will be
+                        # that's silly and silly.
+                        # let's just write the sigchld multiplexer thing
+                        # and have the thread signal us on exit
+                        # yeah and forget that dumb futex thing, even sigchld is better than that.
+                        # hokay so
+                        # it would be nice to all be in the same thread group
+                        # so we all get the signals
+                        # oh no I can't and won't set CLONE_THREAD, because of:
+
+                        # If any of the threads in a thread group performs an
+                        # execve(2), then all threads other than the thread
+                        # group leader are terminated, and the new program is
+                        # executed in the thread group leader.
+                        # so no clone_thread, so we'll stick with what we've got
+
                         await trio.sleep(100000)
         trio.run(test)
 
