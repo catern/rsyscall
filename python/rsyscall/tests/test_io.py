@@ -3,6 +3,7 @@ from rsyscall.io import ProcessContext, SubprocessContext, gather_local_bootstra
 from rsyscall.io import Epoller, allocate_epoll, AsyncFileDescriptor
 from rsyscall.epoll import EpollEvent, EpollEventMask
 import struct
+import time
 import unittest
 import supervise_api as supervise
 import trio
@@ -207,10 +208,14 @@ class TestIO(unittest.TestCase):
 
     def test_mmap(self) -> None:
         async def test() -> None:
+            time.sleep(10)
+            print("about to map")
             async with (await rsyscall.io.make_stack_space(self.task)) as mapping:
                 # how do we portably operate on this memory???
                 # I guess we can add a write_address and read_address.
                 # mmm
+                print(hex(mapping.address))
+                time.sleep(500000)
                 msg = b"hello"
                 await mapping.write(msg)
                 self.assertEqual(await mapping.read(len(msg)), msg)
@@ -232,20 +237,19 @@ class TestIO(unittest.TestCase):
                         await mapping.write(stack)
                         print(mapping.address)
                         self.assertEqual(await mapping.read(len(stack)), stack)
-                        # hmmmmmm
-                        # the procedure linkage table. my nemesis.
-                        # why aren't the addresses known at compile time, let alone link time??
+                        # ok so now i'm getting segfaults when pushing hmm
+                        # so i guess i get the address of a place where I can't push at all
+                        # but I can pop as much as I want
+                        # so I should...
+                        # add 4096...
+                        # allocate down on it...
+                        # the thing labeled [stack] is defined by the binary we're executing.
+                        # so no worries that it isn't right.
                         ret = await self.task.syscall.clone2(lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_SIGHAND,
                                                              mapping.address,
                                                              0, 0, 0)
-                        # okay so we are successfully running this stuff on the thread through the trampoline
-                        # let's now start the server and do calls?
-                        # should we start by running the server in a separate process?
-                        # and maybe even use native Python subprocess to start it?
-                        # that's a BIT silly but let's do it
-                        # er wait, we won't be able to use the same thing as we've got right now.
-                        # okay so NO we won't do that lol
                         print("tid is", ret)
+                        time.sleep(500000)
                         await trio.sleep(100000)
         trio.run(test)
 

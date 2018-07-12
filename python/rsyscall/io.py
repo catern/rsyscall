@@ -590,7 +590,6 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
 
-
 class MemoryMapping:
     task: Task
     address: int
@@ -632,8 +631,9 @@ class MemoryMapping:
 
 async def make_stack_space(task: Task) -> MemoryMapping:
     size = 4096
+    # it seems like MAP_GROWSDOWN does nothing, otherwise I would be using it...
     ret = await task.syscall.mmap(0, size, lib.PROT_READ|lib.PROT_WRITE,
-                                  lib.MAP_PRIVATE|lib.MAP_ANONYMOUS|lib.MAP_GROWSDOWN|lib.MAP_STACK,
+                                  lib.MAP_PRIVATE|lib.MAP_ANONYMOUS|lib.MAP_GROWSDOWN,
                                   -1, 0)
     return MemoryMapping(task, ret, size)
 
