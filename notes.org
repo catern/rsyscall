@@ -1657,6 +1657,27 @@ blargh I guess we can't execveat for now
 
    hmm.
    aren't privilege level changes in Linux threading libraries inherently racy since one thread has to change before the others?
+
+   Oh okay I guess first I'll do a signal multiplexer thing.
+   I'll explicitly opt in to signals that I want to receive instead of terminating me?
+
+   Then we take the SIGCHLD queue and
+
+   We wrap it in Waiter
+
+   Which has a "make" method which returns ChildTasks with a given tid.
+
+   Or actually I guess a clone method?
+
+   No, Waiter returns just ChildTasks.
+
+   We have another thing that takes no arguments and returns a (Task, ChildTask) tuple
+
+   Since it needs the pointer to rsyscall stuff to launch.
+
+   We also want to have some kind of SupervisedTask which is required to fork off
+   things which can
+   exec random binaries
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 
