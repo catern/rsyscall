@@ -17,17 +17,12 @@ import trio
 import signal
 import sfork
 from async_generator import asynccontextmanager
+from dataclasses import dataclass
 import logging
 import fcntl
 import errno
 import enum
 logger = logging.getLogger(__name__)
-
-class Siginfo:
-    pass
-
-def siginfo_parse(data: bytes) -> Siginfo:
-    return Siginfo()
 
 class Rusage:
     pass
@@ -46,10 +41,50 @@ class SigprocmaskHow(enum.IntEnum):
     SETMASK = lib.SIG_SETMASK
 
 def bits(n):
+    "Yields the bit indices that are set"
     while n:
         b = n & (~n+1)
-        yield b
+        yield b.bit_length()
         n ^= b
+
+class ChildCode(enum.Enum):
+    EXITED = lib.CLD_EXITED # child called _exit(2)
+    KILLED = lib.CLD_KILLED # child killed by signal
+    DUMPED = lib.CLD_DUMPED # child killed by signal, and dumped core
+    STOPPED = lib.CLD_STOPPED # child stopped by signal
+    TRAPPED = lib.CLD_TRAPPED # traced child has trapped
+    CONTINUED = lib.CLD_CONTINUED # child continued by SIGCONT
+
+class UncleanExit(Exception):
+    pass
+
+@dataclass
+class ChildEvent:
+    code: ChildCode
+    pid: int
+    uid: int
+    exit_status: t.Optional[int]
+    sig: t.Optional[signal.Signals]
+    def died(self) -> bool:
+        return self.code in [ChildCode.EXITED, ChildCode.KILLED, ChildCode.DUMPED]
+    def clean(self) -> bool:
+        return self.code == ChildCode.EXITED and self.exit_status == 0
+
+    def check(self) -> None:
+        if self.clean():
+            return None
+        else:
+            raise UncleanExit(self)
+
+    def killed_with(self) -> signal.Signals:
+        """What signal was the child killed with?
+
+        Throws if the child was not killed with a signal.
+
+        """
+        if self.sig is None:
+            raise Exception("Child wasn't killed with a signal")
+        return self.sig
 
 class SyscallInterface:
     async def pipe(self, flags=os.O_NONBLOCK) -> t.Tuple[int, int]: ...
@@ -105,9 +140,10 @@ class SyscallInterface:
     async def linkat(self, olddirfd: int, oldpath: bytes, newdirfd: int, newpath: bytes, flags: int) -> None: ...
     async def symlinkat(self, target: bytes, newdirfd: int, newpath: bytes) -> None: ...
     async def readlinkat(self, dirfd: int, pathname: bytes, bufsiz: int) -> bytes: ...
-    async def waitid(self, idtype: IdType, id: int, options: int, *, want_siginfo: bool, want_rusage: bool) -> t.Tuple[t.Union[int, Siginfo], t.Optional[Rusage]]: ...
-    async def signalfd(self, fd: int, signals: t.List[signal.Signals], flags: int) -> int: ...
-    async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.List[signal.Signals]]) -> t.List[signal.Signals]: ...
+    async def waitid(self, idtype: IdType, id: int, options: int, *, want_child_event: bool, want_rusage: bool
+    ) -> t.Tuple[int, t.Optional[bytes], t.Optional[bytes]]: ...
+    async def signalfd(self, fd: int, signals: t.Set[signal.Signals], flags: int) -> int: ...
+    async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.Set[signal.Signals]]) -> t.Set[signal.Signals]: ...
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
@@ -289,10 +325,10 @@ class LocalSyscall(SyscallInterface):
         await self.syscall(lib.SYS_readlinkat, dirfd, null_terminated(pathname), bufsiz)
         return ffi.buffer(bufsiz)
 
-    async def waitid(self, idtype: IdType, id: int, options: int, *, want_siginfo: bool, want_rusage: bool
-    ) -> t.Tuple[t.Union[int, Siginfo], t.Optional[Rusage]]:
-        logger.debug("waitid(%s, %s, %s, want_siginfo=%s, want_rusage=%s)", idtype, id, options, want_siginfo, want_rusage)
-        if want_siginfo:
+    async def waitid(self, idtype: IdType, id: int, options: int, *, want_child_event: bool, want_rusage: bool
+    ) -> t.Tuple[int, t.Optional[bytes], t.Optional[bytes]]:
+        logger.debug("waitid(%s, %s, %s, want_child_event=%s, want_rusage=%s)", idtype, id, options, want_child_event, want_rusage)
+        if want_child_event:
             siginfo = ffi.new('siginfo_t*')
         else:
             siginfo = ffi.NULL
@@ -301,17 +337,9 @@ class LocalSyscall(SyscallInterface):
         else:
             rusage = ffi.NULL
         ret = await self.syscall(lib.SYS_waitid, idtype, id, siginfo, options, rusage)
-        if want_siginfo:
-            parsed_siginfo: t.Union[int, Siginfo] = siginfo_parse(ffi.buffer(siginfo))
-        else:
-            parsed_siginfo = ret
-        if want_rusage:
-            parsed_rusage: t.Optional[Rusage] = rusage_parse(ffi.buffer(rusage))
-        else:
-            parsed_rusage = None
-        return parsed_siginfo, parsed_rusage
+        return ret, bytes(ffi.buffer(siginfo)) if siginfo else None, bytes(ffi.buffer(rusage)) if rusage else None
 
-    async def signalfd(self, fd: int, mask: t.List[signal.Signals], flags: int) -> int:
+    async def signalfd(self, fd: int, mask: t.Set[signal.Signals], flags: int) -> int:
         logger.debug("signalfd(%s, %s, %s)", fd, mask, flags)
         # sigset_t is just a 64bit bitmask of signals, I don't need the manipulation macros.
         set_integer = 0
@@ -320,7 +348,7 @@ class LocalSyscall(SyscallInterface):
         set_data = ffi.new('unsigned long*', set_integer)
         return (await self.syscall(lib.SYS_signalfd4, fd, set_data, ffi.sizeof('unsigned long'), flags))
 
-    async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.List[signal.Signals]]) -> t.List[signal.Signals]:
+    async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.Set[signal.Signals]]) -> t.Set[signal.Signals]:
         logger.debug("rt_sigprocmask(%s, %s)", how, set)
         old_set = ffi.new('unsigned long*')
         if set is None:
@@ -331,7 +359,7 @@ class LocalSyscall(SyscallInterface):
                 set_integer |= 1 << (sig-1)
             new_set = ffi.new('unsigned long*', set_integer)
             await self.syscall(lib.SYS_rt_sigprocmask, how, new_set, old_set, ffi.sizeof('unsigned long'))
-        return [signal.Signals(bit) for bit in bits(old_set[0])]
+        return {signal.Signals(bit) for bit in bits(old_set[0])}
 
 class FDNamespace:
     pass
@@ -341,6 +369,30 @@ class MemoryNamespace:
 
 class MountNamespace:
     pass
+
+class SignalMask:
+    mask: t.Set[signal.Signals]
+    def __init__(self):
+        self.mask = set()
+
+    def _validate(self, task: 'Task') -> SyscallInterface:
+        if task.sigmask != self:
+            raise Exception
+        return task.syscall
+
+    async def block(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
+        syscall = self._validate(task)
+        old_mask = await syscall.rt_sigprocmask(SigprocmaskHow.BLOCK, mask)
+        if self.mask != old_mask:
+            raise Exception("SignalMask tracking got out of sync?")
+        self.mask = self.mask.union(mask)
+
+    async def unblock(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
+        syscall = self._validate(task)
+        old_mask = await syscall.rt_sigprocmask(SigprocmaskHow.UNBLOCK, mask)
+        if self.mask != old_mask:
+            raise Exception("SignalMask tracking got out of sync?")
+        self.mask = self.mask - mask
 
 class Task:
     def __init__(self, syscall: SyscallInterface,
@@ -352,6 +404,7 @@ class Task:
         self.memory = memory
         self.fd_namespace = fd_namespace
         self.mount = mount
+        self.sigmask = SignalMask()
 
 class ProcessContext:
     """A Linux process with associated resources.
@@ -412,11 +465,11 @@ class ReadableWritableFile(ReadableFile, WritableFile):
     pass
 
 class SignalFile(ReadableFile):
-    def __init__(self, mask: t.List[signal.Signals], shared=False):
+    def __init__(self, mask: t.Set[signal.Signals], shared=False) -> None:
         super().__init__(shared=shared)
         self.mask = mask
 
-    async def signalfd(self, fd: 'FileDescriptor[SignalFile]', mask: t.List[signal.Signals]) -> None:
+    async def signalfd(self, fd: 'FileDescriptor[SignalFile]', mask: t.Set[signal.Signals]) -> None:
         await fd.syscall.signalfd(fd.number, mask, 0)
         self.mask = mask
 
@@ -524,6 +577,9 @@ class FileDescriptor(t.Generic[T_file_co]):
 
     async def lseek(self: 'FileDescriptor[SeekableFile]', offset: int, whence: int) -> int:
         return (await self.file.lseek(self, offset, whence))
+
+    async def signalfd(self: 'FileDescriptor[SignalFile]', mask: t.Set[signal.Signals]) -> None:
+        await (self.file.signalfd(self, mask))
 
     async def wait_readable(self) -> None:
         return (await self.syscall.wait_readable(self.number))
@@ -1125,6 +1181,148 @@ async def mkdtemp(root: Path, rm_location: Path, prefix: str="mkdtemp"
             # I think implementing the event-driven in-process child process management thing is a good idea.
             # that will reduce my dependency on supervise and general weirdness...
             await rm_proc.exec(rm_location, ["rm", "-r", basename])
+
+class SignalBlock:
+    """This represents some signals being blocked from normal handling
+
+    We need this around to use alternative signal handling mechanisms
+    such as signalfd.
+
+    """
+    task: Task
+    mask: t.Set[signal.Signals]
+    @staticmethod
+    async def make(task: Task, mask: t.Set[signal.Signals]) -> 'SignalBlock':
+        if len(mask.intersection(task.sigmask.mask)) != 0:
+            raise Exception("can't allocate a SignalBlock for a signal that was already blocked")
+        await task.sigmask.block(task, mask)
+        return SignalBlock(task, mask)
+
+    def __init__(self, task: Task, mask: t.Set[signal.Signals]) -> None:
+        self.task = task
+        self.mask = mask
+
+    async def close(self) -> None:
+        await self.task.sigmask.unblock(self.task, self.mask)
+
+    async def __aenter__(self) -> 'SignalBlock':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.close()
+
+async def allocate_signalfd(task: Task, mask: t.Set[signal.Signals]) -> FileDescriptor[SignalFile]:
+    sigfd_num = await task.syscall.signalfd(-1, mask, lib.SFD_CLOEXEC)
+    return FileDescriptor(SignalFile(mask), task, task.fd_namespace, sigfd_num)
+
+class SignalQueue:
+    def __init__(self, signal_block: SignalBlock, sigfd: AsyncFileDescriptor[SignalFile]) -> None:
+        self.signal_block = signal_block
+        self.sigfd = sigfd
+
+    async def read(self) -> None:
+        data = await self.sigfd.read()
+        # TODO need to return this data in some parsed form
+        data = ffi.cast('struct signalfd_siginfo*', ffi.from_buffer(data))
+    
+    async def close(self) -> None:
+        await self.signal_block.close()
+        await self.sigfd.aclose()
+
+    async def __aenter__(self) -> 'SignalQueue':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.close()
+
+async def allocate_signalqueue(task: Task, epoller: Epoller, mask: t.Set[signal.Signals]) -> SignalQueue:
+    signal_block = await SignalBlock.make(task, mask)
+    sigfd = await allocate_signalfd(task, mask)
+    async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd)
+    return SignalQueue(signal_block, async_sigfd)
+
+class MultiplexerQueue:
+    # TODO 
+    # maybe we should, uhh
+    # oh, we can't just check if someone is running and if they are, starting waiting on the queue
+    # because, we need to get woken up to do the run if we're waiting
+    # maybe that should be the thing, hmm
+    # run this waiting function as long as someone is waiting on the queue
+    # run in their time slice
+    pass
+
+class Multiplexer:
+    pass
+
+class ChildTask:
+    tid: int
+    queue: trio.hazmat.UnboundedQueue
+    async def wait(self) -> None:
+        # wait for a single event on this child
+        pass
+
+class ChildTaskMonitor:
+    def __init__(self, signal_queue: SignalQueue) -> None:
+        self.signal_queue = signal_queue
+        self.task_map: t.Mapping[int, ChildTask] = {}
+        if self.signal_queue.sigfd.epolled.underlying.file.mask != set([signal.SIGCHLD]):
+            raise Exception("ChildTaskMonitor should get a SignalQueue only for SIGCHLD")
+        self.running_wait: t.Optional[trio.Event] = None
+
+    def make(self, tid: int) -> ChildTask:
+        pass
+
+    async def do_wait(self) -> None:
+        if self.running_wait is not None:
+            await self.running_wait.wait()
+        else:
+            running_wait = trio.Event()
+            self.running_wait = running_wait
+
+            # don't even care what event we get
+            await self.signal_queue.read()
+            # loop on wait to flush all child events
+            while True:
+                try:
+                    _, siginfo, _ = await self.signal_queue.sigfd.epolled.underlying.task.syscall.waitid(
+                        IdType.ALL, 0, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG,
+                        want_child_event=True, want_rusage=False
+                    )
+                except ChildProcessError:
+                    # no more children
+                    break
+                struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
+                if struct.si_pid == 0:
+                    # no more waitable events, but we still have children
+                    break
+                code = ChildCode(struct.si_code)
+                pid = int(struct.si_pid)
+                uid = int(struct.si_uid)
+                if code is ChildCode.EXITED:
+                    child_event = ChildEvent(code, pid, uid, int(struct.si_status), None) # type: ignore
+                else:
+                    child_event = ChildEvent(code, pid, uid, None, signal.Signals(struct.si_status)) # type: ignore
+                self.task_map[child_event.pid].queue.put_nowait(child_event)
+
+            self.running_wait = None
+            running_wait.set()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 class Pipe:
     def __init__(self, rfd: FileDescriptor[ReadableFile],

@@ -111,6 +111,21 @@ int faccessat(int dirfd, const char *pathname, int mode, int flags);
 #define P_PID ...
 #define P_PGID ...
 #define P_ALL ...
+#define CLD_EXITED ... // child called _exit(2)
+#define CLD_KILLED ... // child killed by signal
+#define CLD_DUMPED ... // child killed by signal, and dumped core
+#define CLD_STOPPED ... // child stopped by signal
+#define CLD_TRAPPED ... // traced child has trapped
+#define CLD_CONTINUED ... // child continued by SIGCONT
+typedef int... pid_t;
+typedef unsigned... uid_t;
+typedef struct siginfo {
+    int      si_code;      /* Signal code */
+    pid_t    si_pid;       /* Sending process ID */
+    uid_t    si_uid;       /* Real user ID of sending process */
+    int      si_status;    /* Exit value or signal */
+    ...;
+} siginfo_t;
 
 #define SYS_signalfd4 ...
 

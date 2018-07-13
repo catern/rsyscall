@@ -234,55 +234,30 @@ class TestIO(unittest.TestCase):
                         await mapping.write(stack_address, stack)
                         self.assertEqual(await mapping.read(stack_address, len(stack)), stack)
 
-                        mask = [signal.SIGCHLD]
-                        ret = await self.task.syscall.rt_sigprocmask(rsyscall.io.SigprocmaskHow.BLOCK, mask)
-                        print(ret)
-                        sigfd_num = await self.task.syscall.signalfd(-1, mask, 0)
-                        sigfd = rsyscall.io.FileDescriptor(rsyscall.io.SignalFile(mask), self.task, self.task.fd_namespace, sigfd_num)
-                        print(sigfd)
-
-                        tid = await self.task.syscall.clone2(
-                            lib.CLONE_VM|lib.CLONE_FILES|lib.CLONE_SIGHAND|signal.SIGCHLD,
-                            stack_address,
-                            0, 0, 0)
-                        print("tid is", tid)
-                        # okay, now we want to close the pipes and see it exit
-                        # hmmmmmm
-                        # we can't see it exit through EOF
-                        # because it's in our some fd space
-                        # so its end of the pipe isn't closed
-                        # but if we do a CLONE_FILES and close on our sithen it will be
-                        # that's silly and silly.
-                        # let's just write the sigchld multiplexer thing
-                        # and have the thread signal us on exit
-                        # yeah and forget that dumb futex thing, even sigchld is better than that.
-                        # hokay so
-                        # it would be nice to all be in the same thread group
-                        # so we all get the signals
-                        # oh no I can't and won't set CLONE_THREAD, because of:
-
-                        # If any of the threads in a thread group performs an
-                        # execve(2), then all threads other than the thread
-                        # group leader are terminated, and the new program is
-                        # executed in the thread group leader.
-                        # so no clone_thread, so we'll stick with what we've got
-
-                        await pipe_in.wfd.aclose()
-                        await pipe_out.rfd.aclose()
-
                         async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
                             epoller = Epoller(epoll)
-                            async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd)
-                            ret = await async_sigfd.read()
-                            print(ret)
-                            # now we make a class that uses this async sigfd to 
+                            async with (await rsyscall.io.allocate_signalqueue(self.task, epoller, {signal.SIGCHLD})) as signal_queue:
+                                tid = await self.task.syscall.clone2(
+                                    lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD,
+                                    stack_address,
+                                    0, 0, 0)
+                                print("tid is", tid)
 
-                        ret = await self.task.syscall.waitid(rsyscall.io.IdType.PID, tid, lib._WALL|lib.WEXITED,
-                                                             want_siginfo=False, want_rusage=False)
+                                ret = await self.task.syscall.waitid(rsyscall.io.IdType.ALL, 0, lib._WALL|lib.WEXITED|lib.WNOHANG,
+                                                                     want_child_event=True, want_rusage=False)
+                                print(ret)
+        
+                                await pipe_in.wfd.aclose()
+                                await pipe_out.rfd.aclose()
+
+                                await signal_queue.read()
+
+                                ret = await self.task.syscall.waitid(rsyscall.io.IdType.PID, tid, lib._WALL|lib.WEXITED,
+                                                                     want_child_event=True, want_rusage=False)
+                                print("waitid ret is", ret)
                         # okay so we need a sigchld signalfd and a waitid loop.
                         # I guess child handling in Linux is fine after all, huh... IF you're the only one doing it in the process
                         # we should borrow a lot of stuff from supervise
-                        print("waitid ret is", ret)
         trio.run(test)
 
 if __name__ == '__main__':

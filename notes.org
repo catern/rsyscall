@@ -1678,12 +1678,35 @@ blargh I guess we can't execveat for now
    We also want to have some kind of SupervisedTask which is required to fork off
    things which can
    exec random binaries
+
+   And what about our trampoline which lets us run arbitrary C functions?
+   Shouldn't we expose that?
+
+   And that just has a ChildTask dep...
+
+   Or rather it's a wrapper around a ChildTask.
+
+   We don't want to share SIGHAND; not sharing SIGHAND means we can have specific tasks do filicide,
+   without everything doing filicide.
+
+   VM and FILES are both namespaces for dynamic resources,
+   which we can safely share because the kernel multiplexes/allocates in a non-interfering way in those namespaces.
+   (as long as we don't MAP_FIXED or dup2 to an unallocated address/number)
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 
    i.e. immediately upon finishing the basic stuff
 
    My goal: configuring/running nginx.
+** fifos
+   interesting, fifos should always be opened for reading with O_NONBLOCK
+
+   that way they won't block forever when opening for read
+   which means deadlocks aren't possible
+
+   maybe all opens should be done with O_NONBLOCK
+
+   nah it has no effect for files
 * criu
   I feel like I have a bunch in common with criu
 
