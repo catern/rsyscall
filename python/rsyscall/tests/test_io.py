@@ -217,47 +217,11 @@ class TestIO(unittest.TestCase):
 
     def test_mmap_clone(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_memory(self.task)) as mapping:
-                async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
-                    async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
-                        stack_struct = ffi.new('struct rsyscall_trampoline_stack*')
-                        stack_struct.rdi = pipe_in.rfd.number
-                        stack_struct.rsi = pipe_out.wfd.number
-                        print(lib.rsyscall_server)
-                        stack_struct.function = lib.rsyscall_server
-                        stack = bytes(ffi.buffer(stack_struct))
-                        trampoline_addr = int(ffi.cast('long', ffi.addressof(lib, 'rsyscall_trampoline')))
-                        packed_trampoline_addr = struct.pack('Q', trampoline_addr)
-                        stack = packed_trampoline_addr + stack
-                        stack_address = mapping.address + mapping.length
-                        stack_address -= len(stack)
-                        await mapping.write(stack_address, stack)
-                        self.assertEqual(await mapping.read(stack_address, len(stack)), stack)
-
-                        async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
-                            epoller = Epoller(epoll)
-                            async with (await rsyscall.io.allocate_signalqueue(self.task, epoller, {signal.SIGCHLD})) as signal_queue:
-                                tid = await self.task.syscall.clone2(
-                                    lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD,
-                                    stack_address,
-                                    0, 0, 0)
-                                print("tid is", tid)
-
-                                ret = await self.task.syscall.waitid(rsyscall.io.IdType.ALL, 0, lib._WALL|lib.WEXITED|lib.WNOHANG,
-                                                                     want_child_event=True, want_rusage=False)
-                                print(ret)
-        
-                                await pipe_in.wfd.aclose()
-                                await pipe_out.rfd.aclose()
-
-                                await signal_queue.read()
-
-                                ret = await self.task.syscall.waitid(rsyscall.io.IdType.PID, tid, lib._WALL|lib.WEXITED,
-                                                                     want_child_event=True, want_rusage=False)
-                                print("waitid ret is", ret)
-                        # okay so we need a sigchld signalfd and a waitid loop.
-                        # I guess child handling in Linux is fine after all, huh... IF you're the only one doing it in the process
-                        # we should borrow a lot of stuff from supervise
+            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                epoller = Epoller(epoll)
+                async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
+                    async with (await rsyscall.io.RunningTask.make(self.task, monitor)) as running_task:
+                        pass
         trio.run(test)
 
 if __name__ == '__main__':

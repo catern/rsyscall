@@ -13,6 +13,7 @@ import abc
 import sys
 import os
 import typing as t
+import struct
 import trio
 import signal
 import sfork
@@ -65,6 +66,13 @@ class ChildEvent:
     uid: int
     exit_status: t.Optional[int]
     sig: t.Optional[signal.Signals]
+    @staticmethod
+    def make(code: ChildCode, pid: int, uid: int, status: int):
+        if code is ChildCode.EXITED:
+            return ChildEvent(code, pid, uid, status, None) # type: ignore
+        else:
+            return ChildEvent(code, pid, uid, None, signal.Signals(status)) # type: ignore
+
     def died(self) -> bool:
         return self.code in [ChildCode.EXITED, ChildCode.KILLED, ChildCode.DUMPED]
     def clean(self) -> bool:
@@ -82,6 +90,8 @@ class ChildEvent:
         Throws if the child was not killed with a signal.
 
         """
+        if not self.died():
+            raise Exception("Child isn't dead")
         if self.sig is None:
             raise Exception("Child wasn't killed with a signal")
         return self.sig
@@ -102,6 +112,10 @@ class SyscallInterface:
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> int: ...
+
+    async def clone2(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int:
+        raise NotImplementedError
+
     async def getpid(self) -> int: ...
 
     async def mmap(self, addr: int, length: int, prot: int, flags: int, fd: int, offset: int) -> int: ...
@@ -1255,22 +1269,39 @@ class Multiplexer:
     pass
 
 class ChildTask:
-    tid: int
-    queue: trio.hazmat.UnboundedQueue
-    async def wait(self) -> None:
-        # wait for a single event on this child
-        pass
+    def __init__(self, tid: int, queue: trio.hazmat.UnboundedQueue,
+                 monitor: 'ChildTaskMonitor') -> None:
+        self.tid = tid
+        self.queue = queue
+        self.monitor = monitor
+
+    async def wait(self) -> t.List[ChildEvent]:
+        while True:
+            try:
+                return self.queue.get_batch_nowait()
+            except trio.WouldBlock:
+                await self.monitor.do_wait()
 
 class ChildTaskMonitor:
+    @staticmethod
+    async def make(task: Task, epoller: Epoller) -> 'ChildTaskMonitor':
+        signal_queue = await allocate_signalqueue(task, epoller, {signal.SIGCHLD})
+        return ChildTaskMonitor(signal_queue)
+
     def __init__(self, signal_queue: SignalQueue) -> None:
         self.signal_queue = signal_queue
-        self.task_map: t.Mapping[int, ChildTask] = {}
+        self.task_map: t.Dict[int, ChildTask] = {}
+        self.unknown_queue = trio.hazmat.UnboundedQueue()
         if self.signal_queue.sigfd.epolled.underlying.file.mask != set([signal.SIGCHLD]):
             raise Exception("ChildTaskMonitor should get a SignalQueue only for SIGCHLD")
         self.running_wait: t.Optional[trio.Event] = None
 
-    def make(self, tid: int) -> ChildTask:
-        pass
+    async def clone(self, flags: int, child_stack: int) -> ChildTask:
+        task = self.signal_queue.sigfd.epolled.underlying.task
+        tid = await task.syscall.clone2(flags, child_stack, 0, 0, 0)
+        child_task = ChildTask(tid, trio.hazmat.UnboundedQueue(), self)
+        self.task_map[tid] = child_task
+        return child_task
 
     async def do_wait(self) -> None:
         if self.running_wait is not None:
@@ -1279,12 +1310,14 @@ class ChildTaskMonitor:
             running_wait = trio.Event()
             self.running_wait = running_wait
 
-            # don't even care what event we get
+            # we don't care what information we get from the signal, we just want to
+            # sleep until a SIGCHLD happens
             await self.signal_queue.read()
-            # loop on wait to flush all child events
+            # loop on waitid to flush all child events
+            task = self.signal_queue.sigfd.epolled.underlying.task
             while True:
                 try:
-                    _, siginfo, _ = await self.signal_queue.sigfd.epolled.underlying.task.syscall.waitid(
+                    _, siginfo, _ = await task.syscall.waitid(
                         IdType.ALL, 0, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG,
                         want_child_event=True, want_rusage=False
                     )
@@ -1295,23 +1328,129 @@ class ChildTaskMonitor:
                 if struct.si_pid == 0:
                     # no more waitable events, but we still have children
                     break
-                code = ChildCode(struct.si_code)
-                pid = int(struct.si_pid)
-                uid = int(struct.si_uid)
-                if code is ChildCode.EXITED:
-                    child_event = ChildEvent(code, pid, uid, int(struct.si_status), None) # type: ignore
+                child_event = ChildEvent.make(ChildCode(struct.si_code),
+                                              pid=int(struct.si_pid), uid=int(struct.si_uid),
+                                              status=int(struct.si_status))
+                if child_event.pid in self.task_map:
+                    self.task_map[child_event.pid].queue.put_nowait(child_event)
                 else:
-                    child_event = ChildEvent(code, pid, uid, None, signal.Signals(struct.si_status)) # type: ignore
-                self.task_map[child_event.pid].queue.put_nowait(child_event)
+                    # some unknown child. this will happen if we're a subreaper, as
+                    # things get reparented to us and die
+                    self.unknown_queue.put_nowait(child_event)
+                if child_event.died():
+                    # this child is dead. if its pid is reused, we don't want to send
+                    # any more events to the same ChildTask.
+                    del self.task_map[child_event.pid]
 
             self.running_wait = None
             running_wait.set()
 
+    async def close(self) -> None:
+        await self.signal_queue.close()
 
+    async def __aenter__(self) -> 'ChildTaskMonitor':
+        return self
 
+    async def __aexit__(self, *args, **kwargs):
+        await self.close()
 
+class RsyscallConnection:
+    "A connection to some rsyscall server where we can make syscalls"
+    tofd: FileDescriptor[WritableFile]
+    fromfd: FileDescriptor[ReadableFile]
+    def __init__(self,
+                 tofd: FileDescriptor[WritableFile],
+                 fromfd: FileDescriptor[ReadableFile]) -> None:
+        self.tofd = tofd
+        self.fromfd = fromfd
+ 
+    async def close(self) -> None:
+        await self.tofd.aclose()
+        await self.fromfd.aclose()
 
+    async def __aenter__(self) -> 'RsyscallConnection':
+        return self
 
+    async def __aexit__(self, *args, **kwargs) -> None:
+        await self.close()
+
+class RunningTask:
+    """These are the resources that a task needs to live.
+
+    Close this to murder the task.
+
+    But wait what if the task execs?
+    Then it is also fine to free these resources.
+
+    But how will we know?
+    HOW will we KNOW?
+
+    So we can never exec in our base task, right, because then there will be no-one to
+    filicide for us. Though, if we make a supervised task, maybe?
+
+    So we have to figure out how to consume a task's resources after an exec.
+
+    Also how does this relate to remote/out of process rsyscalls, ya dig?
+    With those, one task may depend on another to be accessed! So we can never really exec them.
+    So we do kind of have a differentiation between leaf task and lead task.
+    Or rather, tasks which are depended on by other tasks,
+    and tasks which aren't depended on by others.
+
+    Right, because, only leaf tasks can exec - if a non-leaf task execs,
+    we can no longer track its children!
+    """
+    stack_mapping: MemoryMapping
+    infd: FileDescriptor[ReadableFile]
+    outfd: FileDescriptor[WritableFile]
+    connection: RsyscallConnection
+    child_task: ChildTask
+    @staticmethod
+    async def make(task: Task, monitor: ChildTaskMonitor) -> 'RunningTask':
+        mapping = await allocate_memory(task)
+        pipe_in = await allocate_pipe(task)
+        pipe_out = await allocate_pipe(task)
+        stack_struct = ffi.new('struct rsyscall_trampoline_stack*')
+        infd = pipe_in.rfd
+        outfd = pipe_out.wfd
+        stack_struct.rdi = infd.number
+        stack_struct.rsi = outfd.number
+        stack_struct.function = lib.rsyscall_server
+        trampoline_addr = int(ffi.cast('long', ffi.addressof(lib, 'rsyscall_trampoline')))
+        packed_trampoline_addr = struct.pack('Q', trampoline_addr)
+        stack = packed_trampoline_addr + bytes(ffi.buffer(stack_struct))
+        stack_address = mapping.address + mapping.length
+        stack_address -= len(stack)
+        await mapping.write(stack_address, stack)
+        child_task = await monitor.clone(lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_address)
+        rsyscall_connection = RsyscallConnection(pipe_in.wfd, pipe_out.rfd)
+        running_task = RunningTask(mapping, infd, outfd, rsyscall_connection, child_task)
+        return running_task
+
+    def __init__(self,
+                 stack_mapping: MemoryMapping,
+                 infd: FileDescriptor[ReadableFile],
+                 outfd: FileDescriptor[WritableFile],
+                 connection: RsyscallConnection,
+                 child_task: ChildTask,
+    ) -> None:
+        self.stack_mapping = stack_mapping
+        self.infd = infd
+        self.outfd = outfd
+        self.connection = connection
+        self.child_task = child_task
+
+    async def aclose(self) -> None:
+        await self.connection.close()
+        await self.child_task.wait()
+        await self.infd.aclose()
+        await self.outfd.aclose()
+        await self.stack_mapping.unmap()
+
+    async def __aenter__(self) -> 'RunningTask':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.aclose()
 
 
 
