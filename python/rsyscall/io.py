@@ -1386,17 +1386,128 @@ class RsyscallConnection:
         await self.close()
 
 class ThreadSyscallInterface(LocalSyscallInterface):
-    # we should take ownership of all the resources for the thread here?
+    # should we really have of all the resources of the thread here?
+    # I guess that's how we have to do it
+    # do we need to expose the child_task to the world?
+    # maybe at some point.
+    # I guess it's necessary if we exec.
+    # maybe that's it? we can only exec from tasks whose exit can be monitored from other tasks?
+    # that rules out the root, which is good and right, but not intermediate nodes
+    # but still: we definitely can only exec from tasks that we can monitor
+    # tasks that we can get access to a ChildTask for
+    # so that definitely suggests Task should be an interface, hmm...
+    # I mean, let's think about the ChildTask and what these interfaces look like
+    # I mean, what are we doing really?
+    # we're creating new "threads" (Linux tasks) which are under the control of our program.
+    # each new task is a new tid and is a child of ours
+    # our main thread is also a child of ours
+    # only tasks that are a child of some task we control,
+    # are allowed to exec.
+    # (which rules out the main task on remote hosts)
+    # hmm and incidentally, tasks that aren't children of our tasks,
+    # are the only ones that get argv and envp and stdstreams...
+    # curious, curious.
+    # more and more suggesting that we should have SecondaryTask and MainTask
+    # or something
+    # RootTask and ParentedTask
+    # urgh no I should really just call it ChildTask
+    # and change the name of ChildTask to like, ChildProcess or something
+    # maybe? urgh. I should clean up my naming
+    # WaitedTask or something?
+    # WaitedTid?
+    # ChildPid?
+    # ChildPid seems good. Or ChildIdentifier, or ChildProcessIdentifier
+    # ParentedPid?
+    # WaitedPid?
+    # well, I want to represent that I can also signal it
+    # also RootTask is a bad name probably, because I can't honestly call the remote things RootTask.
+    # MainTask seems better.
+    # though will it always be a MainTask if it's the initial thread in a memory space?
+    # i.e. if I spawn off a new address space/fd space, I'm forced to use a MainTask?
+    # probably fine, sure
+    # okay so while I'm doing this I still need to think about representing that,
+    # intermediate nodes, which are needed to provide ParentedPids and connections for descendents,
+    # can't exec.
+    # well! I guess that kind of coincides with MainTask?
+    # every intermediate node that can't exec, is also a MainTask?
+    # because if it wasn't, errr
+    # then the MainTask in its address space could take over its responsibility
+    # oh, wait, but...
+    # there's also the child hierarchy to think of.
+    # could explicitly handling reparenting be OK?
+    # that is certainly something we *could* do.
+
+    # are those the only two issues with execing in intermediate nodes? breaking the
+    # connection to later nodes, and losing the child structure?
+    # so, we do need to be able to, like, remap file descriptors to a different task.
+    # tricky, tricky...
+    # I guess any fd in a certain fd namespace can be moved to any task in that fd namespace
+    # so... maybe we could just have, like, a task redirect thing???
+    # and lazily migrate???
+
+    # then what about child tasks?
+    # we could explicitly record them in the task and move them to our parent?
+    # hmm
+    # all sounds possible but complicated
+    # I think all we really need to do is split up two different implementations of Task,
+    # so we can get the WaitedPid for tasks that might exec.
+
+    # oh! hmm! maybe the ThreadedSyscallInterface should have a reference to, like, a...
+    # ArbitraryFunctionRunningInThread thing, which holds the stack mapping,
+    # and probably also holds a reference to the WaitedPid?
+    # tricky, tricky.
+
+    # I should take care to not limit what is possible by providing a bad interface.
+    # separate processes on the same box should be able to exec,
+    # because we do have a WaitedPid for them
+    # also it won't kill their address space anyway
+    # but, it will kill our connection to the processes in that space,
+    # assuming it's proxied through the main thread instead of direct through the
+    # main task on the box.
+    # we should try to limit unnecessary nesting like that, not just because it's inefficient,
+    # but because it's brittle, like in that case.
+    # so a ChildTask is the only thing that would support exec, right?
+    # and then almost everything is a ChildTask,
+    # the only non-child-tasks are the bootstrapping tasks,
+    # the first ones we start with on a box.
+    # which I guess we have mysterious unexplained bootstrap connections to...
+    # in all other cases, we ourselves are starting the process,
+    # so we already have envp/argp/stdstreams.
+
+    # so with MainTasks, we don't own our own thread/task
+    # but with ChildTasks, we do own the task
+    # we can deallocate the resources for it, and exec
+    # with MainTask, we do own the resources to connect though
+    # we can't kill the task directly though right
+    # well, we can't kill it, but we can exit it from the inside
+    # but we can't exec it because we then can't monitor it
+    # but we do control the resources inside it in both cases
+    # so okay, there's two kinds of control of a task
+    # there's control of the inside, and the outside
+    # with MainTask we control the inside
+    # with ChildTask we control the outside and inside
+    # with something we exec, we only control the outside
+    # controlling the inside - that's like controlling the infd and outfd, maybe?
+    # do we lump infd and outfd and memory mapping in with the "outside"?
+    # okay so the "outside" thing is the WaitedPid, through which we can signal and wait
+    # the "inside" is making syscalls.
+
+    # maybe I just have something different from a task when I call exec
+    # something which controls the resources for the thread
+    # and can free them
+    # a ControlledTask that has both the ChildTask and the Task
     stack_mapping: MemoryMapping
     infd: FileDescriptor[ReadableFile]
     outfd: FileDescriptor[WritableFile]
     connection: RsyscallConnection
     child_task: ChildTask
     @staticmethod
-    async def make(task: Task, monitor: ChildTaskMonitor, epoller: Epoller) -> 'RunningTask':
+    async def make(monitor: ChildTaskMonitor, epoller: Epoller) -> 'ThreadSyscallInterface':
         mapping = await allocate_memory(task)
         pipe_in = await allocate_pipe(task)
         pipe_out = await allocate_pipe(task)
+        # TODO I can clean this up using an initializer, maybe with a dict or tuples
+        # also maybe add trampoline_address to this struct
         stack_struct = ffi.new('struct rsyscall_trampoline_stack*')
         infd = pipe_in.rfd
         outfd = pipe_out.wfd
@@ -1413,10 +1524,7 @@ class ThreadSyscallInterface(LocalSyscallInterface):
         async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
         async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
         rsyscall_connection = RsyscallConnection(async_tofd, async_fromfd)
-        task = Task(LocalSyscall(trio.hazmat.wait_readable, rsyscall_connection.syscall),
-                    task.fd_namespace, task.memory, task.mount)
-        running_task = RunningTask(mapping, infd, outfd, rsyscall_connection, child_task, task)
-        return running_task
+        return ThreadSyscallInterface(mapping, infd, outfd, rsyscall_connection, child_task)
 
     def __init__(self,
                  stack_mapping: MemoryMapping,
@@ -1424,16 +1532,16 @@ class ThreadSyscallInterface(LocalSyscallInterface):
                  outfd: FileDescriptor[WritableFile],
                  connection: RsyscallConnection,
                  child_task: ChildTask,
-                 task: Task,
     ) -> None:
+        self.connection = connection
+        super().__init__(trio.hazmat.wait_readable, self.connection)
         self.stack_mapping = stack_mapping
         self.infd = infd
         self.outfd = outfd
-        self.connection = connection
         self.child_task = child_task
         self.task = task
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         await self.connection.close()
         await self.child_task.wait()
         await self.infd.aclose()
@@ -1444,7 +1552,12 @@ class ThreadSyscallInterface(LocalSyscallInterface):
         return self
 
     async def __aexit__(self, *args, **kwargs):
-        await self.aclose()
+        await self.close()
+
+class ControlledTask:
+    task: Task
+    child_task: ChildTask
+    # pointer to parent task? no, that's baked into ChildTask
 
 
 

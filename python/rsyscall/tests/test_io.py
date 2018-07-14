@@ -220,7 +220,7 @@ class TestIO(unittest.TestCase):
             async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
                 epoller = Epoller(epoll)
                 async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
-                    async with (await rsyscall.io.RunningTask.make(self.task, monitor, epoller)) as running_task:
+                    async with (await rsyscall.io.ThreadSyscallInterface.make(self.task, monitor, epoller)) as running_task:
                         async with (await rsyscall.io.allocate_epoll(running_task.task)) as epoll:
                             epoller2 = Epoller(epoll)
                             # okay, important:
@@ -242,9 +242,11 @@ class TestIO(unittest.TestCase):
                             # or execing it or whatever
                             # the contextmanager for a task, calls exit in it!
                             # and then after exiting it, closes the SI.
+
                             # is that the right order? should we have the task itself do some cleanup?
                             # having the task itself do cleanup seems dangerous.
                             # merely exiting should do all the cleanup.
+
                             # also, we need to figure out how to prevent non-leaf tasks from closing
 
                             # but, anyway!
