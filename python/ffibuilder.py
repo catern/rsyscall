@@ -228,7 +228,10 @@ struct rsyscall_trampoline_stack {
 
 struct sockaddr_in { ...; };
 
-struct syscall { ...; };
+struct rsyscall_syscall {
+    int64_t sys;
+    int64_t args[6];
+};
 """)
 # TODO need to get the struct definition
 # TODO need to get the syscall numbers

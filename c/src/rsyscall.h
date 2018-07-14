@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdnoreturn.h>
 
-struct syscall {
+struct rsyscall_syscall {
     int64_t sys;
     int64_t args[6];
 };

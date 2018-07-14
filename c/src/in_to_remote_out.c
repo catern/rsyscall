@@ -64,28 +64,28 @@ struct remote parse_options(int argc, char** argv)
         return opt;
 }
 
-struct syscall read_request(const int to_fd)
+struct rsyscall_syscall read_request(const int to_fd)
 {
-        struct syscall request;
+        struct rsyscall_syscall request;
         int ret = recv(to_fd, &request, sizeof(request), MSG_WAITALL);
         if (ret < 0) err(1, "recv(to_fd, &request, sizeof(request), MSG_WAITALL) failed");
         if (ret != sizeof(request)) err(1, "recv(to_fd, &request, sizeof(request), MSG_WAITALL) partial read");
         return request;
 }
 
-struct syscall_response perform_syscall(struct syscall request)
+struct rsyscall_syscall_response perform_syscall(struct rsyscall_syscall request)
 {
         const int64_t ret = syscall(request.sys,
                                     request.args[0], request.args[1], request.args[2],
                                     request.args[3], request.args[4], request.args[5]);
-        const struct syscall_response response = {
+        const struct rsyscall_syscall_response response = {
                 .ret = ret,
                 .err = errno,
         };
         return response;
 }
 
-void write_response(const int from_fd, const struct syscall_response response)
+void write_response(const int from_fd, const struct rsyscall_syscall_response response)
 {
         int ret = write(from_fd, &response, sizeof(response));
         if (ret < 0) err(1, "write(from_fd, &response, sizeof(response)) failed");

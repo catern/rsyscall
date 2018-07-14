@@ -119,8 +119,8 @@ class TestIO(unittest.TestCase):
                     await self.task.syscall.read(epoll.number, 4096)
         trio.run(test)
 
-    async def do_async_things(self, epoller) -> None:
-        async with (await rsyscall.io.allocate_pipe(self.task)) as pipe:
+    async def do_async_things(self, epoller, task: rsyscall.io.Task) -> None:
+        async with (await rsyscall.io.allocate_pipe(task)) as pipe:
             async_pipe_rfd = await AsyncFileDescriptor.make(epoller, pipe.rfd)
             async_pipe_wfd = await AsyncFileDescriptor.make(epoller, pipe.wfd)
             data = b"hello world"
@@ -136,7 +136,7 @@ class TestIO(unittest.TestCase):
         async def test() -> None:
             async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
                 epoller = Epoller(epoll)
-                await self.do_async_things(epoller)
+                await self.do_async_things(epoller, self.task)
         trio.run(test)
 
     def test_async_multi(self) -> None:
@@ -145,7 +145,7 @@ class TestIO(unittest.TestCase):
                 epoller = Epoller(epoll)
                 async with trio.open_nursery() as nursery:
                     for i in range(5):
-                        nursery.start_soon(self.do_async_things, epoller)
+                        nursery.start_soon(self.do_async_things, epoller, self.task)
         trio.run(test)
 
     def test_clonefd(self) -> None:
@@ -220,8 +220,38 @@ class TestIO(unittest.TestCase):
             async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
                 epoller = Epoller(epoll)
                 async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
-                    async with (await rsyscall.io.RunningTask.make(self.task, monitor)) as running_task:
-                        pass
+                    async with (await rsyscall.io.RunningTask.make(self.task, monitor, epoller)) as running_task:
+                        async with (await rsyscall.io.allocate_epoll(running_task.task)) as epoll:
+                            epoller2 = Epoller(epoll)
+                            # okay, important:
+                            # clearly we need to clean up the syscall interface after an exec
+                            # or otherwise close it
+                            # or whatever
+                            # like, otherwise the interface is still open!
+                            # maybe we could have the task be an interface,
+                            # but I think just closing the syscall interface
+                            # would go a long way.
+                            # like, closing the syscall interface on a threaded rsyscall,
+                            # should probably result in killing and waiting the thread!
+                            # or this is really, the ability to close a SI early,
+                            # after an exec or exit or whatever.
+                            # the other end will be closed too - or may be closed, anyway
+                            # but we have to close our end.
+                            # (and indeed sometimes their end too, in the threaded case)
+                            # and this is what closing a task does I guess
+                            # or execing it or whatever
+                            # the contextmanager for a task, calls exit in it!
+                            # and then after exiting it, closes the SI.
+                            # is that the right order? should we have the task itself do some cleanup?
+                            # having the task itself do cleanup seems dangerous.
+                            # merely exiting should do all the cleanup.
+                            # also, we need to figure out how to prevent non-leaf tasks from closing
+
+                            # but, anyway!
+                            # so, all I need to do is return a task!
+                            # and the task has ownership of the SyscallInterface inside of it.
+                            # and I just contextmanager on the task
+                            await self.do_async_things(epoller2, running_task.task)
         trio.run(test)
 
 if __name__ == '__main__':

@@ -1355,12 +1355,13 @@ class ChildTaskMonitor:
         await self.close()
 
 class RsyscallConnection:
-    "A connection to some rsyscall server where we can make syscalls"
-    tofd: FileDescriptor[WritableFile]
-    fromfd: FileDescriptor[ReadableFile]
+    """A connection to some rsyscall server where we can make syscalls
+    """
+    tofd: AsyncFileDescriptor[WritableFile]
+    fromfd: AsyncFileDescriptor[ReadableFile]
     def __init__(self,
-                 tofd: FileDescriptor[WritableFile],
-                 fromfd: FileDescriptor[ReadableFile]) -> None:
+                 tofd: AsyncFileDescriptor[WritableFile],
+                 fromfd: AsyncFileDescriptor[ReadableFile]) -> None:
         self.tofd = tofd
         self.fromfd = fromfd
  
@@ -1368,44 +1369,31 @@ class RsyscallConnection:
         await self.tofd.aclose()
         await self.fromfd.aclose()
 
+    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        request = ffi.new('struct rsyscall_syscall*',
+                          (number,
+                           (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
+                            ffi.cast('long', arg4), ffi.cast('long', arg5), ffi.cast('long', arg6))))
+        await self.tofd.write(bytes(ffi.buffer(request)))
+        response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
+        response, = struct.unpack('Q', response_bytes)
+        return response                                          
+
     async def __aenter__(self) -> 'RsyscallConnection':
         return self
 
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
-class RunningTask:
-    """These are the resources that a task needs to live.
-
-    Close this to murder the task.
-
-    But wait what if the task execs?
-    Then it is also fine to free these resources.
-
-    But how will we know?
-    HOW will we KNOW?
-
-    So we can never exec in our base task, right, because then there will be no-one to
-    filicide for us. Though, if we make a supervised task, maybe?
-
-    So we have to figure out how to consume a task's resources after an exec.
-
-    Also how does this relate to remote/out of process rsyscalls, ya dig?
-    With those, one task may depend on another to be accessed! So we can never really exec them.
-    So we do kind of have a differentiation between leaf task and lead task.
-    Or rather, tasks which are depended on by other tasks,
-    and tasks which aren't depended on by others.
-
-    Right, because, only leaf tasks can exec - if a non-leaf task execs,
-    we can no longer track its children!
-    """
+class ThreadSyscallInterface(LocalSyscallInterface):
+    # we should take ownership of all the resources for the thread here?
     stack_mapping: MemoryMapping
     infd: FileDescriptor[ReadableFile]
     outfd: FileDescriptor[WritableFile]
     connection: RsyscallConnection
     child_task: ChildTask
     @staticmethod
-    async def make(task: Task, monitor: ChildTaskMonitor) -> 'RunningTask':
+    async def make(task: Task, monitor: ChildTaskMonitor, epoller: Epoller) -> 'RunningTask':
         mapping = await allocate_memory(task)
         pipe_in = await allocate_pipe(task)
         pipe_out = await allocate_pipe(task)
@@ -1422,8 +1410,12 @@ class RunningTask:
         stack_address -= len(stack)
         await mapping.write(stack_address, stack)
         child_task = await monitor.clone(lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_address)
-        rsyscall_connection = RsyscallConnection(pipe_in.wfd, pipe_out.rfd)
-        running_task = RunningTask(mapping, infd, outfd, rsyscall_connection, child_task)
+        async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
+        async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
+        rsyscall_connection = RsyscallConnection(async_tofd, async_fromfd)
+        task = Task(LocalSyscall(trio.hazmat.wait_readable, rsyscall_connection.syscall),
+                    task.fd_namespace, task.memory, task.mount)
+        running_task = RunningTask(mapping, infd, outfd, rsyscall_connection, child_task, task)
         return running_task
 
     def __init__(self,
@@ -1432,12 +1424,14 @@ class RunningTask:
                  outfd: FileDescriptor[WritableFile],
                  connection: RsyscallConnection,
                  child_task: ChildTask,
+                 task: Task,
     ) -> None:
         self.stack_mapping = stack_mapping
         self.infd = infd
         self.outfd = outfd
         self.connection = connection
         self.child_task = child_task
+        self.task = task
 
     async def aclose(self) -> None:
         await self.connection.close()

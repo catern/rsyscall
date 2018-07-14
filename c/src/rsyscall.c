@@ -30,9 +30,9 @@ static void error(char* msg, size_t msgsize) {
     exit(1);
 }
 
-static struct syscall read_request(const int infd)
+static struct rsyscall_syscall read_request(const int infd)
 {
-    struct syscall request;
+    struct rsyscall_syscall request;
     char* buf = (char*) &request;
     size_t remaining = sizeof(request);
     while (remaining) {
@@ -48,7 +48,7 @@ static struct syscall read_request(const int infd)
     return request;
 }
 
-static int64_t perform_syscall(struct syscall request)
+static int64_t perform_syscall(struct rsyscall_syscall request)
 {
     return rsyscall_raw_syscall(request.args[0], request.args[1], request.args[2],
                        request.args[3], request.args[4], request.args[5],

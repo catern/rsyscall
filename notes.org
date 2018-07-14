@@ -1698,6 +1698,29 @@ blargh I guess we can't execveat for now
 
    So now I need to turn an RsyscallConnection into a syscall interface.
 
+** runningtask
+
+    Close this to murder the task.
+
+    But wait what if the task execs?
+    Then it is also fine to free these resources.
+
+    But how will we know?
+    HOW will we KNOW?
+
+    So we can never exec in our base task, right, because then there will be no-one to
+    filicide for us. Though, if we make a supervised task, maybe?
+
+    So we have to figure out how to consume a task's resources after an exec.
+
+    Also how does this relate to remote/out of process rsyscalls, ya dig?
+    With those, one task may depend on another to be accessed! So we can never really exec them.
+    So we do kind of have a differentiation between leaf task and lead task.
+    Or rather, tasks which are depended on by other tasks,
+    and tasks which aren't depended on by others.
+
+    Right, because, only leaf tasks can exec - if a non-leaf task execs,
+    we can no longer track its children!
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 
