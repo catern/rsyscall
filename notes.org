@@ -1841,3 +1841,25 @@ hmm, actually it just occurred to me that this question is essentially the same 
 ** building a stack manually to pass to rsyscall trampoline
 ** architecture-specific syscalls
    clone at least is arch-specific in its argument order
+* game
+  non player processes
+
+  file descriptors are inventory
+
+  namespaces are rooms
+
+  avoid metaphor: namespaces aren't rooms, they're just what exists in this world
+  essentially we'd build a rich shell for exploring Linux things
+  (the python interpreter)
+  but also have a text advanture like simple translation layer
+  which translates simple commands into obvious 
+
+  sockets are telephones?
+  you can pick one up and it makes a copy I guess
+
+  I can use this to demonstrate the essential weakness of the concept of,
+  just putting an internet socket out there where anyone can dial it if they have the right number,
+  by having a call verb that allows you to call people
+
+  and have some kind of task where you want to provide a service,
+  and want to avoid some prank callers from calling you.
