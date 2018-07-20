@@ -159,6 +159,12 @@ class SyscallInterface:
     async def signalfd(self, fd: int, signals: t.Set[signal.Signals], flags: int) -> int: ...
     async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.Set[signal.Signals]]) -> t.Set[signal.Signals]: ...
 
+    # socket stuff
+    async def bind(self, sockfd: int, addr: bytes) -> None: ...
+    async def connect(self, sockfd: int, addr: bytes) -> None: ...
+    async def socket(self, domain: int, type: int, protocol: int) -> int: ...
+    async def socketpair(self, domain: int, type: int, protocol: int) -> t.Tuple[int, int]: ...
+
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
     args = (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
@@ -374,6 +380,21 @@ class LocalSyscall(SyscallInterface):
             new_set = ffi.new('unsigned long*', set_integer)
             await self.syscall(lib.SYS_rt_sigprocmask, how, new_set, old_set, ffi.sizeof('unsigned long'))
         return {signal.Signals(bit) for bit in bits(old_set[0])}
+
+    async def bind(self, sockfd: int, addr: bytes) -> None:
+        await self.syscall(lib.SYS_bind, ffi.from_buffer(addr), len(addr))
+
+    async def connect(self, sockfd: int, addr: bytes) -> None:
+        await self.syscall(lib.SYS_connect, ffi.from_buffer(addr), len(addr))
+
+    async def socket(self, domain: int, type: int, protocol: int) -> int:
+        return (await self.syscall(lib.SYS_socket, domain, type, protocol))
+
+    async def socketpair(self, domain: int, type: int, protocol: int) -> t.Tuple[int, int]: ...
+        logger.debug("socketpair(%s, %s, %s)", domain, type, protocol)
+        sv = ffi.new('int[2]')
+        await self.syscall(lib.SYS_socketpair, domain, type, protocol, sv)
+        return (sv[0], sv[1])
 
 class FDNamespace:
     pass
@@ -595,6 +616,30 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def signalfd(self: 'FileDescriptor[SignalFile]', mask: t.Set[signal.Signals]) -> None:
         await (self.file.signalfd(self, mask))
 
+    # hmmm, maybe nest it?
+    # have the SocketFile embed the domain?
+    # hmmm
+    async def bind(self: 'FileDescriptor[SocketFile]', addr: bytes) -> None:
+        await (self.file.signalfd(self, mask))
+
+    async def bind(self: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
+        await (self.file.signalfd(self, mask))
+
+    async def connect(self: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
+        await (self.file.signalfd(self, mask))
+
+    async def getsockname(self: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
+        await (self.file.signalfd(self, mask))
+
+    async def getpeername(self: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
+        await (self.file.signalfd(self, mask))
+
+    async def accept(self: 'FileDescriptor[SocketFile[T_addr]]') -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
+        await (self.file.signalfd(self, mask))
+
+    async def sendto(self: 'FileDescriptor[SocketFile[T_addr]]', date: bytes, flags: int, addr: T_addr) -> None:
+        await (self.file.signalfd(self, mask))
+
     async def wait_readable(self) -> None:
         return (await self.syscall.wait_readable(self.number))
 
@@ -714,7 +759,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 if event.in_: self.is_readable = True
                 if event.out: self.is_writable = True
                 # TODO the rest
-            
+
             self.running_wait = None
             running_wait.set()
 
@@ -763,7 +808,7 @@ class MemoryMapping:
         # valid SyscallInterface for operating on this mapping.
         return self.task.syscall
 
-    def __init__(self, 
+    def __init__(self,
                  task: Task,
                  address: int,
                  length: int,
@@ -905,6 +950,19 @@ class Path:
             return self.base.dirfd.file.raw_path + b"/" + self.path
         else:
             return self._full_path
+    @property
+    def _proc_path(self) -> bytes:
+        """The path, using /proc to do dirfd-relative lookups
+
+        This is not too portable - there are many situations where
+        /proc might not be mounted. But it's the only recourse for a
+        few syscalls which don't have *at versions.
+
+        """
+        if isinstance(self.base, DirfdPathBase):
+            return b"/proc/self/fd/" + str(self.base.dirfd.number).encode() + b"/" + self.path
+        else:
+            return self._full_path
 
     @property
     def syscall(self) -> SyscallInterface:
@@ -999,6 +1057,26 @@ class Path:
 
     async def readlink(self, bufsiz: int=4096) -> bytes:
         return (await self.syscall.readlinkat(self.base.dirfd_num, self._full_path, bufsiz))
+
+    async def bind(self, sockfd: FileDescriptor[UnixSocketFile]) -> bytes:
+        """Linux doesn't support bindat or similar, so this is emulated with /proc.
+
+        This will fail if the bytes component of the path is too long,
+        because bind has a limit of 108 bytes for the pathname.
+
+        """
+        addr = ffi.new('struct sockaddr_un*', (lib.AF_UNIX, self._proc_path))
+        await sockfd.bind(bytes(ffi.buffer(addr)))
+
+    async def connect(self, sockfd: FileDescriptor[UnixSocketFile]) -> bytes:
+        """Linux doesn't support connectat or similar, so this is emulated with /proc.
+
+        This will fail if the bytes component of the path is too long,
+        because connect has a limit of 108 bytes for the pathname.
+
+        """
+        addr = ffi.new('struct sockaddr_un*', (lib.AF_UNIX, self._proc_path))
+        await sockfd.connect(bytes(ffi.buffer(addr)))
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
         element: bytes = sfork.to_bytes(path_element)
@@ -1238,7 +1316,7 @@ class SignalQueue:
         data = await self.sigfd.read()
         # TODO need to return this data in some parsed form
         data = ffi.cast('struct signalfd_siginfo*', ffi.from_buffer(data))
-    
+
     async def close(self) -> None:
         await self.signal_block.close()
         await self.sigfd.aclose()
@@ -1256,7 +1334,7 @@ async def allocate_signalqueue(task: Task, epoller: Epoller, mask: t.Set[signal.
     return SignalQueue(signal_block, async_sigfd)
 
 class MultiplexerQueue:
-    # TODO 
+    # TODO
     # maybe we should, uhh
     # oh, we can't just check if someone is running and if they are, starting waiting on the queue
     # because, we need to get woken up to do the run if we're waiting
@@ -1364,7 +1442,7 @@ class RsyscallConnection:
                  fromfd: AsyncFileDescriptor[ReadableFile]) -> None:
         self.tofd = tofd
         self.fromfd = fromfd
- 
+
     async def close(self) -> None:
         await self.tofd.aclose()
         await self.fromfd.aclose()
@@ -1377,13 +1455,16 @@ class RsyscallConnection:
         await self.tofd.write(bytes(ffi.buffer(request)))
         response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
         response, = struct.unpack('Q', response_bytes)
-        return response                                          
+        return response
 
     async def __aenter__(self) -> 'RsyscallConnection':
         return self
 
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
+
+class LocalSyscallInterface:
+    pass
 
 class ThreadSyscallInterface(LocalSyscallInterface):
     # should we really have of all the resources of the thread here?
@@ -1779,9 +1860,3 @@ async def clonefd(task: Task, stdstreams: StandardStreams) -> t.Any:
                     await super_proc.exec(supervise.supervise_utility_location, [], envp={})
             supervised_subproc.raw_proc = RawProcess(
                 pipe_in.wfd.release(), pipe_out.rfd.release(), user_proc.pid)
-
-
-
-
-
-

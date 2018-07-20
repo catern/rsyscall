@@ -195,6 +195,20 @@ class TestIO(unittest.TestCase):
                 self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..', name])
         trio.run(test)
 
+    def test_bind(self) -> None:
+        async def test() -> None:
+            env = await rsyscall.io.build_unix_environment(self.bootstrap)
+            async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as (dirfd, path):
+                self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..'])
+                text = b"Hello world!"
+                name = b"hello"
+                hello_path = await rsyscall.io.spit(path/name, text)
+                async with (await hello_path.open(os.O_RDONLY)) as readable:
+                    self.assertEqual(await readable.read(), text)
+                await dirfd.lseek(0, os.SEEK_SET)
+                self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..', name])
+        trio.run(test)
+
     def test_getdents_noent(self) -> None:
         "getdents on a removed directory throws FileNotFoundError"
         async def test() -> None:

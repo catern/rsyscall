@@ -1721,12 +1721,44 @@ blargh I guess we can't execveat for now
 
     Right, because, only leaf tasks can exec - if a non-leaf task execs,
     we can no longer track its children!
-** what to do
-   Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
+** passing an epoll'd socket down to a subprocess
+   Oh no!
+   We need to be able to turn O_NONBLOCK off,
+   but even if we're in a separate CLONE_FILES,
+   that will still affect the same object.
 
-   i.e. immediately upon finishing the basic stuff
+   So we need to, in some sense...
 
-   My goal: configuring/running nginx.
+   Oh, wait!
+   Since we're passing it down to a subprocess,
+   we can't ourselves continue to O_NONBLOCK on it.
+   It needs to be consumed by the subprocess.
+
+   So we'll just have some kind of release_from_epoll(),
+   which returns the underlying,
+   and unsets O_NONBLOCK,
+   so it can be used by the subprocess.
+
+   All fine.
+
+   Connect and stuff can happen asynchronously without a problem.
+** IntFlag!!!
+   Woah!!! Use this thing for all the flags!!! So excite!!
+** name
+   it will be a family of related libraries that are similar in structure
+
+   so, rsyscall is I guess an okay name
+** binding sockets
+   so I can do:
+   chdir; bind(./name); chdir
+
+   or I can do
+
+   open(O_DIRECTORY); bind(/dev/fd/n/name)
+
+   the former gives me a full 16 or so extra characters.
+
+   but obviously I have to do the latter
 ** fifos
    interesting, fifos should always be opened for reading with O_NONBLOCK
 
@@ -1736,6 +1768,91 @@ blargh I guess we can't execveat for now
    maybe all opens should be done with O_NONBLOCK
 
    nah it has no effect for files
+** path object, O_PATH fds
+   There are a few common operations between Paths and O_PATH fds.
+
+   namely: fchdir, fstat, fstatfs
+
+   and we can probably use it with AT_EMPTY_PATH
+
+   do we want to support having a Path which is backed only by an O_PATH?
+   maybe, let's think about it future
+** sockets
+   So to know the address type for a socket,
+   I need to know what kind of socket it is.
+
+   There are a bunch of calls using the address type:
+   bind
+   connect
+   sendto
+   recvfrom
+   getsockname
+   getpeername
+   accept
+
+   Also, sockets are only readable once they're connected.
+   so...
+
+   Also, after a shutdown, they're no longer readable.
+   Hm.
+
+   Let's not try and track the readability status.
+
+   But let's indeed track the domain in the type.
+   Since it can't change
+
+   And what about the type?
+   er, that is, the sockettype.
+
+   Maybe I should mix that also into the class type?
+
+   Okay, so all three parameters can change the address type, actually.
+
+   Maybe I should focus specifically on the address type for these SocketFiles.
+
+   Maybe it can be, like,
+   SocketFile[InternetAddress]
+   SocketFile[UnixAddress]
+
+   And so on.
+
+   Hmm, we also need to think about how to handle fd passing
+
+   I guess when we recvmsg,
+   we get back a t.Tuple[t.Optional[T_addr], bytes, t.List[ControlMessage], MsgFlags]
+
+   Then we can parse the ControlMessages to see what kinda do-hicky we got.
+
+   But, this can all be represented low-level.
+   t.Tuple[t.Optional[bytes], bytes, t.List[t.Tuple[int, int, bytes]], int]
+
+   god the socket API is so crap
+   i think, maybe
+
+   okay, so the question is whether we have the address type above or below the FileDescriptor.
+
+   I think below, it's nicer.
+
+   But processing of recvmsg results is above the FileDescriptor.
+   What class does that take place in?
+
+   Well, I suppose each ControlMessage will be parsed.
+
+   And will already contain whatever fds we pull off the socket
+   But we need to specify a File type.
+
+   I guess we can change the File it refers to, after the fact.
+   Just have it refer to a plain base File at first.
+
+   OK! Remember the central goal:
+   Expose Linux features as they are!
+   Do not become opinionated!
+** what to do
+   Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
+
+   i.e. immediately upon finishing the basic stuff
+
+   My goal: configuring/running nginx.
 * criu
   I feel like I have a bunch in common with criu
 
