@@ -213,16 +213,17 @@ class TestIO(unittest.TestCase):
                 # TODO next we need to support asynchronous connect
                 # and accept
                 # those will be on the epollfd I guess
+                # TODO okay we have it, now we need to test it
                 async with sockfd:
-                    addr = (path/"sock")
-                    await addr.bind(sockfd)
+                    addr = (path/"sock").unix_address()
+                    await sockfd.bind(addr)
                     await sockfd.listen(10)
                     clientfd = await rsyscall.io.allocate_unix_socket(self.task, socket.SOCK_STREAM)
                     async with clientfd:
-                        await addr.connect(clientfd)
-                        connfd, addr = await sockfd.accept(0)
+                        await clientfd.connect(addr)
+                        connfd, client_addr = await sockfd.accept(0)
                         async with connfd:
-                            print(addr)
+                            print(addr, client_addr)
         trio.run(test)
 
     def test_getdents_noent(self) -> None:

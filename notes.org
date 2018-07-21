@@ -1960,6 +1960,8 @@ hmm, actually it just occurred to me that this question is essentially the same 
    clone at least is arch-specific in its argument order
 ** using /proc for bind and connect
    Because there's no bindat and connectat.
+
+   This is an awkward blemish
 * game
   non player processes
 

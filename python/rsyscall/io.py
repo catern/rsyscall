@@ -171,6 +171,9 @@ class SyscallInterface:
     async def getsockname(self, sockfd: int, addrlen: int) -> bytes: ...
     async def getpeername(self, sockfd: int, addrlen: int) -> bytes: ...
 
+    async def getsockopt(self, sockfd: int, level: int, optname: int, optlen: int) -> bytes: ...
+    async def setsockopt(self, sockfd: int, level: int, optname: int, optval: bytes) -> None: ...
+
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
     args = (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
@@ -416,6 +419,29 @@ class LocalSyscall(SyscallInterface):
         await self.syscall(lib.SYS_socketpair, domain, type, protocol, sv)
         return (sv[0], sv[1])
 
+    async def getsockopt(self, sockfd: int, level: int, optname: int, optlen: int) -> bytes:
+        logger.debug("getsockopt(%s, %s, %s, %s)", sockfd, level, optname, optlen)
+        buf = ffi.new('char[]', optlen)
+        lenbuf = ffi.new('size_t*', optlen)
+        # some custom netfilter socket options could return an actual value, according to getsockopt(2).
+        # if that ever matters for anyone, we should change this to return a Tuple[int, bytes].
+        await self.syscall(lib.SYS_getsockopt, sockfd, level, optname, buf, lenbuf)
+        return ret, bytes(ffi.buffer(buf, lenbuf[0]))
+
+    async def setsockopt(self, sockfd: int, level: int, optname: int, optval: t.Optional[bytes], *, optlen: t.Optional[int]=None) -> None:
+        logger.debug("setsockopt(%s, %s, %s, %s)", sockfd, level, optname, optval)
+        if optval == None:
+            # AF_ALG has some stupid API where to set an option to "val", it wants you to call with
+            # optval=NULL and optlen=val.  so we have to contort ourselves to make that possible.
+            if optlen == None:
+                raise ValueError("if optvatl is None, optlen must be passed")
+            buf = ffi.NULL
+            length = optlen
+        else:
+            buf = ffi.from_buffer(optval)
+            length = len(optval)
+        await self.syscall(lib.SYS_setsockopt, sockfd, level, optname, buf, length)
+
 class FDNamespace:
     pass
 
@@ -555,18 +581,19 @@ class UnixAddress(Address):
     T = t.TypeVar('T', bound='UnixAddress')
     @classmethod
     def parse(cls: t.Type[T], data: bytes) -> T:
-        if len(data) <= ffi.sizeof('sa_family_t'):
-            # unnamed socket, name is empty
-            return cls(bytes())
+        header = ffi.sizeof('sa_family_t')
         buf = ffi.from_buffer(data)
         struct = ffi.cast('struct sockaddr_un*', buf)
-        if struct.sun_path[0] == b'\0':
+        if len(data) <= header:
+            # unnamed socket, name is empty
+            length = 0
+        elif struct.sun_path[0] == b'\0':
             # abstract socket, entire buffer is part of path
-            return cls(bytes(ffi.buffer(struct.sun_path)))
+            length = len(data) - header
         else:
             # pathname socket, path is null-terminated
             length = lib.strlen(struct.sun_path)
-            return cls(bytes(ffi.buffer(struct.sun_path, length)))
+        return cls(bytes(ffi.buffer(struct.sun_path, length)))
 
     def to_bytes(self) -> bytes:
         addr = ffi.new('struct sockaddr_un*', (lib.AF_UNIX, self.path))
@@ -894,11 +921,41 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 buf = buf[written:]
             except OSError as e:
                 if e.errno == errno.EAGAIN:
+                    # TODO this is not really quite right if it's possible to concurrently call methods on this object.
+                    # we really need to lock while we're making the async call, right? maybe...
                     self.is_writable = False
                     while not self.is_writable:
                         await self._wait_once()
                 else:
                     raise
+
+    async def accept(self: 'AsyncFileDescriptor[SocketFile[T_addr]]', flags: int=lib.SOCK_CLOEXEC
+    ) -> t.Tuple[FileDescriptor[SocketFile[T_addr]], T_addr]:
+        while True:
+            try:
+                return (await self.epolled.underlying.accept(flags))
+            except OSError as e:
+                if e.errno == errno.EAGAIN:
+                    self.is_readable = False
+                    while not self.is_readable:
+                        await self._wait_once()
+                else:
+                    raise
+
+    async def connect(self: 'AsyncFileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
+        try:
+            await self.epolled.underlying.connect(addr)
+        except OSError as e:
+            if e.errno == errno.EINPROGRESS:
+                while not self.is_writable:
+                    await self._wait_once()
+                # writable now, let's check for errors
+                retbuf = await self.epolled.underlying.getsockopt(lib.SOL_SOCKET, lib.SO_ERROR, ffi.sizeof('int'))
+                err = ffi.cast('int*', ffi.from_buffer(retbuf))
+                if err != 0:
+                    raise OSError(err, os.strerror(err))
+            else:
+                raise
 
     async def aclose(self) -> None:
         await self.epolled.aclose()
@@ -1170,23 +1227,16 @@ class Path:
     async def readlink(self, bufsiz: int=4096) -> bytes:
         return (await self.syscall.readlinkat(self.base.dirfd_num, self._full_path, bufsiz))
 
-    async def bind(self, sockfd: FileDescriptor[UnixSocketFile]) -> None:
-        """Linux doesn't support bindat or similar, so this is emulated with /proc.
+    def unix_address(self) -> UnixAddress:
+        """Return an address that can be used with bind/connect for Unix sockets
+
+        Linux doesn't support bindat/connectat or similar, so this is emulated with /proc.
 
         This will fail if the bytes component of the path is too long,
         because bind has a limit of 108 bytes for the pathname.
 
         """
-        await sockfd.bind(UnixAddress(self._proc_path))
-
-    async def connect(self, sockfd: FileDescriptor[UnixSocketFile]) -> None:
-        """Linux doesn't support connectat or similar, so this is emulated with /proc.
-
-        This will fail if the bytes component of the path is too long,
-        because connect has a limit of 108 bytes for the pathname.
-
-        """
-        await sockfd.connect(UnixAddress(self._proc_path))
+        return UnixAddress(self._proc_path)
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
         element: bytes = sfork.to_bytes(path_element)
@@ -1546,6 +1596,9 @@ class ChildTaskMonitor:
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
+class RsyscallException(Exception):
+    pass
+
 class RsyscallConnection:
     """A connection to some rsyscall server where we can make syscalls
     """
@@ -1566,8 +1619,13 @@ class RsyscallConnection:
                           (number,
                            (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
                             ffi.cast('long', arg4), ffi.cast('long', arg5), ffi.cast('long', arg6))))
-        await self.tofd.write(bytes(ffi.buffer(request)))
-        response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
+        try:
+            await self.tofd.write(bytes(ffi.buffer(request)))
+            response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
+        except OSError as e:
+            # we raise a different exception so that users can distinguish syscall errors from
+            # transport errors
+            raise RsycallException() from e
         response, = struct.unpack('Q', response_bytes)
         return response
 
