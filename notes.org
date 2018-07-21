@@ -1847,6 +1847,121 @@ blargh I guess we can't execveat for now
    OK! Remember the central goal:
    Expose Linux features as they are!
    Do not become opinionated!
+** unix sockets
+   interesting, connect on a unix socket immediately returns without blocking,
+   as long as it's to a listening socket
+
+   it doesn't block until the server accepts
+** child task scheme, final version for sure
+   So I can clone and exec at any time without restrictions.
+
+   And when I clone I'm relying on someone up the supervision tree,
+   to have enabled filicide.
+
+   And there's an easy helper to take a task and enable filicide on it.
+   (either by signal handler, or execing, or starting up a thread waiting in sigwait then calling filicide)
+
+   And when I clone I get a ChildTask back,
+   which is usually wrapped in a larger [Something]Task,
+   which holds all the resources given to that ChildTask,
+   so that they can be freed when the child is killed.
+
+   And for rsyscall tasks,
+   that object is RsyscallTask,
+   and it has a reference to the Task,
+   and it has an exec wrapper method,
+   which execs in the Task and frees the resources it used and gives me the ChildTask.
+
+   But I don't have to go through the RsyscallTask to exec,
+   I can just exec directly if I so choose,
+   including from the root task on any system,
+   even though that may break things.
+** exec
+*** TODO detect when exec has completed
+   Though, hmm. how do I detect when an exec has completed?
+   And won't now return with an error?
+   Traditional way would be to use files being closed.
+
+   This is one place where sfork was nice.
+   When I exec'd, it returned to the parent on success.
+
+   How would I ideally do this?
+
+   Well I could use the sfork trick I guess
+   Hm! This is a puzzle.
+
+   So after exec, the fd table is unshared.
+   So maybe we could start off by unsharing the fd table?
+   Then we close the rsyscall-side fds,
+   and then we exec.
+   Then we'll get either a hangup or a result.
+
+   Maybe I can just close the fromfd,
+   so that if it tries to respond,
+   it gets a sigpipe,
+   and exits?
+*** DONE child tasks stay around after exec
+   Hmm.
+   Also, when I exec, how do I make my child threads go away?
+   If I exec up in the tree, my children won't get signal'd, because I am not exiting.
+
+   Actually I think that is fine.
+
+   I have a neat visual of the Starcraft terran HQ, lifting off, setting up a big hierarchy of threads,
+   then anchoring again and transforming into a high-efficiency C program/factory/assault fort.
+
+   For it to be efficient, though, we'd need to free lingering memory and close fds referenced by no task.
+   or something. but that's for later.
+** shared vs unshared file descriptor tables
+   The benefit of unshared is that we can detect things via file descriptor hangup, which is nice.
+   Also it's just a lot more nice isolation, I guess.
+
+   What's the benefit of shared?
+   Well...
+   We can very easily pass file descriptors between tasks?
+   But we could do that with unix sockets anyway, just slightly harder.
+   We kind of don't have to deal with inheritance being tricky,
+   since any fd in a space is valid in new tasks.
+
+   But we kind of want to explicitly move fds between tasks anyway,
+   so...
+
+   On the other hand, do we really want to rely on unshared fd tables?
+   Because, isn't that somewhat expensive?
+   Maybe not that expensive...
+   It's mainly shared memory that we want to preserve.
+
+   So we'll have the shared memory threads,
+   but each with their own fd table.
+
+   That seems fairly good I guess.
+
+   I doubt we'll have issues around moving between tasks being too expensive.
+   And if we do, we can resurrect the trickiness of shared fd tables.
+
+   The issue with shared memory is the same as with shared fds, though.
+   When one dies, its resources aren't freed.
+
+   So I guess we could just go all the way to separate processes.
+   But spawning them requires spawning threads, anyway, so...
+
+   well, not if we use sfork... blargh
+
+   okay, separate fd tables it is
+   that is clean, I think.
+   and also, that's kind of natural for "process is a virtual machine" notion.
+   actually no it's not, why would each CPU have its own fd table,
+   ridiculous
+
+   maybe because of NUMA???? NUMA fds???? NUFA????
+
+   maybe we should exec so we trigger cloexec so only explicitly passed fds go to our internaltasks
+
+   if we start out shared, then move to unshared,
+   how do we handle this inheritance question?
+   we have to deal with that either way.
+   how do we handle inheritance?
+   it would be nice to have a CLOUNSHARE maybe
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 

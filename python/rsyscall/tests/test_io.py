@@ -226,6 +226,30 @@ class TestIO(unittest.TestCase):
                             print(addr, client_addr)
         trio.run(test)
 
+    def test_listen_async(self) -> None:
+        async def test() -> None:
+            env = await rsyscall.io.build_unix_environment(self.bootstrap)
+            async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as (dirfd, path):
+                async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                    epoller = Epoller(epoll)
+                    sockfd = await rsyscall.io.allocate_unix_socket(
+                        self.task, socket.SOCK_STREAM)
+                    async with sockfd:
+                        addr = (path/"sock").unix_address()
+                        await sockfd.bind(addr)
+                        await sockfd.listen(10)
+                        async_sockfd = await AsyncFileDescriptor.make(epoller, sockfd)
+                        async with async_sockfd:
+                            clientfd = await rsyscall.io.allocate_unix_socket(
+                                self.task, socket.SOCK_STREAM)
+                            async_clientfd = await AsyncFileDescriptor.make(epoller, clientfd)
+                            async with async_clientfd:
+                                await async_clientfd.connect(addr)
+                                connfd, client_addr = await async_sockfd.accept(0)
+                                async with connfd:
+                                    print(addr, client_addr)
+        trio.run(test)
+
     def test_getdents_noent(self) -> None:
         "getdents on a removed directory throws FileNotFoundError"
         async def test() -> None:
