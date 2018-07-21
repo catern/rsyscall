@@ -1877,6 +1877,18 @@ blargh I guess we can't execveat for now
    including from the root task on any system,
    even though that may break things.
 ** exec
+*** DONE child tasks stay around after exec
+   Hmm.
+   Also, when I exec, how do I make my child threads go away?
+   If I exec up in the tree, my children won't get signal'd, because I am not exiting.
+
+   Actually I think that is fine.
+
+   I have a neat visual of the Starcraft terran HQ, lifting off, setting up a big hierarchy of threads,
+   then anchoring again and transforming into a high-efficiency C program/factory/assault fort.
+
+   For it to be efficient, though, we'd need to free lingering memory and close fds referenced by no task.
+   or something. but that's for later.
 *** TODO detect when exec has completed
    Though, hmm. how do I detect when an exec has completed?
    And won't now return with an error?
@@ -1900,18 +1912,179 @@ blargh I guess we can't execveat for now
    so that if it tries to respond,
    it gets a sigpipe,
    and exits?
-*** DONE child tasks stay around after exec
-   Hmm.
-   Also, when I exec, how do I make my child threads go away?
-   If I exec up in the tree, my children won't get signal'd, because I am not exiting.
 
-   Actually I think that is fine.
+   Yes, let's just convert an error into an exit.
 
-   I have a neat visual of the Starcraft terran HQ, lifting off, setting up a big hierarchy of threads,
-   then anchoring again and transforming into a high-efficiency C program/factory/assault fort.
+   Wait, wait, wait, again I can't do that, if I want to exec into rsyscall
+   Because, if I want to share the fd in the threaded rsyscall with the process rsyscall,
+   I have to keep them open.
 
-   For it to be efficient, though, we'd need to free lingering memory and close fds referenced by no task.
-   or something. but that's for later.
+   Well if I'm doing that then I'm not freeing all the resources owned by the task.
+
+   I'm pretty much only freeing the stack space.
+   So then the question is: How can I know when the stack space is unused?
+
+   Hmm, I guess this is an issue that is solved by running in a separate address space.
+   Then the stack space is definitely freed up when the task exits.
+
+   But if I want to use clone...
+   And thereby have a thread in my address space...
+   I have to manually free that.
+
+   So what's the trick?
+   How do I know when to free the thing?
+   Well, after an exit or an exec.
+
+   OK, and also keep in mind that the task might not be our child.
+   It's gotta be task-only.
+
+   Though... in that case we don't have anything to free.
+
+   Oh dang, also we can't do it by exiting on error,
+   because then we don't know when to free stuff on success.
+
+   We need some kind of event after the exec but before exit(0)
+
+   If we constructed a process from scratch,
+   then kicked it off,
+   then it did something to no longer need the resources we gave it,
+   shouldn't it free those resources itself?
+
+   So we're in a situation where it's just borrowing resources
+   And we need to know that it no longer needs them.
+
+   Well how the heck do we do that
+
+   I guess there's an easy way to be sure: if the address space changes
+   For fds we can just see when there's no more object references
+
+   Ehhhh hmmmm
+   I think separate fd tables and address spaces are good because they keep things nicely reference counted
+   Everything in a space is needed by that space,
+   when a space goes away all those things have their refcounts decremented,
+   and maybe go away.
+
+   Yes, yes, that is all true!
+   But what about when it's not a separate address space!
+   Oh. Maybe then we can't call exec?
+   But, argh, then how do we even get new tasks in the first place?
+
+   So okay, clearly a separate process (address space, fd table) is very nice and it keeps things nicely refcounted.
+
+   But we need to also support the case where we aren't in a separate fd or vm namepsace.
+   In that case we have to know when things leave ourselves.
+
+   So how do we figure out when the reference to the stack is dropped?
+   Indeed even other more rich functionality could theoretically switch off its stack.
+
+   Well, those things would have rich signaling functions to say when they drop refs.
+   (or just be explicitly controlled by the runtime)
+
+   But if we're talking just system calls, how do we do it?
+
+   Well how would we manage this prop'ly?
+
+   The stack would be linear and passed to the thread
+   When it goes to exit or exec,
+   we'd free the stack purely in registers.
+
+   Okay, so that is all fine and good.
+   What stops us from doing that with exec?
+
+   Well with exec,
+   the thread stops at the point of exec,
+   it doesn't get the chance to continue.
+
+   What is this in terms of continuations?
+
+   OK so it looks like I can use CLONE_CHILD_CLEARTID
+
+   I want to get notified on mm_release,
+   which notifies currently on cleartid and vfork.
+
+   cleartid is gross though because it does a futex wakeup instead of an FD wakeup.
+
+   a CLOEXEC pipe is nicer than CLEARTID maybe
+
+   Oh, but we have to unshare before exec if we do that.
+
+   urgh
+
+   hmm so that seems like it might be okay
+   we'll force the thread to exit if its exec fails?
+
+   how does that interact with main tasks and such?
+
+   well, if a main task execs,
+
+   well, I can't figure out a task to monitor it from in that case!
+   a parent task who can share a pipe with it, argh
+
+   the same problem applies for any exec-monitoring thing
+
+   the problem of responding to the notification and freeing the resources after the exec
+
+   that requirese some kind of monitoring
+
+   which I guess only the wrapper can do.
+
+   some kind of on-the-fly vfork?
+
+   like, instead of setting vfork,
+   I call block_until_child_exec,
+   urgh which is essentially the same as vfork
+   
+   You could emulate vfork with clear_child_tid, I think.
+   Do a clone,
+   in the parent do a futex wait on an address,
+   in a child do clear_child_tid,
+   then proceed to exec.
+
+   so we'd want something that we can bake into our event loop
+
+   I guess if there was a waitid event on exec,
+   then...
+
+   we could also emulate vfork that way?
+   neat
+
+   so OK,
+   two methods suggest themselves to me.
+   1. use CHILD_CLEARTID
+   2. use ptrace
+
+   ptrace would obviously be disgusting but, is it really that bad?
+   it's certainly better than futexing trash...
+   and I only have like,
+   a tiny bit of ptrace.
+
+   But, of course, that is a portability problem because ptrace can be turned off (through the YAMA LSM)
+   But, eh, whatever.
+
+   ok so futexes seem utterly crap, I don't see a way to wait on multiple things
+
+   could I like, mmap an fd or something, and specify that
+
+   ughhhghhh
+
+   so i'll just do traceme,
+   set PTRACE_O_TRACEEXEC,
+   forward any non ptrace signals,
+   and untrace once exec is done successfully
+
+   look on the bright side, supporting ptrace is cool!
+
+   oh hey and uhhh
+   could I speed this up with that seccomp yield to userspace  things?
+   nah, there's no way to exec in the original process with that
+   it tells me before the syscall instead of the syscall
+** fd namespace   
+   It should contain a list of tasks in that namespace.
+
+   And when an FD's task goes away,
+   it picks a new one from the FDNamespace list.
+** file descriptor table inheritance issues
+   fork is really problematic
 ** shared vs unshared file descriptor tables
    The benefit of unshared is that we can detect things via file descriptor hangup, which is nice.
    Also it's just a lot more nice isolation, I guess.
@@ -1962,6 +2135,16 @@ blargh I guess we can't execveat for now
    we have to deal with that either way.
    how do we handle inheritance?
    it would be nice to have a CLOUNSHARE maybe
+*** the file descriptor inheritance question
+    I still need to think some about how to properly handle the semantics of fd table inheritance.
+    that's why I currently have all my child tasks using CLONE_FILES so they share fd tables
+    because that way there's no inheritance going on
+
+    fd table inheritance means that any libraries not controlled by me will have their fds duplicated and kept open,
+    which might break those libraries
+
+    so this is why I can't have things in their own fd table, but in the same VM space as me.
+    the only way to trigger clearing of the fd table is through exec.
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 
@@ -2077,6 +2260,40 @@ hmm, actually it just occurred to me that this question is essentially the same 
    Because there's no bindat and connectat.
 
    This is an awkward blemish
+* desirable kernel features
+** notification of exec (more specifically: mm_release) through wait
+   This way we can detect when a child task/thread has called exec,
+   and free any resources they had.
+   Otherwise there's no way to know for sure that they're done execing.
+
+   This is like CLONE_CHILD_CLEARTID,
+   but that only has a futex interface,
+   which is not suitable for an event loop.
+
+   Current workaround:
+   ptrace.
+** sigkill-resilient filicide
+   Maybe, like, the combination of supervise and PDEATHSIG?
+
+   Except, we'd want like,
+   CHILDDEATHSIG...
+   a signal to send to your children when you die.
+
+   If we want to combine this with a better proc interface,
+   we could maybe have some kind of childgroupfd,
+   which when closed, kills all the children in that group.
+
+   We can't realistically enforce things the same way capsicum does,
+   which is to ban usage of non-forkfd process creation.
+   Also I don't think that's robust to loops anyway.
+
+   Oh, the same is true for the childgroupfd then.
+   Well, no, they can create childgroupfd within them, but,
+   they're still contained in the childgroupfd.
+** bindat, connectat
+   Would be nice to be able to pass a dirfd for these. And also lift the length limit.
+** some way to deal with fd inheritance?
+   CLOUNSHARE?
 * game
   non player processes
 
@@ -2099,3 +2316,6 @@ hmm, actually it just occurred to me that this question is essentially the same 
 
   and have some kind of task where you want to provide a service,
   and want to avoid some prank callers from calling you.
+* what is this? explanation to normies
+it has the intent of providing an interface to Linux tasks as first-class internal entities,
+that can be manipulated by running syscalls inside of them
