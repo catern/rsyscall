@@ -11,6 +11,8 @@ ffibuilder.set_source(
 #include <unistd.h>
 #include <syscall.h>
 #include <sys/socket.h>
+#include <sys/un.h>
+#include <netinet/ip.h> /* superset of previous */
 #include <sys/syscall.h>   /* For SYS_xxx definitions */
 #include <sys/mman.h>
 #include <sys/epoll.h>
@@ -207,13 +209,28 @@ struct signalfd_siginfo {
 #define SYS_socketpair ...
 #define SYS_bind ...
 #define SYS_listen ...
-#define SYS_accept ...
+#define SYS_accept4 ...
 #define SYS_connect ...
+
+typedef unsigned... sa_family_t;
 
 #define AF_UNIX ...
 struct sockaddr_un {
     sa_family_t sun_family;               /* AF_UNIX */
     char        sun_path[108];            /* pathname */
+};
+
+#define AF_INET ...
+typedef unsigned... in_port_t;
+struct sockaddr_in {
+    sa_family_t    sin_family; /* address family: AF_INET */
+    in_port_t      sin_port;   /* port in network byte order */
+    struct in_addr sin_addr;   /* internet address */
+};
+
+/* Internet address. */
+struct in_addr {
+    uint32_t       s_addr;     /* address in network byte order */
 };
 
 // mmap stuff
@@ -243,8 +260,6 @@ struct rsyscall_trampoline_stack {
     int64_t r9;
     void* function;
 };
-
-struct sockaddr_in { ...; };
 
 struct rsyscall_syscall {
     int64_t sys;

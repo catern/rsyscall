@@ -1958,6 +1958,8 @@ hmm, actually it just occurred to me that this question is essentially the same 
 ** building a stack manually to pass to rsyscall trampoline
 ** architecture-specific syscalls
    clone at least is arch-specific in its argument order
+** using /proc for bind and connect
+   Because there's no bindat and connectat.
 * game
   non player processes
 

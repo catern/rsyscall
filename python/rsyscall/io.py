@@ -9,6 +9,7 @@ import random
 import string
 import abc
 import prctl
+import socket
 import abc
 import sys
 import os
@@ -160,10 +161,15 @@ class SyscallInterface:
     async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.Set[signal.Signals]]) -> t.Set[signal.Signals]: ...
 
     # socket stuff
-    async def bind(self, sockfd: int, addr: bytes) -> None: ...
-    async def connect(self, sockfd: int, addr: bytes) -> None: ...
     async def socket(self, domain: int, type: int, protocol: int) -> int: ...
     async def socketpair(self, domain: int, type: int, protocol: int) -> t.Tuple[int, int]: ...
+
+    async def bind(self, sockfd: int, addr: bytes) -> None: ...
+    async def listen(self, sockfd: int, backlog: int) -> None: ...
+    async def connect(self, sockfd: int, addr: bytes) -> None: ...
+    async def accept(self, sockfd: int, addrlen: int, flags: int) -> t.Tuple[int, bytes]: ...
+    async def getsockname(self, sockfd: int, addrlen: int) -> bytes: ...
+    async def getpeername(self, sockfd: int, addrlen: int) -> bytes: ...
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
@@ -382,15 +388,29 @@ class LocalSyscall(SyscallInterface):
         return {signal.Signals(bit) for bit in bits(old_set[0])}
 
     async def bind(self, sockfd: int, addr: bytes) -> None:
-        await self.syscall(lib.SYS_bind, ffi.from_buffer(addr), len(addr))
+        logger.debug("bind(%s, %s)", sockfd, addr)
+        await self.syscall(lib.SYS_bind, sockfd, ffi.from_buffer(addr), len(addr))
+
+    async def listen(self, sockfd: int, backlog: int) -> None:
+        logger.debug("listen(%s, %s)", sockfd, backlog)
+        await self.syscall(lib.SYS_listen, sockfd, backlog)
 
     async def connect(self, sockfd: int, addr: bytes) -> None:
-        await self.syscall(lib.SYS_connect, ffi.from_buffer(addr), len(addr))
+        logger.debug("connect(%s, %s)", sockfd, addr)
+        await self.syscall(lib.SYS_connect, sockfd, ffi.from_buffer(addr), len(addr))
+
+    async def accept(self, sockfd: int, addrlen: int, flags: int) -> t.Tuple[int, bytes]:
+        logger.debug("accept(%s, %s, %s)", sockfd, addrlen, flags)
+        buf = ffi.new('char[]', addrlen)
+        lenbuf = ffi.new('size_t*', addrlen)
+        fd = await self.syscall(lib.SYS_accept4, sockfd, buf, lenbuf, flags)
+        return fd, bytes(ffi.buffer(buf, lenbuf[0]))
 
     async def socket(self, domain: int, type: int, protocol: int) -> int:
+        logger.debug("socket(%s, %s, %s)", domain, type, protocol)
         return (await self.syscall(lib.SYS_socket, domain, type, protocol))
 
-    async def socketpair(self, domain: int, type: int, protocol: int) -> t.Tuple[int, int]: ...
+    async def socketpair(self, domain: int, type: int, protocol: int) -> t.Tuple[int, int]:
         logger.debug("socketpair(%s, %s, %s)", domain, type, protocol)
         sv = ffi.new('int[2]')
         await self.syscall(lib.SYS_socketpair, domain, type, protocol, sv)
@@ -517,6 +537,100 @@ class DirectoryFile(SeekableFile):
     async def getdents(self, fd: 'FileDescriptor[DirectoryFile]', count: int) -> t.List[Dirent]:
         return (await fd.syscall.getdents(fd.number, count))
 
+T_addr = t.TypeVar('T_addr', bound='Address')
+class Address:
+    addrlen: int
+    @classmethod
+    @abc.abstractmethod
+    def parse(cls: t.Type[T_addr], data: bytes) -> T_addr: ...
+    @abc.abstractmethod
+    def to_bytes(self) -> bytes: ...
+
+class UnixAddress(Address):
+    addrlen: int = ffi.sizeof('struct sockaddr_un')
+    path: bytes
+    def __init__(self, path: bytes) -> None:
+        self.path = path
+
+    T = t.TypeVar('T', bound='UnixAddress')
+    @classmethod
+    def parse(cls: t.Type[T], data: bytes) -> T:
+        if len(data) <= ffi.sizeof('sa_family_t'):
+            # unnamed socket, name is empty
+            return cls(bytes())
+        buf = ffi.from_buffer(data)
+        struct = ffi.cast('struct sockaddr_un*', buf)
+        if struct.sun_path[0] == b'\0':
+            # abstract socket, entire buffer is part of path
+            return cls(bytes(ffi.buffer(struct.sun_path)))
+        else:
+            # pathname socket, path is null-terminated
+            length = lib.strlen(struct.sun_path)
+            return cls(bytes(ffi.buffer(struct.sun_path, length)))
+
+    def to_bytes(self) -> bytes:
+        addr = ffi.new('struct sockaddr_un*', (lib.AF_UNIX, self.path))
+        real_length = ffi.sizeof('sa_family_t') + len(self.path) + 1
+        return bytes(ffi.buffer(addr))[:real_length]
+
+    def __str__(self) -> str:
+        return f"UnixAddress({self.path})"
+
+class IPv4Address(Address):
+    addrlen: int = ffi.sizeof('struct sockaddr_in')
+    port: int
+    addr: bytes
+    def __init__(self, port: int, addr: bytes) -> None:
+        self.port = port
+        self.addr = addr
+
+    T = t.TypeVar('T', bound='IPv4Address')
+    @classmethod
+    def parse(cls: t.Type[T], data: bytes) -> T:
+        buf = ffi.from_buffer(data)
+        struct = ffi.cast('struct sockaddr_in*', buf)
+        raise NotImplementedError
+        # TODO need to swap byte order
+        return cls(struct.sin_port, bytes(ffi.buffer(struct.sin_addr)))
+
+    def to_bytes(self) -> bytes:
+        raise NotImplementedError
+        # TODO need to swap byte order
+        addr = ffi.new('struct sockaddr_in*', (lib.AF_INET, self.port))
+        return bytes(ffi.buffer(addr))
+
+class SocketFile(t.Generic[T_addr], ReadableWritableFile):
+    address_type: t.Type[T_addr]
+
+    async def bind(self, fd: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
+        await fd.syscall.bind(fd.number, addr.to_bytes())
+
+    async def listen(self, fd: 'FileDescriptor[SocketFile]', backlog: int) -> None:
+        await fd.syscall.listen(fd.number, backlog)
+
+    async def connect(self, fd: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
+        await fd.syscall.connect(fd.number, addr.to_bytes())
+
+    async def getsockname(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
+        data = await fd.syscall.getsockname(fd.number, self.address_type.addrlen)
+        return self.address_type.parse(data)
+
+    async def getpeername(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
+        data = await fd.syscall.getpeername(fd.number, self.address_type.addrlen)
+        return self.address_type.parse(data)
+
+    async def accept(self, fd: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
+        fdnum, data = await fd.syscall.accept(fd.number, self.address_type.addrlen, flags)
+        addr = self.address_type.parse(data)
+        fd = FileDescriptor(type(self)(), fd.task, fd.fd_namespace, fdnum)
+        return fd, addr
+
+class UnixSocketFile(SocketFile[UnixAddress]):
+    address_type = UnixAddress
+
+class IPv4SocketFile(SocketFile[IPv4Address]):
+    address_type = IPv4Address
+
 class FileDescriptor(t.Generic[T_file_co]):
     "A file descriptor."
     file: T_file_co
@@ -614,34 +728,32 @@ class FileDescriptor(t.Generic[T_file_co]):
         return (await self.file.lseek(self, offset, whence))
 
     async def signalfd(self: 'FileDescriptor[SignalFile]', mask: t.Set[signal.Signals]) -> None:
-        await (self.file.signalfd(self, mask))
-
-    # hmmm, maybe nest it?
-    # have the SocketFile embed the domain?
-    # hmmm
-    async def bind(self: 'FileDescriptor[SocketFile]', addr: bytes) -> None:
-        await (self.file.signalfd(self, mask))
+        await self.file.signalfd(self, mask)
 
     async def bind(self: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
-        await (self.file.signalfd(self, mask))
+        await self.file.bind(self, addr)
+
+    async def listen(self: 'FileDescriptor[SocketFile]', backlog: int) -> None:
+        await self.file.listen(self, backlog)
 
     async def connect(self: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
-        await (self.file.signalfd(self, mask))
+        await self.file.connect(self, addr)
 
     async def getsockname(self: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        await (self.file.signalfd(self, mask))
+        return (await self.file.getsockname(self))
 
     async def getpeername(self: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        await (self.file.signalfd(self, mask))
+        return (await self.file.getpeername(self))
 
-    async def accept(self: 'FileDescriptor[SocketFile[T_addr]]') -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
-        await (self.file.signalfd(self, mask))
-
-    async def sendto(self: 'FileDescriptor[SocketFile[T_addr]]', date: bytes, flags: int, addr: T_addr) -> None:
-        await (self.file.signalfd(self, mask))
+    async def accept(self: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
+        return (await self.file.accept(self, flags))
 
     async def wait_readable(self) -> None:
         return (await self.syscall.wait_readable(self.number))
+
+async def allocate_unix_socket(task: Task, type: socket.SocketKind, protocol: int=0) -> FileDescriptor[UnixSocketFile]:
+    sockfd = await task.syscall.socket(lib.AF_UNIX, type, protocol)
+    return FileDescriptor(UnixSocketFile(), task, task.fd_namespace, sockfd)
 
 class EpollFile(File):
     async def add(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: EpollEvent) -> None:
@@ -1058,31 +1170,33 @@ class Path:
     async def readlink(self, bufsiz: int=4096) -> bytes:
         return (await self.syscall.readlinkat(self.base.dirfd_num, self._full_path, bufsiz))
 
-    async def bind(self, sockfd: FileDescriptor[UnixSocketFile]) -> bytes:
+    async def bind(self, sockfd: FileDescriptor[UnixSocketFile]) -> None:
         """Linux doesn't support bindat or similar, so this is emulated with /proc.
 
         This will fail if the bytes component of the path is too long,
         because bind has a limit of 108 bytes for the pathname.
 
         """
-        addr = ffi.new('struct sockaddr_un*', (lib.AF_UNIX, self._proc_path))
-        await sockfd.bind(bytes(ffi.buffer(addr)))
+        await sockfd.bind(UnixAddress(self._proc_path))
 
-    async def connect(self, sockfd: FileDescriptor[UnixSocketFile]) -> bytes:
+    async def connect(self, sockfd: FileDescriptor[UnixSocketFile]) -> None:
         """Linux doesn't support connectat or similar, so this is emulated with /proc.
 
         This will fail if the bytes component of the path is too long,
         because connect has a limit of 108 bytes for the pathname.
 
         """
-        addr = ffi.new('struct sockaddr_un*', (lib.AF_UNIX, self._proc_path))
-        await sockfd.connect(bytes(ffi.buffer(addr)))
+        await sockfd.connect(UnixAddress(self._proc_path))
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
         element: bytes = sfork.to_bytes(path_element)
         if b"/" in element:
             raise Exception("no / allowed in path elements, do it one by one")
-        return Path(self.base, self.path + b"/" + element)
+        if self.path == b'.':
+            # if the path is empty, just be relative
+            return Path(self.base, element)
+        else:
+            return Path(self.base, self.path + b"/" + element)
 
     def __str__(self) -> str:
         return f"Path({self.base}, {self.path})"

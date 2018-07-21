@@ -2,6 +2,7 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.io import ProcessContext, SubprocessContext, gather_local_bootstrap, wrap_stdin_out_err
 from rsyscall.io import Epoller, allocate_epoll, AsyncFileDescriptor
 from rsyscall.epoll import EpollEvent, EpollEventMask
+import socket
 import struct
 import time
 import unittest
@@ -199,14 +200,29 @@ class TestIO(unittest.TestCase):
         async def test() -> None:
             env = await rsyscall.io.build_unix_environment(self.bootstrap)
             async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as (dirfd, path):
-                self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..'])
-                text = b"Hello world!"
-                name = b"hello"
-                hello_path = await rsyscall.io.spit(path/name, text)
-                async with (await hello_path.open(os.O_RDONLY)) as readable:
-                    self.assertEqual(await readable.read(), text)
-                await dirfd.lseek(0, os.SEEK_SET)
-                self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..', name])
+                sockfd = await rsyscall.io.allocate_unix_socket(self.task, socket.SOCK_STREAM)
+                async with sockfd:
+                    await (path/"sock").bind(sockfd)
+        trio.run(test)
+
+    def test_listen(self) -> None:
+        async def test() -> None:
+            env = await rsyscall.io.build_unix_environment(self.bootstrap)
+            async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as (dirfd, path):
+                sockfd = await rsyscall.io.allocate_unix_socket(self.task, socket.SOCK_STREAM)
+                # TODO next we need to support asynchronous connect
+                # and accept
+                # those will be on the epollfd I guess
+                async with sockfd:
+                    addr = (path/"sock")
+                    await addr.bind(sockfd)
+                    await sockfd.listen(10)
+                    clientfd = await rsyscall.io.allocate_unix_socket(self.task, socket.SOCK_STREAM)
+                    async with clientfd:
+                        await addr.connect(clientfd)
+                        connfd, addr = await sockfd.accept(0)
+                        async with connfd:
+                            print(addr)
         trio.run(test)
 
     def test_getdents_noent(self) -> None:
