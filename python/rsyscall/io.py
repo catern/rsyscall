@@ -977,6 +977,23 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
 
+class Pointer:
+    mapping: MemoryMapping
+    address: int
+
+    async def write(self, data: bytes) -> Pointer:
+        await self.mapping.write(self.address, data)
+        return self.increment(len(data))
+
+    async def read(self, size: int) -> bytes:
+        return (await self.mapping.read(self.address, size))
+
+    def increment(self, amount: int) -> Pointer
+        return Pointer(self.mapping, self.address + amount)
+
+    def __add__(self, other: int) -> Pointer:
+        return self.increment(other)
+
 class MemoryMapping:
     task: Task
     address: int
@@ -996,6 +1013,9 @@ class MemoryMapping:
         self.task = task
         self.address = address
         self.length = length
+
+    def begin(self) -> Pointer:
+        return Pointer(self, self.address)
 
     def in_bounds(self, ptr: int, length: int) -> bool:
         if ptr < self.address:
@@ -1614,6 +1634,108 @@ class ChildTaskMonitor:
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
+class Function:
+    "A function, with a memory address, in some address space."
+    address: int
+    memory: MemoryNamespace
+    def __init__(self, address: int, memory: MemoryNamespace) -> None:
+        self.address = address
+        self.memory = memory
+
+class Thread:
+    """A thread is a child task currently running in the address space of its parent.
+
+    This means:
+    1. We've allocated a stack for it
+    2. We need to free that stack when the task stops existing (by calling exit or receiving a signal)
+    3. We need to free that stack when the task calls exec (and leaves the address space of its parent)
+
+    We can straightforwardly achieve 2. by monitoring SIGCHLD/waitid for the task.
+
+    To achieve 3., we need some reliable way to know when the task has successfully called exec. Since a
+    thread can exec an arbitrary executable, we can't rely on the task notifying us when it has finished
+    execing.
+
+    We effectively want to be notified on mm_release. To achieve this, we use CLONE_CHILD_CLEARTID, which
+    causes the task to do a futex wakeup on a specified address when it calls mm_release, and dedicate another
+    task to waiting on that futex address.
+
+    It would better if we could just get notified of mm_release through SIGCHLD/waitid.
+
+    """
+    child_task: ChildTask
+    stack_mapping: MemoryMapping
+    # the futex task is designed to not need its own stack
+    futex_task: ChildTask
+    def __init__(self, child_task: ChildTask, stack_mapping: MemoryMapping, futex_task: ChildTask) -> None:
+        self.child_task = child_task
+        self.stack_mapping = stack_mapping
+        self.futex_task = futex_task
+
+    # TODO make sure to be able to harvest the return value
+    # we need a separate flag that is zero at the start and one on successful return.
+    # otherwise we won't know if we actually returned or not
+    # nah we just require that they don't call exit(0), only return.
+    # or just jettison the idea of the return value at all
+    async def close(self) -> None:
+        # kill futex task
+        # wait on futex task
+        # if exit successfully, child task exec'd, so don't kill... right?
+        # 
+        # kill child task - rig
+        # 
+        pass
+
+    async def __aenter__(self) -> 'Thread':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.close()
+
+async def build_trampoline_stack(mapping: Mapping, function: Function, arg1, arg2, arg3, arg4, arg5, arg6) -> int:
+    # TODO clean this up with dicts or tuples or something
+    stack_struct = ffi.new('struct rsyscall_trampoline_stack*')
+    stack_struct.rdi = arg1
+    stack_struct.rsi = arg2
+    stack_struct.rdx = arg3
+    stack_struct.rcx = arg4
+    stack_struct.r8  = arg5
+    stack_struct.r9  = arg6
+    stack_struct.function = function.address
+    trampoline_addr = int(ffi.cast('long', ffi.addressof(lib, 'rsyscall_trampoline')))
+    packed_trampoline_addr = struct.pack('Q', trampoline_addr)
+    stack = packed_trampoline_addr + bytes(ffi.buffer(stack_struct))
+    stack_address = mapping.address + mapping.length
+    stack_address -= len(stack)
+    await mapping.write(stack_address, stack)
+    return stack_address
+
+async def make_thread(monitor: ChildTaskMonitor, function: Function, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> Thread:
+    futex_func = Function(ffi.cast('long', lib.rsyscall_futex_helper), memory)
+    mapping = await allocate_memory(task)
+    # allocate the futex at the base of the stack
+    futex_address = mapping.begin()
+    # align the stack, even though the futex is only 4 bytes
+    # TODO do this more portably ¯\_(ツ)_/¯
+    # TODO we should probably do the alignment in build_trampoline_stack
+    stack_base_address = futex_address + 16
+    # write some non-zero value there, has to match what futex_helper expects
+    futex_address.write(struct.pack('i', 1))
+    # build stack for trampolining to the futex helper
+    stack_address = await build_trampoline_stack(stack_base_address, futex_func, arg1=futex_address.address, 0, 0, 0, 0, 0)
+    futex_task = await monitor.clone(lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_address)
+    # wait for futex helper to SIGSTOP itself, which indicates the trampoline is done and we can reuse the stack.
+    # TODO do that
+    await futex_task.dothing()
+    # futex helper will no longer touch the stack, can now reuse the stack from stack_base_address
+    stack_address = await build_trampoline_stack(stack_base_address, function, arg1, arg2, arg3, arg4, arg5, arg6)
+    child_task = await monitor.clone(lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_address)
+    return Thread(child_task, mapping, futex_task)
+
+class ThreadMaker:
+    def __init__(self) -> None:
+        pass
+
 class RsyscallException(Exception):
     pass
 
@@ -1633,6 +1755,7 @@ class RsyscallConnection:
         await self.fromfd.aclose()
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        # TODO we need to match up requests to responses so this method can be called concurrently
         request = ffi.new('struct rsyscall_syscall*',
                           (number,
                            (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),

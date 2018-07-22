@@ -2093,6 +2093,7 @@ blargh I guess we can't execveat for now
    that would be cool and generic I guess...
 
    OK let's do it.
+   Not that specifically, but a thread dedicated to waiting on the futex.
 ** fd namespace   
    It should contain a list of tasks in that namespace.
 
@@ -2346,3 +2347,10 @@ it has the intent of providing an interface to Linux tasks as first-class intern
 that can be manipulated by running syscalls inside of them
 ** amoeba
 it's kind of going back to python's roots and being a distributed scripting language :)
+** make low level functionality generally available
+   there are things that are easy at a low level, but become hard with layers upon layers of abstraction.
+
+   let's make an abstraction that is much lower level and much thinner than usual,
+   to undo those hardnesses that are created by abstractions.
+
+   maybe abstraction is a bad word for this...

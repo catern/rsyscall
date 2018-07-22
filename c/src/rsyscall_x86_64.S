@@ -1,4 +1,5 @@
 #include <sys/syscall.h>
+#include <linux/futex.h>
 
 .globl rsyscall_raw_syscall
 rsyscall_raw_syscall:
@@ -21,7 +22,7 @@ rsyscall_trampoline:
         pop %r9
 	// load function to call from stack
 	pop %rax
-	// call function
+	// call function; we assume we're aligned properly
 	call *%rax
 	// store return value on stack
 	push %rax
@@ -43,5 +44,28 @@ rsyscall_trampoline:
 	// exit thread uncleanly
 	movq $1, %rdi
         movq $0, %rsi
+	movq $__NR_exit, %rax
+        syscall
+
+.globl rsyscall_futex_helper
+rsyscall_futex_helper:
+	// safely stash the futex address
+	movq %rdi, %r9
+	// get my tid
+	movq $__NR_gettid, %rax
+	syscall
+	// SIGSTOP myself
+	movq %rax, %rdi
+        movq $19, %rsi
+	movq $__NR_tkill, %rax
+	syscall
+	// futex(futex_address, FUTEX_WAIT, 1)
+	movq %r9, %rdi
+	movq $__FUTEX_WAIT, %rsi
+	movq $1, %rdx
+	movq $__NR_futex, %rax
+	syscall
+	// exit(0)
+	movq $0, %rdi
 	movq $__NR_exit, %rax
         syscall
