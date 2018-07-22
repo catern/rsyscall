@@ -172,7 +172,7 @@ class SyscallInterface:
     async def getpeername(self, sockfd: int, addrlen: int) -> bytes: ...
 
     async def getsockopt(self, sockfd: int, level: int, optname: int, optlen: int) -> bytes: ...
-    async def setsockopt(self, sockfd: int, level: int, optname: int, optval: bytes) -> None: ...
+    async def setsockopt(self, sockfd: int, level: int, optname: int, optval: t.Optional[bytes], *, optlen: t.Optional[int]=None) -> None: ...
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
@@ -217,6 +217,7 @@ class LocalSyscall(SyscallInterface):
         logger.debug("read(%d, %d)", fd, count)
         buf = ffi.new('char[]', count)
         ret = await self.syscall(lib.SYS_read, fd, buf, count)
+        print("ret", ret, fd, buf, count)
         return bytes(ffi.buffer(buf, ret))
 
     async def write(self, fd: int, buf: bytes) -> int:
@@ -426,11 +427,11 @@ class LocalSyscall(SyscallInterface):
         # some custom netfilter socket options could return an actual value, according to getsockopt(2).
         # if that ever matters for anyone, we should change this to return a Tuple[int, bytes].
         await self.syscall(lib.SYS_getsockopt, sockfd, level, optname, buf, lenbuf)
-        return ret, bytes(ffi.buffer(buf, lenbuf[0]))
+        return bytes(ffi.buffer(buf, lenbuf[0]))
 
     async def setsockopt(self, sockfd: int, level: int, optname: int, optval: t.Optional[bytes], *, optlen: t.Optional[int]=None) -> None:
         logger.debug("setsockopt(%s, %s, %s, %s)", sockfd, level, optname, optval)
-        if optval == None:
+        if optval is None:
             # AF_ALG has some stupid API where to set an option to "val", it wants you to call with
             # optval=NULL and optlen=val.  so we have to contort ourselves to make that possible.
             if optlen == None:
@@ -646,6 +647,13 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
         data = await fd.syscall.getpeername(fd.number, self.address_type.addrlen)
         return self.address_type.parse(data)
 
+    async def getsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
+        return (await fd.syscall.getsockopt(fd.number, level, optname, optlen))
+
+    async def setsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optval: t.Optional[bytes],
+                         *, optlen: t.Optional[int]=None) -> None:
+        return (await fd.syscall.setsockopt(fd.number, level, optname, optval, optlen=optlen))
+
     async def accept(self, fd: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
         fdnum, data = await fd.syscall.accept(fd.number, self.address_type.addrlen, flags)
         addr = self.address_type.parse(data)
@@ -771,6 +779,9 @@ class FileDescriptor(t.Generic[T_file_co]):
 
     async def getpeername(self: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
         return (await self.file.getpeername(self))
+
+    async def getsockopt(self: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
+        return (await self.file.getsockopt(self, level, optname, optlen))
 
     async def accept(self: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
         return (await self.file.accept(self, flags))
@@ -1511,6 +1522,7 @@ class Multiplexer:
     pass
 
 class ChildTask:
+    # TODO need to detect and record exit
     def __init__(self, tid: int, queue: trio.hazmat.UnboundedQueue,
                  monitor: 'ChildTaskMonitor') -> None:
         self.tid = tid
@@ -1523,6 +1535,12 @@ class ChildTask:
                 return self.queue.get_batch_nowait()
             except trio.WouldBlock:
                 await self.monitor.do_wait()
+
+    @property
+    def syscall(self) -> SyscallInterface:
+        # TODO should check if process is dead and throw
+        # we don't need to flush ChildEvents, because the zombie only goes away once we flush it.
+        return self.monitor.signal_queue.sigfd.epolled.underlying.task.syscall
 
 class ChildTaskMonitor:
     @staticmethod
@@ -1625,8 +1643,8 @@ class RsyscallConnection:
         except OSError as e:
             # we raise a different exception so that users can distinguish syscall errors from
             # transport errors
-            raise RsycallException() from e
-        response, = struct.unpack('Q', response_bytes)
+            raise RsyscallException() from e
+        response, = struct.unpack('q', response_bytes)
         return response
 
     async def __aenter__(self) -> 'RsyscallConnection':
@@ -1635,127 +1653,50 @@ class RsyscallConnection:
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
-class LocalSyscallInterface:
-    pass
-
-class ThreadSyscallInterface(LocalSyscallInterface):
-    # should we really have of all the resources of the thread here?
-    # I guess that's how we have to do it
-    # do we need to expose the child_task to the world?
-    # maybe at some point.
-    # I guess it's necessary if we exec.
-    # maybe that's it? we can only exec from tasks whose exit can be monitored from other tasks?
-    # that rules out the root, which is good and right, but not intermediate nodes
-    # but still: we definitely can only exec from tasks that we can monitor
-    # tasks that we can get access to a ChildTask for
-    # so that definitely suggests Task should be an interface, hmm...
-    # I mean, let's think about the ChildTask and what these interfaces look like
-    # I mean, what are we doing really?
-    # we're creating new "threads" (Linux tasks) which are under the control of our program.
-    # each new task is a new tid and is a child of ours
-    # our main thread is also a child of ours
-    # only tasks that are a child of some task we control,
-    # are allowed to exec.
-    # (which rules out the main task on remote hosts)
-    # hmm and incidentally, tasks that aren't children of our tasks,
-    # are the only ones that get argv and envp and stdstreams...
-    # curious, curious.
-    # more and more suggesting that we should have SecondaryTask and MainTask
-    # or something
-    # RootTask and ParentedTask
-    # urgh no I should really just call it ChildTask
-    # and change the name of ChildTask to like, ChildProcess or something
-    # maybe? urgh. I should clean up my naming
-    # WaitedTask or something?
-    # WaitedTid?
-    # ChildPid?
-    # ChildPid seems good. Or ChildIdentifier, or ChildProcessIdentifier
-    # ParentedPid?
-    # WaitedPid?
-    # well, I want to represent that I can also signal it
-    # also RootTask is a bad name probably, because I can't honestly call the remote things RootTask.
-    # MainTask seems better.
-    # though will it always be a MainTask if it's the initial thread in a memory space?
-    # i.e. if I spawn off a new address space/fd space, I'm forced to use a MainTask?
-    # probably fine, sure
-    # okay so while I'm doing this I still need to think about representing that,
-    # intermediate nodes, which are needed to provide ParentedPids and connections for descendents,
-    # can't exec.
-    # well! I guess that kind of coincides with MainTask?
-    # every intermediate node that can't exec, is also a MainTask?
-    # because if it wasn't, errr
-    # then the MainTask in its address space could take over its responsibility
-    # oh, wait, but...
-    # there's also the child hierarchy to think of.
-    # could explicitly handling reparenting be OK?
-    # that is certainly something we *could* do.
-
-    # are those the only two issues with execing in intermediate nodes? breaking the
-    # connection to later nodes, and losing the child structure?
-    # so, we do need to be able to, like, remap file descriptors to a different task.
-    # tricky, tricky...
-    # I guess any fd in a certain fd namespace can be moved to any task in that fd namespace
-    # so... maybe we could just have, like, a task redirect thing???
-    # and lazily migrate???
-
-    # then what about child tasks?
-    # we could explicitly record them in the task and move them to our parent?
-    # hmm
-    # all sounds possible but complicated
-    # I think all we really need to do is split up two different implementations of Task,
-    # so we can get the WaitedPid for tasks that might exec.
-
-    # oh! hmm! maybe the ThreadedSyscallInterface should have a reference to, like, a...
-    # ArbitraryFunctionRunningInThread thing, which holds the stack mapping,
-    # and probably also holds a reference to the WaitedPid?
-    # tricky, tricky.
-
-    # I should take care to not limit what is possible by providing a bad interface.
-    # separate processes on the same box should be able to exec,
-    # because we do have a WaitedPid for them
-    # also it won't kill their address space anyway
-    # but, it will kill our connection to the processes in that space,
-    # assuming it's proxied through the main thread instead of direct through the
-    # main task on the box.
-    # we should try to limit unnecessary nesting like that, not just because it's inefficient,
-    # but because it's brittle, like in that case.
-    # so a ChildTask is the only thing that would support exec, right?
-    # and then almost everything is a ChildTask,
-    # the only non-child-tasks are the bootstrapping tasks,
-    # the first ones we start with on a box.
-    # which I guess we have mysterious unexplained bootstrap connections to...
-    # in all other cases, we ourselves are starting the process,
-    # so we already have envp/argp/stdstreams.
-
-    # so with MainTasks, we don't own our own thread/task
-    # but with ChildTasks, we do own the task
-    # we can deallocate the resources for it, and exec
-    # with MainTask, we do own the resources to connect though
-    # we can't kill the task directly though right
-    # well, we can't kill it, but we can exit it from the inside
-    # but we can't exec it because we then can't monitor it
-    # but we do control the resources inside it in both cases
-    # so okay, there's two kinds of control of a task
-    # there's control of the inside, and the outside
-    # with MainTask we control the inside
-    # with ChildTask we control the outside and inside
-    # with something we exec, we only control the outside
-    # controlling the inside - that's like controlling the infd and outfd, maybe?
-    # do we lump infd and outfd and memory mapping in with the "outside"?
-    # okay so the "outside" thing is the WaitedPid, through which we can signal and wait
-    # the "inside" is making syscalls.
-
-    # maybe I just have something different from a task when I call exec
-    # something which controls the resources for the thread
-    # and can free them
-    # a ControlledTask that has both the ChildTask and the Task
+class RsyscallChildTask:
+    child_task: ChildTask
     stack_mapping: MemoryMapping
     infd: FileDescriptor[ReadableFile]
     outfd: FileDescriptor[WritableFile]
+    def __init__(self,
+                 child_task: ChildTask,
+                 stack_mapping: MemoryMapping,
+                 infd: FileDescriptor[ReadableFile],
+                 outfd: FileDescriptor[WritableFile],
+    ) -> None:
+        self.child_task = child_task
+        self.stack_mapping = stack_mapping
+        self.infd = infd
+        self.outfd = outfd
+
+    async def close(self) -> None:
+        # TODO kill child
+        await self.child_task.wait()
+        await self.infd.aclose()
+        await self.outfd.aclose()
+        await self.stack_mapping.unmap()
+
+    async def __aenter__(self) -> 'RsyscallChildTask':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.close()
+
+class RsyscallTask:
+    child: RsyscallChildTask
     connection: RsyscallConnection
-    child_task: ChildTask
+    task: Task
+    def __init__(self,
+                 child: RsyscallChildTask,
+                 connection: RsyscallConnection,
+                 task: Task,
+    ) -> None:
+        self.child = child
+        self.connection = connection
+        self.task = task
+
     @staticmethod
-    async def make(monitor: ChildTaskMonitor, epoller: Epoller) -> 'ThreadSyscallInterface':
+    async def make(task: Task, monitor: ChildTaskMonitor, epoller: Epoller) -> 'RsyscallTask':
         mapping = await allocate_memory(task)
         pipe_in = await allocate_pipe(task)
         pipe_out = await allocate_pipe(task)
@@ -1774,47 +1715,33 @@ class ThreadSyscallInterface(LocalSyscallInterface):
         stack_address -= len(stack)
         await mapping.write(stack_address, stack)
         child_task = await monitor.clone(lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_address)
+        rsyscall_child_task = RsyscallChildTask(child_task, mapping, infd, outfd)
         async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
         async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
         rsyscall_connection = RsyscallConnection(async_tofd, async_fromfd)
-        return ThreadSyscallInterface(mapping, infd, outfd, rsyscall_connection, child_task)
+        task = Task(LocalSyscall(trio.hazmat.wait_readable, rsyscall_connection.syscall),
+                    task.fd_namespace, task.memory, task.mount)
+        return RsyscallTask(rsyscall_child_task, rsyscall_connection, task)
 
-    def __init__(self,
-                 stack_mapping: MemoryMapping,
-                 infd: FileDescriptor[ReadableFile],
-                 outfd: FileDescriptor[WritableFile],
-                 connection: RsyscallConnection,
-                 child_task: ChildTask,
-    ) -> None:
-        self.connection = connection
-        super().__init__(trio.hazmat.wait_readable, self.connection)
-        self.stack_mapping = stack_mapping
-        self.infd = infd
-        self.outfd = outfd
-        self.child_task = child_task
-        self.task = task
+    async def exec(self, arg) -> ChildTask:
+        # close all da stuff!
+        # or... some of it anyway
+        # the rsyscall child task anyway
+        # TODO
+        # needs ptrace hackery to get notified when exec is done
+        # TODO
+        pass
 
-    async def close(self) -> None:
-        await self.connection.close()
-        await self.child_task.wait()
-        await self.infd.aclose()
-        await self.outfd.aclose()
-        await self.stack_mapping.unmap()
+    async def exit(self, status) -> None:
+        # TODO
+        pass
 
-    async def __aenter__(self) -> 'RunningTask':
+    async def __aenter__(self) -> 'RsyscallTask':
         return self
 
     async def __aexit__(self, *args, **kwargs):
-        await self.close()
-
-class ControlledTask:
-    task: Task
-    child_task: ChildTask
-    # pointer to parent task? no, that's baked into ChildTask
-
-
-
-
+        await self.connection.close()
+        await self.child.close()
 
 
 

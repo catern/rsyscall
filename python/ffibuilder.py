@@ -25,6 +25,7 @@ ffibuilder.set_source(
 #include <sys/wait.h>
 #include <sys/signal.h>
 #include <sys/signalfd.h>
+#include <sys/ptrace.h>
 #include <dirent.h>
 
 struct linux_dirent64 {

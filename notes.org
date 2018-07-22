@@ -2078,6 +2078,21 @@ blargh I guess we can't execveat for now
    could I speed this up with that seccomp yield to userspace  things?
    nah, there's no way to exec in the original process with that
    it tells me before the syscall instead of the syscall
+
+   ptrace is not an acceptable solution
+   because ptrace isn't recursive
+
+   CHILD_CLEARTID or vfork it is.
+   vfork is probably just plain unsuitable.
+
+   so we need to figure out futex integration.
+
+   I guess that essentially means one thread per futex.
+   Doing.. what?
+   ugh, maybe just bridging a futex to an eventfd?
+   that would be cool and generic I guess...
+
+   OK let's do it.
 ** fd namespace   
    It should contain a list of tasks in that namespace.
 
@@ -2272,6 +2287,9 @@ hmm, actually it just occurred to me that this question is essentially the same 
 
    Current workaround:
    ptrace.
+
+   This is especially necessary for threads running arbitrary code.
+   We can't just ptrace such threads all the time.
 ** sigkill-resilient filicide
    Maybe, like, the combination of supervise and PDEATHSIG?
 
@@ -2294,6 +2312,13 @@ hmm, actually it just occurred to me that this question is essentially the same 
    Would be nice to be able to pass a dirfd for these. And also lift the length limit.
 ** some way to deal with fd inheritance?
    CLOUNSHARE?
+* design decisions
+** TODO should we grab the Task out of other objects, or pass it explicitly?
+   Consider RsyscallTask.make as an example.
+   It takes a ChildTaskMonitor and an Epoller as arguments,
+   both of which contain a Task.
+   Should it also explicitly take a Task,
+   or just use one of theirs?
 * game
   non player processes
 
@@ -2319,3 +2344,5 @@ hmm, actually it just occurred to me that this question is essentially the same 
 * what is this? explanation to normies
 it has the intent of providing an interface to Linux tasks as first-class internal entities,
 that can be manipulated by running syscalls inside of them
+** amoeba
+it's kind of going back to python's roots and being a distributed scripting language :)

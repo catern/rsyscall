@@ -221,7 +221,7 @@ class TestIO(unittest.TestCase):
                     clientfd = await rsyscall.io.allocate_unix_socket(self.task, socket.SOCK_STREAM)
                     async with clientfd:
                         await clientfd.connect(addr)
-                        connfd, client_addr = await sockfd.accept(0)
+                        connfd, client_addr = await sockfd.accept(0) # type: ignore
                         async with connfd:
                             print(addr, client_addr)
         trio.run(test)
@@ -245,7 +245,7 @@ class TestIO(unittest.TestCase):
                             async_clientfd = await AsyncFileDescriptor.make(epoller, clientfd)
                             async with async_clientfd:
                                 await async_clientfd.connect(addr)
-                                connfd, client_addr = await async_sockfd.accept(0)
+                                connfd, client_addr = await async_sockfd.accept(0) # type: ignore
                                 async with connfd:
                                     print(addr, client_addr)
         trio.run(test)
@@ -275,8 +275,8 @@ class TestIO(unittest.TestCase):
             async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
                 epoller = Epoller(epoll)
                 async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
-                    async with (await rsyscall.io.ThreadSyscallInterface.make(self.task, monitor, epoller)) as running_task:
-                        async with (await rsyscall.io.allocate_epoll(running_task.task)) as epoll:
+                    async with (await rsyscall.io.RsyscallTask.make(self.task, monitor, epoller)) as rsyscall_task:
+                        async with (await rsyscall.io.allocate_epoll(rsyscall_task.task)) as epoll:
                             epoller2 = Epoller(epoll)
                             # okay, important:
                             # clearly we need to clean up the syscall interface after an exec
@@ -308,7 +308,7 @@ class TestIO(unittest.TestCase):
                             # so, all I need to do is return a task!
                             # and the task has ownership of the SyscallInterface inside of it.
                             # and I just contextmanager on the task
-                            await self.do_async_things(epoller2, running_task.task)
+                            await self.do_async_things(epoller2, rsyscall_task.task)
         trio.run(test)
 
 if __name__ == '__main__':
