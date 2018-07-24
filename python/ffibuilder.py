@@ -101,7 +101,9 @@ size_t strlen(const char *s);
 
 int faccessat(int dirfd, const char *pathname, int mode, int flags);
 
+// signal stuff
 #define SYS_waitid ...
+#define SYS_kill ...
 
 #define WEXITED ...
 #define WSTOPPED ...
@@ -253,8 +255,10 @@ struct in_addr {
 #define MAP_STACK ...
 
 void *memcpy(void *dest, const void *src, size_t n);
+// we need these as function pointers, we aren't calling them from Python
 void (*const rsyscall_server)(const int infd, const int outfd);
-void rsyscall_trampoline(void);
+void (*const rsyscall_futex_helper)(void *futex_addr);
+void (*const rsyscall_trampoline)(void);
 struct rsyscall_trampoline_stack {
     int64_t rdi;
     int64_t rsi;

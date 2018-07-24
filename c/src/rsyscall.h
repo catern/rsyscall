@@ -6,12 +6,13 @@ struct rsyscall_syscall {
     int64_t args[6];
 };
 
+noreturn void rsyscall_server(const int infd, const int outfd);
+
+/* Assembly-language routines: */
 /* careful: the syscall number is the last arg, to make the assembly more convenient. */
 long rsyscall_raw_syscall(long arg1, long arg2, long arg3, long arg4, long arg5, long arg6, long sys);
-noreturn void rsyscall_server(const int infd, const int outfd);
 /* SIGSTOPs itself when it starts up, then waits on the futex, then does exit(0). */
-noreturn void rsyscall_futex_helper(void *futex_addr);
-
+void rsyscall_futex_helper(void *futex_addr);
 /* A trampoline useful when used with clone to call arbitrary functions. */
 void rsyscall_trampoline(void);
 

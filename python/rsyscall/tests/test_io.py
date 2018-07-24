@@ -275,7 +275,8 @@ class TestIO(unittest.TestCase):
             async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
                 epoller = Epoller(epoll)
                 async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
-                    async with (await rsyscall.io.RsyscallTask.make(self.task, monitor, epoller)) as rsyscall_task:
+                    thread_maker = rsyscall.io.ThreadMaker(monitor)
+                    async with (await rsyscall.io.RsyscallTask.make(self.task, thread_maker, epoller)) as rsyscall_task:
                         async with (await rsyscall.io.allocate_epoll(rsyscall_task.task)) as epoll:
                             epoller2 = Epoller(epoll)
                             # okay, important:
@@ -309,6 +310,18 @@ class TestIO(unittest.TestCase):
                             # and the task has ownership of the SyscallInterface inside of it.
                             # and I just contextmanager on the task
                             await self.do_async_things(epoller2, rsyscall_task.task)
+        trio.run(test)
+
+    def test_thread(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                epoller = Epoller(epoll)
+                async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
+                    thread_maker = rsyscall.io.ThreadMaker(monitor)
+                    async with (await rsyscall.io.RsyscallTask.make(self.task, thread_maker, epoller)) as rsyscall_task:
+                        # TODO argh! need to PDEATHSIG to kill the threads
+                        # TODO argh! this is breaking, for some reason running in the main thread??
+                        await rsyscall_task.task.syscall.exit(0)
         trio.run(test)
 
 if __name__ == '__main__':

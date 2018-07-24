@@ -2258,6 +2258,329 @@ hmm, I just realized that I think this is essentially the same question as anoth
 
 hmm, actually it just occurred to me that this question is essentially the same as an earlier question I was pondering and deferred until later, so I guess I'll just defer this one too, and be trio-specific for now
 (the earlier question was whether to expose wait_readable in the system call interface which abstracts over making system calls in the current thread vs. in another thread, or to expose some other primitive async mechanism, or do something else, or whatever)
+** should we call PDEATHSIG in the trampoline, or with rsyscall?
+   In favor of trampoline is that it will apply for all threads
+
+   Against trampoline is that it will not reaaally work for everything
+
+   If the parent dies, but there are still some threads alive in the address space,
+   when we die, our stack won't be cleaned up.
+
+   Well wait, that's an issue with rsyscall as well.
+
+   No, no, we solve that by just making sure PDEATHSIG is set for all of our immediate children, right?
+   Is that the plan?
+   Yes, I think so.
+   We don't want anything in our address space to survive our death, right...?
+
+   Well, we could. But that would require careful resource management.
+   So I think PDEATHSIG does work.
+
+   Then we're back to the question of trampoline or rsyscall.
+
+   What if we wanted to trampoline into something that should survive our death and be in our address space?
+   Again, this would require careful resource management.
+
+   Do we even want anything to be able to survive our death? I argue no!
+   Or, more specifically, by default that shouldn't happen.
+
+   Also, in the future we'll have an inheritable immutable PDEATHSIG.
+
+   Although, we still want to daemonize things, don't we?
+   How will we deal with that?
+
+   I guess we'll have a PersistentChildTask,
+   which is really a supervise (possibly watching multiple children)
+
+   We'll have to unset PDEATHSIG for the supervise,
+   as well as for the children.
+
+   But, it will be in a separate address space anyway.
+
+   Hmm hmm hmm.
+
+   So yeah, how will we design PersistentChildTask?
+   That is something tricky.
+** PersistentChildTask
+   Oh boy, this is a tricky one.
+
+   Yep.
+   Tricky.
+
+   Okay time to start thinking about it.
+
+   Could we just have a persistent rsyscall task which is not our child?
+
+   That's perfect, yes, let's do that.
+
+   That matches the form of remote tasks too, we can just reconnect to them.
+
+   It's SLIGHTLY awkward that if we kill it, it murders everything on that host.
+
+   But I guess we could have multiple of them on a host.
+
+   It could be some kind of rsyscall server, where when you connect to this unix socket,
+   it spins up a thread for you?
+   But it persists forever while the unix socket lasts?
+
+   hmm
+
+   but we do want a specific thread to actually persist,
+   don't we?
+
+   We kind of need that, to preserve the child-parent relationship.
+
+   We could become aware of SUBREAPER...
+
+   Though that doesn't help, does it, we'd just reparent to some parent person,
+   and want to preserve them,
+   because if they go away, then we're ruined.
+
+   We could use supervise to make the child-parent relationship irrelevant.
+
+   Hmm.
+   If an rsyscall task gets wedged by me sending a bad syscall,
+   aren't we screwed?
+
+   We can't recover.
+
+   Wait wait wait, of course we can recover.
+   EINTR is a thing... wait, will we not get EINTRs?
+
+   Can we send it a signal that we've specially designated for interrupting bad syscalls?
+   Yes, and we can get EINTRs.
+
+   That seems distasteful.
+
+   But it works.
+
+   Okay, but, so, I'll either do persistent rsyscall tasks, or use supervise and a Unix-socket-serving thread-server.
+
+   But in either case, don't I need to be able to start things that don't die?
+
+   Also if I use supervise...
+   Can it be a thread inside the thread-server, which I communicate with using an fd?
+
+   And I'd probably do the same with the persistent rsyscall tasks, right?
+   They'd just be threads in the server and I'd access them through a thread-server.
+
+   Hmm.
+
+   A thread-server, which implements the thread creation logic I've done in Python, in C.
+   That seems fairly interesting as a concept.
+   PROCSESES AND THREADS R FILES, DEAL W/ IT HATERS
+
+   Okay but wait, it would be specialized to only work with rsyscall server threads.
+   That's undesirable.
+
+   Could we..
+   could we just...
+   send it a function address and some arguments...
+   and get back a whole lotta nothing...
+
+   Hmm yeah, like, how do we send it to the fds or memory or all that stuff that we might want to send it.
+   I guess those are questions for our runtime to solve, not our kernel-interaction-thingy.
+
+   Only dealing with rsyscall servers seems neat.
+
+   Though! How do I get the data?
+
+   Also, again, I guess I'm just considering something like,
+   I have some threads, I get the fds to talk to them with...
+   I send those fds *into the server*,
+   so it persists.
+   Is that how I'd make a persistent thread?
+   But how would I do that?
+   How would I send the fds in?
+   Since I only have one side, and they have only the other side,
+   how would I get the fds from one side to another.
+
+   Also, again, the data fd.
+
+   Oh wait, I guess the threads I create wouldn't be persistent.
+   In fact I could even connect to the thread server from inside the server.
+   Then it'd be okay.
+
+   So then, data fd. How do I data fd.
+   Hmm...
+   So I can allocate memory without memory, using mmap.
+
+   Then I can write into that memory one byte at a time with syscalls, though that's mega-gross.
+
+   Or I can do the multiplexing trick, but that requires care.
+
+   So I guess, uh
+
+   Oh wait, screw connect, let's just use a protocol.
+   We'll say, "hey gimme some fds BAE",
+   and it'll send them over.
+
+   Although that's tricky when done remotely.
+
+   We could have an initial process that we get,
+   which we then use to connect to the persistent process server.
+
+   And we get that thread,
+   and we send the fds back to our initial process over unix sockets.
+   Seems good.
+
+   Wait, wait, no, no.
+
+   Then we have to go through two address spaces. Not three, which is nice, but still two.
+
+   So we'd really like a direct connection to the persistent process server.
+
+   Wait, can't we just do that?
+   We pick ourselves up, send our fds over, and throw ourselves over, by our bootstraps.
+
+   So we get our initial process. It comes with a free data fd, compliments of the house.
+   It has access to the unix socket.
+   We open that to get a thread.
+   We send the fds for our initial process over the Unix socket.
+   Including the datafd.
+   We dup those fds over the one for our thread inside the thread-server.
+   Now we have direct access to the thread-server.
+   And we only have one data fd.
+
+   So that seems fine and good, and at least that's possible.
+   We'll probably think of something better later.
+** so how do we actually run one of these
+   We probably have an initial initial process, right?
+   Which just runs vanilla rsyscall.
+   And we bootstrap our way into a persistent thread-server from there.
+
+   And how do we do that?
+   Well...
+   I guess we can exec our way in, assuming our initial process isn't forcibly terminated.
+
+   But is that sustainable?
+   What if we want to create another one?
+
+   We won't have another task that is unparented/unfilicided.
+
+   So, what do we do?
+
+   Oh wait, I think it's fine, isn't it?
+   Don't we just double-fork?
+   Standard bidness?
+   That's gross though, I don't want to double-fork.
+
+   Hm, so.
+   This is sounding like I'm in favor of doing it in rsyscall, as a first-class thing.
+
+   And then I can choose to not do it, and instead exec something that will persist.
+
+   Of course, the real issue is nesting persistence...
+   What if one of the applications I start, wants to persist?
+
+   But I don't want to persist?
+
+   I guess I have to give them the ability to persist.
+   I have to pass it down.
+
+   How do I pass down the ability to persist?
+
+   Well. I can allow a task to live forever by default,
+   and remove that ability with a persistent pdeathsig thing.
+
+   Meh, it's some kind of silent persistence, but I guess it's fine.
+
+   Maybe I should have the inheritable PDEATHSIG thing partnered with a clonefd?
+   And the inheritable PDEATHSIG doesn't kill things made with clonefd.
+   That way you can make pseudo-persistent processes which live past a tree's death.
+
+   How would that work?
+
+   I guess maybe I can like,
+   get an fd for some process,
+   which unsets pdeathsig thingy for it??
+
+   Designing this API is hard :(
+
+   OK, so yeah, doing it in rsyscall in code is better.
+
+   Alternatively, we could just do it by default.
+   *Should* it be by default?
+
+   How do we control this?
+   How do we control persisting tasks?
+
+   Well, the ideal way is by linear resources.
+   When we go away, the resources we own (our children) go away as well.
+   
+   But, we can opt in to survive the death of our parent.
+   
+   But, if we want to guarantee our children die because they might maliciously do that.
+
+   Hm, hm.
+
+   So what if it was literally a capability that's passed down?
+
+   Oh, what if it was some kind of process group fd?
+   And when they're closed, everything inside is killed...
+   But you can attach your process to them, and survive!
+
+   Like normal process groups, they aren't recursive.
+   You can only be in one.
+
+   And so, if someone passes down a "survival" process group,
+   you can enter it.
+
+   Actually maybe it should be recursive,
+   then you can make more fine grained divisions.
+   You can spawn a pgroupfd off of another one,
+   and it will be the child of that one.
+   And, if the parent is closed, it will be forcibly closed?
+
+   Well, maybe that's silly
+
+   Okay, why would we want to be recursive?
+   Why can't we just add ourselves to the survival group?
+
+   We could, we could, we certainly could.
+
+   Can we also solve the "library wants to run subprocess" problem this way?
+   Well, we can have the library set no signal at clone time.
+   Then what?
+
+   Could we also also solve the "detect reparenting" problem?
+   Say, because you stay in the process group forever?
+   And maybe you can get notifications when anything in it dies, no matter the depth?
+   No, that's a mistake
+
+   But maybe there's a "top level" of the process group,
+   and when your parent at the top level dies,
+   you go to the top level?
+
+   And you can get notifications for things at the top level dying
+   Nah that's complex
+
+   Oh wait this doesn't work
+   Self-reference, as usual, foils it.
+
+   So that would imply we do need recursion.
+
+   That's interesting.
+   If things have owners, self-reference is a problem.
+   But if owernship is a stack, it's no problem.
+   That's like linear regions etc
+
+   Anyway.
+
+   I think the default would be death in any of these schemes.
+   So I think it makes sense to default PDEATHSIG on.
+   Turning it off is a rare operation anyway.
+
+   Yeah and let's do it in rsyscall main, eh?
+   umm
+
+   oh wait, heh, futex waker isn't gonna wake up and die when rsyscall dies...
+   no wait yes it will...
+   let's put it in rsyscall main for now.
+
+   naw, in that case, let's do it at startup.
+   no wait, what if we die before that?
+   we have to set pdeathsig as soon as possible to avoid this race of death...
 * cool feature: context manager container
   I can start a container with a contextmanager and spin it off by returning.
 
@@ -2309,6 +2632,35 @@ hmm, actually it just occurred to me that this question is essentially the same 
    Oh, the same is true for the childgroupfd then.
    Well, no, they can create childgroupfd within them, but,
    they're still contained in the childgroupfd.
+
+   Oh! Let's just have an inheritable PDEATHSIG which can't be unset!
+   That's easier conceptually.
+   Though, reparenting will still happen before the actual signalling, which is awkward.
+
+   Maybe I should have the inheritable PDEATHSIG thing partnered with a clonefd?
+   And the inheritable PDEATHSIG doesn't kill things made with clonefd.
+   That way you can make pseudo-persistent processes which live past a tree's death.
+
+   There are several things we want:
+   - it should work to kill legacy processes that don't use this API
+   - there should be a means for processes to still daemonize if we want to allow that
+
+   A childgroupfd does actually meet these.
+   If we have a childgroupfd,
+   all the children in it can be killed when we close it,
+   but not if they are inside their own childgroupfd.
+
+   Like process groups, but as a file descriptor?
+   Hmm, that seems like a nice idea.
+
+   So you can escape the process group easily, is the thing?
+   Maybe we have a flag, "escapable" or not.
+
+   Of course, escaping will just require that something has a reference to its own process group fd.
+** remove old confusing comment from dequeue_signal
+   in signal.c
+
+   It just wasn't removed in b8fceee17a310f189188599a8fa5e9beaff57eb0 when it should have been
 ** bindat, connectat
    Would be nice to be able to pass a dirfd for these. And also lift the length limit.
 ** some way to deal with fd inheritance?
@@ -2320,6 +2672,14 @@ hmm, actually it just occurred to me that this question is essentially the same 
    both of which contain a Task.
    Should it also explicitly take a Task,
    or just use one of theirs?
+
+   Also we can grab the Epoller out of the ChildTaskMonitor, for that matter.
+* knowledge
+** tkill vs kill
+The difference between kill and tkill (besides the special negative parameters to kill, which tkill
+doesn't support) is that kill always delivers the signal into the shared SIGHAND table, whereas tkill
+delivers the signal into the task-private (thread-private) table.  Note that pthread_kill, raise, and
+other such things work like tkill (though they actually use tgkill).
 * game
   non player processes
 

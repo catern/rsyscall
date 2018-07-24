@@ -1,5 +1,4 @@
 #include <sys/syscall.h>
-#include <linux/futex.h>
 
 .globl rsyscall_raw_syscall
 rsyscall_raw_syscall:
@@ -13,6 +12,12 @@ rsyscall_raw_syscall:
 
 .globl rsyscall_trampoline
 rsyscall_trampoline:
+	// immediately set PR_SET_PDEATHSIG to SIGKILL to minimize the race
+        // condition where our parent could die early
+	movq $1, %rdi // PR_SET_PDEATHSIG
+        movq $9, %rsi // SIGKILL
+	movq $__NR_prctl, %rax
+        syscall // ignore return value
 	// load argument registers from the stack
 	pop %rdi
         pop %rsi
@@ -35,14 +40,15 @@ rsyscall_trampoline:
         movq $0, %r9
 	movq $__NR_gettid, %rax
 	syscall
-	// SIGTERM myself
+	// SIGTERM myself so signal handlers can fire
 	movq %rax, %rdi
         movq $15, %rsi
-	movq $__NR_tkill, %rax
+	movq $__NR_kill, %rax
 	syscall
-	// should not return, but if it does:
-	// exit thread uncleanly
-	movq $1, %rdi
+	// If we were created with CLONE_SIGHAND, and we inherited a signal mask
+        // masking out SIGTERM, then the kill may be processed in another task.
+        // So, also exit thread cleanly just in case.
+	movq $0, %rdi
         movq $0, %rsi
 	movq $__NR_exit, %rax
         syscall
@@ -61,7 +67,7 @@ rsyscall_futex_helper:
 	syscall
 	// futex(futex_address, FUTEX_WAIT, 1)
 	movq %r9, %rdi
-	movq $__FUTEX_WAIT, %rsi
+	movq $0, %rsi    // FUTEX_WAIT == 0
 	movq $1, %rdx
 	movq $__NR_futex, %rax
 	syscall
