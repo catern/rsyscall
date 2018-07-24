@@ -7,6 +7,8 @@ struct rsyscall_syscall {
 };
 
 noreturn void rsyscall_server(const int infd, const int outfd, const int ppid);
+void rsyscall_do_cloexec();
+int strtoint(const char* p);
 
 /* Assembly-language routines: */
 /* careful: the syscall number is the last arg, to make the assembly more convenient. */

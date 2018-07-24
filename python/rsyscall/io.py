@@ -1899,8 +1899,11 @@ class RsyscallTask:
         # or... some of it anyway
         # the rsyscall child task anyway
         # TODO
-        # needs ptrace hackery to get notified when exec is done
-        # TODO
+        # fasf
+        # we have to, like...
+        # send the thing
+        # and then either get an error message back
+        # or get nothing back, and see the futex task exit
         pass
 
     async def exit(self, status) -> None:

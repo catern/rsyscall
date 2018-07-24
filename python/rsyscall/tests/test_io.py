@@ -328,6 +328,13 @@ class TestIO(unittest.TestCase):
                         await rsyscall_task.task.syscall.exit2(0)
         trio.run(test)
 
+    def test_do_cloexec(self) -> None:
+        pipe = trio.run(rsyscall.io.allocate_pipe, self.task)
+        lib.rsyscall_do_cloexec()
+        with self.assertRaises(OSError):
+            # it was closed due to being cloexec
+            trio.run(pipe.wfd.write, b"foo")
+
 if __name__ == '__main__':
     import unittest
     unittest.main()

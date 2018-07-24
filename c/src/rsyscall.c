@@ -1,10 +1,16 @@
 #define _GNU_SOURCE
 #include <stddef.h>
 #include <sys/syscall.h>
-#include <sys/prctl.h>
 #include <signal.h>
 #include <stdnoreturn.h>
 #include "rsyscall.h"
+#include <err.h>
+
+#include <sys/prctl.h>
+#include <sys/types.h>
+
+#include <fcntl.h>
+#include <dirent.h>
 
 struct options {
         int infd;
@@ -15,7 +21,6 @@ char hello[] = "hello world, I am the syscall server!\n";
 char read_failed[] = "read(infd, &request, sizeof(request)) failed\n";
 char read_eof[] = "read(infd, &request, sizeof(request)) returned EOF\n";
 char write_failed[] = "write(outfd, &response, sizeof(response)) failed\n";
-char pdeathsig_failed[] = "write(outfd, &response, sizeof(response)) failed\n";
 
 static long write(int fd, const void *buf, size_t count) {
     return rsyscall_raw_syscall(fd, (long) buf, (long) count, 0, 0, 0, SYS_write);
@@ -26,14 +31,6 @@ static long read(int fd, void *buf, size_t count) {
 
 static void exit(int status) {
     rsyscall_raw_syscall(status, 0, 0, 0, 0, 0, SYS_exit);
-}
-
-static long set_pdeathsig(int signal) {
-    return rsyscall_raw_syscall(PR_SET_PDEATHSIG, signal, 0, 0, 0, 0, SYS_exit);
-}
-
-static long getppid() {
-    return rsyscall_raw_syscall(0, 0, 0, 0, 0, 0, SYS_getppid);
 }
 
 static void error(char* msg, size_t msgsize) {
@@ -78,16 +75,72 @@ static void write_response(const int outfd, const int64_t response)
     }
 }
 
+long getdents64(int fd, char* buf, unsigned int count) {
+    return rsyscall_raw_syscall(fd, (long)buf, count, 0, 0, 0, SYS_getdents64);
+}
+
+long getfd(int fd) {
+    return rsyscall_raw_syscall(fd, F_GETFD, 0, 0, 0, 0, SYS_fcntl);
+}
+
+long myopen(char* path, int flags) {
+    return rsyscall_raw_syscall((long)path, flags, 0, 0, 0, 0, SYS_open);
+}
+
+long close(int fd) {
+    return rsyscall_raw_syscall(fd, 0, 0, 0, 0, 0, SYS_close);
+}
+
+char getdents64_failed[] = "getdents64(fd, buf, count) failed\n";
+
+int strtoint(const char* p) {
+    int ret = 0;
+    char c;
+    while ((c = *p)) {
+        ret *= 10;
+        ret += (c - '0');
+        p++;
+    }
+    return ret;
+}
+
+struct linux_dirent64 {
+    ino64_t        d_ino;    /* 64-bit inode number */
+    off64_t        d_off;    /* 64-bit offset to next structure */
+    unsigned short d_reclen; /* Size of this dirent */
+    unsigned char  d_type;   /* File type */
+    char           d_name[]; /* Filename (null-terminated) */
+};
+
+/* Close all CLOEXEC file descriptors */
+/* We should add a CLONE_DO_CLOEXEC flag to replace this */
+void rsyscall_do_cloexec() {
+    /* this depends on /proc, dang, but whatever */
+    int dirfd = myopen("/proc/self/fd", O_DIRECTORY|O_RDONLY);
+    char buf[1024];
+    for (;;) {
+        int const nread = getdents64(dirfd, buf, sizeof(buf));
+        if (nread < 0) {
+            error(getdents64_failed, sizeof(getdents64_failed) - 1);
+        } else if (nread == 0) {
+            /* no more fds, we're done */
+            return;
+        }
+        for (int bpos = 0; bpos < nread;) {
+            const struct linux_dirent64 *d = (struct linux_dirent64 *) &buf[bpos];
+            if (d->d_type == DT_LNK) {
+                const int fd = strtoint(d->d_name);
+                if (getfd(fd) & FD_CLOEXEC) {
+                    close(fd);
+                }
+            }
+            bpos += d->d_reclen;
+        }
+    }
+}
+
 noreturn void rsyscall_server(const int infd, const int outfd, const int ppid)
 {
-    if (set_pdeathsig(SIGKILL) < 0) {
-        error(pdeathsig_failed, sizeof(pdeathsig_failed) - 1);
-    }
-    if (getppid() != ppid) {
-        /* our parent was already dead when we set pdeathsig!  */
-        exit(0);
-    }
-
     write(2, hello, sizeof(hello) -1);
     for (;;) {
         write_response(outfd, perform_syscall(read_request(infd)));

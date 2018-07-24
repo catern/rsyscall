@@ -2318,6 +2318,169 @@ blargh I guess we can't execveat for now
    okay, triggering cloexec
 
    urgh I want to be able to iterate over the cloexec fds from userspace :(
+
+   okay, okay, we'll hack it, a lot of fds to iterate over, but whatever
+
+   so this kind of leaves it as,
+
+   I can pass in some fds into a new thread,
+   and some will be dynscoped in.
+
+   If I want to have multiple people operate on the same fd,
+   I can just pass it into all of them.
+
+   But the fd *table* isn't shared-mutable,
+   the mutations each make aren't visible to others.
+
+   Yes, it seems good
+
+   okay...
+
+   I wonder if I can support both methods?
+
+   Both "perfect shared memory eternal glory",
+   and "sublime justice private fd table".
+
+   So I will clearly want to do CLONE_DO_CLOEXEC, right?
+   Always?
+
+   Okay, so what I have is,
+   two different ways to handle detection of the memory space no longer being used.
+
+   OK, so.
+   The private fd space way is cleaner, isn't it?
+
+   That's incremental.
+
+   Now, a true thread would support sharing the table, wouldn't it?
+
+   Well, no.
+   It's cleaner for each thread to have its own table.
+   FDs are exclusively owned by one thread, after all!
+
+   And that allows for neat process stuff.
+
+   But, sharing the fd table...
+
+   Hey wait a second
+   The futex task also exits when it's left the fd table.
+
+   But, it's not clear what the task has taken with it.
+   So does it really allow us to close those things?
+
+   We can clearly close the fds in our address space
+   The question is whether we can close the communication fds.
+   And, again, yes, we clearly can, unless we are reusing it.
+
+   Really, each thread having its own private fd table seems better.
+   But it is limiting.
+
+   Language-level access control over who owns an fd is more flexible/better/more glorious.
+
+   We'd need to, um...
+   On thread exit, track down all the fds it owns, and close them?
+   Along with memory resources too?
+
+   Well uhhhhhhhhhhhhh
+
+   A thread doesn't really own an fd nor does it own memory.
+   We have all that managed centrally.
+
+   I mean, why would I use my own thread system, rly
+   Well, to integrate it with a nice beautiful epoll event loop.
+
+   OK, so let's suppose I start a thread that shares my fd table.
+
+   I need to be notified when it drops the stack.
+
+   Then I go forward and unshare the fd table.
+
+   I need to CLONE_DO_CLOEXEC (after unsharing) so that private fds, and the fds of other threads, are not duplicated.
+
+   Though.
+   Yes, that makes sense.
+   It's not possible to unset CLOEXEC while multithreaded-in-fd-table,
+   since it may be inherited.
+
+   Everything (except for dynscoped things) is CLOEXEC.
+
+   Then I unshare and inherit everything,
+   then I perform some manipulations and unset CLOEXEC on some things,
+   and then I call exec.
+
+   So I don't need to CLONE_DO_CLOEXEC, unless I'm not going to exec.
+   Unless... I regard this as racy.
+   Having the duplicated fd... is there a race there?
+   Might I need to do this immediately, atomically?
+
+   Maybe what I need, then, is some form of atomic,
+   unshare, unset cloexec on things, do_cloexec
+
+   I mean, alternatively...
+
+   I just don't inherit anything?
+   Sounds gross, that's not acceptable.
+
+   So then, maybe something like:
+   int unshare_fd_table(int *inherited_fds, size_t count);
+
+   Which unshares the fd table, closing everything in it that is marked cloexec and which is not in inherited_fds.
+
+   Well, what if I implement that by a socketpair?
+   Oh, ha ha, I can't do that, because I can't inherit the socketpair! Gross.
+
+   Okay, so I don't think there's a race here.
+   Just imagine that I had unshare_fd_table, it's instant, sure?
+
+   But it would be equally instant for me to do the unshare and unset cloexec and call do_cloexec.
+
+   Er.
+
+   That is, one possible interleaving is,
+   if there's some thread A that wants to close fds which another thread is waiting for,
+   A doesn't run for a while.
+
+   But wait, there's certain things that aren't possible.
+   Like.
+
+   Thread A could close fds 4,5,6,
+   then signal using a futex that they closed them.
+   Then other coordinating process would believe with absolute certainty that it should get hups on them.
+   Immediately! Right?
+   (if they're local pipes, sure)
+
+   Well, no, some other thread could also have just forked, as things do.
+   Since it could have always happened before by fork, I think we don't need to care.
+
+   But suppose we did care!
+   It would sure be tough to deal with!
+
+   How would we ever go from a shared fd table,
+   to a private one,
+   inheriting some things from it,
+   while closing the things we don't want,
+   without racing against others?
+   ...locks?
+
+   a lock on... close?
+
+   no, yuck, screw that
+
+   so if a library somewhere deep below,
+   performs a fork,
+   what should they do to ensure they aren't keeping other fds erroneously open?
+
+   well, how do we pass fds to the fork?
+
+   I guess this is a good reason to have something other than "dynamic scope".
+   or, I guess, globals across multiple tasks
+
+   you really want something absolutely task-local
+
+   well.
+
+   is keeping something memory mapped an example of keeping something erroneously open?
+   the address space may be a problem in itself if that's the case...
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 
@@ -2784,6 +2947,15 @@ hmm, actually it just occurred to me that this question is essentially the same 
 
    This is especially necessary for threads running arbitrary code.
    We can't just ptrace such threads all the time.
+** a CLONE_DO_CLOEXEC flag to pass to clone, to close CLOEXEC fds
+   This would be good and useful.
+
+   Though we can do it in userspace, it's ugly and requires creating an extra thread for full correctness.
+
+   And it would be simple.
+   Just need to call do_close_on_exec.
+
+   oh god, clone really is out of flags
 ** sigkill-resilient filicide
    Maybe, like, the combination of supervise and PDEATHSIG?
 
@@ -2828,32 +3000,6 @@ hmm, actually it just occurred to me that this question is essentially the same 
 
    Of course, escaping will just require that something has a reference to its own process group fd.
    oh, capsicum doesn't support passing process fds
-** CLOEXEC also affecting unshare
-   wait, wait, can't we just do the closing ourselves after the unshare?
-
-   well, again, in practice that would require a scan of the fd table
-
-   what I'd really like is some way to instead, mark an fd as inherited?
-   no, pass them as an argument?
-   no, have them inherit by default?
-   no, have both?
-
-   we need to be able to hold arbitrary fds after the unshare,
-   and simultaneously support dynamic scoping of fds (so something is inherited unknowingly)
-
-   I think essentially we want unshare to take a list of fds which are inherited,
-   and also inherit anything not marked CLOEXEC
-
-   blah
-** a CLONE_DO_CLOEXEC flag to pass to clone, to close CLOEXEC fds
-   This would be good and useful.
-
-   Though we can do it in userspace, it's ugly and requires creating an extra thread for full correctness.
-
-   And it would be simple.
-   Just need to call do_close_on_exec.
-
-   oh god, clone really is out of flags
 ** remove old confusing comment from dequeue_signal
    in signal.c
 

@@ -259,6 +259,8 @@ void *memcpy(void *dest, const void *src, size_t n);
 void (*const rsyscall_server)(const int infd, const int outfd, const int ppid);
 void (*const rsyscall_futex_helper)(void *futex_addr);
 void (*const rsyscall_trampoline)(void);
+void (*const rsyscall_do_cloexec)(void);
+
 struct rsyscall_trampoline_stack {
     int64_t rdi;
     int64_t rsi;
