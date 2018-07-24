@@ -321,7 +321,11 @@ class TestIO(unittest.TestCase):
                     async with (await rsyscall.io.RsyscallTask.make(self.task, thread_maker, epoller)) as rsyscall_task:
                         # TODO argh! need to PDEATHSIG to kill the threads
                         # TODO argh! this is breaking, for some reason running in the main thread??
-                        await rsyscall_task.task.syscall.exit(0)
+                        print(rsyscall_task.task, self.task)
+                        print(rsyscall_task.task.syscall, self.task.syscall)
+                        print(rsyscall_task.task.syscall._do_syscall, self.task.syscall._do_syscall)
+                        # ha ha doesn't return
+                        await rsyscall_task.task.syscall.exit2(0)
         trio.run(test)
 
 if __name__ == '__main__':

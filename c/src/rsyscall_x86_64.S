@@ -12,12 +12,6 @@ rsyscall_raw_syscall:
 
 .globl rsyscall_trampoline
 rsyscall_trampoline:
-	// immediately set PR_SET_PDEATHSIG to SIGKILL to minimize the race
-        // condition where our parent could die early
-	movq $1, %rdi // PR_SET_PDEATHSIG
-        movq $9, %rsi // SIGKILL
-	movq $__NR_prctl, %rax
-        syscall // ignore return value
 	// load argument registers from the stack
 	pop %rdi
         pop %rsi

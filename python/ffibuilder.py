@@ -256,7 +256,7 @@ struct in_addr {
 
 void *memcpy(void *dest, const void *src, size_t n);
 // we need these as function pointers, we aren't calling them from Python
-void (*const rsyscall_server)(const int infd, const int outfd);
+void (*const rsyscall_server)(const int infd, const int outfd, const int ppid);
 void (*const rsyscall_futex_helper)(void *futex_addr);
 void (*const rsyscall_trampoline)(void);
 struct rsyscall_trampoline_stack {

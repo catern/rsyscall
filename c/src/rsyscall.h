@@ -6,7 +6,7 @@ struct rsyscall_syscall {
     int64_t args[6];
 };
 
-noreturn void rsyscall_server(const int infd, const int outfd);
+noreturn void rsyscall_server(const int infd, const int outfd, const int ppid);
 
 /* Assembly-language routines: */
 /* careful: the syscall number is the last arg, to make the assembly more convenient. */

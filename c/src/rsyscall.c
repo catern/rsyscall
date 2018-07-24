@@ -1,6 +1,8 @@
 #define _GNU_SOURCE
 #include <stddef.h>
 #include <sys/syscall.h>
+#include <sys/prctl.h>
+#include <signal.h>
 #include <stdnoreturn.h>
 #include "rsyscall.h"
 
@@ -13,6 +15,7 @@ char hello[] = "hello world, I am the syscall server!\n";
 char read_failed[] = "read(infd, &request, sizeof(request)) failed\n";
 char read_eof[] = "read(infd, &request, sizeof(request)) returned EOF\n";
 char write_failed[] = "write(outfd, &response, sizeof(response)) failed\n";
+char pdeathsig_failed[] = "write(outfd, &response, sizeof(response)) failed\n";
 
 static long write(int fd, const void *buf, size_t count) {
     return rsyscall_raw_syscall(fd, (long) buf, (long) count, 0, 0, 0, SYS_write);
@@ -23,6 +26,14 @@ static long read(int fd, void *buf, size_t count) {
 
 static void exit(int status) {
     rsyscall_raw_syscall(status, 0, 0, 0, 0, 0, SYS_exit);
+}
+
+static long set_pdeathsig(int signal) {
+    return rsyscall_raw_syscall(PR_SET_PDEATHSIG, signal, 0, 0, 0, 0, SYS_exit);
+}
+
+static long getppid() {
+    return rsyscall_raw_syscall(0, 0, 0, 0, 0, 0, SYS_getppid);
 }
 
 static void error(char* msg, size_t msgsize) {
@@ -67,8 +78,16 @@ static void write_response(const int outfd, const int64_t response)
     }
 }
 
-noreturn void rsyscall_server(const int infd, const int outfd)
+noreturn void rsyscall_server(const int infd, const int outfd, const int ppid)
 {
+    if (set_pdeathsig(SIGKILL) < 0) {
+        error(pdeathsig_failed, sizeof(pdeathsig_failed) - 1);
+    }
+    if (getppid() != ppid) {
+        /* our parent was already dead when we set pdeathsig!  */
+        exit(0);
+    }
+
     write(2, hello, sizeof(hello) -1);
     for (;;) {
         write_response(outfd, perform_syscall(read_request(infd)));

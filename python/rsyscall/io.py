@@ -868,6 +868,7 @@ class Epoller:
             running_wait = trio.Event()
             self.running_wait = running_wait
 
+            # TODO I should first epoll_wait optimistically, and only then wait_readable
             await self.epfd.wait_readable()
             received_events = await self.epfd.wait(maxevents=32, timeout=-1)
             for event in received_events:
@@ -1795,7 +1796,6 @@ class ThreadMaker:
         await complete_stack.write(trampoline_data)
         # TODO need to actually pass CHILD_CLEARTID
         child_task = await self.monitor.clone(lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, complete_stack.address)
-    
         return Thread(child_task, mapping, futex_task)
 
 class RsyscallException(Exception):
@@ -1881,7 +1881,8 @@ class RsyscallTask:
         function = Function(ffi.cast('long', lib.rsyscall_server), task.memory)
         pipe_in = await allocate_pipe(task)
         pipe_out = await allocate_pipe(task)
-        thread = RsyscallThread(await thread_maker.make_thread(function, pipe_in.rfd.number, pipe_out.wfd.number),
+        thread = RsyscallThread(await thread_maker.make_thread(
+            function, pipe_in.rfd.number, pipe_out.wfd.number, await task.syscall.getpid()),
                                 pipe_in.rfd, pipe_out.wfd)
 
         async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
@@ -1904,6 +1905,24 @@ class RsyscallTask:
 
     async def exit(self, status) -> None:
         # TODO
+        # need to do a half-call
+        # we'll send the request, but not wait for the response
+        # but for exec we need to wait for either the response,
+        # or for the futex_task exiting.
+        # that's tricky.
+        # let's think exclusively about the non-returning call.
+        # well, any call might not return.
+        # we need to be able to cut our losses.
+        # so we could theoretically make the call, then cancel it?
+        # how do we know the call is done?
+        # oh, we need to also wait on the task exiting.
+        # maybe we should be doing that for every syscall.
+        # wait on the futex_task to see if it exits...
+        # no, just a few. waiting forever is pointless.
+        # though it would be nice to get hangups instead of this other stuff
+        # yet again I desire to have each task in its own fd space
+        # it's too hard! I can't do it
+        # well, it's necessary for starting subprocesses.
         pass
 
     async def __aenter__(self) -> 'RsyscallTask':

@@ -2161,6 +2161,163 @@ blargh I guess we can't execveat for now
 
     so this is why I can't have things in their own fd table, but in the same VM space as me.
     the only way to trigger clearing of the fd table is through exec.
+
+    if there was a clounshare...
+
+    wait wait
+
+    a thread that I unshare in,
+    if it's running rsyscall,
+    can't use any fds I don't know about.
+    since I won't send those commands
+
+    but if it's running arbitrary code
+
+    oh wait no
+
+    it's the other libraries, the ones left behind
+    the threads that live and breathe with fds unused
+    if I fork a thread off, and then unshare, and I have the fds, and the original guys close the fd,
+    then that's a weird situation, one which cloexec is supposed to prevent.
+
+    I'd really want to have CLOEXEC also affect unshare.
+    Then I don't have any of these issues, right?
+
+    well... I can implement this myself with scanning the fd table.
+** argh
+   okay so I have two options
+
+   option 1: implement CLOUNSHARE so I can deal with unsharing the fd table,
+   and then have each task in an address space have a different fd table
+   (this doesn't provide a way to exec into a new process and keep using the same rsyscall fds, right?)
+
+   option 2: use futexes and child wait and all that stuff.
+   and pdeathsig.
+   this is gross but I can have everything in the same fd table so it's fine
+** argh argh option 1
+   OK, so let's be realistic, right?
+   Isn't this required for starting subprocesses?
+
+   We unshare(CLONE_FILES), assign some fds to some other fds (fds which we explicitly know the number of),
+   then exec, and it's all good.
+
+   There's no way to do the stdin/stdout assignment without unsharing CLONE_FILES.
+   At most we could first exec a separate rsyscall process,
+   and then start running from there.
+
+   Although.
+
+   Doing either of those irreversible things, really seems like maybe it something I shouldn't be doing.
+
+   Feels like maybe I should have unshare(CLONE_FILES) from the start.
+
+   Then I start my child, not passing CLONE_FILES,
+   and it inherits all my fds.
+
+   (I can have some other mode for running a thread pool for blocking syscalls over shared fds)
+
+   Man, doesn't this suggest that we probably shouldn't even have CLONE_VM either?
+   What if I keep alive some memory that a library was usin'?
+
+   No no, that's exactly opposite. We're all in the same address space, but that's fine.
+   Each one manages his own stuff.
+
+   And we never need to unshare(CLONE_VM) (and it's impossible anyway, lol)
+   Because there's no refcounting hangup stuff that we want to trigger.
+   And things are never placed at known offsets.
+   And all that stuff.
+
+   Yeah, there's no way to inherit a CLONE_VM.
+   You're either in the same address space or a completely new one.
+   Er...
+   Well, that's not true, you can inherit CLONE_VM as you move to a new thread - fork for example.
+
+   Well, we won't be inheriting CLONE_VM, anyway.
+   We'll be doing it all in a single place, right?
+   A single address space
+
+   And we manage memory explicitly within there.
+   Why do this?
+
+   After all, if some thread in that address space dies,
+   its memory resources will not be collected.
+   Only its fd resources.
+
+   Why don't we just forcibly always move to a new process, and exec the thing?
+
+   Because it's far cheaper to write to memory in a single process.
+
+   Well, we could provide a shared memory section.
+
+   And isn't this also an argument in favor of always being in the same fd table?
+   After all,
+   it's far cheaper to pass an fd to another task when you're in the same fd table;
+   you don't have to send it over a Unix socket.
+
+   But the thing differentiating the two is the new-process-start.
+   That is, what happens when we exec.
+
+   When we exec, the address space is destroyed and recreated, not inherited - fine.
+   But the fd table is inherited.
+
+   This means we can avoid dealing with address space inheritance.
+   We could just have everything in its own fresh address space,
+   all fine and good.
+
+   But we can't avoid dealing with fd table inheritance?
+   Is that right?
+
+   It would be nice if we could get a fresh address space and put things in it.
+   Inheriting addresses would be weird.
+   And a gross abuse of virtual memory.
+
+   Since ideally everyone would be in the same address space...
+   And exec would merely set up a new program area...
+
+   Which, in fact, we could do in userspace...
+
+   We could implement processes in userspace -
+   but only if we had each with their own fd table and sighand and stuff?
+   (and assuming that malloc et al was smart enough to not collide other things)
+
+   I mean, if they syscall directly,
+   they really do each need their own fd table and things.
+
+   But that is fine.
+
+   Running them in a single address space, somewhat neat, though somewhat useless.
+
+   But! The issue is!
+   CLOEXEC does not trigger!
+
+   When we start a new thread running a program we've loaded,
+   its fd table is unshared,
+   but not CLOEXEC'd.
+
+   Furthermore, if we first spin up a thread to do preparation of the fd table,
+   it'll be crazy
+
+
+   OK!
+   classes of fd:
+
+   explicitly passed down: not cloexec or clounshare
+   private to a thread: CLOEXEC, CLOUNSHARE
+   dynamically passed down: not cloexec or clounshare
+
+   But, what about when we fork?
+   Do we really want all the library-private things to go away due to clounshare?
+
+   so when we fork off a *thread*, or when we exec a new *program*, we can't use any of the libraries we had before
+   even though the thread could call those functions, because they're in its address space
+
+   but if we fork our process, the libraries are in our address space,
+   and we're in the middle of a call stack,
+   and we probably are going to want to use those libraries.
+
+   okay, triggering cloexec
+
+   urgh I want to be able to iterate over the cloexec fds from userspace :(
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 
@@ -2581,12 +2738,25 @@ hmm, actually it just occurred to me that this question is essentially the same 
    naw, in that case, let's do it at startup.
    no wait, what if we die before that?
    we have to set pdeathsig as soon as possible to avoid this race of death...
+
+   no wait, it's fine, there's no race, we can conditionally do it
+
+   argh gotta fix up rsyscall trampoline or something
+
+   blah, let's just put it in rsyscall and whatever
 * cool feature: context manager container
   I can start a container with a contextmanager and spin it off by returning.
 
   hey, and supervise is a nice pid1 to run inside the container
 
   neat neat neat neaaat
+* things to improve
+** TODO fix the race with PDEATHSIG so that a thread dies even if we die before it sets that
+   I guess we can... know the pid of our parent (have it passed down),
+   set pdeathsig,
+   getppid,
+   if ppid isn't what we expect, suicide.
+
 * portability things
 ** assuming there are 64 signals so sigset_t is an 8-byte integer
    I think you can probably compile the kernel with more signals?
@@ -2657,6 +2827,33 @@ hmm, actually it just occurred to me that this question is essentially the same 
    Maybe we have a flag, "escapable" or not.
 
    Of course, escaping will just require that something has a reference to its own process group fd.
+   oh, capsicum doesn't support passing process fds
+** CLOEXEC also affecting unshare
+   wait, wait, can't we just do the closing ourselves after the unshare?
+
+   well, again, in practice that would require a scan of the fd table
+
+   what I'd really like is some way to instead, mark an fd as inherited?
+   no, pass them as an argument?
+   no, have them inherit by default?
+   no, have both?
+
+   we need to be able to hold arbitrary fds after the unshare,
+   and simultaneously support dynamic scoping of fds (so something is inherited unknowingly)
+
+   I think essentially we want unshare to take a list of fds which are inherited,
+   and also inherit anything not marked CLOEXEC
+
+   blah
+** a CLONE_DO_CLOEXEC flag to pass to clone, to close CLOEXEC fds
+   This would be good and useful.
+
+   Though we can do it in userspace, it's ugly and requires creating an extra thread for full correctness.
+
+   And it would be simple.
+   Just need to call do_close_on_exec.
+
+   oh god, clone really is out of flags
 ** remove old confusing comment from dequeue_signal
    in signal.c
 
@@ -2713,4 +2910,6 @@ it's kind of going back to python's roots and being a distributed scripting lang
    let's make an abstraction that is much lower level and much thinner than usual,
    to undo those hardnesses that are created by abstractions.
 
-   maybe abstraction is a bad word for this...
+   maybe abstraction is a bad word for this.
+** name
+   rsc is russ cox's username :(

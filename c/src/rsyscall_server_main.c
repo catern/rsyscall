@@ -37,5 +37,6 @@ int main(int argc, char** argv)
         const struct options opt = parse_options(argc, argv);
         fcntl(opt.infd, F_SETFL, fcntl(opt.infd, F_GETFL) & ~O_NONBLOCK);
         fcntl(opt.outfd, F_SETFL, fcntl(opt.outfd, F_GETFL) & ~O_NONBLOCK);
-        rsyscall_server(opt.infd, opt.outfd);
+        /* TODO fix this up */
+        rsyscall_server(opt.infd, opt.outfd, 42);
 }
