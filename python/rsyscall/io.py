@@ -108,14 +108,11 @@ class SyscallInterface:
     async def wait_readable(self, fd: int) -> None: ...
 
     # task manipulation
-    async def clone(self, flags: int, deathsig: t.Optional[signal.Signals]) -> int: ...
-    async def exit(self, status: int) -> int: ...
+    async def clone(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int: ...
+    async def exit(self, status: int) -> None: ...
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> int: ...
-
-    async def clone2(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int:
-        raise NotImplementedError
 
     async def getpid(self) -> int: ...
 
@@ -230,16 +227,6 @@ class LocalSyscall(SyscallInterface):
         logger.debug("dup2(%d, %d)", oldfd, newfd)
         return (await self.syscall(lib.SYS_dup2, oldfd, newfd))
 
-    async def clone(self, flags: int, deathsig: t.Optional[signal.Signals]) -> int:
-        logger.debug("clone(%d, %s)", flags, deathsig)
-        if deathsig is not None:
-            flags |= deathsig
-        return sfork.clone(flags)
-
-    async def exit(self, status: int) -> int:
-        logger.debug("exit(%d)", status)
-        return sfork.exit(status)
-
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> int:
@@ -255,16 +242,20 @@ class LocalSyscall(SyscallInterface):
         return (await self.syscall(lib.SYS_munmap, addr, length))
 
     # newstyle task manipulation
-    async def clone2(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int:
+    async def clone(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int:
         logger.debug("clone(%s, %s, %s, %s, %s)", flags, child_stack, ptid, ctid, newtls)
         return (await self.syscall(lib.SYS_clone, flags, child_stack, ptid, ctid, newtls))
 
-    async def exit2(self, status: int) -> None:
+    async def exit(self, status: int) -> None:
         logger.debug("exit(%d)", status)
-        await self.syscall(lib.SYS_exit, status)
+        # how to handle this?
+        try:
+            await self.syscall(lib.SYS_exit, status)
+        except RsyscallHangup:
+            pass
 
     async def exit_group(self, status: int) -> None:
-        logger.debug("exit(%d)", status)
+        logger.debug("exit_group(%d)", status)
         await self.syscall(lib.SYS_exit_group, status)
 
     async def getpid(self) -> int:
@@ -452,7 +443,8 @@ class FDNamespace:
     pass
 
 class MemoryNamespace:
-    pass
+    def null(self) -> 'Pointer':
+        return Pointer(None, 0) # type: ignore
 
 class MountNamespace:
     pass
@@ -1603,6 +1595,10 @@ class ChildTask:
         # The child might already have become a zombie, and we won't know about it until
         # we waitid. But that's fine, we can still use the pid of a zombie, since it won't
         # be reused yet. We'll probably just throw an exception.
+        # TODO V IMPORTANT: the above is nonsense
+        # other ChildTasks can call waitid too, and flush events for our child tasks!
+        # we need some kind of means to avoid that, yo...
+        # hmmm yeah
         return self.monitor.signal_queue.sigfd.epolled.underlying.task.syscall
 
     async def send_signal(self, sig: signal.Signals) -> None:
@@ -1625,9 +1621,11 @@ class ChildTaskMonitor:
             raise Exception("ChildTaskMonitor should get a SignalQueue only for SIGCHLD")
         self.running_wait: t.Optional[trio.Event] = None
 
-    async def clone(self, flags: int, child_stack: int) -> ChildTask:
+    async def clone(self, flags: int,
+                    child_stack: Pointer, ctid: Pointer, newtls: Pointer) -> ChildTask:
         task = self.signal_queue.sigfd.epolled.underlying.task
-        tid = await task.syscall.clone2(flags, child_stack, 0, 0, 0)
+        tid = await task.syscall.clone(flags, child_stack.address,
+                                       ptid=0, ctid=ctid.address, newtls=newtls.address)
         child_task = ChildTask(tid, trio.hazmat.UnboundedQueue(), self)
         self.task_map[tid] = child_task
         return child_task
@@ -1695,51 +1693,81 @@ class Thread:
     """A thread is a child task currently running in the address space of its parent.
 
     This means:
-    1. We've allocated a stack for it
-    2. We need to free that stack when the task stops existing (by calling exit or receiving a signal)
-    3. We need to free that stack when the task calls exec (and leaves the address space of its parent)
+    1. We have probably allocated memory for it, including a stack and thread-local storage.
+    2. We need to free that memory when the task stops existing (by calling exit or receiving a signal)
+    3. We need to free that memory when the task calls exec (and leaves our address space)
 
-    We can straightforwardly achieve 2. by monitoring SIGCHLD/waitid for the task.
+    We can straightforwardly achieve 2 by monitoring SIGCHLD/waitid for the task.
 
-    To achieve 3., we need some reliable way to know when the task has successfully called exec. Since a
-    thread can exec an arbitrary executable, we can't rely on the task notifying us when it has finished
-    execing.
+    To achieve 3, we need some reliable way to know when the task has successfully called
+    exec. Since a thread can exec an arbitrary executable, we can't rely on the task notifying us
+    when it has finished execing.
 
-    We effectively want to be notified on mm_release. To achieve this, we use CLONE_CHILD_CLEARTID, which
-    causes the task to do a futex wakeup on a specified address when it calls mm_release, and dedicate another
-    task to waiting on that futex address.
+    We effectively want to be notified on mm_release. To achieve this, we use CLONE_CHILD_CLEARTID,
+    which causes the task to do a futex wakeup on a specified address when it calls mm_release, and
+    dedicate another task to waiting on that futex address.
 
     It would better if we could just get notified of mm_release through SIGCHLD/waitid.
 
     """
     child_task: ChildTask
-    stack_mapping: MemoryMapping
-    # the futex task is designed to not need its own stack
     futex_task: ChildTask
-    def __init__(self, child_task: ChildTask, stack_mapping: MemoryMapping, futex_task: ChildTask) -> None:
+    futex_mapping: MemoryMapping
+    def __init__(self, child_task: ChildTask, futex_task: ChildTask, futex_mapping: MemoryMapping) -> None:
         self.child_task = child_task
-        self.stack_mapping = stack_mapping
         self.futex_task = futex_task
+        self.futex_mapping = futex_mapping
 
-    async def release(self) -> ChildTask:
+    async def wait_for_mm_release(self) -> ChildTask:
         """Wait for the task to leave the parent's address space, and return the ChildTask.
 
-        The task can leave the parent's address space either by exiting or execing. In any case, the task is
-        no longer using the stack, so we unmap it.
+        The task can leave the parent's address space either by exiting or execing.
 
         """
         # once the futex task has exited, the child task has left the parent's address space.
         result = await self.futex_task.wait_for_exit()
         if not result.clean():
-            raise Exception("the futex task unexpectedly exited non-zero, maybe it was SIGKILL'd?", result)
-        await self.stack_mapping.unmap()
+            raise Exception("the futex task", self.futex_task, "for child task", self.child_task,
+                            "unexpectedly exited non-zero", result, "maybe it was SIGKILL'd?")
+        self.futex_mapping
         return self.child_task
 
     async def close(self) -> None:
         await self.child_task.kill()
-        await self.release()
+        await self.wait_for_mm_release()
 
     async def __aenter__(self) -> 'Thread':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.close()
+
+class CThread:
+    """A thread running the C runtime and some C function.
+
+    At the moment, that means it has a stack. 
+    The considerations for the Thread class all therefore apply.
+
+    TODO thread-local-storage.
+
+    """
+    thread: Thread
+    stack_mapping: MemoryMapping
+    def __init__(self, thread: Thread, stack_mapping: MemoryMapping) -> None:
+        self.thread = thread
+        self.stack_mapping = stack_mapping
+
+    async def wait_for_mm_release(self) -> ChildTask:
+        result = await self.thread.wait_for_mm_release()
+        # we can free the stack mapping now that the thread has left our address space
+        await self.stack_mapping.unmap()
+        return result
+
+    async def close(self) -> None:
+        await self.thread.child_task.kill()
+        await self.wait_for_mm_release()
+
+    async def __aenter__(self) -> 'CThread':
         return self
 
     async def __aexit__(self, *args, **kwargs):
@@ -1767,12 +1795,21 @@ class ThreadMaker:
         # TODO pull this function out of somewhere sensible
         self.futex_func = Function(ffi.cast('long', lib.rsyscall_futex_helper), task.memory)
 
-    async def make_thread(self, function: Function, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> Thread:
-        # TODO should I really be allocating memory from here...
-        mapping = await allocate_memory(self.monitor.signal_queue.sigfd.epolled.underlying.task)
+    async def clone(self, flags: int, child_stack: Pointer, newtls: Pointer) -> Thread:
+        """Provides an asynchronous interface to the CLONE_CHILD_CLEARTID functionality
+
+        Runs "ret" immediately after cloning.
+
+        """
+        if not (flags & lib.CLONE_VM):
+            # TODO let's figure out how to force the futex address to be shared memory with the
+            # child, by mapping a memfd instead of using CLONE_PRIVATE 
+            raise Exception("CLONE_VM is mandatory right now because I'm lazy")
+        task = self.monitor.signal_queue.sigfd.epolled.underlying.task
+        mapping = await allocate_memory(task)
         stack = Stack(Pointer(mapping, mapping.address + mapping.length))
-    
-        # allocate the futex at the base of the stack, with "1" written to it to match what futex_helper expects
+        # allocate the futex at the base of the stack, with "1" written to it to match
+        # what futex_helper expects
         futex_data = struct.pack('i', 1)
         futex_address = await stack.push(futex_data)
         # align the stack to a 16-bit boundary now, so after pushing the trampoline data,
@@ -1780,25 +1817,45 @@ class ThreadMaker:
         stack.allocation_pointer += (16 - len(futex_data)) % 16
     
         # build the trampoline, push it on the stack, and start the thread
-        trampoline_data = build_trampoline_stack(self.futex_func, futex_address.address, 0, 0, 0, 0, 0)
+        trampoline_data = build_trampoline_stack(self.futex_func,
+                                                 futex_address.address, 0, 0, 0, 0, 0)
         complete_stack = await stack.push(trampoline_data)
-        futex_task = await self.monitor.clone(lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, complete_stack.address)
-    
-        # wait for futex helper to SIGSTOP itself, which indicates the trampoline is done and we can reuse the stack.
-        # resume it so it can start waiting on the futex
+        # TODO maybe I can use CLONE_THREAD here? or at least more clone
+        futex_task = await self.monitor.clone(
+            lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, complete_stack,
+            ctid=task.memory.null(), newtls=task.memory.null())
+        # wait for futex helper to SIGSTOP itself,
+        # which indicates the trampoline is done and we can deallocate the stack.
         event = await futex_task.wait_for_stop_or_exit()
         if event.died():
             raise Exception("thread internal futex-waiting task died unexpectedly", event)
+        # resume the futex_task so it can start waiting on the futex
         await futex_task.send_signal(signal.SIGCONT)
+        # the only part of the memory mapping that's being used now is the futex address, which is a
+        # huge waste. oh well, later on we can allocate futex addresses out of a shared mapping
+        child_task = await self.monitor.clone(
+            flags | lib.CLONE_CHILD_CLEARTID, child_stack,
+            ctid=futex_address, newtls=newtls)
+        return Thread(child_task, futex_task, mapping)
+
+    async def make_cthread(self, flags: int,
+                          function: Function, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
+    ) -> CThread:
+        task = self.monitor.signal_queue.sigfd.epolled.underlying.task
+        mapping = await allocate_memory(task)
+        stack = Stack(Pointer(mapping, mapping.address + mapping.length))
     
-        # futex helper will no longer touch the stack, so we can reuse and overwrite it
         trampoline_data = build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)
-        await complete_stack.write(trampoline_data)
-        # TODO need to actually pass CHILD_CLEARTID
-        child_task = await self.monitor.clone(lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, complete_stack.address)
-        return Thread(child_task, mapping, futex_task)
+        complete_stack = await stack.push(trampoline_data)
+        # TODO actually allocate TLS
+        tls = task.memory.null()
+        thread = await self.clone(flags|signal.SIGCHLD, complete_stack, tls)
+        return CThread(thread, mapping)
 
 class RsyscallException(Exception):
+    pass
+
+class RsyscallHangup(Exception):
     pass
 
 class RsyscallConnection:
@@ -1829,6 +1886,14 @@ class RsyscallConnection:
             # we raise a different exception so that users can distinguish syscall errors from
             # transport errors
             raise RsyscallException() from e
+        # raise exception on hangup I guess?
+        # and catch it in specific syscalls?
+        # or, how else will I handle the fact that,
+        # exit and exec don't expect a response?
+        # or, rather, they expect a hup or a response
+        # an optional response
+        if len(response_bytes) == 0:
+            raise RsyscallHangup()
         response, = struct.unpack('q', response_bytes)
         return response
 
@@ -1838,37 +1903,12 @@ class RsyscallConnection:
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
-class RsyscallThread:
-    thread: Thread
-    infd: FileDescriptor[ReadableFile]
-    outfd: FileDescriptor[WritableFile]
-    def __init__(self,
-                 thread: Thread,
-                 infd: FileDescriptor[ReadableFile],
-                 outfd: FileDescriptor[WritableFile],
-    ) -> None:
-        self.thread = thread
-        self.infd = infd
-        self.outfd = outfd
-
-    async def close(self) -> None:
-        # TODO kill child
-        await self.thread.close()
-        await self.infd.aclose()
-        await self.outfd.aclose()
-
-    async def __aenter__(self) -> 'RsyscallThread':
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.close()
-
 class RsyscallTask:
-    thread: RsyscallThread
+    thread: CThread
     connection: RsyscallConnection
     task: Task
     def __init__(self,
-                 thread: RsyscallThread,
+                 thread: CThread,
                  connection: RsyscallConnection,
                  task: Task,
     ) -> None:
@@ -1878,21 +1918,26 @@ class RsyscallTask:
 
     @staticmethod
     async def make(task: Task, thread_maker: ThreadMaker, epoller: Epoller) -> 'RsyscallTask':
+        # TODO so we need to talk about what file descriptors we pass down here, right?
+        # or do we just need to immediately close the remote-side fds in the local side?
+        # then we're fine?
+        # yes, that is true
         function = Function(ffi.cast('long', lib.rsyscall_server), task.memory)
         pipe_in = await allocate_pipe(task)
         pipe_out = await allocate_pipe(task)
-        thread = RsyscallThread(await thread_maker.make_thread(
-            function, pipe_in.rfd.number, pipe_out.wfd.number, await task.syscall.getpid()),
-                                pipe_in.rfd, pipe_out.wfd)
+        cthread = await thread_maker.make_cthread(
+            lib.CLONE_VM, function, pipe_in.rfd.number, pipe_out.wfd.number)
+        await pipe_in.rfd.aclose()
+        await pipe_out.wfd.aclose()
 
         async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
         async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
         rsyscall_connection = RsyscallConnection(async_tofd, async_fromfd)
 
         new_task = Task(LocalSyscall(trio.hazmat.wait_readable, rsyscall_connection.syscall),
-                        task.fd_namespace, task.memory, task.mount)
+                        FDNamespace(), task.memory, task.mount)
 
-        return RsyscallTask(thread, rsyscall_connection, new_task)
+        return RsyscallTask(cthread, rsyscall_connection, new_task)
 
     async def exec(self, arg) -> ChildTask:
         # close all da stuff!
@@ -1907,33 +1952,18 @@ class RsyscallTask:
         pass
 
     async def exit(self, status) -> None:
-        # TODO
-        # need to do a half-call
-        # we'll send the request, but not wait for the response
-        # but for exec we need to wait for either the response,
-        # or for the futex_task exiting.
-        # that's tricky.
-        # let's think exclusively about the non-returning call.
-        # well, any call might not return.
-        # we need to be able to cut our losses.
-        # so we could theoretically make the call, then cancel it?
-        # how do we know the call is done?
-        # oh, we need to also wait on the task exiting.
-        # maybe we should be doing that for every syscall.
-        # wait on the futex_task to see if it exits...
-        # no, just a few. waiting forever is pointless.
-        # though it would be nice to get hangups instead of this other stuff
-        # yet again I desire to have each task in its own fd space
-        # it's too hard! I can't do it
-        # well, it's necessary for starting subprocesses.
-        pass
+        await self.task.syscall.exit(0)
+        await self.close()
+
+    async def close(self) -> None:
+        await self.thread.close()
+        await self.connection.close()
 
     async def __aenter__(self) -> 'RsyscallTask':
         return self
 
     async def __aexit__(self, *args, **kwargs) -> None:
-        await self.thread.close()
-        await self.connection.close()
+        await self.close()
 
 
 
@@ -2030,7 +2060,7 @@ async def subprocess(task: Task) -> t.Any:
     # same kind of behavior. by what name is this known?
 
     parent_files = task.fd_namespace
-    await task.syscall.clone(lib.CLONE_VFORK|lib.CLONE_VM, deathsig=None)
+    await task.syscall.clone(lib.CLONE_VFORK|lib.CLONE_VM, deathsig=None) # type: ignore
     child_files = FDNamespace()
     task.fd_namespace = child_files
     context = SubprocessContext(task, child_files, parent_files)

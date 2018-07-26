@@ -2481,6 +2481,24 @@ blargh I guess we can't execveat for now
 
    is keeping something memory mapped an example of keeping something erroneously open?
    the address space may be a problem in itself if that's the case...
+** okay
+   so
+   I guess I'll do the split thing.
+
+   I'll completely get exec and exit notification through the fd hangup.
+
+   I'll additionally poke the thread, after that's done, to free the stack,
+   and release the task.
+
+   oh god okay
+
+   so I'll make the thread, unsharing the fd table by not passing CLONE_FILES
+
+   then I'll unset cloexec things,
+
+   and then I will call do_cloexec with a thread thingy
+
+   yeah and this is the only way to do it, I can't do cloexec at thread creation time
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 
