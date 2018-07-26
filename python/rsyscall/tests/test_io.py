@@ -323,6 +323,33 @@ class TestIO(unittest.TestCase):
                         print("hello")
         trio.run(test)
 
+    def test_thread_exec(self) -> None:
+        async def test() -> None:
+            env = await rsyscall.io.build_unix_environment(self.bootstrap)
+            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+                epoller = Epoller(epoll)
+                async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
+                    thread_maker = rsyscall.io.ThreadMaker(monitor)
+                    async with (await rsyscall.io.RsyscallTask.make(self.task, thread_maker, epoller)) as rsyscall_task:
+                        # we maybe need some kind of generic cross-task inheritance thing
+                        # so we just pass a list of whatever objects, and it inspects them and translates them?
+                        # or at least a method to do translation
+                        # which constructs a new instance in a new Task
+                        # we can only inherit from our parent task though
+                        # so I guess we'd pass old_task, new_task, and some kind of inherit method?
+                        # and if we're an object that isn't from old_task, we bail?
+                        # we also should be able to support using epoll from multiple tasks,
+                        # that would be cool.
+                        # too complicated at the moment though
+                        # should we have some kind of generic .task thing?
+                        # to show which task an object is associated with?
+                        # nah, that's not good, hackers, that's not good...
+                        # inheritance is tricky, very tricky
+                        # okay let's just do path inheritance
+                        child_task = await rsyscall_task.execve("/bin/sh", ['sh', '-c', 'sleep .01'])
+                        await child_task.wait_for_exit()
+        trio.run(test)
+
     def test_do_cloexec(self) -> None:
         pipe = trio.run(rsyscall.io.allocate_pipe, self.task)
         lib.rsyscall_do_cloexec()

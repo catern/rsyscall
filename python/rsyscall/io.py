@@ -112,7 +112,7 @@ class SyscallInterface:
     async def exit(self, status: int) -> None: ...
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
-                       flags: int) -> int: ...
+                       flags: int) -> None: ...
 
     async def getpid(self) -> int: ...
 
@@ -227,11 +227,33 @@ class LocalSyscall(SyscallInterface):
         logger.debug("dup2(%d, %d)", oldfd, newfd)
         return (await self.syscall(lib.SYS_dup2, oldfd, newfd))
 
+    async def clone(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int:
+        logger.debug("clone(%s, %s, %s, %s, %s)", flags, child_stack, ptid, ctid, newtls)
+        return (await self.syscall(lib.SYS_clone, flags, child_stack, ptid, ctid, newtls))
+
+    async def exit(self, status: int) -> None:
+        logger.debug("exit(%d)", status)
+        try:
+            await self.syscall(lib.SYS_exit, status)
+        except RsyscallHangup:
+            # a hangup means the exit was successful
+            pass
+
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
-                       flags: int) -> int:
+                       flags: int) -> None:
         logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
-        return sfork.execveat(dirfd, path, argv, envp, flags)
+        # this null-terminated-array logic is tricky to extract out into a separate function due to lifetime issues
+        null_terminated_args = [ffi.new('char[]', arg) for arg in argv]
+        argv_bytes = ffi.new('char *const[]', null_terminated_args + [ffi.NULL])
+        null_terminated_env_vars = [ffi.new('char[]', arg) for arg in envp]
+        envp_bytes = ffi.new('char *const[]', null_terminated_env_vars + [ffi.NULL])
+        path_bytes = ffi.new('char[]', path)
+        try:
+            await self.syscall(lib.SYS_execveat, dirfd, path_bytes, argv_bytes, envp_bytes, flags)
+        except RsyscallHangup:
+            # a hangup means the exec was successful. other exceptions will propagate through
+            pass
 
     async def mmap(self, addr: int, length: int, prot: int, flags: int, fd: int, offset: int) -> int:
         logger.debug("mmap(%s, %s, %s, %s, %s, %s)", addr, length, prot, flags, fd, offset)
@@ -240,19 +262,6 @@ class LocalSyscall(SyscallInterface):
     async def munmap(self, addr: int, length: int) -> int:
         logger.debug("munmap(%s, %s)", addr, length)
         return (await self.syscall(lib.SYS_munmap, addr, length))
-
-    # newstyle task manipulation
-    async def clone(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int:
-        logger.debug("clone(%s, %s, %s, %s, %s)", flags, child_stack, ptid, ctid, newtls)
-        return (await self.syscall(lib.SYS_clone, flags, child_stack, ptid, ctid, newtls))
-
-    async def exit(self, status: int) -> None:
-        logger.debug("exit(%d)", status)
-        # how to handle this?
-        try:
-            await self.syscall(lib.SYS_exit, status)
-        except RsyscallHangup:
-            pass
 
     async def exit_group(self, status: int) -> None:
         logger.debug("exit_group(%d)", status)
@@ -815,6 +824,7 @@ class EpolledFileDescriptor(t.Generic[T_file_co]):
         self.epoller = epoller
         self.underlying = underlying
         self.queue = queue
+        self.in_epollfd = True
 
     async def modify(self, events: EpollEventMask) -> None:
         await self.epoller.epfd.modify(self.underlying, EpollEvent(self.underlying.number, events))
@@ -827,7 +837,9 @@ class EpolledFileDescriptor(t.Generic[T_file_co]):
                 await self.epoller.do_wait()
 
     async def aclose(self) -> None:
-        await self.epoller.epfd.delete(self.underlying)
+        if self.in_epollfd:
+            await self.epoller.epfd.delete(self.underlying)
+            self.in_epollfd = False
         await self.underlying.aclose()
 
     async def __aenter__(self) -> 'EpolledFileDescriptor[T_file_co]':
@@ -860,9 +872,11 @@ class Epoller:
             running_wait = trio.Event()
             self.running_wait = running_wait
 
-            # TODO I should first epoll_wait optimistically, and only then wait_readable
-            await self.epfd.wait_readable()
+            # we first epoll_wait optimistically, and only then wait_readable
             received_events = await self.epfd.wait(maxevents=32, timeout=-1)
+            if len(received_events) == 0:
+                await self.epfd.wait_readable()
+                received_events = await self.epfd.wait(maxevents=32, timeout=-1)
             for event in received_events:
                 queue = self.fd_map[event.data].queue
                 queue.put_nowait(event.events)
@@ -886,7 +900,8 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     @staticmethod
     async def make(epoller: Epoller, fd: FileDescriptor[T_file]) -> 'AsyncFileDescriptor[T_file]':
         await fd.set_nonblock()
-        epolled = await epoller.add(fd, EpollEventMask.make(in_=True, out=True, et=True))
+        epolled = await epoller.add(fd, EpollEventMask.make(
+            in_=True, out=True, rdhup=True, pri=True, err=True, hup=True, et=True))
         return AsyncFileDescriptor(epolled)
 
     def __init__(self, epolled: EpolledFileDescriptor[T_file_co]) -> None:
@@ -894,6 +909,10 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
         self.running_wait: t.Optional[trio.Event] = None
         self.is_readable = False
         self.is_writable = False
+        self.read_hangup = False
+        self.priority = False
+        self.error = False
+        self.hangup = False
 
     async def _wait_once(self):
         if self.running_wait is not None:
@@ -904,10 +923,12 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
 
             events = await self.epolled.wait()
             for event in events:
-                if event.in_: self.is_readable = True
-                if event.out: self.is_writable = True
-                # TODO the rest
-
+                if event.in_:   self.is_readable = True
+                if event.out:   self.is_writable = True
+                if event.rdhup: self.read_hangup = True
+                if event.pri:   self.priority = True
+                if event.err:   self.error = True
+                if event.hup:   self.hangup = True
             self.running_wait = None
             running_wait.set()
 
@@ -918,7 +939,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             except OSError as e:
                 if e.errno == errno.EAGAIN:
                     self.is_readable = False
-                    while not self.is_readable:
+                    while not (self.is_readable or self.read_hangup or self.hangup or self.error):
                         await self._wait_once()
                 else:
                     raise
@@ -933,7 +954,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                     # TODO this is not really quite right if it's possible to concurrently call methods on this object.
                     # we really need to lock while we're making the async call, right? maybe...
                     self.is_writable = False
-                    while not self.is_writable:
+                    while not (self.is_writable or self.error):
                         await self._wait_once()
                 else:
                     raise
@@ -946,7 +967,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             except OSError as e:
                 if e.errno == errno.EAGAIN:
                     self.is_readable = False
-                    while not self.is_readable:
+                    while not (self.is_readable or self.hangup):
                         await self._wait_once()
                 else:
                     raise
@@ -958,7 +979,6 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             if e.errno == errno.EINPROGRESS:
                 while not self.is_writable:
                     await self._wait_once()
-                # writable now, let's check for errors
                 retbuf = await self.epolled.underlying.getsockopt(lib.SOL_SOCKET, lib.SO_ERROR, ffi.sizeof('int'))
                 err = ffi.cast('int*', ffi.from_buffer(retbuf))
                 if err != 0:
@@ -1006,6 +1026,7 @@ class MemoryMapping:
     async def write(self, ptr: int, data: bytes) -> None:
         if not self.in_bounds(ptr, len(data)):
             raise Exception("pointer and data not in bounds of mapping")
+        logger.debug("writing to memory %s data %s", hex(ptr), data)
         lib.memcpy(ffi.cast('void*', ptr), ffi.from_buffer(data), len(data))
 
     async def read(self, ptr: int, size: int) -> bytes:
@@ -1048,6 +1069,9 @@ class Stack:
     def alloc(self, size: int) -> Pointer:
         self.allocation_pointer -= size
         return self.allocation_pointer
+
+    def align(self):
+        self.allocation_pointer -= self.allocation_pointer.address % 16
 
     async def push(self, data: bytes) -> Pointer:
         memory = self.alloc(len(data))
@@ -1182,15 +1206,14 @@ class Path:
         await self.syscall.mkdirat(self.base.dirfd_num, self._full_path, mode)
         return self
 
-    async def execve(self, argv: t.List[t.Union[str, bytes]], envp: t.Mapping[str, t.Union[str, bytes]]) -> int:
+    async def execve(self, argv: t.List[t.Union[str, bytes]], envp: t.Mapping[str, t.Union[str, bytes]]) -> None:
         # let's not worry too much about what execveat actually does in an sfork situation vs not sfork...
         # in sfork: starts new thread in current namespaces, returns current thread to stashed namespaces
         # out of sfork: starts new thread in current namespaces, destroys current thread
-        ret = await self.syscall.execveat(
+        await self.syscall.execveat(
             self.base.dirfd_num, self._full_path,
             [sfork.to_bytes(arg) for arg in argv],
             sfork.serialize_environ(**envp), flags=0)
-        return ret
 
     async def chdir(self) -> None:
         "Mutate the underlying task under this Path, changing its CWD to something new."
@@ -1375,12 +1398,15 @@ class ExecutableLookupCache:
 
 class UnixUtilities:
     rm: Path
-    def __init__(self, rm: Path) -> None:
+    sh: Path
+    def __init__(self, sh: Path) -> None:
         self.rm = rm
+        self.sh = sh
 
 async def build_unix_utilities(exec_cache: ExecutableLookupCache) -> UnixUtilities:
     rm = await exec_cache.lookup("rm")
-    return UnixUtilities(rm=rm)
+    sh = await exec_cache.lookup("sh")
+    return UnixUtilities(rm=rm, sh=sh)
 
 class UnixEnvironment:
     """The utilities provided by a standard Unix userspace.
@@ -1557,22 +1583,35 @@ class ChildTask:
         self.pid = pid
         self.queue = queue
         self.monitor = monitor
-        self.dead = False
+        self.death_event: t.Optional[ChildEvent] = None
 
     async def wait(self) -> t.List[ChildEvent]:
-        if self.dead:
+        if self.death_event:
             raise Exception("child is already dead!")
         while True:
             try:
                 events = self.queue.get_batch_nowait()
                 for event in events:
                     if event.died():
-                        self.dead = True
+                        self.death_event = event
                 return events
             except trio.WouldBlock:
                 await self.monitor.do_wait()
 
+    def _flush_nowait(self) -> None:
+        while True:
+            try:
+                events = self.queue.get_batch_nowait()
+                for event in events:
+                    if event.died():
+                        self.death_event = event
+            except trio.WouldBlock:
+                return
+        
+
     async def wait_for_exit(self) -> ChildEvent:
+        if self.death_event:
+            return self.death_event
         while True:
             for event in (await self.wait()):
                 if event.died():
@@ -1588,24 +1627,37 @@ class ChildTask:
 
     @property
     def syscall(self) -> SyscallInterface:
-        # We can't send system calls for this pid if the child is dead.
-        # The pid might be reused.
-        if self.dead:
-            raise Exception("child is already dead!")
-        # The child might already have become a zombie, and we won't know about it until
-        # we waitid. But that's fine, we can still use the pid of a zombie, since it won't
-        # be reused yet. We'll probably just throw an exception.
-        # TODO V IMPORTANT: the above is nonsense
-        # other ChildTasks can call waitid too, and flush events for our child tasks!
-        # we need some kind of means to avoid that, yo...
-        # hmmm yeah
         return self.monitor.signal_queue.sigfd.epolled.underlying.task.syscall
 
     async def send_signal(self, sig: signal.Signals) -> None:
-        await self.syscall.kill(self.pid, sig)
+        async with self as pid:
+            if pid:
+                await self.syscall.kill(pid, sig)
+            else:
+                raise Exception("child is already dead!")
 
     async def kill(self) -> None:
-        await self.send_signal(signal.SIGKILL)
+        async with self as pid:
+            if pid:
+                await self.syscall.kill(pid, signal.SIGKILL)
+
+    async def __aenter__(self) -> t.Optional[int]:
+        """Returns the pid for this child process, or None if it's already dead.
+
+        Operating on the pid of a child process requires taking the wait_lock to make sure
+        the process's zombie is not collected while we're using its pid.
+
+        """
+        # TODO this could really be a reader-writer lock, with this use as the reader and
+        # wait as the writer.
+        await self.monitor.wait_lock.acquire()
+        self._flush_nowait()
+        if self.death_event:
+            return None
+        return self.pid
+
+    async def __aexit__(self, *args, **kwargs) -> None:
+        self.monitor.wait_lock.release()
 
 class ChildTaskMonitor:
     @staticmethod
@@ -1617,6 +1669,7 @@ class ChildTaskMonitor:
         self.signal_queue = signal_queue
         self.task_map: t.Dict[int, ChildTask] = {}
         self.unknown_queue = trio.hazmat.UnboundedQueue()
+        self.wait_lock = trio.Lock()
         if self.signal_queue.sigfd.epolled.underlying.file.mask != set([signal.SIGCHLD]):
             raise Exception("ChildTaskMonitor should get a SignalQueue only for SIGCHLD")
         self.running_wait: t.Optional[trio.Event] = None
@@ -1642,12 +1695,23 @@ class ChildTaskMonitor:
             await self.signal_queue.read()
             # loop on waitid to flush all child events
             task = self.signal_queue.sigfd.epolled.underlying.task
-            while True:
+            # only handle a maximum of 32 child events before returning, to prevent a DOS-through-forkbomb
+            # TODO if we could just detect when the ChildTask that we are wait()ing for
+            # has gotten an event, we could handle events in this function indefinitely,
+            # and only return once we've sent an event to that ChildTask.
+            # maybe by passing in the waiting queue?
+            # could do the same for epoll too.
+            # though we have to wake other people up too...
+            for _ in range(32):
                 try:
-                    _, siginfo, _ = await task.syscall.waitid(
-                        IdType.ALL, 0, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG,
-                        want_child_event=True, want_rusage=False
-                    )
+                    # have to serialize against things which use pids; we can't do a wait
+                    # while something else is making a syscall with a pid, because we
+                    # might collect the zombie for that pid and cause pid reuse
+                    async with self.wait_lock:
+                        _, siginfo, _ = await task.syscall.waitid(
+                            IdType.ALL, 0, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG,
+                            want_child_event=True, want_rusage=False
+                        )
                 except ChildProcessError:
                     # no more children
                     break
@@ -1717,6 +1781,7 @@ class Thread:
         self.child_task = child_task
         self.futex_task = futex_task
         self.futex_mapping = futex_mapping
+        self.released = False
 
     async def wait_for_mm_release(self) -> ChildTask:
         """Wait for the task to leave the parent's address space, and return the ChildTask.
@@ -1729,12 +1794,14 @@ class Thread:
         if not result.clean():
             raise Exception("the futex task", self.futex_task, "for child task", self.child_task,
                             "unexpectedly exited non-zero", result, "maybe it was SIGKILL'd?")
-        self.futex_mapping
+        await self.futex_mapping.unmap()
+        self.released = True
         return self.child_task
 
     async def close(self) -> None:
-        await self.child_task.kill()
-        await self.wait_for_mm_release()
+        if not self.released:
+            await self.child_task.kill()
+            await self.wait_for_mm_release()
 
     async def __aenter__(self) -> 'Thread':
         return self
@@ -1764,7 +1831,7 @@ class CThread:
         return result
 
     async def close(self) -> None:
-        await self.thread.child_task.kill()
+        await self.thread.close()
         await self.wait_for_mm_release()
 
     async def __aenter__(self) -> 'CThread':
@@ -1798,7 +1865,7 @@ class ThreadMaker:
     async def clone(self, flags: int, child_stack: Pointer, newtls: Pointer) -> Thread:
         """Provides an asynchronous interface to the CLONE_CHILD_CLEARTID functionality
 
-        Runs "ret" immediately after cloning.
+        Executes the instruction "ret" immediately after cloning.
 
         """
         if not (flags & lib.CLONE_VM):
@@ -1811,10 +1878,11 @@ class ThreadMaker:
         # allocate the futex at the base of the stack, with "1" written to it to match
         # what futex_helper expects
         futex_data = struct.pack('i', 1)
+        # TODO huh, writing the stack seems be overwritting this
         futex_address = await stack.push(futex_data)
         # align the stack to a 16-bit boundary now, so after pushing the trampoline data,
         # which the trampoline will all pop off, the stack will be aligned.
-        stack.allocation_pointer += (16 - len(futex_data)) % 16
+        stack.align()
     
         # build the trampoline, push it on the stack, and start the thread
         trampoline_data = build_trampoline_stack(self.futex_func,
@@ -1832,7 +1900,7 @@ class ThreadMaker:
         # resume the futex_task so it can start waiting on the futex
         await futex_task.send_signal(signal.SIGCONT)
         # the only part of the memory mapping that's being used now is the futex address, which is a
-        # huge waste. oh well, later on we can allocate futex addresses out of a shared mapping
+        # huge waste. oh well, later on we can allocate futex addresses out of a shared mapping.
         child_task = await self.monitor.clone(
             flags | lib.CLONE_CHILD_CLEARTID, child_stack,
             ctid=futex_address, newtls=newtls)
@@ -1937,19 +2005,35 @@ class RsyscallTask:
         new_task = Task(LocalSyscall(trio.hazmat.wait_readable, rsyscall_connection.syscall),
                         FDNamespace(), task.memory, task.mount)
 
+        # TODO we also need to have a wrapper around this to select what fds we want,
+        # and then do_cloexec.
+
         return RsyscallTask(cthread, rsyscall_connection, new_task)
 
-    async def exec(self, arg) -> ChildTask:
-        # close all da stuff!
-        # or... some of it anyway
-        # the rsyscall child task anyway
-        # TODO
-        # fasf
-        # we have to, like...
-        # send the thing
-        # and then either get an error message back
-        # or get nothing back, and see the futex task exit
-        pass
+    async def execveat(self, dirfd: int, path: bytes,
+                       argv: t.List[bytes], envp: t.List[bytes],
+                       flags: int) -> ChildTask:
+        await self.task.syscall.execveat(dirfd, path, argv, envp, flags)
+        # the connection is no longer needed
+        await self.connection.close()
+        # we return the still-running ChildTask that was inside this RsyscallTask
+        return (await self.thread.wait_for_mm_release())
+
+    async def execve(self, path: Path, argv: t.List[t.Union[str, bytes]]) -> ChildTask:
+        if path.task is not self.task:
+            raise Exception("path Task and my Task must be the same")
+        await path.execve(argv, {})
+        # the connection is no longer needed
+        await self.connection.close()
+        # we return the still-running ChildTask that was inside this RsyscallTask
+        return (await self.thread.wait_for_mm_release())
+        # so okay where am I gonna get os.environ from?
+        # I guess I have some wrapper for this task
+        # so when we create this we need to inherit stuff from our parent, innit
+        # in particular, the UnixEnvironment
+        # that can also be where I get the function pointers I need
+        # alright, yet more to do
+        # blah let's get some success first
 
     async def exit(self, status) -> None:
         await self.task.syscall.exit(0)
@@ -1965,6 +2049,33 @@ class RsyscallTask:
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
+class UnixTask:
+    # hmmmmmmmmm  hmmm hmmmmmm
+    # child tasks
+    # we need some kind of notion that holds a Task and a UnixEnvironment
+    # and then also something which holds a Task, a UnixEnvironment, and a Thread
+    # and with that latter, we can do exec
+    # so clearly we need a CThread
+    # and the RsyscallConnection, too, of course
+    # the Task can be separate
+    # let's call the RsyscallTask the RsyscallThread
+
+    # hmm, okay, hmm, so how about a UnixTask and UnixChildTask?
+    # for any task that's our child separate thread and address space
+    # UnixChildTask should support both RsyscallThread and an Rsyscall running in a separate address space
+    # when we exec, er...
+    # maybe I do need 3 separate modes?
+    # MainTask, ThreadTask, ProcessTask
+    # The former is un-controlled, the latter two both children
+    # didn't I consider this problem before?
+    # blaaaah
+    # what if I just put the environ into the Task?
+    # and the rest of the UnixEnvironment too?
+    # that would be good...
+    # but what about when I don't have one?
+    # and what about when I can't inherit it?
+    # for example, when entering a new mount namespace
+    pass
 
 
 
