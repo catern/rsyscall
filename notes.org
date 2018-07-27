@@ -2699,6 +2699,9 @@ blargh I guess we can't execveat for now
    though I could dup them...
 
    or pass them down and close them up above....
+
+   should this be a thread-level API???
+   if I pass file descriptors down???
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 
