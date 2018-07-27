@@ -2499,6 +2499,206 @@ blargh I guess we can't execveat for now
    and then I will call do_cloexec with a thread thingy
 
    yeah and this is the only way to do it, I can't do cloexec at thread creation time
+** unix task thing
+   Environ
+** translation API
+   So we can translate fds in two ways:
+
+   Through inheritance and through fd passing.
+
+   Essentially we should have a function which takes a file descriptor in one task,
+   and returns a file descriptor in another task/fd table.
+
+   That works easily for fd passing
+
+   But the range of validity is more limited for inheritance.
+   Because new fds can be created in the old task.
+
+   Also, you can only inherit once. Because after you inherit, the new FD could be closed or whatever.
+
+   It sure does seem like a one-shot approach is better, hmm.
+
+   But it's not truly flexible
+
+   We want to inherit fds while simultaneously making arbitrary calls in each side of the task boundary.
+
+   I mean, what would be the C API?
+   We have some library object,
+   and we want to use it in the new fork/in the new thread with a different fd table,
+   so we have to do some things.
+
+   Well, wouldn't it be better to just call into it and say,
+   hey migrate yourself to the new task ok
+
+   And it can make arbitrary calls to do so?
+
+   And what exactly are the capabilities it uses?
+   The FD translation, of course, but that's one-shot...
+
+   OK, so again, what would be the C API if we provided FD translation?
+   Well...
+   We do this post-clone, and...
+   It just picks some fds to preserve?
+   And otherwise does nothing?
+
+   It does this direct style?
+
+   Doing this direct style seems a whole heckuva lot better.
+
+   It would be nice if we could do this direct style while not having to be staged about this.
+   i.e. if we kept the ability to translate forever
+
+   Should we just use Unix socket based translation for everything?
+   That is a heckuva lot more expensive...
+
+   Well, no, we can just focus on that style of translation for long-term things.
+
+   i.e., we keep the context manager approach,
+   and the only do it once approach,
+   and...
+
+   OK ok okay, so just saying, "here are the objects I want to translate..."
+
+   It's not really good because I can just write my code as, "take this translation thing in and then run arbitrary function" object.
+
+   So a contextmanager where I can really run arbitrary code is better.
+   And in that scope I do the things
+   And I leave that scope
+   And the curtain falls - but the task remains usable.
+
+   And I have a check that I don't translate things made after the fork
+
+   Maybe I can do all this in the kernel?
+
+   Well...
+
+   I mean, when I fork and unshare memory,
+   then I get a nice snapshot of fds.
+
+   When I unshared the fd table and don't unshare memory,
+   the memory can change due to other threads,
+   and mention other fds.
+
+   So how do I work with that?
+
+   Maybe if I could, like, build an fd table ahead of time and then use it?
+   I guess I would want to be able to,
+   operate in one fd table and send fds to another.
+
+   But that's exactly what unix sockets do, so...
+
+   The issue I guess is that to do a Unix socket you need to have a reference to both sides
+   But how do you handle that when you have already cloned and cloexec'd.
+
+   What about just passing a list explicitly to initialize new fd tables?
+   And have everything cloexec be closed?
+
+   Unshare can take this list too
+
+   I guess the idea is, when you don't pass CLONE_FILES to clone, you can pass CLONE_DO_CLOEXEC and pass a list.
+   And when you do pass CLONE_FILES to unshare, you can pass CLONE_DO_CLOEXEC and pass a list
+
+   when I exec, I wipe out all the library-private memory (by making a fresh address space) and the library-private file descriptors (through cloexec)
+   (it occurs to me that I can't really do exec in userspace, because I can't find out the library-private (executable-private) memory space)
+
+   But what if I want to pass things down through an exec?
+
+   First I need a thread
+
+   That thread needs resources to do the exec
+
+   I want to be able to actually run code in that thread, not just pre-prepare everything.
+
+   But it does seem like pre-preparing everything is better.
+   No! I reject that!
+   Pre-preparing is in many ways not possible, such as setuid and setns.
+
+   So if we really run substantial code in the thread,
+   then it needs resources.
+
+   Those resources could come through shared memory...
+   and shared fd tables...
+
+
+   Well, okay, so, if I want to run arbitrary code in a thread.
+   That's not really something I can do.
+   It needs to be in a separate address space not just for safety, but also for cleanup.
+
+   So that's fine.
+   So maybe I do that arbitrary logic in a separate process?
+
+   Then what I need is a way to establish that separate process.
+
+   And, so, well, I need a way to pass fds down to it.
+
+   In practice, today, that means setting them as not cloexec.
+
+   Which, actually, isn't that fine if I have a single-threaded space?
+
+   So couldn't I, then, just mangle the fds up and then call a quick clone + exec?
+
+   How do I get the error code of the exec?
+
+   Just put it on the stack, whatever!
+   It's easy enough.
+   And we can use the futex thing to know about its success.
+   
+   Could vfork factor into this?
+   Naw...
+
+   OK, so this essentially takes the approach of, let's never share our FD table or our address spaces,
+   except immediately before spawning a thread to exec into something else.
+
+   That thing which execs, can be - if we so choose - a direct binary
+   Or it can be a rsyscall thingy which we can then direct to exec.
+
+   OK, but how does this help at all?
+
+   This is just an approach of, requiring the fds to be specified up front.
+
+   Actually the fact that you can't dynamically translate when doing it in a separate process really suggests,
+   specifying the fds up front is best.
+
+   OK, so we'll do that.
+   Specify the fds, or whatever, up front.
+   Now, we need to be careful about it.
+
+   Should we have the cloexec baked into the thread-starter, then?
+
+   And we just unset cloexec appropriately in our thread,
+   and they'll inherit those things in their thread?
+
+   We have to be single threaded, of course,
+   but I guess we've always needed to be single threaded (or locked) to pass additional fds down through exec.
+
+   If we did it after the clone/unshare...
+   Then we could be multi-threaded...
+
+   If we unshared the fd table so we could get exclusive ownership on fds,
+   then set some not cloexec,
+   then either did an exec or manually did a do_cloexec (rather than clone yet another thread)
+
+   Well then we could be spawning things without a problom.
+   Maybe the trick is to have the thing which runs in the thread and does an exec or a do_cloexec,
+   not be generic.
+
+   Instead have it be a totally not-generic thing for just unsetting cloexec.
+   If I want something generic then I have to exec through into, rsyscall.
+   Then exec from rsyscall into whatever.
+
+   OK, but why not be generic, though?
+
+   Because then we have the issue of any fd we want bein' eligible for passin' along.
+
+   What if I have some kinda
+   mock thing
+
+   I say let's translate these fds,
+   then with that I can build the rsyscall task and other things,
+   assuming that they don't actually access those fds...
+   though I could dup them...
+
+   or pass them down and close them up above....
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 

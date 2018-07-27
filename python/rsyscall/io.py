@@ -717,6 +717,9 @@ class FileDescriptor(t.Generic[T_file_co]):
         else:
             raise Exception("file descriptor already closed")
 
+    def translate(self, old_task: Task, target: Foo):
+        pass
+
     async def dup2(self, target: 'FileDescriptor') -> 'FileDescriptor[T_file_co]':
         """Make a copy of this file descriptor at target.number
 
@@ -1315,6 +1318,47 @@ class Path:
     def __str__(self) -> str:
         return f"Path({self.base}, {self.path})"
 
+    def translate(self, old_task: Task, new_task: Task) -> Path:
+        # this includes a list of file descriptors??
+        # I guess we need some kind of file descriptor translate thing?
+        # Maybe we should pass that down and collect the list?
+        # so yeah, this is the question, how do we translate a library/object/whatever into a new fd table through inheritance
+        # it would be nice if we could just express the primitive as easily as,
+        # I can take an FD in one fd space and make it appear in another space
+        # I can do that in two ways: Unix socket passing, and normal inheritance
+        # Maybe I should just pass that capability to translate fds down in that way.
+        # Or some kind of thing that encapsulates a translation thing, having translation and old and new.
+        # yeah, and some kind of builder thing?
+        # we have some kind of context manager
+        # yeah, the capability of translating into a new task seems good
+        # and while we're translating, the new task exists.
+        # I see, so we will just have the translation happen in a scope,
+        # then we leave that scope and lose the translation ability
+        # of course, I guess this requires a lock on the old task
+        # so we can't make new fds in the old task that aren't in the new task
+        # is that how we handle making a copy of something???
+        # locking the old version.. hmm
+        # it would be nice if we could keep using the old task
+        # theoretically we could
+        # can we encode that with a type?
+        # the translation API seems good
+        # we can do the 
+        if isinstance(self.base, DirfdPathBase):
+            base = DirfdPathBase(self.base.dirfd.translate(old_task, new_task))
+            return Path(base, self.path)
+        elif isinstance(self.base, RootPathBase):
+            if old_task.mount == new_task.mount and old_task.fs == new_task.fs:
+                return Path(RootPathBase(new_task), self.path)
+            else:
+                raise Exception("mount namespace and root directory namespace must be the same")
+        elif isinstance(self.base, CurrentWorkingDirectoryPathBase):
+            if old_task.mount == new_task.mount and old_task.fs == new_task.fs:
+                return Path(CurrentWorkingDirectoryPathBase((new_task)), self.path)
+            else:
+                raise Exception("mount namespace and root directory namespace must be the same")
+        else:
+            raise Exception("oops")
+
 class StandardStreams:
     stdin: FileDescriptor[ReadableFile]
     stdout: FileDescriptor[WritableFile]
@@ -1399,7 +1443,7 @@ class ExecutableLookupCache:
 class UnixUtilities:
     rm: Path
     sh: Path
-    def __init__(self, sh: Path) -> None:
+    def __init__(self, rm: Path, sh: Path) -> None:
         self.rm = rm
         self.sh = sh
 
@@ -2019,21 +2063,17 @@ class RsyscallTask:
         # we return the still-running ChildTask that was inside this RsyscallTask
         return (await self.thread.wait_for_mm_release())
 
-    async def execve(self, path: Path, argv: t.List[t.Union[str, bytes]]) -> ChildTask:
+    async def execve(self, path: Path, argv: t.List[t.Union[str, bytes]], *, envp: t.Optional[t.Mapping[str, str]]=None) -> ChildTask:
         if path.task is not self.task:
             raise Exception("path Task and my Task must be the same")
-        await path.execve(argv, {})
+        if envp is None:
+            # TODO os.environ should actually be pulled from, er... somewhere
+            envp = dict(**os.environ)
+        await path.execve(argv, envp)
         # the connection is no longer needed
         await self.connection.close()
         # we return the still-running ChildTask that was inside this RsyscallTask
         return (await self.thread.wait_for_mm_release())
-        # so okay where am I gonna get os.environ from?
-        # I guess I have some wrapper for this task
-        # so when we create this we need to inherit stuff from our parent, innit
-        # in particular, the UnixEnvironment
-        # that can also be where I get the function pointers I need
-        # alright, yet more to do
-        # blah let's get some success first
 
     async def exit(self, status) -> None:
         await self.task.syscall.exit(0)
@@ -2049,36 +2089,23 @@ class RsyscallTask:
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
-class UnixTask:
-    # hmmmmmmmmm  hmmm hmmmmmm
-    # child tasks
-    # we need some kind of notion that holds a Task and a UnixEnvironment
-    # and then also something which holds a Task, a UnixEnvironment, and a Thread
-    # and with that latter, we can do exec
-    # so clearly we need a CThread
-    # and the RsyscallConnection, too, of course
-    # the Task can be separate
-    # let's call the RsyscallTask the RsyscallThread
+class Translator:
+    old_task: Task
+    new_task: Task
+    async def translate(self, fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]: ...
 
-    # hmm, okay, hmm, so how about a UnixTask and UnixChildTask?
-    # for any task that's our child separate thread and address space
-    # UnixChildTask should support both RsyscallThread and an Rsyscall running in a separate address space
-    # when we exec, er...
-    # maybe I do need 3 separate modes?
-    # MainTask, ThreadTask, ProcessTask
-    # The former is un-controlled, the latter two both children
-    # didn't I consider this problem before?
-    # blaaaah
-    # what if I just put the environ into the Task?
-    # and the rest of the UnixEnvironment too?
-    # that would be good...
-    # but what about when I don't have one?
-    # and what about when I can't inherit it?
-    # for example, when entering a new mount namespace
-    pass
-
-
-
+class InheritanceTranslator:
+    old_task: Task
+    new_task: Task
+    already_done: t.Set[int]
+    
+    async def translate(self, fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
+        # TODO how do we prevent users from calling this function with fds they made after the fd table unshared?
+        # maybe this should be done in the kernel?
+        if fd.number in already_done:
+            raise Exception("no! no! no! only once can you translate!")
+        # it's a new reference to the same file; the number stays the same because it was inherited the same
+        return FileDescriptor(fd.file, self.new_task, self.new_task.fd_namespace, fd.number)
 
 
 
