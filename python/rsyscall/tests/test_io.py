@@ -310,6 +310,8 @@ class TestIO(unittest.TestCase):
                     async with rsyscall_task:
                         child_task = await rsyscall_task.execve(env.utilities.sh, ['sh', '-c', 'sleep .01'])
                         await child_task.wait_for_exit()
+                    async with rsyscall.io.mkdtemp(rsyscall_spawner, env.tmpdir, env.utilities.rm) as (dirfd, path):
+                        pass
         trio.run(test)
 
     def test_do_cloexec(self) -> None:
