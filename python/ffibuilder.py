@@ -240,6 +240,11 @@ struct in_addr {
     uint32_t       s_addr;     /* address in network byte order */
 };
 
+// fcntl stuff
+#define SYS_fcntl ...
+
+#define F_GETFD ...
+
 // mmap stuff
 #define SYS_mmap ...
 #define SYS_munmap ...
@@ -260,7 +265,7 @@ void *memcpy(void *dest, const void *src, size_t n);
 void (*const rsyscall_server)(const int infd, const int outfd, const int ppid);
 void (*const rsyscall_futex_helper)(void *futex_addr);
 void (*const rsyscall_trampoline)(void);
-void (*const rsyscall_do_cloexec)(void);
+void (*const rsyscall_do_cloexec)(int* excluded_fds, size_t fd_count);
 
 struct rsyscall_trampoline_stack {
     int64_t rdi;

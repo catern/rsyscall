@@ -7,7 +7,7 @@ struct rsyscall_syscall {
 };
 
 noreturn void rsyscall_server(const int infd, const int outfd, const int ppid);
-void rsyscall_do_cloexec();
+void rsyscall_do_cloexec(int* excluded_fds, int fd_count);
 int strtoint(const char* p);
 
 /* Assembly-language routines: */

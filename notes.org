@@ -2702,6 +2702,106 @@ blargh I guess we can't execveat for now
 
    should this be a thread-level API???
    if I pass file descriptors down???
+
+   OK so last quick question, where do we do do_cloexec?
+
+   We do it after creating the rsyscall thread,
+   but before returning it to the user?
+
+   Sure
+
+   and we call a function which disables do_translate
+   finish_translation or something
+   I guess that's the best we can do, we can't give them access to the new task and gate it behind finishing the translation at the same time.
+   How do we enforce that they call finish_translation?
+   Well, we couldn't enforce that for arbitrary code.
+   But for our code, we want that to happen... reasonably soon.
+   We can't gate the RsyscallTask behind it because that's taking away real powers, and doesn't help anything.
+   What if we could gate the unshare behind it?
+
+   Like, alright, if we want to always be safe,
+   then we need there to never be a time when fds are duplicated
+
+   And we also want to make sure users don't try to translate fds that are made after duplication.
+
+   All this really suggests doing it up front,
+   before unsharing.
+
+   But if we do it up front,
+   that has its own limitations.
+
+   Bah! Screw it! User handles it! Fug!
+
+   Argh ARGH
+
+   So I'm just about prepared to embrace "every rsyscall task has a unix socketpair to its parent"
+
+   But let's see.
+
+   let's list the problems
+** list the problems
+   We need there to never be a time when fds are duplicated
+   And also make sure users don't try to translate fds that are made after duplication
+   And also avoid closing fds that have been opened in the new task and marked cloexec
+   And deal with the fact that an fd could be closed after translation but before do cloexec
+
+   OK ok so we should do it up front
+   We'll take a list of FileDescriptors, and damn the typing issues.
+** paths
+   Paths probably should not have Tasks embedded into them, it is too confusing.
+
+   "also, we need to figure out how to prevent non-leaf tasks from closing"
+** threads
+   OK so we can avoid threads hmmmmmmmmmm
+
+   nah
+
+   wait yeah
+
+   otherwise we have to have all this crap just to make threads, BORING
+
+   wait nah
+
+   because otherwise we block others from progressing.
+
+   hmmm
+
+   with mkdtemp, at least, I need the..
+   need the thing...
+
+   since I don't wanna block others from running while...
+   the rm runs...
+
+   yeah.
+
+   so let's get some kinda standard task,
+   and let rip
+
+   StandardTask or something which has all the resources inside it
+
+   Or like, ProcessResources?
+   HostResources?
+
+   TaskResources? That would have the FD things and child processes
+   ProcessResources would have the functions and libraries
+   FilesystemResources would have the binaries and stuff
+
+   I guess we can put this inside the Task?
+   And unshare them appropriately when necessary?
+
+   Hmm.
+   What if we had a dictionary of resources inside
+   FDNamespace, VMNamespace, MountNamespace?
+
+   Since inside those namespaces you can access anything...
+   No that would be awful
+
+   StandardResources containing the aforementioned.
+   And a Task.
+
+   Maybe StandardTask then since it contains a Task.
+   Or EnrichedTask.
+   StandardTask, and I'll change the name later if necessary
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 

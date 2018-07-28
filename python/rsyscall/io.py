@@ -2,7 +2,7 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.epoll import EpollEvent, EpollEventMask, EPOLL_CLOEXEC
 import rsyscall.epoll
 from rsyscall.stat import StatxResult
-from rsyscall.stat import Dirent
+from rsyscall.stat import Dirent, DType
 import rsyscall.stat
 import supervise_api as supervise
 import random
@@ -15,6 +15,7 @@ import sys
 import os
 import typing as t
 import struct
+import array
 import trio
 import signal
 import sfork
@@ -130,7 +131,12 @@ class SyscallInterface:
 
     # we can do the same with ioctl
     # but not with prctl. what a mistake prctl is!
-    async def fcntl(self, fd: int, cmd: int, arg: t.Union[bytes, int]=0) -> t.Union[bytes, int]:
+
+    @t.overload
+    async def fcntl(self, fd: int, cmd: int, arg: int=0) -> int: ...
+    @t.overload
+    async def fcntl(self, fd: int, cmd: int, arg: bytes) -> bytes: ...
+    async def fcntl(self, fd, cmd, arg=0):
         "This follows the same protocol as fcntl.fcntl."
         ...
 
@@ -296,11 +302,21 @@ class LocalSyscall(SyscallInterface):
             ret.append(EpollEvent(ev.data.u64, EpollEventMask(ev.events)))
         return ret
 
-    async def fcntl(self, fd: int, cmd: int, arg: t.Union[bytes, int]=0) -> t.Union[bytes, int]:
+    @t.overload
+    async def fcntl(self, fd: int, cmd: int, arg: int=0) -> int: ...
+    @t.overload
+    async def fcntl(self, fd: int, cmd: int, arg: bytes) -> bytes:
+        "This follows the same protocol as fcntl.fcntl."
+        ...
+    async def fcntl(self, fd: int, cmd: int, arg=0) -> t.Union[bytes, int]:
         "This follows the same protocol as fcntl.fcntl."
         logger.debug("fcntl(%d, %d, %s)", fd, cmd, arg)
-        # TODO this guy
-        return fcntl.fcntl(fd, cmd, arg)
+        if isinstance(arg, int):
+            return (await self.syscall(lib.SYS_fcntl, fd, cmd, arg))
+        elif isinstance(arg, bytes):
+            raise NotImplementedError
+        else:
+            raise Exception
 
     async def prctl_set_child_subreaper(self, flag: bool) -> None:
         logger.debug("prctl_set_child_subreaper(%s)", flag)
@@ -458,6 +474,10 @@ class MemoryNamespace:
 class MountNamespace:
     pass
 
+class FSInformation:
+    "Filesystem root, current working directory, and umask; controlled by CLONE_FS."
+    pass
+
 class SignalMask:
     mask: t.Set[signal.Signals]
     def __init__(self):
@@ -487,11 +507,13 @@ class Task:
                  fd_namespace: FDNamespace,
                  memory: MemoryNamespace,
                  mount: MountNamespace,
+                 fs: FSInformation,
     ) -> None:
         self.syscall = syscall
         self.memory = memory
         self.fd_namespace = fd_namespace
         self.mount = mount
+        self.fs = fs
         self.sigmask = SignalMask()
 
 class ProcessContext:
@@ -716,9 +738,6 @@ class FileDescriptor(t.Generic[T_file_co]):
             return self.__class__(self.file, self.task, self.fd_namespace, self.number)
         else:
             raise Exception("file descriptor already closed")
-
-    def translate(self, old_task: Task, target: Foo):
-        pass
 
     async def dup2(self, target: 'FileDescriptor') -> 'FileDescriptor[T_file_co]':
         """Make a copy of this file descriptor at target.number
@@ -1205,18 +1224,20 @@ class Path:
     def syscall(self) -> SyscallInterface:
         return self.base.task.syscall
 
+    def assert_okay_for_task(self, task: Task) -> None:
+        if isinstance(self.base, DirfdPathBase):
+            if self.base.dirfd.task is not task:
+                raise Exception("can't use a Path based on a dirfd not in my task")
+        elif isinstance(self.base, RootPathBase):
+            if self.base.task.fs != task.fs:
+                raise Exception("can't use a Path based on a different root directory")
+        elif isinstance(self.base, CurrentWorkingDirectoryPathBase):
+            if self.base.task.fs != task.fs:
+                raise Exception("can't use a Path based on a different current working directory")
+
     async def mkdir(self, mode=0o777) -> 'Path':
         await self.syscall.mkdirat(self.base.dirfd_num, self._full_path, mode)
         return self
-
-    async def execve(self, argv: t.List[t.Union[str, bytes]], envp: t.Mapping[str, t.Union[str, bytes]]) -> None:
-        # let's not worry too much about what execveat actually does in an sfork situation vs not sfork...
-        # in sfork: starts new thread in current namespaces, returns current thread to stashed namespaces
-        # out of sfork: starts new thread in current namespaces, destroys current thread
-        await self.syscall.execveat(
-            self.base.dirfd_num, self._full_path,
-            [sfork.to_bytes(arg) for arg in argv],
-            sfork.serialize_environ(**envp), flags=0)
 
     async def chdir(self) -> None:
         "Mutate the underlying task under this Path, changing its CWD to something new."
@@ -1318,47 +1339,6 @@ class Path:
     def __str__(self) -> str:
         return f"Path({self.base}, {self.path})"
 
-    def translate(self, old_task: Task, new_task: Task) -> Path:
-        # this includes a list of file descriptors??
-        # I guess we need some kind of file descriptor translate thing?
-        # Maybe we should pass that down and collect the list?
-        # so yeah, this is the question, how do we translate a library/object/whatever into a new fd table through inheritance
-        # it would be nice if we could just express the primitive as easily as,
-        # I can take an FD in one fd space and make it appear in another space
-        # I can do that in two ways: Unix socket passing, and normal inheritance
-        # Maybe I should just pass that capability to translate fds down in that way.
-        # Or some kind of thing that encapsulates a translation thing, having translation and old and new.
-        # yeah, and some kind of builder thing?
-        # we have some kind of context manager
-        # yeah, the capability of translating into a new task seems good
-        # and while we're translating, the new task exists.
-        # I see, so we will just have the translation happen in a scope,
-        # then we leave that scope and lose the translation ability
-        # of course, I guess this requires a lock on the old task
-        # so we can't make new fds in the old task that aren't in the new task
-        # is that how we handle making a copy of something???
-        # locking the old version.. hmm
-        # it would be nice if we could keep using the old task
-        # theoretically we could
-        # can we encode that with a type?
-        # the translation API seems good
-        # we can do the 
-        if isinstance(self.base, DirfdPathBase):
-            base = DirfdPathBase(self.base.dirfd.translate(old_task, new_task))
-            return Path(base, self.path)
-        elif isinstance(self.base, RootPathBase):
-            if old_task.mount == new_task.mount and old_task.fs == new_task.fs:
-                return Path(RootPathBase(new_task), self.path)
-            else:
-                raise Exception("mount namespace and root directory namespace must be the same")
-        elif isinstance(self.base, CurrentWorkingDirectoryPathBase):
-            if old_task.mount == new_task.mount and old_task.fs == new_task.fs:
-                return Path(CurrentWorkingDirectoryPathBase((new_task)), self.path)
-            else:
-                raise Exception("mount namespace and root directory namespace must be the same")
-        else:
-            raise Exception("oops")
-
 class StandardStreams:
     stdin: FileDescriptor[ReadableFile]
     stdout: FileDescriptor[WritableFile]
@@ -1402,7 +1382,7 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
 
 def gather_local_bootstrap() -> UnixBootstrap:
     task = Task(LocalSyscall(trio.hazmat.wait_readable, direct_syscall),
-                FDNamespace(), MemoryNamespace(), MountNamespace())
+                FDNamespace(), MemoryNamespace(), MountNamespace(), FSInformation())
     argv = [arg.encode() for arg in sys.argv]
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
     stdstreams = wrap_stdin_out_err(task)
@@ -1512,6 +1492,8 @@ async def mkdtemp(root: Path, rm_location: Path, prefix: str="mkdtemp"
     async with (await path.open(os.O_DIRECTORY)) as dirfd:
         yield dirfd, Path(DirfdPathBase(dirfd), b".")
         async with subprocess(root.base.task) as rm_proc:
+            # TODO hmm I think I will unshare the CLONE_FS first before doing this
+            # though I guess it does that by default
             await root.chdir()
             # TODO we should convert this to use supervise, and wait on it
             # wait no. we can skip that.
@@ -1884,7 +1866,7 @@ class CThread:
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
-def build_trampoline_stack(function: Function, arg1, arg2, arg3, arg4, arg5, arg6) -> bytes:
+def build_trampoline_stack(function: Function, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> bytes:
     # TODO clean this up with dicts or tuples or something
     stack_struct = ffi.new('struct rsyscall_trampoline_stack*')
     stack_struct.rdi = arg1
@@ -2015,44 +1997,22 @@ class RsyscallConnection:
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
+class RsyscallInternals:
+    def __init__(self, infd: FileDescriptor[ReadableFile], outfd: FileDescriptor[WritableFile]) -> None:
+        self.infd = infd
+        self.outfd = outfd
+
 class RsyscallTask:
-    thread: CThread
-    connection: RsyscallConnection
-    task: Task
     def __init__(self,
                  thread: CThread,
                  connection: RsyscallConnection,
                  task: Task,
+                 internals: RsyscallInternals,
     ) -> None:
         self.thread = thread
         self.connection = connection
         self.task = task
-
-    @staticmethod
-    async def make(task: Task, thread_maker: ThreadMaker, epoller: Epoller) -> 'RsyscallTask':
-        # TODO so we need to talk about what file descriptors we pass down here, right?
-        # or do we just need to immediately close the remote-side fds in the local side?
-        # then we're fine?
-        # yes, that is true
-        function = Function(ffi.cast('long', lib.rsyscall_server), task.memory)
-        pipe_in = await allocate_pipe(task)
-        pipe_out = await allocate_pipe(task)
-        cthread = await thread_maker.make_cthread(
-            lib.CLONE_VM, function, pipe_in.rfd.number, pipe_out.wfd.number)
-        await pipe_in.rfd.aclose()
-        await pipe_out.wfd.aclose()
-
-        async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
-        async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
-        rsyscall_connection = RsyscallConnection(async_tofd, async_fromfd)
-
-        new_task = Task(LocalSyscall(trio.hazmat.wait_readable, rsyscall_connection.syscall),
-                        FDNamespace(), task.memory, task.mount)
-
-        # TODO we also need to have a wrapper around this to select what fds we want,
-        # and then do_cloexec.
-
-        return RsyscallTask(cthread, rsyscall_connection, new_task)
+        self.internals = internals
 
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
@@ -2064,12 +2024,14 @@ class RsyscallTask:
         return (await self.thread.wait_for_mm_release())
 
     async def execve(self, path: Path, argv: t.List[t.Union[str, bytes]], *, envp: t.Optional[t.Mapping[str, str]]=None) -> ChildTask:
-        if path.task is not self.task:
-            raise Exception("path Task and my Task must be the same")
+        path.assert_okay_for_task(self.task)
         if envp is None:
             # TODO os.environ should actually be pulled from, er... somewhere
             envp = dict(**os.environ)
-        await path.execve(argv, envp)
+        await self.task.syscall.execveat(
+            path.base.dirfd_num, path._full_path,
+            [sfork.to_bytes(arg) for arg in argv],
+            sfork.serialize_environ(**envp), flags=0)
         # the connection is no longer needed
         await self.connection.close()
         # we return the still-running ChildTask that was inside this RsyscallTask
@@ -2089,24 +2051,69 @@ class RsyscallTask:
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
-class Translator:
-    old_task: Task
-    new_task: Task
-    async def translate(self, fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]: ...
+async def call_function(task: Task, stack: Stack, function: Function, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> ChildEvent:
+    "Calls a C function and waits for it to complete. Returns the ChildEvent that the child thread terminated with."
+    stack.align()
+    complete_stack = await stack.push(build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
+    # we directly spawn a thread for the function and wait on it
+    pid = await task.syscall.clone(lib.CLONE_VM|lib.CLONE_FILES, complete_stack.address, ptid=0, ctid=0, newtls=0)
+    _, siginfo, _ = await task.syscall.waitid(IdType.PID, pid, lib._WALL|lib.WEXITED, want_child_event=True, want_rusage=False)
+    struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
+    child_event = ChildEvent.make(ChildCode(struct.si_code),
+                                  pid=int(struct.si_pid), uid=int(struct.si_uid),
+                                  status=int(struct.si_status))
+    return child_event
 
-class InheritanceTranslator:
-    old_task: Task
-    new_task: Task
-    already_done: t.Set[int]
-    
-    async def translate(self, fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
-        # TODO how do we prevent users from calling this function with fds they made after the fd table unshared?
-        # maybe this should be done in the kernel?
-        if fd.number in already_done:
-            raise Exception("no! no! no! only once can you translate!")
-        # it's a new reference to the same file; the number stays the same because it was inherited the same
-        return FileDescriptor(fd.file, self.new_task, self.new_task.fd_namespace, fd.number)
+async def do_cloexec_except(task: Task, excluded_fd_numbers: t.Set[int]) -> None:
+    "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
+    function = Function(ffi.cast('long', lib.rsyscall_do_cloexec), task.memory)
+    async with (await allocate_memory(task)) as mapping:
+        stack = Stack(Pointer(mapping, mapping.address + mapping.length))
+        fd_array = await stack.push(array.array('i', excluded_fd_numbers).tobytes())
+        child_event = await call_function(task, stack, function, fd_array.address, len(excluded_fd_numbers))
+        if not child_event.clean():
+            raise Exception("cloexec function child died!", child_event)
 
+class RsyscallSpawner:
+    def __init__(self, task: Task, thread_maker: ThreadMaker, epoller: Epoller) -> None:
+        self.task = task
+        self.thread_maker = thread_maker
+        self.epoller = epoller
+        self.function = Function(ffi.cast('long', lib.rsyscall_server), task.memory)
+
+    async def spawn(self, user_fds: t.List[FileDescriptor]) -> t.Tuple[RsyscallTask, t.List[FileDescriptor]]:
+        for fd in user_fds:
+            if fd.fd_namespace is not self.task.fd_namespace:
+                raise Exception("can only translate file descriptors from my fd namespace")
+        pipe_in = await allocate_pipe(self.task)
+        pipe_out = await allocate_pipe(self.task)
+        # new fd namespace is created here
+        cthread = await self.thread_maker.make_cthread(
+            lib.CLONE_VM|lib.CLONE_FS, self.function, pipe_in.rfd.number, pipe_out.wfd.number)
+
+        async_tofd = await AsyncFileDescriptor.make(self.epoller, pipe_in.wfd)
+        async_fromfd = await AsyncFileDescriptor.make(self.epoller, pipe_out.rfd)
+        rsyscall_connection = RsyscallConnection(async_tofd, async_fromfd)
+
+        new_task = Task(LocalSyscall(trio.hazmat.wait_readable, rsyscall_connection.syscall),
+                        FDNamespace(), self.task.memory, self.task.mount, self.task.fs)
+
+        inherited_fd_numbers: t.Set[int] = set()
+        def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
+            inherited_fd_numbers.add(fd.number)
+            return FileDescriptor(fd.file, new_task, new_task.fd_namespace, fd.number)
+
+        # pass a few file descriptors down to the new task
+        internals = RsyscallInternals(translate(pipe_in.rfd), translate(pipe_out.wfd))
+        await pipe_in.rfd.aclose()
+        await pipe_out.wfd.aclose()
+        inherited_user_fds = [translate(fd) for fd in user_fds]
+
+        # close everything that's cloexec and not explicitly passed down
+        await do_cloexec_except(new_task, inherited_fd_numbers)
+
+        rsyscall_task = RsyscallTask(cthread, rsyscall_connection, new_task, internals)
+        return rsyscall_task, inherited_user_fds
 
 
 class Pipe:
@@ -2176,7 +2183,7 @@ class SubprocessContext:
         # this is too restrictive but whatever
         if path.base.task != self.task:
             raise Exception("can't exec a path from another task")
-        self.pid = await path.execve(argv, envp)
+        self.pid = await path.execve(argv, envp) # type: ignore
         self.task.fd_namespace = self.parent_files
 
     async def fexec(self, fd: FileDescriptor, argv: t.List[t.Union[str, bytes]],

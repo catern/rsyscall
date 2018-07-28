@@ -2,5 +2,4 @@
 
 int main()
 {
-    rsyscall_do_cloexec();
 }

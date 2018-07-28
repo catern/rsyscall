@@ -270,57 +270,32 @@ class TestIO(unittest.TestCase):
                 self.assertEqual(await mapping.read(mapping.address, len(msg)), msg)
         trio.run(test)
 
-    def test_mmap_clone(self) -> None:
+    def test_thread_exit(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
                 epoller = Epoller(epoll)
                 async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
                     thread_maker = rsyscall.io.ThreadMaker(monitor)
-                    async with (await rsyscall.io.RsyscallTask.make(self.task, thread_maker, epoller)) as rsyscall_task:
-                        async with (await rsyscall.io.allocate_epoll(rsyscall_task.task)) as epoll:
-                            epoller2 = Epoller(epoll)
-                            # okay, important:
-                            # clearly we need to clean up the syscall interface after an exec
-                            # or otherwise close it
-                            # or whatever
-                            # like, otherwise the interface is still open!
-                            # maybe we could have the task be an interface,
-                            # but I think just closing the syscall interface
-                            # would go a long way.
-                            # like, closing the syscall interface on a threaded rsyscall,
-                            # should probably result in killing and waiting the thread!
-                            # or this is really, the ability to close a SI early,
-                            # after an exec or exit or whatever.
-                            # the other end will be closed too - or may be closed, anyway
-                            # but we have to close our end.
-                            # (and indeed sometimes their end too, in the threaded case)
-                            # and this is what closing a task does I guess
-                            # or execing it or whatever
-                            # the contextmanager for a task, calls exit in it!
-                            # and then after exiting it, closes the SI.
-
-                            # is that the right order? should we have the task itself do some cleanup?
-                            # having the task itself do cleanup seems dangerous.
-                            # merely exiting should do all the cleanup.
-
-                            # also, we need to figure out how to prevent non-leaf tasks from closing
-
-                            # but, anyway!
-                            # so, all I need to do is return a task!
-                            # and the task has ownership of the SyscallInterface inside of it.
-                            # and I just contextmanager on the task
-                            await self.do_async_things(epoller2, rsyscall_task.task)
+                    rsyscall_spawner = rsyscall.io.RsyscallSpawner(self.task, thread_maker, epoller)
+                    rsyscall_task, _ = await rsyscall_spawner.spawn([])
+                    async with rsyscall_task:
+                        await rsyscall_task.exit(0)
         trio.run(test)
 
-    def test_thread(self) -> None:
+    def test_thread_epoll(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
                 epoller = Epoller(epoll)
+                # hmmmm
+                # TODO let's avoid using ChildTaskMonitor for this
                 async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
                     thread_maker = rsyscall.io.ThreadMaker(monitor)
-                    async with (await rsyscall.io.RsyscallTask.make(self.task, thread_maker, epoller)) as rsyscall_task:
-                        await rsyscall_task.exit(0)
-                        print("hello")
+                    rsyscall_spawner = rsyscall.io.RsyscallSpawner(self.task, thread_maker, epoller)
+                    rsyscall_task, _ = await rsyscall_spawner.spawn([])
+                    async with rsyscall_task:
+                        async with (await rsyscall.io.allocate_epoll(rsyscall_task.task)) as epoll:
+                            epoller2 = Epoller(epoll)
+                            await self.do_async_things(epoller2, rsyscall_task.task)
         trio.run(test)
 
     def test_thread_exec(self) -> None:
@@ -330,23 +305,10 @@ class TestIO(unittest.TestCase):
                 epoller = Epoller(epoll)
                 async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
                     thread_maker = rsyscall.io.ThreadMaker(monitor)
-                    async with (await rsyscall.io.RsyscallTask.make(self.task, thread_maker, epoller)) as rsyscall_task:
-                        # we maybe need some kind of generic cross-task inheritance thing
-                        # so we just pass a list of whatever objects, and it inspects them and translates them?
-                        # or at least a method to do translation
-                        # which constructs a new instance in a new Task
-                        # we can only inherit from our parent task though
-                        # so I guess we'd pass old_task, new_task, and some kind of inherit method?
-                        # and if we're an object that isn't from old_task, we bail?
-                        # we also should be able to support using epoll from multiple tasks,
-                        # that would be cool.
-                        # too complicated at the moment though
-                        # should we have some kind of generic .task thing?
-                        # to show which task an object is associated with?
-                        # nah, that's not good, hackers, that's not good...
-                        # inheritance is tricky, very tricky
-                        # okay let's just do path inheritance
-                        child_task = await rsyscall_task.execve("/bin/sh", ['sh', '-c', 'sleep .01'])
+                    rsyscall_spawner = rsyscall.io.RsyscallSpawner(self.task, thread_maker, epoller)
+                    rsyscall_task, _ = await rsyscall_spawner.spawn([])
+                    async with rsyscall_task:
+                        child_task = await rsyscall_task.execve(env.utilities.sh, ['sh', '-c', 'sleep .01'])
                         await child_task.wait_for_exit()
         trio.run(test)
 

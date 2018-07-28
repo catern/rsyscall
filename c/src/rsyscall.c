@@ -114,7 +114,10 @@ struct linux_dirent64 {
 
 /* Close all CLOEXEC file descriptors */
 /* We should add a CLONE_DO_CLOEXEC flag to replace this */
-void rsyscall_do_cloexec() {
+/* hmm we want to exclude fds in a list */
+/* maybe we'll make a bitset? */
+/* I guess we'll just do a linear scan of the excluded array we receive */
+void rsyscall_do_cloexec(int* excluded_fds, int fd_count) {
     /* this depends on /proc, dang, but whatever */
     int dirfd = myopen("/proc/self/fd", O_DIRECTORY|O_RDONLY);
     char buf[1024];
@@ -130,9 +133,14 @@ void rsyscall_do_cloexec() {
             const struct linux_dirent64 *d = (struct linux_dirent64 *) &buf[bpos];
             if (d->d_type == DT_LNK) {
                 const int fd = strtoint(d->d_name);
+                for (int i = 0; i < fd_count; i++) {
+                    if (fd == excluded_fds[i]) goto skip;
+                }
                 if (getfd(fd) & FD_CLOEXEC) {
                     close(fd);
                 }
+            skip:
+                ;
             }
             bpos += d->d_reclen;
         }

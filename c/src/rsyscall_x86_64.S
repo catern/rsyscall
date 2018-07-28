@@ -25,23 +25,7 @@ rsyscall_trampoline:
 	call *%rax
 	// store return value on stack
 	push %rax
-	// get my tid
-	movq $0, %rdi
-        movq $0, %rsi
-	movq $0, %rdx
-        movq $0, %r10
-        movq $0, %r8
-        movq $0, %r9
-	movq $__NR_gettid, %rax
-	syscall
-	// SIGTERM myself so signal handlers can fire
-	movq %rax, %rdi
-        movq $15, %rsi
-	movq $__NR_kill, %rax
-	syscall
-	// If we were created with CLONE_SIGHAND, and we inherited a signal mask
-        // masking out SIGTERM, then the kill may be processed in another task.
-        // So, also exit thread cleanly just in case.
+	// exit thread cleanly
 	movq $0, %rdi
         movq $0, %rsi
 	movq $__NR_exit, %rax
