@@ -146,7 +146,7 @@ class SyscallInterface:
     async def setns(self, fd: int, nstype: NsType) -> None: ...
 
     async def mmap(self, addr: int, length: int, prot: int, flags: int, fd: int, offset: int) -> int: ...
-    async def munmap(self, addr: int, length: int) -> int: ...
+    async def munmap(self, addr: int, length: int) -> None: ...
 
     # epoll operations
     async def epoll_create(self, flags: int) -> int: ...
@@ -291,9 +291,9 @@ class LocalSyscall(SyscallInterface):
         logger.debug("mmap(%s, %s, %s, %s, %s, %s)", addr, length, prot, flags, fd, offset)
         return (await self.syscall(lib.SYS_mmap, addr, length, prot, flags, fd, offset))
 
-    async def munmap(self, addr: int, length: int) -> int:
+    async def munmap(self, addr: int, length: int) -> None:
         logger.debug("munmap(%s, %s)", addr, length)
-        return (await self.syscall(lib.SYS_munmap, addr, length))
+        await self.syscall(lib.SYS_munmap, addr, length)
 
     async def exit_group(self, status: int) -> None:
         logger.debug("exit_group(%d)", status)
@@ -521,6 +521,14 @@ class FSInformation:
             await syscall.chdir(path.path)
         else:
             await syscall.chdir(path._full_path)
+
+class Function:
+    "A function, with a memory address, in some address space."
+    address: int
+    memory: MemoryNamespace
+    def __init__(self, address: int, memory: MemoryNamespace) -> None:
+        self.address = address
+        self.memory = memory
 
 class SignalMask:
     mask: t.Set[signal.Signals]
@@ -943,10 +951,10 @@ class Epoller:
             self.running_wait = running_wait
 
             # we first epoll_wait optimistically, and only then wait_readable
-            received_events = await self.epfd.wait(maxevents=32, timeout=-1)
+            received_events = await self.epfd.wait(maxevents=32, timeout=0)
             if len(received_events) == 0:
                 await self.epfd.wait_readable()
-                received_events = await self.epfd.wait(maxevents=32, timeout=-1)
+                received_events = await self.epfd.wait(maxevents=32, timeout=0)
             for event in received_events:
                 queue = self.fd_map[event.data].queue
                 queue.put_nowait(event.events)
@@ -954,7 +962,7 @@ class Epoller:
             self.running_wait = None
             running_wait.set()
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         await self.epfd.aclose()
 
     async def __aenter__(self) -> 'Epoller':
@@ -1311,6 +1319,9 @@ class Path:
         fd = await self.syscall.openat(self.base.dirfd_num, self._full_path, flags, mode)
         return FileDescriptor(file, self.base.task, fd_namespace, fd)
 
+    async def open_directory(self) -> FileDescriptor[DirectoryFile]:
+        return (await self.open(os.O_DIRECTORY))
+
     async def creat(self, mode=0o644) -> FileDescriptor[WritableFile]:
         file = WritableFile()
         fd_namespace = self.base.task.fd_namespace
@@ -1355,7 +1366,7 @@ class Path:
     async def readlink(self, bufsiz: int=4096) -> bytes:
         return (await self.syscall.readlinkat(self.base.dirfd_num, self._full_path, bufsiz))
 
-    def unix_address(self) -> UnixAddress:
+    def unix_address(self, task: Task) -> UnixAddress:
         """Return an address that can be used with bind/connect for Unix sockets
 
         Linux doesn't support bindat/connectat or similar, so this is emulated with /proc.
@@ -1364,6 +1375,7 @@ class Path:
         because bind has a limit of 108 bytes for the pathname.
 
         """
+        self.assert_okay_for_task(task)
         return UnixAddress(self._proc_path)
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
@@ -1472,41 +1484,6 @@ async def build_unix_utilities(exec_cache: ExecutableLookupCache) -> UnixUtiliti
     sh = await exec_cache.lookup("sh")
     return UnixUtilities(rm=rm, sh=sh)
 
-class UnixEnvironment:
-    """The utilities provided by a standard Unix userspace.
-
-    These are primarily built from various environment variables.
-
-    """
-    # various things picked up by environment variables
-    executable_lookup_cache: ExecutableLookupCache
-    tmpdir: Path
-    # utilities are eagerly looked up in PATH
-    utilities: UnixUtilities
-    # locale?
-    # home directory?
-    def __init__(self,
-                 executable_lookup_cache: ExecutableLookupCache,
-                 tmpdir: Path,
-                 utilities: UnixUtilities,
-    ) -> None:
-        self.executable_lookup_cache = executable_lookup_cache
-        self.tmpdir = tmpdir
-        self.utilities = utilities
-
-async def build_unix_environment(bootstrap: UnixBootstrap) -> UnixEnvironment:
-    executable_dirs: t.List[Path] = []
-    for prefix in bootstrap.environ[b"PATH"].split(b":"):
-        executable_dirs.append(Path.from_bytes(bootstrap.task, prefix))
-    executable_lookup_cache = ExecutableLookupCache(executable_dirs)
-    tmpdir = Path.from_bytes(bootstrap.task, bootstrap.environ[b"TMPDIR"])
-    utilities = await build_unix_utilities(executable_lookup_cache)
-    return UnixEnvironment(
-        executable_lookup_cache=executable_lookup_cache,
-        tmpdir=tmpdir,
-        utilities=utilities,
-    )
-
 async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
     """Open a file, creating and truncating it, and write the passed text to it
 
@@ -1522,30 +1499,7 @@ async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
             data = data[ret:]
     return path
 
-class TemporaryDirectory:
-    dirfd: FileDescriptor[DirectoryFile]
-    path: Path
-    def __init__(self, 
-
-@asynccontextmanager
-async def mkdtemp(spawner: 'RsyscallSpawner', root: Path, rm_location: Path, prefix: str="mkdtemp"
-) -> t.AsyncGenerator[t.Tuple[FileDescriptor[DirectoryFile], Path], None]:
-    random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-    basename = prefix+"."+random_suffix
-    path = root/basename
-    await path.mkdir(mode=0o700)
-    async with (await path.open(os.O_DIRECTORY)) as dirfd:
-        yield dirfd, Path(DirfdPathBase(dirfd), b".")
-        # TODO would be nice if unsharing the fs information gave us a cap to chdir
-        new_task, _ = await spawner.spawn([], shared=UnshareFlag.NONE)
-        async with new_task:
-            await new_task.task.fs.chdir(new_task.task, root)
-            child = await new_task.execve(rm_location, ["rm", "-r", basename])
-            (await child.wait_for_exit()).check()
-
 class TaskResources:
-    epoller: Epoller
-    child_monitor: 'ChildTaskMonitor'
     def __init__(self,
                  epoller: Epoller,
                  child_monitor: 'ChildTaskMonitor',
@@ -1556,15 +1510,17 @@ class TaskResources:
     @staticmethod
     async def make(task: Task) -> 'TaskResources':
         # TODO handle deallocating if later steps fail
-        epoller = await allocate_epoll(self.task)
+        epoller = Epoller(await allocate_epoll(task))
         child_monitor = await ChildTaskMonitor.make(task, epoller)
         return TaskResources(epoller, child_monitor)
 
     async def close(self) -> None:
-        await self.epoller.close()
-        await self.child_monitor.close()
+        # destruct in opposite order ¯\_(ツ)_/¯
 
-    async def __aenter__(self) -> 'SignalBlock':
+        await self.child_monitor.close()
+        await self.epoller.close()
+
+    async def __aenter__(self) -> 'TaskResources':
         return self
 
     async def __aexit__(self, *args, **kwargs):
@@ -1585,9 +1541,12 @@ class ProcessResources:
 
     @staticmethod
     def make_from_local(task: Task) -> 'ProcessResources':
-        self.server_func = Function(ffi.cast('long', lib.rsyscall_server), task.memory)
-        self.do_cloexec_func = Function(ffi.cast('long', lib.rsyscall_do_cloexec), task.memory)
-        self.futex_helper_func = Function(ffi.cast('long', lib.rsyscall_futex_helper), task.memory)
+        return ProcessResources(
+            server_func=Function(ffi.cast('long', lib.rsyscall_server), task.memory),
+            do_cloexec_func=Function(ffi.cast('long', lib.rsyscall_do_cloexec), task.memory),
+            futex_helper_func=Function(ffi.cast('long', lib.rsyscall_futex_helper), task.memory),
+        )
+
 
 class FilesystemResources:
     # various things picked up by environment variables
@@ -1621,10 +1580,6 @@ class FilesystemResources:
         )
 
 class StandardTask:
-    task: Task
-    task_resources: TaskResources
-    process_resources: ProcessResources
-    filesystem_resources: FilesystemResources
     def __init__(self,
                  task: Task,
                  task_resources: TaskResources,
@@ -1632,9 +1587,9 @@ class StandardTask:
                  filesystem_resources: FilesystemResources,
     ) -> None:
         self.task = task
-        self.task_resources = task_resources
-        self.process_resources = process_resources
-        self.filesystem_resources = filesystem_resources
+        self.resources = task_resources
+        self.process = process_resources
+        self.filesystem = filesystem_resources
 
     @staticmethod
     async def make_from_bootstrap(bootstrap: UnixBootstrap) -> 'StandardTask':
@@ -1645,15 +1600,52 @@ class StandardTask:
         filesystem_resources = await FilesystemResources.make_from_bootstrap(task, bootstrap)
         return StandardTask(task, task_resources, process_resources, filesystem_resources)            
 
-    # TODO  turn this guy into a separate class! boo to the contextmanager decorator!
-    @asynccontextmanager
-    async def mkdtemp(self, prefix: str="mkdtemp"
-    ) -> t.AsyncGenerator[t.Tuple[FileDescriptor[DirectoryFile], Path], None]:
-        thread_maker = ThreadMaker(self.task_resources.child_monitor)
-        rsyscall_spawner = RsyscallSpawner(self.task, thread_maker, self.task_resources.epoller)
-        async with mkdtemp(rsyscall_spawner, self.filesystem_resources.tmpdir,
-                           self.filesystem_resources.rm_location, prefix=prefix) as result:
-            yield result
+    async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
+        parent = self.filesystem.tmpdir
+        random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        name = (prefix+"."+random_suffix).encode()
+        await (parent/name).mkdir(mode=0o700)
+        return TemporaryDirectory(self, parent, name)
+
+    async def spawn(self,
+                    user_fds: t.List[FileDescriptor],
+                    shared: UnshareFlag=UnshareFlag.FS,
+    ) -> t.Tuple['RsyscallTask', t.List[FileDescriptor]]:
+        thread_maker = ThreadMaker(self.resources.child_monitor)
+        rsyscall_spawner = RsyscallSpawner(self.task, thread_maker, self.resources.epoller)
+        return (await rsyscall_spawner.spawn(user_fds, shared))
+
+    async def close(self) -> None:
+        await self.resources.close()
+
+    async def __aenter__(self) -> 'StandardTask':
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.close()
+
+class TemporaryDirectory:
+    path: Path
+    def __init__(self, stdtask: StandardTask, parent: Path, name: bytes) -> None:
+        self.stdtask = stdtask
+        self.parent = parent
+        self.name = name
+        self.path = parent/name
+
+    async def cleanup(self) -> None:
+        # TODO would be nice if unsharing the fs information gave us a cap to chdir
+        # TODO we need to inherit the self.parent path so we can chdir to it even if it's dirfd based
+        new_task, _ = await self.stdtask.spawn([], shared=UnshareFlag.NONE)
+        async with new_task:
+            await new_task.task.fs.chdir(new_task.task, self.parent)
+            child = await new_task.execve(self.stdtask.filesystem.utilities.rm, ["rm", "-r", self.name])
+            (await child.wait_for_exit()).check()
+
+    async def __aenter__(self) -> 'Path':
+        return self.path
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.cleanup()
 
 class SignalBlock:
     """This represents some signals being blocked from normal handling
@@ -1895,14 +1887,6 @@ class ChildTaskMonitor:
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
-class Function:
-    "A function, with a memory address, in some address space."
-    address: int
-    memory: MemoryNamespace
-    def __init__(self, address: int, memory: MemoryNamespace) -> None:
-        self.address = address
-        self.memory = memory
-
 class Thread:
     """A thread is a child task currently running in the address space of its parent.
 
@@ -2076,6 +2060,55 @@ class RsyscallException(Exception):
 class RsyscallHangup(Exception):
     pass
 
+class GenericMultiplexer:
+    def get_anyone_pending(self) -> None:
+        pass
+
+    async def request(self, arg) -> None:
+        future = await self.do_request(arg)
+        while not future.complete():
+            if not self.has_runner:
+                self.has_runner = True
+                await do_stuff()
+                self.has_runner = False
+            else:
+                await my_fut
+        anyone_pending = self.get_anyone_pending()
+        if anyone_pending is not None:
+            anyone_pending.wakeup()
+        return future.result()
+
+    async def be_worker(self, future) -> None:
+        self.has_worker = True
+        while not future.complete():
+            await self.do_work()
+        self.has_worker = False
+        anyone_pending = self.get_anyone_pending()
+        if anyone_pending is not None:
+            anyone_pending.wakeup()
+
+    async def request(self, arg) -> None:
+        future = await self.do_request(arg)
+        if not self.has_worker:
+            await self.be_worker(future)
+        await future
+        if not future.complete():
+            # we were woken up to work
+            await self.be_worker(future)
+        return future.result()
+
+        while not future.complete():
+            if not self.has_runner:
+                self.has_runner = True
+                await do_stuff()
+                self.has_runner = False
+            else:
+                await my_fut
+        anyone_pending = self.get_anyone_pending()
+        if anyone_pending is not None:
+            anyone_pending.wakeup()
+        return future.result()
+
 class RsyscallConnection:
     """A connection to some rsyscall server where we can make syscalls
     """
@@ -2093,6 +2126,63 @@ class RsyscallConnection:
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         # TODO we need to match up requests to responses so this method can be called concurrently
+        # so essentially we need to keep track of the order that the reads are performed...
+        # hmm wait a second, asyncfd doesn't even support being concurrently called, ha ha
+        # so when we enter syscall(),
+        # we submit a request to somewhere,
+        # which performs a write and then begins waitin' on a queue
+        # the writes are how we serialize it I guess
+        # maybe we should batch reads
+        # nah
+        # so we submit a request and then we wait for a response
+        # that's, really, that's really just,
+        # y'know, run an object in our space, kinda thing, but with a lock?
+        # except, no, we don't, we don't want it completely locked
+        # so we can have a queue ummm
+        # we want to preserve the order...
+        # what if we j ust have like...
+        # man, man, it would be,y'know,
+        # so easy if, we'know, we could just, like
+        # pile up the continuations and order 'em in a list and then read and pop 'em off
+        # okay so it's pretty easy to just have like,
+        # a big ole,
+        # thingy thing,
+        # one trio.Event per request, amirite
+        # well we need a lock on it too ofc
+        # it's kinda like an HTTP connection y'know
+        # we lock 
+        async with lock:
+            try:
+                await self.tofd.write(bytes(ffi.buffer(request)))
+            except OSError as e:
+                # we raise a different exception so that users can distinguish syscall errors from
+                # transport errors
+                raise RsyscallException() from e
+            fut = Future()
+            self.pending.append(fut)
+        while True:
+            if not is_runner:
+                while not my_fut.complete():
+                    # as a side effect, this completes other futures and wakes them up
+                    await do_stuff()
+                is_runner = False
+                if len(self.pending) > 0:
+                    self.pending.wakeup()
+            else:
+                while not my_fut.complete():
+                    if not is_runner:
+                        is_runner = True
+                        # this should remove my_fut from pending when it completes it
+                        await do_stuff()
+                        # man let's just build a continuation API? on top of Event?
+                        is_runner = False
+                    else:
+                        await my_fut
+                if not is_runner and len(self.pending) > 0:
+                    self.pending[0].wakeup()
+
+
+    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         request = ffi.new('struct rsyscall_syscall*',
                           (number,
                            (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
@@ -2121,22 +2211,15 @@ class RsyscallConnection:
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
-class RsyscallInternals:
-    def __init__(self, infd: FileDescriptor[ReadableFile], outfd: FileDescriptor[WritableFile]) -> None:
-        self.infd = infd
-        self.outfd = outfd
-
 class RsyscallTask:
     def __init__(self,
                  thread: CThread,
                  connection: RsyscallConnection,
                  task: Task,
-                 internals: RsyscallInternals,
     ) -> None:
         self.thread = thread
         self.connection = connection
         self.task = task
-        self.internals = internals
 
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
@@ -2221,6 +2304,16 @@ class RsyscallSpawner:
         async_fromfd = await AsyncFileDescriptor.make(self.epoller, pipe_out.rfd)
         rsyscall_connection = RsyscallConnection(async_tofd, async_fromfd)
 
+        # OK this wait_readable is SUPER WRONG!
+        # we need to maybe get it from the rsyscall_connection?
+        # which needs to support pipelining
+        # also tracking what wait_readables need to be performed
+        # and doing a select on all of them when ready
+        # (should we actually be integrating epoll with this?)
+        # (epoll's edge-triggered-ness might be just the thing for a stream of events...)
+        # nah let's just do the simple select-based thing
+        # so we need pipelining and a monitor
+        # pipelining first
         new_task = Task(LocalSyscall(trio.hazmat.wait_readable, rsyscall_connection.syscall),
                         FDNamespace(), self.task.memory, self.task.mount, self.task.fs)
 
@@ -2230,15 +2323,16 @@ class RsyscallSpawner:
             return FileDescriptor(fd.file, new_task, new_task.fd_namespace, fd.number)
 
         # pass a few file descriptors down to the new task
-        internals = RsyscallInternals(translate(pipe_in.rfd), translate(pipe_out.wfd))
+        translate(pipe_in.rfd)
         await pipe_in.rfd.aclose()
+        translate(pipe_out.wfd)
         await pipe_out.wfd.aclose()
         inherited_user_fds = [translate(fd) for fd in user_fds]
 
         # close everything that's cloexec and not explicitly passed down
         await do_cloexec_except(new_task, inherited_fd_numbers)
 
-        rsyscall_task = RsyscallTask(cthread, rsyscall_connection, new_task, internals)
+        rsyscall_task = RsyscallTask(cthread, rsyscall_connection, new_task)
         return rsyscall_task, inherited_user_fds
 
 
@@ -2263,192 +2357,3 @@ async def allocate_pipe(task: Task) -> Pipe:
     r, w = await task.syscall.pipe()
     return Pipe(FileDescriptor(ReadableFile(shared=False), task, task.fd_namespace, r),
                 FileDescriptor(WritableFile(shared=False), task, task.fd_namespace, w))
-
-class SubprocessContext:
-    def __init__(self, task: Task, child_files: FDNamespace, parent_files: FDNamespace) -> None:
-        self.task = task
-        self.child_files = child_files
-        self.parent_files = parent_files
-        self.pid: t.Optional[int] = None
-
-    def translate(self, fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
-        """Translate FDs from the parent's FDNamespace to the child's FDNamespace
-
-        Any file descriptor created by my task in parent_files is now
-        also present in child_files, so we're able to translate them
-        to child_files.
-
-        This only works for fds created by my task because fds from
-        other tasks may have been created after the fork, through
-        concurrent execution. To translate fds from other tasks,
-        provide them as arguments at fork time.
-
-        """
-        if self.pid is not None:
-            raise Exception("Already left the subprocess")
-        if fd.fd_namespace != self.parent_files:
-            raise Exception("Can't translate an fd not coming from my parent's FDNamespace")
-        if fd.task != self.task:
-            raise Exception("Can't translate an fd not coming from my Task; it could have been created after the fork.")
-        return type(fd)(fd.file, fd.task, self.child_files, fd.number)
-
-    @property
-    def syscall(self) -> SyscallInterface:
-        if self.pid is not None:
-            raise Exception("Already left this process")
-        return self.task.syscall
-
-    async def exit(self, status: int) -> None:
-        self.pid = await self.syscall.exit(status)
-        self.task.fd_namespace = self.parent_files
-
-    async def exec(self, path: Path, argv: t.List[t.Union[str, bytes]],
-             *, envp: t.Optional[t.Mapping[str, str]]=None) -> None:
-        if envp is None:
-            # TODO os.environ should actually be pulled from, er... somewhere
-            envp = dict(**os.environ)
-        # this is too restrictive but whatever
-        if path.base.task != self.task:
-            raise Exception("can't exec a path from another task")
-        self.pid = await path.execve(argv, envp) # type: ignore
-        self.task.fd_namespace = self.parent_files
-
-    async def fexec(self, fd: FileDescriptor, argv: t.List[t.Union[str, bytes]],
-                    *, envp: t.Optional[t.Dict[str, str]]=None) -> None:
-        if envp is None:
-            envp = dict(**os.environ)
-        # TODO this won't work for scripts since cloexec needs to be unset
-        self.pid = await self.syscall.execveat(
-            fd.number, b"",
-            [sfork.to_bytes(arg) for arg in argv],
-            sfork.serialize_environ(**envp), flags=rsyscall.epoll.AT_EMPTY_PATH)
-        self.task.fd_namespace = self.parent_files
-
-@asynccontextmanager
-async def subprocess(task: Task) -> t.Any:
-    # the way we are setting a variable to a new thing, then resetting
-    # it back to an old thing, is really contextvar-ish. but it's
-    # inside an explicitly passed around object. but it's still the
-    # same kind of behavior. by what name is this known?
-
-    parent_files = task.fd_namespace
-    await task.syscall.clone(lib.CLONE_VFORK|lib.CLONE_VM, deathsig=None) # type: ignore
-    child_files = FDNamespace()
-    task.fd_namespace = child_files
-    context = SubprocessContext(task, child_files, parent_files)
-    try:
-        yield context
-    finally:
-        if context.pid is None:
-            await context.exit(0)
-
-class Process:
-    """A single process addressed with a killfd and waitfd"""
-    def __init__(self, killfd: AsyncFileDescriptor[WritableFile],
-                 waitfd: AsyncFileDescriptor[ReadableFile],
-                 pid: int) -> None:
-        self.killfd = killfd
-        self.waitfd = waitfd
-        self.pid = pid
-        self.child_event_buffer = supervise.ChildEventBuffer()
-
-    async def close(self) -> None:
-        await self.killfd.aclose()
-        await self.waitfd.aclose()
-
-    async def events(self) -> t.Any:
-        while True:
-            ret = await self.waitfd.read()
-            if len(ret) == 0:
-                # EOF
-                return
-            self.child_event_buffer.feed(ret)
-            while True:
-                event = self.child_event_buffer.consume()
-                if event:
-                    yield event
-                else:
-                    break
-
-    async def check(self) -> None:
-        async for event in self.events():
-            if event.pid != self.pid:
-                continue
-            if event.died():
-                return event.check()
-        raise supervise.UncleanExit()
-
-    async def send_signal(self, signum: signal.Signals):
-        """Send this signal to the main child process."""
-        if not isinstance(signum, int):
-            raise TypeError("signum must be an integer: {}".format(signum))
-        msg = supervise.ffi.new('struct supervise_send_signal*', {'pid':self.pid, 'signal':signum})
-        buf = bytes(ffi.buffer(msg))
-        await self.killfd.write(buf)
-
-    async def terminate(self):
-        """Terminate the main child process with SIGTERM.
-
-        Note that this does not kill all descendent processes.
-        For that, call close().
-        """
-        await self.send_signal(signal.SIGTERM)
-
-    async def kill(self):
-        """Kill the main child process with SIGKILL.
-
-        Note that this does not kill all descendent processes.
-        For that, call close().
-        """
-        await self.send_signal(signal.SIGKILL)
-
-class RawProcess:
-    def __init__(self, killfd: FileDescriptor[WritableFile],
-                 waitfd: FileDescriptor[ReadableFile],
-                 pid: int) -> None:
-        self.killfd = killfd
-        self.waitfd = waitfd
-        self.pid = pid
-
-    async def make_async(self, epoller: Epoller) -> Process:
-        async_killfd = await AsyncFileDescriptor.make(epoller, self.killfd)
-        async_waitfd = await AsyncFileDescriptor.make(epoller, self.waitfd)
-        return Process(async_killfd, async_waitfd, self.pid)
-
-class SupervisedSubprocessContext:
-    def __init__(self, super_subproc: SubprocessContext, user_subproc: SubprocessContext) -> None:
-        self.super_subproc = super_subproc
-        self.user_subproc = user_subproc
-        self.raw_proc: t.Optional[RawProcess] = None
-
-    def translate(self, fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
-        return self.super_subproc.translate(self.user_subproc.translate(fd))
-
-    async def exit(self, status: int) -> None:
-        await self.user_subproc.exit(status)
-
-    async def exec(self, path: Path, argv: t.List[t.Union[str, bytes]],
-                   *, envp: t.Optional[t.Dict[str, str]]=None) -> None:
-        await self.user_subproc.exec(path, argv, envp=envp)
-
-@asynccontextmanager
-async def clonefd(task: Task, stdstreams: StandardStreams) -> t.Any:
-    async with (await allocate_pipe(task)) as pipe_in:
-        async with (await allocate_pipe(task)) as pipe_out:
-            async with subprocess(task) as super_proc:
-                os.setsid()
-                prctl.set_child_subreaper(True)
-                try:
-                    async with subprocess(task) as user_proc:
-                        supervised_subproc = SupervisedSubprocessContext(super_proc, user_proc)
-                        yield supervised_subproc
-                finally:
-                    # we launch supervise regardless of whether an exception is thrown,
-                    # to clean up child processes.
-                    await super_proc.translate(pipe_in.rfd).dup2(
-                        super_proc.translate(stdstreams.stdin))
-                    await super_proc.translate(pipe_out.wfd).dup2(
-                        super_proc.translate(stdstreams.stdout))
-                    await super_proc.exec(supervise.supervise_utility_location, [], envp={})
-            supervised_subproc.raw_proc = RawProcess(
-                pipe_in.wfd.release(), pipe_out.rfd.release(), user_proc.pid)

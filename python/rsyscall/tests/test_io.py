@@ -1,5 +1,5 @@
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.io import ProcessContext, SubprocessContext, gather_local_bootstrap, wrap_stdin_out_err
+from rsyscall.io import gather_local_bootstrap, wrap_stdin_out_err
 from rsyscall.io import Epoller, allocate_epoll, AsyncFileDescriptor
 from rsyscall.epoll import EpollEvent, EpollEventMask
 import socket
@@ -34,55 +34,40 @@ class TestIO(unittest.TestCase):
                 self.assertEqual(in_data, out_data)
         trio.run(test)
 
-    def test_subprocess(self):
-        async def test() -> None:
-            async with rsyscall.io.subprocess(self.task) as subproc:
-                await subproc.exit(0)
-        trio.run(test)
-
-    def test_subprocess_fcntl(self):
-        async def test() -> None:
-            async with rsyscall.io.subprocess(self.task) as subproc:
-                await subproc.exit(0)
-        trio.run(test)
-
-    def test_subprocess_nested(self):
-        async def test() -> None:
-            async with rsyscall.io.subprocess(self.task):
-                async with rsyscall.io.subprocess(self.task) as subproc:
-                    await subproc.exit(0)
-        trio.run(test)
-
     def test_cat(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
-                async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
-                    async with rsyscall.io.subprocess(self.task) as subproc:
-                        await subproc.translate(pipe_in.rfd).dup2(subproc.translate(self.stdin))
-                        await subproc.translate(pipe_out.wfd).dup2(subproc.translate(self.stdout))
-                        await subproc.exec("/bin/sh", ['sh', '-c', 'cat'])
-                    in_data = b"hello"
-                    await pipe_in.wfd.write(in_data)
-                    out_data = await pipe_out.rfd.read(len(in_data))
-                    self.assertEqual(in_data, out_data)
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
+                    async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
+                        rsyscall_task, (stdin, stdout, new_stdin, new_stdout) = await stdtask.spawn(
+                            [self.stdin, self.stdout, pipe_in.rfd, pipe_out.wfd])
+                        async with rsyscall_task:
+                            await new_stdin.dup2(stdin)
+                            await new_stdout.dup2(stdout)
+                            child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'cat'])
+                            in_data = b"hello"
+                            await pipe_in.wfd.write(in_data)
+                            out_data = await pipe_out.rfd.read(len(in_data))
+                            self.assertEqual(in_data, out_data)
         trio.run(test)
 
     def test_cat_async(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
-                epoller = Epoller(epoll)
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
                 async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
                     async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
-                        async with rsyscall.io.subprocess(self.task) as subproc:
-                            await subproc.translate(pipe_in.rfd).dup2(subproc.translate(self.stdin))
-                            await subproc.translate(pipe_out.wfd).dup2(subproc.translate(self.stdout))
-                            await subproc.exec("/bin/sh", ['sh', '-c', 'cat'])
-                        async_cat_rfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
-                        async_cat_wfd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
-                        in_data = b"hello world"
-                        await async_cat_wfd.write(in_data)
-                        out_data = await async_cat_rfd.read()
-                        self.assertEqual(in_data, out_data)
+                        rsyscall_task, (stdin, stdout, new_stdin, new_stdout) = await stdtask.spawn(
+                            [self.stdin, self.stdout, pipe_in.rfd, pipe_out.wfd])
+                        async with rsyscall_task:
+                            await new_stdin.dup2(stdin)
+                            await new_stdout.dup2(stdout)
+                            child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'cat'])
+                            async_cat_rfd = await AsyncFileDescriptor.make(stdtask.resources.epoller, pipe_out.rfd)
+                            async_cat_wfd = await AsyncFileDescriptor.make(stdtask.resources.epoller, pipe_in.wfd)
+                            in_data = b"hello world"
+                            await async_cat_wfd.write(in_data)
+                            out_data = await async_cat_rfd.read()
+                            self.assertEqual(in_data, out_data)
         trio.run(test)
 
     async def do_epoll_things(self, epoller) -> None:
@@ -149,19 +134,6 @@ class TestIO(unittest.TestCase):
                         nursery.start_soon(self.do_async_things, epoller, self.task)
         trio.run(test)
 
-    def test_clonefd(self) -> None:
-        async def test() -> None:
-            async with rsyscall.io.clonefd(self.task, self.stdstreams) as subproc:
-                await subproc.exec("/bin/sh", ['-c', 'sleep inf'])
-            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
-                epoller = Epoller(epoll)
-                process = await subproc.raw_proc.make_async(epoller)
-                await process.terminate()
-                with self.assertRaises(supervise.UncleanExit):
-                    await process.check()
-                await process.close()
-        trio.run(test)
-
     def test_path_cache(self) -> None:
         async def test() -> None:
             # we need to build a hierarchy of directories
@@ -184,66 +156,60 @@ class TestIO(unittest.TestCase):
 
     def test_mkdtemp(self) -> None:
         async def test() -> None:
-            env = await rsyscall.io.build_unix_environment(self.bootstrap)
-            async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as (dirfd, path):
-                self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..'])
-                text = b"Hello world!"
-                name = b"hello"
-                hello_path = await rsyscall.io.spit(path/name, text)
-                async with (await hello_path.open(os.O_RDONLY)) as readable:
-                    self.assertEqual(await readable.read(), text)
-                await dirfd.lseek(0, os.SEEK_SET)
-                self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..', name])
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as path:
+                    async with (await path.open_directory()) as dirfd:
+                        self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..'])
+                        text = b"Hello world!"
+                        name = b"hello"
+                        hello_path = await rsyscall.io.spit(path/name, text)
+                        async with (await hello_path.open(os.O_RDONLY)) as readable:
+                            self.assertEqual(await readable.read(), text)
+                        await dirfd.lseek(0, os.SEEK_SET)
+                        self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..', name])
         trio.run(test)
 
     def test_bind(self) -> None:
         async def test() -> None:
-            env = await rsyscall.io.build_unix_environment(self.bootstrap)
-            async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as (dirfd, path):
-                sockfd = await rsyscall.io.allocate_unix_socket(self.task, socket.SOCK_STREAM)
-                async with sockfd:
-                    await (path/"sock").bind(sockfd)
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as path:
+                    async with (await rsyscall.io.allocate_unix_socket(stdtask.task, socket.SOCK_STREAM)) as sockfd:
+                        addr = (path/"sock").unix_address(stdtask.task)
+                        await sockfd.bind(addr)
         trio.run(test)
 
     def test_listen(self) -> None:
         async def test() -> None:
-            env = await rsyscall.io.build_unix_environment(self.bootstrap)
-            async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as (dirfd, path):
-                sockfd = await rsyscall.io.allocate_unix_socket(self.task, socket.SOCK_STREAM)
-                # TODO next we need to support asynchronous connect
-                # and accept
-                # those will be on the epollfd I guess
-                # TODO okay we have it, now we need to test it
-                async with sockfd:
-                    addr = (path/"sock").unix_address()
-                    await sockfd.bind(addr)
-                    await sockfd.listen(10)
-                    clientfd = await rsyscall.io.allocate_unix_socket(self.task, socket.SOCK_STREAM)
-                    async with clientfd:
-                        await clientfd.connect(addr)
-                        connfd, client_addr = await sockfd.accept(0) # type: ignore
-                        async with connfd:
-                            print(addr, client_addr)
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as path:
+                    async with (await rsyscall.io.allocate_unix_socket(stdtask.task, socket.SOCK_STREAM)) as sockfd:
+                        addr = (path/"sock").unix_address(stdtask.task)
+                        await sockfd.bind(addr)
+                        await sockfd.listen(10)
+                        async with (await rsyscall.io.allocate_unix_socket(stdtask.task, socket.SOCK_STREAM)) as clientfd:
+                            await clientfd.connect(addr)
+                            connfd, client_addr = await sockfd.accept(0) # type: ignore
+                            async with connfd:
+                                print(addr, client_addr)
         trio.run(test)
 
     def test_listen_async(self) -> None:
         async def test() -> None:
-            env = await rsyscall.io.build_unix_environment(self.bootstrap)
-            async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as (dirfd, path):
-                async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
-                    epoller = Epoller(epoll)
-                    sockfd = await rsyscall.io.allocate_unix_socket(
-                        self.task, socket.SOCK_STREAM)
-                    async with sockfd:
-                        addr = (path/"sock").unix_address()
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as path:
+                    async with (await rsyscall.io.allocate_unix_socket(stdtask.task, socket.SOCK_STREAM)) as sockfd:
+                        addr = (path/"sock").unix_address(stdtask.task)
                         await sockfd.bind(addr)
                         await sockfd.listen(10)
-                        async_sockfd = await AsyncFileDescriptor.make(epoller, sockfd)
-                        async with async_sockfd:
-                            clientfd = await rsyscall.io.allocate_unix_socket(
-                                self.task, socket.SOCK_STREAM)
-                            async_clientfd = await AsyncFileDescriptor.make(epoller, clientfd)
+                        async with (await AsyncFileDescriptor.make(stdtask.resources.epoller, sockfd)) as async_sockfd:
+                            clientfd = await rsyscall.io.allocate_unix_socket(stdtask.task, socket.SOCK_STREAM)
+                            async_clientfd = await AsyncFileDescriptor.make(stdtask.resources.epoller, clientfd)
                             async with async_clientfd:
+                                # doop doop doop hmm
+                                # it would be nice if, actually, we had UnixAddress be a Union[UnixAddress, Path]
+                                # all Paths are valid UnixAddresses,
+                                # but not all UnixAddresses are valid Paths
+                                # hm.
                                 await async_clientfd.connect(addr)
                                 connfd, client_addr = await async_sockfd.accept(0) # type: ignore
                                 async with connfd:
@@ -253,13 +219,13 @@ class TestIO(unittest.TestCase):
     def test_getdents_noent(self) -> None:
         "getdents on a removed directory throws FileNotFoundError"
         async def test() -> None:
-            env = await rsyscall.io.build_unix_environment(self.bootstrap)
-            async with rsyscall.io.mkdtemp(env.tmpdir, env.utilities.rm) as (dirfd, path):
-                new_path = await (path/"foo").mkdir()
-                async with (await new_path.open(os.O_DIRECTORY)) as new_dirfd:
-                    await new_path.rmdir()
-                    with self.assertRaises(FileNotFoundError):
-                        await new_dirfd.getdents()
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as path:
+                    new_path = await (path/"foo").mkdir()
+                    async with (await new_path.open_directory()) as new_dirfd:
+                        await new_path.rmdir()
+                        with self.assertRaises(FileNotFoundError):
+                            await new_dirfd.getdents()
         trio.run(test)
 
     def test_mmap(self) -> None:
@@ -284,34 +250,30 @@ class TestIO(unittest.TestCase):
 
     def test_thread_epoll(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
-                epoller = Epoller(epoll)
-                # hmmmm
-                # TODO let's avoid using ChildTaskMonitor for this
-                async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
-                    thread_maker = rsyscall.io.ThreadMaker(monitor)
-                    rsyscall_spawner = rsyscall.io.RsyscallSpawner(self.task, thread_maker, epoller)
-                    rsyscall_task, _ = await rsyscall_spawner.spawn([])
-                    async with rsyscall_task:
-                        async with (await rsyscall.io.allocate_epoll(rsyscall_task.task)) as epoll:
-                            epoller2 = Epoller(epoll)
-                            await self.do_async_things(epoller2, rsyscall_task.task)
+            # TODO figure out how to inherit this properly
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                rsyscall_task, _ = await stdtask.spawn([])
+                async with rsyscall_task:
+                    # TODO aha we've finally hit the problem with wait_readable on things out of my fd space, ha ha ho ho
+                    async with (await rsyscall.io.allocate_epoll(rsyscall_task.task)) as epoll:
+                        epoller2 = Epoller(epoll)
+                        await self.do_async_things(epoller2, rsyscall_task.task)
         trio.run(test)
 
     def test_thread_exec(self) -> None:
         async def test() -> None:
-            env = await rsyscall.io.build_unix_environment(self.bootstrap)
-            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
-                epoller = Epoller(epoll)
-                async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
-                    thread_maker = rsyscall.io.ThreadMaker(monitor)
-                    rsyscall_spawner = rsyscall.io.RsyscallSpawner(self.task, thread_maker, epoller)
-                    rsyscall_task, _ = await rsyscall_spawner.spawn([])
-                    async with rsyscall_task:
-                        child_task = await rsyscall_task.execve(env.utilities.sh, ['sh', '-c', 'sleep .01'])
-                        await child_task.wait_for_exit()
-                    async with rsyscall.io.mkdtemp(rsyscall_spawner, env.tmpdir, env.utilities.rm) as (dirfd, path):
-                        pass
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                rsyscall_task, _ = await stdtask.spawn([])
+                async with rsyscall_task:
+                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                    await child_task.wait_for_exit()
+        trio.run(test)
+
+    def test_thread_mkdtemp(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as tmpdir:
+                    pass
         trio.run(test)
 
     def test_do_cloexec(self) -> None:
