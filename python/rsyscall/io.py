@@ -2248,8 +2248,9 @@ class RsyscallSpawner:
         new_task = Task(LocalSyscall(rsyscall_connection.wait_readable, rsyscall_connection.syscall),
                         FDNamespace(), self.task.memory, self.task.mount, self.task.fs,
                         self.task.sigmask.inherit())
-        # clear the signal mask because it's pointlessly inherited across fork
-        await new_task.sigmask.setmask(new_task, set())
+        if len(new_task.sigmask) != 0:
+            # clear this non-empty signal mask because it's pointlessly inherited across fork
+            await new_task.sigmask.setmask(new_task, set())
 
         inherited_fd_numbers: t.Set[int] = {pipe_in.rfd.number, pipe_out.wfd.number}
         def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:

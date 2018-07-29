@@ -260,6 +260,20 @@ class TestIO(unittest.TestCase):
                 async with rsyscall_task:
                     # TODO figure out how to inherit this properly
                     # only then can I set env variables
+                    # I should maybe store env variables in StdTask?
+                    # then use StdTask for exec?
+                    # clearly I need to use stdtask for exec, yes
+                    # and have spawn return another stdtask I guess
+                    # though then I need to resolve the rsyscall task resources problem...
+                    # I can go with closing a task
+                    # and that closes the SI
+                    # which closes the RscConn
+                    # which somehow affects the CThread?!??!??!
+                    # oh, but we clearly need to also have the CThread when we exec,
+                    # so we can extract the Child from it.
+                    # so we can combine the task and rsyscallconnection,
+                    # and just close the task.
+                    # but we still need to handle the thread
                     stdtask2 = rsyscall.io.StandardTask(
                         rsyscall_task.task,
                         await rsyscall.io.TaskResources.make(rsyscall_task.task),
