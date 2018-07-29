@@ -121,6 +121,10 @@ class UnshareFlag(enum.IntFlag):
     SYSVSEM = lib.CLONE_SYSVSEM
 
 class SyscallInterface:
+    # non-syscall operations
+    async def close_interface(self) -> None: ...
+    async def wait_readable(self, fd: int) -> None: ...
+    # syscalls
     async def pipe(self, flags=os.O_NONBLOCK) -> t.Tuple[int, int]: ...
     async def close(self, fd: int) -> None: ...
     # TODO add optional offset argument?
@@ -128,7 +132,6 @@ class SyscallInterface:
     async def read(self, fd: int, count: int) -> bytes: ...
     async def write(self, fd: int, buf: bytes) -> int: ...
     async def dup2(self, oldfd: int, newfd: int) -> int: ...
-    async def wait_readable(self, fd: int) -> None: ...
 
     # task manipulation
     async def clone(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int: ...
@@ -220,6 +223,9 @@ class LocalSyscall(SyscallInterface):
     def __init__(self, wait_readable, do_syscall) -> None:
         self._wait_readable = wait_readable
         self._do_syscall = do_syscall
+
+    async def close_interface(self) -> None:
+        pass
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         ret = await self._do_syscall(number, arg1=arg1, arg2=arg2, arg3=arg3, arg4=arg4, arg5=arg5, arg6=arg6)
@@ -531,7 +537,7 @@ class Function:
         self.memory = memory
 
 class SignalMask:
-    def __init__(self, mask: t.Set[signal.Signals]):
+    def __init__(self, mask: t.Set[signal.Signals]) -> None:
         self.mask = mask
 
     def inherit(self) -> 'SignalMask':
@@ -577,6 +583,19 @@ class Task:
         self.mount = mount
         self.fs = fs
         self.sigmask = sigmask
+
+    async def close(self):
+        await self.syscall.close_interface()
+
+    async def exit(self, status: int) -> None:
+        await self.syscall.exit(status)
+        await self.close()
+
+    async def execveat(self, dirfd: int, path: bytes,
+                       argv: t.List[bytes], envp: t.List[bytes],
+                       flags: int) -> None:
+        await self.syscall.execveat(dirfd, path, argv, envp, flags)
+        await self.close()
 
     async def unshare_fs(self) -> None:
         # we want this to return something that we can use to chdir
@@ -1624,10 +1643,16 @@ class StandardTask:
     ) -> t.Tuple['RsyscallTask', t.List[FileDescriptor]]:
         thread_maker = ThreadMaker(self.resources.child_monitor)
         rsyscall_spawner = RsyscallSpawner(self.task, thread_maker, self.resources.epoller)
-        return (await rsyscall_spawner.spawn(user_fds, shared))
+        task, cthread, fds = await rsyscall_spawner.spawn(user_fds, shared)
+        # TODO maybe need to think some more about how this resource inheriting works
+        # for that matter, could I inherit the epollfd and signalfd across tasks?
+        stdtask = StandardTask(task, await TaskResources.make(task),
+                               self.process, self.filesystem)
+        return RsyscallTask(stdtask, cthread), fds
 
     async def close(self) -> None:
         await self.resources.close()
+        await self.task.close()
 
     async def __aenter__(self) -> 'StandardTask':
         return self
@@ -1648,7 +1673,7 @@ class TemporaryDirectory:
         # TODO we need to inherit the self.parent path so we can chdir to it even if it's dirfd based
         new_task, _ = await self.stdtask.spawn([], shared=UnshareFlag.NONE)
         async with new_task:
-            await new_task.task.fs.chdir(new_task.task, self.parent)
+            await new_task.stdtask.task.fs.chdir(new_task.stdtask.task, self.parent)
             child = await new_task.execve(self.stdtask.filesystem.utilities.rm, ["rm", "-r", self.name])
             (await child.wait_for_exit()).check()
 
@@ -2077,12 +2102,9 @@ class RsyscallConnection:
     def __init__(self,
                  tofd: AsyncFileDescriptor[WritableFile],
                  fromfd: AsyncFileDescriptor[ReadableFile],
-                 # this is the rsyscall-side infd number
-                 infd: int,
     ) -> None:
         self.tofd = tofd
         self.fromfd = fromfd
-        self.infd = infd
         self.request_lock = trio.Lock()
         self.response_fifo_lock = trio.StrictFIFOLock()
 
@@ -2113,7 +2135,18 @@ class RsyscallConnection:
         response, = struct.unpack('q', response_bytes)
         return response
 
-    async def wait_readable(self, fd: int) -> None:
+class RsyscallLocalSyscall(LocalSyscall):
+    def __init__(self, rsyscall_connection: RsyscallConnection, infd: int) -> None:
+        self.rsyscall_connection = rsyscall_connection
+        self.infd = infd
+        self.request_lock = trio.Lock()
+        self.response_fifo_lock = trio.StrictFIFOLock()
+        super().__init__(self.__do_wait_readable, rsyscall_connection.syscall)
+
+    async def close_interface(self) -> None:
+        await self.rsyscall_connection.close()
+
+    async def __do_wait_readable(self, fd: int) -> None:
         # TODO this could really actually be a separate object
         pollfds = ffi.new('struct pollfd[3]',
                           # passing two means we can figure out which one tripped from just the
@@ -2123,7 +2156,7 @@ class RsyscallConnection:
         while True:
             for _ in range(5):
                 # take response lock to make sure no-one else is actively sending requests
-                async with self.response_fifo_lock:
+                async with self.rsyscall_connection.response_fifo_lock:
                     # yield, let others run
                     await trio.sleep(0)
             logger.debug("poll(%s, %s, %s)", pollfds, 3, -1)
@@ -2134,60 +2167,7 @@ class RsyscallConnection:
             if ret == 2:
                 # the user fd had an event, return
                 return
-            # our fd or no fd had an event. repeat!
-
-    async def __aenter__(self) -> 'RsyscallConnection':
-        return self
-
-    async def __aexit__(self, *args, **kwargs) -> None:
-        await self.close()
-
-class RsyscallTask:
-    def __init__(self,
-                 thread: CThread,
-                 connection: RsyscallConnection,
-                 task: Task,
-    ) -> None:
-        self.thread = thread
-        self.connection = connection
-        self.task = task
-
-    async def execveat(self, dirfd: int, path: bytes,
-                       argv: t.List[bytes], envp: t.List[bytes],
-                       flags: int) -> ChildTask:
-        await self.task.syscall.execveat(dirfd, path, argv, envp, flags)
-        # the connection is no longer needed
-        await self.connection.close()
-        # we return the still-running ChildTask that was inside this RsyscallTask
-        return (await self.thread.wait_for_mm_release())
-
-    async def execve(self, path: Path, argv: t.List[t.Union[str, bytes]], *, envp: t.Optional[t.Mapping[str, str]]=None) -> ChildTask:
-        path.assert_okay_for_task(self.task)
-        if envp is None:
-            # TODO os.environ should actually be pulled from, er... somewhere
-            envp = dict(**os.environ)
-        await self.task.syscall.execveat(
-            path.base.dirfd_num, path._full_path,
-            [sfork.to_bytes(arg) for arg in argv],
-            sfork.serialize_environ(**envp), flags=0)
-        # the connection is no longer needed
-        await self.connection.close()
-        # we return the still-running ChildTask that was inside this RsyscallTask
-        return (await self.thread.wait_for_mm_release())
-
-    async def exit(self, status) -> None:
-        await self.task.syscall.exit(0)
-        await self.close()
-
-    async def close(self) -> None:
-        await self.thread.close()
-        await self.connection.close()
-
-    async def __aenter__(self) -> 'RsyscallTask':
-        return self
-
-    async def __aexit__(self, *args, **kwargs) -> None:
-        await self.close()
+            # the incoming request fd, or no fd, had an event. repeat!
 
 async def call_function(task: Task, stack: Stack, function: Function, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> ChildEvent:
     "Calls a C function and waits for it to complete. Returns the ChildEvent that the child thread terminated with."
@@ -2221,7 +2201,7 @@ class RsyscallSpawner:
 
     async def spawn(self, user_fds: t.List[FileDescriptor],
                     shared: UnshareFlag=UnshareFlag.FS,
-    ) -> t.Tuple[RsyscallTask, t.List[FileDescriptor]]:
+    ) -> t.Tuple[Task, CThread, t.List[FileDescriptor]]:
         for fd in user_fds:
             if fd.fd_namespace is not self.task.fd_namespace:
                 raise Exception("can only translate file descriptors from my fd namespace")
@@ -2233,40 +2213,66 @@ class RsyscallSpawner:
 
         async_tofd = await AsyncFileDescriptor.make(self.epoller, pipe_in.wfd)
         async_fromfd = await AsyncFileDescriptor.make(self.epoller, pipe_out.rfd)
-        rsyscall_connection = RsyscallConnection(async_tofd, async_fromfd, pipe_in.rfd.number)
+        syscall = RsyscallLocalSyscall(RsyscallConnection(async_tofd, async_fromfd), pipe_in.rfd.number)
 
-        # OK this wait_readable is SUPER WRONG!
-        # we need to maybe get it from the rsyscall_connection?
-        # which needs to support pipelining
-        # also tracking what wait_readables need to be performed
-        # and doing a select on all of them when ready
-        # (should we actually be integrating epoll with this?)
-        # (epoll's edge-triggered-ness might be just the thing for a stream of events...)
-        # nah let's just do the simple select-based thing
-        # so we need pipelining and a monitor
-        # pipelining first
-        new_task = Task(LocalSyscall(rsyscall_connection.wait_readable, rsyscall_connection.syscall),
+        new_task = Task(syscall,
                         FDNamespace(), self.task.memory, self.task.mount, self.task.fs,
                         self.task.sigmask.inherit())
-        if len(new_task.sigmask) != 0:
+        if len(new_task.sigmask.mask) != 0:
             # clear this non-empty signal mask because it's pointlessly inherited across fork
             await new_task.sigmask.setmask(new_task, set())
 
         inherited_fd_numbers: t.Set[int] = {pipe_in.rfd.number, pipe_out.wfd.number}
+        await pipe_in.rfd.aclose()
+        await pipe_out.wfd.aclose()
+
         def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
             inherited_fd_numbers.add(fd.number)
             return FileDescriptor(fd.file, new_task, new_task.fd_namespace, fd.number)
-        await pipe_in.rfd.aclose()
-        await pipe_out.wfd.aclose()
         inherited_user_fds = [translate(fd) for fd in user_fds]
 
         # close everything that's cloexec and not explicitly passed down
         await do_cloexec_except(new_task, inherited_fd_numbers)
-
-        rsyscall_task = RsyscallTask(cthread, rsyscall_connection, new_task)
-        return rsyscall_task, inherited_user_fds
+        return new_task, cthread, inherited_user_fds
 
 
+class RsyscallTask:
+    def __init__(self,
+                 stdtask: StandardTask,
+                 thread: CThread,
+    ) -> None:
+        self.stdtask = stdtask
+        self.thread = thread
+
+    async def execveat(self, dirfd: int, path: bytes,
+                       argv: t.List[bytes], envp: t.List[bytes],
+                       flags: int) -> ChildTask:
+        await self.stdtask.task.execveat(dirfd, path, argv, envp, flags)
+        # we return the still-running ChildTask that was inside this RsyscallTask
+        return (await self.thread.wait_for_mm_release())
+
+    async def execve(self, path: Path, argv: t.List[t.Union[str, bytes]], *, envp: t.Optional[t.Mapping[str, str]]=None) -> ChildTask:
+        path.assert_okay_for_task(self.stdtask.task)
+        if envp is None:
+            # TODO os.environ should actually be pulled from, er... somewhere
+            envp = dict(**os.environ)
+        return (await self.execveat(
+            path.base.dirfd_num, path._full_path,
+            [sfork.to_bytes(arg) for arg in argv],
+            sfork.serialize_environ(**envp), flags=0))
+
+    async def exit(self, status) -> None:
+        await self.stdtask.task.exit(0)
+
+    async def close(self) -> None:
+        await self.thread.close()
+        await self.stdtask.task.close()
+
+    async def __aenter__(self) -> 'RsyscallTask':
+        return self
+
+    async def __aexit__(self, *args, **kwargs) -> None:
+        await self.close()
 
 class Pipe:
     def __init__(self, rfd: FileDescriptor[ReadableFile],

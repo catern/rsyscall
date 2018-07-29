@@ -233,14 +233,10 @@ class TestIO(unittest.TestCase):
 
     def test_thread_exit(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
-                epoller = Epoller(epoll)
-                async with (await rsyscall.io.ChildTaskMonitor.make(self.task, epoller)) as monitor:
-                    thread_maker = rsyscall.io.ThreadMaker(monitor)
-                    rsyscall_spawner = rsyscall.io.RsyscallSpawner(self.task, thread_maker, epoller)
-                    rsyscall_task, _ = await rsyscall_spawner.spawn([])
-                    async with rsyscall_task:
-                        await rsyscall_task.exit(0)
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                rsyscall_task, _ = await stdtask.spawn([])
+                async with rsyscall_task:
+                    await rsyscall_task.exit(0)
         trio.run(test)
 
     def test_thread_epoll(self) -> None:
@@ -274,6 +270,25 @@ class TestIO(unittest.TestCase):
                     # so we can combine the task and rsyscallconnection,
                     # and just close the task.
                     # but we still need to handle the thread
+                    # how about returning a StandardTask, CThread, and list of file descriptors?
+                    # and then have a method on StandardTask which does an exec given a CThread...?
+                    # maybe I can just externalize that to the user, and be able to exec regardless
+                    # the user then does wait_for_mm_release...
+                    # I'll have a wrapper function that takes a StandardTask and CThread and does it, I guess.
+                    # nah I will have a method on standardtask which does the exec given a CThread
+                    # then a method on Task which does the exec even without a CThread
+                    # first step: support closing the SI.
+                    # done.
+                    # next step: method on StandardTask which does exec given a CThread
+                    # wait, wait, wait, let's be careful here
+                    # we don't want to... have excessive... classes...
+                    # that is to say, we need to close both the cthread and the task with a contextmanager
+                    # and furthermore the translated FDs too!
+                    # okay so the FDs we can kind of ignore since they will be closed with the thread/fd table dying
+                    # but we do have to close both the cthread and the task
+                    # what if we separately allocate the stack resource...
+                    # and passed it in?
+                    # ugh, would be nice to have some GC thing, since I really am just messing with memory...
                     stdtask2 = rsyscall.io.StandardTask(
                         rsyscall_task.task,
                         await rsyscall.io.TaskResources.make(rsyscall_task.task),
