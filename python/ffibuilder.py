@@ -16,6 +16,7 @@ ffibuilder.set_source(
 #include <sys/syscall.h>   /* For SYS_xxx definitions */
 #include <sys/mman.h>
 #include <sys/epoll.h>
+#include <poll.h>
 #include <string.h>
 #include <sched.h>
 #include <setjmp.h>
@@ -36,9 +37,8 @@ struct linux_dirent64 {
     char           d_name[]; /* Filename (null-terminated) */
 };
 
-int getdents64(unsigned int fd, struct linux_dirent64 *dirp, unsigned int count) {
-    return syscall(SYS_getdents64, fd, dirp, count);
-};
+// the double underscores are hard to use from Python,
+// since they will be replaced with the class name
 #define _WNOTHREAD __WNOTHREAD
 #define _WCLONE __WCLONE
 #define _WALL __WALL
@@ -194,6 +194,20 @@ struct signalfd_siginfo {
 #define SYS_epoll_ctl ...
 #define SYS_epoll_wait ...
 #define SYS_epoll_create1 ...
+
+// poll stuff
+#define SYS_poll ...
+
+struct pollfd {
+    int   fd;         /* file descriptor */
+    short events;     /* requested events */
+    short revents;    /* returned events */
+};
+
+#define POLLIN ...
+#define POLLHUP ...
+#define POLLERR ...
+#define POLLNVAL ...
 
 // task stuff
 #define SYS_clone ...

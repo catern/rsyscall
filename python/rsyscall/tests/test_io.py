@@ -115,7 +115,7 @@ class TestIO(unittest.TestCase):
                 self.assertEqual(result, data)
             async with trio.open_nursery() as nursery:
                 nursery.start_soon(stuff)
-                await trio.sleep(0)
+                await trio.sleep(0.01)
                 await async_pipe_wfd.write(data)
 
     def test_async(self) -> None:
@@ -147,11 +147,6 @@ class TestIO(unittest.TestCase):
             # so we'll add a write_text method?
             # and we need a tempdir maker thingy
             pass
-        trio.run(test)
-
-    def test_unix_environment(self) -> None:
-        async def test() -> None:
-            env = await rsyscall.io.build_unix_environment(self.bootstrap)
         trio.run(test)
 
     def test_mkdtemp(self) -> None:
@@ -250,14 +245,32 @@ class TestIO(unittest.TestCase):
 
     def test_thread_epoll(self) -> None:
         async def test() -> None:
-            # TODO figure out how to inherit this properly
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
                 rsyscall_task, _ = await stdtask.spawn([])
                 async with rsyscall_task:
-                    # TODO aha we've finally hit the problem with wait_readable on things out of my fd space, ha ha ho ho
                     async with (await rsyscall.io.allocate_epoll(rsyscall_task.task)) as epoll:
                         epoller2 = Epoller(epoll)
                         await self.do_async_things(epoller2, rsyscall_task.task)
+        trio.run(test)
+
+    def test_thread_nest(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                rsyscall_task, _ = await stdtask.spawn([])
+                async with rsyscall_task:
+                    # TODO figure out how to inherit this properly
+                    # only then can I set env variables
+                    stdtask2 = rsyscall.io.StandardTask(
+                        rsyscall_task.task,
+                        await rsyscall.io.TaskResources.make(rsyscall_task.task),
+                        stdtask.process, stdtask.filesystem)
+                    rsyscall_task3, _ = await stdtask2.spawn([])
+                    async with rsyscall_task3:
+                        stdtask3 = rsyscall.io.StandardTask(
+                            rsyscall_task3.task,
+                            await rsyscall.io.TaskResources.make(rsyscall_task3.task),
+                            stdtask.process, stdtask.filesystem)
+                        await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
         trio.run(test)
 
     def test_thread_exec(self) -> None:

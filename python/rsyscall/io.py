@@ -531,9 +531,11 @@ class Function:
         self.memory = memory
 
 class SignalMask:
-    mask: t.Set[signal.Signals]
-    def __init__(self):
-        self.mask = set()
+    def __init__(self, mask: t.Set[signal.Signals]):
+        self.mask = mask
+
+    def inherit(self) -> 'SignalMask':
+        return SignalMask(self.mask)
 
     def _validate(self, task: 'Task') -> SyscallInterface:
         if task.sigmask != self:
@@ -554,23 +556,31 @@ class SignalMask:
             raise Exception("SignalMask tracking got out of sync?")
         self.mask = self.mask - mask
 
+    async def setmask(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
+        syscall = self._validate(task)
+        old_mask = await syscall.rt_sigprocmask(SigprocmaskHow.SETMASK, mask)
+        if self.mask != old_mask:
+            raise Exception("SignalMask tracking got out of sync?")
+        self.mask = mask
+
 class Task:
     def __init__(self, syscall: SyscallInterface,
                  fd_namespace: FDNamespace,
                  memory: MemoryNamespace,
                  mount: MountNamespace,
                  fs: FSInformation,
+                 sigmask: SignalMask,
     ) -> None:
         self.syscall = syscall
         self.memory = memory
         self.fd_namespace = fd_namespace
         self.mount = mount
         self.fs = fs
-        self.sigmask = SignalMask()
+        self.sigmask = sigmask
 
     async def unshare_fs(self) -> None:
         # we want this to return something that we can use to chdir
-         raise NotImplementedError
+        raise NotImplementedError
 
 class ProcessContext:
     """A Linux process with associated resources.
@@ -1013,7 +1023,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     async def read(self: 'AsyncFileDescriptor[ReadableFile]', count: int=4096) -> bytes:
         while True:
             try:
-                return (await self.epolled.underlying.read())
+                return (await self.epolled.underlying.read(count))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
                     self.is_readable = False
@@ -1434,7 +1444,8 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
 
 def gather_local_bootstrap() -> UnixBootstrap:
     task = Task(LocalSyscall(trio.hazmat.wait_readable, direct_syscall),
-                FDNamespace(), MemoryNamespace(), MountNamespace(), FSInformation())
+                FDNamespace(), MemoryNamespace(), MountNamespace(), FSInformation(),
+                SignalMask(set()))
     argv = [arg.encode() for arg in sys.argv]
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
     stdstreams = wrap_stdin_out_err(task)
@@ -2060,150 +2071,70 @@ class RsyscallException(Exception):
 class RsyscallHangup(Exception):
     pass
 
-class GenericMultiplexer:
-    def get_anyone_pending(self) -> None:
-        pass
-
-    async def request(self, arg) -> None:
-        future = await self.do_request(arg)
-        while not future.complete():
-            if not self.has_runner:
-                self.has_runner = True
-                await do_stuff()
-                self.has_runner = False
-            else:
-                await my_fut
-        anyone_pending = self.get_anyone_pending()
-        if anyone_pending is not None:
-            anyone_pending.wakeup()
-        return future.result()
-
-    async def be_worker(self, future) -> None:
-        self.has_worker = True
-        while not future.complete():
-            await self.do_work()
-        self.has_worker = False
-        anyone_pending = self.get_anyone_pending()
-        if anyone_pending is not None:
-            anyone_pending.wakeup()
-
-    async def request(self, arg) -> None:
-        future = await self.do_request(arg)
-        if not self.has_worker:
-            await self.be_worker(future)
-        await future
-        if not future.complete():
-            # we were woken up to work
-            await self.be_worker(future)
-        return future.result()
-
-        while not future.complete():
-            if not self.has_runner:
-                self.has_runner = True
-                await do_stuff()
-                self.has_runner = False
-            else:
-                await my_fut
-        anyone_pending = self.get_anyone_pending()
-        if anyone_pending is not None:
-            anyone_pending.wakeup()
-        return future.result()
-
 class RsyscallConnection:
     """A connection to some rsyscall server where we can make syscalls
     """
-    tofd: AsyncFileDescriptor[WritableFile]
-    fromfd: AsyncFileDescriptor[ReadableFile]
     def __init__(self,
                  tofd: AsyncFileDescriptor[WritableFile],
-                 fromfd: AsyncFileDescriptor[ReadableFile]) -> None:
+                 fromfd: AsyncFileDescriptor[ReadableFile],
+                 # this is the rsyscall-side infd number
+                 infd: int,
+    ) -> None:
         self.tofd = tofd
         self.fromfd = fromfd
+        self.infd = infd
+        self.request_lock = trio.Lock()
+        self.response_fifo_lock = trio.StrictFIFOLock()
 
     async def close(self) -> None:
         await self.tofd.aclose()
         await self.fromfd.aclose()
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        # TODO we need to match up requests to responses so this method can be called concurrently
-        # so essentially we need to keep track of the order that the reads are performed...
-        # hmm wait a second, asyncfd doesn't even support being concurrently called, ha ha
-        # so when we enter syscall(),
-        # we submit a request to somewhere,
-        # which performs a write and then begins waitin' on a queue
-        # the writes are how we serialize it I guess
-        # maybe we should batch reads
-        # nah
-        # so we submit a request and then we wait for a response
-        # that's, really, that's really just,
-        # y'know, run an object in our space, kinda thing, but with a lock?
-        # except, no, we don't, we don't want it completely locked
-        # so we can have a queue ummm
-        # we want to preserve the order...
-        # what if we j ust have like...
-        # man, man, it would be,y'know,
-        # so easy if, we'know, we could just, like
-        # pile up the continuations and order 'em in a list and then read and pop 'em off
-        # okay so it's pretty easy to just have like,
-        # a big ole,
-        # thingy thing,
-        # one trio.Event per request, amirite
-        # well we need a lock on it too ofc
-        # it's kinda like an HTTP connection y'know
-        # we lock 
-        async with lock:
+        request = ffi.new('struct rsyscall_syscall*',
+                          (number,
+                           (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
+                            ffi.cast('long', arg4), ffi.cast('long', arg5), ffi.cast('long', arg6))))
+        async with self.request_lock:
             try:
                 await self.tofd.write(bytes(ffi.buffer(request)))
             except OSError as e:
                 # we raise a different exception so that users can distinguish syscall errors from
                 # transport errors
                 raise RsyscallException() from e
-            fut = Future()
-            self.pending.append(fut)
-        while True:
-            if not is_runner:
-                while not my_fut.complete():
-                    # as a side effect, this completes other futures and wakes them up
-                    await do_stuff()
-                is_runner = False
-                if len(self.pending) > 0:
-                    self.pending.wakeup()
-            else:
-                while not my_fut.complete():
-                    if not is_runner:
-                        is_runner = True
-                        # this should remove my_fut from pending when it completes it
-                        await do_stuff()
-                        # man let's just build a continuation API? on top of Event?
-                        is_runner = False
-                    else:
-                        await my_fut
-                if not is_runner and len(self.pending) > 0:
-                    self.pending[0].wakeup()
-
-
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        request = ffi.new('struct rsyscall_syscall*',
-                          (number,
-                           (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
-                            ffi.cast('long', arg4), ffi.cast('long', arg5), ffi.cast('long', arg6))))
-        try:
-            await self.tofd.write(bytes(ffi.buffer(request)))
-            response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
-        except OSError as e:
-            # we raise a different exception so that users can distinguish syscall errors from
-            # transport errors
-            raise RsyscallException() from e
-        # raise exception on hangup I guess?
-        # and catch it in specific syscalls?
-        # or, how else will I handle the fact that,
-        # exit and exec don't expect a response?
-        # or, rather, they expect a hup or a response
-        # an optional response
+        async with self.response_fifo_lock:
+            try:
+                response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
+            except OSError as e:
+                raise RsyscallException() from e
         if len(response_bytes) == 0:
+            # we catch this in the implementations of exec and exit
             raise RsyscallHangup()
         response, = struct.unpack('q', response_bytes)
         return response
+
+    async def wait_readable(self, fd: int) -> None:
+        # TODO this could really actually be a separate object
+        pollfds = ffi.new('struct pollfd[3]',
+                          # passing two means we can figure out which one tripped from just the
+                          # return value!
+                          [(fd, lib.POLLIN, 0), (fd, lib.POLLIN, 0),
+                           (self.infd, lib.POLLIN, 0)])
+        while True:
+            for _ in range(5):
+                # take response lock to make sure no-one else is actively sending requests
+                async with self.response_fifo_lock:
+                    # yield, let others run
+                    await trio.sleep(0)
+            logger.debug("poll(%s, %s, %s)", pollfds, 3, -1)
+            ret = await self.syscall(lib.SYS_poll, pollfds, 3, -1)
+            if ret < 0:
+                err = -ret
+                raise OSError(err, os.strerror(err))
+            if ret == 2:
+                # the user fd had an event, return
+                return
+            # our fd or no fd had an event. repeat!
 
     async def __aenter__(self) -> 'RsyscallConnection':
         return self
@@ -2302,7 +2233,7 @@ class RsyscallSpawner:
 
         async_tofd = await AsyncFileDescriptor.make(self.epoller, pipe_in.wfd)
         async_fromfd = await AsyncFileDescriptor.make(self.epoller, pipe_out.rfd)
-        rsyscall_connection = RsyscallConnection(async_tofd, async_fromfd)
+        rsyscall_connection = RsyscallConnection(async_tofd, async_fromfd, pipe_in.rfd.number)
 
         # OK this wait_readable is SUPER WRONG!
         # we need to maybe get it from the rsyscall_connection?
@@ -2314,18 +2245,17 @@ class RsyscallSpawner:
         # nah let's just do the simple select-based thing
         # so we need pipelining and a monitor
         # pipelining first
-        new_task = Task(LocalSyscall(trio.hazmat.wait_readable, rsyscall_connection.syscall),
-                        FDNamespace(), self.task.memory, self.task.mount, self.task.fs)
+        new_task = Task(LocalSyscall(rsyscall_connection.wait_readable, rsyscall_connection.syscall),
+                        FDNamespace(), self.task.memory, self.task.mount, self.task.fs,
+                        self.task.sigmask.inherit())
+        # clear the signal mask because it's pointlessly inherited across fork
+        await new_task.sigmask.setmask(new_task, set())
 
-        inherited_fd_numbers: t.Set[int] = set()
+        inherited_fd_numbers: t.Set[int] = {pipe_in.rfd.number, pipe_out.wfd.number}
         def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
             inherited_fd_numbers.add(fd.number)
             return FileDescriptor(fd.file, new_task, new_task.fd_namespace, fd.number)
-
-        # pass a few file descriptors down to the new task
-        translate(pipe_in.rfd)
         await pipe_in.rfd.aclose()
-        translate(pipe_out.wfd)
         await pipe_out.wfd.aclose()
         inherited_user_fds = [translate(fd) for fd in user_fds]
 
