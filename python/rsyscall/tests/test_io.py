@@ -1,6 +1,6 @@
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.io import gather_local_bootstrap, wrap_stdin_out_err
-from rsyscall.io import Epoller, allocate_epoll, AsyncFileDescriptor
+from rsyscall.io import Epoller, AsyncFileDescriptor
 from rsyscall.epoll import EpollEvent, EpollEventMask
 import socket
 import struct
@@ -27,7 +27,7 @@ class TestIO(unittest.TestCase):
 
     def test_pipe(self):
         async def test() -> None:
-            async with (await rsyscall.io.allocate_pipe(self.task)) as pipe:
+            async with (await self.task.pipe()) as pipe:
                 in_data = b"hello"
                 await pipe.wfd.write(in_data)
                 out_data = await pipe.rfd.read(len(in_data))
@@ -37,8 +37,8 @@ class TestIO(unittest.TestCase):
     def test_cat(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-                async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
-                    async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
+                async with (await self.task.pipe()) as pipe_in:
+                    async with (await self.task.pipe()) as pipe_out:
                         rsyscall_task, (stdin, stdout, new_stdin, new_stdout) = await stdtask.spawn(
                             [self.stdin, self.stdout, pipe_in.rfd, pipe_out.wfd])
                         async with rsyscall_task:
@@ -54,8 +54,8 @@ class TestIO(unittest.TestCase):
     def test_cat_async(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-                async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_in:
-                    async with (await rsyscall.io.allocate_pipe(self.task)) as pipe_out:
+                async with (await self.task.pipe()) as pipe_in:
+                    async with (await self.task.pipe()) as pipe_out:
                         rsyscall_task, (stdin, stdout, new_stdin, new_stdout) = await stdtask.spawn(
                             [self.stdin, self.stdout, pipe_in.rfd, pipe_out.wfd])
                         async with rsyscall_task:
@@ -71,7 +71,7 @@ class TestIO(unittest.TestCase):
         trio.run(test)
 
     async def do_epoll_things(self, epoller) -> None:
-        async with (await rsyscall.io.allocate_pipe(self.task)) as pipe:
+        async with (await self.task.pipe()) as pipe:
             pipe_rfd_wrapped = await epoller.add(pipe.rfd, EpollEventMask.make(in_=True))
             async def stuff():
                 events = await pipe_rfd_wrapped.wait()
@@ -84,14 +84,14 @@ class TestIO(unittest.TestCase):
 
     def test_epoll(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+            async with (await self.task.epoll_create()) as epoll:
                 epoller = Epoller(epoll)
                 await self.do_epoll_things(epoller)
         trio.run(test)
 
     def test_epoll_multi(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+            async with (await self.task.epoll_create()) as epoll:
                 epoller = Epoller(epoll)
                 async with trio.open_nursery() as nursery:
                     for i in range(5):
@@ -100,13 +100,13 @@ class TestIO(unittest.TestCase):
 
     def test_epoll_read(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+            async with (await self.task.epoll_create()) as epoll:
                 with self.assertRaises(OSError):
                     await self.task.syscall.read(epoll.number, 4096)
         trio.run(test)
 
     async def do_async_things(self, epoller, task: rsyscall.io.Task) -> None:
-        async with (await rsyscall.io.allocate_pipe(task)) as pipe:
+        async with (await task.pipe()) as pipe:
             async_pipe_rfd = await AsyncFileDescriptor.make(epoller, pipe.rfd)
             async_pipe_wfd = await AsyncFileDescriptor.make(epoller, pipe.wfd)
             data = b"hello world"
@@ -120,14 +120,14 @@ class TestIO(unittest.TestCase):
 
     def test_async(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+            async with (await self.task.epoll_create()) as epoll:
                 epoller = Epoller(epoll)
                 await self.do_async_things(epoller, self.task)
         trio.run(test)
 
     def test_async_multi(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.allocate_epoll(self.task)) as epoll:
+            async with (await self.task.epoll_create()) as epoll:
                 epoller = Epoller(epoll)
                 async with trio.open_nursery() as nursery:
                     for i in range(5):
@@ -168,7 +168,7 @@ class TestIO(unittest.TestCase):
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
                 async with (await stdtask.mkdtemp()) as path:
-                    async with (await rsyscall.io.allocate_unix_socket(stdtask.task, socket.SOCK_STREAM)) as sockfd:
+                    async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
                         addr = (path/"sock").unix_address(stdtask.task)
                         await sockfd.bind(addr)
         trio.run(test)
@@ -177,11 +177,11 @@ class TestIO(unittest.TestCase):
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
                 async with (await stdtask.mkdtemp()) as path:
-                    async with (await rsyscall.io.allocate_unix_socket(stdtask.task, socket.SOCK_STREAM)) as sockfd:
+                    async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
                         addr = (path/"sock").unix_address(stdtask.task)
                         await sockfd.bind(addr)
                         await sockfd.listen(10)
-                        async with (await rsyscall.io.allocate_unix_socket(stdtask.task, socket.SOCK_STREAM)) as clientfd:
+                        async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as clientfd:
                             await clientfd.connect(addr)
                             connfd, client_addr = await sockfd.accept(0) # type: ignore
                             async with connfd:
@@ -192,12 +192,12 @@ class TestIO(unittest.TestCase):
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
                 async with (await stdtask.mkdtemp()) as path:
-                    async with (await rsyscall.io.allocate_unix_socket(stdtask.task, socket.SOCK_STREAM)) as sockfd:
+                    async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
                         addr = (path/"sock").unix_address(stdtask.task)
                         await sockfd.bind(addr)
                         await sockfd.listen(10)
                         async with (await AsyncFileDescriptor.make(stdtask.resources.epoller, sockfd)) as async_sockfd:
-                            clientfd = await rsyscall.io.allocate_unix_socket(stdtask.task, socket.SOCK_STREAM)
+                            clientfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
                             async_clientfd = await AsyncFileDescriptor.make(stdtask.resources.epoller, clientfd)
                             async with async_clientfd:
                                 # doop doop doop hmm
@@ -235,70 +235,25 @@ class TestIO(unittest.TestCase):
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
                 rsyscall_task, _ = await stdtask.spawn([])
-                async with rsyscall_task:
-                    await rsyscall_task.exit(0)
+                async with rsyscall_task as stdtask2:
+                    await stdtask2.exit(0)
         trio.run(test)
 
     def test_thread_epoll(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
                 rsyscall_task, _ = await stdtask.spawn([])
-                async with rsyscall_task:
-                    async with (await rsyscall.io.allocate_epoll(rsyscall_task.task)) as epoll:
-                        epoller2 = Epoller(epoll)
-                        await self.do_async_things(epoller2, rsyscall_task.task)
+                async with rsyscall_task as stdtask2:
+                        await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
         trio.run(test)
 
     def test_thread_nest(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
                 rsyscall_task, _ = await stdtask.spawn([])
-                async with rsyscall_task:
-                    # TODO figure out how to inherit this properly
-                    # only then can I set env variables
-                    # I should maybe store env variables in StdTask?
-                    # then use StdTask for exec?
-                    # clearly I need to use stdtask for exec, yes
-                    # and have spawn return another stdtask I guess
-                    # though then I need to resolve the rsyscall task resources problem...
-                    # I can go with closing a task
-                    # and that closes the SI
-                    # which closes the RscConn
-                    # which somehow affects the CThread?!??!??!
-                    # oh, but we clearly need to also have the CThread when we exec,
-                    # so we can extract the Child from it.
-                    # so we can combine the task and rsyscallconnection,
-                    # and just close the task.
-                    # but we still need to handle the thread
-                    # how about returning a StandardTask, CThread, and list of file descriptors?
-                    # and then have a method on StandardTask which does an exec given a CThread...?
-                    # maybe I can just externalize that to the user, and be able to exec regardless
-                    # the user then does wait_for_mm_release...
-                    # I'll have a wrapper function that takes a StandardTask and CThread and does it, I guess.
-                    # nah I will have a method on standardtask which does the exec given a CThread
-                    # then a method on Task which does the exec even without a CThread
-                    # first step: support closing the SI.
-                    # done.
-                    # next step: method on StandardTask which does exec given a CThread
-                    # wait, wait, wait, let's be careful here
-                    # we don't want to... have excessive... classes...
-                    # that is to say, we need to close both the cthread and the task with a contextmanager
-                    # and furthermore the translated FDs too!
-                    # okay so the FDs we can kind of ignore since they will be closed with the thread/fd table dying
-                    # but we do have to close both the cthread and the task
-                    # what if we separately allocate the stack resource...
-                    # and passed it in?
-                    # ugh, would be nice to have some GC thing, since I really am just messing with memory...
-                    stdtask2 = rsyscall.io.StandardTask(
-                        rsyscall_task.task,
-                        await rsyscall.io.TaskResources.make(rsyscall_task.task),
-                        stdtask.process, stdtask.filesystem)
+                async with rsyscall_task as stdtask2:
                     rsyscall_task3, _ = await stdtask2.spawn([])
-                    async with rsyscall_task3:
-                        stdtask3 = rsyscall.io.StandardTask(
-                            rsyscall_task3.task,
-                            await rsyscall.io.TaskResources.make(rsyscall_task3.task),
-                            stdtask.process, stdtask.filesystem)
+                    async with rsyscall_task3 as stdtask3:
                         await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
         trio.run(test)
 
@@ -318,12 +273,18 @@ class TestIO(unittest.TestCase):
                     pass
         trio.run(test)
 
-    def test_do_cloexec(self) -> None:
-        pipe = trio.run(rsyscall.io.allocate_pipe, self.task)
-        lib.rsyscall_do_cloexec()
-        with self.assertRaises(OSError):
-            # it was closed due to being cloexec
-            trio.run(pipe.wfd.write, b"foo")
+    def test_do_cloexec_except(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                rsyscall_task, _ = await stdtask.spawn([])
+                async with rsyscall_task as stdtask2:
+                    pipe = await stdtask2.task.pipe()
+                    fds = [stdtask2.task.syscall.infd, stdtask2.task.syscall.outfd] # type: ignore
+                    await rsyscall.io.do_cloexec_except(stdtask2.task, fds)
+                    with self.assertRaises(OSError):
+                        # it was closed due to being cloexec
+                        await pipe.wfd.write(b"foo")
+        trio.run(test)
 
 if __name__ == '__main__':
     import unittest

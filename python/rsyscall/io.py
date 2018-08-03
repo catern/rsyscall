@@ -18,7 +18,6 @@ import struct
 import array
 import trio
 import signal
-import sfork
 from async_generator import asynccontextmanager
 from dataclasses import dataclass
 import logging
@@ -119,6 +118,12 @@ class UnshareFlag(enum.IntFlag):
     NEWUSER = lib.CLONE_NEWUSER
     NEWUTS = lib.CLONE_NEWUTS
     SYSVSEM = lib.CLONE_SYSVSEM
+
+class ProtFlag(enum.IntFlag):
+    EXEC = lib.PROT_EXEC
+    READ = lib.PROT_READ
+    WRITE = lib.PROT_WRITE
+    NONE = lib.PROT_NONE
 
 class SyscallInterface:
     # non-syscall operations
@@ -353,7 +358,7 @@ class LocalSyscall(SyscallInterface):
     async def prctl_set_child_subreaper(self, flag: bool) -> None:
         logger.debug("prctl_set_child_subreaper(%s)", flag)
         # TODO also this guy
-        prctl.set_child_subreaper(flag)
+        raise NotImplementedError
 
     async def faccessat(self, dirfd: int, pathname: bytes, mode: int, flags: int) -> None:
         logger.debug("faccessat(%s, %s, %s)", dirfd, pathname, mode)
@@ -601,19 +606,27 @@ class Task:
         # we want this to return something that we can use to chdir
         raise NotImplementedError
 
-class ProcessContext:
-    """A Linux process with associated resources.
+    async def pipe(self, flags=os.O_CLOEXEC) -> 'Pipe':
+        r, w = await self.syscall.pipe(flags)
+        return Pipe(FileDescriptor(ReadableFile(shared=False), self, self.fd_namespace, r),
+                    FileDescriptor(WritableFile(shared=False), self, self.fd_namespace, w))
 
-    Resources chiefly include memory and file descriptors. Maybe other
-    things at some point.
+    async def epoll_create(self, flags=lib.EPOLL_CLOEXEC) -> 'FileDescriptor[EpollFile]':
+        epfd = await self.syscall.epoll_create(flags)
+        return FileDescriptor(EpollFile(), self, self.fd_namespace, epfd)
 
-    Eventually, when we support pipelining file descriptor creation, we'll need some
-    kind of transactional interface, or a list of "pending" fds.
+    async def socket_unix(self, type: socket.SocketKind, protocol: int=0) -> 'FileDescriptor[UnixSocketFile]':
+        sockfd = await self.syscall.socket(lib.AF_UNIX, type, protocol)
+        return FileDescriptor(UnixSocketFile(), self, self.fd_namespace, sockfd)
 
-    This also contains a fixed SyscallInterface that is used to access this process.
-    """
-    def __init__(self, syscall_interface: SyscallInterface) -> None:
-        self.syscall = syscall_interface
+    async def signalfd_create(self, mask: t.Set[signal.Signals]) -> 'FileDescriptor[SignalFile]':
+        sigfd_num = await self.syscall.signalfd(-1, mask, lib.SFD_CLOEXEC)
+        return FileDescriptor(SignalFile(mask), self, self.fd_namespace, sigfd_num)
+
+    async def mmap(self, length: int, prot: ProtFlag, flags: int) -> 'MemoryMapping':
+        # currently doesn't support specifying an address, nor specifying a file descriptor
+        ret = await self.syscall.mmap(0, length, prot, flags|lib.MAP_ANONYMOUS, -1, 0)
+        return MemoryMapping(self, ret, length)
 
 T = t.TypeVar('T')
 class File:
@@ -902,10 +915,6 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def wait_readable(self) -> None:
         return (await self.syscall.wait_readable(self.number))
 
-async def allocate_unix_socket(task: Task, type: socket.SocketKind, protocol: int=0) -> FileDescriptor[UnixSocketFile]:
-    sockfd = await task.syscall.socket(lib.AF_UNIX, type, protocol)
-    return FileDescriptor(UnixSocketFile(), task, task.fd_namespace, sockfd)
-
 class EpollFile(File):
     async def add(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: EpollEvent) -> None:
         await epfd.syscall.epoll_ctl_add(epfd.number, fd.number, event)
@@ -918,10 +927,6 @@ class EpollFile(File):
 
     async def wait(self, epfd: FileDescriptor['EpollFile'], maxevents: int=10, timeout: int=-1) -> t.List[EpollEvent]:
         return (await epfd.syscall.epoll_wait(epfd.number, maxevents, timeout))
-
-async def allocate_epoll(task: Task) -> FileDescriptor[EpollFile]:
-    epfd = await task.syscall.epoll_create(EPOLL_CLOEXEC)
-    return FileDescriptor(EpollFile(), task, task.fd_namespace, epfd)
 
 class EpolledFileDescriptor(t.Generic[T_file_co]):
     epoller: 'Epoller'
@@ -1185,14 +1190,6 @@ class Stack:
         await memory.write(data)
         return memory
 
-async def allocate_memory(task: Task, size: int=4096) -> MemoryMapping:
-    size = 4096
-    # it seems like MAP_GROWSDOWN does nothing, otherwise I would be using it...
-    ret = await task.syscall.mmap(0, size, lib.PROT_READ|lib.PROT_WRITE,
-                                  lib.MAP_PRIVATE|lib.MAP_ANONYMOUS,
-                                  -1, 0)
-    return MemoryMapping(task, ret, size)
-
 class PathBase:
     """These are possible bases for Paths.
 
@@ -1236,7 +1233,7 @@ class RootPathBase(PathBase):
         self._task = task
     @property
     def dirfd_num(self) -> int:
-        return sfork.AT_FDCWD
+        return lib.AT_FDCWD
     @property
     def path_prefix(self) -> bytes:
         return b"/"
@@ -1252,7 +1249,7 @@ class CurrentWorkingDirectoryPathBase(PathBase):
         self._task = task
     @property
     def dirfd_num(self) -> int:
-        return sfork.AT_FDCWD
+        return lib.AT_FDCWD
     @property
     def path_prefix(self) -> bytes:
         return b""
@@ -1268,7 +1265,7 @@ class Path:
     path: bytes
     def __init__(self, base: PathBase, path: t.Union[str, bytes]) -> None:
         self.base = base
-        self.path = sfork.to_bytes(path)
+        self.path = os.fsencode(path)
         if len(self.path) == 0:
             # readlink, and possibly other syscalls, behave differently when given an empty path and a dirfd
             # in general an empty path is probably not good
@@ -1408,7 +1405,7 @@ class Path:
         return UnixAddress(self._proc_path)
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
-        element: bytes = sfork.to_bytes(path_element)
+        element: bytes = os.fsencode(path_element)
         if b"/" in element:
             raise Exception("no / allowed in path elements, do it one by one")
         if self.path == b'.':
@@ -1491,7 +1488,7 @@ class ExecutableLookupCache:
         return None
 
     async def lookup(self, name: t.Union[str, bytes]) -> Path:
-        basename: bytes = sfork.to_bytes(name)
+        basename: bytes = os.fsencode(name)
         if basename in self.cache:
             return self.cache[basename]
         else:
@@ -1522,7 +1519,7 @@ async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
     Returns the passed-in Path so this serves as a nice pseudo-constructor.
 
     """
-    data = sfork.to_bytes(text)
+    data = os.fsencode(text)
     async with (await path.creat()) as fd:
         while len(data) > 0:
             ret = await fd.write(data)
@@ -1540,7 +1537,7 @@ class TaskResources:
     @staticmethod
     async def make(task: Task) -> 'TaskResources':
         # TODO handle deallocating if later steps fail
-        epoller = Epoller(await allocate_epoll(task))
+        epoller = Epoller(await task.epoll_create())
         child_monitor = await ChildTaskMonitor.make(task, epoller)
         return TaskResources(epoller, child_monitor)
 
@@ -1615,11 +1612,13 @@ class StandardTask:
                  task_resources: TaskResources,
                  process_resources: ProcessResources,
                  filesystem_resources: FilesystemResources,
+                 environment: t.Dict[bytes, bytes],
     ) -> None:
         self.task = task
         self.resources = task_resources
         self.process = process_resources
         self.filesystem = filesystem_resources
+        self.environment = environment
 
     @staticmethod
     async def make_from_bootstrap(bootstrap: UnixBootstrap) -> 'StandardTask':
@@ -1628,7 +1627,8 @@ class StandardTask:
         # TODO fix this to... pull it from the bootstrap or something...
         process_resources = ProcessResources.make_from_local(task)
         filesystem_resources = await FilesystemResources.make_from_bootstrap(task, bootstrap)
-        return StandardTask(task, task_resources, process_resources, filesystem_resources)            
+        return StandardTask(task, task_resources, process_resources, filesystem_resources,
+                            {**bootstrap.environ})
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
         parent = self.filesystem.tmpdir
@@ -1642,13 +1642,31 @@ class StandardTask:
                     shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple['RsyscallTask', t.List[FileDescriptor]]:
         thread_maker = ThreadMaker(self.resources.child_monitor)
-        rsyscall_spawner = RsyscallSpawner(self.task, thread_maker, self.resources.epoller)
-        task, cthread, fds = await rsyscall_spawner.spawn(user_fds, shared)
+        task, cthread, fds = await rsyscall_spawn(
+            self.task, thread_maker, self.resources.epoller, self.process.server_func,
+            user_fds, shared)
         # TODO maybe need to think some more about how this resource inheriting works
         # for that matter, could I inherit the epollfd and signalfd across tasks?
         stdtask = StandardTask(task, await TaskResources.make(task),
-                               self.process, self.filesystem)
+                               self.process, self.filesystem, {**self.environment})
         return RsyscallTask(stdtask, cthread), fds
+
+    async def execve(self, path: Path, argv: t.List[t.Union[str, bytes]],
+                     env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes]]={},
+    ) -> None:
+        path.assert_okay_for_task(self.task)
+        envp = {**self.environment}
+        for key in env_updates:
+            envp[os.fsencode(key)] = os.fsencode(env_updates[key])
+        raw_envp: t.List[bytes] = []
+        for key, value in envp.items():
+            raw_envp.append(b''.join([key, b'=', value]))
+        await self.task.execveat(path.base.dirfd_num, path._full_path,
+                                 [os.fsencode(arg) for arg in argv],
+                                 raw_envp, flags=0)
+
+    async def exit(self, status) -> None:
+        await self.task.exit(0)
 
     async def close(self) -> None:
         await self.resources.close()
@@ -1712,14 +1730,17 @@ class SignalBlock:
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
-async def allocate_signalfd(task: Task, mask: t.Set[signal.Signals]) -> FileDescriptor[SignalFile]:
-    sigfd_num = await task.syscall.signalfd(-1, mask, lib.SFD_CLOEXEC)
-    return FileDescriptor(SignalFile(mask), task, task.fd_namespace, sigfd_num)
-
 class SignalQueue:
     def __init__(self, signal_block: SignalBlock, sigfd: AsyncFileDescriptor[SignalFile]) -> None:
         self.signal_block = signal_block
         self.sigfd = sigfd
+
+    @classmethod
+    async def make(cls, task: Task, epoller: Epoller, mask: t.Set[signal.Signals]) -> 'SignalQueue':
+        signal_block = await SignalBlock.make(task, mask)
+        sigfd = await task.signalfd_create(mask)
+        async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd)
+        return cls(signal_block, async_sigfd)
 
     async def read(self) -> None:
         data = await self.sigfd.read()
@@ -1735,12 +1756,6 @@ class SignalQueue:
 
     async def __aexit__(self, *args, **kwargs):
         await self.close()
-
-async def allocate_signalqueue(task: Task, epoller: Epoller, mask: t.Set[signal.Signals]) -> SignalQueue:
-    signal_block = await SignalBlock.make(task, mask)
-    sigfd = await allocate_signalfd(task, mask)
-    async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd)
-    return SignalQueue(signal_block, async_sigfd)
 
 class MultiplexerQueue:
     # TODO
@@ -1840,7 +1855,7 @@ class ChildTask:
 class ChildTaskMonitor:
     @staticmethod
     async def make(task: Task, epoller: Epoller) -> 'ChildTaskMonitor':
-        signal_queue = await allocate_signalqueue(task, epoller, {signal.SIGCHLD})
+        signal_queue = await SignalQueue.make(task, epoller, {signal.SIGCHLD})
         return ChildTaskMonitor(signal_queue)
 
     def __init__(self, signal_queue: SignalQueue) -> None:
@@ -2043,7 +2058,7 @@ class ThreadMaker:
             # child, by mapping a memfd instead of using CLONE_PRIVATE 
             raise Exception("CLONE_VM is mandatory right now because I'm lazy")
         task = self.monitor.signal_queue.sigfd.epolled.underlying.task
-        mapping = await allocate_memory(task)
+        mapping = await task.mmap(4096, ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)
         stack = Stack(Pointer(mapping, mapping.address + mapping.length))
         # allocate the futex at the base of the stack, with "1" written to it to match
         # what futex_helper expects
@@ -2080,7 +2095,7 @@ class ThreadMaker:
                           function: Function, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
     ) -> CThread:
         task = self.monitor.signal_queue.sigfd.epolled.underlying.task
-        mapping = await allocate_memory(task)
+        mapping = await task.mmap(4096, ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)
         stack = Stack(Pointer(mapping, mapping.address + mapping.length))
     
         trampoline_data = build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)
@@ -2136,9 +2151,10 @@ class RsyscallConnection:
         return response
 
 class RsyscallLocalSyscall(LocalSyscall):
-    def __init__(self, rsyscall_connection: RsyscallConnection, infd: int) -> None:
+    def __init__(self, rsyscall_connection: RsyscallConnection, infd: int, outfd: int) -> None:
         self.rsyscall_connection = rsyscall_connection
         self.infd = infd
+        self.outfd = outfd
         self.request_lock = trio.Lock()
         self.response_fifo_lock = trio.StrictFIFOLock()
         super().__init__(self.__do_wait_readable, rsyscall_connection.syscall)
@@ -2182,59 +2198,55 @@ async def call_function(task: Task, stack: Stack, function: Function, arg1=0, ar
                                   status=int(struct.si_status))
     return child_event
 
-async def do_cloexec_except(task: Task, excluded_fd_numbers: t.Set[int]) -> None:
+async def do_cloexec_except(task: Task, excluded_fd_numbers: t.Iterable[int]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
     function = Function(ffi.cast('long', lib.rsyscall_do_cloexec), task.memory)
-    async with (await allocate_memory(task)) as mapping:
+    async with (await task.mmap(4096, ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)) as mapping:
         stack = Stack(Pointer(mapping, mapping.address + mapping.length))
-        fd_array = await stack.push(array.array('i', excluded_fd_numbers).tobytes())
-        child_event = await call_function(task, stack, function, fd_array.address, len(excluded_fd_numbers))
+        local_array = array.array('i', excluded_fd_numbers)
+        fd_array = await stack.push(local_array.tobytes())
+        child_event = await call_function(task, stack, function, fd_array.address, len(local_array))
         if not child_event.clean():
             raise Exception("cloexec function child died!", child_event)
 
-class RsyscallSpawner:
-    def __init__(self, task: Task, thread_maker: ThreadMaker, epoller: Epoller) -> None:
-        self.task = task
-        self.thread_maker = thread_maker
-        self.epoller = epoller
-        self.function = Function(ffi.cast('long', lib.rsyscall_server), task.memory)
-
-    async def spawn(self, user_fds: t.List[FileDescriptor],
-                    shared: UnshareFlag=UnshareFlag.FS,
+async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: Function,
+                         user_fds: t.List[FileDescriptor],
+                         shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple[Task, CThread, t.List[FileDescriptor]]:
-        for fd in user_fds:
-            if fd.fd_namespace is not self.task.fd_namespace:
-                raise Exception("can only translate file descriptors from my fd namespace")
-        pipe_in = await allocate_pipe(self.task)
-        pipe_out = await allocate_pipe(self.task)
-        # new fd namespace is created here
-        cthread = await self.thread_maker.make_cthread(
-            lib.CLONE_VM|shared, self.function, pipe_in.rfd.number, pipe_out.wfd.number)
+    "Spawn an rsyscall server running in a child task"
+    for fd in user_fds:
+        if fd.fd_namespace is not task.fd_namespace:
+            raise Exception("can only translate file descriptors from my fd namespace")
+    pipe_in = await task.pipe()
+    pipe_out = await task.pipe()
+    # new fd namespace is created here
+    cthread = await thread_maker.make_cthread(
+        lib.CLONE_VM|shared, function, pipe_in.rfd.number, pipe_out.wfd.number)
 
-        async_tofd = await AsyncFileDescriptor.make(self.epoller, pipe_in.wfd)
-        async_fromfd = await AsyncFileDescriptor.make(self.epoller, pipe_out.rfd)
-        syscall = RsyscallLocalSyscall(RsyscallConnection(async_tofd, async_fromfd), pipe_in.rfd.number)
+    async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
+    async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
+    syscall = RsyscallLocalSyscall(RsyscallConnection(async_tofd, async_fromfd),
+                                   pipe_in.rfd.number, pipe_out.wfd.number)
 
-        new_task = Task(syscall,
-                        FDNamespace(), self.task.memory, self.task.mount, self.task.fs,
-                        self.task.sigmask.inherit())
-        if len(new_task.sigmask.mask) != 0:
-            # clear this non-empty signal mask because it's pointlessly inherited across fork
-            await new_task.sigmask.setmask(new_task, set())
+    new_task = Task(syscall,
+                    FDNamespace(), task.memory, task.mount, task.fs,
+                    task.sigmask.inherit())
+    if len(new_task.sigmask.mask) != 0:
+        # clear this non-empty signal mask because it's pointlessly inherited across fork
+        await new_task.sigmask.setmask(new_task, set())
 
-        inherited_fd_numbers: t.Set[int] = {pipe_in.rfd.number, pipe_out.wfd.number}
-        await pipe_in.rfd.aclose()
-        await pipe_out.wfd.aclose()
+    inherited_fd_numbers: t.Set[int] = {pipe_in.rfd.number, pipe_out.wfd.number}
+    await pipe_in.rfd.aclose()
+    await pipe_out.wfd.aclose()
 
-        def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
-            inherited_fd_numbers.add(fd.number)
-            return FileDescriptor(fd.file, new_task, new_task.fd_namespace, fd.number)
-        inherited_user_fds = [translate(fd) for fd in user_fds]
+    def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
+        inherited_fd_numbers.add(fd.number)
+        return FileDescriptor(fd.file, new_task, new_task.fd_namespace, fd.number)
+    inherited_user_fds = [translate(fd) for fd in user_fds]
 
-        # close everything that's cloexec and not explicitly passed down
-        await do_cloexec_except(new_task, inherited_fd_numbers)
-        return new_task, cthread, inherited_user_fds
-
+    # close everything that's cloexec and not explicitly passed down
+    await do_cloexec_except(new_task, inherited_fd_numbers)
+    return new_task, cthread, inherited_user_fds
 
 class RsyscallTask:
     def __init__(self,
@@ -2244,32 +2256,19 @@ class RsyscallTask:
         self.stdtask = stdtask
         self.thread = thread
 
-    async def execveat(self, dirfd: int, path: bytes,
-                       argv: t.List[bytes], envp: t.List[bytes],
-                       flags: int) -> ChildTask:
-        await self.stdtask.task.execveat(dirfd, path, argv, envp, flags)
+    async def execve(self, path: Path, argv: t.List[t.Union[str, bytes]],
+                     envp: t.Mapping[t.Union[str, bytes], t.Union[str, bytes]]={},
+    ) -> ChildTask:
+        await self.stdtask.execve(path, argv, envp)
         # we return the still-running ChildTask that was inside this RsyscallTask
         return (await self.thread.wait_for_mm_release())
-
-    async def execve(self, path: Path, argv: t.List[t.Union[str, bytes]], *, envp: t.Optional[t.Mapping[str, str]]=None) -> ChildTask:
-        path.assert_okay_for_task(self.stdtask.task)
-        if envp is None:
-            # TODO os.environ should actually be pulled from, er... somewhere
-            envp = dict(**os.environ)
-        return (await self.execveat(
-            path.base.dirfd_num, path._full_path,
-            [sfork.to_bytes(arg) for arg in argv],
-            sfork.serialize_environ(**envp), flags=0))
-
-    async def exit(self, status) -> None:
-        await self.stdtask.task.exit(0)
 
     async def close(self) -> None:
         await self.thread.close()
         await self.stdtask.task.close()
 
-    async def __aenter__(self) -> 'RsyscallTask':
-        return self
+    async def __aenter__(self) -> StandardTask:
+        return self.stdtask
 
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
@@ -2289,8 +2288,3 @@ class Pipe:
 
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
-
-async def allocate_pipe(task: Task) -> Pipe:
-    r, w = await task.syscall.pipe()
-    return Pipe(FileDescriptor(ReadableFile(shared=False), task, task.fd_namespace, r),
-                FileDescriptor(WritableFile(shared=False), task, task.fd_namespace, w))
