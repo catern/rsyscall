@@ -464,6 +464,20 @@ class LocalSyscall(SyscallInterface):
         fd = await self.syscall(lib.SYS_accept4, sockfd, buf, lenbuf, flags)
         return fd, bytes(ffi.buffer(buf, lenbuf[0]))
 
+    async def getsockname(self, sockfd: int, addrlen: int) -> bytes:
+        logger.debug("getsockname(%s, %s)", sockfd, addrlen)
+        buf = ffi.new('char[]', addrlen)
+        lenbuf = ffi.new('size_t*', addrlen)
+        await self.syscall(lib.SYS_getsockname, sockfd, buf, lenbuf)
+        return bytes(ffi.buffer(buf, lenbuf[0]))
+
+    async def getpeername(self, sockfd: int, addrlen: int) -> bytes:
+        logger.debug("getpeername(%s, %s)", sockfd, addrlen)
+        buf = ffi.new('char[]', addrlen)
+        lenbuf = ffi.new('size_t*', addrlen)
+        await self.syscall(lib.SYS_getpeername, sockfd, buf, lenbuf)
+        return bytes(ffi.buffer(buf, lenbuf[0]))
+
     async def socket(self, domain: int, type: int, protocol: int) -> int:
         logger.debug("socket(%s, %s, %s)", domain, type, protocol)
         return (await self.syscall(lib.SYS_socket, domain, type, protocol))
@@ -619,6 +633,10 @@ class Task:
         sockfd = await self.syscall.socket(lib.AF_UNIX, type, protocol)
         return FileDescriptor(UnixSocketFile(), self, self.fd_namespace, sockfd)
 
+    async def socket_inet(self, type: socket.SocketKind, protocol: int=0) -> 'FileDescriptor[InetSocketFile]':
+        sockfd = await self.syscall.socket(lib.AF_INET, type, protocol)
+        return FileDescriptor(InetSocketFile(), self, self.fd_namespace, sockfd)
+
     async def signalfd_create(self, mask: t.Set[signal.Signals]) -> 'FileDescriptor[SignalFile]':
         sigfd_num = await self.syscall.signalfd(-1, mask, lib.SFD_CLOEXEC)
         return FileDescriptor(SignalFile(mask), self, self.fd_namespace, sigfd_num)
@@ -730,28 +748,21 @@ class UnixAddress(Address):
     def __str__(self) -> str:
         return f"UnixAddress({self.path})"
 
-class IPv4Address(Address):
+class InetAddress(Address):
     addrlen: int = ffi.sizeof('struct sockaddr_in')
-    port: int
-    addr: bytes
-    def __init__(self, port: int, addr: bytes) -> None:
+    def __init__(self, port: int, addr: int) -> None:
         self.port = port
         self.addr = addr
 
-    T = t.TypeVar('T', bound='IPv4Address')
+    T = t.TypeVar('T', bound='InetAddress')
     @classmethod
     def parse(cls: t.Type[T], data: bytes) -> T:
-        buf = ffi.from_buffer(data)
-        struct = ffi.cast('struct sockaddr_in*', buf)
-        raise NotImplementedError
-        # TODO need to swap byte order
-        return cls(struct.sin_port, bytes(ffi.buffer(struct.sin_addr)))
+        # _, port, addr = struct.unpack(">HH4s")
+        _, port, addr = struct.unpack(">HHI8x", data)
+        return cls(port, addr)
 
     def to_bytes(self) -> bytes:
-        raise NotImplementedError
-        # TODO need to swap byte order
-        addr = ffi.new('struct sockaddr_in*', (lib.AF_INET, self.port))
-        return bytes(ffi.buffer(addr))
+        return struct.pack("H", lib.AF_INET) + struct.pack(">HI8x", self.port, self.addr)
 
 class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     address_type: t.Type[T_addr]
@@ -789,8 +800,8 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
 class UnixSocketFile(SocketFile[UnixAddress]):
     address_type = UnixAddress
 
-class IPv4SocketFile(SocketFile[IPv4Address]):
-    address_type = IPv4Address
+class InetSocketFile(SocketFile[InetAddress]):
+    address_type = InetAddress
 
 class FileDescriptor(t.Generic[T_file_co]):
     "A file descriptor."
@@ -1092,7 +1103,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 while not self.is_writable:
                     await self._wait_once()
                 retbuf = await self.epolled.underlying.getsockopt(lib.SOL_SOCKET, lib.SO_ERROR, ffi.sizeof('int'))
-                err = ffi.cast('int*', ffi.from_buffer(retbuf))
+                err = ffi.cast('int*', ffi.from_buffer(retbuf))[0]
                 if err != 0:
                     raise OSError(err, os.strerror(err))
             else:

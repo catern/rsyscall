@@ -200,11 +200,24 @@ class TestIO(unittest.TestCase):
                             clientfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
                             async_clientfd = await AsyncFileDescriptor.make(stdtask.resources.epoller, clientfd)
                             async with async_clientfd:
-                                # doop doop doop hmm
-                                # it would be nice if, actually, we had UnixAddress be a Union[UnixAddress, Path]
-                                # all Paths are valid UnixAddresses,
-                                # but not all UnixAddresses are valid Paths
-                                # hm.
+                                await async_clientfd.connect(addr)
+                                connfd, client_addr = await async_sockfd.accept(0) # type: ignore
+                                async with connfd:
+                                    print(addr, client_addr)
+        trio.run(test)
+
+    def test_ip_listen_async(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as path:
+                    async with (await stdtask.task.socket_inet(socket.SOCK_STREAM)) as sockfd:
+                        await sockfd.bind(sockfd.file.address_type(0, 0))
+                        addr = await sockfd.getsockname()
+                        await sockfd.listen(10)
+                        async with (await AsyncFileDescriptor.make(stdtask.resources.epoller, sockfd)) as async_sockfd:
+                            clientfd = await stdtask.task.socket_inet(socket.SOCK_STREAM)
+                            async_clientfd = await AsyncFileDescriptor.make(stdtask.resources.epoller, clientfd)
+                            async with async_clientfd:
                                 await async_clientfd.connect(addr)
                                 connfd, client_addr = await async_sockfd.accept(0) # type: ignore
                                 async with connfd:

@@ -96,7 +96,6 @@ struct linux_dirent64 {
     char           d_name[]; /* Filename (null-terminated) */
 };
 
-int getdents64(unsigned int fd, struct linux_dirent64 *dirp, unsigned int count);
 // needed to determine true length of the null-terminated filenames, which are null-padded
 size_t strlen(const char *s);
 
@@ -240,6 +239,8 @@ struct pollfd {
 #define SYS_listen ...
 #define SYS_accept4 ...
 #define SYS_connect ...
+#define SYS_getsockname ...
+#define SYS_getpeername ...
 
 #define SOCK_NONBLOCK ...
 #define SOCK_CLOEXEC ...
@@ -258,12 +259,20 @@ struct sockaddr_in {
     sa_family_t    sin_family; /* address family: AF_INET */
     in_port_t      sin_port;   /* port in network byte order */
     struct in_addr sin_addr;   /* internet address */
+    ...;
 };
 
 /* Internet address. */
 struct in_addr {
     uint32_t       s_addr;     /* address in network byte order */
 };
+
+// sockopt stuff
+#define SYS_getsockopt ...
+#define SYS_setsockopt ...
+
+#define SOL_SOCKET ...
+#define SO_ERROR ...
 
 // fcntl stuff
 #define SYS_fcntl ...
@@ -290,7 +299,7 @@ void *memcpy(void *dest, const void *src, size_t n);
 void (*const rsyscall_server)(const int infd, const int outfd, const int ppid);
 void (*const rsyscall_futex_helper)(void *futex_addr);
 void (*const rsyscall_trampoline)(void);
-void (*const rsyscall_do_cloexec)(int* excluded_fds, size_t fd_count);
+void (*const rsyscall_do_cloexec)(int* excluded_fds, int fd_count);
 
 struct rsyscall_trampoline_stack {
     int64_t rdi;
