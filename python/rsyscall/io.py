@@ -4,7 +4,6 @@ import rsyscall.epoll
 from rsyscall.stat import StatxResult
 from rsyscall.stat import Dirent, DType
 import rsyscall.stat
-import supervise_api as supervise
 import random
 import string
 import abc
@@ -503,7 +502,7 @@ class LocalSyscall(SyscallInterface):
             # AF_ALG has some stupid API where to set an option to "val", it wants you to call with
             # optval=NULL and optlen=val.  so we have to contort ourselves to make that possible.
             if optlen == None:
-                raise ValueError("if optvatl is None, optlen must be passed")
+                raise ValueError("if optval is None, optlen must be passed")
             buf = ffi.NULL
             length = optlen
         else:
@@ -751,18 +750,26 @@ class UnixAddress(Address):
 class InetAddress(Address):
     addrlen: int = ffi.sizeof('struct sockaddr_in')
     def __init__(self, port: int, addr: int) -> None:
+        # these are in host byte order, of course
         self.port = port
         self.addr = addr
 
     T = t.TypeVar('T', bound='InetAddress')
     @classmethod
     def parse(cls: t.Type[T], data: bytes) -> T:
-        # _, port, addr = struct.unpack(">HH4s")
-        _, port, addr = struct.unpack(">HHI8x", data)
-        return cls(port, addr)
+        struct = ffi.cast('struct sockaddr_in*', ffi.from_buffer(data))
+        return cls(socket.ntohs(struct.sin_port), socket.ntohl(struct.sin_addr.s_addr))
 
     def to_bytes(self) -> bytes:
-        return struct.pack("H", lib.AF_INET) + struct.pack(">HI8x", self.port, self.addr)
+        addr = ffi.new('struct sockaddr_in*', (lib.AF_INET, socket.htons(self.port), (socket.htonl(self.addr),)))
+        return ffi.buffer(addr)
+
+    def addr_as_string(self) -> str:
+        "Returns the addr portion of this address in 127.0.0.1 form"
+        return socket.inet_ntoa(struct.pack("!I", self.addr))
+
+    def __str__(self) -> str:
+        return f"InetAddress({self.addr_as_string()}:{self.port})"
 
 class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     address_type: t.Type[T_addr]
@@ -862,6 +869,13 @@ class FileDescriptor(t.Generic[T_file_co]):
         # dup2 unsets cloexec on the new copy, so:
         self.file.shared = True
         return new_fd
+
+    @asynccontextmanager
+    async def as_argument(self) -> int:
+        # unset cloexec
+        yield self.number
+        # check whether the task is closed or not
+        # if the task is closed, don't bother setting cloexec back on 
 
     async def enable_cloexec(self) -> None:
         self.file.shared = True
@@ -1292,15 +1306,8 @@ class Path:
     @property
     def _full_path(self) -> bytes:
         return self.base.path_prefix + self.path
-
-    @property
-    def _raw_path(self) -> bytes:
-        if isinstance(self.base, DirfdPathBase):
-            return self.base.dirfd.file.raw_path + b"/" + self.path
-        else:
-            return self._full_path
-    @property
-    def _proc_path(self) -> bytes:
+    
+    def _as_proc_path(self) -> bytes:
         """The path, using /proc to do dirfd-relative lookups
 
         This is not too portable - there are many situations where
@@ -1312,6 +1319,15 @@ class Path:
             return b"/proc/self/fd/" + str(self.base.dirfd.number).encode() + b"/" + self.path
         else:
             return self._full_path
+
+    @asynccontextmanager
+    async def as_argument(self) -> bytes:
+        if isinstance(self.base, DirfdPathBase):
+            # we need to pass the dirfd as an argument
+            async with self.base.dirfd.as_argument():
+                yield self._as_proc_path()
+        else:
+            yield self._as_proc_path()
 
     @property
     def syscall(self) -> SyscallInterface:
@@ -1346,7 +1362,11 @@ class Path:
         elif flags & os.O_RDWR:
             file = ReadableWritableFile()
         elif flags & os.O_DIRECTORY:
-            file = DirectoryFile(self._raw_path)
+            if isinstance(self.base, DirfdPathBase):
+                raw_path = self.base.dirfd.file.raw_path + b"/" + self.path
+            else:
+                raw_path = self._full_path
+            file = DirectoryFile(raw_path)
         else:
             # os.O_RDONLY is 0, so if we don't have any of the rest, then...
             file = ReadableFile()
@@ -1413,7 +1433,7 @@ class Path:
 
         """
         self.assert_okay_for_task(task)
-        return UnixAddress(self._proc_path)
+        return UnixAddress(self.as_proc_path())
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
         element: bytes = os.fsencode(path_element)
@@ -1427,6 +1447,18 @@ class Path:
 
     def __str__(self) -> str:
         return f"Path({self.base}, {self.path})"
+
+@asynccontextmanager
+async def fspath(arg: t.Union[str, bytes, Path]) -> bytes:
+    if isinstance(arg, str):
+        return os.fsencode(arg)
+    elif isinstance(arg, bytes):
+        return arg
+    elif isinstance(arg, Path):
+        async with arg.as_argument() as pathbytes:
+            yield pathbytes
+    else:
+        raise ValueError
 
 class StandardStreams:
     stdin: FileDescriptor[ReadableFile]
@@ -1662,12 +1694,13 @@ class StandardTask:
                                self.process, self.filesystem, {**self.environment})
         return RsyscallTask(stdtask, cthread), fds
 
-    async def execve(self, path: Path, argv: t.List[t.Union[str, bytes]],
-                     env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes]]={},
+    async def execve(self, path: Path, argv: t.List[t.Union[str, bytes, Path]],
+                     env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
     ) -> None:
         path.assert_okay_for_task(self.task)
         envp = {**self.environment}
         for key in env_updates:
+
             envp[os.fsencode(key)] = os.fsencode(env_updates[key])
         raw_envp: t.List[bytes] = []
         for key, value in envp.items():
@@ -2299,3 +2332,22 @@ class Pipe:
 
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
+
+def extract_task(arg):
+    if isinstance(arg, Task):
+        return arg
+    elif isinstance(arg, FileDescriptor):
+        return arg.task
+    elif isinstance(arg, Path):
+        return arg.task
+
+def assert_same_task(task: Task, *args) -> None:
+    for arg in args:
+        if isinstance(arg, Path):
+            arg.assert_okay_for_task(task)
+        elif isinstance(arg, FileDescriptor):
+            if arg.task != task:
+                raise Exception("desired task", task, "doesn't match task", arg.task, "in arg", arg)
+        else:
+            raise Exception("can't validate argument", arg)
+                

@@ -1,5 +1,4 @@
 import unittest
-import supervise_api
 import rsyscall.base as rsyscall
 import trio
 from rsyscall.local import LocalServer
@@ -7,11 +6,6 @@ import os
 
 def pipe():
     return trio.socket.socketpair()
-
-# def remote_cat(stub: StubProcess, infd, outfd) -> supervise_api.Process:
-#     proc = supervise_api.Process(['./remote_cat'], fds={0:infd, 1:outfd})
-#     os.close(infd)
-#     os.close(outfd)
 
 class TestBase(unittest.TestCase):
     def test_run_stub(self):

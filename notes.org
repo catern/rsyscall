@@ -3234,6 +3234,12 @@ hmm, actually it just occurred to me that this question is essentially the same 
   hey, and supervise is a nice pid1 to run inside the container
 
   neat neat neat neaaat
+* standardtask with my own additions
+  I could have my own additions-thingy inherit from Task...
+
+  And have it be stashed inside Paths and things...
+
+  That's not particularly type-safe eh
 * things to improve
 ** TODO fix the race with PDEATHSIG so that a thread dies even if we die before it sets that
    I guess we can... know the pid of our parent (have it passed down),

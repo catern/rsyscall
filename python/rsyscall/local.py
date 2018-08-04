@@ -1,5 +1,4 @@
 import shutil
-import supervise_api
 import trio
 from rsyscall.base import ServerInterface
 import typing as t
