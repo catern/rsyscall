@@ -2802,6 +2802,47 @@ blargh I guess we can't execveat for now
    Maybe StandardTask then since it contains a Task.
    Or EnrichedTask.
    StandardTask, and I'll change the name later if necessary
+** passing path parameters
+   So I have two alternatives.
+
+   Alternative 1: I use a contextmanager to set the fd to not cloexec, then set it back if there's an exception.
+   Alternative 2: I build up a list of fds that I need to pass down as I serialize various objects.
+
+   Alternative 1 is kind of like building an implicit list of 2
+
+   Maybe I should just not even re-set cloexec
+
+   Just do the mutation with no way back
+
+   After all that's how most things work...
+
+   setsid for example
+
+   ON the other hand, serializing a path over a unix socket, for example, demands that I get a list of fds out.
+
+   And one can't really serialize a setsid.
+
+   Building a list seems better then.
+
+   Hmm, serializing a path over a unix socket is tricky though
+
+   Because we can't encode the same fd number in it.
+
+   Hmm, and furthermore we can't rely on root dir or cwd.
+
+   Really when serializing a path over a unix socket,
+
+   we need to always open it as a dirfd and a path segment,
+   and pass those along explicitly.
+
+   Which is very different from how we can inherit paths!
+
+   Having a different path for inheritance seems better than.
+
+   So it's a bit weird though,
+   what if we make a path into an argument and then chroot?
+
+   Well don't do that then!
 ** what to do
    Once it reaches a certain level of maturity, I should use this inside TS to get more validation/testing.
 

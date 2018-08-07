@@ -531,6 +531,7 @@ class MemoryNamespace:
 class MountNamespace:
     pass
 
+
 class FSInformation:
     "Filesystem root, current working directory, and umask; controlled by CLONE_FS."
     def _validate(self, task: 'Task') -> SyscallInterface:
@@ -870,19 +871,16 @@ class FileDescriptor(t.Generic[T_file_co]):
         self.file.shared = True
         return new_fd
 
-    @asynccontextmanager
     async def as_argument(self) -> int:
-        # unset cloexec
-        yield self.number
-        # check whether the task is closed or not
-        # if the task is closed, don't bother setting cloexec back on 
+        # TODO unset cloexec
+        await self.disable_cloexec()
+        return self.number
 
     async def enable_cloexec(self) -> None:
-        self.file.shared = True
         raise NotImplementedError
 
     async def disable_cloexec(self) -> None:
-        raise NotImplementedError
+        await self.syscall.fcntl(self.number, fcntl.F_SETFD, 0)
 
     # These are just helper methods which forward to the method on the underlying file object.
     async def set_nonblock(self: 'FileDescriptor[File]') -> None:
@@ -1320,14 +1318,11 @@ class Path:
         else:
             return self._full_path
 
-    @asynccontextmanager
     async def as_argument(self) -> bytes:
         if isinstance(self.base, DirfdPathBase):
             # we need to pass the dirfd as an argument
-            async with self.base.dirfd.as_argument():
-                yield self._as_proc_path()
-        else:
-            yield self._as_proc_path()
+            await self.base.dirfd.as_argument()
+        return self._as_proc_path()
 
     @property
     def syscall(self) -> SyscallInterface:
@@ -1433,7 +1428,7 @@ class Path:
 
         """
         self.assert_okay_for_task(task)
-        return UnixAddress(self.as_proc_path())
+        return UnixAddress(self._as_proc_path())
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
         element: bytes = os.fsencode(path_element)
@@ -1448,15 +1443,13 @@ class Path:
     def __str__(self) -> str:
         return f"Path({self.base}, {self.path})"
 
-@asynccontextmanager
 async def fspath(arg: t.Union[str, bytes, Path]) -> bytes:
     if isinstance(arg, str):
         return os.fsencode(arg)
     elif isinstance(arg, bytes):
         return arg
     elif isinstance(arg, Path):
-        async with arg.as_argument() as pathbytes:
-            yield pathbytes
+        return (await arg.as_argument())
     else:
         raise ValueError
 
@@ -1694,19 +1687,18 @@ class StandardTask:
                                self.process, self.filesystem, {**self.environment})
         return RsyscallTask(stdtask, cthread), fds
 
-    async def execve(self, path: Path, argv: t.List[t.Union[str, bytes, Path]],
+    async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
     ) -> None:
         path.assert_okay_for_task(self.task)
         envp = {**self.environment}
         for key in env_updates:
-
-            envp[os.fsencode(key)] = os.fsencode(env_updates[key])
+            envp[os.fsencode(key)] = await fspath(env_updates[key])
         raw_envp: t.List[bytes] = []
         for key, value in envp.items():
             raw_envp.append(b''.join([key, b'=', value]))
         await self.task.execveat(path.base.dirfd_num, path._full_path,
-                                 [os.fsencode(arg) for arg in argv],
+                                 [await fspath(arg) for arg in argv],
                                  raw_envp, flags=0)
 
     async def exit(self, status) -> None:
@@ -2300,8 +2292,8 @@ class RsyscallTask:
         self.stdtask = stdtask
         self.thread = thread
 
-    async def execve(self, path: Path, argv: t.List[t.Union[str, bytes]],
-                     envp: t.Mapping[t.Union[str, bytes], t.Union[str, bytes]]={},
+    async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
+                     envp: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
     ) -> ChildTask:
         await self.stdtask.execve(path, argv, envp)
         # we return the still-running ChildTask that was inside this RsyscallTask
