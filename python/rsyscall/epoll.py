@@ -2,10 +2,7 @@ from rsyscall._raw import lib, ffi # type: ignore
 import os
 import select
 import typing as t
-
-EPOLL_CLOEXEC=lib.EPOLL_CLOEXEC
-AT_EMPTY_PATH=lib.AT_EMPTY_PATH
-AT_SYMLINK_NOFOLLOW=lib.AT_SYMLINK_NOFOLLOW
+from dataclasses import dataclass
 
 class BitField:
     def __init__(self, bitval):
@@ -20,6 +17,7 @@ class BitField:
         else:
             instance.raw &= ~self.bitval
 
+@dataclass
 class EpollEventMask:
     raw: int
     in_ = BitField(select.EPOLLIN)
@@ -29,8 +27,6 @@ class EpollEventMask:
     err = BitField(select.EPOLLERR)
     hup = BitField(select.EPOLLHUP)
     et = BitField(select.EPOLLET)
-    def __init__(self, raw: int) -> None:
-        self.raw = raw
 
     @classmethod
     def make(cls, *, in_=False, out=False, rdhup=False, pri=False, err=False, hup=False, et=False) -> 'EpollEventMask':
@@ -44,18 +40,10 @@ class EpollEventMask:
         ret.et = et
         return ret
 
-    def __str__(self) -> str:
-        return f"EpollEventMask({self.raw})"
-
+@dataclass
 class EpollEvent:
-    events: EpollEventMask
     data: int
-    def __init__(self, data: int, events: EpollEventMask) -> None:
-        self.data = data
-        self.events = events
-
-    def __str__(self) -> str:
-        return f"EpollEvent({self.data}, {self.events})"
+    events: EpollEventMask
 
     def to_bytes(self) -> bytes:
         return ffi.new('struct epoll_event const*', (self.events.raw, (self.data,)))

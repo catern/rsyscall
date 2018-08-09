@@ -1,7 +1,7 @@
+from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.epoll import EpollEvent, EpollEventMask, EPOLL_CLOEXEC
+from rsyscall.epoll import EpollEvent, EpollEventMask
 import rsyscall.epoll
-from rsyscall.stat import StatxResult
 from rsyscall.stat import Dirent, DType
 import rsyscall.stat
 import random
@@ -17,7 +17,6 @@ import struct
 import array
 import trio
 import signal
-from async_generator import asynccontextmanager
 from dataclasses import dataclass
 import logging
 import fcntl
@@ -66,12 +65,13 @@ class ChildEvent:
     uid: int
     exit_status: t.Optional[int]
     sig: t.Optional[signal.Signals]
+
     @staticmethod
     def make(code: ChildCode, pid: int, uid: int, status: int):
         if code is ChildCode.EXITED:
-            return ChildEvent(code, pid, uid, status, None) # type: ignore
+            return ChildEvent(code, pid, uid, status, None)
         else:
-            return ChildEvent(code, pid, uid, None, signal.Signals(status)) # type: ignore
+            return ChildEvent(code, pid, uid, None, signal.Signals(status))
 
     def died(self) -> bool:
         return self.code in [ChildCode.EXITED, ChildCode.KILLED, ChildCode.DUMPED]
@@ -547,13 +547,11 @@ class FSInformation:
         else:
             await syscall.chdir(path._full_path)
 
+@dataclass
 class Function:
     "A function, with a memory address, in some address space."
     address: int
     memory: MemoryNamespace
-    def __init__(self, address: int, memory: MemoryNamespace) -> None:
-        self.address = address
-        self.memory = memory
 
 class SignalMask:
     def __init__(self, mask: t.Set[signal.Signals]) -> None:
@@ -1178,12 +1176,10 @@ class MemoryMapping:
     async def __aexit__(self, *args, **kwargs):
         await self.unmap()
 
+@dataclass
 class Pointer:
     mapping: MemoryMapping
     address: int
-    def __init__(self, mapping: MemoryMapping, address: int) -> None:
-        self.mapping = mapping
-        self.address = address
 
     async def write(self, data: bytes) -> None:
         await self.mapping.write(self.address, data)
@@ -1453,19 +1449,13 @@ async def fspath(arg: t.Union[str, bytes, Path]) -> bytes:
     else:
         raise ValueError
 
+@dataclass
 class StandardStreams:
     stdin: FileDescriptor[ReadableFile]
     stdout: FileDescriptor[WritableFile]
     stderr: FileDescriptor[WritableFile]
 
-    def __init__(self,
-                 stdin: FileDescriptor[ReadableFile],
-                 stdout: FileDescriptor[WritableFile],
-                 stderr: FileDescriptor[WritableFile]) -> None:
-        self.stdin = stdin
-        self.stdout = stdout
-        self.stderr = stderr
-
+@dataclass
 class UnixBootstrap:
     """The resources traditionally given to a process on startup in Unix.
 
@@ -1478,15 +1468,6 @@ class UnixBootstrap:
     argv: t.List[bytes]
     environ: t.Mapping[bytes, bytes]
     stdstreams: StandardStreams
-    def __init__(self,
-                 task: Task,
-                 argv: t.List[bytes],
-                 environ: t.Mapping[bytes, bytes],
-                 stdstreams: StandardStreams) -> None:
-        self.task = task
-        self.argv = argv
-        self.environ = environ
-        self.stdstreams = stdstreams
 
 def wrap_stdin_out_err(task: Task) -> StandardStreams:
     stdin = FileDescriptor(ReadableFile(shared=True), task, task.fd_namespace, 0)
@@ -1535,12 +1516,10 @@ class ExecutableLookupCache:
             self.cache[basename] = result
             return result
 
+@dataclass
 class UnixUtilities:
     rm: Path
     sh: Path
-    def __init__(self, rm: Path, sh: Path) -> None:
-        self.rm = rm
-        self.sh = sh
 
 async def build_unix_utilities(exec_cache: ExecutableLookupCache) -> UnixUtilities:
     rm = await exec_cache.lookup("rm")
@@ -1562,45 +1541,35 @@ async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
             data = data[ret:]
     return path
 
+@dataclass
 class TaskResources:
-    def __init__(self,
-                 epoller: Epoller,
-                 child_monitor: 'ChildTaskMonitor',
-    ) -> None:
-        self.epoller = epoller
-        self.child_monitor = child_monitor
+    epoller: Epoller
+    child_monitor: ChildTaskMonitor
 
     @staticmethod
-    async def make(task: Task) -> 'TaskResources':
+    async def make(task: Task) -> TaskResources:
         # TODO handle deallocating if later steps fail
         epoller = Epoller(await task.epoll_create())
         child_monitor = await ChildTaskMonitor.make(task, epoller)
         return TaskResources(epoller, child_monitor)
 
     async def close(self) -> None:
-        # destruct in opposite order ¯\_(ツ)_/¯
-
+        # have to destruct in opposite order of construction, gee that sounds like C++
+        # ¯\_(ツ)_/¯
         await self.child_monitor.close()
         await self.epoller.close()
 
-    async def __aenter__(self) -> 'TaskResources':
+    async def __aenter__(self) -> TaskResources:
         return self
 
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
+@dataclass
 class ProcessResources:
     server_func: Function
     do_cloexec_func: Function
     futex_helper_func: Function
-    def __init__(self,
-                 server_func: Function,
-                 do_cloexec_func: Function,
-                 futex_helper_func: Function,
-    ) -> None:
-        self.server_func = server_func
-        self.do_cloexec_func = do_cloexec_func
-        self.futex_helper_func = futex_helper_func
 
     @staticmethod
     def make_from_local(task: Task) -> 'ProcessResources':
@@ -1611,6 +1580,7 @@ class ProcessResources:
         )
 
 
+@dataclass
 class FilesystemResources:
     # various things picked up by environment variables
     executable_lookup_cache: ExecutableLookupCache
@@ -1619,14 +1589,6 @@ class FilesystemResources:
     utilities: UnixUtilities
     # locale?
     # home directory?
-    def __init__(self,
-                 executable_lookup_cache: ExecutableLookupCache,
-                 tmpdir: Path,
-                 utilities: UnixUtilities,
-    ) -> None:
-        self.executable_lookup_cache = executable_lookup_cache
-        self.tmpdir = tmpdir
-        self.utilities = utilities
 
     @staticmethod
     async def make_from_bootstrap(task: Task, bootstrap: UnixBootstrap) -> 'FilesystemResources':
@@ -2309,17 +2271,16 @@ class RsyscallTask:
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
+@dataclass
 class Pipe:
-    def __init__(self, rfd: FileDescriptor[ReadableFile],
-                 wfd: FileDescriptor[WritableFile]) -> None:
-        self.rfd = rfd
-        self.wfd = wfd
+    rfd: FileDescriptor[ReadableFile]
+    wfd: FileDescriptor[WritableFile]
 
     async def aclose(self):
         await self.rfd.aclose()
         await self.wfd.aclose()
 
-    async def __aenter__(self) -> 'Pipe':
+    async def __aenter__(self) -> Pipe:
         return self
 
     async def __aexit__(self, *args, **kwargs):

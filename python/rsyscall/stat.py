@@ -2,6 +2,7 @@ from rsyscall._raw import lib, ffi # type: ignore
 import os
 import typing as t
 import enum
+from dataclasses import dataclass
 
 AT_REMOVEDIR = lib.AT_REMOVEDIR
 AT_EMPTY_PATH = lib.AT_EMPTY_PATH
@@ -87,22 +88,12 @@ class DType(enum.Enum):
     SOCK = lib.DT_SOCK # This is a UNIX domain socket.
     UNKNOWN = lib.DT_UNKNOWN # The file type is unknown.
 
+@dataclass
 class Dirent:
     inode: int
     offset: int # the offset to seek to to see the next dirent
     type: DType
     name: bytes
-    def __init__(self, inode: int,
-                 offset: int,
-                 type: DType,
-                 name: bytes) -> None:
-        self.inode = inode
-        self.offset = offset
-        self.type = type
-        self.name = name
-
-    def __repr__(self) -> str:
-        return f"Dirent({self.inode}, {self.offset}, {self.type}, {self.name})"
 
     def __str__(self) -> str:
         return f"Dirent({self.type}, {self.name})"

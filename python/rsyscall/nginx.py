@@ -59,11 +59,13 @@ http {
         # as_argument or something
         # and I guess it does need to be a contextmanager so we can bail out
         workdir = await rsctask.stdtask.mkdtemp()
+        await (workdir.path/"logs").mkdir()
         # nginx requires a directory in which to store temporary files
         # created during operation; this will be that directory.
         # wait a second we nee
+        print("rsctask pid", await rsctask.stdtask.task.syscall.getpid())
         child_task = await rsctask.execve(self.executable_path, [
             "nginx", "-p", workdir.path,
             "-c", await rsc.spit(workdir.path/"nginx.conf", config),
-        ], envp={"NGINX":str(await sockfd.as_argument())})
+        ], envp={"NGINX":str(await sockfd.as_argument()) + ";"})
         return NginxChildTask(child_task, workdir)

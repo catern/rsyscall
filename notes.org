@@ -3287,6 +3287,11 @@ hmm, actually it just occurred to me that this question is essentially the same 
    set pdeathsig,
    getppid,
    if ppid isn't what we expect, suicide.
+** TODO use AsyncExitStack heavily to manage resources!
+   When we pass in a resource to something,
+   we need to immediately put it on our AsyncExitStack.
+
+   Then when we finish successfully, we can cancel some of the things off of our AsyncExitStack.
 
 * portability things
 ** assuming there are 64 signals so sigset_t is an 8-byte integer

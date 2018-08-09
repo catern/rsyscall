@@ -223,6 +223,35 @@ class TestIO(unittest.TestCase):
                                  print(addr, client_addr)
         trio.run(test)
 
+    def test_ip_dgram_connect(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                 async with (await stdtask.task.socket_inet(socket.SOCK_DGRAM)) as recv_sockfd:
+                     await recv_sockfd.bind(recv_sockfd.file.address_type(0, 0x7F_00_00_01))
+                     addr_recv = await recv_sockfd.getsockname()
+                     async with (await stdtask.task.socket_inet(socket.SOCK_DGRAM)) as send1_sockfd:
+                         await send1_sockfd.bind(recv_sockfd.file.address_type(0, 0x7F_00_00_01))
+                         addr_send1 = await send1_sockfd.getsockname()
+                         await recv_sockfd.connect(addr_send1)
+                         await send1_sockfd.connect(addr_recv)
+                         async with (await stdtask.task.socket_inet(socket.SOCK_DGRAM)) as send2_sockfd:
+                             await send2_sockfd.bind(recv_sockfd.file.address_type(0, 0x7F_00_00_01))
+                             await send2_sockfd.connect(addr_recv)
+                             addr_send2 = await send1_sockfd.getsockname()
+                             # send some data from send1 and receive it
+                             await send1_sockfd.write(b"hello")
+                             data = await recv_sockfd.read(4096)
+                             print(data)
+                             await send1_sockfd.write(b"hello")
+                             data = await recv_sockfd.read(4096)
+                             print(data)
+                             await send1_sockfd.write(b"hello")
+                             data = await recv_sockfd.read(4096)
+                             print(data)
+                             await send2_sockfd.write(b"hello")
+                             data = await recv_sockfd.read(4096)
+        trio.run(test)
+
     def test_getdents_noent(self) -> None:
         "getdents on a removed directory throws FileNotFoundError"
         async def test() -> None:
