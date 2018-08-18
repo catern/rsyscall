@@ -3381,6 +3381,14 @@ hmm, actually it just occurred to me that this question is essentially the same 
    Would be nice to be able to pass a dirfd for these. And also lift the length limit.
 ** some way to deal with fd inheritance?
    CLOUNSHARE?
+** the ability to take existing memory and wrap it up in a memfd
+   This would be useful to allow a uniform interface for operations.
+
+   Instead of providing both an interface for operating on memory,
+   and an interface for operating on file descriptors,
+   we could just have a single interface that operates on file descriptors.
+
+   Anyone who wants to operate on memory has to wrap it up in a memfd first.
 * design decisions
 ** TODO should we grab the Task out of other objects, or pass it explicitly?
    Consider RsyscallTask.make as an example.
@@ -3432,3 +3440,303 @@ it's kind of going back to python's roots and being a distributed scripting lang
    maybe abstraction is a bad word for this.
 ** name
    rsc is russ cox's username :(
+
+   rsys is better
+* explicitly modeling memory
+how would I do this?
+
+why do I want to do this?
+
+so I need a syscall interface which is indifferent to memory,
+I guess,
+for most functionality.
+
+or, no.
+i'll only implement some few things as indifferent to memory?
+
+I can implement
+
+like, child monitoring, I guess
+
+so ultimately what I want to do is read a file
+
+and the most efficient way to do that is to run cat on the opened file,
+connected to a TCP connection to the hub
+
+but, when the opened file is on localhost
+
+then, that is not necessary.
+
+so we only need to bring it to localhost if we are actually gonna look at the bytes
+
+read is not the way to get the bytes in a file.
+
+we need some higher-level thing.
+
+we want to bring it to the local task.
+
+which makes local memory rather special
+
+or rather, memory which is under language control
+
+okay well I could deal completely with opaque memory
+
+and then have a special case inside the library to copy/convert local opaque memory to language control
+
+then I can have Path library that,
+supports read_text,
+and,
+is aware of the distinction between localhost and remote host?
+
+yeah...
+one specific task has the attribute that,
+its address space is shared with my address space.
+
+(or multiple tasks like that really)
+
+or really actually,
+a task is in an address space,
+so it has the AddressSpace object in a field
+and there's a global local_address_space,
+which we can compare against the task.address_space with "is",
+to see if we can directly access memory associated with that task...
+
+so that's good for the in-local-task or in-address-space-task.
+
+but what about same-kernel, different address space?
+
+socketpair
+
+need to handle it anyway with data socket
+ehhh
+
+what do we put in standardtask?
+
+standardtask can, i guess, be an abstraction?
+
+no, it will be real
+
+but then how will we achieve memory-using syscalls?
+
+ah, we'll have standardtask hold an abstraction,
+MemoryManipulator
+
+which might be shared between others in the same address space, maybe.
+or might point to a dedicated thread for the purpose of manipulating memory.
+
+but in any case it will provide the memory-abstracted syscall interface we want, right?
+
+maybe, or maybe not
+
+we need a really true syscall interface
+
+that presents all the details of memory
+
+then on top of it we can build SyscallInterface
+which is memory-abstract.
+
+I guess StandardTask will also hold a MemoryAllocator,
+which doesn't need to be abstract.
+
+that's what users and classes can use,
+to get memory in the remote task,
+so they can make system calls that need memory and stuff.
+it's a nice simple dynamic allocator.
+
+then I guess the Path thing itself,
+for reading a file to bytes...
+
+cases on whether the Task is local or not, I guess
+
+if it isn't local,
+it uses the cat-to-datafd trick.
+
+if it is local,
+it just reads it directly.
+
+this is an operation on a file descriptor, I guess
+and it works in batches
+and, is probably async?
+
+now wait a second, how does the Path get the datafd
+how does it manage to get a connection
+
+well,
+hm
+
+a StandardTask, I guess, will provide a means to create a new pipe between,
+the task inside the StandardTask,
+and,
+a closer task???
+
+probably through a new TCP connection, at least inside TS where we have a trusted network.
+
+so how do we read a fd to bytes?
+
+so we have to have a reference to the local task, of course.
+and a reference to the remote task.
+and then, the ability to create a pipe between local and remote???
+
+which possibly requires a route of tasks between local and remote
+
+so then to read an fd to bytes
+
+we create a pipe between the local task
+and the remote task
+and cat the fd to that pipe and read it in the local task
+
+so in fact, in general,
+this is a way to transfer data from,
+one task to another.
+
+so to read an fd to memory in another task,
+we can do this thing.
+
+we provide the memory
+
+or we provide the fd to write out to
+(if we provide an fd, we directly cat into it, giving the remote pipe in as cat's stdin and the fd out as stdout)
+(like splice between two hosts)
+
+and so the wrapper around this is just then,
+to read something to bytes we first allocate memory,
+then do a read from a remote fd to bytes in a different place)
+
+and hm
+if we're not going between tasks at all,
+we can just read directly.
+
+so this doesn't require special casing local memory nearly at all,
+just in the very first step when we allocate memory,
+
+this is nicely abstract
+
+could we reduce it even more?
+just have memory? or just have an fd, even better.
+
+use a memfd if you want to read it in memory...
+
+it would be nice if we could take some existing memory and wrap it up in a memfd.
+
+that would be cool
+we should not bake that in, though
+
+so okay, this is the foundation, right?
+we can take memory or file descriptors from any task,
+and splice/copy it on to memory from any other task.
+
+this is how our memory manipulator will work
+
+we actually might not even have read/write operations on memory
+
+instead all reading/writing has to happen directly locally.
+cuz, duh, we can't actually read/write from remote stuff.
+
+different thing: we can always run the read/write system calls, on task-local memory and fds.
+
+so when we're reading a file, what will we do?
+
+I guess we'll go through the generic interface
+
+we'll say,
+here's some memory in the local task so we can get some bytes
+here's an fd in some whatever task
+then we pass those two to rsplice
+and it does the efficient thing to copy from fd to memory.
+
+what about, also, when we can just directly use local memory?
+that is to say:
+when we're making syscalls in the local space,
+we can build the args with bytes,
+then directly pass those bytes to the syscalls.
+
+so really that's another thing I guess?
+appearify: mem -> task -> mem
+which takes some memory, and a task
+and returns some memory in the task
+
+naturally,
+this is a method on the memory manipulator or memory allocator thing
+since it might need to allocate?
+but also might not?
+
+and we have our bytes,
+and we turn it to a memory object,
+and pass it in,
+and possibly it is used.
+
+it's nice that bytes are immutable :)
+
+hmm that's not good though, hackers, that's not good
+
+what if i need rw memory out
+like what if it's an in-out parameter
+
+and what about ownership?
+do i lose ownership of the bytes once I pass them in?
+that can't be right
+
+oh i think i should just build any arguments in memory allocated
+by the allocator
+
+hmm but then i have read/write methods on remote memory, not good
+
+so two alternatives:
+- build directly in memory allocated by MemoryAllocator.
+  This requires read/write methods on the remote memory.
+- build in local bytes, allocate memory and copy to remote task if necessary
+  This is inefficient in the local case where we might be able to build directly in memory.
+  Hm.
+
+so I think we should have
+
+some kind of allocate and fill thing
+
+where the memory allocater takes a bytes
+and returns memory containing that bytes
+
+and ownership of the bytes is lost,
+since you see, bytes are immutable
+
+and it has a with-context manager
+
+and it takes a writable=True parameter,
+so that if the memory is read-only
+
+then the bytes can be used
+
+and if the memory is writable,
+then a copy is fine.
+
+also a bytebuffer would be maybe okay
+
+but maybe not,
+who knows whatever
+
+essentially split out all the logic into individual classes
+
+have only the primitive interface centrally
+seems good!
+
+hmm, direct access to the channel would be better though
+
+but sharing a TCP connection is hard - how can we ensure that previous users have cleared the buffer?
+and it's too expensive to create a new connection on each usage, probably
+a TCP handshake on each syscall is probably too expensive
+
+although
+maybe we can just
+allocate a TCP connection for each object?
+
+we are probably making a TCP connection for each file we read...
+and a cat process...
+
+so we could easily afford one for each object that wants to do syscalls
+but I don't think so, no, that's a bad idea
+we can, instead, just share the connection! abstracted slightly
+yeah, it's fine to just abstract it.
+* pipelining/mobile code
+mobile code hmm
+
+i mean, for any specific function,
+we can always stick a function into the library to handle it.
