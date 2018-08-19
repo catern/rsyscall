@@ -3744,6 +3744,10 @@ gross!
 we should be able to read into remote memory and write that remote memory back out,
 without pulling the data into the hub.
 hub is a bad word, I should say "runtime" maybe, or "language"
+
+ok so we have a simple SyscallInterface that just has,
+the method,
+"syscall"
 * pipelining/mobile code
 mobile code hmm
 
