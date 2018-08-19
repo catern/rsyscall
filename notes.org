@@ -3735,6 +3735,15 @@ so we could easily afford one for each object that wants to do syscalls
 but I don't think so, no, that's a bad idea
 we can, instead, just share the connection! abstracted slightly
 yeah, it's fine to just abstract it.
+
+in any case, explicitly modelling memory is definitely a good idea:
+at the moment, if we wanted to proxy between two file descriptors in the same task,
+and we didn't want to use splice for whatever reason,
+all the data would have to hop through the hub.
+gross!
+we should be able to read into remote memory and write that remote memory back out,
+without pulling the data into the hub.
+hub is a bad word, I should say "runtime" maybe, or "language"
 * pipelining/mobile code
 mobile code hmm
 
