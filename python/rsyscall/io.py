@@ -5,6 +5,7 @@ from rsyscall.epoll import EpollEvent, EpollEventMask
 import rsyscall.epoll
 
 from rsyscall.base import AddressSpace, Pointer, FDNamespace
+from rsyscall.base import MemoryGateway, LocalMemoryGateway, to_local_pointer
 import rsyscall.base as base
 
 from rsyscall.stat import Dirent, DType
@@ -588,6 +589,7 @@ class SignalMask:
 
 class Task:
     def __init__(self, syscall: SyscallInterface,
+                 gateway: MemoryGateway,
                  fd_namespace: FDNamespace,
                  address_space: AddressSpace,
                  mount: MountNamespace,
@@ -595,6 +597,7 @@ class Task:
                  sigmask: SignalMask,
     ) -> None:
         self.syscall = syscall
+        self.gateway = gateway
         self.address_space = address_space
         self.fd_namespace = fd_namespace
         self.mount = mount
@@ -1148,6 +1151,9 @@ class MemoryMapping:
         self.address = address
         self.length = length
 
+    def pointer(self) -> Pointer:
+        return Pointer(self.task.address_space, self.address)
+
     def in_bounds(self, ptr: int, length: int) -> bool:
         if ptr < self.address:
             return False
@@ -1175,22 +1181,6 @@ class MemoryMapping:
 
     async def __aexit__(self, *args, **kwargs):
         await self.unmap()
-
-class Stack:
-    def __init__(self, allocation_pointer: Pointer) -> None:
-        self.allocation_pointer = allocation_pointer
-
-    def alloc(self, size: int) -> Pointer:
-        self.allocation_pointer -= size
-        return self.allocation_pointer
-
-    def align(self):
-        self.allocation_pointer -= self.allocation_pointer.address % 16
-
-    async def push(self, data: bytes) -> Pointer:
-        memory = self.alloc(len(data))
-        await memory.write(data)
-        return memory
 
 class PathBase:
     """These are possible bases for Paths.
@@ -1460,6 +1450,7 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
 
 def gather_local_bootstrap() -> UnixBootstrap:
     task = Task(LocalSyscall(trio.hazmat.wait_readable, direct_syscall),
+                LocalMemoryGateway(),
                 FDNamespace(), AddressSpace(), MountNamespace(), FSInformation(),
                 SignalMask(set()))
     argv = [arg.encode() for arg in sys.argv]
@@ -1622,7 +1613,7 @@ class StandardTask:
                     user_fds: t.List[FileDescriptor],
                     shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple['RsyscallTask', t.List[FileDescriptor]]:
-        thread_maker = ThreadMaker(self.resources.child_monitor)
+        thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor)
         task, cthread, fds = await rsyscall_spawn(
             self.task, thread_maker, self.resources.epoller, self.process.server_func,
             user_fds, shared)
@@ -2022,7 +2013,8 @@ def build_trampoline_stack(function: FunctionPointer, arg1=0, arg2=0, arg3=0, ar
     return stack
 
 class ThreadMaker:
-    def __init__(self, monitor: ChildTaskMonitor) -> None:
+    def __init__(self, gateway: MemoryGateway, monitor: ChildTaskMonitor) -> None:
+        self.gateway = gateway
         self.monitor = monitor
         task = monitor.signal_queue.sigfd.epolled.underlying.task
         # TODO pull this function out of somewhere sensible
@@ -2047,17 +2039,18 @@ class ThreadMaker:
         # align the stack to a 16-bit boundary now, so after pushing the trampoline data,
         # which the trampoline will all pop off, the stack will be aligned.
         stack += bytes(8)
-        # build the trampoline and push it on the stack
-        stack += build_trampoline_stack(self.futex_func, futex_address.address, 0, 0, 0, 0, 0)
         # allocate memory for the stack
         mapping = await task.mmap(len(stack), ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)
-        # doing this requires the magic of,
-        # the rsplice thingy
-        # gotta figure that out
-        raise Exception("copy the stack into the allocated memory")
+        stack_base = mapping.pointer()
+        futex_pointer = stack_base
+        # build the trampoline and push it on the stack
+        stack += build_trampoline_stack(self.futex_func, futex_pointer.address, 0, 0, 0, 0, 0)
+        # copy the stack over
+        await self.gateway.memcpy(stack_base, to_local_pointer(stack), len(stack))
+        stack_pointer = stack_base + len(stack)
         # start the task
         futex_task = await self.monitor.clone(
-            lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, complete_stack,
+            lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_pointer,
             ctid=task.address_space.null(), newtls=task.address_space.null())
         # wait for futex helper to SIGSTOP itself,
         # which indicates the trampoline is done and we can deallocate the stack.
@@ -2070,21 +2063,22 @@ class ThreadMaker:
         # huge waste. oh well, later on we can allocate futex addresses out of a shared mapping.
         child_task = await self.monitor.clone(
             flags | lib.CLONE_CHILD_CLEARTID, child_stack,
-            ctid=futex_address, newtls=newtls)
+            ctid=futex_pointer, newtls=newtls)
         return Thread(child_task, futex_task, mapping)
 
     async def make_cthread(self, flags: int,
                           function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
     ) -> CThread:
         task = self.monitor.signal_queue.sigfd.epolled.underlying.task
+        stack = build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)
         mapping = await task.mmap(4096, ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)
-        stack = Stack(Pointer(mapping, mapping.address + mapping.length))
-    
-        trampoline_data = build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)
-        complete_stack = await stack.push(trampoline_data)
+        stack_base = mapping.pointer()
+        # copy the stack over
+        await self.gateway.memcpy(stack_base, to_local_pointer(stack), len(stack))
+        stack_pointer = stack_base + len(stack)
         # TODO actually allocate TLS
         tls = task.address_space.null()
-        thread = await self.clone(flags|signal.SIGCHLD, complete_stack, tls)
+        thread = await self.clone(flags|signal.SIGCHLD, stack_pointer, tls)
         return CThread(thread, mapping)
 
 class RsyscallException(Exception):
@@ -2167,12 +2161,14 @@ class RsyscallLocalSyscall(LocalSyscall):
                 return
             # the incoming request fd, or no fd, had an event. repeat!
 
-async def call_function(task: Task, stack: Stack, function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> ChildEvent:
+async def call_function(task: Task, stack_base: Pointer, function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> ChildEvent:
     "Calls a C function and waits for it to complete. Returns the ChildEvent that the child thread terminated with."
-    stack.align()
-    complete_stack = await stack.push(build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
+    stack_base += 16 - (stack_base.address % 16)
+    stack = build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)
+    await task.gateway.memcpy(stack_base, to_local_pointer(stack), len(stack))
+    stack_pointer = stack_base + len(stack)
     # we directly spawn a thread for the function and wait on it
-    pid = await task.syscall.clone(lib.CLONE_VM|lib.CLONE_FILES, complete_stack.address, ptid=0, ctid=0, newtls=0)
+    pid = await task.syscall.clone(lib.CLONE_VM|lib.CLONE_FILES, stack_pointer.address, ptid=0, ctid=0, newtls=0)
     _, siginfo, _ = await task.syscall.waitid(IdType.PID, pid, lib._WALL|lib.WEXITED, want_child_event=True, want_rusage=False)
     struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
     child_event = ChildEvent.make(ChildCode(struct.si_code),
@@ -2184,7 +2180,7 @@ async def do_cloexec_except(task: Task, excluded_fd_numbers: t.Iterable[int]) ->
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
     function = FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_do_cloexec))
     async with (await task.mmap(4096, ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)) as mapping:
-        stack = Stack(Pointer(mapping, mapping.address + mapping.length))
+        stack_base = mapping.pointer()
         local_array = array.array('i', excluded_fd_numbers)
         fd_array = await stack.push(local_array.tobytes())
         child_event = await call_function(task, stack, function, fd_array.address, len(local_array))
@@ -2209,8 +2205,10 @@ async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller
     async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
     syscall = RsyscallLocalSyscall(RsyscallConnection(async_tofd, async_fromfd),
                                    pipe_in.rfd.number, pipe_out.wfd.number)
+    # TODO remove assumption that we are local
+    gateway = LocalMemoryGateway()
 
-    new_task = Task(syscall,
+    new_task = Task(syscall, gateway,
                     FDNamespace(), task.address_space, task.mount, task.fs,
                     task.sigmask.inherit())
     if len(new_task.sigmask.mask) != 0:

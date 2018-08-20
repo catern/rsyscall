@@ -3748,8 +3748,106 @@ hub is a bad word, I should say "runtime" maybe, or "language"
 ok so we have a simple SyscallInterface that just has,
 the method,
 "syscall"
+* rsplice
+  I guess we can grant the ability to,
+  for any "bytes",
+  get a Pointer and Task and stuff for that bytes,
+  in the local address space.
+
+  and we'll have a gateway class thing
+
+  which is the gateway between here and there
+
+  and supports splicing things
+
+  and it's an abstract interface
+
+  and the awkwardness of this interface will discourage working with data
+
+  what to call it?
+
+  gateway?
+  rsplicer?
+
+  HomePortal
+
+  rdma...?
+
+  Gateway.
+
+  And it'll be in standardtask?
+
+  Or in task?
+
+  but it certainly requires async processing stuff...
+
+  how can we put it in Task?
+
+  we can't.
+
+  oh but we must?
+
+  no, we only need to,
+  if we want to have nice syscall wrappers.
+
+  memory gateway, hm.
+
+  memory is just an actor that we send messages to, y'know
+
+  baking it into task is really necessary tho right
+
+  well no, it's technically possible to get along with just syscall
+
+  we could bootstrap our way up.
+
+  hmmmmmmm MMMMm
+
+  if I don't put it into Task,
+  I'll need StandardTask for pretty much everything
+
+  So yeah, stick it in task.
+
+  maybe merge it with syscallinterface
+  maybe not
+
+  ok so now I need to think about how to handle this split thing
+  where two things want to write to memory,
+  but the write isn't needed until the latter is done?
 * pipelining/mobile code
+** muse 1
 mobile code hmm
 
 i mean, for any specific function,
 we can always stick a function into the library to handle it.
+** muse 2
+  i'm tempted to bring this all to its ultimate conclusion
+  by just sending over snippets of assembly to execute
+
+  they can have the syscall args embedded into them
+  and do "syscall"...
+
+  then we'll return back, what?
+  the register state?
+  eax?
+  nothing? force it to do its own return?
+
+  meh we'll stick to just syscalls for now,
+  it's nicely constrained to force heavy use of Linux stuff
+** muse 3
+this explicit modeling of all these things
+like memory and such
+makes mobile code pretty viable y'know
+
+unusually viable
+
+that's a later step if we choose to do it
+
+we can easily reimplement syscallinterface and gateway on top
+** tail calling
+   we could even have the mobile-code-receiver be entirely tail-called
+
+   as in, it has no main loop,
+   we're just require to send over the right mobile code,
+   which has a tail section which calls wait_for_more_code
+
+   we can even be stackless
