@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dataclasses import dataclass
 import abc
 
@@ -17,6 +18,9 @@ class AddressSpace:
     def null(self) -> Pointer:
         return Pointer(self, 0)
 
+    def __str__(self) -> str:
+        return f"AddressSpace({id(self)})"
+
 local_address_space = AddressSpace()
 
 @dataclass
@@ -29,6 +33,9 @@ class Pointer:
 
     def __sub__(self, other: int) -> 'Pointer':
         return Pointer(self.address_space, self.address - other)
+
+    def __str__(self) -> str:
+        return f"Pointer({self.address_space}, {hex(self.address)})"
 
 class FDNamespace:
     def null(self) -> FileDescriptor:
@@ -73,11 +80,13 @@ class MemoryGateway:
 
 from rsyscall._raw import ffi, lib # type: ignore
 class LocalMemoryGateway(MemoryGateway):
+    i = 0
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
         if dest.address_space == src.address_space == local_address_space:
+            print("memcpy", dest, src)
             lib.memcpy(ffi.cast('void*', dest.address), ffi.cast('void*', src.address), n)
         else:
             raise Exception("some pointer isn't in the local address space")
 
 def to_local_pointer(data: bytes) -> Pointer:
-    return Pointer(local_address_space, ffi.cast('long', ffi.from_buffer(data)))
+    return Pointer(local_address_space, int(ffi.cast('long', ffi.from_buffer(data))))

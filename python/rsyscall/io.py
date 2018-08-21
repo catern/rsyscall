@@ -280,7 +280,7 @@ class LocalSyscall(SyscallInterface):
         return (await self.syscall(lib.SYS_dup2, oldfd, newfd))
 
     async def clone(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int:
-        logger.debug("clone(%s, %s, %s, %s, %s)", flags, child_stack, ptid, ctid, newtls)
+        logger.debug("clone(%s, %s, %s, %s, %s)", flags, hex(child_stack), ptid, ctid, newtls)
         return (await self.syscall(lib.SYS_clone, flags, child_stack, ptid, ctid, newtls))
 
     async def exit(self, status: int) -> None:
@@ -1451,7 +1451,7 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
 def gather_local_bootstrap() -> UnixBootstrap:
     task = Task(LocalSyscall(trio.hazmat.wait_readable, direct_syscall),
                 LocalMemoryGateway(),
-                FDNamespace(), AddressSpace(), MountNamespace(), FSInformation(),
+                FDNamespace(), base.local_address_space, MountNamespace(), FSInformation(),
                 SignalMask(set()))
     argv = [arg.encode() for arg in sys.argv]
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
@@ -2180,10 +2180,10 @@ async def do_cloexec_except(task: Task, excluded_fd_numbers: t.Iterable[int]) ->
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
     function = FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_do_cloexec))
     async with (await task.mmap(4096, ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)) as mapping:
-        stack_base = mapping.pointer()
-        local_array = array.array('i', excluded_fd_numbers)
-        fd_array = await stack.push(local_array.tobytes())
-        child_event = await call_function(task, stack, function, fd_array.address, len(local_array))
+        fd_array_ptr = mapping.pointer()
+        array = array.array('i', excluded_fd_numbers).tobytes()
+        await task.gateway.memcpy(fd_array_ptr, to_local_pointer(array), len(array))
+        child_event = await call_function(task, fd_array_ptr + len(array), function, fd_array_ptr.address, len(array))
         if not child_event.clean():
             raise Exception("cloexec function child died!", child_event)
 
