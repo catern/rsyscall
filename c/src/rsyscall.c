@@ -18,9 +18,9 @@ struct options {
 };
 
 char hello[] = "hello world, I am the syscall server!\n";
-char read_failed[] = "read(infd, &request, sizeof(request)) failed\n";
-char read_eof[] = "read(infd, &request, sizeof(request)) returned EOF\n";
-char write_failed[] = "write(outfd, &response, sizeof(response)) failed\n";
+char read_failed[] = "rsyscall: read(infd, &request, sizeof(request)) failed\n";
+char read_eof[] = "rsyscall: read(infd, &request, sizeof(request)) returned EOF\n";
+char write_failed[] = "rsyscall: write(outfd, &response, sizeof(response)) failed\n";
 
 static long write(int fd, const void *buf, size_t count) {
     return rsyscall_raw_syscall(fd, (long) buf, (long) count, 0, 0, 0, SYS_write);
@@ -112,11 +112,15 @@ struct linux_dirent64 {
     char           d_name[]; /* Filename (null-terminated) */
 };
 
-/* Close all CLOEXEC file descriptors */
-/* We should add a CLONE_DO_CLOEXEC flag to replace this */
-/* hmm we want to exclude fds in a list */
-/* maybe we'll make a bitset? */
-/* I guess we'll just do a linear scan of the excluded array we receive */
+static int find_in_array(int wanted, int* array, int count) {
+    for (int i = 0; i < count; i++) {
+        if (wanted == array[i]) return 1;
+    }
+    return 0;
+}
+
+// Close all CLOEXEC file descriptors, excluding some in a list.
+// For each open fd, we do a linear scan of the excluded array.
 void rsyscall_do_cloexec(int* excluded_fds, int fd_count) {
     /* this depends on /proc, dang, but whatever */
     int dirfd = myopen("/proc/self/fd", O_DIRECTORY|O_RDONLY);
@@ -129,20 +133,16 @@ void rsyscall_do_cloexec(int* excluded_fds, int fd_count) {
             /* no more fds, we're done */
             return;
         }
-        for (int bpos = 0; bpos < nread;) {
+        for (int bpos = 0; bpos < nread; bpos += ((struct linux_dirent64 *) &buf[bpos])->d_reclen) {
             const struct linux_dirent64 *d = (struct linux_dirent64 *) &buf[bpos];
             if (d->d_type == DT_LNK) {
                 const int fd = strtoint(d->d_name);
-                for (int i = 0; i < fd_count; i++) {
-                    if (fd == excluded_fds[i]) goto skip;
+                if (!find_in_array(fd, excluded_fds, fd_count)) {
+                    if (getfd(fd) & FD_CLOEXEC) {
+                        close(fd);
+                    }
                 }
-                if (getfd(fd) & FD_CLOEXEC) {
-                    close(fd);
-                }
-            skip:
-                ;
             }
-            bpos += d->d_reclen;
         }
     }
 }
