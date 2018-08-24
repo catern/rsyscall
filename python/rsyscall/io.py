@@ -28,6 +28,7 @@ import logging
 import fcntl
 import errno
 import enum
+import contextlib
 logger = logging.getLogger(__name__)
 
 class Rusage:
@@ -1539,18 +1540,57 @@ class TaskResources:
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
-class MemoryAllocator:
-    def __init__(self, task: Task) -> None:
-        pass
+class Arena:
+    def __init__(self, mapping: MemoryMapping) -> None:
+        self.mapping = mapping
+        self.inuse = False
 
-    async def malloc(self, size: int) -> Pointer:
-        pass
+    # no not a pointer because we need to be able to free it as well
+    def malloc(self, size: int) -> t.Optional[Pointer]:
+        self.inuse = True
+        return self.mapping.pointer()
+
+class MemoryAllocator:
+    """A not-particularly-efficient memory allocator
+    
+    Each request gets an entire page, and requests over a page in size aren't supported.
+
+    ok so that's not efficient enough
+
+    we need to actually legit do it
+
+    """
+    def __init__(self, task: Task) -> None:
+        self.task = task
+        self.free_pages: t.List[Pointer] = []
+        self.mappings: t.List[MemoryMapping] = []
+
+    @contextlib.asynccontextmanager
+    async def malloc(self, size: int) -> t.AsyncIterator[Pointer]:
+        page_size = 4096
+        if size > page_size:
+            raise Exception("we can't allocate more than a page lol")
+        if self.free_pages:
+            page = self.free_pages.pop()
+        else:
+            mapping = await self.task.mmap(page_size, ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)
+            self.mappings.append(mapping)
+            page = mapping.pointer()
+        try:
+            yield page
+        finally:
+            self.free_pages.append(page)
+
+    async def close(self) -> None:
+        for mapping in self.mappings:
+            await mapping.unmap()
 
 @dataclass
 class ProcessResources:
     server_func: FunctionPointer
     do_cloexec_func: FunctionPointer
     futex_helper_func: FunctionPointer
+    memory_allocator: MemoryAllocator
 
     @staticmethod
     def make_from_local(task: Task) -> 'ProcessResources':
@@ -1560,8 +1600,11 @@ class ProcessResources:
             server_func=FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_server)),
             do_cloexec_func=FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_do_cloexec)),
             futex_helper_func=FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_futex_helper)),
+            memory_allocator=MemoryAllocator(task),
         )
 
+    async def decref(self) -> None:
+        await self.memory_allocator.close()
 
 @dataclass
 class FilesystemResources:
@@ -1606,7 +1649,7 @@ class StandardTask:
         task = bootstrap.task
         task_resources = await TaskResources.make(task)
         # TODO fix this to... pull it from the bootstrap or something...
-        process_resources = await ProcessResources.make_from_local(task)
+        process_resources = ProcessResources.make_from_local(task)
         filesystem_resources = await FilesystemResources.make_from_bootstrap(task, bootstrap)
         return StandardTask(task, task_resources, process_resources, filesystem_resources,
                             {**bootstrap.environ})
@@ -1632,6 +1675,24 @@ class StandardTask:
                                self.process, self.filesystem, {**self.environment})
         return RsyscallTask(stdtask, cthread), fds
 
+    async def execveat(self, dirfd: int, path: bytes,
+                       argv: t.List[bytes], envp: t.List[bytes],
+                       flags: int) -> None:
+        logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
+        # this null-terminated-array logic is tricky to extract out into a separate function due to lifetime issues
+        # hmmm
+        # so we should probably allocate one big long array
+        # even if that is hard
+        # because that optimizes copying from here to there
+        # which is extremely important
+        null_terminated_args = [ffi.new('char[]', arg) for arg in argv]
+        argv_bytes = ffi.new('char *const[]', null_terminated_args + [ffi.NULL])
+        null_terminated_env_vars = [ffi.new('char[]', arg) for arg in envp]
+        envp_bytes = ffi.new('char *const[]', null_terminated_env_vars + [ffi.NULL])
+        path_bytes = ffi.new('char[]', path)
+        await raw_syscall.execveat(self.task.syscall, dirfd, path, argv, envp, flags)
+        await self.close()
+
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
     ) -> None:
@@ -1650,6 +1711,7 @@ class StandardTask:
         await self.task.exit(0)
 
     async def close(self) -> None:
+        await self.process.decref()
         await self.resources.close()
         await self.task.close()
 

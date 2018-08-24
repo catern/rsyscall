@@ -3851,3 +3851,10 @@ we can easily reimplement syscallinterface and gateway on top
    which has a tail section which calls wait_for_more_code
 
    we can even be stackless
+** explicitly managing resources
+explicitly managing resources on the remote side is so much better
+
+instead of sending a message which causes some mysterious amount of resources to be used,
+instead just have some code which you control which runs on the remote side,
+and which you communicate with using some internal protocol,
+and if peple want to talk with you they go through that code, I guess

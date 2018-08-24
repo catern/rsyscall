@@ -1,4 +1,4 @@
-from rsyscall.base import Task, FileDescriptor, Pointer
+from rsyscall.base import SyscallInterface, Task, FileDescriptor, Pointer
 
 # TODO verify that pointers and file descriptors come from the same
 # address space and fd namespace as the task.
@@ -34,6 +34,15 @@ async def exit(task: Task, status: int) -> None:
         await task.sysif.syscall(lib.SYS_exit, status)
     except RsyscallHangup:
         # a hangup means the exit was successful
+        pass
+
+async def execveat(sysif: SyscallInterface, dirfd: FileDescriptor, path: Pointer,
+                   argv: Pointer, envp: Pointer, flags: int) -> None:
+    logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
+    try:
+        await self.syscall(lib.SYS_execveat, dirfd, path, argv, envp, flags)
+    except RsyscallHangup:
+        # a hangup means the exec was successful. other exceptions will propagate through
         pass
 
 async def execveat(self, dirfd: int, path: bytes,
