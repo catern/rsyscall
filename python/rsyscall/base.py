@@ -37,6 +37,9 @@ class Pointer:
     def __str__(self) -> str:
         return f"Pointer({self.address_space}, {hex(self.address)})"
 
+    def __int__(self) -> int:
+        return self.address
+
 class FDNamespace:
     def null(self) -> FileDescriptor:
         return FileDescriptor(self, -1)
