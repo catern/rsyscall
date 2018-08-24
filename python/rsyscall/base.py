@@ -93,3 +93,9 @@ class LocalMemoryGateway(MemoryGateway):
 
 def to_local_pointer(data: bytes) -> Pointer:
     return Pointer(local_address_space, int(ffi.cast('long', ffi.from_buffer(data))))
+
+class RsyscallException(Exception):
+    pass
+
+class RsyscallHangup(Exception):
+    pass

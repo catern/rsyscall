@@ -4,9 +4,10 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.epoll import EpollEvent, EpollEventMask
 import rsyscall.epoll
 
-from rsyscall.base import AddressSpace, Pointer, FDNamespace
+from rsyscall.base import AddressSpace, Pointer, FDNamespace, RsyscallException, RsyscallHangup
 from rsyscall.base import MemoryGateway, LocalMemoryGateway, to_local_pointer
 import rsyscall.base as base
+import rsyscall.raw_syscalls as raw_syscall
 
 from rsyscall.stat import Dirent, DType
 import rsyscall.stat
@@ -131,7 +132,7 @@ class ProtFlag(enum.IntFlag):
     WRITE = lib.PROT_WRITE
     NONE = lib.PROT_NONE
 
-class SyscallInterface:
+class SyscallInterface(base.SyscallInterface):
     # non-syscall operations
     async def close_interface(self) -> None: ...
     async def wait_readable(self, fd: int) -> None: ...
@@ -824,6 +825,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         self.task = task
         self.fd_namespace = fd_namespace
         self.number = number
+        self.raw = base.FileDescriptor(fd_namespace, number)
         self.open = True
 
     @property
@@ -895,10 +897,10 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def write(self: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
         return (await self.file.write(self, buf))
 
-    async def add(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor', event: EpollEvent) -> None:
+    async def add(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor', event: Pointer) -> None:
         await self.file.add(self, fd, event)
 
-    async def modify(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor', event: EpollEvent) -> None:
+    async def modify(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor', event: Pointer) -> None:
         await self.file.modify(self, fd, event)
 
     async def delete(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor') -> None:
@@ -941,30 +943,30 @@ class FileDescriptor(t.Generic[T_file_co]):
         return (await self.syscall.wait_readable(self.number))
 
 class EpollFile(File):
-    async def add(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: EpollEvent) -> None:
-        await epfd.syscall.epoll_ctl_add(epfd.number, fd.number, event)
+    async def add(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: Pointer) -> None:
+        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.raw, lib.EPOLL_CTL_ADD, fd.raw, event)
 
-    async def modify(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: EpollEvent) -> None:
-        await epfd.syscall.epoll_ctl_mod(epfd.number, fd.number, event)
+    async def modify(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: Pointer) -> None:
+        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.raw, lib.EPOLL_CTL_MOD, fd.raw, event)
 
     async def delete(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor) -> None:
-        await epfd.syscall.epoll_ctl_del(epfd.number, fd.number)
+        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.raw, lib.EPOLL_CTL_DEL, fd.raw)
 
     async def wait(self, epfd: FileDescriptor['EpollFile'], maxevents: int=10, timeout: int=-1) -> t.List[EpollEvent]:
         return (await epfd.syscall.epoll_wait(epfd.number, maxevents, timeout))
 
 class EpolledFileDescriptor(t.Generic[T_file_co]):
-    epoller: 'Epoller'
+    epoller: Epoller
     underlying: FileDescriptor[T_file_co]
     queue: trio.hazmat.UnboundedQueue
-    def __init__(self, epoller: 'Epoller', underlying: FileDescriptor[T_file_co], queue: trio.hazmat.UnboundedQueue) -> None:
+    def __init__(self, epoller: Epoller, underlying: FileDescriptor[T_file_co], queue: trio.hazmat.UnboundedQueue) -> None:
         self.epoller = epoller
         self.underlying = underlying
         self.queue = queue
         self.in_epollfd = True
 
     async def modify(self, events: EpollEventMask) -> None:
-        await self.epoller.epfd.modify(self.underlying, EpollEvent(self.underlying.number, events))
+        await self.epoller.modify(self.underlying, EpollEvent(self.underlying.number, events))
 
     async def wait(self) -> t.List[EpollEvent]:
         while True:
@@ -975,23 +977,24 @@ class EpolledFileDescriptor(t.Generic[T_file_co]):
 
     async def aclose(self) -> None:
         if self.in_epollfd:
-            await self.epoller.epfd.delete(self.underlying)
+            await self.epoller.delete(self.underlying)
             self.in_epollfd = False
         await self.underlying.aclose()
 
-    async def __aenter__(self) -> 'EpolledFileDescriptor[T_file_co]':
+    async def __aenter__(self) -> EpolledFileDescriptor[T_file_co]:
         return self
 
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
 
 class Epoller:
-    def __init__(self, epfd: FileDescriptor[EpollFile]) -> None:
+    def __init__(self, epfd: FileDescriptor[EpollFile], memory_allocator: MemoryAllocator) -> None:
         self.epfd = epfd
+        self.memory_allocator = memory_allocator
         self.fd_map: t.Dict[int, EpolledFileDescriptor] = {}
         self.running_wait: t.Optional[trio.Event] = None
 
-    async def add(self, fd: FileDescriptor[T_file], events: EpollEventMask=None
+    async def register(self, fd: FileDescriptor[T_file], events: EpollEventMask=None
     ) -> EpolledFileDescriptor:
         if events is None:
             events = EpollEventMask.make()
@@ -999,7 +1002,7 @@ class Epoller:
         queue = trio.hazmat.UnboundedQueue()
         wrapper = EpolledFileDescriptor(self, fd, queue)
         self.fd_map[fd.number] = wrapper
-        await self.epfd.add(fd, EpollEvent(fd.number, events))
+        await self.add(fd, EpollEvent(fd.number, events))
         return wrapper
 
     async def do_wait(self) -> None:
@@ -1021,6 +1024,15 @@ class Epoller:
             self.running_wait = None
             running_wait.set()
 
+    async def modify(self, fd: FileDescriptor, event: EpollEvent) -> None:
+        fd + event
+
+    async def add(self, fd: FileDescriptor, event: EpollEvent) -> None:
+        fd + event
+
+    async def delete(self, fd: FileDescriptor) -> None:
+        await self.epfd.delete(fd)
+
     async def close(self) -> None:
         await self.epfd.aclose()
 
@@ -1037,7 +1049,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     @staticmethod
     async def make(epoller: Epoller, fd: FileDescriptor[T_file]) -> 'AsyncFileDescriptor[T_file]':
         await fd.set_nonblock()
-        epolled = await epoller.add(fd, EpollEventMask.make(
+        epolled = await epoller.register(fd, EpollEventMask.make(
             in_=True, out=True, rdhup=True, pri=True, err=True, hup=True, et=True))
         return AsyncFileDescriptor(epolled)
 
@@ -1524,6 +1536,7 @@ class TaskResources:
     @staticmethod
     async def make(task: Task) -> TaskResources:
         # TODO handle deallocating if later steps fail
+        # aaaaaaaaaaaaaaaaaaaaaaaaaaa I need the memory allcator here aaaaaaaaaaaaa
         epoller = Epoller(await task.epoll_create())
         child_monitor = await ChildTaskMonitor.make(task, epoller)
         return TaskResources(epoller, child_monitor)
@@ -1540,15 +1553,34 @@ class TaskResources:
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
+class MemoryAllocation:
+    def __init__(self, arena: Arena) -> None:
+        self.arena = arena
+
+    def __enter__(self) -> 'Pointer':
+        return self.arena.mapping.pointer()
+
+    def __exit__(self, *args, **kwargs) -> None:
+        self.arena.inuse = False
+
 class Arena:
     def __init__(self, mapping: MemoryMapping) -> None:
         self.mapping = mapping
         self.inuse = False
 
-    # no not a pointer because we need to be able to free it as well
-    def malloc(self, size: int) -> t.Optional[Pointer]:
+    def malloc(self, size: int) -> t.Optional[MemoryAllocation]:
+        if self.inuse or self.mapping.length < size:
+            return None
         self.inuse = True
-        return self.mapping.pointer()
+        return MemoryAllocation(self)
+
+    async def close(self) -> None:
+        if self.inuse:
+            raise Exception
+        await self.mapping.unmap()
+
+def align(num: int, alignment: int) -> int:
+    return num + (alignment - (num % alignment))
 
 class MemoryAllocator:
     """A not-particularly-efficient memory allocator
@@ -1559,31 +1591,30 @@ class MemoryAllocator:
 
     we need to actually legit do it
 
+    we
+
     """
     def __init__(self, task: Task) -> None:
         self.task = task
-        self.free_pages: t.List[Pointer] = []
-        self.mappings: t.List[MemoryMapping] = []
+        self.arenas: t.List[Arena] = []
 
-    @contextlib.asynccontextmanager
-    async def malloc(self, size: int) -> t.AsyncIterator[Pointer]:
-        page_size = 4096
-        if size > page_size:
-            raise Exception("we can't allocate more than a page lol")
-        if self.free_pages:
-            page = self.free_pages.pop()
+    async def malloc(self, size: int) -> MemoryAllocation:
+        for arena in self.arenas:
+            alloc = arena.malloc(size)
+            if alloc:
+                return alloc
+        mapping = await self.task.mmap(align(size, 4096), ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)
+        arena = Arena(mapping)
+        self.arenas.append(arena)
+        result = arena.malloc(size)
+        if result is None:
+            raise Exception("some kind of internal error caused a freshly created memory arena to return null for an allocation")
         else:
-            mapping = await self.task.mmap(page_size, ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)
-            self.mappings.append(mapping)
-            page = mapping.pointer()
-        try:
-            yield page
-        finally:
-            self.free_pages.append(page)
+            return result
 
     async def close(self) -> None:
-        for mapping in self.mappings:
-            await mapping.unmap()
+        for arena in self.arenas:
+            await arena.close()
 
 @dataclass
 class ProcessResources:
@@ -1604,6 +1635,8 @@ class ProcessResources:
         )
 
     async def decref(self) -> None:
+        # TODO oops this won't work probably humm
+        # we need some kind of reference counting
         await self.memory_allocator.close()
 
 @dataclass
@@ -1629,6 +1662,37 @@ class FilesystemResources:
             tmpdir=tmpdir,
             utilities=utilities,
         )
+
+class BatchGatewayOperation:
+    def __init__(self, gateway: MemoryGateway) -> None:
+        self.gateway = gateway
+        self.operations: t.List[t.Tuple[Pointer, Pointer, int]] = []
+
+    def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
+        self.operations.append((dest, src, n))
+
+    async def flush(self) -> None:
+        raise Exception("use iovec magic to do the copy, woo")
+
+class Serializer:
+    def __init__(self, memory_allocator: MemoryAllocator, async_exit_stack: contextlib.AsyncExitStack) -> None:
+        self.memory_allocator = memory_allocator
+        self.async_exit_stack = async_exit_stack
+        self.operations: t.List[t.Tuple[Pointer, bytes]] = []
+
+    async def serialize(self, data: bytes) -> Pointer:
+        # we could defer allocation to the end and do it in bulk, but I can't figure out how to
+        # model that, since we need to have the pointers to the allocated memory to serialize argv.
+        allocation = await self.memory_allocator.malloc(len(data))
+        ptr: Pointer = self.async_exit_stack.enter_context(allocation)
+        self.operations.append((ptr, data))
+        return ptr
+
+    async def flush(self, gateway: MemoryGateway) -> None:
+        batch = BatchGatewayOperation(gateway)
+        for ptr, data in self.operations:
+            batch.memcpy(ptr, to_local_pointer(data), len(data))
+        await batch.flush()
 
 class StandardTask:
     def __init__(self,
@@ -1687,11 +1751,28 @@ class StandardTask:
         # which is extremely important
         null_terminated_args = [ffi.new('char[]', arg) for arg in argv]
         argv_bytes = ffi.new('char *const[]', null_terminated_args + [ffi.NULL])
+        # so hm
+        # making syscalls requires allocating memory.
+        # should we have the memory allocator in the task??
+        # no, definitely not.
+        # but this kinda means that..
+        # well, I guess we can't have EpollFile be able to make its own syscalls.
+        # oh, wait, yes we can, just pass a Pointer not an event
         null_terminated_env_vars = [ffi.new('char[]', arg) for arg in envp]
         envp_bytes = ffi.new('char *const[]', null_terminated_env_vars + [ffi.NULL])
         path_bytes = ffi.new('char[]', path)
         await raw_syscall.execveat(self.task.syscall, dirfd, path, argv, envp, flags)
         await self.close()
+
+    async def bestthing(self, arglist):
+        async with AsyncExitStack as exit_stack:
+            serializer = Serializer(self.process.memory_allocator, exit_stack)
+            argv = b""
+            for arg in arglist:
+                ptr = await serializer.serialize(arg)
+                destptr.append(struct.pack("!I", ptr.address))
+            argv_ptr = await serializer.serialize(argv)
+            await serializer.flush(self.task.gateway)
 
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
@@ -2170,12 +2251,6 @@ class ThreadMaker:
         tls = task.address_space.null()
         thread = await self.clone(flags|signal.SIGCHLD, stack_pointer, tls)
         return CThread(thread, mapping)
-
-class RsyscallException(Exception):
-    pass
-
-class RsyscallHangup(Exception):
-    pass
 
 class RsyscallConnection:
     """A connection to some rsyscall server where we can make syscalls
