@@ -1040,13 +1040,13 @@ class Epoller:
     async def add(self, fd: FileDescriptor, event: EpollEvent) -> None:
         data = event.to_bytes()
         with await self.memory_allocator.malloc(len(data)) as event_ptr:
-            self.epfd.task.gateway.memcpy(event_ptr, to_local_pointer(data), len(data))
+            await self.epfd.task.gateway.memcpy(event_ptr, to_local_pointer(data), len(data))
             await self.epfd.add(fd, event_ptr)
 
     async def modify(self, fd: FileDescriptor, event: EpollEvent) -> None:
         data = event.to_bytes()
         with await self.memory_allocator.malloc(len(data)) as event_ptr:
-            self.epfd.task.gateway.memcpy(event_ptr, to_local_pointer(data), len(data))
+            await self.epfd.task.gateway.memcpy(event_ptr, to_local_pointer(data), len(data))
             await self.epfd.modify(fd, event_ptr)
 
     async def delete(self, fd: FileDescriptor) -> None:
