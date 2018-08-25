@@ -48,6 +48,11 @@ class SigprocmaskHow(enum.IntEnum):
     UNBLOCK = lib.SIG_UNBLOCK
     SETMASK = lib.SIG_SETMASK
 
+class EpollCtlOp(enum.IntEnum):
+    ADD = lib.EPOLL_CTL_ADD
+    MOD = lib.EPOLL_CTL_MOD
+    DEL = lib.EPOLL_CTL_DEL
+
 def bits(n):
     "Yields the bit indices that are set"
     while n:
@@ -169,9 +174,6 @@ class SyscallInterface(base.SyscallInterface):
 
     # epoll operations
     async def epoll_create(self, flags: int) -> int: ...
-    async def epoll_ctl_add(self, epfd: int, fd: int, event: EpollEvent) -> None: ...
-    async def epoll_ctl_mod(self, epfd: int, fd: int, event: EpollEvent) -> None: ...
-    async def epoll_ctl_del(self, epfd: int, fd: int) -> None: ...
     async def epoll_wait(self, epfd: int, maxevents: int, timeout: int) -> t.List[EpollEvent]: ...
 
     # we can do the same with ioctl
@@ -334,18 +336,6 @@ class LocalSyscall(SyscallInterface):
         logger.debug("epoll_create(%s)", flags)
         return (await self.syscall(lib.SYS_epoll_create1, flags))
 
-    async def epoll_ctl_add(self, epfd: int, fd: int, event: EpollEvent) -> None:
-        logger.debug("epoll_ctl_add(%d, %d, %s)", epfd, fd, event)
-        await self.syscall(lib.SYS_epoll_ctl, epfd, lib.EPOLL_CTL_ADD, fd, event.to_bytes())
-
-    async def epoll_ctl_mod(self, epfd: int, fd: int, event: EpollEvent) -> None:
-        logger.debug("epoll_ctl_mod(%d, %d, %s)", epfd, fd, event)
-        await self.syscall(lib.SYS_epoll_ctl, epfd, lib.EPOLL_CTL_MOD, fd, event.to_bytes())
-
-    async def epoll_ctl_del(self, epfd: int, fd: int) -> None:
-        logger.debug("epoll_ctl_del(%d, %d)", epfd, fd)
-        await self.syscall(lib.SYS_epoll_ctl, epfd, lib.EPOLL_CTL_DEL, fd)
-
     async def epoll_wait(self, epfd: int, maxevents: int, timeout: int) -> t.List[EpollEvent]:
         logger.debug("epoll_wait(%d, maxevents=%d, timeout=%d)", epfd, maxevents, timeout)
         c_events = ffi.new('struct epoll_event[]', maxevents)
@@ -471,7 +461,8 @@ class LocalSyscall(SyscallInterface):
 
     async def bind(self, sockfd: int, addr: bytes) -> None:
         logger.debug("bind(%s, %s)", sockfd, addr)
-        await self.syscall(lib.SYS_bind, sockfd, ffi.from_buffer(addr), len(addr))
+        buf = ffi.from_buffer(addr)
+        await self.syscall(lib.SYS_bind, sockfd, ffi.cast('long', buf), len(addr))
 
     async def listen(self, sockfd: int, backlog: int) -> None:
         logger.debug("listen(%s, %s)", sockfd, backlog)
@@ -479,13 +470,15 @@ class LocalSyscall(SyscallInterface):
 
     async def connect(self, sockfd: int, addr: bytes) -> None:
         logger.debug("connect(%s, %s)", sockfd, addr)
-        await self.syscall(lib.SYS_connect, sockfd, ffi.from_buffer(addr), len(addr))
+        buf = ffi.from_buffer(addr)
+        await self.syscall(lib.SYS_connect, sockfd, ffi.cast('long', buf), len(addr))
 
     async def accept(self, sockfd: int, addrlen: int, flags: int) -> t.Tuple[int, bytes]:
         logger.debug("accept(%s, %s, %s)", sockfd, addrlen, flags)
         buf = ffi.new('char[]', addrlen)
         lenbuf = ffi.new('size_t*', addrlen)
-        fd = await self.syscall(lib.SYS_accept4, sockfd, buf, lenbuf, flags)
+        fd = await self.syscall(lib.SYS_accept4, sockfd, ffi.cast('long', buf),
+                                ffi.cast('long', lenbuf), flags)
         return fd, bytes(ffi.buffer(buf, lenbuf[0]))
 
     async def getsockname(self, sockfd: int, addrlen: int) -> bytes:
@@ -919,8 +912,9 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def delete(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor') -> None:
         await self.file.delete(self, fd)
 
-    async def wait(self: 'FileDescriptor[EpollFile]', maxevents: int=10, timeout: int=-1) -> t.List[EpollEvent]:
-        return (await self.file.wait(self, maxevents, timeout))
+    async def wait(self: 'FileDescriptor[EpollFile]',
+                   events: Pointer, maxevents: int, timeout: int) -> int:
+        return (await self.file.wait(self, events, maxevents, timeout))
 
     async def getdents(self: 'FileDescriptor[DirectoryFile]', count: int=4096) -> t.List[Dirent]:
         return (await self.file.getdents(self, count))
@@ -957,16 +951,17 @@ class FileDescriptor(t.Generic[T_file_co]):
 
 class EpollFile(File):
     async def add(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: Pointer) -> None:
-        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.raw, lib.EPOLL_CTL_ADD, fd.raw, event)
+        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.raw, EpollCtlOp.ADD, fd.raw, event)
 
     async def modify(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: Pointer) -> None:
-        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.raw, lib.EPOLL_CTL_MOD, fd.raw, event)
+        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.raw, EpollCtlOp.MOD, fd.raw, event)
 
     async def delete(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor) -> None:
-        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.raw, lib.EPOLL_CTL_DEL, fd.raw)
+        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.raw, EpollCtlOp.DEL, fd.raw)
 
-    async def wait(self, epfd: FileDescriptor['EpollFile'], maxevents: int=10, timeout: int=-1) -> t.List[EpollEvent]:
-        return (await epfd.syscall.epoll_wait(epfd.number, maxevents, timeout))
+    async def wait(self, epfd: 'FileDescriptor[EpollFile]',
+                   events: Pointer, maxevents: int, timeout: int) -> int:
+        return (await raw_syscall.epoll_wait(epfd.task.syscall, epfd.raw, events, maxevents, timeout))
 
 class EpolledFileDescriptor(t.Generic[T_file_co]):
     epoller: Epoller
@@ -1001,9 +996,9 @@ class EpolledFileDescriptor(t.Generic[T_file_co]):
         await self.aclose()
 
 class Epoller:
-    def __init__(self, epfd: FileDescriptor[EpollFile], memory_allocator: MemoryAllocator) -> None:
+    def __init__(self, epfd: FileDescriptor[EpollFile], remote_new: RemoteNew) -> None:
         self.epfd = epfd
-        self.memory_allocator = memory_allocator
+        self.remote_new = remote_new
         self.fd_map: t.Dict[int, EpolledFileDescriptor] = {}
         self.running_wait: t.Optional[trio.Event] = None
 
@@ -1026,10 +1021,10 @@ class Epoller:
             self.running_wait = running_wait
 
             # we first epoll_wait optimistically, and only then wait_readable
-            received_events = await self.epfd.wait(maxevents=32, timeout=0)
+            received_events = await self.wait(maxevents=32, timeout=0)
             if len(received_events) == 0:
                 await self.epfd.wait_readable()
-                received_events = await self.epfd.wait(maxevents=32, timeout=0)
+                received_events = await self.wait(maxevents=32, timeout=0)
             for event in received_events:
                 queue = self.fd_map[event.data].queue
                 queue.put_nowait(event.events)
@@ -1037,16 +1032,26 @@ class Epoller:
             self.running_wait = None
             running_wait.set()
 
+    async def wait(self, maxevents: int, timeout: int) -> t.List[EpollEvent]:
+        bufsize = maxevents * EpollEvent.bytesize()
+        localbuf = bytearray(bufsize)
+        with await self.remote_new.memory_allocator.malloc(bufsize) as events_ptr:
+            count = await self.epfd.wait(events_ptr, maxevents, timeout)
+            await self.remote_new.memory_gateway.memcpy(
+                to_local_pointer(localbuf), events_ptr, bufsize)
+        ret: t.List[EpollEvent] = []
+        cur = 0
+        for _ in range(count):
+            ret.append(EpollEvent.from_bytes(localbuf[cur:cur+EpollEvent.bytesize()]))
+            cur += EpollEvent.bytesize()
+        return ret
+
     async def add(self, fd: FileDescriptor, event: EpollEvent) -> None:
-        data = event.to_bytes()
-        with await self.memory_allocator.malloc(len(data)) as event_ptr:
-            await self.epfd.task.gateway.memcpy(event_ptr, to_local_pointer(data), len(data))
+        with await self.remote_new.new(event.to_bytes()) as event_ptr:
             await self.epfd.add(fd, event_ptr)
 
     async def modify(self, fd: FileDescriptor, event: EpollEvent) -> None:
-        data = event.to_bytes()
-        with await self.memory_allocator.malloc(len(data)) as event_ptr:
-            await self.epfd.task.gateway.memcpy(event_ptr, to_local_pointer(data), len(data))
+        with await self.remote_new.new(event.to_bytes()) as event_ptr:
             await self.epfd.modify(fd, event_ptr)
 
     async def delete(self, fd: FileDescriptor) -> None:
@@ -1547,8 +1552,22 @@ async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
             data = data[ret:]
     return path
 
+class RemoteNew:
+    def __init__(self, memory_allocator: MemoryAllocator, memory_gateway: MemoryGateway) -> None:
+        self.memory_allocator = memory_allocator
+        self.memory_gateway = memory_gateway
+
+    async def new(self, data: bytes) -> MemoryAllocation:
+        allocation = await self.memory_allocator.malloc(len(data))
+        try:
+            await self.memory_gateway.memcpy(allocation.pointer(), to_local_pointer(data), len(data))
+        except Exception:
+            allocation.free()
+        return allocation
+
 @dataclass
 class TaskResources:
+    remote_new: RemoteNew
     epoller: Epoller
     child_monitor: ChildTaskMonitor
 
@@ -1558,9 +1577,10 @@ class TaskResources:
         # aaaaaaaaaaaaaaaaaaaaaaaaaaa I need the memory allcator here aaaaaaaaaaaaa
         # hmmm
         # having the task resources rely on the process resources is tricky but whatever
-        epoller = Epoller(await task.epoll_create(), memory_allocator)
+        remote_new = RemoteNew(memory_allocator, task.gateway)
+        epoller = Epoller(await task.epoll_create(), remote_new)
         child_monitor = await ChildTaskMonitor.make(task, epoller)
-        return TaskResources(epoller, child_monitor)
+        return TaskResources(remote_new, epoller, child_monitor)
 
     async def close(self) -> None:
         # have to destruct in opposite order of construction, gee that sounds like C++
@@ -1578,11 +1598,17 @@ class MemoryAllocation:
     def __init__(self, arena: Arena) -> None:
         self.arena = arena
 
-    def __enter__(self) -> 'Pointer':
+    def pointer(self) -> Pointer:
         return self.arena.mapping.pointer()
 
-    def __exit__(self, *args, **kwargs) -> None:
+    def free(self) -> None:
         self.arena.inuse = False
+
+    def __enter__(self) -> 'Pointer':
+        return self.pointer()
+
+    def __exit__(self, *args, **kwargs) -> None:
+        self.free()
 
 class Arena:
     def __init__(self, mapping: MemoryMapping) -> None:

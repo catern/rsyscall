@@ -50,8 +50,12 @@ async def execveat(sysif: SyscallInterface, dirfd: FileDescriptor, path: Pointer
 
 async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: int, fd: FileDescriptor, event: Pointer=None) -> None:
     if event is None:
-        logger.debug("epoll_ctl(%s, %s, %s)", epfd, op, fd)
+        logger.debug("epoll_ctl(%d, %s, %d)", epfd, op, fd)
         await sysif.syscall(lib.SYS_epoll_ctl, epfd, op, fd, 0)
     else:
-        logger.debug("epoll_ctl(%s, %s, %s, %s)", epfd, op, fd, event)
+        logger.debug("epoll_ctl(%d, %s, %d, %s)", epfd, op, fd, event)
         await sysif.syscall(lib.SYS_epoll_ctl, epfd, op, fd, event)
+
+async def epoll_wait(sysif: SyscallInterface, epfd: FileDescriptor, events: Pointer, maxevents: int, timeout: int) -> int:
+    logger.debug("epoll_wait(%d, %d, %d, %d)", epfd, events, maxevents, timeout)
+    return (await sysif.syscall(lib.SYS_epoll_wait, epfd, events, maxevents, timeout))

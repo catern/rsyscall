@@ -1,3 +1,4 @@
+from __future__ import annotations
 from rsyscall._raw import lib, ffi # type: ignore
 import os
 import select
@@ -47,3 +48,12 @@ class EpollEvent:
 
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct epoll_event const*', (self.events.raw, (self.data,)))))
+
+    @staticmethod
+    def from_bytes(data: bytes) -> EpollEvent:
+        struct = ffi.cast('struct epoll_event*', ffi.from_buffer(data))
+        return EpollEvent(struct.data.u64, EpollEventMask(struct.events))
+
+    @staticmethod
+    def bytesize() -> int:
+        return ffi.sizeof('struct epoll_event')
