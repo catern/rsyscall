@@ -46,4 +46,4 @@ class EpollEvent:
     events: EpollEventMask
 
     def to_bytes(self) -> bytes:
-        return ffi.new('struct epoll_event const*', (self.events.raw, (self.data,)))
+        return bytes(ffi.buffer(ffi.new('struct epoll_event const*', (self.events.raw, (self.data,)))))

@@ -44,10 +44,19 @@ class FDNamespace:
     def null(self) -> FileDescriptor:
         return FileDescriptor(self, -1)
 
+    def __str__(self) -> str:
+        return f"FDNamespace({id(self)})"
+
 @dataclass
 class FileDescriptor:
     fd_namespace: FDNamespace
     number: int
+
+    def __str__(self) -> str:
+        return f"FileDescriptor({self.fd_namespace}, {self.number})"
+
+    def __int__(self) -> int:
+        return self.number
 
 class MountNamespace:
     pass

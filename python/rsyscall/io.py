@@ -244,7 +244,9 @@ class LocalSyscall(SyscallInterface):
         pass
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        ret = await self._do_syscall(number, arg1=arg1, arg2=arg2, arg3=arg3, arg4=arg4, arg5=arg5, arg6=arg6)
+        ret = await self._do_syscall(number,
+                                     arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+                                     arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
         if ret < 0:
             err = -ret
             raise OSError(err, os.strerror(err))
@@ -257,7 +259,7 @@ class LocalSyscall(SyscallInterface):
     async def pipe(self, flags=os.O_CLOEXEC) -> t.Tuple[int, int]:
         logger.debug("pipe(%s)", flags)
         buf = ffi.new('int[2]')
-        await self.syscall(lib.SYS_pipe2, buf, flags)
+        await self.syscall(lib.SYS_pipe2, ffi.cast('long', buf), flags)
         return (buf[0], buf[1])
 
     async def close(self, fd: int) -> None:
@@ -269,12 +271,13 @@ class LocalSyscall(SyscallInterface):
     async def read(self, fd: int, count: int) -> bytes:
         logger.debug("read(%d, %d)", fd, count)
         buf = ffi.new('char[]', count)
-        ret = await self.syscall(lib.SYS_read, fd, buf, count)
+        ret = await self.syscall(lib.SYS_read, fd, ffi.cast('long', buf), count)
         return bytes(ffi.buffer(buf, ret))
 
     async def write(self, fd: int, buf: bytes) -> int:
         logger.debug("write(%d, %s)", fd, buf)
-        ret = await self.syscall(lib.SYS_write, fd, ffi.from_buffer(buf), len(buf))
+        bufptr = ffi.from_buffer(buf)
+        ret = await self.syscall(lib.SYS_write, fd, ffi.cast('long', bufptr), len(buf))
         return ret
 
     async def dup2(self, oldfd: int, newfd: int) -> int:
@@ -304,7 +307,9 @@ class LocalSyscall(SyscallInterface):
         envp_bytes = ffi.new('char *const[]', null_terminated_env_vars + [ffi.NULL])
         path_bytes = ffi.new('char[]', path)
         try:
-            await self.syscall(lib.SYS_execveat, dirfd, path_bytes, argv_bytes, envp_bytes, flags)
+            await self.syscall(lib.SYS_execveat, dirfd,
+                               ffi.cast('long', path_bytes), ffi.cast('long', argv_bytes),
+                               ffi.cast('long', envp_bytes), flags)
         except RsyscallHangup:
             # a hangup means the exec was successful. other exceptions will propagate through
             pass
@@ -344,7 +349,7 @@ class LocalSyscall(SyscallInterface):
     async def epoll_wait(self, epfd: int, maxevents: int, timeout: int) -> t.List[EpollEvent]:
         logger.debug("epoll_wait(%d, maxevents=%d, timeout=%d)", epfd, maxevents, timeout)
         c_events = ffi.new('struct epoll_event[]', maxevents)
-        count = await self.syscall(lib.SYS_epoll_wait, epfd, c_events, maxevents, timeout)
+        count = await self.syscall(lib.SYS_epoll_wait, epfd, ffi.cast('long', c_events), maxevents, timeout)
         ret = []
         for ev in c_events[0:count]:
             ret.append(EpollEvent(ev.data.u64, EpollEventMask(ev.events)))
@@ -373,11 +378,13 @@ class LocalSyscall(SyscallInterface):
 
     async def faccessat(self, dirfd: int, pathname: bytes, mode: int, flags: int) -> None:
         logger.debug("faccessat(%s, %s, %s)", dirfd, pathname, mode)
-        await self.syscall(lib.SYS_faccessat, dirfd, null_terminated(pathname), mode, flags)
+        pathptr = null_terminated(pathname)
+        await self.syscall(lib.SYS_faccessat, dirfd, ffi.cast('long', pathptr), mode, flags)
 
     async def chdir(self, path: bytes) -> None:
         logger.debug("chdir(%s)", path)
-        await self.syscall(lib.SYS_chdir, null_terminated(path))
+        pathptr = null_terminated(path)
+        await self.syscall(lib.SYS_chdir, ffi.cast('long', pathptr))
 
     async def fchdir(self, fd: int) -> None:
         logger.debug("fchdir(%s)", fd)
@@ -385,17 +392,19 @@ class LocalSyscall(SyscallInterface):
 
     async def mkdirat(self, dirfd: int, pathname: bytes, mode: int) -> None:
         logger.debug("mkdirat(%s, %s, %s)", dirfd, pathname, mode)
-        await self.syscall(lib.SYS_mkdirat, dirfd, null_terminated(pathname), mode)
+        pathptr = null_terminated(pathname)
+        await self.syscall(lib.SYS_mkdirat, dirfd, ffi.cast('long', pathptr), mode)
 
     async def openat(self, dirfd: int, pathname: bytes, flags: int, mode: int) -> int:
         logger.debug("openat(%s, %s, %s, %s)", dirfd, pathname, flags, mode)
-        ret = await self.syscall(lib.SYS_openat, dirfd, null_terminated(pathname), flags, mode)
+        pathptr = null_terminated(pathname)
+        ret = await self.syscall(lib.SYS_openat, dirfd, ffi.cast('long', pathptr), flags, mode)
         return ret
 
     async def getdents(self, fd: int, count: int) -> t.List[Dirent]:
         logger.debug("getdents64(%s, %s)", fd, count)
         buf = ffi.new('char[]', count)
-        ret = await self.syscall(lib.SYS_getdents64, fd, buf, count)
+        ret = await self.syscall(lib.SYS_getdents64, fd, ffi.cast('long', buf), count)
         return rsyscall.stat.getdents64_parse(ffi.buffer(buf, ret))
 
     async def lseek(self, fd: int, offset: int, whence: int) -> int:
@@ -431,7 +440,8 @@ class LocalSyscall(SyscallInterface):
             rusage = ffi.new('struct rusage*')
         else:
             rusage = ffi.NULL
-        ret = await self.syscall(lib.SYS_waitid, idtype, id, siginfo, options, rusage)
+        ret = await self.syscall(lib.SYS_waitid, idtype, id,
+                                 ffi.cast('long', siginfo), options, ffi.cast('long', rusage))
         return ret, bytes(ffi.buffer(siginfo)) if siginfo else None, bytes(ffi.buffer(rusage)) if rusage else None
 
     async def signalfd(self, fd: int, mask: t.Set[signal.Signals], flags: int) -> int:
@@ -441,7 +451,8 @@ class LocalSyscall(SyscallInterface):
         for sig in mask:
             set_integer |= 1 << (sig-1)
         set_data = ffi.new('unsigned long*', set_integer)
-        return (await self.syscall(lib.SYS_signalfd4, fd, set_data, ffi.sizeof('unsigned long'), flags))
+        return (await self.syscall(lib.SYS_signalfd4, fd, ffi.cast('long', set_data),
+                                   ffi.sizeof('unsigned long'), flags))
 
     async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.Set[signal.Signals]]) -> t.Set[signal.Signals]:
         logger.debug("rt_sigprocmask(%s, %s)", how, set)
@@ -453,7 +464,9 @@ class LocalSyscall(SyscallInterface):
             for sig in set:
                 set_integer |= 1 << (sig-1)
             new_set = ffi.new('unsigned long*', set_integer)
-            await self.syscall(lib.SYS_rt_sigprocmask, how, new_set, old_set, ffi.sizeof('unsigned long'))
+            await self.syscall(lib.SYS_rt_sigprocmask, how,
+                               ffi.cast('long', new_set), ffi.cast('long', old_set),
+                               ffi.sizeof('unsigned long'))
         return {signal.Signals(bit) for bit in bits(old_set[0])}
 
     async def bind(self, sockfd: int, addr: bytes) -> None:
@@ -1024,11 +1037,17 @@ class Epoller:
             self.running_wait = None
             running_wait.set()
 
-    async def modify(self, fd: FileDescriptor, event: EpollEvent) -> None:
-        fd + event
-
     async def add(self, fd: FileDescriptor, event: EpollEvent) -> None:
-        fd + event
+        data = event.to_bytes()
+        with await self.memory_allocator.malloc(len(data)) as event_ptr:
+            self.epfd.task.gateway.memcpy(event_ptr, to_local_pointer(data), len(data))
+            await self.epfd.add(fd, event_ptr)
+
+    async def modify(self, fd: FileDescriptor, event: EpollEvent) -> None:
+        data = event.to_bytes()
+        with await self.memory_allocator.malloc(len(data)) as event_ptr:
+            self.epfd.task.gateway.memcpy(event_ptr, to_local_pointer(data), len(data))
+            await self.epfd.modify(fd, event_ptr)
 
     async def delete(self, fd: FileDescriptor) -> None:
         await self.epfd.delete(fd)
@@ -1534,10 +1553,12 @@ class TaskResources:
     child_monitor: ChildTaskMonitor
 
     @staticmethod
-    async def make(task: Task) -> TaskResources:
+    async def make(task: Task, memory_allocator: MemoryAllocator) -> TaskResources:
         # TODO handle deallocating if later steps fail
         # aaaaaaaaaaaaaaaaaaaaaaaaaaa I need the memory allcator here aaaaaaaaaaaaa
-        epoller = Epoller(await task.epoll_create())
+        # hmmm
+        # having the task resources rely on the process resources is tricky but whatever
+        epoller = Epoller(await task.epoll_create(), memory_allocator)
         child_monitor = await ChildTaskMonitor.make(task, epoller)
         return TaskResources(epoller, child_monitor)
 
@@ -1711,9 +1732,9 @@ class StandardTask:
     @staticmethod
     async def make_from_bootstrap(bootstrap: UnixBootstrap) -> 'StandardTask':
         task = bootstrap.task
-        task_resources = await TaskResources.make(task)
         # TODO fix this to... pull it from the bootstrap or something...
         process_resources = ProcessResources.make_from_local(task)
+        task_resources = await TaskResources.make(task, process_resources.memory_allocator)
         filesystem_resources = await FilesystemResources.make_from_bootstrap(task, bootstrap)
         return StandardTask(task, task_resources, process_resources, filesystem_resources,
                             {**bootstrap.environ})
@@ -1735,7 +1756,7 @@ class StandardTask:
             user_fds, shared)
         # TODO maybe need to think some more about how this resource inheriting works
         # for that matter, could I inherit the epollfd and signalfd across tasks?
-        stdtask = StandardTask(task, await TaskResources.make(task),
+        stdtask = StandardTask(task, await TaskResources.make(task, self.process.memory_allocator),
                                self.process, self.filesystem, {**self.environment})
         return RsyscallTask(stdtask, cthread), fds
 
