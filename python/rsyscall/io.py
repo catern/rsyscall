@@ -172,10 +172,6 @@ class SyscallInterface(base.SyscallInterface):
     async def mmap(self, addr: int, length: int, prot: int, flags: int, fd: int, offset: int) -> int: ...
     async def munmap(self, addr: int, length: int) -> None: ...
 
-    # epoll operations
-    async def epoll_create(self, flags: int) -> int: ...
-    async def epoll_wait(self, epfd: int, maxevents: int, timeout: int) -> t.List[EpollEvent]: ...
-
     # we can do the same with ioctl
     # but not with prctl. what a mistake prctl is!
 
@@ -331,19 +327,6 @@ class LocalSyscall(SyscallInterface):
     async def getpid(self) -> int:
         logger.debug("getpid()")
         return (await self.syscall(lib.SYS_getpid))
-
-    async def epoll_create(self, flags: int) -> int:
-        logger.debug("epoll_create(%s)", flags)
-        return (await self.syscall(lib.SYS_epoll_create1, flags))
-
-    async def epoll_wait(self, epfd: int, maxevents: int, timeout: int) -> t.List[EpollEvent]:
-        logger.debug("epoll_wait(%d, maxevents=%d, timeout=%d)", epfd, maxevents, timeout)
-        c_events = ffi.new('struct epoll_event[]', maxevents)
-        count = await self.syscall(lib.SYS_epoll_wait, epfd, ffi.cast('long', c_events), maxevents, timeout)
-        ret = []
-        for ev in c_events[0:count]:
-            ret.append(EpollEvent(ev.data.u64, EpollEventMask(ev.events)))
-        return ret
 
     @t.overload
     async def fcntl(self, fd: int, cmd: int, arg: int=0) -> int: ...
@@ -596,6 +579,44 @@ class SignalMask:
         self.mask = mask
 
 class Task:
+    # so should we include the memory allocator in this task?
+    # well, do all tasks have memory usable for syscalls? as a basic requirement?
+    # yes, yes I think they do.
+    # but then again they all have epoll and stuff and yet we're not putting that in here
+    # since the memory allocation is opinionated.
+    # most of these are finite in size though...
+    # which ones are not?
+    # read/write et al, and execveat
+    # so maybe we could just use a finite amount of memory?
+    # so I guess this kind of relies on the implicit authority of having a stack in C.
+    # we can just freely allocate infinite amounts...
+    # so, Path operations all really need memory,
+    # so it'll have to embed something with a memory allocator.
+    # right? hm.
+    # could we preallocate the memory?
+    # could we use some other trick?
+    # keep in mind that this is single threaded,
+    # so only one syscall can happen at a time...
+    # but we can still pipeline...
+    # hmm....
+    # i mean if call A uses some memory,
+    # we can't reuse it until call A is done...
+    # which, I guess...
+    # I mean, it's not really single threaded
+    # it's just that the memory is freed when a call is complete.
+    # and we can chain them together by pipelining the next call.
+    # so i guess we could have one big buffer?
+    # hmmmmmm
+    # what if we breach the bounds of this one big buffer
+    # for example with too much argv
+    # hmm can we use our argv for this
+    # we could write to argv, but it's not necessarily as big as we need,
+    # and furthermore argv is variable size,
+    # so there's no fixed size that will be enough for all future calls.
+    # we really do need dynamic allocation, hmm.
+    # well and the allocation size can be fixed,
+    # and we just throw an exception if we try to allocate more and fail,
+    # or maybe instead we wait for the current allocations to reduce
     def __init__(self, syscall: SyscallInterface,
                  gateway: MemoryGateway,
                  fd_namespace: FDNamespace,
@@ -635,7 +656,7 @@ class Task:
                     FileDescriptor(WritableFile(shared=False), self, self.fd_namespace, w))
 
     async def epoll_create(self, flags=lib.EPOLL_CLOEXEC) -> 'FileDescriptor[EpollFile]':
-        epfd = await self.syscall.epoll_create(flags)
+        epfd = await raw_syscall.epoll_create(self.syscall, flags)
         return FileDescriptor(EpollFile(), self, self.fd_namespace, epfd)
 
     async def socket_unix(self, type: socket.SocketKind, protocol: int=0) -> 'FileDescriptor[UnixSocketFile]':

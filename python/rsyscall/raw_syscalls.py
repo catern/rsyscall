@@ -48,6 +48,10 @@ async def execveat(sysif: SyscallInterface, dirfd: FileDescriptor, path: Pointer
         # a hangup means the exec was successful. other exceptions will propagate through
         pass
 
+async def epoll_create(sysif: SyscallInterface, flags: int) -> int:
+    logger.debug("epoll_create(%s)", flags)
+    return (await sysif.syscall(lib.SYS_epoll_create1, flags))
+
 async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: int, fd: FileDescriptor, event: Pointer=None) -> None:
     if event is None:
         logger.debug("epoll_ctl(%d, %s, %d)", epfd, op, fd)
