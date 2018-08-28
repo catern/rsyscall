@@ -96,6 +96,10 @@ async def lseek(sysif: SyscallInterface, fd: FileDescriptor, offset: int, whence
     logger.debug("lseek(%s, %s, %s)", fd, offset, whence)
     return (await sysif.syscall(lib.SYS_lseek, fd, offset, whence))
 
+async def listen(sysif: SyscallInterface, sockfd: FileDescriptor, backlog: int) -> None:
+    logger.debug("listen(%s, %s)", sockfd, backlog)
+    await sysif.syscall(lib.SYS_listen, sockfd, backlog)
+
 #### Syscalls which need read or write memory access and allocation to be used. ####
 async def pipe2(sysif: SyscallInterface, pipefd: Pointer, flags: int) -> None:
     logger.debug("pipe2(%s, %s)", pipefd, flags)
@@ -140,7 +144,28 @@ async def epoll_wait(sysif: SyscallInterface, epfd: FileDescriptor, events: Poin
     logger.debug("epoll_wait(%d, %d, %d, %d)", epfd, events, maxevents, timeout)
     return (await sysif.syscall(lib.SYS_epoll_wait, epfd, events, maxevents, timeout))
 
+async def signalfd4(sysif: SyscallInterface, mask: Pointer, sizemask: int, flags: int,
+                   fd: t.Optional[FileDescriptor]=None) -> int:
+    logger.debug("signalfd(%s, %s, %s, %s)", fd, mask, sizemask, flags)
+    if fd is None:
+        fd = -1 # type: ignore
+    return (await sysif.syscall(lib.SYS_signalfd4, fd, mask, sizemask, flags))
+
+async def rt_sigprocmask(sysif: SyscallInterface, how: int,
+                         set: t.Optional[Pointer], oldset: t.Optional[Pointer], sigsetsize: int) -> None:
+    logger.debug("rt_sigprocmask(%s, %s, %s, %s)", how, set, oldset, sigsetsize)
+    await sysif.syscall(lib.SYS_rt_sigprocmask, how, set, oldset, sigsetsize)
+
 # filesystem stuff
+async def chdir(sysif: SyscallInterface, path: Pointer) -> None:
+    logger.debug("chdir(%s)", path)
+    await sysif.syscall(lib.SYS_chdir, path)
+
+async def getdents(sysif: SyscallInterface, fd: FileDescriptor, dirp: Pointer, count: int) -> int:
+    logger.debug("getdents64(%s, %s, %s)", fd, dirp, count)
+    return (await sysif.syscall(lib.SYS_getdents64, fd, dirp, count))
+
+# operations on paths
 async def openat(sysif: SyscallInterface,
                  dirfd: t.Optional[FileDescriptor], path: Pointer, flags: int, mode: int) -> int:
     logger.debug("openat(%s, %s, %s, %s)", dirfd, path, flags, mode)
@@ -149,27 +174,58 @@ async def openat(sysif: SyscallInterface,
     return (await sysif.syscall(lib.SYS_openat, dirfd, path, flags, mode))
 
 async def faccessat(sysif: SyscallInterface,
-                    dirfd: t.Optional[FileDescriptor], path: Pointer, flags: int, mode: int) -> int:
+                    dirfd: t.Optional[FileDescriptor], path: Pointer, flags: int, mode: int) -> None:
     logger.debug("faccessat(%s, %s, %s, %s)", dirfd, path, flags, mode)
     if dirfd is None:
         dirfd = lib.AT_FDCWD # type: ignore
-    return (await sysif.syscall(lib.SYS_faccessat, dirfd, path, flags, mode))
+    await sysif.syscall(lib.SYS_faccessat, dirfd, path, flags, mode)
 
 async def mkdirat(sysif: SyscallInterface,
-                  dirfd: t.Optional[FileDescriptor], path: Pointer, mode: int) -> int:
+                  dirfd: t.Optional[FileDescriptor], path: Pointer, mode: int) -> None:
     logger.debug("mkdirat(%s, %s, %s)", dirfd, path, mode)
     if dirfd is None:
         dirfd = lib.AT_FDCWD # type: ignore
-    return (await sysif.syscall(lib.SYS_mkdirat, dirfd, path, mode))
+    await sysif.syscall(lib.SYS_mkdirat, dirfd, path, mode)
 
 async def unlinkat(sysif: SyscallInterface,
-                   dirfd: t.Optional[FileDescriptor], path: Pointer, flags: int) -> int:
+                   dirfd: t.Optional[FileDescriptor], path: Pointer, flags: int) -> None:
     logger.debug("unlinkat(%s, %s, %s)", dirfd, path, flags)
     if dirfd is None:
         dirfd = lib.AT_FDCWD # type: ignore
-    return (await sysif.syscall(lib.SYS_unlinkat, dirfd, path, flags))
+    await sysif.syscall(lib.SYS_unlinkat, dirfd, path, flags)
+
+async def linkat(sysif: SyscallInterface,
+                 olddirfd: t.Optional[FileDescriptor], oldpath: Pointer,
+                 newdirfd: t.Optional[FileDescriptor], newpath: Pointer,
+                 flags: int) -> None:
+    logger.debug("linkat(%s, %s, %s, %s, %s)", olddirfd, oldpath, newdirfd, newpath, flags)
+    if olddirfd is None:
+        olddirfd = lib.AT_FDCWD # type: ignore
+    if newdirfd is None:
+        newdirfd = lib.AT_FDCWD # type: ignore
+    await sysif.syscall(lib.SYS_linkat, olddirfd, oldpath, newdirfd, newpath, flags)
+
+async def symlinkat(sysif: SyscallInterface,
+                    newdirfd: t.Optional[FileDescriptor], linkpath: Pointer, target: Pointer) -> None:
+    logger.debug("symlinkat(%s, %s, %s)", newdirfd, linkpath, target)
+    if newdirfd is None:
+        newdirfd = lib.AT_FDCWD # type: ignore
+    # symlinkat is in the opposite order of usual, for no reason
+    await sysif.syscall(lib.SYS_symlinkat, linkpath, newdirfd, target)
+
+async def readlinkat(sysif: SyscallInterface,
+                     dirfd: t.Optional[FileDescriptor], path: Pointer,
+                     buf: Pointer, bufsiz: int) -> int:
+    logger.debug("readlinkat(%s, %s, %s, %s)", dirfd, path, buf, bufsiz)
+    if dirfd is None:
+        dirfd = lib.AT_FDCWD # type: ignore
+    return (await sysif.syscall(lib.SYS_readlinkat, dirfd, path, buf, bufsiz))
 
 # socket stuff
+async def socketpair(sysif: SyscallInterface, domain: int, type: int, protocol: int, sv: Pointer) -> None:
+    logger.debug("socketpair(%s, %s, %s, %s)", domain, type, protocol, sv)
+    await sysif.syscall(lib.SYS_socketpair, domain, type, protocol, sv)
+
 async def getsockname(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: Pointer) -> None:
     logger.debug("getsockname(%s, %s, %s)", sockfd, addr, addrlen)
     await sysif.syscall(lib.SYS_getsockname, sockfd, addr, addrlen)
@@ -185,3 +241,16 @@ async def getsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int
 async def setsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int, optname: int, optval: Pointer, optlen: int) -> None:
     logger.debug("setsockopt(%s, %s, %s, %s, %s)", sockfd, level, optname, optval, optlen)
     await sysif.syscall(lib.SYS_setsockopt, sockfd, level, optname, optval, optlen)
+
+async def bind(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: int) -> None:
+    logger.debug("bind(%s, %s, %s)", sockfd, addr, addrlen)
+    await sysif.syscall(lib.SYS_bind, sockfd, addr, addrlen)
+
+async def connect(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: int) -> None:
+    logger.debug("connect(%s, %s, %s)", sockfd, addr, addrlen)
+    await sysif.syscall(lib.SYS_connect, sockfd, addr, addrlen)
+
+async def accept(sysif: SyscallInterface, sockfd: FileDescriptor,
+                 addr: Pointer, addrlen: Pointer, flags: int) -> int:
+    logger.debug("accept(%s, %s, %s, %s)", sockfd, addr, addrlen, flags)
+    return (await sysif.syscall(lib.SYS_accept4, sockfd, addr, addrlen, flags))

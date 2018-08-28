@@ -132,24 +132,9 @@ class SyscallInterface(base.SyscallInterface):
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> None: ...
 
-    async def chdir(self, path: bytes) -> None: ...
-
-    async def getdents(self, fd: int, count: int) -> t.List[Dirent]: ...
-    async def linkat(self, olddirfd: int, oldpath: bytes, newdirfd: int, newpath: bytes, flags: int) -> None: ...
-    async def symlinkat(self, target: bytes, newdirfd: int, newpath: bytes) -> None: ...
-    async def readlinkat(self, dirfd: int, pathname: bytes, bufsiz: int) -> bytes: ...
     async def waitid(self, idtype: IdType, id: int, options: int, *, want_child_event: bool, want_rusage: bool
     ) -> t.Tuple[int, t.Optional[bytes], t.Optional[bytes]]: ...
-    async def signalfd(self, fd: int, signals: t.Set[signal.Signals], flags: int) -> int: ...
     async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.Set[signal.Signals]]) -> t.Set[signal.Signals]: ...
-
-    # socket stuff
-    async def socketpair(self, domain: int, type: int, protocol: int) -> t.Tuple[int, int]: ...
-
-    async def bind(self, sockfd: int, addr: bytes) -> None: ...
-    async def listen(self, sockfd: int, backlog: int) -> None: ...
-    async def connect(self, sockfd: int, addr: bytes) -> None: ...
-    async def accept(self, sockfd: int, addrlen: int, flags: int) -> t.Tuple[int, bytes]: ...
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
@@ -219,31 +204,6 @@ class LocalSyscall(SyscallInterface):
             # a hangup means the exec was successful. other exceptions will propagate through
             pass
 
-    async def chdir(self, path: bytes) -> None:
-        logger.debug("chdir(%s)", path)
-        pathptr = null_terminated(path)
-        await self.syscall(lib.SYS_chdir, ffi.cast('long', pathptr))
-
-    async def getdents(self, fd: int, count: int) -> t.List[Dirent]:
-        logger.debug("getdents64(%s, %s)", fd, count)
-        buf = ffi.new('char[]', count)
-        ret = await self.syscall(lib.SYS_getdents64, fd, ffi.cast('long', buf), count)
-        return rsyscall.stat.getdents64_parse(ffi.buffer(buf, ret))
-
-    async def linkat(self, olddirfd: int, oldpath: bytes, newdirfd: int, newpath: bytes, flags: int) -> None:
-        logger.debug("linkat(%s, %s, %s, %s, %s)", olddirfd, oldpath, newdirfd, newpath, flags)
-        await self.syscall(lib.SYS_linkat, olddirfd, null_terminated(oldpath), newdirfd, null_terminated(newpath), flags)
-
-    async def symlinkat(self, target: bytes, newdirfd: int, newpath: bytes) -> None:
-        logger.debug("symlinkat(%s, %s, %s)", target, newdirfd, newpath)
-        await self.syscall(lib.SYS_symlinkat, null_terminated(target), newdirfd, newpath)
-
-    async def readlinkat(self, dirfd: int, pathname: bytes, bufsiz: int) -> bytes:
-        logger.debug("readlinkat(%s, %s, %s)", dirfd, pathname, bufsiz)
-        buf = ffi.new('char[]', bufsiz)
-        await self.syscall(lib.SYS_readlinkat, dirfd, null_terminated(pathname), bufsiz)
-        return ffi.buffer(bufsiz)
-
     async def waitid(self, idtype: IdType, id: int, options: int, *, want_child_event: bool, want_rusage: bool
     ) -> t.Tuple[int, t.Optional[bytes], t.Optional[bytes]]:
         logger.debug("waitid(%s, %s, %s, want_child_event=%s, want_rusage=%s)", idtype, id, options, want_child_event, want_rusage)
@@ -259,16 +219,6 @@ class LocalSyscall(SyscallInterface):
                                  ffi.cast('long', siginfo), options, ffi.cast('long', rusage))
         return ret, bytes(ffi.buffer(siginfo)) if siginfo else None, bytes(ffi.buffer(rusage)) if rusage else None
 
-    async def signalfd(self, fd: int, mask: t.Set[signal.Signals], flags: int) -> int:
-        logger.debug("signalfd(%s, %s, %s)", fd, mask, flags)
-        # sigset_t is just a 64bit bitmask of signals, I don't need the manipulation macros.
-        set_integer = 0
-        for sig in mask:
-            set_integer |= 1 << (sig-1)
-        set_data = ffi.new('unsigned long*', set_integer)
-        return (await self.syscall(lib.SYS_signalfd4, fd, ffi.cast('long', set_data),
-                                   ffi.sizeof('unsigned long'), flags))
-
     async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.Set[signal.Signals]]) -> t.Set[signal.Signals]:
         logger.debug("rt_sigprocmask(%s, %s)", how, set)
         old_set = ffi.new('unsigned long*')
@@ -283,41 +233,6 @@ class LocalSyscall(SyscallInterface):
                                ffi.cast('long', new_set), ffi.cast('long', old_set),
                                ffi.sizeof('unsigned long'))
         return {signal.Signals(bit) for bit in bits(old_set[0])}
-
-    async def bind(self, sockfd: int, addr: bytes) -> None:
-        logger.debug("bind(%s, %s)", sockfd, addr)
-        buf = ffi.from_buffer(addr)
-        await self.syscall(lib.SYS_bind, sockfd, ffi.cast('long', buf), len(addr))
-
-    async def listen(self, sockfd: int, backlog: int) -> None:
-        logger.debug("listen(%s, %s)", sockfd, backlog)
-        await self.syscall(lib.SYS_listen, sockfd, backlog)
-
-    async def connect(self, sockfd: int, addr: bytes) -> None:
-        logger.debug("connect(%s, %s)", sockfd, addr)
-        buf = ffi.from_buffer(addr)
-        await self.syscall(lib.SYS_connect, sockfd, ffi.cast('long', buf), len(addr))
-
-    async def accept(self, sockfd: int, addrlen: int, flags: int) -> t.Tuple[int, bytes]:
-        logger.debug("accept(%s, %s, %s)", sockfd, addrlen, flags)
-        buf = ffi.new('char[]', addrlen)
-        lenbuf = ffi.new('size_t*', addrlen)
-        fd = await self.syscall(lib.SYS_accept4, sockfd, ffi.cast('long', buf),
-                                ffi.cast('long', lenbuf), flags)
-        return fd, bytes(ffi.buffer(buf, lenbuf[0]))
-
-    async def getpeername(self, sockfd: int, addrlen: int) -> bytes:
-        logger.debug("getpeername(%s, %s)", sockfd, addrlen)
-        buf = ffi.new('char[]', addrlen)
-        lenbuf = ffi.new('size_t*', addrlen)
-        await self.syscall(lib.SYS_getpeername, sockfd, buf, lenbuf)
-        return bytes(ffi.buffer(buf, lenbuf[0]))
-
-    async def socketpair(self, domain: int, type: int, protocol: int) -> t.Tuple[int, int]:
-        logger.debug("socketpair(%s, %s, %s)", domain, type, protocol)
-        sv = ffi.new('int[2]')
-        await self.syscall(lib.SYS_socketpair, domain, type, protocol, sv)
-        return (sv[0], sv[1])
 
 class FunctionPointer(Pointer):
     "A function pointer."
@@ -454,9 +369,9 @@ class Task:
     async def chdir(self, path: 'Path') -> None:
         if isinstance(path.base, DirfdPathBase):
             await raw_syscall.fchdir(self.syscall, path.base.dirfd.raw)
-            await self.syscall.chdir(path.path)
+            await memsys.chdir(self.syscall, self.gateway, self.allocator, path.path)
         else:
-            await self.syscall.chdir(path._full_path)
+            await memsys.chdir(self.syscall, self.gateway, self.allocator, path._full_path)
 
     async def unshare_fs(self) -> None:
         # we want this to return something that we can use to chdir
@@ -480,7 +395,7 @@ class Task:
         return FileDescriptor(InetSocketFile(), self, self.fd_namespace, sockfd)
 
     async def signalfd_create(self, mask: t.Set[signal.Signals]) -> 'FileDescriptor[SignalFile]':
-        sigfd_num = await self.syscall.signalfd(-1, mask, lib.SFD_CLOEXEC)
+        sigfd_num = await memsys.signalfd(self.syscall, self.gateway, self.allocator, mask, os.O_CLOEXEC)
         return FileDescriptor(SignalFile(mask), self, self.fd_namespace, sigfd_num)
 
     async def mmap(self, length: int, prot: memory.ProtFlag, flags: memory.MapFlag) -> memory.AnonymousMapping:
@@ -540,7 +455,7 @@ class SignalFile(ReadableFile):
         self.mask = mask
 
     async def signalfd(self, fd: 'FileDescriptor[SignalFile]', mask: t.Set[signal.Signals]) -> None:
-        await fd.syscall.signalfd(fd.number, mask, 0)
+        await memsys.signalfd(fd.syscall, fd.task.gateway, fd.task.allocator, mask, 0, fd=fd.raw)
         self.mask = mask
 
 class DirectoryFile(SeekableFile):
@@ -550,7 +465,8 @@ class DirectoryFile(SeekableFile):
         self.raw_path = raw_path
 
     async def getdents(self, fd: 'FileDescriptor[DirectoryFile]', count: int) -> t.List[Dirent]:
-        return (await fd.syscall.getdents(fd.number, count))
+        data = await memsys.getdents64(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, count)
+        return rsyscall.stat.getdents64_parse(data)
 
 T_addr = t.TypeVar('T_addr', bound='Address')
 class Address:
@@ -624,13 +540,13 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     address_type: t.Type[T_addr]
 
     async def bind(self, fd: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
-        await fd.syscall.bind(fd.number, addr.to_bytes())
+        await memsys.bind(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, addr.to_bytes())
 
     async def listen(self, fd: 'FileDescriptor[SocketFile]', backlog: int) -> None:
-        await fd.syscall.listen(fd.number, backlog)
+        await raw_syscall.listen(fd.syscall, fd.raw, backlog)
 
     async def connect(self, fd: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
-        await fd.syscall.connect(fd.number, addr.to_bytes())
+        await memsys.connect(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, addr.to_bytes())
 
     async def getsockname(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
         data = await memsys.getsockname(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, self.address_type.addrlen)
@@ -647,7 +563,8 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
         return (await memsys.setsockopt(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, level, optname, optval))
 
     async def accept(self, fd: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
-        fdnum, data = await fd.syscall.accept(fd.number, self.address_type.addrlen, flags)
+        fdnum, data = await memsys.accept(fd.syscall, fd.task.gateway, fd.task.allocator,
+                                          fd.raw, self.address_type.addrlen, flags)
         addr = self.address_type.parse(data)
         fd = FileDescriptor(type(self)(), fd.task, fd.fd_namespace, fdnum)
         return fd, addr
@@ -1209,18 +1126,19 @@ class Path:
 
     async def link_to(self, oldpath: 'Path', flags: int=0) -> 'Path':
         "Create a hardlink at Path 'self' to the file at Path 'oldpath'"
-        await self.syscall.linkat(oldpath.base.dirfd_num, oldpath._full_path,
-                                  self.base.dirfd_num, self._full_path,
-                                  flags)
+        await memsys.linkat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+                            oldpath.pure, self.pure, flags)
         return self
 
     async def symlink_to(self, target: bytes) -> 'Path':
         "Create a symlink at Path 'self' pointing to the passed-in target"
-        await self.syscall.symlinkat(target, self.base.dirfd_num, self._full_path)
+        await memsys.symlinkat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+                               self.pure, target)
         return self
 
     async def readlink(self, bufsiz: int=4096) -> bytes:
-        return (await self.syscall.readlinkat(self.base.dirfd_num, self._full_path, bufsiz))
+        return (await memsys.readlinkat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+                                        self.pure, bufsiz))
 
     def unix_address(self, task: Task) -> UnixAddress:
         """Return an address that can be used with bind/connect for Unix sockets
