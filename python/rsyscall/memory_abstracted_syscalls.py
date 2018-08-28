@@ -12,6 +12,11 @@ import signal
 import contextlib
 logger = logging.getLogger(__name__)
 
+class SigprocmaskHow(enum.IntEnum):
+    BLOCK = lib.SIG_BLOCK
+    UNBLOCK = lib.SIG_UNBLOCK
+    SETMASK = lib.SIG_SETMASK
+
 @contextlib.asynccontextmanager
 async def localize_data(
         gateway: MemoryGateway, allocator: memory.Allocator, data: bytes
@@ -55,9 +60,8 @@ async def signalfd(sysif: SyscallInterface, gateway: MemoryGateway, allocator: m
         return (await raw_syscall.signalfd4(sysif, mask_ptr, mask_len, flags, fd=fd))
 
 async def rt_sigprocmask(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
-                         # TODO hmm maybe group how with set
-                         how: SigprocmaskHow, set: t.Optional[t.Set[signal.Signals]],
-                         want_oldset: bool=True
+                         newset: t.Optional[t.Tuple[SigprocmaskHow, t.Set[signal.Signals]]]=None,
+                         want_oldset: bool=True,
 ) -> t.Set[signal.Signals]:
     logger.debug("rt_sigprocmask(%s, %s)", how, set)
     old_set = ffi.new('unsigned long*')

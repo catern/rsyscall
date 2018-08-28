@@ -156,6 +156,19 @@ async def rt_sigprocmask(sysif: SyscallInterface, how: int,
     logger.debug("rt_sigprocmask(%s, %s, %s, %s)", how, set, oldset, sigsetsize)
     await sysif.syscall(lib.SYS_rt_sigprocmask, how, set, oldset, sigsetsize)
 
+async def rt_sigprocmask(sysif: SyscallInterface,
+                         newset: t.Optional[t.Tuple[SigprocmaskHow, Pointer]],
+                         oldset: t.Optional[Pointer],
+                         sigsetsize: int) -> None:
+    logger.debug("rt_sigprocmask(%s, %s, %s)", newset, oldset, sigsetsize)
+    if newset is None:
+        how, set = 0, 0 # type: ignore
+    else:
+        how, set = newset
+    if oldset is None:
+        oldset = 0 # type: ignore
+    await sysif.syscall(lib.SYS_rt_sigprocmask, how, set, oldset, sigsetsize)
+
 # filesystem stuff
 async def chdir(sysif: SyscallInterface, path: Pointer) -> None:
     logger.debug("chdir(%s)", path)
