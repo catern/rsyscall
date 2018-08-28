@@ -63,7 +63,7 @@ http {
         # nginx requires a directory in which to store temporary files
         # created during operation; this will be that directory.
         # wait a second we nee
-        print("rsctask pid", await rsctask.stdtask.task.syscall.getpid())
+        # print("rsctask pid", await rsctask.stdtask.task.syscall.getpid())
         child_task = await rsctask.execve(self.executable_path, [
             "nginx", "-p", workdir.path,
             "-c", await rsc.spit(workdir.path/"nginx.conf", config),

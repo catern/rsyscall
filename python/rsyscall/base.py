@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import typing as t
 import abc
 
 # Here we have base dataclasses which don't carry around references to a task.
@@ -65,6 +66,26 @@ class FSInformation:
     "Filesystem root, current working directory, and umask; controlled by CLONE_FS."
     pass
 
+@dataclass
+class DirfdPathBase:
+    dirfd: FileDescriptor
+
+@dataclass
+class RootPathBase:
+    namespace: MountNamespace
+    fs_information: FSInformation
+
+@dataclass
+class CWDPathBase:
+    namespace: MountNamespace
+    fs_information: FSInformation
+
+@dataclass
+class Path:
+    base: t.Union[DirfdPathBase, RootPathBase, CWDPathBase]
+    # shouldn't have a leading / if it's relative to root, we'll put that on ourselves.
+    data: bytes
+
 class Task:
     def __init__(self, pid: int,
                  sysif: SyscallInterface,
@@ -86,19 +107,26 @@ class MemoryGateway:
     Or more specifically between their address spaces and file descriptor namespaces.
 
     """
-    # future methods will support copying between
+    # future methods will support copying between file descriptors
     @abc.abstractmethod
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None: ...
+    @abc.abstractmethod
+    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None: ...
 
 from rsyscall._raw import ffi, lib # type: ignore
 class LocalMemoryGateway(MemoryGateway):
     i = 0
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
         if dest.address_space == src.address_space == local_address_space:
-            print("memcpy", dest, src)
             lib.memcpy(ffi.cast('void*', dest.address), ffi.cast('void*', src.address), n)
         else:
-            raise Exception("some pointer isn't in the local address space")
+            raise Exception("some pointer isn't in the local address space", dest, src, n)
+
+    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
+        # TODO when we implement the remote support, we should try to coalesce adjacent buffers,
+        # so one or both sides of the copy can be implemented with a single read or write instead of readv/writev.
+        for dest, src, n in ops:
+            await self.memcpy(dest, src, n)
 
 def to_local_pointer(data: bytes) -> Pointer:
     return Pointer(local_address_space, int(ffi.cast('long', ffi.from_buffer(data))))

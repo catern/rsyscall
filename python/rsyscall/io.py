@@ -7,7 +7,10 @@ import rsyscall.epoll
 from rsyscall.base import AddressSpace, Pointer, FDNamespace, RsyscallException, RsyscallHangup
 from rsyscall.base import MemoryGateway, LocalMemoryGateway, to_local_pointer
 import rsyscall.base as base
+from rsyscall.raw_syscalls import UnshareFlag, NsType
 import rsyscall.raw_syscalls as raw_syscall
+import rsyscall.memory_abstracted_syscalls as memsys
+import rsyscall.memory as memory
 
 from rsyscall.stat import Dirent, DType
 import rsyscall.stat
@@ -109,34 +112,6 @@ class ChildEvent:
             raise Exception("Child wasn't killed with a signal")
         return self.sig
 
-class NsType(enum.IntFlag):
-    NEWCGROUP = lib.CLONE_NEWCGROUP
-    NEWIPC = lib.CLONE_NEWIPC
-    NEWNET = lib.CLONE_NEWNET
-    NEWNS = lib.CLONE_NEWNS
-    NEWPID = lib.CLONE_NEWPID
-    NEWUSER = lib.CLONE_NEWUSER
-    NEWUTS = lib.CLONE_NEWUTS
-
-class UnshareFlag(enum.IntFlag):
-    NONE = 0
-    FILES = lib.CLONE_FILES
-    FS = lib.CLONE_FS
-    NEWCGROUP = lib.CLONE_NEWCGROUP
-    NEWIPC = lib.CLONE_NEWIPC
-    NEWNET = lib.CLONE_NEWNET
-    NEWNS = lib.CLONE_NEWNS
-    NEWPID = lib.CLONE_NEWPID
-    NEWUSER = lib.CLONE_NEWUSER
-    NEWUTS = lib.CLONE_NEWUTS
-    SYSVSEM = lib.CLONE_SYSVSEM
-
-class ProtFlag(enum.IntFlag):
-    EXEC = lib.PROT_EXEC
-    READ = lib.PROT_READ
-    WRITE = lib.PROT_WRITE
-    NONE = lib.PROT_NONE
-
 class SyscallInterface(base.SyscallInterface):
     # non-syscall operations
     async def close_interface(self) -> None: ...
@@ -146,60 +121,20 @@ class SyscallInterface(base.SyscallInterface):
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int: ...
 
     # syscalls
-    async def pipe(self, flags=os.O_NONBLOCK) -> t.Tuple[int, int]: ...
-    async def close(self, fd: int) -> None: ...
     # TODO add optional offset argument?
     # TODO figure out how to allow preadv2 flags?
     async def read(self, fd: int, count: int) -> bytes: ...
     async def write(self, fd: int, buf: bytes) -> int: ...
-    async def dup2(self, oldfd: int, newfd: int) -> int: ...
 
     # task manipulation
     async def clone(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int: ...
-    async def exit(self, status: int) -> None: ...
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> None: ...
 
-    async def getpid(self) -> int: ...
-
-    async def kill(self, pid: int, sig: signal.Signals) -> None: ...
-
-    # namespace manipulation
-    async def unshare(self, flags: UnshareFlag) -> None: ...
-    async def setns(self, fd: int, nstype: NsType) -> None: ...
-
-    async def mmap(self, addr: int, length: int, prot: int, flags: int, fd: int, offset: int) -> int: ...
-    async def munmap(self, addr: int, length: int) -> None: ...
-
-    # we can do the same with ioctl
-    # but not with prctl. what a mistake prctl is!
-
-    @t.overload
-    async def fcntl(self, fd: int, cmd: int, arg: int=0) -> int: ...
-    @t.overload
-    async def fcntl(self, fd: int, cmd: int, arg: bytes) -> bytes: ...
-    async def fcntl(self, fd, cmd, arg=0):
-        "This follows the same protocol as fcntl.fcntl."
-        ...
-
-    # for prctl we will have a separate method for each usage mode;
-    # its interface is too diverse to do anything else and still abstract over the details of memory
-    async def prctl_set_child_subreaper(self, flag: bool) -> None: ...
-
-    # statx returns a fixed-sized buffer which we parse outside the SyscallInterface
-    async def statx(self, dirfd: int, pathname: bytes, flags: int, mask: int) -> bytes: ...
-
-    async def faccessat(self, dirfd: int, pathname: bytes, mode: int, flags: int) -> None: ...
-
     async def chdir(self, path: bytes) -> None: ...
-    async def fchdir(self, fd: int) -> None: ...
 
-    async def openat(self, dirfd: int, pathname: bytes, flags: int, mode: int) -> int: ...
-    async def mkdirat(self, dirfd: int, pathname: bytes, mode: int) -> None: ...
     async def getdents(self, fd: int, count: int) -> t.List[Dirent]: ...
-    async def lseek(self, fd: int, offset: int, whence: int) -> int: ...
-    async def unlinkat(self, dirfd: int, pathname: bytes, flags: int) -> None: ...
     async def linkat(self, olddirfd: int, oldpath: bytes, newdirfd: int, newpath: bytes, flags: int) -> None: ...
     async def symlinkat(self, target: bytes, newdirfd: int, newpath: bytes) -> None: ...
     async def readlinkat(self, dirfd: int, pathname: bytes, bufsiz: int) -> bytes: ...
@@ -209,18 +144,12 @@ class SyscallInterface(base.SyscallInterface):
     async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.Set[signal.Signals]]) -> t.Set[signal.Signals]: ...
 
     # socket stuff
-    async def socket(self, domain: int, type: int, protocol: int) -> int: ...
     async def socketpair(self, domain: int, type: int, protocol: int) -> t.Tuple[int, int]: ...
 
     async def bind(self, sockfd: int, addr: bytes) -> None: ...
     async def listen(self, sockfd: int, backlog: int) -> None: ...
     async def connect(self, sockfd: int, addr: bytes) -> None: ...
     async def accept(self, sockfd: int, addrlen: int, flags: int) -> t.Tuple[int, bytes]: ...
-    async def getsockname(self, sockfd: int, addrlen: int) -> bytes: ...
-    async def getpeername(self, sockfd: int, addrlen: int) -> bytes: ...
-
-    async def getsockopt(self, sockfd: int, level: int, optname: int, optlen: int) -> bytes: ...
-    async def setsockopt(self, sockfd: int, level: int, optname: int, optval: t.Optional[bytes], *, optlen: t.Optional[int]=None) -> None: ...
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
@@ -254,16 +183,6 @@ class LocalSyscall(SyscallInterface):
         logger.debug("wait_readable(%s)", fd)
         await self._wait_readable(fd)
 
-    async def pipe(self, flags=os.O_CLOEXEC) -> t.Tuple[int, int]:
-        logger.debug("pipe(%s)", flags)
-        buf = ffi.new('int[2]')
-        await self.syscall(lib.SYS_pipe2, ffi.cast('long', buf), flags)
-        return (buf[0], buf[1])
-
-    async def close(self, fd: int) -> None:
-        logger.debug("close(%d)", fd)
-        await self.syscall(lib.SYS_close, fd)
-
     # I could switch to preadv2 as my primitive; I can avoid overhead
     # by storing the iovec and data as a single big buffer.
     async def read(self, fd: int, count: int) -> bytes:
@@ -278,21 +197,9 @@ class LocalSyscall(SyscallInterface):
         ret = await self.syscall(lib.SYS_write, fd, ffi.cast('long', bufptr), len(buf))
         return ret
 
-    async def dup2(self, oldfd: int, newfd: int) -> int:
-        logger.debug("dup2(%d, %d)", oldfd, newfd)
-        return (await self.syscall(lib.SYS_dup2, oldfd, newfd))
-
     async def clone(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int:
         logger.debug("clone(%s, %s, %s, %s, %s)", flags, hex(child_stack), ptid, ctid, newtls)
         return (await self.syscall(lib.SYS_clone, flags, child_stack, ptid, ctid, newtls))
-
-    async def exit(self, status: int) -> None:
-        logger.debug("exit(%d)", status)
-        try:
-            await self.syscall(lib.SYS_exit, status)
-        except RsyscallHangup:
-            # a hangup means the exit was successful
-            pass
 
     async def execveat(self, dirfd: int, path: bytes,
                        argv: t.List[bytes], envp: t.List[bytes],
@@ -312,81 +219,16 @@ class LocalSyscall(SyscallInterface):
             # a hangup means the exec was successful. other exceptions will propagate through
             pass
 
-    async def mmap(self, addr: int, length: int, prot: int, flags: int, fd: int, offset: int) -> int:
-        logger.debug("mmap(%s, %s, %s, %s, %s, %s)", addr, length, prot, flags, fd, offset)
-        return (await self.syscall(lib.SYS_mmap, addr, length, prot, flags, fd, offset))
-
-    async def munmap(self, addr: int, length: int) -> None:
-        logger.debug("munmap(%s, %s)", addr, length)
-        await self.syscall(lib.SYS_munmap, addr, length)
-
-    async def exit_group(self, status: int) -> None:
-        logger.debug("exit_group(%d)", status)
-        await self.syscall(lib.SYS_exit_group, status)
-
-    async def getpid(self) -> int:
-        logger.debug("getpid()")
-        return (await self.syscall(lib.SYS_getpid))
-
-    @t.overload
-    async def fcntl(self, fd: int, cmd: int, arg: int=0) -> int: ...
-    @t.overload
-    async def fcntl(self, fd: int, cmd: int, arg: bytes) -> bytes:
-        "This follows the same protocol as fcntl.fcntl."
-        ...
-    async def fcntl(self, fd: int, cmd: int, arg=0) -> t.Union[bytes, int]:
-        "This follows the same protocol as fcntl.fcntl."
-        logger.debug("fcntl(%d, %d, %s)", fd, cmd, arg)
-        if isinstance(arg, int):
-            return (await self.syscall(lib.SYS_fcntl, fd, cmd, arg))
-        elif isinstance(arg, bytes):
-            raise NotImplementedError
-        else:
-            raise Exception
-
-    async def prctl_set_child_subreaper(self, flag: bool) -> None:
-        logger.debug("prctl_set_child_subreaper(%s)", flag)
-        # TODO also this guy
-        raise NotImplementedError
-
-    async def faccessat(self, dirfd: int, pathname: bytes, mode: int, flags: int) -> None:
-        logger.debug("faccessat(%s, %s, %s)", dirfd, pathname, mode)
-        pathptr = null_terminated(pathname)
-        await self.syscall(lib.SYS_faccessat, dirfd, ffi.cast('long', pathptr), mode, flags)
-
     async def chdir(self, path: bytes) -> None:
         logger.debug("chdir(%s)", path)
         pathptr = null_terminated(path)
         await self.syscall(lib.SYS_chdir, ffi.cast('long', pathptr))
-
-    async def fchdir(self, fd: int) -> None:
-        logger.debug("fchdir(%s)", fd)
-        await self.syscall(lib.SYS_fchdir, fd)
-
-    async def mkdirat(self, dirfd: int, pathname: bytes, mode: int) -> None:
-        logger.debug("mkdirat(%s, %s, %s)", dirfd, pathname, mode)
-        pathptr = null_terminated(pathname)
-        await self.syscall(lib.SYS_mkdirat, dirfd, ffi.cast('long', pathptr), mode)
-
-    async def openat(self, dirfd: int, pathname: bytes, flags: int, mode: int) -> int:
-        logger.debug("openat(%s, %s, %s, %s)", dirfd, pathname, flags, mode)
-        pathptr = null_terminated(pathname)
-        ret = await self.syscall(lib.SYS_openat, dirfd, ffi.cast('long', pathptr), flags, mode)
-        return ret
 
     async def getdents(self, fd: int, count: int) -> t.List[Dirent]:
         logger.debug("getdents64(%s, %s)", fd, count)
         buf = ffi.new('char[]', count)
         ret = await self.syscall(lib.SYS_getdents64, fd, ffi.cast('long', buf), count)
         return rsyscall.stat.getdents64_parse(ffi.buffer(buf, ret))
-
-    async def lseek(self, fd: int, offset: int, whence: int) -> int:
-        logger.debug("lseek(%s, %s, %s)", fd, offset, whence)
-        return (await self.syscall(lib.SYS_lseek, fd, offset, whence))
-
-    async def unlinkat(self, dirfd: int, pathname: bytes, flags: int) -> None:
-        logger.debug("unlinkat(%s, %s, %s)", dirfd, pathname, flags)
-        await self.syscall(lib.SYS_unlinkat, dirfd, null_terminated(pathname), flags)
 
     async def linkat(self, olddirfd: int, oldpath: bytes, newdirfd: int, newpath: bytes, flags: int) -> None:
         logger.debug("linkat(%s, %s, %s, %s, %s)", olddirfd, oldpath, newdirfd, newpath, flags)
@@ -464,13 +306,6 @@ class LocalSyscall(SyscallInterface):
                                 ffi.cast('long', lenbuf), flags)
         return fd, bytes(ffi.buffer(buf, lenbuf[0]))
 
-    async def getsockname(self, sockfd: int, addrlen: int) -> bytes:
-        logger.debug("getsockname(%s, %s)", sockfd, addrlen)
-        buf = ffi.new('char[]', addrlen)
-        lenbuf = ffi.new('size_t*', addrlen)
-        await self.syscall(lib.SYS_getsockname, sockfd, buf, lenbuf)
-        return bytes(ffi.buffer(buf, lenbuf[0]))
-
     async def getpeername(self, sockfd: int, addrlen: int) -> bytes:
         logger.debug("getpeername(%s, %s)", sockfd, addrlen)
         buf = ffi.new('char[]', addrlen)
@@ -478,68 +313,11 @@ class LocalSyscall(SyscallInterface):
         await self.syscall(lib.SYS_getpeername, sockfd, buf, lenbuf)
         return bytes(ffi.buffer(buf, lenbuf[0]))
 
-    async def socket(self, domain: int, type: int, protocol: int) -> int:
-        logger.debug("socket(%s, %s, %s)", domain, type, protocol)
-        return (await self.syscall(lib.SYS_socket, domain, type, protocol))
-
     async def socketpair(self, domain: int, type: int, protocol: int) -> t.Tuple[int, int]:
         logger.debug("socketpair(%s, %s, %s)", domain, type, protocol)
         sv = ffi.new('int[2]')
         await self.syscall(lib.SYS_socketpair, domain, type, protocol, sv)
         return (sv[0], sv[1])
-
-    async def getsockopt(self, sockfd: int, level: int, optname: int, optlen: int) -> bytes:
-        logger.debug("getsockopt(%s, %s, %s, %s)", sockfd, level, optname, optlen)
-        buf = ffi.new('char[]', optlen)
-        lenbuf = ffi.new('size_t*', optlen)
-        # some custom netfilter socket options could return an actual value, according to getsockopt(2).
-        # if that ever matters for anyone, we should change this to return a Tuple[int, bytes].
-        await self.syscall(lib.SYS_getsockopt, sockfd, level, optname, buf, lenbuf)
-        return bytes(ffi.buffer(buf, lenbuf[0]))
-
-    async def setsockopt(self, sockfd: int, level: int, optname: int, optval: t.Optional[bytes], *, optlen: t.Optional[int]=None) -> None:
-        logger.debug("setsockopt(%s, %s, %s, %s)", sockfd, level, optname, optval)
-        if optval is None:
-            # AF_ALG has some stupid API where to set an option to "val", it wants you to call with
-            # optval=NULL and optlen=val.  so we have to contort ourselves to make that possible.
-            if optlen == None:
-                raise ValueError("if optval is None, optlen must be passed")
-            buf = ffi.NULL
-            length = optlen
-        else:
-            buf = ffi.from_buffer(optval)
-            length = len(optval)
-        await self.syscall(lib.SYS_setsockopt, sockfd, level, optname, buf, length)
-
-    async def kill(self, pid: int, sig: signal.Signals) -> None:
-        logger.debug("kill(%s, %s)", pid, sig)
-        await self.syscall(lib.SYS_kill, pid, sig)
-
-    async def unshare(self, flags: UnshareFlag) -> None:
-        logger.debug("unshare(%s)", flags)
-        await self.syscall(lib.SYS_unshare, flags)
-        
-    async def setns(self, fd: int, nstype: NsType) -> None:
-        raise NotImplementedError
-
-class MountNamespace:
-    pass
-
-
-class FSInformation:
-    "Filesystem root, current working directory, and umask; controlled by CLONE_FS."
-    def _validate(self, task: 'Task') -> SyscallInterface:
-        if task.fs is not self:
-            raise Exception
-        return task.syscall
-
-    async def chdir(self, task: 'Task', path: 'Path') -> None:
-        syscall = self._validate(task)
-        if isinstance(path.base, DirfdPathBase):
-            await syscall.fchdir(path.base.dirfd.number)
-            await syscall.chdir(path.path)
-        else:
-            await syscall.chdir(path._full_path)
 
 class FunctionPointer(Pointer):
     "A function pointer."
@@ -617,17 +395,44 @@ class Task:
     # well and the allocation size can be fixed,
     # and we just throw an exception if we try to allocate more and fail,
     # or maybe instead we wait for the current allocations to reduce
+
+    # okay, including it in the task is at least better than putting it behind a highly-abstracted syscallinterface.
+    # so let's do it.
+    # and it's kind of like having a stack, anyway.
+
+    # hmm, should we abstract sufficiently such that we can return direct pointers to language objects?
+    # nah that's not worth it.
+    # copying is fine.
+
+    # we'll have a memory_abstracted_syscalls module,
+    # memsys,
+    # which will take a Task and...
+    # maybe we should put the gateway and the allocator inside the SyscallInterface.
+    # no, we don't do that because we could have a syscallinterface without a gateway, as always,
+    # and we could implement new gateways on top of old ones that are more powerful/efficient.
+
+    # anyway, memsys will take, I guess, all three things as separate arguments?
+    # I guess that's fine.
+    # we can always abstract it away later.
+    # anyway, anywhere we would call syscallinterface.thing(stuff),
+    # we'll instead call memsys.thing(sysif, gateway, allocator, stuff)
+    # verbose, but whatever.
+    # we could put the epoll calls in there too, but I don't want to yet, in case it turns out bad.
+    # ok! let's start.
     def __init__(self, syscall: SyscallInterface,
                  gateway: MemoryGateway,
+                 # Being able to allocate memory is like having a stack.
+                 # we really need to be able to allocate memory to get anything done - namely, to call syscalls.
                  fd_namespace: FDNamespace,
                  address_space: AddressSpace,
-                 mount: MountNamespace,
-                 fs: FSInformation,
+                 mount: base.MountNamespace,
+                 fs: base.FSInformation,
                  sigmask: SignalMask,
     ) -> None:
         self.syscall = syscall
         self.gateway = gateway
         self.address_space = address_space
+        self.allocator = memory.Allocator(syscall, address_space)
         self.fd_namespace = fd_namespace
         self.mount = mount
         self.fs = fs
@@ -637,7 +442,7 @@ class Task:
         await self.syscall.close_interface()
 
     async def exit(self, status: int) -> None:
-        await self.syscall.exit(status)
+        await raw_syscall.exit(self.syscall, status)
         await self.close()
 
     async def execveat(self, dirfd: int, path: bytes,
@@ -646,12 +451,19 @@ class Task:
         await self.syscall.execveat(dirfd, path, argv, envp, flags)
         await self.close()
 
+    async def chdir(self, path: 'Path') -> None:
+        if isinstance(path.base, DirfdPathBase):
+            await raw_syscall.fchdir(self.syscall, path.base.dirfd.raw)
+            await self.syscall.chdir(path.path)
+        else:
+            await self.syscall.chdir(path._full_path)
+
     async def unshare_fs(self) -> None:
         # we want this to return something that we can use to chdir
         raise NotImplementedError
 
     async def pipe(self, flags=os.O_CLOEXEC) -> 'Pipe':
-        r, w = await self.syscall.pipe(flags)
+        r, w = await memsys.pipe(self.syscall, self.gateway, self.allocator, flags)
         return Pipe(FileDescriptor(ReadableFile(shared=False), self, self.fd_namespace, r),
                     FileDescriptor(WritableFile(shared=False), self, self.fd_namespace, w))
 
@@ -660,21 +472,21 @@ class Task:
         return FileDescriptor(EpollFile(), self, self.fd_namespace, epfd)
 
     async def socket_unix(self, type: socket.SocketKind, protocol: int=0) -> 'FileDescriptor[UnixSocketFile]':
-        sockfd = await self.syscall.socket(lib.AF_UNIX, type, protocol)
+        sockfd = await raw_syscall.socket(self.syscall, lib.AF_UNIX, type, protocol)
         return FileDescriptor(UnixSocketFile(), self, self.fd_namespace, sockfd)
 
     async def socket_inet(self, type: socket.SocketKind, protocol: int=0) -> 'FileDescriptor[InetSocketFile]':
-        sockfd = await self.syscall.socket(lib.AF_INET, type, protocol)
+        sockfd = await raw_syscall.socket(self.syscall, lib.AF_INET, type, protocol)
         return FileDescriptor(InetSocketFile(), self, self.fd_namespace, sockfd)
 
     async def signalfd_create(self, mask: t.Set[signal.Signals]) -> 'FileDescriptor[SignalFile]':
         sigfd_num = await self.syscall.signalfd(-1, mask, lib.SFD_CLOEXEC)
         return FileDescriptor(SignalFile(mask), self, self.fd_namespace, sigfd_num)
 
-    async def mmap(self, length: int, prot: ProtFlag, flags: int) -> 'MemoryMapping':
+    async def mmap(self, length: int, prot: memory.ProtFlag, flags: memory.MapFlag) -> memory.AnonymousMapping:
         # currently doesn't support specifying an address, nor specifying a file descriptor
-        ret = await self.syscall.mmap(0, length, prot, flags|lib.MAP_ANONYMOUS, -1, 0)
-        return MemoryMapping(self, ret, length)
+        return (await memory.AnonymousMapping.make(
+            self.syscall, self.address_space, length, prot, flags))
 
 T = t.TypeVar('T')
 class File:
@@ -700,7 +512,9 @@ class File:
     async def set_nonblock(self, fd: 'FileDescriptor[File]') -> None:
         if self.shared:
             raise Exception("file object is shared and can't be mutated")
-        await fd.syscall.fcntl(fd.number, fcntl.F_SETFL, os.O_NONBLOCK)
+        if fd.file != self:
+            raise Exception("can't set a file to nonblocking through a file descriptor that doesn't point to it")
+        await raw_syscall.fcntl(fd.syscall, fd.raw, fcntl.F_SETFL, os.O_NONBLOCK)
 
 T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
@@ -715,7 +529,7 @@ class WritableFile(File):
 
 class SeekableFile(File):
     async def lseek(self, fd: 'FileDescriptor[SeekableFile]', offset: int, whence: int) -> int:
-        return (await fd.syscall.lseek(fd.number, offset, whence))
+        return (await raw_syscall.lseek(fd.syscall, fd.raw, offset, whence))
 
 class ReadableWritableFile(ReadableFile, WritableFile):
     pass
@@ -757,6 +571,8 @@ class UnixAddress(Address):
     @classmethod
     def parse(cls: t.Type[T], data: bytes) -> T:
         header = ffi.sizeof('sa_family_t')
+        if header.sun_family != lib.AF_UNIX:
+            raise Exception("sun_family must be", lib.AF_UNIX, "is instead", header.sun_family)
         buf = ffi.from_buffer(data)
         struct = ffi.cast('struct sockaddr_un*', buf)
         if len(data) <= header:
@@ -789,6 +605,8 @@ class InetAddress(Address):
     @classmethod
     def parse(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct sockaddr_in*', ffi.from_buffer(data))
+        if struct.sin_family != lib.AF_INET:
+            raise Exception("sin_family must be", lib.AF_INET, "is instead", struct.sin_family)
         return cls(socket.ntohs(struct.sin_port), socket.ntohl(struct.sin_addr.s_addr))
 
     def to_bytes(self) -> bytes:
@@ -815,19 +633,18 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
         await fd.syscall.connect(fd.number, addr.to_bytes())
 
     async def getsockname(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        data = await fd.syscall.getsockname(fd.number, self.address_type.addrlen)
+        data = await memsys.getsockname(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, self.address_type.addrlen)
         return self.address_type.parse(data)
 
     async def getpeername(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        data = await fd.syscall.getpeername(fd.number, self.address_type.addrlen)
+        data = await memsys.getpeername(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, self.address_type.addrlen)
         return self.address_type.parse(data)
 
     async def getsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
-        return (await fd.syscall.getsockopt(fd.number, level, optname, optlen))
+        return (await memsys.getsockopt(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, level, optname, optlen))
 
-    async def setsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optval: t.Optional[bytes],
-                         *, optlen: t.Optional[int]=None) -> None:
-        return (await fd.syscall.setsockopt(fd.number, level, optname, optval, optlen=optlen))
+    async def setsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optval: bytes) -> None:
+        return (await memsys.setsockopt(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, level, optname, optval))
 
     async def accept(self, fd: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
         fdnum, data = await fd.syscall.accept(fd.number, self.address_type.addrlen, flags)
@@ -863,7 +680,7 @@ class FileDescriptor(t.Generic[T_file_co]):
 
     async def aclose(self):
         if self.open:
-            await self.syscall.close(self.number)
+            await raw_syscall.close(self.task.syscall, self.raw)
             self.open = False
         else:
             pass
@@ -895,7 +712,7 @@ class FileDescriptor(t.Generic[T_file_co]):
             raise Exception("two fds are not in the same FDNamespace")
         if self is target:
             return self
-        await self.syscall.dup2(self.number, target.number)
+        await raw_syscall.dup2(self.syscall, self.raw, target.raw)
         target.open = False
         new_fd = type(self)(self.file, self.task, self.fd_namespace, target.number)
         # dup2 unsets cloexec on the new copy, so:
@@ -911,7 +728,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         raise NotImplementedError
 
     async def disable_cloexec(self) -> None:
-        await self.syscall.fcntl(self.number, fcntl.F_SETFD, 0)
+        await raw_syscall.fcntl(self.syscall, self.raw, fcntl.F_SETFD, 0)
 
     # These are just helper methods which forward to the method on the underlying file object.
     async def set_nonblock(self: 'FileDescriptor[File]') -> None:
@@ -1017,9 +834,9 @@ class EpolledFileDescriptor(t.Generic[T_file_co]):
         await self.aclose()
 
 class Epoller:
-    def __init__(self, epfd: FileDescriptor[EpollFile], remote_new: RemoteNew) -> None:
+    def __init__(self, epfd: FileDescriptor[EpollFile]) -> None:
         self.epfd = epfd
-        self.remote_new = remote_new
+        self.remote_new = RemoteNew(epfd.task.allocator, epfd.task.gateway)
         self.fd_map: t.Dict[int, EpolledFileDescriptor] = {}
         self.running_wait: t.Optional[trio.Event] = None
 
@@ -1189,57 +1006,6 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
 
-class MemoryMapping:
-    task: Task
-    address: int
-    length: int
-
-    @property
-    def syscall(self) -> SyscallInterface:
-        # A task can't change address space, so this will always be a
-        # valid SyscallInterface for operating on this mapping.
-        return self.task.syscall
-
-    def __init__(self,
-                 task: Task,
-                 address: int,
-                 length: int,
-    ) -> None:
-        self.task = task
-        self.address = address
-        self.length = length
-
-    def pointer(self) -> Pointer:
-        return Pointer(self.task.address_space, self.address)
-
-    def in_bounds(self, ptr: int, length: int) -> bool:
-        if ptr < self.address:
-            return False
-        offset = self.address - ptr
-        if (self.length - offset) < length:
-            return False
-        return True
-
-    async def write(self, ptr: int, data: bytes) -> None:
-        if not self.in_bounds(ptr, len(data)):
-            raise Exception("pointer and data not in bounds of mapping")
-        logger.debug("writing to memory %s data %s", hex(ptr), data)
-        lib.memcpy(ffi.cast('void*', ptr), ffi.from_buffer(data), len(data))
-
-    async def read(self, ptr: int, size: int) -> bytes:
-        if not self.in_bounds(ptr, size):
-            raise Exception("pointer and size not in bounds of mapping")
-        return bytes(ffi.buffer(ffi.cast('void*', ptr), size))
-
-    async def unmap(self) -> None:
-        await self.syscall.munmap(self.address, self.length)
-
-    async def __aenter__(self) -> 'MemoryMapping':
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.unmap()
-
 class PathBase:
     """These are possible bases for Paths.
 
@@ -1263,6 +1029,7 @@ class DirfdPathBase(PathBase):
     dirfd: FileDescriptor[DirectoryFile]
     def __init__(self, dirfd: FileDescriptor[DirectoryFile]) -> None:
         self.dirfd = dirfd
+        self.pure = base.DirfdPathBase(dirfd.raw)
     @property
     def dirfd_num(self) -> int:
         return self.dirfd.number
@@ -1281,6 +1048,7 @@ class DirfdPathBase(PathBase):
 class RootPathBase(PathBase):
     def __init__(self, task: Task) -> None:
         self._task = task
+        self.pure = base.RootPathBase(task.mount, task.fs)
     @property
     def dirfd_num(self) -> int:
         return lib.AT_FDCWD
@@ -1297,6 +1065,7 @@ class CurrentWorkingDirectoryPathBase(PathBase):
     task: Task
     def __init__(self, task: Task) -> None:
         self._task = task
+        self.pure = base.CWDPathBase(task.mount, task.fs)
     @property
     def dirfd_num(self) -> int:
         return lib.AT_FDCWD
@@ -1313,13 +1082,15 @@ class Path:
     "This is our entry point to any syscall that takes a path argument."
     base: PathBase
     path: bytes
-    def __init__(self, base: PathBase, path: t.Union[str, bytes]) -> None:
-        self.base = base
+    def __init__(self, base_: PathBase, path: t.Union[str, bytes]) -> None:
+        self.base = base_
         self.path = os.fsencode(path)
         if len(self.path) == 0:
             # readlink, and possibly other syscalls, behave differently when given an empty path and a dirfd
             # in general an empty path is probably not good
+            # TODO okay actually maybe let's lift this restriction
             raise Exception("empty paths not allowed")
+        self.pure = base.Path(self.base.pure, self.path) # type: ignore
 
     @staticmethod
     def from_bytes(task: Task, path: bytes) -> 'Path':
@@ -1367,7 +1138,8 @@ class Path:
                 raise Exception("can't use a Path based on a different current working directory")
 
     async def mkdir(self, mode=0o777) -> 'Path':
-        await self.syscall.mkdirat(self.base.dirfd_num, self._full_path, mode)
+        await memsys.mkdirat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+                             self.pure, mode)
         return self
 
     async def open(self, flags: int, mode=0o644) -> FileDescriptor:
@@ -1395,7 +1167,8 @@ class Path:
         # hmm hmmm we need a task I guess, not just a syscall
         # so we can find the files
         fd_namespace = self.base.task.fd_namespace
-        fd = await self.syscall.openat(self.base.dirfd_num, self._full_path, flags, mode)
+        fd = await memsys.openat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+                                 self.pure, flags, mode)
         return FileDescriptor(file, self.base.task, fd_namespace, fd)
 
     async def open_directory(self) -> FileDescriptor[DirectoryFile]:
@@ -1404,7 +1177,8 @@ class Path:
     async def creat(self, mode=0o644) -> FileDescriptor[WritableFile]:
         file = WritableFile()
         fd_namespace = self.base.task.fd_namespace
-        fd = await self.syscall.openat(self.base.dirfd_num, self._full_path, os.O_WRONLY|os.O_CREAT|os.O_TRUNC, mode)
+        fd = await memsys.openat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+                                 self.pure, os.O_WRONLY|os.O_CREAT|os.O_TRUNC, mode)
         return FileDescriptor(file, self.base.task, fd_namespace, fd)
 
     async def access(self, *, read=False, write=False, execute=False) -> bool:
@@ -1419,16 +1193,19 @@ class Path:
         if mode == 0:
             mode = os.F_OK
         try:
-            await self.syscall.faccessat(self.base.dirfd_num, self._full_path, mode, 0)
+            await memsys.faccessat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+                                   self.pure, mode, 0)
             return True
         except OSError:
             return False
 
     async def unlink(self, flags: int=0) -> None:
-        await self.syscall.unlinkat(self.base.dirfd_num, self._full_path, flags)
+        await memsys.unlinkat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+                              self.pure, flags)
 
     async def rmdir(self) -> None:
-        await self.syscall.unlinkat(self.base.dirfd_num, self._full_path, rsyscall.stat.AT_REMOVEDIR)
+        await memsys.unlinkat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+                              self.pure, rsyscall.stat.AT_REMOVEDIR)
 
     async def link_to(self, oldpath: 'Path', flags: int=0) -> 'Path':
         "Create a hardlink at Path 'self' to the file at Path 'oldpath'"
@@ -1509,7 +1286,7 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
 def gather_local_bootstrap() -> UnixBootstrap:
     task = Task(LocalSyscall(trio.hazmat.wait_readable, direct_syscall),
                 LocalMemoryGateway(),
-                FDNamespace(), base.local_address_space, MountNamespace(), FSInformation(),
+                FDNamespace(), base.local_address_space, base.MountNamespace(), base.FSInformation(),
                 SignalMask(set()))
     argv = [arg.encode() for arg in sys.argv]
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
@@ -1574,34 +1351,29 @@ async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
     return path
 
 class RemoteNew:
-    def __init__(self, memory_allocator: MemoryAllocator, memory_gateway: MemoryGateway) -> None:
+    def __init__(self, memory_allocator: memory.Allocator, memory_gateway: MemoryGateway) -> None:
         self.memory_allocator = memory_allocator
         self.memory_gateway = memory_gateway
 
-    async def new(self, data: bytes) -> MemoryAllocation:
+    async def new(self, data: bytes) -> memory.Allocation:
         allocation = await self.memory_allocator.malloc(len(data))
         try:
-            await self.memory_gateway.memcpy(allocation.pointer(), to_local_pointer(data), len(data))
+            await self.memory_gateway.memcpy(allocation.pointer, to_local_pointer(data), len(data))
         except Exception:
             allocation.free()
         return allocation
 
 @dataclass
 class TaskResources:
-    remote_new: RemoteNew
     epoller: Epoller
     child_monitor: ChildTaskMonitor
 
     @staticmethod
-    async def make(task: Task, memory_allocator: MemoryAllocator) -> TaskResources:
+    async def make(task: Task) -> TaskResources:
         # TODO handle deallocating if later steps fail
-        # aaaaaaaaaaaaaaaaaaaaaaaaaaa I need the memory allcator here aaaaaaaaaaaaa
-        # hmmm
-        # having the task resources rely on the process resources is tricky but whatever
-        remote_new = RemoteNew(memory_allocator, task.gateway)
-        epoller = Epoller(await task.epoll_create(), remote_new)
+        epoller = Epoller(await task.epoll_create())
         child_monitor = await ChildTaskMonitor.make(task, epoller)
-        return TaskResources(remote_new, epoller, child_monitor)
+        return TaskResources(epoller, child_monitor)
 
     async def close(self) -> None:
         # have to destruct in opposite order of construction, gee that sounds like C++
@@ -1615,81 +1387,13 @@ class TaskResources:
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
-class MemoryAllocation:
-    def __init__(self, arena: Arena) -> None:
-        self.arena = arena
-
-    def pointer(self) -> Pointer:
-        return self.arena.mapping.pointer()
-
-    def free(self) -> None:
-        self.arena.inuse = False
-
-    def __enter__(self) -> 'Pointer':
-        return self.pointer()
-
-    def __exit__(self, *args, **kwargs) -> None:
-        self.free()
-
-class Arena:
-    def __init__(self, mapping: MemoryMapping) -> None:
-        self.mapping = mapping
-        self.inuse = False
-
-    def malloc(self, size: int) -> t.Optional[MemoryAllocation]:
-        if self.inuse or self.mapping.length < size:
-            return None
-        self.inuse = True
-        return MemoryAllocation(self)
-
-    async def close(self) -> None:
-        if self.inuse:
-            raise Exception
-        await self.mapping.unmap()
-
-def align(num: int, alignment: int) -> int:
-    return num + (alignment - (num % alignment))
-
-class MemoryAllocator:
-    """A not-particularly-efficient memory allocator
-    
-    Each request gets an entire page, and requests over a page in size aren't supported.
-
-    ok so that's not efficient enough
-
-    we need to actually legit do it
-
-    we
-
-    """
-    def __init__(self, task: Task) -> None:
-        self.task = task
-        self.arenas: t.List[Arena] = []
-
-    async def malloc(self, size: int) -> MemoryAllocation:
-        for arena in self.arenas:
-            alloc = arena.malloc(size)
-            if alloc:
-                return alloc
-        mapping = await self.task.mmap(align(size, 4096), ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)
-        arena = Arena(mapping)
-        self.arenas.append(arena)
-        result = arena.malloc(size)
-        if result is None:
-            raise Exception("some kind of internal error caused a freshly created memory arena to return null for an allocation")
-        else:
-            return result
-
-    async def close(self) -> None:
-        for arena in self.arenas:
-            await arena.close()
 
 @dataclass
 class ProcessResources:
     server_func: FunctionPointer
     do_cloexec_func: FunctionPointer
     futex_helper_func: FunctionPointer
-    memory_allocator: MemoryAllocator
+    memory_allocator: memory.Allocator
 
     @staticmethod
     def make_from_local(task: Task) -> 'ProcessResources':
@@ -1699,7 +1403,7 @@ class ProcessResources:
             server_func=FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_server)),
             do_cloexec_func=FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_do_cloexec)),
             futex_helper_func=FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_futex_helper)),
-            memory_allocator=MemoryAllocator(task),
+            memory_allocator=memory.Allocator(task.syscall, task.address_space),
         )
 
     async def decref(self) -> None:
@@ -1743,7 +1447,7 @@ class BatchGatewayOperation:
         raise Exception("use iovec magic to do the copy, woo")
 
 class Serializer:
-    def __init__(self, memory_allocator: MemoryAllocator, async_exit_stack: contextlib.AsyncExitStack) -> None:
+    def __init__(self, memory_allocator: memory.Allocator, async_exit_stack: contextlib.AsyncExitStack) -> None:
         self.memory_allocator = memory_allocator
         self.async_exit_stack = async_exit_stack
         self.operations: t.List[t.Tuple[Pointer, bytes]] = []
@@ -1781,7 +1485,7 @@ class StandardTask:
         task = bootstrap.task
         # TODO fix this to... pull it from the bootstrap or something...
         process_resources = ProcessResources.make_from_local(task)
-        task_resources = await TaskResources.make(task, process_resources.memory_allocator)
+        task_resources = await TaskResources.make(task)
         filesystem_resources = await FilesystemResources.make_from_bootstrap(task, bootstrap)
         return StandardTask(task, task_resources, process_resources, filesystem_resources,
                             {**bootstrap.environ})
@@ -1803,7 +1507,7 @@ class StandardTask:
             user_fds, shared)
         # TODO maybe need to think some more about how this resource inheriting works
         # for that matter, could I inherit the epollfd and signalfd across tasks?
-        stdtask = StandardTask(task, await TaskResources.make(task, self.process.memory_allocator),
+        stdtask = StandardTask(task, await TaskResources.make(task),
                                self.process, self.filesystem, {**self.environment})
         return RsyscallTask(stdtask, cthread), fds
 
@@ -1883,7 +1587,7 @@ class TemporaryDirectory:
         # TODO we need to inherit the self.parent path so we can chdir to it even if it's dirfd based
         new_task, _ = await self.stdtask.spawn([], shared=UnshareFlag.NONE)
         async with new_task:
-            await new_task.stdtask.task.fs.chdir(new_task.stdtask.task, self.parent)
+            await new_task.stdtask.task.chdir(self.parent)
             child = await new_task.execve(self.stdtask.filesystem.utilities.rm, ["rm", "-r", self.name])
             (await child.wait_for_exit()).check()
 
@@ -2017,14 +1721,14 @@ class ChildTask:
     async def send_signal(self, sig: signal.Signals) -> None:
         async with self as pid:
             if pid:
-                await self.syscall.kill(pid, sig)
+                await raw_syscall.kill(self.syscall, pid, sig)
             else:
                 raise Exception("child is already dead!")
 
     async def kill(self) -> None:
         async with self as pid:
             if pid:
-                await self.syscall.kill(pid, signal.SIGKILL)
+                await raw_syscall.kill(self.syscall, pid, signal.SIGKILL)
 
     async def __aenter__(self) -> t.Optional[int]:
         """Returns the pid for this child process, or None if it's already dead.
@@ -2153,8 +1857,8 @@ class Thread:
     """
     child_task: ChildTask
     futex_task: ChildTask
-    futex_mapping: MemoryMapping
-    def __init__(self, child_task: ChildTask, futex_task: ChildTask, futex_mapping: MemoryMapping) -> None:
+    futex_mapping: memory.AnonymousMapping
+    def __init__(self, child_task: ChildTask, futex_task: ChildTask, futex_mapping: memory.AnonymousMapping) -> None:
         self.child_task = child_task
         self.futex_task = futex_task
         self.futex_mapping = futex_mapping
@@ -2196,8 +1900,8 @@ class CThread:
 
     """
     thread: Thread
-    stack_mapping: MemoryMapping
-    def __init__(self, thread: Thread, stack_mapping: MemoryMapping) -> None:
+    stack_mapping: memory.AnonymousMapping
+    def __init__(self, thread: Thread, stack_mapping: memory.AnonymousMapping) -> None:
         self.thread = thread
         self.stack_mapping = stack_mapping
 
@@ -2273,8 +1977,8 @@ class ThreadMaker:
         task = self.monitor.signal_queue.sigfd.epolled.underlying.task
         # allocate memory for the stack
         stack_size = 4096
-        mapping = await task.mmap(stack_size, ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)
-        stack = BufferedStack(mapping.pointer() + stack_size)
+        mapping = await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)
+        stack = BufferedStack(mapping.pointer + stack_size)
         # allocate the futex at the base of the stack, with "1" written to it to match
         # what futex_helper expects
         futex_pointer = stack.push(struct.pack('i', 1))
@@ -2309,8 +2013,8 @@ class ThreadMaker:
         task = self.monitor.signal_queue.sigfd.epolled.underlying.task
         # allocate memory for the stack
         stack_size = 4096
-        mapping = await task.mmap(stack_size, ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)
-        stack = BufferedStack(mapping.pointer() + stack_size)
+        mapping = await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)
+        stack = BufferedStack(mapping.pointer + stack_size)
         # build stack
         stack.push(build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
         # copy the stack over
@@ -2412,10 +2116,9 @@ async def do_cloexec_except(task: Task, excluded_fd_numbers: t.Iterable[int]) ->
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
     function = FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_do_cloexec))
     stack_size = 4096
-    async with (await task.mmap(stack_size, ProtFlag.READ|ProtFlag.WRITE, lib.MAP_PRIVATE)) as mapping:
-        stack = BufferedStack(mapping.pointer() + stack_size)
+    async with (await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)) as mapping:
+        stack = BufferedStack(mapping.pointer + stack_size)
         fd_array = array.array('i', excluded_fd_numbers)
-        print("excluded", fd_array)
         fd_array_ptr = stack.push(fd_array.tobytes())
         child_event = await call_function(task, stack, function, fd_array_ptr, len(fd_array))
         if not child_event.clean():

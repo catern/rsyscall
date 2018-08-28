@@ -240,16 +240,10 @@ class TestIO(unittest.TestCase):
                              addr_send2 = await send1_sockfd.getsockname()
                              # send some data from send1 and receive it
                              await send1_sockfd.write(b"hello")
-                             data = await recv_sockfd.read(4096)
-                             print(data)
+                             self.assertEqual(await recv_sockfd.read(4096), b"hello")
+                             await send2_sockfd.write(b"goodbye")
                              await send1_sockfd.write(b"hello")
-                             data = await recv_sockfd.read(4096)
-                             print(data)
-                             await send1_sockfd.write(b"hello")
-                             data = await recv_sockfd.read(4096)
-                             print(data)
-                             await send2_sockfd.write(b"hello")
-                             data = await recv_sockfd.read(4096)
+                             self.assertEqual(await recv_sockfd.read(4096), b"hello")
         trio.run(test)
 
     def test_getdents_noent(self) -> None:
