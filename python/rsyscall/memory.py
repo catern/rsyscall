@@ -3,6 +3,7 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.base import AddressSpace, Pointer, SyscallInterface
 import rsyscall.raw_syscalls as raw_syscall
 import enum
+import contextlib
 import typing as t
 
 class ProtFlag(enum.IntFlag):
@@ -16,15 +17,17 @@ class MapFlag(enum.IntFlag):
     ANONYMOUS = lib.MAP_ANONYMOUS
 
 class Allocation:
-    def __init__(self, arena: Arena) -> None:
+    def __init__(self, arena: Arena, start: int, end: int) -> None:
         self.arena = arena
+        self.start = start
+        self.end = end
 
     @property
     def pointer(self) -> Pointer:
-        return self.arena.mapping.pointer
+        return self.arena.mapping.pointer + self.start
 
     def free(self) -> None:
-        self.arena.inuse = False
+        self.arena.allocations.remove(self)
 
     def __enter__(self) -> 'Pointer':
         return self.pointer
@@ -64,16 +67,25 @@ class AnonymousMapping:
 class Arena:
     def __init__(self, mapping: AnonymousMapping) -> None:
         self.mapping = mapping
-        self.inuse = False
+        self.allocations: t.List[Allocation] = []
+
+    def _alloc(self, start: int, end: int) -> Allocation:
+        newalloc = Allocation(self, start, end)
+        self.allocations.append(newalloc)
+        return newalloc
 
     def malloc(self, size: int) -> t.Optional[Allocation]:
-        if self.inuse or self.mapping.length < size:
-            return None
-        self.inuse = True
-        return Allocation(self)
+        newstart = 0
+        for alloc in self.allocations:
+            if (newstart+size) <= alloc.start:
+                return self._alloc(newstart, newstart+size)
+            newstart = alloc.end
+        if (newstart+size) <= self.mapping.length:
+            return self._alloc(newstart, newstart+size)
+        return None
 
     async def close(self) -> None:
-        if self.inuse:
+        if self.allocations:
             raise Exception
         await self.mapping.unmap()
 
@@ -81,19 +93,39 @@ def align(num: int, alignment: int) -> int:
     return num + (alignment - (num % alignment))
 
 class Allocator:
-    """A not-particularly-efficient memory allocator
-    
-    Each request gets a entire memory mapping to itself; so, an entire page.
+    """A somewhat-efficient memory allocator.
+
+    Perfect in its foresight, but not so bright.
     """
-    # OK! Next step: move this into a rsyscall.memory file which is built on rsyscall.base
-    # I guess we'll have that kind of layered structure.
-    # And we'll make this an interface, I guess. Since we might want to share it, or whatever
-    # Then after that we'll add this to the Task.
-    # Then we'll finally be able to do memory_abstracted syscalls
     def __init__(self, syscall_interface: SyscallInterface, address_space: AddressSpace) -> None:
         self.syscall_interface = syscall_interface
         self.address_space = address_space
         self.arenas: t.List[Arena] = []
+
+    @contextlib.asynccontextmanager
+    async def bulk_malloc(self, sizes: t.List[int]) -> t.AsyncGenerator[t.List[Pointer], None]:
+        pointers: t.List[Pointer] = []
+        async with contextlib.AsyncExitStack() as stack:
+            size_index = 0
+            for arena in self.arenas:
+                alloc = arena.malloc(sizes[size_index])
+                if alloc:
+                    pointers.append(stack.enter_context(alloc))
+                    size_index += 1
+                    if size_index == len(sizes):
+                        # we finished all the allocations, yield up the pointers and return
+                        yield pointers
+                        return
+            # we hit the end of the arena and now need to allocate more for the remaining sizes:
+            rest_sizes = sizes[size_index:]
+            # let's do it in bulk:
+            remaining_size = sum(rest_sizes)
+            mapping = await AnonymousMapping.make(self.syscall_interface, self.address_space,
+                                                  align(remaining_size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
+            arena = Arena(mapping)
+            for size in rest_sizes:
+                pointers.append(stack.enter_context(arena.malloc(size)))
+            yield pointers
 
     async def malloc(self, size: int) -> Allocation:
         for arena in self.arenas:
@@ -101,7 +133,7 @@ class Allocator:
             if alloc:
                 return alloc
         mapping = await AnonymousMapping.make(self.syscall_interface, self.address_space,
-                                                    align(size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
+                                              align(size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
         arena = Arena(mapping)
         self.arenas.append(arena)
         result = arena.malloc(size)

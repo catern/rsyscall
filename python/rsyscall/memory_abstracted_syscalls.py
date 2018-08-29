@@ -1,6 +1,7 @@
 from rsyscall._raw import ffi, lib # type: ignore
 import os
 import rsyscall.raw_syscalls as raw_syscall
+from rsyscall.raw_syscalls import SigprocmaskHow, IdType
 from rsyscall.base import SyscallInterface, MemoryGateway
 import rsyscall.base as base
 import rsyscall.memory as memory
@@ -10,12 +11,8 @@ import logging
 import struct
 import signal
 import contextlib
+import enum
 logger = logging.getLogger(__name__)
-
-class SigprocmaskHow(enum.IntEnum):
-    BLOCK = lib.SIG_BLOCK
-    UNBLOCK = lib.SIG_UNBLOCK
-    SETMASK = lib.SIG_SETMASK
 
 @contextlib.asynccontextmanager
 async def localize_data(
@@ -33,6 +30,19 @@ async def read_to_bytes(gateway: MemoryGateway, data: base.Pointer, count: int) 
 
 
 #### miscellaneous ####
+async def read(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
+               fd: base.FileDescriptor, count: int) -> bytes:
+    logger.debug("read(%s, %s)", fd, count)
+    with await allocator.malloc(count) as buf_ptr:
+        ret = await raw_syscall.read(sysif, fd, buf_ptr, count)
+        return (await read_to_bytes(gateway, buf_ptr, ret))
+
+async def write(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
+                fd: base.FileDescriptor, buf: bytes) -> int:
+    logger.debug("write(%s, %s)", fd, buf)
+    async with localize_data(gateway, allocator, buf) as (buf_ptr, buf_len):
+        return (await raw_syscall.write(sysif, fd, buf_ptr, buf_len))
+
 async def chdir(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
                 path: bytes) -> None:
     logger.debug("chdir(%s)", path)
@@ -40,45 +50,57 @@ async def chdir(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memo
         await raw_syscall.chdir(sysif, path_ptr)
 
 async def getdents64(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
-                   fd: base.FileDescriptor, count: int) -> bytes:
+                     fd: base.FileDescriptor, count: int) -> bytes:
     logger.debug("getdents64(%s, %s)", fd, count)
     with await allocator.malloc(count) as dirp:
         ret = await raw_syscall.getdents(sysif, fd, dirp, count)
         return (await read_to_bytes(gateway, dirp, ret))
 
+siginfo_size = ffi.sizeof('siginfo_t')
+async def waitid(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
+                 id: t.Union[base.Process, base.ProcessGroup, None], options: int) -> bytes:
+    logger.debug("waitid(%s, %s)", id, options)
+    with await allocator.malloc(siginfo_size) as infop:
+        await raw_syscall.waitid(sysif, id, infop, options, None)
+        return (await read_to_bytes(gateway, infop, siginfo_size))
+
+
+
+#### signal mask manipulation ####
 # sigset_t is just a 64bit bitmask of signals, I don't need the manipulation macros.
 sigset = struct.Struct("Q")
+def sigset_to_bytes(set: t.Set[signal.Signals]) -> bytes:
+    set_integer = 0
+    for sig in set:
+        set_integer |= 1 << (sig-1)
+    return sigset.pack(set_integer)
+
 async def signalfd(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
                    mask: t.Set[signal.Signals], flags: int,
                    fd: t.Optional[base.FileDescriptor]=None) -> int:
     logger.debug("signalfd(%s, %s, %s)", mask, flags, fd)
-    mask_integer = 0
-    for sig in mask:
-        mask_integer |= 1 << (sig-1)
-    mask_data = sigset.pack(mask_integer)
-    async with localize_data(gateway, allocator, mask_data) as (mask_ptr, mask_len):
+    async with localize_data(gateway, allocator, sigset_to_bytes(mask)) as (mask_ptr, mask_len):
         return (await raw_syscall.signalfd4(sysif, mask_ptr, mask_len, flags, fd=fd))
 
+def bits(n: int):
+    "Yields the bit indices that are set in this integer"
+    while n:
+        b = n & (~n+1)
+        yield b.bit_length()
+        n ^= b
+
+def bytes_to_sigset(data: bytes) -> t.Set[signal.Signals]:
+    set_integer, = sigset.unpack(data)
+    return {signal.Signals(bit) for bit in bits(set_integer)}
+
 async def rt_sigprocmask(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
-                         newset: t.Optional[t.Tuple[SigprocmaskHow, t.Set[signal.Signals]]]=None,
-                         want_oldset: bool=True,
-) -> t.Set[signal.Signals]:
+                         how: SigprocmaskHow, newset: t.Set[signal.Signals]) -> t.Set[signal.Signals]:
     logger.debug("rt_sigprocmask(%s, %s)", how, set)
-    old_set = ffi.new('unsigned long*')
-    if set is None:
-        with await allocator.malloc(sigset.size) as old_set:
-            await raw_syscall.rt_sigprocmask(sysif, how, ffi.NULL, old_set, sigset.size)
-            # TODO need to read the bytes out
-            # hmmmmm
-    else:
-        set_integer = 0
-        for sig in set:
-            set_integer |= 1 << (sig-1)
-        new_set = ffi.new('unsigned long*', set_integer)
-        await self.syscall(lib.SYS_rt_sigprocmask, how,
-                           ffi.cast('long', new_set), ffi.cast('long', old_set),
-                           ffi.sizeof('unsigned long'))
-    return {signal.Signals(bit) for bit in bits(old_set[0])}
+    async with localize_data(gateway, allocator, sigset_to_bytes(newset)) as (newset_ptr, _):
+        with await allocator.malloc(sigset.size) as oldset_ptr:
+            await raw_syscall.rt_sigprocmask(sysif, (how, newset_ptr), oldset_ptr, sigset.size)
+            oldset_data = await read_to_bytes(gateway, oldset_ptr, sigset.size)
+            return bytes_to_sigset(oldset_data)
 
 
 #### two syscalls returning a pair of integers ####
@@ -86,7 +108,8 @@ intpair = struct.Struct("II")
 
 async def read_to_intpair(gateway: MemoryGateway, pair_ptr: base.Pointer) -> t.Tuple[int, int]:
     data = await read_to_bytes(gateway, pair_ptr, intpair.size)
-    return intpair.unpack(data)
+    a, b = intpair.unpack(data)
+    return a, b
 
 async def pipe(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
                flags: int) -> t.Tuple[int, int]:
@@ -164,9 +187,78 @@ async def readlinkat(sysif: SyscallInterface, gateway: MemoryGateway, allocator:
     with await allocator.malloc(bufsiz) as buf:
         async with localize_path(gateway, allocator, path) as (dirfd, pathname):
             ret = await raw_syscall.readlinkat(sysif, dirfd, pathname, buf, bufsiz)
-        local_buf = ffi.new('char[]', ret)
-        await gateway.memcpy(base.to_local_pointer(ffi.buffer(local_buf)), buf, ret)
-    return bytes(ffi.buffer(local_buf, ret))
+        return (await read_to_bytes(gateway, buf, ret))
+
+
+#### execveat, which requires a lot of memory fiddling ####
+class SerializedPointer:
+    def __init__(self) -> None:
+        self._real_pointer: t.Optional[base.Pointer] = None
+
+    @property
+    def pointer(self) -> base.Pointer:
+        if self._real_pointer is None:
+            raise Exception("SerializedPointer's pointer was accessed before it was actually allocated")
+        else:
+            return self._real_pointer
+
+class Serializer:
+    def __init__(self) -> None:
+        self.operations: t.List[t.Tuple[SerializedPointer, int, t.Union[bytes, t.Callable[[], bytes]]]] = []
+
+    def serialize_data(self, data: bytes) -> SerializedPointer:
+        ptr = SerializedPointer()
+        self.operations.append((ptr, len(data), data))
+        return ptr
+
+    def serialize_lambda(self, size: int, func: t.Callable[[], bytes]) -> SerializedPointer:
+        ptr = SerializedPointer()
+        self.operations.append((ptr, size, func))
+        return ptr
+
+    @contextlib.asynccontextmanager
+    async def with_flushed(self, gateway: MemoryGateway, allocator: memory.Allocator) -> t.AsyncGenerator[None, None]:
+        async with allocator.bulk_malloc([size for _, size, _ in self.operations]) as pointers:
+            for ptr, (ser_ptr, _, _) in zip(pointers, self.operations):
+                ser_ptr._real_pointer = ptr
+            # call all the functions to build all the bytes
+            real_operations: t.List[t.Tuple[base.Pointer, bytes]] = []
+            for serptr, size, data in self.operations:
+                if isinstance(data, bytes):
+                    data_bytes = data
+                elif callable(data):
+                    data_bytes = data()
+                    if len(data_bytes) != size:
+                        raise Exception("size provided doesn't match provided size")
+                else:
+                    raise Exception("nonsense value in operations", data)
+                real_operations.append((serptr.pointer, data_bytes))
+            # copy all the bytes in bulk
+            await gateway.batch_memcpy([
+                (ptr, base.to_local_pointer(data), len(data)) for ptr, data in real_operations
+            ])
+            yield
+
+pointer = struct.Struct("Q")
+def serialize_null_terminated_array(serializer: Serializer, args: t.List[bytes]) -> SerializedPointer:
+    arg_ser_ptrs = [serializer.serialize_data(arg+b"\0") for arg in args]
+    argv_ser_ptr = serializer.serialize_lambda(
+        (len(args) + 1) * pointer.size,
+        lambda: b"".join(pointer.pack(int(ser_ptr.pointer)) for ser_ptr in arg_ser_ptrs) + pointer.pack(0)
+    )
+    return argv_ser_ptr
+
+async def execveat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
+                   path: base.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> None:
+    logger.debug("execveat(%s, <len(argv): %d>, <len(envp): %d>, %s)", path, len(argv), len(envp), flags)
+    # TODO we should batch this localize_path with the rest
+    async with localize_path(gateway, allocator, path) as (dirfd, pathname):
+        serializer = Serializer()
+        argv_ser_ptr = serialize_null_terminated_array(serializer, argv)
+        envp_ser_ptr = serialize_null_terminated_array(serializer, envp)
+        async with serializer.with_flushed(gateway, allocator):
+            await raw_syscall.execveat(sysif, dirfd, pathname, argv_ser_ptr.pointer, envp_ser_ptr.pointer, flags)
+
 
 
 #### socket syscalls that write data ####

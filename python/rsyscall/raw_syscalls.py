@@ -1,4 +1,4 @@
-from rsyscall.base import SyscallInterface, Task, FileDescriptor, Pointer, RsyscallException, RsyscallHangup
+from rsyscall.base import SyscallInterface, Task, FileDescriptor, Pointer, Process, ProcessGroup, RsyscallException, RsyscallHangup
 from rsyscall._raw import ffi, lib # type: ignore
 import logging
 import signal
@@ -27,6 +27,16 @@ class UnshareFlag(enum.IntFlag):
     NEWUSER = lib.CLONE_NEWUSER
     NEWUTS = lib.CLONE_NEWUTS
     SYSVSEM = lib.CLONE_SYSVSEM
+
+class SigprocmaskHow(enum.IntEnum):
+    BLOCK = lib.SIG_BLOCK
+    UNBLOCK = lib.SIG_UNBLOCK
+    SETMASK = lib.SIG_SETMASK
+
+class IdType(enum.IntEnum):
+    PID = lib.P_PID # Wait for the child whose process ID matches id.
+    PGID = lib.P_PGID # Wait for any child whose process group ID matches id.
+    ALL = lib.P_ALL # Wait for any child; id is ignored.
 
 # TODO verify that pointers and file descriptors come from the same
 # address space and fd namespace as the task.
@@ -66,8 +76,7 @@ async def exit(sysif: SyscallInterface, status: int) -> None:
         # a hangup means the exit was successful
         pass
 
-async def kill(sysif: SyscallInterface, pid: int, sig: signal.Signals) -> None:
-    # TODO should probable wrap pid in something ProcessNamespace-relative
+async def kill(sysif: SyscallInterface, pid: Process, sig: signal.Signals) -> None:
     logger.debug("kill(%s, %s)", pid, sig)
     await sysif.syscall(lib.SYS_kill, pid, sig)
 
@@ -100,6 +109,23 @@ async def listen(sysif: SyscallInterface, sockfd: FileDescriptor, backlog: int) 
     logger.debug("listen(%s, %s)", sockfd, backlog)
     await sysif.syscall(lib.SYS_listen, sockfd, backlog)
 
+async def waitid(sysif: SyscallInterface,
+                 id: t.Union[Process, ProcessGroup, None], infop: t.Optional[Pointer], options: int, rusage: t.Optional[Pointer]) -> int:
+    logger.debug("waitid(%s, %s, %s, %s)", id, infop, options, rusage)
+    if isinstance(id, Process):
+        idtype, idnum = IdType.PID, id.id
+    elif isinstance(id, ProcessGroup):
+        idtype, idnum = IdType.PGID, id.id
+    elif id is None:
+        idtype, idnum = IdType.ALL, 0
+    else:
+        raise ValueError("unknown id type", id)
+    if infop is None:
+        infop = 0 # type: ignore
+    if rusage is None:
+        rusage = 0 # type: ignore
+    return (await sysif.syscall(lib.SYS_waitid, idtype, idnum, infop, options, rusage))
+
 #### Syscalls which need read or write memory access and allocation to be used. ####
 async def pipe2(sysif: SyscallInterface, pipefd: Pointer, flags: int) -> None:
     logger.debug("pipe2(%s, %s)", pipefd, flags)
@@ -113,20 +139,19 @@ async def write(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count
     logger.debug("write(%s, %s, %d)", fd, buf, count)
     return (await sysif.syscall(lib.SYS_write, fd, buf, count))
 
-async def clone(sysif: SyscallInterface, flags: int, child_stack: Pointer,
-                ptid: Pointer, ctid: Pointer,
-                newtls: Pointer) -> int:
+async def clone(sysif: SyscallInterface, flags: int, child_stack: t.Optional[Pointer],
+                ptid: t.Optional[Pointer], ctid: t.Optional[Pointer],
+                newtls: t.Optional[Pointer]) -> int:
     logger.debug("clone(%s, %s, %s, %s, %s)", flags, child_stack, ptid, ctid, newtls)
+    if child_stack is None:
+        child_stack = 0 # type: ignore
+    if ptid is None:
+        ptid = 0 # type: ignore
+    if ctid is None:
+        ctid = 0 # type: ignore
+    if newtls is None:
+        newtls = 0 # type: ignore
     return (await sysif.syscall(lib.SYS_clone, flags, child_stack, ptid, ctid, newtls))
-
-async def execveat(sysif: SyscallInterface, dirfd: FileDescriptor, path: Pointer,
-                   argv: Pointer, envp: Pointer, flags: int) -> None:
-    logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
-    try:
-        await sysif.syscall(lib.SYS_execveat, dirfd, path, argv, envp, flags)
-    except RsyscallHangup:
-        # a hangup means the exec was successful. other exceptions will propagate through
-        pass
 
 async def epoll_create(sysif: SyscallInterface, flags: int) -> int:
     logger.debug("epoll_create(%s)", flags)
@@ -151,20 +176,15 @@ async def signalfd4(sysif: SyscallInterface, mask: Pointer, sizemask: int, flags
         fd = -1 # type: ignore
     return (await sysif.syscall(lib.SYS_signalfd4, fd, mask, sizemask, flags))
 
-async def rt_sigprocmask(sysif: SyscallInterface, how: int,
-                         set: t.Optional[Pointer], oldset: t.Optional[Pointer], sigsetsize: int) -> None:
-    logger.debug("rt_sigprocmask(%s, %s, %s, %s)", how, set, oldset, sigsetsize)
-    await sysif.syscall(lib.SYS_rt_sigprocmask, how, set, oldset, sigsetsize)
-
 async def rt_sigprocmask(sysif: SyscallInterface,
                          newset: t.Optional[t.Tuple[SigprocmaskHow, Pointer]],
                          oldset: t.Optional[Pointer],
                          sigsetsize: int) -> None:
     logger.debug("rt_sigprocmask(%s, %s, %s)", newset, oldset, sigsetsize)
-    if newset is None:
-        how, set = 0, 0 # type: ignore
-    else:
+    if newset is not None:
         how, set = newset
+    else:
+        how, set = 0, 0 # type: ignore
     if oldset is None:
         oldset = 0 # type: ignore
     await sysif.syscall(lib.SYS_rt_sigprocmask, how, set, oldset, sigsetsize)
@@ -233,6 +253,18 @@ async def readlinkat(sysif: SyscallInterface,
     if dirfd is None:
         dirfd = lib.AT_FDCWD # type: ignore
     return (await sysif.syscall(lib.SYS_readlinkat, dirfd, path, buf, bufsiz))
+
+async def execveat(sysif: SyscallInterface,
+                   dirfd: t.Optional[FileDescriptor], path: Pointer,
+                   argv: Pointer, envp: Pointer, flags: int) -> None:
+    logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
+    if dirfd is None:
+        dirfd = lib.AT_FDCWD # type: ignore
+    try:
+        await sysif.syscall(lib.SYS_execveat, dirfd, path, argv, envp, flags)
+    except RsyscallHangup:
+        # a hangup means the exec was successful. other exceptions will propagate through
+        pass
 
 # socket stuff
 async def socketpair(sysif: SyscallInterface, domain: int, type: int, protocol: int, sv: Pointer) -> None:

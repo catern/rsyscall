@@ -86,6 +86,28 @@ class Path:
     # shouldn't have a leading / if it's relative to root, we'll put that on ourselves.
     data: bytes
 
+class ProcessNamespace:
+    "The namespace for processes and process groups"
+    pass
+
+@dataclass
+class Process:
+    namespace: ProcessNamespace
+    id: int
+
+    def __int__(self) -> int:
+        return self.id
+
+@dataclass
+class ProcessGroup:
+    namespace: ProcessNamespace
+    id: int
+
+    def __int__(self) -> int:
+        return self.id
+
+# TODO later on we'll have user namespaces too
+
 class Task:
     def __init__(self, pid: int,
                  sysif: SyscallInterface,

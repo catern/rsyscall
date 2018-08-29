@@ -7,7 +7,7 @@ import rsyscall.epoll
 from rsyscall.base import AddressSpace, Pointer, FDNamespace, RsyscallException, RsyscallHangup
 from rsyscall.base import MemoryGateway, LocalMemoryGateway, to_local_pointer
 import rsyscall.base as base
-from rsyscall.raw_syscalls import UnshareFlag, NsType
+from rsyscall.raw_syscalls import UnshareFlag, NsType, SigprocmaskHow
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
 import rsyscall.memory as memory
@@ -46,22 +46,10 @@ class IdType(enum.IntEnum):
     PGID = lib.P_PGID # Wait for any child whose process group ID matches id.
     ALL = lib.P_ALL # Wait for any child; id is ignored.
 
-class SigprocmaskHow(enum.IntEnum):
-    BLOCK = lib.SIG_BLOCK
-    UNBLOCK = lib.SIG_UNBLOCK
-    SETMASK = lib.SIG_SETMASK
-
 class EpollCtlOp(enum.IntEnum):
     ADD = lib.EPOLL_CTL_ADD
     MOD = lib.EPOLL_CTL_MOD
     DEL = lib.EPOLL_CTL_DEL
-
-def bits(n):
-    "Yields the bit indices that are set"
-    while n:
-        b = n & (~n+1)
-        yield b.bit_length()
-        n ^= b
 
 class ChildCode(enum.Enum):
     EXITED = lib.CLD_EXITED # child called _exit(2)
@@ -120,22 +108,6 @@ class SyscallInterface(base.SyscallInterface):
     # the true core, everything else is deprecated
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int: ...
 
-    # syscalls
-    # TODO add optional offset argument?
-    # TODO figure out how to allow preadv2 flags?
-    async def read(self, fd: int, count: int) -> bytes: ...
-    async def write(self, fd: int, buf: bytes) -> int: ...
-
-    # task manipulation
-    async def clone(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int: ...
-    async def execveat(self, dirfd: int, path: bytes,
-                       argv: t.List[bytes], envp: t.List[bytes],
-                       flags: int) -> None: ...
-
-    async def waitid(self, idtype: IdType, id: int, options: int, *, want_child_event: bool, want_rusage: bool
-    ) -> t.Tuple[int, t.Optional[bytes], t.Optional[bytes]]: ...
-    async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.Set[signal.Signals]]) -> t.Set[signal.Signals]: ...
-
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
     args = (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
@@ -168,72 +140,6 @@ class LocalSyscall(SyscallInterface):
         logger.debug("wait_readable(%s)", fd)
         await self._wait_readable(fd)
 
-    # I could switch to preadv2 as my primitive; I can avoid overhead
-    # by storing the iovec and data as a single big buffer.
-    async def read(self, fd: int, count: int) -> bytes:
-        logger.debug("read(%d, %d)", fd, count)
-        buf = ffi.new('char[]', count)
-        ret = await self.syscall(lib.SYS_read, fd, ffi.cast('long', buf), count)
-        return bytes(ffi.buffer(buf, ret))
-
-    async def write(self, fd: int, buf: bytes) -> int:
-        logger.debug("write(%d, %s)", fd, buf)
-        bufptr = ffi.from_buffer(buf)
-        ret = await self.syscall(lib.SYS_write, fd, ffi.cast('long', bufptr), len(buf))
-        return ret
-
-    async def clone(self, flags: int, child_stack: int, ptid: int, ctid: int, newtls: int) -> int:
-        logger.debug("clone(%s, %s, %s, %s, %s)", flags, hex(child_stack), ptid, ctid, newtls)
-        return (await self.syscall(lib.SYS_clone, flags, child_stack, ptid, ctid, newtls))
-
-    async def execveat(self, dirfd: int, path: bytes,
-                       argv: t.List[bytes], envp: t.List[bytes],
-                       flags: int) -> None:
-        logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
-        # this null-terminated-array logic is tricky to extract out into a separate function due to lifetime issues
-        null_terminated_args = [ffi.new('char[]', arg) for arg in argv]
-        argv_bytes = ffi.new('char *const[]', null_terminated_args + [ffi.NULL])
-        null_terminated_env_vars = [ffi.new('char[]', arg) for arg in envp]
-        envp_bytes = ffi.new('char *const[]', null_terminated_env_vars + [ffi.NULL])
-        path_bytes = ffi.new('char[]', path)
-        try:
-            await self.syscall(lib.SYS_execveat, dirfd,
-                               ffi.cast('long', path_bytes), ffi.cast('long', argv_bytes),
-                               ffi.cast('long', envp_bytes), flags)
-        except RsyscallHangup:
-            # a hangup means the exec was successful. other exceptions will propagate through
-            pass
-
-    async def waitid(self, idtype: IdType, id: int, options: int, *, want_child_event: bool, want_rusage: bool
-    ) -> t.Tuple[int, t.Optional[bytes], t.Optional[bytes]]:
-        logger.debug("waitid(%s, %s, %s, want_child_event=%s, want_rusage=%s)", idtype, id, options, want_child_event, want_rusage)
-        if want_child_event:
-            siginfo = ffi.new('siginfo_t*')
-        else:
-            siginfo = ffi.NULL
-        if want_rusage:
-            rusage = ffi.new('struct rusage*')
-        else:
-            rusage = ffi.NULL
-        ret = await self.syscall(lib.SYS_waitid, idtype, id,
-                                 ffi.cast('long', siginfo), options, ffi.cast('long', rusage))
-        return ret, bytes(ffi.buffer(siginfo)) if siginfo else None, bytes(ffi.buffer(rusage)) if rusage else None
-
-    async def rt_sigprocmask(self, how: SigprocmaskHow, set: t.Optional[t.Set[signal.Signals]]) -> t.Set[signal.Signals]:
-        logger.debug("rt_sigprocmask(%s, %s)", how, set)
-        old_set = ffi.new('unsigned long*')
-        if set is None:
-            await self.syscall(lib.SYS_rt_sigprocmask, how, ffi.NULL, old_set, ffi.sizeof('unsigned long'))
-        else:
-            set_integer = 0
-            for sig in set:
-                set_integer |= 1 << (sig-1)
-            new_set = ffi.new('unsigned long*', set_integer)
-            await self.syscall(lib.SYS_rt_sigprocmask, how,
-                               ffi.cast('long', new_set), ffi.cast('long', old_set),
-                               ffi.sizeof('unsigned long'))
-        return {signal.Signals(bit) for bit in bits(old_set[0])}
-
 class FunctionPointer(Pointer):
     "A function pointer."
     pass
@@ -252,106 +158,46 @@ class SignalMask:
 
     async def block(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
         syscall = self._validate(task)
-        old_mask = await syscall.rt_sigprocmask(SigprocmaskHow.BLOCK, mask)
+        old_mask = await memsys.rt_sigprocmask(syscall, task.gateway, task.allocator, SigprocmaskHow.BLOCK, mask)
         if self.mask != old_mask:
             raise Exception("SignalMask tracking got out of sync?")
         self.mask = self.mask.union(mask)
 
     async def unblock(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
         syscall = self._validate(task)
-        old_mask = await syscall.rt_sigprocmask(SigprocmaskHow.UNBLOCK, mask)
+        old_mask = await memsys.rt_sigprocmask(syscall, task.gateway, task.allocator, SigprocmaskHow.UNBLOCK, mask)
         if self.mask != old_mask:
             raise Exception("SignalMask tracking got out of sync?")
         self.mask = self.mask - mask
 
     async def setmask(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
         syscall = self._validate(task)
-        old_mask = await syscall.rt_sigprocmask(SigprocmaskHow.SETMASK, mask)
+        old_mask = await memsys.rt_sigprocmask(syscall, task.gateway, task.allocator, SigprocmaskHow.SETMASK, mask)
         if self.mask != old_mask:
             raise Exception("SignalMask tracking got out of sync?")
         self.mask = mask
 
 class Task:
-    # so should we include the memory allocator in this task?
-    # well, do all tasks have memory usable for syscalls? as a basic requirement?
-    # yes, yes I think they do.
-    # but then again they all have epoll and stuff and yet we're not putting that in here
-    # since the memory allocation is opinionated.
-    # most of these are finite in size though...
-    # which ones are not?
-    # read/write et al, and execveat
-    # so maybe we could just use a finite amount of memory?
-    # so I guess this kind of relies on the implicit authority of having a stack in C.
-    # we can just freely allocate infinite amounts...
-    # so, Path operations all really need memory,
-    # so it'll have to embed something with a memory allocator.
-    # right? hm.
-    # could we preallocate the memory?
-    # could we use some other trick?
-    # keep in mind that this is single threaded,
-    # so only one syscall can happen at a time...
-    # but we can still pipeline...
-    # hmm....
-    # i mean if call A uses some memory,
-    # we can't reuse it until call A is done...
-    # which, I guess...
-    # I mean, it's not really single threaded
-    # it's just that the memory is freed when a call is complete.
-    # and we can chain them together by pipelining the next call.
-    # so i guess we could have one big buffer?
-    # hmmmmmm
-    # what if we breach the bounds of this one big buffer
-    # for example with too much argv
-    # hmm can we use our argv for this
-    # we could write to argv, but it's not necessarily as big as we need,
-    # and furthermore argv is variable size,
-    # so there's no fixed size that will be enough for all future calls.
-    # we really do need dynamic allocation, hmm.
-    # well and the allocation size can be fixed,
-    # and we just throw an exception if we try to allocate more and fail,
-    # or maybe instead we wait for the current allocations to reduce
-
-    # okay, including it in the task is at least better than putting it behind a highly-abstracted syscallinterface.
-    # so let's do it.
-    # and it's kind of like having a stack, anyway.
-
-    # hmm, should we abstract sufficiently such that we can return direct pointers to language objects?
-    # nah that's not worth it.
-    # copying is fine.
-
-    # we'll have a memory_abstracted_syscalls module,
-    # memsys,
-    # which will take a Task and...
-    # maybe we should put the gateway and the allocator inside the SyscallInterface.
-    # no, we don't do that because we could have a syscallinterface without a gateway, as always,
-    # and we could implement new gateways on top of old ones that are more powerful/efficient.
-
-    # anyway, memsys will take, I guess, all three things as separate arguments?
-    # I guess that's fine.
-    # we can always abstract it away later.
-    # anyway, anywhere we would call syscallinterface.thing(stuff),
-    # we'll instead call memsys.thing(sysif, gateway, allocator, stuff)
-    # verbose, but whatever.
-    # we could put the epoll calls in there too, but I don't want to yet, in case it turns out bad.
-    # ok! let's start.
     def __init__(self, syscall: SyscallInterface,
                  gateway: MemoryGateway,
-                 # Being able to allocate memory is like having a stack.
-                 # we really need to be able to allocate memory to get anything done - namely, to call syscalls.
                  fd_namespace: FDNamespace,
                  address_space: AddressSpace,
                  mount: base.MountNamespace,
                  fs: base.FSInformation,
                  sigmask: SignalMask,
+                 process_namespace: base.ProcessNamespace,
     ) -> None:
         self.syscall = syscall
         self.gateway = gateway
         self.address_space = address_space
+        # Being able to allocate memory is like having a stack.
+        # we really need to be able to allocate memory to get anything done - namely, to call syscalls.
         self.allocator = memory.Allocator(syscall, address_space)
         self.fd_namespace = fd_namespace
         self.mount = mount
         self.fs = fs
         self.sigmask = sigmask
+        self.process_namespace = process_namespace
 
     async def close(self):
         await self.syscall.close_interface()
@@ -360,10 +206,10 @@ class Task:
         await raw_syscall.exit(self.syscall, status)
         await self.close()
 
-    async def execveat(self, dirfd: int, path: bytes,
+    async def execveat(self, path: Path,
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> None:
-        await self.syscall.execveat(dirfd, path, argv, envp, flags)
+        await memsys.execveat(self.syscall, self.gateway, self.allocator, path.pure, argv, envp, flags)
         await self.close()
 
     async def chdir(self, path: 'Path') -> None:
@@ -436,11 +282,11 @@ T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
 class ReadableFile(File):
     async def read(self, fd: 'FileDescriptor[ReadableFile]', count: int=4096) -> bytes:
-        return (await fd.syscall.read(fd.number, count))
+        return (await memsys.read(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, count))
 
 class WritableFile(File):
     async def write(self, fd: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
-        return (await fd.syscall.write(fd.number, buf))
+        return (await memsys.write(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, buf))
 
 class SeekableFile(File):
     async def lseek(self, fd: 'FileDescriptor[SeekableFile]', offset: int, whence: int) -> int:
@@ -1205,7 +1051,7 @@ def gather_local_bootstrap() -> UnixBootstrap:
     task = Task(LocalSyscall(trio.hazmat.wait_readable, direct_syscall),
                 LocalMemoryGateway(),
                 FDNamespace(), base.local_address_space, base.MountNamespace(), base.FSInformation(),
-                SignalMask(set()))
+                SignalMask(set()), base.ProcessNamespace())
     argv = [arg.encode() for arg in sys.argv]
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
     stdstreams = wrap_stdin_out_err(task)
@@ -1429,41 +1275,6 @@ class StandardTask:
                                self.process, self.filesystem, {**self.environment})
         return RsyscallTask(stdtask, cthread), fds
 
-    async def execveat(self, dirfd: int, path: bytes,
-                       argv: t.List[bytes], envp: t.List[bytes],
-                       flags: int) -> None:
-        logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
-        # this null-terminated-array logic is tricky to extract out into a separate function due to lifetime issues
-        # hmmm
-        # so we should probably allocate one big long array
-        # even if that is hard
-        # because that optimizes copying from here to there
-        # which is extremely important
-        null_terminated_args = [ffi.new('char[]', arg) for arg in argv]
-        argv_bytes = ffi.new('char *const[]', null_terminated_args + [ffi.NULL])
-        # so hm
-        # making syscalls requires allocating memory.
-        # should we have the memory allocator in the task??
-        # no, definitely not.
-        # but this kinda means that..
-        # well, I guess we can't have EpollFile be able to make its own syscalls.
-        # oh, wait, yes we can, just pass a Pointer not an event
-        null_terminated_env_vars = [ffi.new('char[]', arg) for arg in envp]
-        envp_bytes = ffi.new('char *const[]', null_terminated_env_vars + [ffi.NULL])
-        path_bytes = ffi.new('char[]', path)
-        await raw_syscall.execveat(self.task.syscall, dirfd, path, argv, envp, flags)
-        await self.close()
-
-    async def bestthing(self, arglist):
-        async with AsyncExitStack as exit_stack:
-            serializer = Serializer(self.process.memory_allocator, exit_stack)
-            argv = b""
-            for arg in arglist:
-                ptr = await serializer.serialize(arg)
-                destptr.append(struct.pack("!I", ptr.address))
-            argv_ptr = await serializer.serialize(argv)
-            await serializer.flush(self.task.gateway)
-
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
     ) -> None:
@@ -1474,7 +1285,7 @@ class StandardTask:
         raw_envp: t.List[bytes] = []
         for key, value in envp.items():
             raw_envp.append(b''.join([key, b'=', value]))
-        await self.task.execveat(path.base.dirfd_num, path._full_path,
+        await self.task.execveat(path,
                                  [await fspath(arg) for arg in argv],
                                  raw_envp, flags=0)
 
@@ -1585,9 +1396,9 @@ class Multiplexer:
     pass
 
 class ChildTask:
-    def __init__(self, pid: int, queue: trio.hazmat.UnboundedQueue,
+    def __init__(self, process: base.Process, queue: trio.hazmat.UnboundedQueue,
                  monitor: 'ChildTaskMonitor') -> None:
-        self.pid = pid
+        self.process = process
         self.queue = queue
         self.monitor = monitor
         self.death_event: t.Optional[ChildEvent] = None
@@ -1637,19 +1448,19 @@ class ChildTask:
         return self.monitor.signal_queue.sigfd.epolled.underlying.task.syscall
 
     async def send_signal(self, sig: signal.Signals) -> None:
-        async with self as pid:
-            if pid:
-                await raw_syscall.kill(self.syscall, pid, sig)
+        async with self as process:
+            if process:
+                await raw_syscall.kill(self.syscall, process, sig)
             else:
                 raise Exception("child is already dead!")
 
     async def kill(self) -> None:
-        async with self as pid:
-            if pid:
-                await raw_syscall.kill(self.syscall, pid, signal.SIGKILL)
+        async with self as process:
+            if process:
+                await raw_syscall.kill(self.syscall, process, signal.SIGKILL)
 
-    async def __aenter__(self) -> t.Optional[int]:
-        """Returns the pid for this child process, or None if it's already dead.
+    async def __aenter__(self) -> t.Optional[base.Process]:
+        """Returns the underlying process, or None if it's already dead.
 
         Operating on the pid of a child process requires taking the wait_lock to make sure
         the process's zombie is not collected while we're using its pid.
@@ -1661,7 +1472,7 @@ class ChildTask:
         self._flush_nowait()
         if self.death_event:
             return None
-        return self.pid
+        return self.process
 
     async def __aexit__(self, *args, **kwargs) -> None:
         self.monitor.wait_lock.release()
@@ -1684,9 +1495,9 @@ class ChildTaskMonitor:
     async def clone(self, flags: int,
                     child_stack: Pointer, ctid: Pointer, newtls: Pointer) -> ChildTask:
         task = self.signal_queue.sigfd.epolled.underlying.task
-        tid = await task.syscall.clone(flags, child_stack.address,
-                                       ptid=0, ctid=ctid.address, newtls=newtls.address)
-        child_task = ChildTask(tid, trio.hazmat.UnboundedQueue(), self)
+        tid = await raw_syscall.clone(task.syscall, flags, child_stack,
+                                      ptid=None, ctid=ctid, newtls=newtls)
+        child_task = ChildTask(base.Process(task.process_namespace, tid), trio.hazmat.UnboundedQueue(), self)
         self.task_map[tid] = child_task
         return child_task
 
@@ -1715,10 +1526,8 @@ class ChildTaskMonitor:
                     # while something else is making a syscall with a pid, because we
                     # might collect the zombie for that pid and cause pid reuse
                     async with self.wait_lock:
-                        _, siginfo, _ = await task.syscall.waitid(
-                            IdType.ALL, 0, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG,
-                            want_child_event=True, want_rusage=False
-                        )
+                        siginfo = await memsys.waitid(task.syscall, task.gateway, task.allocator,
+                                                      None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
                 except ChildProcessError:
                     # no more children
                     break
@@ -2022,8 +1831,10 @@ async def call_function(task: Task, stack: BufferedStack, function: FunctionPoin
     stack.push(build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
     stack_pointer = await stack.flush(task.gateway)
     # we directly spawn a thread for the function and wait on it
-    pid = await task.syscall.clone(lib.CLONE_VM|lib.CLONE_FILES, stack_pointer.address, ptid=0, ctid=0, newtls=0)
-    _, siginfo, _ = await task.syscall.waitid(IdType.PID, pid, lib._WALL|lib.WEXITED, want_child_event=True, want_rusage=False)
+    pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
+    process = base.Process(task.process_namespace, pid)
+    siginfo = await memsys.waitid(task.syscall, task.gateway, task.allocator,
+                                  process, lib._WALL|lib.WEXITED)
     struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
     child_event = ChildEvent.make(ChildCode(struct.si_code),
                                   pid=int(struct.si_pid), uid=int(struct.si_uid),
@@ -2065,7 +1876,7 @@ async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller
 
     new_task = Task(syscall, gateway,
                     FDNamespace(), task.address_space, task.mount, task.fs,
-                    task.sigmask.inherit())
+                    task.sigmask.inherit(), task.process_namespace)
     if len(new_task.sigmask.mask) != 0:
         # clear this non-empty signal mask because it's pointlessly inherited across fork
         await new_task.sigmask.setmask(new_task, set())
