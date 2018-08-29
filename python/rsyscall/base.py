@@ -10,6 +10,7 @@ import abc
 # The ones in io.py carry a reference to a Task, and so are more convenient for users.
 
 class SyscallInterface:
+    # Throws on negative return value
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int: ...
     # non-syscall operations which we haven't figured out how to get rid of yet
     async def close_interface(self) -> None: ...

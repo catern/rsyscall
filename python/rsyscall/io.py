@@ -6,6 +6,7 @@ import rsyscall.epoll
 
 from rsyscall.base import AddressSpace, Pointer, FDNamespace, RsyscallException, RsyscallHangup
 from rsyscall.base import MemoryGateway, LocalMemoryGateway, to_local_pointer
+from rsyscall.base import SyscallInterface
 import rsyscall.base as base
 from rsyscall.raw_syscalls import UnshareFlag, NsType, SigprocmaskHow
 import rsyscall.raw_syscalls as raw_syscall
@@ -100,14 +101,6 @@ class ChildEvent:
             raise Exception("Child wasn't killed with a signal")
         return self.sig
 
-class SyscallInterface(base.SyscallInterface):
-    # non-syscall operations
-    async def close_interface(self) -> None: ...
-    async def wait_readable(self, fd: int) -> None: ...
-
-    # the true core, everything else is deprecated
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int: ...
-
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
     args = (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
@@ -116,21 +109,14 @@ async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0)
     ret = lib.rsyscall_raw_syscall(*args)
     return ret
 
-def null_terminated(data: bytes):
-    return ffi.new('char[]', data)
-
-class LocalSyscall(SyscallInterface):
-    def __init__(self, wait_readable, do_syscall) -> None:
-        self._wait_readable = wait_readable
-        self._do_syscall = do_syscall
-
+class LocalSyscall(base.SyscallInterface):
     async def close_interface(self) -> None:
         pass
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        ret = await self._do_syscall(number,
-                                     arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-                                     arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        ret = await direct_syscall(number,
+                                   arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+                                   arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
         if ret < 0:
             err = -ret
             raise OSError(err, os.strerror(err))
@@ -138,7 +124,7 @@ class LocalSyscall(SyscallInterface):
 
     async def wait_readable(self, fd: int) -> None:
         logger.debug("wait_readable(%s)", fd)
-        await self._wait_readable(fd)
+        await trio.hazmat.wait_readable(fd)
 
 class FunctionPointer(Pointer):
     "A function pointer."
@@ -1048,7 +1034,7 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
     return StandardStreams(stdin, stdout, stderr)
 
 def gather_local_bootstrap() -> UnixBootstrap:
-    task = Task(LocalSyscall(trio.hazmat.wait_readable, direct_syscall),
+    task = Task(LocalSyscall(),
                 LocalMemoryGateway(),
                 FDNamespace(), base.local_address_space, base.MountNamespace(), base.FSInformation(),
                 SignalMask(set()), base.ProcessNamespace())
@@ -1790,19 +1776,28 @@ class RsyscallConnection:
         response, = struct.unpack('q', response_bytes)
         return response
 
-class RsyscallLocalSyscall(LocalSyscall):
+class RsyscallLocalSyscall(base.SyscallInterface):
     def __init__(self, rsyscall_connection: RsyscallConnection, infd: int, outfd: int) -> None:
         self.rsyscall_connection = rsyscall_connection
         self.infd = infd
         self.outfd = outfd
         self.request_lock = trio.Lock()
         self.response_fifo_lock = trio.StrictFIFOLock()
-        super().__init__(self.__do_wait_readable, rsyscall_connection.syscall)
 
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
 
-    async def __do_wait_readable(self, fd: int) -> None:
+    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        ret = await self.rsyscall_connection.syscall(
+            number,
+            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        if ret < 0:
+            err = -ret
+            raise OSError(err, os.strerror(err))
+        return ret
+
+    async def wait_readable(self, fd: int) -> None:
         # TODO this could really actually be a separate object
         pollfds = ffi.new('struct pollfd[3]',
                           # passing two means we can figure out which one tripped from just the
