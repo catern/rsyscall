@@ -169,6 +169,10 @@ async def epoll_wait(sysif: SyscallInterface, epfd: FileDescriptor, events: Poin
     logger.debug("epoll_wait(%d, %d, %d, %d)", epfd, events, maxevents, timeout)
     return (await sysif.syscall(lib.SYS_epoll_wait, epfd, events, maxevents, timeout))
 
+async def poll(sysif: SyscallInterface, fds: Pointer, nfds: int, timeout: int) -> int:
+    logger.debug("poll(%s, %s, %s)", fds, nfds, timeout)
+    return (await sysif.syscall(lib.SYS_poll, fds, nfds, timeout))
+
 async def signalfd4(sysif: SyscallInterface, mask: Pointer, sizemask: int, flags: int,
                    fd: t.Optional[FileDescriptor]=None) -> int:
     logger.debug("signalfd(%s, %s, %s, %s)", fd, mask, sizemask, flags)

@@ -36,12 +36,6 @@ import enum
 import contextlib
 logger = logging.getLogger(__name__)
 
-class Rusage:
-    pass
-
-def rusage_parse(data: bytes) -> Rusage:
-    return Rusage()
-
 class IdType(enum.IntEnum):
     PID = lib.P_PID # Wait for the child whose process ID matches id.
     PGID = lib.P_PGID # Wait for any child whose process group ID matches id.
@@ -1804,6 +1798,35 @@ class RsyscallLocalSyscall(base.SyscallInterface):
                           # return value!
                           [(fd, lib.POLLIN, 0), (fd, lib.POLLIN, 0),
                            (self.infd, lib.POLLIN, 0)])
+        # hmmmmmmmmmmmmmmmmmmMMMMMMMMMMMMMMM
+        # let's get rid of wait_readable.
+        # that shall be our next great adventure!
+        # we need to add some new fd to epoll wait to wait on
+        # some fd which is readable, I guess, when some "other" events are ready...
+        # what does that mean?
+        # we can support both interface I suppose if necesary
+        # an fd that we add to our own blocking, and a wait readable
+        # are they deeply the same?
+        # i guess they're kind of inversions of each other
+        # one, we get an fd from the other guy and we monitor it,
+        # two, we send our fd to the other guy and he monitors it.
+        # like... the event loops should be symmetric?
+        # any event loop should implement both methods?
+        # "here is my fd, tell me when it's ready".
+        # and,
+        # "give me your fd, i'll tell you when it's ready".
+        # internal blocking vs external blocking?
+        # okay! epoll needs to support both internal and external blocking
+        # internal by registering other loops on the epoller,
+        # external by some kind of callback thing
+        # ideally we'd have both available at the same time!
+        # when only internal is supported, that is still fine.
+        # when only external is supported, we should set a mode on the epoller,
+        # so that it doesn't internally block.
+        # rsyscall tasks only support internal because remote fds stuff,
+        # and because trio doesn't expose an fd, it only supports external.
+        # good, good!
+        # maybe we should also modularize to have the external-only be a different class...
         while True:
             for _ in range(5):
                 # take response lock to make sure no-one else is actively sending requests
@@ -1811,7 +1834,7 @@ class RsyscallLocalSyscall(base.SyscallInterface):
                     # yield, let others run
                     await trio.sleep(0)
             logger.debug("poll(%s, %s, %s)", pollfds, 3, -1)
-            ret = await self.syscall(lib.SYS_poll, pollfds, 3, -1)
+            ret = await raw_syscall.poll(self.syscall, pollfds, 3, -1)
             if ret < 0:
                 err = -ret
                 raise OSError(err, os.strerror(err))
