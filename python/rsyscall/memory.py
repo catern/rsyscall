@@ -124,7 +124,11 @@ class Allocator:
                                                   align(remaining_size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
             arena = Arena(mapping)
             for size in rest_sizes:
-                pointers.append(stack.enter_context(arena.malloc(size)))
+                alloc = arena.malloc(size)
+                if alloc is None:
+                    raise Exception("some kind of internal error caused a freshly created memory arena to return null for an allocation")
+                else:
+                    pointers.append(stack.enter_context(alloc))
             yield pointers
 
     async def malloc(self, size: int) -> Allocation:

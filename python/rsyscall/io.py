@@ -189,15 +189,12 @@ class Task:
     async def execveat(self, path: Path,
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> None:
+        _validate_path_and_task_match(self, path.pure)
         await memsys.execveat(self.syscall, self.gateway, self.allocator, path.pure, argv, envp, flags)
         await self.close()
 
     async def chdir(self, path: 'Path') -> None:
-        if isinstance(path.base, DirfdPathBase):
-            await raw_syscall.fchdir(self.syscall, path.base.dirfd.raw)
-            await memsys.chdir(self.syscall, self.gateway, self.allocator, path.path)
-        else:
-            await memsys.chdir(self.syscall, self.gateway, self.allocator, path._full_path)
+        await memsys.chdir(self.syscall, self.gateway, self.allocator, path.pure)
 
     async def unshare_fs(self) -> None:
         # we want this to return something that we can use to chdir
@@ -285,9 +282,8 @@ class SignalFile(ReadableFile):
         self.mask = mask
 
 class DirectoryFile(SeekableFile):
-    # this is a fallback if we need to serialize this dirfd out
-    raw_path: bytes
-    def __init__(self, raw_path: bytes) -> None:
+    def __init__(self, raw_path: base.Path) -> None:
+        # this is a fallback if we need to serialize this dirfd out
         self.raw_path = raw_path
 
     async def getdents(self, fd: 'FileDescriptor[DirectoryFile]', count: int) -> t.List[Dirent]:
@@ -749,139 +745,42 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
 
-class PathBase:
-    """These are possible bases for Paths.
-
-    A path can be interpreted relative to three different things:
-    - A directory file descriptor
-    - The task's root directory
-    - The task's current working directory
-
-    The latter two can change location, both by chdir and chroot, and
-    by changing mount namespace.
-
-    """
-    @abc.abstractproperty
-    def dirfd_num(self) -> int: ...
-    @abc.abstractproperty
-    def path_prefix(self) -> bytes: ...
-    @abc.abstractproperty
-    def task(self) -> Task: ...
-
-class DirfdPathBase(PathBase):
-    dirfd: FileDescriptor[DirectoryFile]
-    def __init__(self, dirfd: FileDescriptor[DirectoryFile]) -> None:
-        self.dirfd = dirfd
-        self.pure = base.DirfdPathBase(dirfd.raw)
-    @property
-    def dirfd_num(self) -> int:
-        return self.dirfd.number
-    @property
-    def path_prefix(self) -> bytes:
-        return b""
-    @property
-    def task(self) -> Task:
-        if self.dirfd.task.fd_namespace != self.dirfd.fd_namespace:
-            raise Exception("Can't call syscalls on dirfd when my Task has moved out of my FDNamespaces")
-        return self.dirfd.task
-
-    def __str__(self) -> str:
-        return f"Dirfd({self.dirfd.number})"
-
-class RootPathBase(PathBase):
-    def __init__(self, task: Task) -> None:
-        self._task = task
-        self.pure = base.RootPathBase(task.mount, task.fs)
-    @property
-    def dirfd_num(self) -> int:
-        return lib.AT_FDCWD
-    @property
-    def path_prefix(self) -> bytes:
-        return b"/"
-    @property
-    def task(self) -> Task:
-        return self._task
-    def __str__(self) -> str:
-        return "[ROOT]"
-
-class CurrentWorkingDirectoryPathBase(PathBase):
-    task: Task
-    def __init__(self, task: Task) -> None:
-        self._task = task
-        self.pure = base.CWDPathBase(task.mount, task.fs)
-    @property
-    def dirfd_num(self) -> int:
-        return lib.AT_FDCWD
-    @property
-    def path_prefix(self) -> bytes:
-        return b""
-    @property
-    def task(self) -> Task:
-        return self._task
-    def __str__(self) -> str:
-        return "[CWD]"
+def _validate_path_and_task_match(task: Task, path: base.Path) -> None:
+    if isinstance(path.base, base.DirfdPathBase):
+        if path.base.dirfd.fd_namespace != task.fd_namespace:
+            raise Exception("path", path, "based at a dirfd which isn't in the fd_namespace of task", task)
+    elif isinstance(path.base, base.RootPathBase):
+        if path.base.mount_namespace != task.mount:
+            raise Exception("path", path, "based at root isn't in the mount namespace of task", task)
+        if path.base.fs_information != task.fs:
+            raise Exception("path", path, "based at root doesn't share fs information with task", task)
+    elif isinstance(path.base, base.CWDPathBase):
+        if path.base.mount_namespace != task.mount:
+            raise Exception("path", path, "based at cwd isn't in the mount namespace of task", task)
+        if path.base.fs_information != task.fs:
+            raise Exception("path", path, "based at cwd doesn't share fs information with task", task)
 
 class Path:
-    "This is our entry point to any syscall that takes a path argument."
-    base: PathBase
-    path: bytes
-    def __init__(self, base_: PathBase, path: t.Union[str, bytes]) -> None:
-        self.base = base_
-        self.path = os.fsencode(path)
-        if len(self.path) == 0:
+    "This is a convenient combination of a pure path and a task to make syscalls in."
+    def __init__(self, task: Task, pure: base.Path) -> None:
+        self.task = task
+        self.pure = pure
+        _validate_path_and_task_match(self.task, self.pure)
+
+    @staticmethod
+    def from_bytes(task: Task, path: bytes) -> Path:
+        if len(path) == 0:
             # readlink, and possibly other syscalls, behave differently when given an empty path and a dirfd
             # in general an empty path is probably not good
             # TODO okay actually maybe let's lift this restriction
             raise Exception("empty paths not allowed")
-        self.pure = base.Path(self.base.pure, self.path) # type: ignore
-
-    @staticmethod
-    def from_bytes(task: Task, path: bytes) -> 'Path':
         if path.startswith(b"/"):
-            return Path(RootPathBase(task), path[1:])
+            return Path(task, base.Path(base.RootPathBase(task.mount, task.fs), path[1:]))
         else:
-            return Path(CurrentWorkingDirectoryPathBase(task), path)
+            return Path(task, base.Path(base.CWDPathBase(task.mount, task.fs), path))
 
-    @property
-    def _full_path(self) -> bytes:
-        return self.base.path_prefix + self.path
-    
-    def _as_proc_path(self) -> bytes:
-        """The path, using /proc to do dirfd-relative lookups
-
-        This is not too portable - there are many situations where
-        /proc might not be mounted. But it's the only recourse for a
-        few syscalls which don't have *at versions.
-
-        """
-        if isinstance(self.base, DirfdPathBase):
-            return b"/proc/self/fd/" + str(self.base.dirfd.number).encode() + b"/" + self.path
-        else:
-            return self._full_path
-
-    async def as_argument(self) -> bytes:
-        if isinstance(self.base, DirfdPathBase):
-            # we need to pass the dirfd as an argument
-            await self.base.dirfd.as_argument()
-        return self._as_proc_path()
-
-    @property
-    def syscall(self) -> SyscallInterface:
-        return self.base.task.syscall
-
-    def assert_okay_for_task(self, task: Task) -> None:
-        if isinstance(self.base, DirfdPathBase):
-            if self.base.dirfd.task is not task:
-                raise Exception("can't use a Path based on a dirfd not in my task")
-        elif isinstance(self.base, RootPathBase):
-            if self.base.task.fs != task.fs:
-                raise Exception("can't use a Path based on a different root directory")
-        elif isinstance(self.base, CurrentWorkingDirectoryPathBase):
-            if self.base.task.fs != task.fs:
-                raise Exception("can't use a Path based on a different current working directory")
-
-    async def mkdir(self, mode=0o777) -> 'Path':
-        await memsys.mkdirat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+    async def mkdir(self, mode=0o777) -> Path:
+        await memsys.mkdirat(self.task.syscall, self.task.gateway, self.task.allocator,
                              self.pure, mode)
         return self
 
@@ -899,30 +798,21 @@ class Path:
         elif flags & os.O_RDWR:
             file = ReadableWritableFile()
         elif flags & os.O_DIRECTORY:
-            if isinstance(self.base, DirfdPathBase):
-                raw_path = self.base.dirfd.file.raw_path + b"/" + self.path
-            else:
-                raw_path = self._full_path
-            file = DirectoryFile(raw_path)
+            file = DirectoryFile(self.pure)
         else:
             # os.O_RDONLY is 0, so if we don't have any of the rest, then...
             file = ReadableFile()
-        # hmm hmmm we need a task I guess, not just a syscall
-        # so we can find the files
-        fd_namespace = self.base.task.fd_namespace
-        fd = await memsys.openat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+        fd = await memsys.openat(self.task.syscall, self.task.gateway, self.task.allocator,
                                  self.pure, flags, mode)
-        return FileDescriptor(file, self.base.task, fd_namespace, fd)
+        return FileDescriptor(file, self.task, self.task.fd_namespace, fd)
 
     async def open_directory(self) -> FileDescriptor[DirectoryFile]:
         return (await self.open(os.O_DIRECTORY))
 
     async def creat(self, mode=0o644) -> FileDescriptor[WritableFile]:
-        file = WritableFile()
-        fd_namespace = self.base.task.fd_namespace
-        fd = await memsys.openat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+        fd = await memsys.openat(self.task.syscall, self.task.gateway, self.task.allocator,
                                  self.pure, os.O_WRONLY|os.O_CREAT|os.O_TRUNC, mode)
-        return FileDescriptor(file, self.base.task, fd_namespace, fd)
+        return FileDescriptor(WritableFile(), self.task, self.task.fd_namespace, fd)
 
     async def access(self, *, read=False, write=False, execute=False) -> bool:
         mode = 0
@@ -936,37 +826,62 @@ class Path:
         if mode == 0:
             mode = os.F_OK
         try:
-            await memsys.faccessat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+            await memsys.faccessat(self.task.syscall, self.task.gateway, self.task.allocator,
                                    self.pure, mode, 0)
             return True
         except OSError:
             return False
 
     async def unlink(self, flags: int=0) -> None:
-        await memsys.unlinkat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+        await memsys.unlinkat(self.task.syscall, self.task.gateway, self.task.allocator,
                               self.pure, flags)
 
     async def rmdir(self) -> None:
-        await memsys.unlinkat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+        await memsys.unlinkat(self.task.syscall, self.task.gateway, self.task.allocator,
                               self.pure, rsyscall.stat.AT_REMOVEDIR)
 
     async def link_to(self, oldpath: 'Path', flags: int=0) -> 'Path':
         "Create a hardlink at Path 'self' to the file at Path 'oldpath'"
-        await memsys.linkat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+        await memsys.linkat(self.task.syscall, self.task.gateway, self.task.allocator,
                             oldpath.pure, self.pure, flags)
         return self
 
     async def symlink_to(self, target: bytes) -> 'Path':
         "Create a symlink at Path 'self' pointing to the passed-in target"
-        await memsys.symlinkat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+        await memsys.symlinkat(self.task.syscall, self.task.gateway, self.task.allocator,
                                self.pure, target)
         return self
 
     async def readlink(self, bufsiz: int=4096) -> bytes:
-        return (await memsys.readlinkat(self.base.task.syscall, self.base.task.gateway, self.base.task.allocator,
+        return (await memsys.readlinkat(self.task.syscall, self.task.gateway, self.task.allocator,
                                         self.pure, bufsiz))
+    
+    def _as_proc_path(self) -> bytes:
+        """The path, using /proc to do dirfd-relative lookups
 
-    def unix_address(self, task: Task) -> UnixAddress:
+        This is not too portable - there are many situations where /proc might
+        not be mounted. But if we have a dirfd-relative path, this is the only
+        way to build an AF_UNIX sock address from the path or to pass the path
+        to a subprocess.
+
+        """
+        purebase = self.pure.base
+        if isinstance(purebase, base.DirfdPathBase):
+            return b"/".join([b"/proc/self/fd", str(purebase.dirfd.number).encode(), self.pure.data])
+        elif isinstance(purebase, base.RootPathBase):
+            return b"/" + self.pure.data
+        else:
+            return self.pure.data
+
+    async def as_argument(self) -> bytes:
+        purebase = self.pure.base
+        if isinstance(purebase, base.DirfdPathBase):
+            # we disable cloexec to pass the dirfd as an argument.
+            # this is somewhat weird to do without ownership, but whatever.
+            await raw_syscall.fcntl(self.task.syscall, purebase.dirfd, fcntl.F_SETFD, 0)
+        return self._as_proc_path()
+
+    def unix_address(self) -> UnixAddress:
         """Return an address that can be used with bind/connect for Unix sockets
 
         Linux doesn't support bindat/connectat or similar, so this is emulated with /proc.
@@ -975,21 +890,20 @@ class Path:
         because bind has a limit of 108 bytes for the pathname.
 
         """
-        self.assert_okay_for_task(task)
         return UnixAddress(self._as_proc_path())
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
         element: bytes = os.fsencode(path_element)
         if b"/" in element:
             raise Exception("no / allowed in path elements, do it one by one")
-        if self.path == b'.':
+        if self.pure.data == b'.':
             # if the path is empty, just be relative
-            return Path(self.base, element)
+            return Path(self.task, base.Path(self.pure.base, element))
         else:
-            return Path(self.base, self.path + b"/" + element)
+            return Path(self.task, base.Path(self.pure.base, self.pure.data + b"/" + element))
 
     def __str__(self) -> str:
-        return f"Path({self.base}, {self.path})"
+        return f"Path({self.pure})"
 
 async def fspath(arg: t.Union[str, bytes, Path]) -> bytes:
     if isinstance(arg, str):
@@ -1258,7 +1172,6 @@ class StandardTask:
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
     ) -> None:
-        path.assert_okay_for_task(self.task)
         envp = {**self.environment}
         for key in env_updates:
             envp[os.fsencode(key)] = await fspath(env_updates[key])
@@ -1834,7 +1747,7 @@ class RsyscallLocalSyscall(base.SyscallInterface):
                     # yield, let others run
                     await trio.sleep(0)
             logger.debug("poll(%s, %s, %s)", pollfds, 3, -1)
-            ret = await raw_syscall.poll(self.syscall, pollfds, 3, -1)
+            ret = await raw_syscall.poll(self, pollfds, 3, -1)
             if ret < 0:
                 err = -ret
                 raise OSError(err, os.strerror(err))

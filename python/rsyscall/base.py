@@ -73,12 +73,12 @@ class DirfdPathBase:
 
 @dataclass
 class RootPathBase:
-    namespace: MountNamespace
+    mount_namespace: MountNamespace
     fs_information: FSInformation
 
 @dataclass
 class CWDPathBase:
-    namespace: MountNamespace
+    mount_namespace: MountNamespace
     fs_information: FSInformation
 
 @dataclass

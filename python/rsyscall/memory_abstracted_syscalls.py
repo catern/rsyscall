@@ -43,12 +43,6 @@ async def write(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memo
     async with localize_data(gateway, allocator, buf) as (buf_ptr, buf_len):
         return (await raw_syscall.write(sysif, fd, buf_ptr, buf_len))
 
-async def chdir(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
-                path: bytes) -> None:
-    logger.debug("chdir(%s)", path)
-    async with localize_data(gateway, allocator, path+b"\0") as (path_ptr, _):
-        await raw_syscall.chdir(sysif, path_ptr)
-
 async def getdents64(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
                      fd: base.FileDescriptor, count: int) -> bytes:
     logger.debug("getdents64(%s, %s)", fd, count)
@@ -141,6 +135,14 @@ async def localize_path(
             yield path.base.dirfd, pathname_ptr
         else:
             yield None, pathname_ptr
+
+async def chdir(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
+                path: base.Path) -> None:
+    logger.debug("chdir(%s)", path)
+    async with localize_path(gateway, allocator, path) as (dirfd, pathname):
+        if dirfd is not None:
+            await raw_syscall.fchdir(sysif, dirfd)
+        await raw_syscall.chdir(sysif, pathname)
 
 async def openat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
                  path: base.Path, flags: int, mode: int) -> int:

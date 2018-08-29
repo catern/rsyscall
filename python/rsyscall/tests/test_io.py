@@ -2,6 +2,8 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.io import gather_local_bootstrap, wrap_stdin_out_err
 from rsyscall.io import Epoller, AsyncFileDescriptor
 from rsyscall.epoll import EpollEvent, EpollEventMask
+import rsyscall.base as base
+import rsyscall.memory_abstracted_syscalls as memsys
 import socket
 import struct
 import time
@@ -319,6 +321,12 @@ class TestIO(unittest.TestCase):
                     with self.assertRaises(OSError):
                         # it was closed due to being cloexec
                         await pipe.wfd.write(b"foo")
+        trio.run(test)
+
+    def test_open_empty(self) -> None:
+        async def test() -> None:
+            fd = await memsys.openat(self.task.syscall, self.task.gateway, self.task.allocator,
+                                     base.Path(base.CWDPathBase, b"."), 0, 0)
         trio.run(test)
 
 if __name__ == '__main__':
