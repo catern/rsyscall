@@ -1749,6 +1749,18 @@ class RsyscallLocalSyscall(base.SyscallInterface):
         # bah okay maybe I really will just go with an EpollInterface thingy
         # and different implementations for the rsyscall task and for local synchronous epoll.
         # I think that's probably okay??
+
+        # ah so really the issue is that we're blocking the language runtime when we epoll locally...
+
+        # okay here's what I'll do
+        # just take an optional async func call_before_blocking in the epoller constructor
+        # and call it before blocking
+        # and also add the fd to the rsyscall
+
+        # deployment plan:
+        # add infd to rsyscall interface
+        # no-op out the rsycall interface wait readable
+        # if that works, do the other cleanup
         while True:
             for _ in range(5):
                 # take response lock to make sure no-one else is actively sending requests
