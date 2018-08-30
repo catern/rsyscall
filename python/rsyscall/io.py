@@ -1740,6 +1740,15 @@ class RsyscallLocalSyscall(base.SyscallInterface):
         # and because trio doesn't expose an fd, it only supports external.
         # good, good!
         # maybe we should also modularize to have the external-only be a different class...
+        # so how do we test this?
+        # I guess we should try having two corecursive epolls?
+        # each which does both internal and external blocking for the other?
+        # and we register one end of a pipe on both sides?
+        # or no, just the read end of a pipe on both sides...
+
+        # bah okay maybe I really will just go with an EpollInterface thingy
+        # and different implementations for the rsyscall task and for local synchronous epoll.
+        # I think that's probably okay??
         while True:
             for _ in range(5):
                 # take response lock to make sure no-one else is actively sending requests
