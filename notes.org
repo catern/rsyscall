@@ -3858,3 +3858,16 @@ instead of sending a message which causes some mysterious amount of resources to
 instead just have some code which you control which runs on the remote side,
 and which you communicate with using some internal protocol,
 and if peple want to talk with you they go through that code, I guesso
+* logging
+maybe we should have a per-task logger?
+
+or better yet: a per syscall-interface logger?
+
+then we call getlogger on it to get the right logger.
+
+well what is it I really want?
+I want to be able to know which task a syscall is coming from.
+
+I don't actually care about customizing the level based on each one
+
+I guess a logger per syscallinterface seems fine.

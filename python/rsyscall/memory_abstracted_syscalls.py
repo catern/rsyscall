@@ -14,6 +14,8 @@ import contextlib
 import enum
 logger = logging.getLogger(__name__)
 
+logger.setLevel(logging.INFO)
+
 @contextlib.asynccontextmanager
 async def localize_data(
         gateway: MemoryGateway, allocator: memory.Allocator, data: bytes

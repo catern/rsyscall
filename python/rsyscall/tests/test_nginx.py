@@ -44,7 +44,7 @@ class TestNginx(unittest.TestCase):
                     # all tricky.
                     async with (await stdtask.mkdtemp()) as path:
                         async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
-                            addr = (path/"sock").unix_address(stdtask.task)
+                            addr = (path/"sock").unix_address()
                             await sockfd.bind(addr)
                             await sockfd.listen(10)
                             executable = ng.NginxExecutable(Path.from_bytes(

@@ -4,7 +4,7 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.epoll import EpollEvent, EpollEventMask
 import rsyscall.epoll
 
-from rsyscall.base import AddressSpace, Pointer, FDNamespace, RsyscallException, RsyscallHangup
+from rsyscall.base import Pointer, RsyscallException, RsyscallHangup
 from rsyscall.base import MemoryGateway, LocalMemoryGateway, to_local_pointer
 from rsyscall.base import SyscallInterface
 import rsyscall.base as base
@@ -103,11 +103,35 @@ async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0)
     ret = lib.rsyscall_raw_syscall(*args)
     return ret
 
+def log_syscall(logger, number, arg1, arg2, arg3, arg4, arg5, arg6) -> None:
+    if arg6 == 0:
+        if arg5 == 0:
+            if arg4 == 0:
+                if arg3 == 0:
+                    if arg2 == 0:
+                        if arg1 == 0:
+                            logger.debug("%s()", number)
+                        else:
+                            logger.debug("%s(%s)", number, arg1)
+                    else:
+                        logger.debug("%s(%s, %s)", number, arg1, arg2)
+                else:
+                    logger.debug("%s(%s, %s, %s)", number, arg1, arg2, arg3)
+            else:
+                logger.debug("%s(%s, %s, %s, %s)", number, arg1, arg2, arg3, arg4)
+        else:
+            logger.debug("%s(%s, %s, %s, %s, %s)", number, arg1, arg2, arg3, arg4, arg5)
+    else:
+        logger.debug("%s(%s, %s, %s, %s, %s, %s)", number, arg1, arg2, arg3, arg4, arg5, arg6)
+
 class LocalSyscall(base.SyscallInterface):
+    other_activity_fd = None
+    logger = logging.getLogger("rsyscall.LocalSyscall")
     async def close_interface(self) -> None:
         pass
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         ret = await direct_syscall(number,
                                    arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
                                    arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
@@ -115,10 +139,6 @@ class LocalSyscall(base.SyscallInterface):
             err = -ret
             raise OSError(err, os.strerror(err))
         return ret
-
-    async def wait_readable(self, fd: int) -> None:
-        logger.debug("wait_readable(%s)", fd)
-        await trio.hazmat.wait_readable(fd)
 
 class FunctionPointer(Pointer):
     "A function pointer."
@@ -157,11 +177,42 @@ class SignalMask:
             raise Exception("SignalMask tracking got out of sync?")
         self.mask = mask
 
+T = t.TypeVar('T')
+class File:
+    """This is the underlying file object referred to by a file descriptor.
+
+    Often, multiple file descriptors in multiple processes can refer
+    to the same file object. For example, the stdin/stdout/stderr file
+    descriptors will typically all refer to the same file object
+    across several processes started by the same shell.
+
+    This is unfortunate, because there are some useful mutations (in
+    particular, setting O_NONBLOCK) which we'd like to perform to
+    Files, but which might break other users.
+
+    We store whether the File is shared with others with
+    "shared". If it is, we can't mutate it.
+
+    """
+    shared: bool
+    def __init__(self, shared: bool=False, flags: int=None) -> None:
+        self.shared = shared
+
+    async def set_nonblock(self, fd: FileDescriptor[File]) -> None:
+        if self.shared:
+            raise Exception("file object is shared and can't be mutated")
+        if fd.file != self:
+            raise Exception("can't set a file to nonblocking through a file descriptor that doesn't point to it")
+        await raw_syscall.fcntl(fd.task.syscall, fd.pure, fcntl.F_SETFL, os.O_NONBLOCK)
+
+T_file = t.TypeVar('T_file', bound=File)
+T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
+
 class Task:
     def __init__(self, syscall: SyscallInterface,
                  gateway: MemoryGateway,
-                 fd_namespace: FDNamespace,
-                 address_space: AddressSpace,
+                 fd_namespace: base.FDNamespace,
+                 address_space: base.AddressSpace,
                  mount: base.MountNamespace,
                  fs: base.FSInformation,
                  sigmask: SignalMask,
@@ -200,74 +251,62 @@ class Task:
         # we want this to return something that we can use to chdir
         raise NotImplementedError
 
-    async def pipe(self, flags=os.O_CLOEXEC) -> 'Pipe':
+    def _make_fd(self, num: int, file: T_file) -> FileDescriptor[T_file]:
+        return FileDescriptor(self, base.FileDescriptor(self.fd_namespace, num), file)
+
+    async def pipe(self, flags=os.O_CLOEXEC) -> Pipe:
         r, w = await memsys.pipe(self.syscall, self.gateway, self.allocator, flags)
-        return Pipe(FileDescriptor(ReadableFile(shared=False), self, self.fd_namespace, r),
-                    FileDescriptor(WritableFile(shared=False), self, self.fd_namespace, w))
+        return Pipe(self._make_fd(r, ReadableFile(shared=False)),
+                    self._make_fd(w, WritableFile(shared=False)))
 
-    async def epoll_create(self, flags=lib.EPOLL_CLOEXEC) -> 'FileDescriptor[EpollFile]':
+    async def epoll_create(self, flags=lib.EPOLL_CLOEXEC) -> FileDescriptor[EpollFile]:
         epfd = await raw_syscall.epoll_create(self.syscall, flags)
-        return FileDescriptor(EpollFile(), self, self.fd_namespace, epfd)
+        return self._make_fd(epfd, EpollFile())
 
-    async def socket_unix(self, type: socket.SocketKind, protocol: int=0) -> 'FileDescriptor[UnixSocketFile]':
+    async def socket_unix(self, type: socket.SocketKind, protocol: int=0) -> FileDescriptor[UnixSocketFile]:
         sockfd = await raw_syscall.socket(self.syscall, lib.AF_UNIX, type, protocol)
-        return FileDescriptor(UnixSocketFile(), self, self.fd_namespace, sockfd)
+        return self._make_fd(sockfd, UnixSocketFile())
 
-    async def socket_inet(self, type: socket.SocketKind, protocol: int=0) -> 'FileDescriptor[InetSocketFile]':
+    async def socket_inet(self, type: socket.SocketKind, protocol: int=0) -> FileDescriptor[InetSocketFile]:
         sockfd = await raw_syscall.socket(self.syscall, lib.AF_INET, type, protocol)
-        return FileDescriptor(InetSocketFile(), self, self.fd_namespace, sockfd)
+        return self._make_fd(sockfd, InetSocketFile())
 
-    async def signalfd_create(self, mask: t.Set[signal.Signals]) -> 'FileDescriptor[SignalFile]':
-        sigfd_num = await memsys.signalfd(self.syscall, self.gateway, self.allocator, mask, os.O_CLOEXEC)
-        return FileDescriptor(SignalFile(mask), self, self.fd_namespace, sigfd_num)
+    async def signalfd_create(self, mask: t.Set[signal.Signals]) -> FileDescriptor[SignalFile]:
+        sigfd = await memsys.signalfd(self.syscall, self.gateway, self.allocator, mask, os.O_CLOEXEC)
+        return self._make_fd(sigfd, SignalFile(mask))
 
     async def mmap(self, length: int, prot: memory.ProtFlag, flags: memory.MapFlag) -> memory.AnonymousMapping:
         # currently doesn't support specifying an address, nor specifying a file descriptor
         return (await memory.AnonymousMapping.make(
             self.syscall, self.address_space, length, prot, flags))
 
-T = t.TypeVar('T')
-class File:
-    """This is the underlying file object referred to by a file descriptor.
-
-    Often, multiple file descriptors in multiple processes can refer
-    to the same file object. For example, the stdin/stdout/stderr file
-    descriptors will typically all refer to the same file object
-    across several processes started by the same shell.
-
-    This is unfortunate, because there are some useful mutations (in
-    particular, setting O_NONBLOCK) which we'd like to perform to
-    Files, but which might break other users.
-
-    We store whether the File is shared with others with
-    "shared". If it is, we can't mutate it.
-
-    """
-    shared: bool
-    def __init__(self, shared: bool=False, flags: int=None) -> None:
-        self.shared = shared
-
-    async def set_nonblock(self, fd: 'FileDescriptor[File]') -> None:
-        if self.shared:
-            raise Exception("file object is shared and can't be mutated")
-        if fd.file != self:
-            raise Exception("can't set a file to nonblocking through a file descriptor that doesn't point to it")
-        await raw_syscall.fcntl(fd.syscall, fd.raw, fcntl.F_SETFL, os.O_NONBLOCK)
-
-T_file = t.TypeVar('T_file', bound=File)
-T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
+    async def make_epoller(self) -> Epoller:
+        epfd = await self.epoll_create()
+        # TODO handle deallocating the epoll fd if later steps fail
+        if self.syscall.other_activity_fd is not None:
+            epoller = Epoller(epfd, None)
+            other_activity_fd = self._make_fd(self.syscall.other_activity_fd, File())
+            epolled_other_activity_fd = await epoller.register(other_activity_fd, events=EpollEventMask.make(in_=True))
+        else:
+            # TODO this is a pretty low-level detail, not sure where is the right place to do this
+            async def wait_readable():
+                logger.debug("wait_readable(%s)", epfd.pure.number)
+                await trio.hazmat.wait_readable(epfd.pure.number)
+            epoller = Epoller(epfd, wait_readable)
+        return epoller
+        
 
 class ReadableFile(File):
     async def read(self, fd: 'FileDescriptor[ReadableFile]', count: int=4096) -> bytes:
-        return (await memsys.read(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, count))
+        return (await memsys.read(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, count))
 
 class WritableFile(File):
     async def write(self, fd: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
-        return (await memsys.write(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, buf))
+        return (await memsys.write(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, buf))
 
 class SeekableFile(File):
     async def lseek(self, fd: 'FileDescriptor[SeekableFile]', offset: int, whence: int) -> int:
-        return (await raw_syscall.lseek(fd.syscall, fd.raw, offset, whence))
+        return (await raw_syscall.lseek(fd.task.syscall, fd.pure, offset, whence))
 
 class ReadableWritableFile(ReadableFile, WritableFile):
     pass
@@ -278,7 +317,7 @@ class SignalFile(ReadableFile):
         self.mask = mask
 
     async def signalfd(self, fd: 'FileDescriptor[SignalFile]', mask: t.Set[signal.Signals]) -> None:
-        await memsys.signalfd(fd.syscall, fd.task.gateway, fd.task.allocator, mask, 0, fd=fd.raw)
+        await memsys.signalfd(fd.task.syscall, fd.task.gateway, fd.task.allocator, mask, 0, fd=fd.pure)
         self.mask = mask
 
 class DirectoryFile(SeekableFile):
@@ -287,7 +326,7 @@ class DirectoryFile(SeekableFile):
         self.raw_path = raw_path
 
     async def getdents(self, fd: 'FileDescriptor[DirectoryFile]', count: int) -> t.List[Dirent]:
-        data = await memsys.getdents64(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, count)
+        data = await memsys.getdents64(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, count)
         return rsyscall.stat.getdents64_parse(data)
 
 T_addr = t.TypeVar('T_addr', bound='Address')
@@ -309,11 +348,13 @@ class UnixAddress(Address):
     @classmethod
     def parse(cls: t.Type[T], data: bytes) -> T:
         header = ffi.sizeof('sa_family_t')
-        if header.sun_family != lib.AF_UNIX:
-            raise Exception("sun_family must be", lib.AF_UNIX, "is instead", header.sun_family)
         buf = ffi.from_buffer(data)
+        if len(data) < header:
+            raise Exception("data too smalllll")
         struct = ffi.cast('struct sockaddr_un*', buf)
-        if len(data) <= header:
+        if struct.sun_family != lib.AF_UNIX:
+            raise Exception("sun_family must be", lib.AF_UNIX, "is instead", header.sun_family)
+        if len(data) == header:
             # unnamed socket, name is empty
             length = 0
         elif struct.sun_path[0] == b'\0':
@@ -362,33 +403,33 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     address_type: t.Type[T_addr]
 
     async def bind(self, fd: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
-        await memsys.bind(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, addr.to_bytes())
+        await memsys.bind(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, addr.to_bytes())
 
     async def listen(self, fd: 'FileDescriptor[SocketFile]', backlog: int) -> None:
-        await raw_syscall.listen(fd.syscall, fd.raw, backlog)
+        await raw_syscall.listen(fd.task.syscall, fd.pure, backlog)
 
     async def connect(self, fd: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
-        await memsys.connect(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, addr.to_bytes())
+        await memsys.connect(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, addr.to_bytes())
 
     async def getsockname(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        data = await memsys.getsockname(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, self.address_type.addrlen)
+        data = await memsys.getsockname(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, self.address_type.addrlen)
         return self.address_type.parse(data)
 
     async def getpeername(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        data = await memsys.getpeername(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, self.address_type.addrlen)
+        data = await memsys.getpeername(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, self.address_type.addrlen)
         return self.address_type.parse(data)
 
     async def getsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
-        return (await memsys.getsockopt(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, level, optname, optlen))
+        return (await memsys.getsockopt(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, level, optname, optlen))
 
     async def setsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optval: bytes) -> None:
-        return (await memsys.setsockopt(fd.syscall, fd.task.gateway, fd.task.allocator, fd.raw, level, optname, optval))
+        return (await memsys.setsockopt(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, level, optname, optval))
 
     async def accept(self, fd: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
-        fdnum, data = await memsys.accept(fd.syscall, fd.task.gateway, fd.task.allocator,
-                                          fd.raw, self.address_type.addrlen, flags)
+        fdnum, data = await memsys.accept(fd.task.syscall, fd.task.gateway, fd.task.allocator,
+                                          fd.pure, self.address_type.addrlen, flags)
         addr = self.address_type.parse(data)
-        fd = FileDescriptor(type(self)(), fd.task, fd.fd_namespace, fdnum)
+        fd = FileDescriptor(fd.task, base.FileDescriptor(fd.pure.fd_namespace, fdnum), type(self)())
         return fd, addr
 
 class UnixSocketFile(SocketFile[UnixAddress]):
@@ -398,34 +439,25 @@ class InetSocketFile(SocketFile[InetAddress]):
     address_type = InetAddress
 
 class FileDescriptor(t.Generic[T_file_co]):
-    "A file descriptor."
-    file: T_file_co
+    "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."
     task: Task
-    fd_namespace: FDNamespace
-    number: int
-    def __init__(self, file: T_file_co, task: Task, fd_namespace: FDNamespace, number: int) -> None:
-        self.file = file
+    pure: base.FileDescriptor
+    file: T_file_co
+    def __init__(self, task: Task, pure: base.FileDescriptor, file: T_file_co) -> None:
         self.task = task
-        self.fd_namespace = fd_namespace
-        self.number = number
-        self.raw = base.FileDescriptor(fd_namespace, number)
+        self.pure = pure
+        self.file = file
         self.open = True
-
-    @property
-    def syscall(self) -> SyscallInterface:
-        if self.task.fd_namespace != self.fd_namespace:
-            raise Exception("Can't call syscalls on FD when my Task has moved out of my FDNamespaces")
-        return self.task.syscall
 
     async def aclose(self):
         if self.open:
-            await raw_syscall.close(self.task.syscall, self.raw)
+            await raw_syscall.close(self.task.syscall, self.pure)
             self.open = False
         else:
             pass
 
     def __str__(self) -> str:
-        return f'FD({self.number}, {self.file}, {self.task})'
+        return f'FD({self.task}, {self.pure}, {self.file})'
 
     async def __aenter__(self) -> 'FileDescriptor[T_file_co]':
         return self
@@ -439,7 +471,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         """
         if self.open:
             self.open = False
-            return self.__class__(self.file, self.task, self.fd_namespace, self.number)
+            return self.__class__(self.task, self.pure, self.file)
         else:
             raise Exception("file descriptor already closed")
 
@@ -447,13 +479,13 @@ class FileDescriptor(t.Generic[T_file_co]):
         """Make a copy of this file descriptor at target.number
 
         """
-        if self.fd_namespace != target.fd_namespace:
+        if self.pure.fd_namespace != target.pure.fd_namespace:
             raise Exception("two fds are not in the same FDNamespace")
         if self is target:
             return self
-        await raw_syscall.dup2(self.syscall, self.raw, target.raw)
+        await raw_syscall.dup2(self.task.syscall, self.pure, target.pure)
         target.open = False
-        new_fd = type(self)(self.file, self.task, self.fd_namespace, target.number)
+        new_fd = self.task._make_fd(target.pure.number, self.file)
         # dup2 unsets cloexec on the new copy, so:
         self.file.shared = True
         return new_fd
@@ -461,13 +493,13 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def as_argument(self) -> int:
         # TODO unset cloexec
         await self.disable_cloexec()
-        return self.number
+        return self.pure.number
 
     async def enable_cloexec(self) -> None:
         raise NotImplementedError
 
     async def disable_cloexec(self) -> None:
-        await raw_syscall.fcntl(self.syscall, self.raw, fcntl.F_SETFD, 0)
+        await raw_syscall.fcntl(self.task.syscall, self.pure, fcntl.F_SETFD, 0)
 
     # These are just helper methods which forward to the method on the underlying file object.
     async def set_nonblock(self: 'FileDescriptor[File]') -> None:
@@ -523,22 +555,19 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def accept(self: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
         return (await self.file.accept(self, flags))
 
-    async def wait_readable(self) -> None:
-        return (await self.syscall.wait_readable(self.number))
-
 class EpollFile(File):
     async def add(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: Pointer) -> None:
-        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.raw, EpollCtlOp.ADD, fd.raw, event)
+        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.pure, EpollCtlOp.ADD, fd.pure, event)
 
     async def modify(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: Pointer) -> None:
-        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.raw, EpollCtlOp.MOD, fd.raw, event)
+        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.pure, EpollCtlOp.MOD, fd.pure, event)
 
     async def delete(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor) -> None:
-        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.raw, EpollCtlOp.DEL, fd.raw)
+        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.pure, EpollCtlOp.DEL, fd.pure)
 
     async def wait(self, epfd: 'FileDescriptor[EpollFile]',
                    events: Pointer, maxevents: int, timeout: int) -> int:
-        return (await raw_syscall.epoll_wait(epfd.task.syscall, epfd.raw, events, maxevents, timeout))
+        return (await raw_syscall.epoll_wait(epfd.task.syscall, epfd.pure, events, maxevents, timeout))
 
 class EpolledFileDescriptor(t.Generic[T_file_co]):
     epoller: Epoller
@@ -551,7 +580,7 @@ class EpolledFileDescriptor(t.Generic[T_file_co]):
         self.in_epollfd = True
 
     async def modify(self, events: EpollEventMask) -> None:
-        await self.epoller.modify(self.underlying, EpollEvent(self.underlying.number, events))
+        await self.epoller.modify(self.underlying, EpollEvent(self.underlying.pure.number, events))
 
     async def wait(self) -> t.List[EpollEvent]:
         while True:
@@ -573,8 +602,9 @@ class EpolledFileDescriptor(t.Generic[T_file_co]):
         await self.aclose()
 
 class Epoller:
-    def __init__(self, epfd: FileDescriptor[EpollFile]) -> None:
+    def __init__(self, epfd: FileDescriptor[EpollFile], wait_readable: t.Optional[t.Callable[[], t.Awaitable[None]]]) -> None:
         self.epfd = epfd
+        self.wait_readable = wait_readable
         self.remote_new = RemoteNew(epfd.task.allocator, epfd.task.gateway)
         self.fd_map: t.Dict[int, EpolledFileDescriptor] = {}
         self.running_wait: t.Optional[trio.Event] = None
@@ -586,8 +616,8 @@ class Epoller:
         fd = fd.release()
         queue = trio.hazmat.UnboundedQueue()
         wrapper = EpolledFileDescriptor(self, fd, queue)
-        self.fd_map[fd.number] = wrapper
-        await self.add(fd, EpollEvent(fd.number, events))
+        self.fd_map[fd.pure.number] = wrapper
+        await self.add(fd, EpollEvent(fd.pure.number, events))
         return wrapper
 
     async def do_wait(self) -> None:
@@ -597,11 +627,15 @@ class Epoller:
             running_wait = trio.Event()
             self.running_wait = running_wait
 
-            # we first epoll_wait optimistically, and only then wait_readable
-            received_events = await self.wait(maxevents=32, timeout=0)
-            if len(received_events) == 0:
-                await self.epfd.wait_readable()
+            # yield away first
+            await trio.sleep(0)
+            if self.wait_readable is not None:
                 received_events = await self.wait(maxevents=32, timeout=0)
+                if len(received_events) == 0:
+                    await self.wait_readable()
+                    received_events = await self.wait(maxevents=32, timeout=-1)
+            else:
+                received_events = await self.wait(maxevents=32, timeout=-1)
             for event in received_events:
                 queue = self.fd_map[event.data].queue
                 queue.put_nowait(event.events)
@@ -640,8 +674,8 @@ class Epoller:
     async def __aenter__(self) -> 'Epoller':
         return self
 
-    async def __aexit__(self, *args, **kwargs):
-        await self.aclose()
+    async def __aexit__(self, *args, **kwargs) -> None:
+        await self.close()
 
 
 class AsyncFileDescriptor(t.Generic[T_file_co]):
@@ -804,7 +838,7 @@ class Path:
             file = ReadableFile()
         fd = await memsys.openat(self.task.syscall, self.task.gateway, self.task.allocator,
                                  self.pure, flags, mode)
-        return FileDescriptor(file, self.task, self.task.fd_namespace, fd)
+        return self.task._make_fd(fd, file)
 
     async def open_directory(self) -> FileDescriptor[DirectoryFile]:
         return (await self.open(os.O_DIRECTORY))
@@ -812,7 +846,7 @@ class Path:
     async def creat(self, mode=0o644) -> FileDescriptor[WritableFile]:
         fd = await memsys.openat(self.task.syscall, self.task.gateway, self.task.allocator,
                                  self.pure, os.O_WRONLY|os.O_CREAT|os.O_TRUNC, mode)
-        return FileDescriptor(WritableFile(), self.task, self.task.fd_namespace, fd)
+        return self.task._make_fd(fd, WritableFile())
 
     async def access(self, *, read=False, write=False, execute=False) -> bool:
         mode = 0
@@ -936,16 +970,18 @@ class UnixBootstrap:
     stdstreams: StandardStreams
 
 def wrap_stdin_out_err(task: Task) -> StandardStreams:
-    stdin = FileDescriptor(ReadableFile(shared=True), task, task.fd_namespace, 0)
-    stdout = FileDescriptor(WritableFile(shared=True), task, task.fd_namespace, 1)
-    stderr = FileDescriptor(WritableFile(shared=True), task, task.fd_namespace, 2)
+    stdin = task._make_fd(0, ReadableFile(shared=True))
+    stdout = task._make_fd(1, WritableFile(shared=True))
+    stderr = task._make_fd(2, WritableFile(shared=True))
     return StandardStreams(stdin, stdout, stderr)
 
 def gather_local_bootstrap() -> UnixBootstrap:
-    task = Task(LocalSyscall(),
+    syscall = LocalSyscall()
+    pid = os.getpid()
+    task = Task(syscall,
                 LocalMemoryGateway(),
-                FDNamespace(), base.local_address_space, base.MountNamespace(), base.FSInformation(),
-                SignalMask(set()), base.ProcessNamespace())
+                base.FDNamespace(pid), base.local_address_space, base.MountNamespace(pid), base.FSInformation(pid),
+                SignalMask(set()), base.ProcessNamespace(pid))
     argv = [arg.encode() for arg in sys.argv]
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
     stdstreams = wrap_stdin_out_err(task)
@@ -1028,8 +1064,7 @@ class TaskResources:
 
     @staticmethod
     async def make(task: Task) -> TaskResources:
-        # TODO handle deallocating if later steps fail
-        epoller = Epoller(await task.epoll_create())
+        epoller = await task.make_epoller()
         child_monitor = await ChildTaskMonitor.make(task, epoller)
         return TaskResources(epoller, child_monitor)
 
@@ -1340,19 +1375,8 @@ class ChildTask:
     def syscall(self) -> SyscallInterface:
         return self.monitor.signal_queue.sigfd.epolled.underlying.task.syscall
 
-    async def send_signal(self, sig: signal.Signals) -> None:
-        async with self as process:
-            if process:
-                await raw_syscall.kill(self.syscall, process, sig)
-            else:
-                raise Exception("child is already dead!")
-
-    async def kill(self) -> None:
-        async with self as process:
-            if process:
-                await raw_syscall.kill(self.syscall, process, signal.SIGKILL)
-
-    async def __aenter__(self) -> t.Optional[base.Process]:
+    @contextlib.asynccontextmanager
+    async def get_pid(self) -> t.AsyncGenerator[t.Optional[base.Process], None]:
         """Returns the underlying process, or None if it's already dead.
 
         Operating on the pid of a child process requires taking the wait_lock to make sure
@@ -1361,14 +1385,34 @@ class ChildTask:
         """
         # TODO this could really be a reader-writer lock, with this use as the reader and
         # wait as the writer.
-        await self.monitor.wait_lock.acquire()
-        self._flush_nowait()
-        if self.death_event:
-            return None
-        return self.process
+        async with self.monitor.wait_lock:
+            self._flush_nowait()
+            if self.death_event:
+                yield None
+            else:
+                yield self.process
+
+    async def send_signal(self, sig: signal.Signals) -> None:
+        async with self.get_pid() as process:
+            if process:
+                await raw_syscall.kill(self.syscall, process, sig)
+            else:
+                raise Exception("child is already dead!")
+
+    async def kill(self) -> None:
+        async with self.get_pid() as process:
+            if process:
+                await raw_syscall.kill(self.syscall, process, signal.SIGKILL)
+
+    async def __aenter__(self) -> None:
+        pass
 
     async def __aexit__(self, *args, **kwargs) -> None:
-        self.monitor.wait_lock.release()
+        if self.death_event:
+            pass
+        else:
+            await self.kill()
+            await self.wait_for_exit()
 
 class ChildTaskMonitor:
     @staticmethod
@@ -1660,11 +1704,9 @@ class RsyscallConnection:
         await self.tofd.aclose()
         await self.fromfd.aclose()
 
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+    async def syscall(self, number: int, arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> int:
         request = ffi.new('struct rsyscall_syscall*',
-                          (number,
-                           (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
-                            ffi.cast('long', arg4), ffi.cast('long', arg5), ffi.cast('long', arg6))))
+                          (number, (arg1, arg2, arg3, arg4, arg5, arg6)))
         async with self.request_lock:
             try:
                 await self.tofd.write(bytes(ffi.buffer(request)))
@@ -1684,17 +1726,19 @@ class RsyscallConnection:
         return response
 
 class RsyscallLocalSyscall(base.SyscallInterface):
-    def __init__(self, rsyscall_connection: RsyscallConnection, infd: int, outfd: int) -> None:
+    def __init__(self, rsyscall_connection: RsyscallConnection, process: base.Process, infd: base.FileDescriptor, outfd: base.FileDescriptor) -> None:
         self.rsyscall_connection = rsyscall_connection
+        self.other_activity_fd = infd.number
         self.infd = infd
         self.outfd = outfd
-        self.request_lock = trio.Lock()
-        self.response_fifo_lock = trio.StrictFIFOLock()
+        self.process = process
+        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{self.process.id}")
 
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         ret = await self.rsyscall_connection.syscall(
             number,
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
@@ -1703,79 +1747,6 @@ class RsyscallLocalSyscall(base.SyscallInterface):
             err = -ret
             raise OSError(err, os.strerror(err))
         return ret
-
-    async def wait_readable(self, fd: int) -> None:
-        # TODO this could really actually be a separate object
-        pollfds = ffi.new('struct pollfd[3]',
-                          # passing two means we can figure out which one tripped from just the
-                          # return value!
-                          [(fd, lib.POLLIN, 0), (fd, lib.POLLIN, 0),
-                           (self.infd, lib.POLLIN, 0)])
-        # hmmmmmmmmmmmmmmmmmmMMMMMMMMMMMMMMM
-        # let's get rid of wait_readable.
-        # that shall be our next great adventure!
-        # we need to add some new fd to epoll wait to wait on
-        # some fd which is readable, I guess, when some "other" events are ready...
-        # what does that mean?
-        # we can support both interface I suppose if necesary
-        # an fd that we add to our own blocking, and a wait readable
-        # are they deeply the same?
-        # i guess they're kind of inversions of each other
-        # one, we get an fd from the other guy and we monitor it,
-        # two, we send our fd to the other guy and he monitors it.
-        # like... the event loops should be symmetric?
-        # any event loop should implement both methods?
-        # "here is my fd, tell me when it's ready".
-        # and,
-        # "give me your fd, i'll tell you when it's ready".
-        # internal blocking vs external blocking?
-        # okay! epoll needs to support both internal and external blocking
-        # internal by registering other loops on the epoller,
-        # external by some kind of callback thing
-        # ideally we'd have both available at the same time!
-        # when only internal is supported, that is still fine.
-        # when only external is supported, we should set a mode on the epoller,
-        # so that it doesn't internally block.
-        # rsyscall tasks only support internal because remote fds stuff,
-        # and because trio doesn't expose an fd, it only supports external.
-        # good, good!
-        # maybe we should also modularize to have the external-only be a different class...
-        # so how do we test this?
-        # I guess we should try having two corecursive epolls?
-        # each which does both internal and external blocking for the other?
-        # and we register one end of a pipe on both sides?
-        # or no, just the read end of a pipe on both sides...
-
-        # bah okay maybe I really will just go with an EpollInterface thingy
-        # and different implementations for the rsyscall task and for local synchronous epoll.
-        # I think that's probably okay??
-
-        # ah so really the issue is that we're blocking the language runtime when we epoll locally...
-
-        # okay here's what I'll do
-        # just take an optional async func call_before_blocking in the epoller constructor
-        # and call it before blocking
-        # and also add the fd to the rsyscall
-
-        # deployment plan:
-        # add infd to rsyscall interface
-        # no-op out the rsycall interface wait readable
-        # if that works, do the other cleanup
-        while True:
-            for _ in range(5):
-                # take response lock to make sure no-one else is actively sending requests
-                async with self.rsyscall_connection.response_fifo_lock:
-                    # yield, let others run
-                    await trio.sleep(0)
-            logger.debug("poll(%s, %s, %s)", pollfds, 3, -1)
-            ret = await raw_syscall.poll(self, pollfds, 3, -1)
-            if ret < 0:
-                err = -ret
-                raise OSError(err, os.strerror(err))
-            if ret == 2:
-                # the user fd had an event, return
-                return
-            # the incoming request fd, or no fd, had an event. repeat!
 
 async def call_function(task: Task, stack: BufferedStack, function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> ChildEvent:
     "Calls a C function and waits for it to complete. Returns the ChildEvent that the child thread terminated with."
@@ -1811,35 +1782,37 @@ async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller
     ) -> t.Tuple[Task, CThread, t.List[FileDescriptor]]:
     "Spawn an rsyscall server running in a child task"
     for fd in user_fds:
-        if fd.fd_namespace is not task.fd_namespace:
+        if fd.pure.fd_namespace is not task.fd_namespace:
             raise Exception("can only translate file descriptors from my fd namespace")
     pipe_in = await task.pipe()
     pipe_out = await task.pipe()
     # new fd namespace is created here
     cthread = await thread_maker.make_cthread(
-        lib.CLONE_VM|shared, function, pipe_in.rfd.number, pipe_out.wfd.number)
+        lib.CLONE_VM|shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
+    process = cthread.thread.child_task.process
 
     async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
     async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
     syscall = RsyscallLocalSyscall(RsyscallConnection(async_tofd, async_fromfd),
-                                   pipe_in.rfd.number, pipe_out.wfd.number)
+                                   cthread.thread.child_task.process,
+                                   pipe_in.rfd.pure, pipe_out.wfd.pure)
     # TODO remove assumption that we are local
     gateway = LocalMemoryGateway()
 
     new_task = Task(syscall, gateway,
-                    FDNamespace(), task.address_space, task.mount, task.fs,
+                    base.FDNamespace(process.id), task.address_space, task.mount, task.fs,
                     task.sigmask.inherit(), task.process_namespace)
     if len(new_task.sigmask.mask) != 0:
         # clear this non-empty signal mask because it's pointlessly inherited across fork
         await new_task.sigmask.setmask(new_task, set())
 
-    inherited_fd_numbers: t.Set[int] = {pipe_in.rfd.number, pipe_out.wfd.number}
+    inherited_fd_numbers: t.Set[int] = {pipe_in.rfd.pure.number, pipe_out.wfd.pure.number}
     await pipe_in.rfd.aclose()
     await pipe_out.wfd.aclose()
 
     def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
-        inherited_fd_numbers.add(fd.number)
-        return FileDescriptor(fd.file, new_task, new_task.fd_namespace, fd.number)
+        inherited_fd_numbers.add(fd.pure.number)
+        return new_task._make_fd(fd.pure.number, fd.file)
     inherited_user_fds = [translate(fd) for fd in user_fds]
 
     # close everything that's cloexec and not explicitly passed down
@@ -1897,7 +1870,7 @@ def extract_task(arg):
 def assert_same_task(task: Task, *args) -> None:
     for arg in args:
         if isinstance(arg, Path):
-            arg.assert_okay_for_task(task)
+            _validate_path_and_task_match(task, arg.pure)
         elif isinstance(arg, FileDescriptor):
             if arg.task != task:
                 raise Exception("desired task", task, "doesn't match task", arg.task, "in arg", arg)
