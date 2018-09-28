@@ -208,6 +208,103 @@ class TestIO(unittest.TestCase):
                                     logger.info("%s, %s", addr, client_addr)
         trio.run(test)
 
+    def test_connect_proc_fails(self) -> None:
+        "Attempting to connect to a Unix socket through /proc/self/fd fails"
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as path:
+                    async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
+                        addr = (path/"sock").unix_address()
+                        await sockfd.bind(addr)
+                        await sockfd.listen(10)
+                        async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as clientfd:
+                            with self.assertRaises(ConnectionRefusedError):
+                                await clientfd.connect(rsyscall.io.UnixAddress(f"/proc/self/fd/{sockfd.pure.number}".encode()))
+        trio.run(test)
+
+    def test_connect_proc_path(self) -> None:
+        "We can connect to a Unix socket through /proc/self/fd pointing to an O_PATH descriptor"
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as path:
+                    async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
+                        sockpath = path/"sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssock"
+                        addr = sockpath.unix_address()
+                        await sockfd.bind(addr)
+                        await sockfd.listen(10)
+                        async with (await sockpath.open(os.O_PATH)) as sockpathfd:
+                            async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as clientfd:
+                                # AMAZING! YES! IT WORKS!
+                                await clientfd.connect(rsyscall.io.UnixAddress(f"/proc/self/fd/{sockpathfd.pure.number}".encode()))
+                                connfd, client_addr = await sockfd.accept(0) # type: ignore
+                                async with connfd:
+                                    logger.info("%s, %s", addr, client_addr)
+        trio.run(test)
+
+    def test_connect_dirfd_proc_path(self) -> None:
+        "We can connect to a Unix socket through /proc/self/fd pointing to an O_PATH descriptor even when the original socket path goes through a dirfd"
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as path:
+                    async with (await path.open_directory()) as pathdirfd:
+                        path_with_dirfd = pathdirfd.as_path()
+                        async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
+                            sockname = "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssock"
+                            sockpath = path_with_dirfd/sockname
+                            realsockpath = path/sockname
+                            addr = sockpath.unix_address()
+                            await sockfd.bind(addr)
+                            await sockfd.listen(10)
+                            async with (await realsockpath.open(os.O_PATH)) as sockpathfd:
+                                async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as clientfd:
+                                    await clientfd.connect(rsyscall.io.UnixAddress(f"/proc/self/fd/{sockpathfd.pure.number}".encode()))
+                                    connfd, client_addr = await sockfd.accept(0) # type: ignore
+                                    async with connfd:
+                                        logger.info("My address, client address: %s, %s", addr, client_addr)
+                                        print(realsockpath)
+                                        print(await clientfd.getpeername())
+        trio.run(test)
+
+    def test_bind_proc_path(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as path:
+                    async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
+                        sockpath = path/"sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssock"
+                        addr = sockpath.unix_address()
+                        async with (await sockpath.open(os.O_PATH)) as sockpathfd:
+                            await sockfd.bind(rsyscall.io.UnixAddress(f"/proc/self/fd/{sockpathfd.pure.number}".encode()))
+                            await sockfd.listen(10)
+                            # async with (await sockpath.open(os.O_PATH)) as sockpathfd:
+                            #     async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as clientfd:
+                            #         # AMAZING! YES! IT WORKS!
+                            #         await clientfd.connect(rsyscall.io.UnixAddress(f"/proc/self/fd/{sockpathfd.pure.number}".encode()))
+                            #         connfd, client_addr = await sockfd.accept(0) # type: ignore
+                            #         async with connfd:
+                            #             logger.info("%s, %s", addr, client_addr)
+        trio.run(test)
+
+    def test_bind_symlink(self) -> None:
+        async def test() -> None:
+            filler = "filler" + "_"*102
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as path:
+                    async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
+                        sockpath = path/filler/"sock"
+                        sockpath_procpath = sockpath._as_proc_path()
+                        print("PROCPATH", sockpath_procpath)
+                        sympath = await (path/"symlink").symlink_to(sockpath_procpath)
+                        await sockfd.bind(sympath.unix_address())
+                        await sockfd.listen(10)
+                            # async with (await sockpath.open(os.O_PATH)) as sockpathfd:
+                            #     async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as clientfd:
+                            #         # AMAZING! YES! IT WORKS!
+                            #         await clientfd.connect(rsyscall.io.UnixAddress(f"/proc/self/fd/{sockpathfd.pure.number}".encode()))
+                            #         connfd, client_addr = await sockfd.accept(0) # type: ignore
+                            #         async with connfd:
+                            #             logger.info("%s, %s", addr, client_addr)
+        trio.run(test)
+
     def test_ip_listen_async(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:

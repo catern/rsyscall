@@ -3871,3 +3871,130 @@ I want to be able to know which task a syscall is coming from.
 I don't actually care about customizing the level based on each one
 
 I guess a logger per syscallinterface seems fine.
+* small unix socket paths
+  What would I do eternally?
+
+  So I want to be able to connect to an arbitrary Unix socket path.
+
+  hm.
+
+  Why don't I just open the directory in the connector,
+  and then connect to the path?
+
+  That's not fully generic, but it comes close.
+
+  Yeah okay so, the path is limited in size...
+  but we can do it by directory...
+
+  but then the final component still is a maximum of 108 bytes...
+
+  which we can work around by... making a symlink, I guess?
+
+  oh, hm, can we do this with an O_PATH socket?
+
+  that would be neat... :)
+
+  WOAH IT WORKS!
+
+  ZOMG
+
+  this is transformative
+
+  so you can connect to a socket
+
+  through an O_PATH descriptor
+
+  this is great
+
+  oh and it makes sense, since the /proc/self/fd entry is a symlink to the real socket.
+
+  okay so I guess what we'll do is,
+  we'll pass down the O_PATH descriptor?
+  hmm, maybe not
+  I think we should probably just pass down the path and have the user open it.
+
+  on the other hand, hmmm..
+
+  what happens if I O_PATH open something under a dirfd
+
+  it works! omg!
+
+  so this handles the connecting side.
+
+  but now what about the listening side? does this let us listen on sockets with components more than 108 characters?
+  
+  in other words what happens when I listen on a symlink?
+
+  i guess we can find out but
+
+  i am not sure this whole thing actually works in different filesystem namespaces!!
+
+  in fact I think it's likely that it doesn't...
+
+  oho of course we can't bind through a symlink
+
+  we can't O_PATH open something that doesn't exist yet!
+
+  we can use mknod to create a socket, I guess.
+  then the socket exists, but can we bind to it?
+
+  wait wait, can we use a symlink to do the binding?
+
+  and how does this even look when we call getsockname?
+  will we get a huge (>108 bytes) address back and have to find size by strlen???
+
+  what??? I guess we get the dirfd-relative path when we call sockname or peername?
+  even on the remote side??
+
+  well no on the OH hm
+
+  what???
+  we do???
+
+  this is confusing...
+
+  okay so let's try binding on a symlink
+
+  ohhh it fails because the symlink already exists!
+
+  hmmm
+
+  what if I bind the socket then rename it?
+
+  yes that seems wise.
+
+  okay!
+  so for connecting:
+  open O_PATH the socket then connect to /proc/self/fd/pathfdnum
+
+  for binding/listening:
+  open (O_PATH or O_DIRECTORY) the directory you want to bind in,
+  then bind on /proc/self/fd/pathfdnum/whatever,
+  then rename whatever to the real name.
+
+  Well, here's one issue:
+  What if whatever is taken as a name?
+
+  I guess we are just generating a temp name.
+  Hmm, tricky.
+
+  Also we only do this if the name is long I guess?
+
+  Otherwise we bind directly.
+
+  so yeah I guess getpeername is just whatever the original name was.
+  lol
+
+  so, at least I've discovered this!
+* stuff
+
+  write a shell with rsyscall
+
+  some other thing what was it
+  some explanation of what rsyscall is
+
+  meh
+  it was nothing original
+
+  it was I guess the notion of a language based system?
+  

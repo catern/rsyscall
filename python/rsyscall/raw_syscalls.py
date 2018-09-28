@@ -288,7 +288,7 @@ async def symlinkat(sysif: SyscallInterface,
     if newdirfd is None:
         newdirfd = lib.AT_FDCWD # type: ignore
     # symlinkat is in the opposite order of usual, for no reason
-    await sysif.syscall(SYS.symlinkat, linkpath, newdirfd, target)
+    await sysif.syscall(SYS.symlinkat, target, newdirfd, linkpath)
 
 async def readlinkat(sysif: SyscallInterface,
                      dirfd: t.Optional[FileDescriptor], path: Pointer,

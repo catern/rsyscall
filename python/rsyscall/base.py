@@ -100,6 +100,26 @@ class CWDPathBase:
     fs_information: FSInformation
 
 @dataclass(eq=False)
+class Directory:
+    base: t.Union[DirfdPathBase, RootPathBase, CWDPathBase]
+    # none of these will contain a "/"
+    components: t.List[bytes]
+
+    def __post_init__(self) -> None:
+        for component in self.components:
+            assert b"/" not in component
+            assert len(component) != 0
+
+@dataclass(eq=False)
+class Path:
+    dir: Directory
+    basename: bytes
+
+    def __post_init__(self) -> None:
+        assert b"/" not in self.basename
+        assert len(self.basename) != 0
+
+@dataclass(eq=False)
 class Path:
     base: t.Union[DirfdPathBase, RootPathBase, CWDPathBase]
     # shouldn't have a leading / if it's relative to root, we'll put that on ourselves.

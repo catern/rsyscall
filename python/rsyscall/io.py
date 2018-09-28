@@ -329,6 +329,9 @@ class DirectoryFile(SeekableFile):
         data = await memsys.getdents64(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, count)
         return rsyscall.stat.getdents64_parse(data)
 
+    def as_path(self, fd: FileDescriptor[DirectoryFile]) -> Path:
+        return Path(fd.task, base.Path(base.DirfdPathBase(fd.pure), b"."))
+
 T_addr = t.TypeVar('T_addr', bound='Address')
 class Address:
     addrlen: int
@@ -527,6 +530,9 @@ class FileDescriptor(t.Generic[T_file_co]):
 
     async def getdents(self: 'FileDescriptor[DirectoryFile]', count: int=4096) -> t.List[Dirent]:
         return (await self.file.getdents(self, count))
+
+    def as_path(self: FileDescriptor[DirectoryFile]) -> Path:
+        return self.file.as_path(self)
 
     async def lseek(self: 'FileDescriptor[SeekableFile]', offset: int, whence: int) -> int:
         return (await self.file.lseek(self, offset, whence))
@@ -794,6 +800,15 @@ def _validate_path_and_task_match(task: Task, path: base.Path) -> None:
         if path.base.fs_information != task.fs:
             raise Exception("path", path, "based at cwd doesn't share fs information with task", task)
 
+class Directory:
+    "This is a convenient combination of a pure path and a task to make syscalls in."
+    def __init__(self, task: Task, pure: base.Path) -> None:
+        self.task = task
+        self.base = pure
+        self.components = pure
+        _validate_path_and_task_match(self.task, self.pure)
+    pass
+
 class Path:
     "This is a convenient combination of a pure path and a task to make syscalls in."
     def __init__(self, task: Task, pure: base.Path) -> None:
@@ -842,6 +857,9 @@ class Path:
 
     async def open_directory(self) -> FileDescriptor[DirectoryFile]:
         return (await self.open(os.O_DIRECTORY))
+
+    async def open_path(self) -> FileDescriptor[File]:
+        return (await self.open(os.O_PATH))
 
     async def creat(self, mode=0o644) -> FileDescriptor[WritableFile]:
         fd = await memsys.openat(self.task.syscall, self.task.gateway, self.task.allocator,
@@ -914,6 +932,63 @@ class Path:
             # this is somewhat weird to do without ownership, but whatever.
             await raw_syscall.fcntl(self.task.syscall, purebase.dirfd, fcntl.F_SETFD, 0)
         return self._as_proc_path()
+
+    async def bind(self, fd: FileDescriptor[UnixSocketFile]) -> None:
+        # TODO
+        proc_path = self._as_proc_path()
+        if len(proc_path) > 108:
+            # if the filename is longer than 108,
+            # then I need to do a temp name and rename
+            # open the directory,
+            # bind on temp 
+            pass
+        else:
+            await fd.bind(UnixAddress(proc_path))
+
+    async def connect(self, fd: FileDescriptor[UnixSocketFile]) -> None:
+        proc_path = self._as_proc_path()
+        # TODO don't hardcode 108
+        if len(proc_path) > 108:
+            # the path is too long to fit in a UnixAddress;
+            # open the path as an O_PATH fd then use /proc/self/fd to do the connect
+            # hmm I wonder if I should throw an exception and force the user to do this?
+            # rather than automagically doing something slow?
+            # I contend that Linux should really support this anyway,
+            # so I think I'm fine with handling it automagically
+            # hmm should it support doing this?
+            async with (await self.open_path()) as pathfd:
+                # hmm what if we just had some method directly on the fd to do the AT_EMPTY_PATH thing,
+                # on a pathfd?
+                # that seems wise, we would want to have that in any case
+                # then what is the bind?
+                # well, we operate on a directory, I guess, to create the socket...
+                # should mkdirat and symlinkat and all those things have separated directory/name arguments?
+                # dubious: openat means that's not needed.
+                # on the other hand, we could currently pass a Path to a mkdirat/symlinkat,
+                # and it might or might not be a directory entry.
+                # so we could have things that we assert are directories,
+                # and things which we assert are directory entries,
+                # and sometimes a directory entry can also be a directory,
+                # and so directory entry can also be a directory.
+                # so do I have two separate classes?
+                # or something?
+                # I have Directory and DirectoryEntry?
+                # and I can't determine what something is?
+                # but doesn't that level of typing contradict the way paths usually work?
+                # hmmmmmmmmmmmm
+                # paths are really juts opaque pointers though...
+                # hmmmmmmmmmmmmmmmmmmmmm
+                # and we can use those pointers as either directories or directory entries
+                # but some times we can ensure it's a directory by construction
+                # and sometimes directory entries at runtime are directories
+                # and only the ones
+                # so, dirfds are always directories.
+                # cwd and root are always directories.
+                # other directories may be directory entries.
+                await fd.connect(UnixAddress(
+                    b"/".join([b"/proc/self/fd", str(pathfd.pure.number).encode()])))
+        else:
+            await fd.connect(UnixAddress(proc_path))
 
     def unix_address(self) -> UnixAddress:
         """Return an address that can be used with bind/connect for Unix sockets
@@ -1240,10 +1315,9 @@ class TemporaryDirectory:
         self.path = parent/name
 
     async def cleanup(self) -> None:
-        # TODO would be nice if unsharing the fs information gave us a cap to chdir
-        # TODO we need to inherit the self.parent path so we can chdir to it even if it's dirfd based
         new_task, _ = await self.stdtask.spawn([], shared=UnshareFlag.NONE)
         async with new_task:
+            # TODO would be nice if unsharing the fs information gave us a cap to chdir
             await new_task.stdtask.task.chdir(self.parent)
             child = await new_task.execve(self.stdtask.filesystem.utilities.rm, ["rm", "-r", self.name])
             (await child.wait_for_exit()).check()
@@ -1877,3 +1951,38 @@ def assert_same_task(task: Task, *args) -> None:
         else:
             raise Exception("can't validate argument", arg)
                 
+# compare this, with task_status arguments:
+async def run_foo(arg1, arg2, *, task_status=trio.TASK_STATUS_IGNORED):
+    internal_data = await frobnicate(arg1, arg2)
+    async with trio.open_nursery() as nursery:
+        internal_object = await nursery.start(run_foo_internal, internal_data)
+        task_status.started(internal_object.userobject())
+
+async def run_foo_internal(internal_data, *, task_status=trio.TASK_STATUS_IGNORED):
+    for thing in internal_data.things:
+        await prepare(thing)
+    async with trio.open_nursery() as nursery:
+        await nursery.start(low_level_other_thing, internal_data.geta(), internal_data.getb())
+        task_status.started()
+    
+# to this, with nursery arguments:
+async def run_foo(nursery, arg1, arg2):
+    internal_data = await frobnicate(arg1, arg2)
+    internal_object = await run_foo_internal(nursery, internal_data)
+    return internal_object.userobject()
+
+async def run_foo_internal(nursery, internal_data):
+    for thing in internal_data.things:
+        await prepare(thing)
+    await nursery.start(low_level_other_thing, internal_data.geta(), internal_data.getb())
+
+# run_foo can even be simplified to:
+async def run_foo(nursery, arg1, arg2):
+    return (await run_foo_internal(nursery, await frobnicate(arg1, arg2))).userobject()
+
+async def run_foo_internal(internal_data, *, task_status=trio.TASK_STATUS_IGNORED):
+    for thing in internal_data.things:
+        await prepare(thing)
+    async with trio.open_nursery() as nursery:
+        await nursery.start(low_level_other_thing, internal_data.geta(), internal_data.getb())
+        task_status.started()
