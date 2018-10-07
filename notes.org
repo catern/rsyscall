@@ -4004,3 +4004,8 @@ I guess a logger per syscallinterface seems fine.
   That's bad!
 
   It prevents you from using other things such as a debugger!
+
+* unshared memory
+  ok so I guess the first step is to do this with a thread
+
+  rather than execing into it

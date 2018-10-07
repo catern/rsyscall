@@ -62,6 +62,7 @@ class SYS(enum.IntEnum):
     getsockopt = lib.SYS_getsockopt
     kill = lib.SYS_kill
     linkat = lib.SYS_linkat
+    renameat2 = lib.SYS_renameat2
     listen = lib.SYS_listen
     lseek = lib.SYS_lseek
     mkdirat = lib.SYS_mkdirat
@@ -281,6 +282,17 @@ async def linkat(sysif: SyscallInterface,
     if newdirfd is None:
         newdirfd = lib.AT_FDCWD # type: ignore
     await sysif.syscall(SYS.linkat, olddirfd, oldpath, newdirfd, newpath, flags)
+
+async def renameat2(sysif: SyscallInterface,
+                    olddirfd: t.Optional[FileDescriptor], oldpath: Pointer,
+                    newdirfd: t.Optional[FileDescriptor], newpath: Pointer,
+                    flags: int) -> None:
+    logger.debug("renameat2(%s, %s, %s, %s, %s)", olddirfd, oldpath, newdirfd, newpath, flags)
+    if olddirfd is None:
+        olddirfd = lib.AT_FDCWD # type: ignore
+    if newdirfd is None:
+        newdirfd = lib.AT_FDCWD # type: ignore
+    await sysif.syscall(SYS.renameat2, olddirfd, oldpath, newdirfd, newpath, flags)
 
 async def symlinkat(sysif: SyscallInterface,
                     newdirfd: t.Optional[FileDescriptor], linkpath: Pointer, target: Pointer) -> None:

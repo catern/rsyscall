@@ -179,6 +179,13 @@ async def linkat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: mem
         async with localize_path(gateway, allocator, newpath) as (newdirfd, newpathname):
             await raw_syscall.linkat(sysif, olddirfd, oldpathname, newdirfd, newpathname, flags)
 
+async def renameat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
+                   oldpath: base.Path, newpath: base.Path, flags: int) -> None:
+    logger.debug("renameat2(%s, %s, %s)", oldpath, newpath, flags)
+    async with localize_path(gateway, allocator, oldpath) as (olddirfd, oldpathname):
+        async with localize_path(gateway, allocator, newpath) as (newdirfd, newpathname):
+            await raw_syscall.renameat2(sysif, olddirfd, oldpathname, newdirfd, newpathname, flags)
+
 async def symlinkat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
                     linkpath: base.Path, target: bytes) -> None:
     logger.debug("symlinkat(%s, %s)", linkpath, target)
