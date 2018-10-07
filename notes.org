@@ -3998,3 +3998,9 @@ I guess a logger per syscallinterface seems fine.
 
   it was I guess the notion of a language based system?
   
+* another advantage
+  Don't hardcode position of fds in fd space!
+
+  That's bad!
+
+  It prevents you from using other things such as a debugger!

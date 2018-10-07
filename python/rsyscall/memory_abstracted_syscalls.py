@@ -127,22 +127,12 @@ async def socketpair(sysif: SyscallInterface, gateway: MemoryGateway, allocator:
 async def localize_path(
         gateway: MemoryGateway, allocator: memory.Allocator, path: base.Path
 ) -> t.AsyncGenerator[t.Tuple[t.Optional[base.FileDescriptor], base.Pointer], None]:
-    if isinstance(path.dir.base, base.RootPathBase):
-        # pathname has to be null terminated
-        pathname = b"/" + path.data + b"\0"
-    else:
-        pathname = path.data + b"\0"
-    async with localize_data(gateway, allocator, pathname) as (pathname_ptr, pathname_len):
-        if isinstance(path.base, base.DirfdPathBase):
-            yield path.base.dirfd, pathname_ptr
-        else:
-            yield None, pathname_ptr
-
+    pathdata = b"/".join(path.components)
     if isinstance(path.base, base.RootPathBase):
         # pathname has to be null terminated
-        pathname = b"/" + path.data + b"\0"
+        pathname = b"/" + pathdata + b"\0"
     else:
-        pathname = path.data + b"\0"
+        pathname = pathdata + b"\0"
     async with localize_data(gateway, allocator, pathname) as (pathname_ptr, pathname_len):
         if isinstance(path.base, base.DirfdPathBase):
             yield path.base.dirfd, pathname_ptr

@@ -341,6 +341,9 @@ class Address:
     @abc.abstractmethod
     def to_bytes(self) -> bytes: ...
 
+class PathTooLongError(ValueError):
+    pass
+
 class UnixAddress(Address):
     addrlen: int = ffi.sizeof('struct sockaddr_un')
     path: bytes
@@ -364,11 +367,14 @@ class UnixAddress(Address):
             # abstract socket, entire buffer is part of path
             length = len(data) - header
         else:
+            # TODO handle the case where there's no null terminator
             # pathname socket, path is null-terminated
             length = lib.strlen(struct.sun_path)
         return cls(bytes(ffi.buffer(struct.sun_path, length)))
 
     def to_bytes(self) -> bytes:
+        if len(self.path) > 108:
+            raise PathTooLongError("path can't be converted to address because it's longer than the maximum unix address size")
         addr = ffi.new('struct sockaddr_un*', (lib.AF_UNIX, self.path))
         real_length = ffi.sizeof('sa_family_t') + len(self.path) + 1
         return bytes(ffi.buffer(addr))[:real_length]
@@ -816,17 +822,18 @@ class Path:
         self.pure = pure
         _validate_path_and_task_match(self.task, self.pure)
 
+    def get_dirname(self) -> Path:
+        return Path(self.task, self.pure.get_dirname())
+
+    def get_basename(self) -> bytes:
+        return self.pure.get_basename()
+
     @staticmethod
     def from_bytes(task: Task, path: bytes) -> Path:
-        if len(path) == 0:
-            # readlink, and possibly other syscalls, behave differently when given an empty path and a dirfd
-            # in general an empty path is probably not good
-            # TODO okay actually maybe let's lift this restriction
-            raise Exception("empty paths not allowed")
         if path.startswith(b"/"):
-            return Path(task, base.Path(base.RootPathBase(task.mount, task.fs), path[1:]))
+            return Path(task, base.Path(base.RootPathBase(task.mount, task.fs), path[1:].split(b"/")))
         else:
-            return Path(task, base.Path(base.CWDPathBase(task.mount, task.fs), path))
+            return Path(task, base.Path(base.CWDPathBase(task.mount, task.fs), path.split(b"/")))
 
     async def mkdir(self, mode=0o777) -> Path:
         await memsys.mkdirat(self.task.syscall, self.task.gateway, self.task.allocator,
@@ -918,12 +925,13 @@ class Path:
 
         """
         purebase = self.pure.base
+        pathdata = b"/".join(self.pure.components)
         if isinstance(purebase, base.DirfdPathBase):
-            return b"/".join([b"/proc/self/fd", str(purebase.dirfd.number).encode(), self.pure.data])
+            return b"/".join([b"/proc/self/fd", str(purebase.dirfd.number).encode(), pathdata])
         elif isinstance(purebase, base.RootPathBase):
-            return b"/" + self.pure.data
+            return b"/" + pathdata
         else:
-            return self.pure.data
+            return pathdata
 
     async def as_argument(self) -> bytes:
         purebase = self.pure.base
@@ -1005,14 +1013,23 @@ class Path:
         element: bytes = os.fsencode(path_element)
         if b"/" in element:
             raise Exception("no / allowed in path elements, do it one by one")
-        if self.pure.data == b'.':
-            # if the path is empty, just be relative
-            return Path(self.task, base.Path(self.pure.base, element))
-        else:
-            return Path(self.task, base.Path(self.pure.base, self.pure.data + b"/" + element))
+        return Path(self.task, base.Path(self.pure.base, self.pure.components + [element]))
 
     def __str__(self) -> str:
         return f"Path({self.pure})"
+
+async def robust_unix_bind(path: Path, sock: FileDescriptor[UnixSocketFile]) -> None:
+    async with contextlib.AsyncExitStack() as stack:
+        try:
+            addr = path.unix_address()
+        except PathTooLongError:
+            pass
+
+async def robust_unix_connect(path: Path, sock: FileDescriptor[UnixSocketFile]) -> None:
+    try:
+        addr = path.unix_address()
+    except PathTooLongError:
+        pass
 
 async def fspath(arg: t.Union[str, bytes, Path]) -> bytes:
     if isinstance(arg, str):

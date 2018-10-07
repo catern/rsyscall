@@ -122,8 +122,25 @@ class Path:
 @dataclass(eq=False)
 class Path:
     base: t.Union[DirfdPathBase, RootPathBase, CWDPathBase]
-    # shouldn't have a leading / if it's relative to root, we'll put that on ourselves.
-    data: bytes
+    # The typical representation of a path as foo/bar/baz\0,
+    # is really just a serialization of a list of components using / as the in-band separator.
+    # We represent paths directly as the list they really are.
+    components: t.List[bytes]
+    def __post_init__(self) -> None:
+        # Each componnet has no / in it and is non-zero length.
+        for component in self.components:
+            assert len(component) != 0
+            assert b"/" not in component
+
+    def get_basename(self) -> Path:
+        if len(self.components) == 0:
+            raise Exception("path has no basename")
+        return Path(self.base, self.components[:-1])
+
+    def get_dirname(self) -> bytes:
+        if len(self.components) == 0:
+            raise Exception("path has no dirname")
+        return self.components[-1]
 
 @dataclass(eq=False)
 class ProcessNamespace:
