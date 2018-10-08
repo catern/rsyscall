@@ -4009,3 +4009,17 @@ I guess a logger per syscallinterface seems fine.
   ok so I guess the first step is to do this with a thread
 
   rather than execing into it
+
+  hmm or should we actually exec into a separate process?
+
+  after all what's the point in forking really...
+
+  it's dumb!
+
+  copying your address space? pointless!
+
+  primarily because all the other threads, and the runtime, don't get cleaned up...
+
+  so yeah let's go with execing
+
+  alternatively, that's a bit of a headache, so let's not

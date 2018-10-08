@@ -14,6 +14,7 @@ class ProtFlag(enum.IntFlag):
 
 class MapFlag(enum.IntFlag):
     PRIVATE = lib.MAP_PRIVATE
+    SHARED = lib.MAP_SHARED
     ANONYMOUS = lib.MAP_ANONYMOUS
 
 class Allocation:

@@ -6,7 +6,7 @@ struct rsyscall_syscall {
     int64_t args[6];
 };
 
-noreturn void rsyscall_server(const int infd, const int outfd, const int ppid);
+noreturn void rsyscall_server(const int infd, const int outfd);
 void rsyscall_do_cloexec(int* excluded_fds, int fd_count);
 int strtoint(const char* p);
 

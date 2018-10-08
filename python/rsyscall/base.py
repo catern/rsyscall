@@ -20,7 +20,8 @@ class SyscallInterface:
     async def close_interface(self) -> None: ...
     # when this file descriptor is readable, it means other things want to run on this thread.
     # Users of the SyscallInterface should ensure that when they block, they are monitoring this fd as well.
-    other_activity_fd: t.Optional[int]
+    # Typically, this is in fact the fd which the rsyscall server reads for incoming system calls!
+    activity_fd: t.Optional[FileDescriptor]
 
 
 # In general, the identifiers inside these objects can be reused. Therefore, we
@@ -168,7 +169,6 @@ class MemoryGateway:
 local_address_space = AddressSpace(os.getpid())
 from rsyscall._raw import ffi, lib # type: ignore
 class LocalMemoryGateway(MemoryGateway):
-    i = 0
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
         if dest.address_space == src.address_space == local_address_space:
             lib.memcpy(ffi.cast('void*', dest.address), ffi.cast('void*', src.address), n)
@@ -183,6 +183,34 @@ class LocalMemoryGateway(MemoryGateway):
 
 def to_local_pointer(data: bytes) -> Pointer:
     return Pointer(local_address_space, int(ffi.cast('long', ffi.from_buffer(data))))
+
+class PeerMemoryGateway(MemoryGateway):
+    def __init__(self, space_a: AddressSpace, space_b: AddressSpace) -> None:
+        pass
+
+    async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
+        # write memory from dest pointer into that pointer's address space's data sending fd
+        # read from src pointer's address space's data receiving fd into src pointer
+        # they definitely need to be async since the reads and writes can block a lot.
+        # do we need to prepare the async fd in advance? the epollfd? is that it?
+        # that's certainly one trick we could do.
+        # how will that work on a remote host? I guess the rsyscall bootstrap will prepare it autonomously... and tell us it...
+        # um, well in that case we could have the bootstrap do that even locally
+        # well we will never actually be in a different address space locally, there's no benefit to it, so...
+        # for now let's prepare it in the parent and pass it down, yeah
+        # and we'll send the write and the read in parallel, which should be fine.
+        # ok! seems good.
+        # we'll register things in the host process, and also make things in the host process, then inherit them down
+        if dest.address_space == src.address_space == local_address_space:
+            lib.memcpy(ffi.cast('void*', dest.address), ffi.cast('void*', src.address), n)
+        else:
+            raise Exception("some pointer isn't in the local address space", dest, src, n)
+
+    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
+        # TODO when we implement the remote support, we should try to coalesce adjacent buffers,
+        # so one or both sides of the copy can be implemented with a single read or write instead of readv/writev.
+        for dest, src, n in ops:
+            await self.memcpy(dest, src, n)
 
 class RsyscallException(Exception):
     pass

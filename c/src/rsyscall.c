@@ -147,7 +147,7 @@ void rsyscall_do_cloexec(int* excluded_fds, int fd_count) {
     }
 }
 
-noreturn void rsyscall_server(const int infd, const int outfd, const int ppid)
+noreturn void rsyscall_server(const int infd, const int outfd)
 {
     write(2, hello, sizeof(hello) -1);
     for (;;) {

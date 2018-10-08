@@ -1602,6 +1602,9 @@ class Thread:
     which causes the task to do a futex wakeup on a specified address when it calls mm_release, and
     dedicate another task to waiting on that futex address.
 
+    The purpose of this class, then, is to hold the resources necessary to be notified of
+    mm_release. Namely, the futex.
+
     It would better if we could just get notified of mm_release through SIGCHLD/waitid.
 
     """
@@ -1720,14 +1723,12 @@ class ThreadMaker:
         Executes the instruction "ret" immediately after cloning.
 
         """
-        if not (flags & lib.CLONE_VM):
-            # TODO let's figure out how to force the futex address to be shared memory with the
-            # child, by mapping a memfd instead of using CLONE_PRIVATE 
-            raise Exception("CLONE_VM is mandatory right now because I'm lazy")
         task = self.monitor.signal_queue.sigfd.epolled.underlying.task
         # allocate memory for the stack
         stack_size = 4096
-        mapping = await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)
+        # the mapping is SHARED rather than PRIVATE so that the futex is shared even if CLONE_VM
+        # unshares the address space
+        mapping = await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED)
         stack = BufferedStack(mapping.pointer + stack_size)
         # allocate the futex at the base of the stack, with "1" written to it to match
         # what futex_helper expects
@@ -1775,8 +1776,7 @@ class ThreadMaker:
         return CThread(thread, mapping)
 
 class RsyscallConnection:
-    """A connection to some rsyscall server where we can make syscalls
-    """
+    "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
                  tofd: AsyncFileDescriptor[WritableFile],
                  fromfd: AsyncFileDescriptor[ReadableFile],
@@ -1811,14 +1811,12 @@ class RsyscallConnection:
         response, = struct.unpack('q', response_bytes)
         return response
 
-class RsyscallLocalSyscall(base.SyscallInterface):
-    def __init__(self, rsyscall_connection: RsyscallConnection, process: base.Process, infd: base.FileDescriptor, outfd: base.FileDescriptor) -> None:
+class RsyscallInterface(base.SyscallInterface):
+    def __init__(self, rsyscall_connection: RsyscallConnection,
+                 process: base.Process, activity_fd: base.FileDescriptor) -> None:
         self.rsyscall_connection = rsyscall_connection
-        self.other_activity_fd = infd.number
-        self.infd = infd
-        self.outfd = outfd
-        self.process = process
         self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{self.process.id}")
+        self.activity_fd = activity_fd
 
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
@@ -1879,15 +1877,65 @@ async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller
 
     async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
     async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
-    syscall = RsyscallLocalSyscall(RsyscallConnection(async_tofd, async_fromfd),
-                                   cthread.thread.child_task.process,
-                                   pipe_in.rfd.pure, pipe_out.wfd.pure)
+    syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
+                                cthread.thread.child_task.process,
+                                activity_fd=pipe_in.rfd.pure)
     # TODO remove assumption that we are local
     gateway = LocalMemoryGateway()
 
     new_task = Task(syscall, gateway,
                     base.FDNamespace(process.id), task.address_space, task.mount, task.fs,
                     task.sigmask.inherit(), task.process_namespace)
+    if len(new_task.sigmask.mask) != 0:
+        # clear this non-empty signal mask because it's pointlessly inherited across fork
+        await new_task.sigmask.setmask(new_task, set())
+
+    inherited_fd_numbers: t.Set[int] = {pipe_in.rfd.pure.number, pipe_out.wfd.pure.number}
+    await pipe_in.rfd.aclose()
+    await pipe_out.wfd.aclose()
+
+    def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
+        inherited_fd_numbers.add(fd.pure.number)
+        return new_task._make_fd(fd.pure.number, fd.file)
+    inherited_user_fds = [translate(fd) for fd in user_fds]
+
+    # close everything that's cloexec and not explicitly passed down
+    await do_cloexec_except(new_task, inherited_fd_numbers)
+    return new_task, cthread, inherited_user_fds
+
+async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: FunctionPointer,
+                                     user_fds: t.List[FileDescriptor],
+                                     shared: UnshareFlag=UnshareFlag.FS,
+    ) -> t.Tuple[Task, CThread, t.List[FileDescriptor]]:
+    "Spawn an rsyscall server running in a child task, without specifying CLONE_VM, so it's in a new (copied) address space"
+    for fd in user_fds:
+        if fd.pure.fd_namespace is not task.fd_namespace:
+            raise Exception("can only translate file descriptors from my fd namespace")
+    pipe_in = await task.pipe()
+    pipe_out = await task.pipe()
+    # new fd namespace and address space are created here
+    cthread = await thread_maker.make_cthread(
+        shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
+    process = cthread.thread.child_task.process
+    address_space = base.AddressSpace(process.id)
+    fd_namespace = base.FDNamespace(process.id)
+
+    async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
+    async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
+    syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
+                                cthread.thread.child_task.process,
+                                activity_fd=pipe_in.rfd.pure)
+    # hmmmmmmmmmmmmmm multihops are a lil tricky
+    # okay so we clearly need to open another pair of pipes as well, for data
+    # and...
+    # do they need to be async?
+    # what's the flow?
+    gateway = base.PeerMemoryGateway(task.address_space, address_space)
+
+    new_task = Task(syscall, gateway,
+                    fd_namespace, address_space,
+                    # TODO whether these things are shared depends on the `shared` flags
+                    task.mount, task.fs, task.sigmask.inherit(), task.process_namespace)
     if len(new_task.sigmask.mask) != 0:
         # clear this non-empty signal mask because it's pointlessly inherited across fork
         await new_task.sigmask.setmask(new_task, set())
