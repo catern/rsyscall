@@ -7,6 +7,8 @@ import rsyscall.epoll
 from rsyscall.base import Pointer, RsyscallException, RsyscallHangup
 from rsyscall.base import MemoryGateway, LocalMemoryGateway, to_local_pointer
 from rsyscall.base import SyscallInterface
+from rsyscall.base import T_addr, UnixAddress, PathTooLongError, InetAddress
+from rsyscall.base import IdType, EpollCtlOp, ChildCode, UncleanExit, ChildEvent
 import rsyscall.base as base
 from rsyscall.raw_syscalls import UnshareFlag, NsType, SigprocmaskHow
 import rsyscall.raw_syscalls as raw_syscall
@@ -35,65 +37,6 @@ import errno
 import enum
 import contextlib
 logger = logging.getLogger(__name__)
-
-class IdType(enum.IntEnum):
-    PID = lib.P_PID # Wait for the child whose process ID matches id.
-    PGID = lib.P_PGID # Wait for any child whose process group ID matches id.
-    ALL = lib.P_ALL # Wait for any child; id is ignored.
-
-class EpollCtlOp(enum.IntEnum):
-    ADD = lib.EPOLL_CTL_ADD
-    MOD = lib.EPOLL_CTL_MOD
-    DEL = lib.EPOLL_CTL_DEL
-
-class ChildCode(enum.Enum):
-    EXITED = lib.CLD_EXITED # child called _exit(2)
-    KILLED = lib.CLD_KILLED # child killed by signal
-    DUMPED = lib.CLD_DUMPED # child killed by signal, and dumped core
-    STOPPED = lib.CLD_STOPPED # child stopped by signal
-    TRAPPED = lib.CLD_TRAPPED # traced child has trapped
-    CONTINUED = lib.CLD_CONTINUED # child continued by SIGCONT
-
-class UncleanExit(Exception):
-    pass
-
-@dataclass
-class ChildEvent:
-    code: ChildCode
-    pid: int
-    uid: int
-    exit_status: t.Optional[int]
-    sig: t.Optional[signal.Signals]
-
-    @staticmethod
-    def make(code: ChildCode, pid: int, uid: int, status: int):
-        if code is ChildCode.EXITED:
-            return ChildEvent(code, pid, uid, status, None)
-        else:
-            return ChildEvent(code, pid, uid, None, signal.Signals(status))
-
-    def died(self) -> bool:
-        return self.code in [ChildCode.EXITED, ChildCode.KILLED, ChildCode.DUMPED]
-    def clean(self) -> bool:
-        return self.code == ChildCode.EXITED and self.exit_status == 0
-
-    def check(self) -> None:
-        if self.clean():
-            return None
-        else:
-            raise UncleanExit(self)
-
-    def killed_with(self) -> signal.Signals:
-        """What signal was the child killed with?
-
-        Throws if the child was not killed with a signal.
-
-        """
-        if not self.died():
-            raise Exception("Child isn't dead")
-        if self.sig is None:
-            raise Exception("Child wasn't killed with a signal")
-        return self.sig
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
@@ -125,7 +68,7 @@ def log_syscall(logger, number, arg1, arg2, arg3, arg4, arg5, arg6) -> None:
         logger.debug("%s(%s, %s, %s, %s, %s, %s)", number, arg1, arg2, arg3, arg4, arg5, arg6)
 
 class LocalSyscall(base.SyscallInterface):
-    other_activity_fd = None
+    activity_fd = None
     logger = logging.getLogger("rsyscall.LocalSyscall")
     async def close_interface(self) -> None:
         pass
@@ -283,9 +226,9 @@ class Task:
     async def make_epoller(self) -> Epoller:
         epfd = await self.epoll_create()
         # TODO handle deallocating the epoll fd if later steps fail
-        if self.syscall.other_activity_fd is not None:
+        if self.syscall.activity_fd is not None:
             epoller = Epoller(epfd, None)
-            other_activity_fd = self._make_fd(self.syscall.other_activity_fd, File())
+            other_activity_fd = FileDescriptor(self, self.syscall.activity_fd, File())
             epolled_other_activity_fd = await epoller.register(other_activity_fd, events=EpollEventMask.make(in_=True))
         else:
             # TODO this is a pretty low-level detail, not sure where is the right place to do this
@@ -331,81 +274,6 @@ class DirectoryFile(SeekableFile):
 
     def as_path(self, fd: FileDescriptor[DirectoryFile]) -> Path:
         return Path(fd.task, base.Path(base.DirfdPathBase(fd.pure), []))
-
-T_addr = t.TypeVar('T_addr', bound='Address')
-class Address:
-    addrlen: int
-    @classmethod
-    @abc.abstractmethod
-    def parse(cls: t.Type[T_addr], data: bytes) -> T_addr: ...
-    @abc.abstractmethod
-    def to_bytes(self) -> bytes: ...
-
-class PathTooLongError(ValueError):
-    pass
-
-class UnixAddress(Address):
-    addrlen: int = ffi.sizeof('struct sockaddr_un')
-    def __init__(self, path: bytes) -> None:
-        if len(path) > 108:
-            raise PathTooLongError("path is longer than the maximum unix address size")
-        self.path = path
-
-    T = t.TypeVar('T', bound='UnixAddress')
-    @classmethod
-    def parse(cls: t.Type[T], data: bytes) -> T:
-        header = ffi.sizeof('sa_family_t')
-        buf = ffi.from_buffer(data)
-        if len(data) < header:
-            raise Exception("data too smalllll")
-        struct = ffi.cast('struct sockaddr_un*', buf)
-        if struct.sun_family != lib.AF_UNIX:
-            raise Exception("sun_family must be", lib.AF_UNIX, "is instead", header.sun_family)
-        if len(data) == header:
-            # unnamed socket, name is empty
-            length = 0
-        elif struct.sun_path[0] == b'\0':
-            # abstract socket, entire buffer is part of path
-            length = len(data) - header
-        else:
-            # TODO handle the case where there's no null terminator
-            # pathname socket, path is null-terminated
-            length = lib.strlen(struct.sun_path)
-        return cls(bytes(ffi.buffer(struct.sun_path, length)))
-
-    def to_bytes(self) -> bytes:
-        addr = ffi.new('struct sockaddr_un*', (lib.AF_UNIX, self.path))
-        real_length = ffi.sizeof('sa_family_t') + len(self.path) + 1
-        return bytes(ffi.buffer(addr))[:real_length]
-
-    def __str__(self) -> str:
-        return f"UnixAddress({self.path})"
-
-class InetAddress(Address):
-    addrlen: int = ffi.sizeof('struct sockaddr_in')
-    def __init__(self, port: int, addr: int) -> None:
-        # these are in host byte order, of course
-        self.port = port
-        self.addr = addr
-
-    T = t.TypeVar('T', bound='InetAddress')
-    @classmethod
-    def parse(cls: t.Type[T], data: bytes) -> T:
-        struct = ffi.cast('struct sockaddr_in*', ffi.from_buffer(data))
-        if struct.sin_family != lib.AF_INET:
-            raise Exception("sin_family must be", lib.AF_INET, "is instead", struct.sin_family)
-        return cls(socket.ntohs(struct.sin_port), socket.ntohl(struct.sin_addr.s_addr))
-
-    def to_bytes(self) -> bytes:
-        addr = ffi.new('struct sockaddr_in*', (lib.AF_INET, socket.htons(self.port), (socket.htonl(self.addr),)))
-        return ffi.buffer(addr)
-
-    def addr_as_string(self) -> str:
-        "Returns the addr portion of this address in 127.0.0.1 form"
-        return socket.inet_ntoa(struct.pack("!I", self.addr))
-
-    def __str__(self) -> str:
-        return f"InetAddress({self.addr_as_string()}:{self.port})"
 
 class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     address_type: t.Type[T_addr]
@@ -491,7 +359,7 @@ class FileDescriptor(t.Generic[T_file_co]):
             raise Exception("two fds are not in the same FDNamespace")
         if self is target:
             return self
-        await raw_syscall.dup2(self.task.syscall, self.pure, target.pure)
+        await raw_syscall.dup3(self.task.syscall, self.pure, target.pure, 0)
         target.open = False
         new_fd = self.task._make_fd(target.pure.number, self.file)
         # dup2 unsets cloexec on the new copy, so:
@@ -1813,10 +1681,14 @@ class RsyscallConnection:
 
 class RsyscallInterface(base.SyscallInterface):
     def __init__(self, rsyscall_connection: RsyscallConnection,
-                 process: base.Process, activity_fd: base.FileDescriptor) -> None:
+                 process: base.Process,
+                 infd: base.FileDescriptor, outfd: base.FileDescriptor) -> None:
         self.rsyscall_connection = rsyscall_connection
-        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{self.process.id}")
-        self.activity_fd = activity_fd
+        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{process.id}")
+        self.activity_fd = infd
+        # these are needed so that we don't accidentally close them when doing a do_cloexec_except
+        self.infd = infd
+        self.outfd = outfd
 
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
@@ -1879,7 +1751,7 @@ async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller
     async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
     syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
                                 cthread.thread.child_task.process,
-                                activity_fd=pipe_in.rfd.pure)
+                                pipe_in.rfd.pure, pipe_out.wfd.pure)
     # TODO remove assumption that we are local
     gateway = LocalMemoryGateway()
 
@@ -1903,6 +1775,44 @@ async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller
     await do_cloexec_except(new_task, inherited_fd_numbers)
     return new_task, cthread, inherited_user_fds
 
+class PeerMemoryGateway(MemoryGateway):
+    def __init__(self,
+                 fd_a: FileDescriptor[ReadableWritableFile],
+                 fd_b: FileDescriptor[ReadableWritableFile],
+    ) -> None:
+        # these fds must not be marked NONBLOCK
+        self.pipe_a = pipe_a
+        self.pipe_b = fd_b
+
+    async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
+        if dest.address_space == self.fd_a.task.address_space:
+            assert(src.address_space == self.fd_b.task.address_space)
+            write_src_to = self.fd_b
+            read_dest_from = self.fd_a
+        elif dest.address_space == self.space_b:
+            assert(src.address_space == self.fd_a.task.address_space)
+            write_src_to = self.fd_a
+            read_dest_from = self.fd_b
+        else:
+            raise Exception("pointer isn't in the correct address space", dest, src, n)
+        async def read() -> None:
+            i = 0
+            while (n - i) > 0:
+                i += await raw_syscall.read(read_dest_from.task.syscall, read_dest_from.pure dest+i, n-i)
+        async def write() -> None:
+            i = 0
+            while (n - i) > 0:
+                await raw_syscall.write(write_src_to.task.syscall, write_src_to.pure, src+i, n-i)
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(read)
+            nursery.start_soon(write)
+
+    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
+        # TODO we should try to coalesce adjacent buffers, so one or both sides of the copy can be
+        # implemented with a single read or write instead of readv/writev.
+        for dest, src, n in ops:
+            await self.memcpy(dest, src, n)
+
 async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: FunctionPointer,
                                      user_fds: t.List[FileDescriptor],
                                      shared: UnshareFlag=UnshareFlag.FS,
@@ -1913,6 +1823,8 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
             raise Exception("can only translate file descriptors from my fd namespace")
     pipe_in = await task.pipe()
     pipe_out = await task.pipe()
+    mem_pipe_in = await task.pipe()
+    mem_pipe_out = await task.pipe()
     # new fd namespace and address space are created here
     cthread = await thread_maker.make_cthread(
         shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
@@ -1931,6 +1843,20 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
     # do they need to be async?
     # what's the flow?
     gateway = base.PeerMemoryGateway(task.address_space, address_space)
+    # hmm okay so we want to have a file descriptor thing in this task, before creating the memory gateway.
+    # I see.
+    # well, we could just, um, pass the syscall and pure fd in?
+    # that's lame-o.
+    # we need the raw fds, sigh.
+    # so I guess I'll have a Task which is purely, exclusively, just:
+    # namespaces + syscall interface
+    # sigh
+    # oh, I kinda do need that though
+    # ugh, mutation is such a hassle
+    # no, it's really segmentation that's a hassle
+
+    # protected mode segmentation
+    # lol segmentation
 
     new_task = Task(syscall, gateway,
                     fd_namespace, address_space,
@@ -1940,9 +1866,14 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
         # clear this non-empty signal mask because it's pointlessly inherited across fork
         await new_task.sigmask.setmask(new_task, set())
 
-    inherited_fd_numbers: t.Set[int] = {pipe_in.rfd.pure.number, pipe_out.wfd.pure.number}
+    inherited_fd_numbers: t.Set[int] = {
+        pipe_in.rfd.pure.number, pipe_out.wfd.pure.number,
+        mem_pipe_in.rfd.pure.number, mem_pipe_out.wfd.pure.number,
+    }
     await pipe_in.rfd.aclose()
     await pipe_out.wfd.aclose()
+    await mem_pipe_in.rfd.aclose()
+    await mem_pipe_out.wfd.aclose()
 
     def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
         inherited_fd_numbers.add(fd.pure.number)

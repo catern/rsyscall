@@ -4023,3 +4023,348 @@ I guess a logger per syscallinterface seems fine.
   so yeah let's go with execing
 
   alternatively, that's a bit of a headache, so let's not
+
+  okay yeah so we have to pass down the stuff
+
+  ah! I need to figure out how to avoid blocking the rest of the program
+
+  I guess having a single linear Task,
+  which I pass in and pass out whenever I'm gonna block,
+  is the way to do it ideally.
+
+  And what abstraction would we build around this?
+
+  I guess we'd have some thing that we can ask to borrow the task,
+  so we do the blocking internally?
+
+  It's better for that blocking to happen on the actual task.
+  i.e. we should be blocking on a response coming back;
+  the requests should all be pipelined
+
+  hmm.
+
+  if we have two epollers both with the activity_fd subscribed, we'll get into a spinning situation.
+
+  the first one will wait, then the second will wait, which will wake up the first one,
+  and the first one will send a new wait request through,
+  which will wake up the second,
+  and the first will send a new wait request through,
+  and we'll just be spinning! ugly.
+
+  okay so how do we handle avoiding the spinning with epollers?
+  wait, hm.
+  what if it's edge-triggered?
+  suppose it's edge-triggered.
+
+  oh wait, but.
+
+  we can't have a loop in epoll.
+  we can't have an epollfd which is our "do we have stuff to do",
+  which points to another epoll which is their "do we have stuff to do",
+  which points back at us.
+
+  could we do that nicely if, hum.
+  if we, um.
+  if we were edge-triggered?
+
+  hmm, loops are possible, but loops are always unnatural I think.
+
+  so we want something that references "the rest of the world".
+
+  and we want that something to also reference us? nonsense!
+
+  we are the only thing that is!
+
+  so when we're us, we are, um, hum herm.
+
+  I should read more composable concurrency stuff.
+
+  ughhh that's a drag
+
+  ok so if i don't read more concurrency stuff.
+
+  how would I just do this in Unix?
+
+  I have a good ole fashioned C library.
+
+  It performs some function and exposes an fd.
+
+  I include that fd in my event loop.
+
+  This way I pump its work loop whenever it needs something.
+  So it can maintain its service.
+
+  What if there's some function that completes asynchronously?
+
+  well I guess I can just,
+  pass down a,
+
+  callback thing.
+
+  yes and mhm
+
+  I pass down a callback
+
+  and eventually it gets called
+
+  and okay I guess it um
+
+  it just y'know
+
+  oh I pass down a callback,
+
+  as well as a rest of the program thing to do immediately,
+  and return up and continue running,
+
+  and eventually I pump its work loop with an epoll
+
+  and, yeah.
+
+  but the question is.
+
+  what if I'm a-wanting to do some things in the function?
+
+  and...
+
+  okay so...
+
+
+  I want to do an operation that is atomic, aka a syscall.
+
+  It's a blocking function.
+
+  How do I do that?
+
+  I just don't, I guess.
+
+  I have some epollfd and I just add to that and assume someone will call it.
+
+  So yeah okay so that's the thing.
+
+  Someone can't pass in to me, and have me block for them.
+
+  Okay I was thinking about this before yeah
+
+  Either we take in an activity fd,
+  and we block on our own events plus that,
+  or we take in a blocking fd to add our events to,
+  and we just return.
+
+  Um, that's weird.
+
+  So either we take an object on which we can register events and supply callbacks,
+  or we take in the event representing the rest of the program and do our own blocking.
+
+  Oh so no I guess a CML way would be,
+  we bundle together our own events into a single event and return it.
+  Yeah, yeah.
+
+  So either we return a single event representing us,
+  or we take in an event representing the rest of the program.
+
+  bah let's just have it work by accident.
+** proglangdesign question
+  Hey #proglangdesign
+
+  So, consider a program that does only minor computation,
+  and spends all its time blocked, waiting for any of a bunch of things to happen.
+
+  There are lots of languages and idioms where (put maximally vaguely) if there's such a program A, and a component B of that program,
+  and A calls into B, and B wants to perform some blocking operation,
+  then B (at some level of abstraction) will send to the rest of the program A some event thing that A can run/monitor.
+
+  For example, B might return a future, or might register a pair of (event description, callback) and return nothing,
+  or might be a coroutine that yields up some event description to some central event loop handler thingy,
+  or more esoteric things.
+
+  Essentially, B reifies the blocking operation and the subsequent operations it wants to do,
+  and gives that to A to run at A's leisure.
+
+  But what about the inverse operation?
+  If B wants to perform some blocking operation and doesn't want to block the rest of the program,
+  why doesn't *A* reify all the blocking operations that A wants to do,
+  and send it in to B?
+
+  Essentially, why can't we reify the blocking operation and subsequent operations that A wants to do,
+  and give that to B to run at B's leisure?
+** monads
+   kinda like monads I guess
+
+   or I guess like objects sending messages? no...
+
+   I mean, ultimately I want to avoid having to do the conventional thing,
+   (but which I've recently convinced myself is weird)
+   where I'm in some deep library function and I make a call up to do blocking.
+   I think that deeply requires weird stateful stuff.
+
+   Instead I'd rather be able to block directly, and wherever I am, always have the rest of the program be calling down into me to do blocking.
+* memory again
+  OK so I used the memorygateway agressively.
+
+  Now let's evaluate whether it's necessary :)
+
+  So if I just had a "pipe" which allowed me to move memory from one place to another.
+  That would be fine and good wouldn't it?
+
+  talking about memory as memory allows me to, um
+  well I can transparently use RDMA stuff y'know
+
+  if I specify,
+  hey here's the two sides.
+  here's the memcpy.
+
+  well yeah the pipe is really essentially this gateway thing.
+
+  should it be unidirectional?
+
+  yes. wait no.
+
+  HMM I think we want read and write and all those things to not be memory-abstracted.
+
+  That way we can easily do PeerMemoryGateway.
+
+  I guess read can just be a free helper function.
+
+  Yes and it can take a memory allocator thing and allocate some memory
+  and write it into there.
+
+  I guess. But then what about easily, y'know, reading from a file descriptor and getting those bytes into the runtime?
+
+  Inspecting those bytes is tricky yeah.
+
+  But I need the ability to read and write arbitrary bytes to even do the basics of AsyncFD stuff.
+
+  Y'know I feel like I should probably extract some of those fundamental components into helper libraries/threads/things.
+
+  Though maybe not, I should prove the concept of doing it all through syscalls.
+
+  Keep both implementations and test equivalence?
+
+  Anyway, so I allocate memory and copy into it with a helper.
+  Seems fine and good.
+
+  Then we need some help to get it into the runtime.
+
+  I guess that's really more of a, hm.
+
+  We have some kind of connection from the host, to the runtime.
+  And, yeah.
+
+  Well, I guess we maybe could have a big Runtime object,
+  which has connections to all the hosts?
+
+  Hmm no I guess we need the connection to the individual host.
+
+  And we'll do a read() method on an individual file descriptor.
+
+  Yes that makes sense.
+
+  That is to say, that kind of reading is in the io level,
+  not in the base level?
+
+  How will Path work then?
+
+  Path will rely on this connection, I guess, since we maintain the data in the runtime.
+
+  Or will it?
+
+  I guess we could go all the way, and have Path be only dirfds.
+
+  But that's just as slow as maintaining the path pointer remotely.
+
+  So if we maintain this data in the runtime.
+
+  And send it over on demand.
+
+  Then, that's all good.
+
+
+  HMMM wait a second so, hm.
+  Ah yeah so our Path class is correct, right, it correctly operates on Paths.
+  And we could indeed replace it with a dirfd-only thing.
+
+  I guess operations would still require memory access to actually be performed.
+
+  So we are not really improving anything if we want to allow easily accessing arbitrary filenames.
+
+  So Path, because it needs to work on arbitrary filenames which are stored in the runtime, needs to absolutely rely on the memory gateway.
+
+  Well.
+
+  We could have the dirfd thing,
+  and have it operate on pointers.
+
+  We could, I guess, have dirfds, as well as cwd and root things.
+  And have them indeed operate on pointers.
+
+  I suppose I could slide this API in under the current API.
+
+  Should this be the same as base or separate from base?
+
+  I think separate. We can combine later if necessary.
+
+  Basically, a memory-access-free task and abstraction layer.
+
+  ya okay I guess
+* object capability design question
+  It is a central precept of capabilities to not separate naming from authority.
+
+  But, what about a situation where I can precisely name an object,
+  but there are multiple possible (equivalent in power) authorities that I could use to access it?
+
+  Hmm okay so they're suggesting just only exposing io.Pointer and supporting an equality between io.Pointers to see that they are the same.
+
+  We could, I guess, only carry around the SyscallInterface along with the io.Pointer.
+  But wait, we do need to be able to do the dynamic check on the task to check its authority.
+
+  Well, hmm, I guess we can couple the io.Pointer with a MemoryGateway actually, not a task.
+  Well, a MemoryGateway wraps a Task.
+
+  An FD is the thing that we'll couple with a Task.
+  And the Task I guess has all the namespaces on it?
+* segmentation
+  lol this is a lot memory segmentation stuff
+  
+  basically I have far pointers in terms of memory segmentation
+
+  well, there's an additional thing beyond memory segmentation:
+  I have to perform the access through a specific resource.
+
+  also the segments are not just numbers, you have to use an object to set your segment to something.
+
+  model segment registers with dynamic scope
+  I think that would be a really cool mapping
+
+  so then how do you ensure your accesses are correct?
+
+  not sure
+
+  but you could also manage the current, um
+  the current filesystem namespace with it, yeah
+
+  yeah, you'd just have, um, setting that dynamic scope as,
+  an expensive operation, I guess,
+  but nevertheless an operation,
+  and you basically can assign the current namespace to a thing.
+
+  so, yeah.
+
+  but now I just need to understand how dynamic scope can be associated with an object.
+
+  I took notes about this before.
+
+  Well, wait, reverting back to the previous state is expensive too.
+  It requires you to save a thing.
+
+  So... maybe we'd just want to be mutable.
+  Urgh. So okay, let's just be mutable.
+
+  We have the Task, and it has some mutable attributes.
+  And that's it!
+
+  OK so FarFD is fine.
+
+  The fact that threads are first class objects is weird.
+  But cool.
+
+  Let's do the Task thing now.

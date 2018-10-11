@@ -38,5 +38,5 @@ int main(int argc, char** argv)
         fcntl(opt.infd, F_SETFL, fcntl(opt.infd, F_GETFL) & ~O_NONBLOCK);
         fcntl(opt.outfd, F_SETFL, fcntl(opt.outfd, F_GETFL) & ~O_NONBLOCK);
         /* TODO fix this up */
-        rsyscall_server(opt.infd, opt.outfd, 42);
+        rsyscall_server(opt.infd, opt.outfd);
 }

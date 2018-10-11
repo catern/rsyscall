@@ -46,7 +46,7 @@ class SYS(enum.IntEnum):
     clone = lib.SYS_clone
     close = lib.SYS_close
     connect = lib.SYS_connect
-    dup2 = lib.SYS_dup2
+    dup3 = lib.SYS_dup3
     epoll_create1 = lib.SYS_epoll_create1
     epoll_ctl = lib.SYS_epoll_ctl
     epoll_wait = lib.SYS_epoll_wait
@@ -91,9 +91,9 @@ async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
     logger.debug("close(%s)", fd)
     await sysif.syscall(SYS.close, fd)
 
-async def dup2(sysif: SyscallInterface, oldfd: FileDescriptor, newfd: FileDescriptor) -> None:
-    logger.debug("dup2(%s, %s)", oldfd, newfd)
-    await sysif.syscall(SYS.dup2, oldfd, newfd)
+async def dup3(sysif: SyscallInterface, oldfd: FileDescriptor, newfd: FileDescriptor, flags: int) -> None:
+    logger.debug("dup3(%s, %s, %d)", oldfd, newfd, flags)
+    await sysif.syscall(SYS.dup3, oldfd, newfd, flags)
 
 async def mmap(sysif: SyscallInterface, length: int, prot: int, flags: int,
                addr: t.Optional[Pointer]=None, 
