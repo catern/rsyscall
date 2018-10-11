@@ -4368,3 +4368,253 @@ I guess a logger per syscallinterface seems fine.
   But cool.
 
   Let's do the Task thing now.
+
+  meh there's still the weirdness of...
+
+  given a far pointer, I still need an additional thing to access it. (a thread)
+
+  I wonder if there's a "physical" (hardware) metaphor for that too?
+
+  afaik, far pointer systems never had to allocate and identify the,
+  like, bus lane that they were accessing memory through :)
+  
+  that would be cool though.
+  would that correspond to what I'm talking about?
+
+  maybe:
+  if the segment physically exists,
+  and we set up a bus lane so that it's actually pointing at that segment and pointing at me,
+
+  then that's kinda the same?
+
+  we still want the far pointers on our side.
+
+  hmmm.
+
+  oh, the fs and gs!
+
+  effectively you just,
+  you sent up all the segments right,
+  and then you use them!
+
+  hmm what if we don't have far pointers, we just have pointers used with a specific task?
+
+  that would be less realistic, true
+
+  but wait, we could support join on them to get equality.
+
+  hmmmmmmmmmmm
+
+  that's strictly less functional though...
+  because it doesn't invalidate pointers used before.
+
+  paths used before are not invalidated,
+  nor are other things.
+
+  but maybe that's good?
+  no that is not good, the paths are not in general valid after a change.
+
+  this is kind of the issue with moving a thread between address spaces,
+  because the instruction pointer might need to be invalidated.
+
+  and, yeah... the fact that the we have some specific channels we can do instructions through,
+  and they are each mutable with respect to which segment they use...
+
+  it's a lot like us...
+
+  which is useful, since I could, say, set up FS and GS at the start of some block to point to specific segments,
+  and then use far pointers within that block by just passing the correct segment override prefix.
+  but because this is stateful, how do I make sure that I don't mix this up,
+  and use the wrong segment override prefix with the wrong far pointer?
+  or what if I have some user-provided far pointer and I want to use it,
+  and the user *should* be providing a far pointer whose segment matchesr
+
+  it seems like the best I can do is a dynamic check at the time that I use so-and-so far pointer,
+
+  how do I make sure that I use the segment override prefix with the right addresses?
+
+  so were there ever any idioms for managing those?
+  
+  also! what about idioms for managing the current state of the extra segment registers?
+  of course SS and CS are constant most of the time, but {E,F,G}S could, if I understand right,
+  be arbitrarily pointed at new things
+
+  which is useful, since if, say, the user provides a bunch of far pointers in the same to me,
+  and I want to do a bunch of operations on them,
+  I can just set up FS correctly at the start and just use the segment override prefix.
+  but how do I make sure that all those far pointers are in the same segment?
+  seems like I need to do a dynamic check.
+
+  but, hm.
+  if they provided me a bunch of near pointers,
+  and a segment.
+
+  that would be type-safe I guess...
+
+  well, what would that correspond to?
+
+  i guess, they provide me with a bunch of raw addresses,
+  and a syscallinterface.
+
+  that would be type-safe.
+
+  so that's actually more like,
+  they provide me a bunch of near pointers and a segment override prefix.
+
+  so yeah, what if the user provides a far pointer to me,
+  and helpfully they claim they've already set up one of the segment registers to match that segment,
+  which is good because they're slow to change.
+  so how do I validate that?
+
+  well they should provide near pointers to me I guess.
+
+  what if we bundle a far pointer and a segment register override prefix?
+
+  so imagine that we have more segments than we have registers
+
+  and, we want to pass around far pointers and the segment register that's been set up with the matching segment id.
+
+  so that we don't have to allocate segments.
+  
+
+  so we clearly need to have an interface that is,
+
+  f(segment register, near pointer)
+
+  then probably we have something that's:
+
+  f(Bundle(segment register, far pointer))
+
+  which does the type check...
+
+  so if it's much more expensive to change a segment register than it is to do a dynamic check...
+  maybe this works?
+  maybe this makes sense?
+
+  we do a join across all the segment registers to make sure they're the same...
+  well, across all bundles to make sure they've got the same segment register, I guess...
+  well, no, we extract the segment register and check the thing,
+  check that they are all the same.
+  and we also reduce the bundle to a near pointer.
+
+  no so, that's not maximally exploiting the efficiency.
+  the segment register doesn't need to be the same across all of them;
+  it just needs to... um...
+  it just needs to point to the same segment?
+
+  
+  no, this is silliness...
+
+  hmm..
+
+  okay so we have this pointer type which is a packed pointer,
+  which is the segment register plus a far pointer.
+
+  we pass around the packed pointer to places.
+
+  what are the methods on the packed pointer?
+
+  I guesse they are,
+  "gimme some far pointers and I'll do these things"?
+
+  or packed pointers?
+
+  or near pointers?
+
+  so f(segment register, far pointer) doesn't seem that bad *if* it does the type check, right
+
+  f(segment register, far pointer, far pointer, far pointer)
+
+  and have it do the check that segments are correct.
+
+  so then we have a bundle like,
+  Bundle(segment register, far pointer),
+  which has methods which take... what?
+
+  Bundles or far pointers?
+
+  Well, if it's far pointers, it's cheap, innit.
+  We just delegate on down to the function.
+
+  If it's bundles... isn't it also cheap?
+  We also just delegate down?
+
+  I guess we just don't even bother checking the segment registers of the others.
+
+  segment registers are required to actually access things.
+  near pointer combined with segment register is what's necessary
+
+  okay so i've got objects which are near pointers and objects which are segment registers,
+  and then i've got a function (near pointer, segment register) -> stuff,
+  which is how we ultimately perform an access to a near pointer, we run an instruction
+  with a segment register override prefix to specify which segment register to use,
+  and pass a near pointer in a general purpose register as an argument to the instruction.
+
+  and then i've got an object containing a near pointer and a segment id, aka a far pointer object.
+  and then i've got a function (far pointer, segment register) -> stuff,
+  which is where I specify a segment register to use for accessing this far pointer,
+  and we do a dynamic check to check that the segment register is set to the correct segment id.
+  this is nice and fast, if changing the segment register is slower than checking that it's correct.
+
+  so what would I call an object containing a far pointer and a segment register?
+
+  the existence of this object asserts that we can correctly access this pointer,
+  and throws an exception if we try to use the far pointer and segment register together and it breaks.
+
+  near pointer
+
+  far pointer
+
+  a segment is a place
+
+  a pointer is a location inside the place
+
+  a segment id is a place identifier
+
+  a segment register then is a route to the place?
+  or like, a channel you can follow to get to the place?
+
+  how does that relate to a notion of source routes as far pointers...
+
+  if a source route is a far pointer
+
+  then what's the segment register?
+  the network interface????
+
+  naw...
+  maybe a segment register is just an even more far pointer
+
+  so hmm
+
+  each segment register could theoretically have different segment ids?
+
+  no i guess segment ids are global
+
+  from our perspective it's truly uniquely defined
+
+  i guess it's hierarchical
+
+  but a representation as a graph is better.
+
+  i guess putting a segment register on it is just like one step further on the graph.
+
+  but we need to check that that element in the graph is correct?
+  and, hey, wait, we don't walk through the namespace really!
+
+  although, do we actually?
+  we walk from the task to the far pointer,
+  but that fails if they differ.
+
+  I guess it really is just a more far far pointer.
+
+  distant pointer?
+
+  what's the word for more far,
+  but also more accessible?
+
+  far implies you have to go through some additional absolute thingy to get to it.
+  or, I guess, you have to go from some larger context.
+
+  a wider view on the world
+
+  astral pointer?
