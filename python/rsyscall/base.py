@@ -144,20 +144,11 @@ class ProcessGroup:
 
 # TODO later on we'll have user namespaces too
 
+@dataclass
 class Task:
-    def __init__(self, pid: int,
-                 sysif: SyscallInterface,
-                 fd_namespace: FDNamespace,
-                 address_space: AddressSpace,
-                 mount: MountNamespace,
-                 fs: FSInformation,
-    ) -> None:
-        self.pid = pid
-        self.sysif = sysif
-        self.fd_namespace = fd_namespace
-        self.address_space = address_space
-        self.mount = mount
-        self.fs = fs
+    sysif: SyscallInterface
+    fd_namespace: FDNamespace
+    address_space: AddressSpace
 
 class MemoryGateway:
     """A gateway between two tasks.

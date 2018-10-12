@@ -152,26 +152,35 @@ T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
 class Task:
-    def __init__(self, syscall: SyscallInterface,
+    def __init__(self,
+                 base_: base.Task,
                  gateway: MemoryGateway,
-                 fd_namespace: base.FDNamespace,
-                 address_space: base.AddressSpace,
                  mount: base.MountNamespace,
                  fs: base.FSInformation,
                  sigmask: SignalMask,
                  process_namespace: base.ProcessNamespace,
     ) -> None:
-        self.syscall = syscall
+        self.base = base_
         self.gateway = gateway
-        self.address_space = address_space
         # Being able to allocate memory is like having a stack.
         # we really need to be able to allocate memory to get anything done - namely, to call syscalls.
-        self.allocator = memory.Allocator(syscall, address_space)
-        self.fd_namespace = fd_namespace
+        self.allocator = memory.Allocator(self.base.sysif, base_.address_space)
         self.mount = mount
         self.fs = fs
         self.sigmask = sigmask
         self.process_namespace = process_namespace
+
+    @property
+    def syscall(self) -> base.SyscallInterface:
+        return self.base.sysif
+
+    @property
+    def address_space(self) -> base.AddressSpace:
+        return self.base.address_space
+
+    @property
+    def fd_namespace(self) -> base.FDNamespace:
+        return self.base.fd_namespace
 
     async def close(self):
         await self.syscall.close_interface()
@@ -195,7 +204,7 @@ class Task:
         raise NotImplementedError
 
     def _make_fd(self, num: int, file: T_file) -> FileDescriptor[T_file]:
-        return FileDescriptor(self, base.FileDescriptor(self.fd_namespace, num), file)
+        return FileDescriptor(self, base.FileDescriptor(self.base.fd_namespace, num), file)
 
     async def pipe(self, flags=os.O_CLOEXEC) -> Pipe:
         r, w = await memsys.pipe(self.syscall, self.gateway, self.allocator, flags)
@@ -221,7 +230,7 @@ class Task:
     async def mmap(self, length: int, prot: memory.ProtFlag, flags: memory.MapFlag) -> memory.AnonymousMapping:
         # currently doesn't support specifying an address, nor specifying a file descriptor
         return (await memory.AnonymousMapping.make(
-            self.syscall, self.address_space, length, prot, flags))
+            self.syscall, self.base.address_space, length, prot, flags))
 
     async def make_epoller(self) -> Epoller:
         epfd = await self.epoll_create()
@@ -660,7 +669,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
 
 def _validate_path_and_task_match(task: Task, path: base.Path) -> None:
     if isinstance(path.base, base.DirfdPathBase):
-        if path.base.dirfd.fd_namespace != task.fd_namespace:
+        if path.base.dirfd.fd_namespace != task.base.fd_namespace:
             raise Exception("path", path, "based at a dirfd which isn't in the fd_namespace of task", task)
     elif isinstance(path.base, base.RootPathBase):
         if path.base.mount_namespace != task.mount:
@@ -934,9 +943,9 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
 def gather_local_bootstrap() -> UnixBootstrap:
     syscall = LocalSyscall()
     pid = os.getpid()
-    task = Task(syscall,
+    task = Task(base.Task(syscall, base.FDNamespace(pid), base.local_address_space),
                 LocalMemoryGateway(),
-                base.FDNamespace(pid), base.local_address_space, base.MountNamespace(pid), base.FSInformation(pid),
+                base.MountNamespace(pid), base.FSInformation(pid),
                 SignalMask(set()), base.ProcessNamespace(pid))
     argv = [arg.encode() for arg in sys.argv]
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
@@ -1755,8 +1764,8 @@ async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller
     # TODO remove assumption that we are local
     gateway = LocalMemoryGateway()
 
-    new_task = Task(syscall, gateway,
-                    base.FDNamespace(process.id), task.address_space, task.mount, task.fs,
+    new_task = Task(base.Task(syscall, base.FDNamespace(process.id), task.address_space),
+                    gateway, task.mount, task.fs,
                     task.sigmask.inherit(), task.process_namespace)
     if len(new_task.sigmask.mask) != 0:
         # clear this non-empty signal mask because it's pointlessly inherited across fork
@@ -1798,7 +1807,7 @@ class PeerMemoryGateway(MemoryGateway):
         async def read() -> None:
             i = 0
             while (n - i) > 0:
-                i += await raw_syscall.read(read_dest_from.task.syscall, read_dest_from.pure dest+i, n-i)
+                i += await raw_syscall.read(read_dest_from.task.syscall, read_dest_from.pure, dest+i, n-i)
         async def write() -> None:
             i = 0
             while (n - i) > 0:
@@ -1836,7 +1845,7 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
     async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
     syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
                                 cthread.thread.child_task.process,
-                                activity_fd=pipe_in.rfd.pure)
+                                pipe_in.rfd.pure, pipe_out.wfd.pure)
     # hmmmmmmmmmmmmmm multihops are a lil tricky
     # okay so we clearly need to open another pair of pipes as well, for data
     # and...
@@ -1858,8 +1867,8 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
     # protected mode segmentation
     # lol segmentation
 
-    new_task = Task(syscall, gateway,
-                    fd_namespace, address_space,
+    new_task = Task(base.Task(syscall, fd_namespace, address_space),
+                    gateway,
                     # TODO whether these things are shared depends on the `shared` flags
                     task.mount, task.fs, task.sigmask.inherit(), task.process_namespace)
     if len(new_task.sigmask.mask) != 0:

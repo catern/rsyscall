@@ -4618,3 +4618,25 @@ I guess a logger per syscallinterface seems fine.
   a wider view on the world
 
   astral pointer?
+
+  so we really do need this thing
+
+  but then I guess it's wrapped in a thing which also carries a memory gateway?
+
+  and translates down to the active fd?
+
+  how do we do that as a free function?
+
+  I guess we just have the memory gateway
+  and allocator
+  and far pointer
+
+  I guess we could have them be methods on active FD after all
+
+  No that's a bad idea
+
+  We'll have the allocators, um...
+  return near pointers??
+
+  the only thing we really need is to have the io.Task inherit from or compose from the far.Task.
+  which is easy! we can even import the near and far stuff in the base stuff
