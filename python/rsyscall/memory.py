@@ -2,6 +2,7 @@ from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.base import AddressSpace, Pointer, SyscallInterface
 import rsyscall.raw_syscalls as raw_syscall
+import rsyscall.near
 import enum
 import contextlib
 import typing as t
@@ -41,7 +42,7 @@ class AnonymousMapping:
     async def make(self, syscall_interface: SyscallInterface, address_space: AddressSpace,
                    length: int, prot: ProtFlag, flags: MapFlag) -> AnonymousMapping:
         address = await raw_syscall.mmap(syscall_interface, length, prot, flags|MapFlag.ANONYMOUS)
-        pointer = Pointer(address_space, address)
+        pointer = Pointer(address_space, rsyscall.near.Pointer(address))
         return AnonymousMapping(syscall_interface, pointer, length)
 
     def __init__(self,

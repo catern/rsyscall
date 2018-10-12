@@ -4322,6 +4322,56 @@ I guess a logger per syscallinterface seems fine.
 
   An FD is the thing that we'll couple with a Task.
   And the Task I guess has all the namespaces on it?
+* epoll notes
+    # first, let's have them both be externally driven, I suppose
+    # no wait, what are we going to do testwise?
+    # so we have them each registered as epoll on the other one.
+    # we'll call wait on the pipe_rfd on both of them.
+    # then we'll activate some... stuff...
+    # how do we call wait on the pipe_rfd on both of them, if wait blocks??
+    # we can't, I guess.
+    # before blocking, I guess we need to ensure that no other tasks are ready to run.
+    # that's tricky, so let's go with external blocking for now.
+    # okay so this is hard, very hard, we will probably not be able to run things until everything is blocked, so...
+    # so...
+    # how exactly do we ensure that everything that can run, has run?
+    # well it's a matter of doing all pending work that we control
+    # and only then blocking
+    # blocking surrenders control back elsewhere...
+    # but if we run a function for someone else...
+    # and they call back into us...
+    # well actually that only will happen if we have a level-triggered approach.
+    # also... don't we need to do something level triggered then?
+    # I guess we'll, um...
+    # when we do the call into some other guy, they'll do just the, um...
+    # just the nonblocking approach.
+    # they won't block.
+    # we'll block.
+    # but no we won't block either.
+    # well then when will we block?
+    # okay so but yeah.
+    # when we do an external blocking for some other guy,
+    # that is, internal blocking from our perspective,
+    # external blocking for them,
+    # then,
+    # they need to not block.
+    # so yeah...
+    # but then alternatively, we can say, let's externalize our blocking to this other guy,
+    # and they'll call us when we're good.
+    # I mean...
+    # proposal is to do blocking internally, when exactly???
+    # like, I guess we really do have two modes?
+    # one external-blocking always, one internal-blocking always?
+    # an internal-blocking guy can monitor for an external-blocking guy...
+    # but here's the issue, how can we handle doing internal-blocking in any of our stuff??
+    # after all, when we do an internal-block,
+    # well, we can't be sure that other events aren't going to appear
+    # well, except when we can in fact be sure?????
+    # like when we are the only thing in the world,
+    # we call our thing,
+    # and any new action has to activate us?
+    # blaaaaaaaah!
+
 * segmentation
   lol this is a lot memory segmentation stuff
   
@@ -4640,3 +4690,41 @@ I guess a logger per syscallinterface seems fine.
 
   the only thing we really need is to have the io.Task inherit from or compose from the far.Task.
   which is easy! we can even import the near and far stuff in the base stuff
+
+* getting it to work
+  I think I will just neglect freeing things from now on.
+
+  I could achieve a GC'd by writing to a queue in __del__ and monitoring that queue from some closing thread.
+
+  Oh but I guess I need to flush that queue when closing the task or changing the task's namespace.
+
+  Oh and I guess I'll have to use active fds and pointers to do ownership.
+  They're the ones that truly own things.
+** blocking on local thread
+   reading/writing is blocking us indefinitely when it's on the local thread.
+   hm.
+   I guess putting it on a different thread would be fine.
+   but, argh, running the syscall connection on a different thread is weird
+   can't we be async about this?
+   let's lay it out
+
+   we want local reads to go through an Epoller,
+   which requires reading pointers to get the result.
+
+   remote reads can't go through an epoller because we're implementing the memory-reading functionality here.
+
+   I guess one side can be async and the other not async?
+
+   that would make sense.
+
+   yeah and running on a separate thread isn't really helpful anyway,
+   it'll still block others.
+
+   OK! one async, one direct.
+   That makes sense, right?
+   There's a "local" part of the gateway,
+   whose memory we can already access;
+   then there's a "remote" part,
+   whose memory we cannot access.
+
+   we need to support a pointer for async fd things.

@@ -1,9 +1,10 @@
-from rsyscall._raw import ffi, lib # type: ignore
 from __future__ import annotations
+from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass
 import enum
 import abc
 import logging
+import typing as t
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 

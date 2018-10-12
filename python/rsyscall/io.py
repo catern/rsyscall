@@ -14,6 +14,9 @@ from rsyscall.raw_syscalls import UnshareFlag, NsType, SigprocmaskHow
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
 import rsyscall.memory as memory
+import rsyscall.active as active
+import rsyscall.far as far
+import rsyscall.near as near
 
 from rsyscall.stat import Dirent, DType
 import rsyscall.stat
@@ -179,8 +182,8 @@ class Task:
         return self.base.address_space
 
     @property
-    def fd_namespace(self) -> base.FDNamespace:
-        return self.base.fd_namespace
+    def fd_table(self) -> base.FDTable:
+        return self.base.fd_table
 
     async def close(self):
         await self.syscall.close_interface()
@@ -204,7 +207,7 @@ class Task:
         raise NotImplementedError
 
     def _make_fd(self, num: int, file: T_file) -> FileDescriptor[T_file]:
-        return FileDescriptor(self, base.FileDescriptor(self.base.fd_namespace, num), file)
+        return FileDescriptor(self, base.FileDescriptor(self.base.fd_table, num), file)
 
     async def pipe(self, flags=os.O_CLOEXEC) -> Pipe:
         r, w = await memsys.pipe(self.syscall, self.gateway, self.allocator, flags)
@@ -237,7 +240,7 @@ class Task:
         # TODO handle deallocating the epoll fd if later steps fail
         if self.syscall.activity_fd is not None:
             epoller = Epoller(epfd, None)
-            other_activity_fd = FileDescriptor(self, self.syscall.activity_fd, File())
+            other_activity_fd = self._make_fd(self.syscall.activity_fd.number, File())
             epolled_other_activity_fd = await epoller.register(other_activity_fd, events=EpollEventMask.make(in_=True))
         else:
             # TODO this is a pretty low-level detail, not sure where is the right place to do this
@@ -314,7 +317,7 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
         fdnum, data = await memsys.accept(fd.task.syscall, fd.task.gateway, fd.task.allocator,
                                           fd.pure, self.address_type.addrlen, flags)
         addr = self.address_type.parse(data)
-        fd = FileDescriptor(fd.task, base.FileDescriptor(fd.pure.fd_namespace, fdnum), type(self)())
+        fd = FileDescriptor(fd.task, base.FileDescriptor(fd.pure.fd_table, fdnum), type(self)())
         return fd, addr
 
 class UnixSocketFile(SocketFile[UnixAddress]):
@@ -364,8 +367,8 @@ class FileDescriptor(t.Generic[T_file_co]):
         """Make a copy of this file descriptor at target.number
 
         """
-        if self.pure.fd_namespace != target.pure.fd_namespace:
-            raise Exception("two fds are not in the same FDNamespace")
+        if self.pure.fd_table != target.pure.fd_table:
+            raise Exception("two fds are not in the same FDTable")
         if self is target:
             return self
         await raw_syscall.dup3(self.task.syscall, self.pure, target.pure, 0)
@@ -669,8 +672,8 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
 
 def _validate_path_and_task_match(task: Task, path: base.Path) -> None:
     if isinstance(path.base, base.DirfdPathBase):
-        if path.base.dirfd.fd_namespace != task.base.fd_namespace:
-            raise Exception("path", path, "based at a dirfd which isn't in the fd_namespace of task", task)
+        if path.base.dirfd.fd_table != task.base.fd_table:
+            raise Exception("path", path, "based at a dirfd which isn't in the fd_table of task", task)
     elif isinstance(path.base, base.RootPathBase):
         if path.base.mount_namespace != task.mount:
             raise Exception("path", path, "based at root isn't in the mount namespace of task", task)
@@ -943,7 +946,7 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
 def gather_local_bootstrap() -> UnixBootstrap:
     syscall = LocalSyscall()
     pid = os.getpid()
-    task = Task(base.Task(syscall, base.FDNamespace(pid), base.local_address_space),
+    task = Task(base.Task(syscall, base.FDTable(pid), base.local_address_space),
                 LocalMemoryGateway(),
                 base.MountNamespace(pid), base.FSInformation(pid),
                 SignalMask(set()), base.ProcessNamespace(pid))
@@ -1158,7 +1161,7 @@ class StandardTask:
                     shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple['RsyscallTask', t.List[FileDescriptor]]:
         thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor)
-        task, cthread, fds = await rsyscall_spawn(
+        task, cthread, fds = await rsyscall_spawn_no_clone_vm(
             self.task, thread_maker, self.resources.epoller, self.process.server_func,
             user_fds, shared)
         # TODO maybe need to think some more about how this resource inheriting works
@@ -1560,7 +1563,7 @@ def build_trampoline_stack(function: FunctionPointer, arg1=0, arg2=0, arg3=0, ar
     stack_struct.rcx = int(arg4)
     stack_struct.r8  = int(arg5)
     stack_struct.r9  = int(arg6)
-    stack_struct.function = ffi.cast('void*', function.address)
+    stack_struct.function = ffi.cast('void*', int(function.near))
     trampoline_addr = int(ffi.cast('long', lib.rsyscall_trampoline))
     packed_trampoline_addr = struct.pack('Q', trampoline_addr)
     stack = packed_trampoline_addr + bytes(ffi.buffer(stack_struct))
@@ -1578,7 +1581,7 @@ class BufferedStack:
         return self.allocation_pointer
 
     def align(self, alignment=16) -> None:
-        offset = self.allocation_pointer.address % alignment
+        offset = int(self.allocation_pointer.near) % alignment
         self.push(bytes(offset))
 
     async def flush(self, gateway) -> Pointer:
@@ -1694,7 +1697,7 @@ class RsyscallInterface(base.SyscallInterface):
                  infd: base.FileDescriptor, outfd: base.FileDescriptor) -> None:
         self.rsyscall_connection = rsyscall_connection
         self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{process.id}")
-        self.activity_fd = infd
+        self.activity_fd = near.FileDescriptor(infd.number)
         # these are needed so that we don't accidentally close them when doing a do_cloexec_except
         self.infd = infd
         self.outfd = outfd
@@ -1747,7 +1750,7 @@ async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller
     ) -> t.Tuple[Task, CThread, t.List[FileDescriptor]]:
     "Spawn an rsyscall server running in a child task"
     for fd in user_fds:
-        if fd.pure.fd_namespace is not task.fd_namespace:
+        if fd.pure.fd_table is not task.fd_table:
             raise Exception("can only translate file descriptors from my fd namespace")
     pipe_in = await task.pipe()
     pipe_out = await task.pipe()
@@ -1764,7 +1767,7 @@ async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller
     # TODO remove assumption that we are local
     gateway = LocalMemoryGateway()
 
-    new_task = Task(base.Task(syscall, base.FDNamespace(process.id), task.address_space),
+    new_task = Task(base.Task(syscall, base.FDTable(process.id), task.address_space),
                     gateway, task.mount, task.fs,
                     task.sigmask.inherit(), task.process_namespace)
     if len(new_task.sigmask.mask) != 0:
@@ -1784,37 +1787,55 @@ async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller
     await do_cloexec_except(new_task, inherited_fd_numbers)
     return new_task, cthread, inherited_user_fds
 
-class PeerMemoryGateway(MemoryGateway):
-    def __init__(self,
-                 fd_a: FileDescriptor[ReadableWritableFile],
-                 fd_b: FileDescriptor[ReadableWritableFile],
-    ) -> None:
-        # these fds must not be marked NONBLOCK
-        self.pipe_a = pipe_a
-        self.pipe_b = fd_b
+class PipeMemoryGateway(MemoryGateway):
+    def __init__(self, pipe: active.Pipe) -> None:
+        self.pipe = pipe
 
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
-        if dest.address_space == self.fd_a.task.address_space:
-            assert(src.address_space == self.fd_b.task.address_space)
-            write_src_to = self.fd_b
-            read_dest_from = self.fd_a
-        elif dest.address_space == self.space_b:
-            assert(src.address_space == self.fd_a.task.address_space)
-            write_src_to = self.fd_a
-            read_dest_from = self.fd_b
-        else:
-            raise Exception("pointer isn't in the correct address space", dest, src, n)
+        rtask = self.pipe.read.task
+        near_dest = rtask.to_near_pointer(dest)
+        near_read_fd = self.pipe.read.to_near()
+        wtask = self.pipe.write.task
+        near_src   = wtask.to_near_pointer(src)
+        near_write_fd = self.pipe.write.to_near()
+        logger.debug("selected read: %s %s %s", rtask, near_dest, near_read_fd)
+        logger.debug("selected write: %s %s %s", wtask, near_src, near_write_fd)
         async def read() -> None:
             i = 0
             while (n - i) > 0:
-                i += await raw_syscall.read(read_dest_from.task.syscall, read_dest_from.pure, dest+i, n-i)
+                ret = await near.read(rtask.sysif, near_read_fd, near_dest, n)
+                logger.debug("read successful %d", ret)
+                i += ret
         async def write() -> None:
             i = 0
             while (n - i) > 0:
-                await raw_syscall.write(write_src_to.task.syscall, write_src_to.pure, src+i, n-i)
+                ret = await near.write(wtask.sysif, near_write_fd, near_src, n)
+                logger.debug("write successful %d", ret)
+                i += ret
         async with trio.open_nursery() as nursery:
             nursery.start_soon(read)
             nursery.start_soon(write)
+
+    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
+        # TODO we should try to coalesce adjacent buffers, so one or both sides of the copy can be
+        # implemented with a single read or write instead of readv/writev.
+        for dest, src, n in ops:
+            await self.memcpy(dest, src, n)
+
+class ComposedMemoryGateway(MemoryGateway):
+    def __init__(self,
+                 components: t.List[MemoryGateway],
+    ) -> None:
+        self.components = components
+
+    async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
+        for component in self.components:
+            try:
+                await component.memcpy(dest, src, n)
+                return
+            except far.AddressSpaceMismatchError as e:
+                logger.debug("failed on %s", component, exc_info=True)
+        raise far.AddressSpaceMismatchError("none of my components support this combination of address spaces", dest, src)
 
     async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
         # TODO we should try to coalesce adjacent buffers, so one or both sides of the copy can be
@@ -1828,7 +1849,7 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
     ) -> t.Tuple[Task, CThread, t.List[FileDescriptor]]:
     "Spawn an rsyscall server running in a child task, without specifying CLONE_VM, so it's in a new (copied) address space"
     for fd in user_fds:
-        if fd.pure.fd_namespace is not task.fd_namespace:
+        if fd.pure.fd_table is not task.fd_table:
             raise Exception("can only translate file descriptors from my fd namespace")
     pipe_in = await task.pipe()
     pipe_out = await task.pipe()
@@ -1839,35 +1860,23 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
         shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
     process = cthread.thread.child_task.process
     address_space = base.AddressSpace(process.id)
-    fd_namespace = base.FDNamespace(process.id)
+    fd_table = base.FDTable(process.id)
 
     async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
     async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
     syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
                                 cthread.thread.child_task.process,
                                 pipe_in.rfd.pure, pipe_out.wfd.pure)
-    # hmmmmmmmmmmmmmm multihops are a lil tricky
-    # okay so we clearly need to open another pair of pipes as well, for data
-    # and...
-    # do they need to be async?
-    # what's the flow?
-    gateway = base.PeerMemoryGateway(task.address_space, address_space)
-    # hmm okay so we want to have a file descriptor thing in this task, before creating the memory gateway.
-    # I see.
-    # well, we could just, um, pass the syscall and pure fd in?
-    # that's lame-o.
-    # we need the raw fds, sigh.
-    # so I guess I'll have a Task which is purely, exclusively, just:
-    # namespaces + syscall interface
-    # sigh
-    # oh, I kinda do need that though
-    # ugh, mutation is such a hassle
-    # no, it's really segmentation that's a hassle
-
-    # protected mode segmentation
-    # lol segmentation
-
-    new_task = Task(base.Task(syscall, fd_namespace, address_space),
+    new_base_task = base.Task(syscall, fd_table, address_space)
+    def convert_pipe(pipe: Pipe, rtask: far.Task, wtask: far.Task) -> PipeMemoryGateway:
+        return PipeMemoryGateway(active.Pipe(
+           read= active.FileDescriptor(rtask, far.FileDescriptor(rtask.fd_table, near.FileDescriptor(pipe.rfd.pure.number))),
+           write=active.FileDescriptor(wtask, far.FileDescriptor(wtask.fd_table, near.FileDescriptor(pipe.wfd.pure.number)))))
+    gateway = ComposedMemoryGateway([
+        convert_pipe(mem_pipe_in, task.base, new_base_task),
+        convert_pipe(mem_pipe_out, new_base_task, task.base),
+    ])
+    new_task = Task(new_base_task,
                     gateway,
                     # TODO whether these things are shared depends on the `shared` flags
                     task.mount, task.fs, task.sigmask.inherit(), task.process_namespace)

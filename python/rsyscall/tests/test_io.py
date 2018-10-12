@@ -360,54 +360,13 @@ class TestIO(unittest.TestCase):
                                     await pipe2.wfd.write(b"data")
         trio.run(test)
 
-    # first, let's have them both be externally driven, I suppose
-    # no wait, what are we going to do testwise?
-    # so we have them each registered as epoll on the other one.
-    # we'll call wait on the pipe_rfd on both of them.
-    # then we'll activate some... stuff...
-    # how do we call wait on the pipe_rfd on both of them, if wait blocks??
-    # we can't, I guess.
-    # before blocking, I guess we need to ensure that no other tasks are ready to run.
-    # that's tricky, so let's go with external blocking for now.
-    # okay so this is hard, very hard, we will probably not be able to run things until everything is blocked, so...
-    # so...
-    # how exactly do we ensure that everything that can run, has run?
-    # well it's a matter of doing all pending work that we control
-    # and only then blocking
-    # blocking surrenders control back elsewhere...
-    # but if we run a function for someone else...
-    # and they call back into us...
-    # well actually that only will happen if we have a level-triggered approach.
-    # also... don't we need to do something level triggered then?
-    # I guess we'll, um...
-    # when we do the call into some other guy, they'll do just the, um...
-    # just the nonblocking approach.
-    # they won't block.
-    # we'll block.
-    # but no we won't block either.
-    # well then when will we block?
-    # okay so but yeah.
-    # when we do an external blocking for some other guy,
-    # that is, internal blocking from our perspective,
-    # external blocking for them,
-    # then,
-    # they need to not block.
-    # so yeah...
-    # but then alternatively, we can say, let's externalize our blocking to this other guy,
-    # and they'll call us when we're good.
-    # I mean...
-    # proposal is to do blocking internally, when exactly???
-    # like, I guess we really do have two modes?
-    # one external-blocking always, one internal-blocking always?
-    # an internal-blocking guy can monitor for an external-blocking guy...
-    # but here's the issue, how can we handle doing internal-blocking in any of our stuff??
-    # after all, when we do an internal-block,
-    # well, we can't be sure that other events aren't going to appear
-    # well, except when we can in fact be sure?????
-    # like when we are the only thing in the world,
-    # we call our thing,
-    # and any new action has to activate us?
-    # blaaaaaaaah!
+    def test_unshared_thread_epoll(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                rsyscall_task, _ = await stdtask.spawn([])
+                async with rsyscall_task as stdtask2:
+                        await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
+        trio.run(test)
 
 if __name__ == '__main__':
     import unittest

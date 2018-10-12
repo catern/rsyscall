@@ -256,7 +256,7 @@ def serialize_null_terminated_array(serializer: Serializer, args: t.List[bytes])
     arg_ser_ptrs = [serializer.serialize_data(arg+b"\0") for arg in args]
     argv_ser_ptr = serializer.serialize_lambda(
         (len(args) + 1) * pointer.size,
-        lambda: b"".join(pointer.pack(int(ser_ptr.pointer)) for ser_ptr in arg_ser_ptrs) + pointer.pack(0)
+        lambda: b"".join(pointer.pack(int(ser_ptr.pointer.near)) for ser_ptr in arg_ser_ptrs) + pointer.pack(0)
     )
     return argv_ser_ptr
 
