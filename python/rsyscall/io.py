@@ -1691,6 +1691,24 @@ class ThreadMaker:
         thread = await self.clone(flags|signal.SIGCHLD, stack_pointer, tls)
         return CThread(thread, mapping)
 
+async def make_bread(gateway: MemoryGateway, monitor: ChildTaskMonitor,
+                     flags: int,
+                     function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
+) -> ChildTask:
+    task = monitor.signal_queue.sigfd.epolled.underlying.task
+    # allocate memory for the stack
+    stack_size = 4096
+    mapping = await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)
+    async with mapping:
+        stack = BufferedStack(mapping.pointer + stack_size)
+        # build stack
+        stack.push(build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
+        # copy the stack over
+        stack_pointer = await stack.flush(gateway)
+        # TODO actually allocate TLS
+        tls = task.address_space.null()
+        return (await monitor.clone(flags|CLONE_VM, child_stack, ctid=task.address_space.null(), newtls=tls))
+
 class RsyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
