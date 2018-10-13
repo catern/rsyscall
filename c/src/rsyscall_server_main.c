@@ -22,7 +22,6 @@ struct options parse_options(int argc, char** argv)
         errno = 0;
         const int infd = strtol(argv[1], NULL, 0);
         if (errno != 0) err(1, "strtol(%s)", argv[1]);
-        errno = 0;
         const int outfd = strtol(argv[2], NULL, 0);
         if (errno != 0) err(1, "strtol(%s)", argv[2]);
         const struct options opt = {
@@ -37,6 +36,5 @@ int main(int argc, char** argv)
         const struct options opt = parse_options(argc, argv);
         fcntl(opt.infd, F_SETFL, fcntl(opt.infd, F_GETFL) & ~O_NONBLOCK);
         fcntl(opt.outfd, F_SETFL, fcntl(opt.outfd, F_GETFL) & ~O_NONBLOCK);
-        /* TODO fix this up */
         rsyscall_server(opt.infd, opt.outfd);
 }

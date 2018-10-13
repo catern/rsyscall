@@ -1175,14 +1175,14 @@ class StandardTask:
                     shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple['RsyscallTask', t.List[FileDescriptor]]:
         thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor)
-        task, cthread, fds = await rsyscall_spawn_no_clone_vm(
+        task, child_task, fds = await rsyscall_spawn_no_clone_vm(
             self.task, thread_maker, self.resources.epoller, self.process.server_func,
             user_fds, shared)
         # TODO maybe need to think some more about how this resource inheriting works
         # for that matter, could I inherit the epollfd and signalfd across tasks?
         stdtask = StandardTask(task, await TaskResources.make(task),
                                self.process, self.filesystem, {**self.environment})
-        return RsyscallTask(stdtask, cthread), fds
+        return RsyscallProcess(stdtask, child_task), fds
 
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
@@ -1707,7 +1707,7 @@ async def make_bread(gateway: MemoryGateway, monitor: ChildTaskMonitor,
         stack_pointer = await stack.flush(gateway)
         # TODO actually allocate TLS
         tls = task.address_space.null()
-        return (await monitor.clone(flags|CLONE_VM, child_stack, ctid=task.address_space.null(), newtls=tls))
+        return (await monitor.clone(flags, stack_pointer, ctid=task.address_space.null(), newtls=tls))
 
 class RsyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
@@ -1937,7 +1937,7 @@ class ComposedMemoryGateway(MemoryGateway):
 async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: FunctionPointer,
                                      user_fds: t.List[FileDescriptor],
                                      shared: UnshareFlag=UnshareFlag.FS,
-    ) -> t.Tuple[Task, CThread, t.List[FileDescriptor]]:
+    ) -> t.Tuple[Task, ChildTask, t.List[FileDescriptor]]:
     "Spawn an rsyscall server running in a child task, without specifying CLONE_VM, so it's in a new (copied) address space"
     for fd in user_fds:
         if fd.pure.fd_table is not task.fd_table:
@@ -1947,22 +1947,21 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
     mem_pipe_in = await task.pipe()
     mem_pipe_out = await task.pipe()
     # new fd namespace and address space are created here
-    cthread = await thread_maker.make_cthread(
+    child_task = await make_bread(
+        thread_maker.gateway, thread_maker.monitor,
         shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
-    process = cthread.thread.child_task.process
+    process = child_task.process
     address_space = base.AddressSpace(process.id)
     fd_table = base.FDTable(process.id)
 
     async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
     async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
     syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
-                                cthread.thread.child_task.process,
+                                process,
                                 pipe_in.rfd.pure, pipe_out.wfd.pure)
     new_base_task = base.Task(syscall, fd_table, address_space)
     def inherit(fd: active.FileDescriptor) -> active.FileDescriptor:
         return active.FileDescriptor(new_base_task, far.FileDescriptor(fd_table, fd.far.near))
-    def convert_pipe(pipe: Pipe, rtask: far.Task, wtask: far.Task) -> PipeMemoryGateway:
-        return 
     gateway = ComposedMemoryGateway([
         PipeMemoryGateway(active.Pipe(read=inherit(mem_pipe_in.rfd.active), write=mem_pipe_in.wfd.active)),
         ReceiveMemoryGateway(read=await AsyncFileDescriptor.make(epoller, mem_pipe_out.rfd),
@@ -1992,8 +1991,9 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
 
     # close everything that's cloexec and not explicitly passed down
     await do_cloexec_except(new_task, inherited_fd_numbers)
-    return new_task, cthread, inherited_user_fds
+    return new_task, child_task, inherited_user_fds
 
+# TODO this should be renamed to RsyscallThread
 class RsyscallTask:
     def __init__(self,
                  stdtask: StandardTask,
@@ -2015,6 +2015,31 @@ class RsyscallTask:
         logger.info("finished closing thread")
         await self.stdtask.task.close()
         logger.info("finished closing task")
+
+    async def __aenter__(self) -> StandardTask:
+        return self.stdtask
+
+    async def __aexit__(self, *args, **kwargs) -> None:
+        await self.close()
+
+class RsyscallProcess:
+    # this is used for any rsyscall daemon owning its own resources,
+    # rather than having its parent own its resources.
+    def __init__(self,
+                 stdtask: StandardTask,
+                 child_task: ChildTask,
+    ) -> None:
+        self.stdtask = stdtask
+        self.child_task = child_task
+
+    async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
+                     envp: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
+    ) -> ChildTask:
+        await self.stdtask.execve(path, argv, envp)
+        return self.child_task
+
+    async def close(self) -> None:
+        await self.child_task.kill()
 
     async def __aenter__(self) -> StandardTask:
         return self.stdtask

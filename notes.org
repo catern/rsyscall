@@ -4784,6 +4784,28 @@ I guess a logger per syscallinterface seems fine.
    hmmmm we need to support threads setting up the stack right
 
    wait actually it's quite different because we immediately free the stack
+** start up rsyscall executable
+   so it's working in thread
+
+   now for execing a separate process
+
+   should I make a helper that just does exec?
+
+   that's all the system call does?
+
+   not right now but later maybe
+
+   so I need to write a helper
+
+   I think the helper for remote systems will be different from the local helper.
+
+   probably maybe statically linked so I can get into it immediately?
+
+   or should I use Nix for it?
+
+   statically linked is best I think. it's a small binary anyway.
+
+   and the interface with two fds specified is fine
 * great post
 http://www.evanjones.ca/software/threading-linus-msg.html
 
