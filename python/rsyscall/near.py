@@ -11,6 +11,7 @@ logger.setLevel(logging.INFO)
 class SYS(enum.IntEnum):
     read = lib.SYS_read
     write = lib.SYS_write
+    fcntl = lib.SYS_fcntl
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallInterface:
@@ -59,3 +60,8 @@ async def read(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count:
 async def write(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int) -> int:
     return (await sysif.syscall(SYS.write, fd, buf, count))
 
+async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: int, arg: t.Optional[t.Union[int, Pointer]]=None) -> int:
+    logger.debug("fcntl(%s, %s, %s)", fd, cmd, arg)
+    if arg is None:
+        arg = 0
+    return (await sysif.syscall(SYS.fcntl, fd, cmd, arg))

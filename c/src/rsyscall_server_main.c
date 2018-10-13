@@ -16,14 +16,19 @@ struct options {
 
 struct options parse_options(int argc, char** argv)
 {
-        if (argc != 3) {
-                errx(1, "Usage: %s <infd> <outfd>", argc ? argv[0] : "rsyscall_server");
+        if (argc < 3) {
+                errx(1, "Usage: %s <infd> <outfd> [passedfd [passedfd [passedfd...]]]", argc ? argv[0] : "rsyscall_server");
         }
         errno = 0;
         const int infd = strtol(argv[1], NULL, 0);
         if (errno != 0) err(1, "strtol(%s)", argv[1]);
         const int outfd = strtol(argv[2], NULL, 0);
         if (errno != 0) err(1, "strtol(%s)", argv[2]);
+        for (int i = 3; i < argc; i++) {
+            const int passedfd = strtol(argv[i], NULL, 0);
+            if (errno != 0) err(1, "strtol(argv[%d] = %s)", i, argv[i]);
+            if (fcntl(passedfd, F_SETFD, O_CLOEXEC) < 0) err(1, "fcntl(%d, F_SETFD, O_CLOEXEC)", passedfd);
+        }
         const struct options opt = {
                 .infd = infd,
                 .outfd = outfd,

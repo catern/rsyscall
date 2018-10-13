@@ -4692,17 +4692,6 @@ I guess a logger per syscallinterface seems fine.
   which is easy! we can even import the near and far stuff in the base stuff
 
 * getting it to work
-  I think I will just neglect freeing things from now on.
-
-  I could achieve a GC'd by writing to a queue in __del__ and monitoring that queue from some closing thread.
-
-  Oh but I guess I need to flush that queue when closing the task or changing the task's namespace.
-
-  Oh and I guess I'll have to use active fds and pointers to do ownership.
-  They're the ones that truly own things.
-
-  wait but if I change the task, then I can no longer close it.
-  very tricky
 ** blocking on local thread
    reading/writing is blocking us indefinitely when it's on the local thread.
    hm.
@@ -4789,12 +4778,6 @@ I guess a logger per syscallinterface seems fine.
 
    now for execing a separate process
 
-   should I make a helper that just does exec?
-
-   that's all the system call does?
-
-   not right now but later maybe
-
    so I need to write a helper
 
    I think the helper for remote systems will be different from the local helper.
@@ -4806,6 +4789,43 @@ I guess a logger per syscallinterface seems fine.
    statically linked is best I think. it's a small binary anyway.
 
    and the interface with two fds specified is fine
+
+   so hm hm hm
+** helper C function for exec
+   should I make a helper function that just does exec?
+   that's all the system call does?
+
+   it would need to take arguments at a static location if it wasn't to use a stack
+
+   or just use a stack I guess.
+
+   yeah that's best
+
+   derp
+
+   we can specify the stack and the address and all that stuff
+
+   we can use a pre-existing stack memory so we don't have to allocate
+
+   then it would be good
+* garbage collection
+  I think I will just neglect freeing things from now on.
+
+  I could achieve a GC'd by writing to a queue in __del__ and monitoring that queue from some closing thread.
+
+  Oh but I guess I need to flush that queue when closing the task or changing the task's namespace.
+
+  Oh and I guess I'll have to use active fds and pointers to do ownership.
+  They're the ones that truly own things.
+
+  wait but if I change the task, then I can no longer close it.
+  very tricky
+
+  I should support both explicit context managers and __del__ based freeing.
+
+  And, I suppose, explicit closing. but maybe also this subsumes "release"?
+  hmm if i support context managers, I need release.
+  well, only if I support them in a way that is actually usable :) :) :) :)
 * great post
 http://www.evanjones.ca/software/threading-linus-msg.html
 

@@ -1173,9 +1173,9 @@ class StandardTask:
     async def spawn(self,
                     user_fds: t.List[FileDescriptor],
                     shared: UnshareFlag=UnshareFlag.FS,
-    ) -> t.Tuple['RsyscallTask', t.List[FileDescriptor]]:
+    ) -> t.Tuple['RsyscallThread', t.List[FileDescriptor]]:
         thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor)
-        task, child_task, fds = await rsyscall_spawn_no_clone_vm(
+        task, child_task, fds = await rsyscall_spawn_exec(
             self.task, thread_maker, self.resources.epoller, self.process.server_func,
             user_fds, shared)
         # TODO maybe need to think some more about how this resource inheriting works
@@ -1993,8 +1993,83 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
     await do_cloexec_except(new_task, inherited_fd_numbers)
     return new_task, child_task, inherited_user_fds
 
-# TODO this should be renamed to RsyscallThread
+async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: FunctionPointer,
+                              user_fds: t.List[far.FileDescriptor],
+                              shared: UnshareFlag=UnshareFlag.FS,
+    ) -> t.Tuple[Task, ChildTask, t.List[far.FileDescriptor]]:
+    "Spawn an rsyscall server running in a child task, without specifying CLONE_VM, so it's in a new (copied) address space"
+    pipe_in = await task.pipe()
+    pipe_out = await task.pipe()
+    mem_pipe_in = await task.pipe()
+    mem_pipe_out = await task.pipe()
+    # new fd namespace and address space are created here
+    child_task = await make_bread(
+        thread_maker.gateway, thread_maker.monitor,
+        shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
+    process = child_task.process
+    address_space = base.AddressSpace(process.id)
+    fd_table = base.FDTable(process.id)
+    parent_fd_table = task.fd_table
+    inherited_fds: t.List[near.FileDescriptor] = []
+    def inherit(fd: far.FileDescriptor) -> far.FileDescriptor:
+        nearfd = parent_fd_table.to_near(fd)
+        inherited_fds.append(nearfd)
+        return far.FileDescriptor(fd_table, nearfd)
+    async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
+    async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
+    syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
+                                process,
+                                pipe_in.rfd.pure, pipe_out.wfd.pure)
+    inherit(pipe_in.rfd.active.far)
+    inherit(pipe_out.wfd.active.far)
+    new_base_task = base.Task(syscall, fd_table, address_space)
+    def inherit_active(fd: active.FileDescriptor) -> active.FileDescriptor:
+        return active.FileDescriptor(new_base_task, inherit(fd.far))
+    gateway = ComposedMemoryGateway([
+        PipeMemoryGateway(active.Pipe(read=inherit_active(mem_pipe_in.rfd.active), write=mem_pipe_in.wfd.active)),
+        ReceiveMemoryGateway(read=await AsyncFileDescriptor.make(epoller, mem_pipe_out.rfd),
+                             write=inherit_active(mem_pipe_out.wfd.active))
+    ])
+    new_task = Task(new_base_task,
+                    gateway,
+                    # TODO whether these things are shared depends on the `shared` flags
+                    task.mount, task.fs, task.sigmask.inherit(), task.process_namespace)
+    if len(new_task.sigmask.mask) != 0:
+        # clear this non-empty signal mask because it's pointlessly inherited across fork
+        await new_task.sigmask.setmask(new_task, set())
+
+    # We don't need these things in the parent. . .
+    await pipe_in.rfd.aclose()
+    await pipe_out.wfd.aclose()
+    await mem_pipe_in.rfd.aclose()
+    await mem_pipe_out.wfd.aclose()
+
+    inherited_user_fds = [inherit(fd) for fd in user_fds]
+    # OK this needs to be done through the exec.
+    # we call exec here.
+    # waaaaaait a second.
+    # we need to make them non-cloexec and then re-cloexec them.
+    # make each fd non-cloexec
+    for fd in inherited_fds:
+        # disable cloexec for the fd
+        await near.fcntl(syscall, fd, fcntl.F_SETFD, 0)
+    # wow! the task just keeps working! neat!
+    # TODO need to validate that path matches up with the task
+    path = base.Path(base.RootPathBase(None, None),
+                     [b"nix", b"store", b"v7z07536aiknhknr2nix8sl8p0nn98rh-rsyscall", b"bin", b"rsyscall_server"])
+    # TODO hmm argh we don't get a response from this execveat so the thing just hangs
+    # HMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+    # maybe we *do* need the futex waiting thing, ugh.
+    await memsys.execveat(syscall, gateway, new_task.allocator, path,
+                          [b"rsyscall"] + [str(syscall.infd).encode(), str(syscall.outfd).encode()] +
+                          [str(int(fd)).encode() for fd in inherited_fds], [], 0)
+    return new_task, child_task, inherited_user_fds
+
 class RsyscallTask:
+    # TODO make this into an interface
+    pass
+
+class RsyscallThread(RsyscallTask):
     def __init__(self,
                  stdtask: StandardTask,
                  thread: CThread,
@@ -2006,7 +2081,7 @@ class RsyscallTask:
                      envp: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
     ) -> ChildTask:
         await self.stdtask.execve(path, argv, envp)
-        # we return the still-running ChildTask that was inside this RsyscallTask
+        # we return the still-running ChildTask that was inside this RsyscallThread
         return (await self.thread.wait_for_mm_release())
 
     async def close(self) -> None:
@@ -2022,7 +2097,7 @@ class RsyscallTask:
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
-class RsyscallProcess:
+class RsyscallProcess(RsyscallTask):
     # this is used for any rsyscall daemon owning its own resources,
     # rather than having its parent own its resources.
     def __init__(self,

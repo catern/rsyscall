@@ -391,6 +391,30 @@ class TestIO(unittest.TestCase):
             logger.info("finished destructing outer task")
         trio.run(test)
 
+    def test_subprocess_pipe(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                rsyscall_task, _ = await stdtask.spawn([])
+                async with rsyscall_task as stdtask2:
+                    # need to exec into a task
+                    async with (await stdtask2.task.pipe()) as pipe:
+                        in_data = b"hello"
+                        await pipe.wfd.write(in_data)
+                        out_data = await pipe.rfd.read(len(in_data))
+                        logger.info("HELLO")
+                        self.assertEqual(in_data, out_data)
+                        logger.info("HELLO 2")
+                        # so closing is hanging.
+                        # hmm
+                        # we sigkill the process...
+                        # then we try to read from something?
+                        logger.info("sleeping %s", rsyscall_task.child_task.process)
+                        # await trio.sleep(30923023940)
+                    logger.info("finished destructing pipe")
+                logger.info("finished destructing inner task")
+            logger.info("finished destructing outer task")
+        trio.run(test)
+
 if __name__ == '__main__':
     import unittest
     unittest.main()

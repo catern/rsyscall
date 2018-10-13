@@ -13,6 +13,12 @@ class FDTable:
     def __str__(self) -> str:
         return f"FDTable({self.creator_pid})"
 
+    def to_near(self, file_descriptor: FileDescriptor) -> rsyscall.near.FileDescriptor:
+        if file_descriptor.fd_table == self:
+            return file_descriptor.near
+        else:
+            raise FDTableMismatchError()
+
 @dataclass(eq=False)
 class AddressSpace:
     # the pid for which this address space was created. processes can't change
@@ -25,6 +31,12 @@ class AddressSpace:
 
     def __str__(self) -> str:
         return f"AddressSpace({self.creator_pid})"
+
+    def to_near(self, pointer: Pointer) -> rsyscall.near.Pointer:
+        if pointer.address_space == self:
+            return pointer.near
+        else:
+            raise AddressSpaceMismatchError("pointer", pointer, "doesn't match address space", self)
 
 # These are like far pointers.
 @dataclass
@@ -77,16 +89,10 @@ class Task:
     address_space: AddressSpace
 
     def to_near_pointer(self, pointer: Pointer) -> rsyscall.near.Pointer:
-        if pointer.address_space == self.address_space:
-            return pointer.near
-        else:
-            raise AddressSpaceMismatchError("pointer", pointer, "doesn't match address space", self.address_space)
+        return self.address_space.to_near(pointer)
 
     def to_near_fd(self, file_descriptor: FileDescriptor) -> rsyscall.near.FileDescriptor:
-        if file_descriptor.fd_table == self.fd_table:
-            return file_descriptor.near
-        else:
-            raise FDTableMismatchError()
+        return self.fd_table.to_near(file_descriptor)
 
 # These are like the instructions in near, but they also do the appropriate dynamic check.
 async def read(task: Task, fd: FileDescriptor, buf: Pointer, count: int) -> int:
