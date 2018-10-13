@@ -336,6 +336,8 @@ class FileDescriptor(t.Generic[T_file_co]):
         self.pure = pure
         self.file = file
         self.open = True
+        self.active = active.FileDescriptor(
+            task.base, far.FileDescriptor(task.base.fd_table, near.FileDescriptor(pure.number)))
 
     async def aclose(self):
         if self.open:
@@ -611,6 +613,18 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
         while True:
             try:
                 return (await self.epolled.underlying.read(count))
+            except OSError as e:
+                if e.errno == errno.EAGAIN:
+                    self.is_readable = False
+                    while not (self.is_readable or self.read_hangup or self.hangup or self.error):
+                        await self._wait_once()
+                else:
+                    raise
+
+    async def read_raw(self, sysif: near.SyscallInterface, fd: near.FileDescriptor, pointer: near.Pointer, count: int) -> int:
+        while True:
+            try:
+                return (await near.read(sysif, fd, pointer, count))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
                     self.is_readable = False
@@ -1322,6 +1336,7 @@ class ChildTask:
         
 
     async def wait_for_exit(self) -> ChildEvent:
+        logger.info("waiting for %s to exit", self.process)
         if self.death_event:
             return self.death_event
         while True:
@@ -1397,7 +1412,15 @@ class ChildTaskMonitor:
 
     async def clone(self, flags: int,
                     child_stack: Pointer, ctid: Pointer, newtls: Pointer) -> ChildTask:
+        # I think I need to take the wait_lock here?
+        # because... if the child exits...
+        # children are shared between threads...
+        # hmmm....
+        # we synchronously waitid...
         task = self.signal_queue.sigfd.epolled.underlying.task
+        # if we're multithreaded, and our child exits before this syscall returns, we could get the
+        # SIGCHLD and call waitid before we actually know what the child's tid is, and be confused.
+        # good thing we're single threaded and use signalfd.
         tid = await raw_syscall.clone(task.syscall, flags, child_stack,
                                       ptid=None, ctid=ctid, newtls=newtls)
         child_task = ChildTask(base.Process(task.process_namespace, tid), trio.hazmat.UnboundedQueue(), self)
@@ -1429,8 +1452,10 @@ class ChildTaskMonitor:
                     # while something else is making a syscall with a pid, because we
                     # might collect the zombie for that pid and cause pid reuse
                     async with self.wait_lock:
+                        logger.info("waiting on waitid")
                         siginfo = await memsys.waitid(task.syscall, task.gateway, task.allocator,
                                                       None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
+                        logger.info("done with waitid")
                 except ChildProcessError:
                     # no more children
                     break
@@ -1441,6 +1466,7 @@ class ChildTaskMonitor:
                 child_event = ChildEvent.make(ChildCode(struct.si_code),
                                               pid=int(struct.si_pid), uid=int(struct.si_uid),
                                               status=int(struct.si_status))
+                logger.info("got child event %s", child_event)
                 if child_event.pid in self.task_map:
                     self.task_map[child_event.pid].queue.put_nowait(child_event)
                 else:
@@ -1504,7 +1530,9 @@ class Thread:
 
         """
         # once the futex task has exited, the child task has left the parent's address space.
+        logger.info("wait for futex task")
         result = await self.futex_task.wait_for_exit()
+        logger.info("futex task exited")
         if not result.clean():
             raise Exception("the futex task", self.futex_task, "for child task", self.child_task,
                             "unexpectedly exited non-zero", result, "maybe it was SIGKILL'd?")
@@ -1513,9 +1541,15 @@ class Thread:
         return self.child_task
 
     async def close(self) -> None:
+        logger.info("starting closing class Thread %s", self.released)
         if not self.released:
+            logger.info("killing")
             await self.child_task.kill()
+            logger.info("done killing")
             await self.wait_for_mm_release()
+            logger.info("done mm release")
+        logger.info("done closing class Thread")
+
 
     async def __aenter__(self) -> 'Thread':
         return self
@@ -1546,7 +1580,9 @@ class CThread:
 
     async def close(self) -> None:
         await self.thread.close()
+        logger.info("finished closing thread.thread")
         await self.wait_for_mm_release()
+        logger.info("finished mm wait")
 
     async def __aenter__(self) -> 'CThread':
         return self
@@ -1787,6 +1823,43 @@ async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller
     await do_cloexec_except(new_task, inherited_fd_numbers)
     return new_task, cthread, inherited_user_fds
 
+@dataclass
+class ReceiveMemoryGateway(MemoryGateway):
+    """From the perspective of the side "closer" to us"""
+    read: AsyncFileDescriptor[ReadableFile]
+    write: active.FileDescriptor
+
+    async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
+        rtask = self.read.epolled.underlying.task.base
+        near_dest = rtask.to_near_pointer(dest)
+        near_read_fd = self.read.epolled.underlying.active.to_near()
+        wtask = self.write.task
+        near_src = wtask.to_near_pointer(src)
+        near_write_fd = self.write.to_near()
+        logger.debug("selected read: %s %s %s", rtask, near_dest, near_read_fd)
+        logger.debug("selected write: %s %s %s", wtask, near_src, near_write_fd)
+        async def read() -> None:
+            i = 0
+            while (n - i) > 0:
+                ret = await self.read.read_raw(rtask.sysif, near_read_fd, near_dest+i, n-i)
+                logger.debug("write successful %d", ret)
+                i += ret
+        async def write() -> None:
+            i = 0
+            while (n - i) > 0:
+                ret = await near.write(wtask.sysif, near_write_fd, near_src+i, n-i)
+                logger.debug("write successful %d", ret)
+                i += ret
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(read)
+            nursery.start_soon(write)
+
+    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
+        # TODO we should try to coalesce adjacent buffers, so one or both sides of the copy can be
+        # implemented with a single read or write instead of readv/writev.
+        for dest, src, n in ops:
+            await self.memcpy(dest, src, n)
+
 class PipeMemoryGateway(MemoryGateway):
     def __init__(self, pipe: active.Pipe) -> None:
         self.pipe = pipe
@@ -1868,13 +1941,14 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
                                 cthread.thread.child_task.process,
                                 pipe_in.rfd.pure, pipe_out.wfd.pure)
     new_base_task = base.Task(syscall, fd_table, address_space)
+    def inherit(fd: active.FileDescriptor) -> active.FileDescriptor:
+        return active.FileDescriptor(new_base_task, far.FileDescriptor(fd_table, fd.far.near))
     def convert_pipe(pipe: Pipe, rtask: far.Task, wtask: far.Task) -> PipeMemoryGateway:
-        return PipeMemoryGateway(active.Pipe(
-           read= active.FileDescriptor(rtask, far.FileDescriptor(rtask.fd_table, near.FileDescriptor(pipe.rfd.pure.number))),
-           write=active.FileDescriptor(wtask, far.FileDescriptor(wtask.fd_table, near.FileDescriptor(pipe.wfd.pure.number)))))
+        return 
     gateway = ComposedMemoryGateway([
-        convert_pipe(mem_pipe_in, task.base, new_base_task),
-        convert_pipe(mem_pipe_out, new_base_task, task.base),
+        PipeMemoryGateway(active.Pipe(read=inherit(mem_pipe_in.rfd.active), write=mem_pipe_in.wfd.active)),
+        ReceiveMemoryGateway(read=await AsyncFileDescriptor.make(epoller, mem_pipe_out.rfd),
+                             write=inherit(mem_pipe_out.wfd.active))
     ])
     new_task = Task(new_base_task,
                     gateway,
@@ -1918,8 +1992,11 @@ class RsyscallTask:
         return (await self.thread.wait_for_mm_release())
 
     async def close(self) -> None:
+        logger.info("starting closing thread")
         await self.thread.close()
+        logger.info("finished closing thread")
         await self.stdtask.task.close()
+        logger.info("finished closing task")
 
     async def __aenter__(self) -> StandardTask:
         return self.stdtask

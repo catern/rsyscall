@@ -4700,6 +4700,9 @@ I guess a logger per syscallinterface seems fine.
 
   Oh and I guess I'll have to use active fds and pointers to do ownership.
   They're the ones that truly own things.
+
+  wait but if I change the task, then I can no longer close it.
+  very tricky
 ** blocking on local thread
    reading/writing is blocking us indefinitely when it's on the local thread.
    hm.
@@ -4728,3 +4731,60 @@ I guess a logger per syscallinterface seems fine.
    whose memory we cannot access.
 
    we need to support a pointer for async fd things.
+
+   I guess we should take a lock when getting the near pointer.
+** blocking forever on wait, I guess
+   okay so why is this happening?
+
+   aha the futex is hanging forever
+
+   i bet because the address is not properly shared?
+
+   maybe
+
+   hmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm maybe we could/should invoke it after creating the thing?
+
+   that's a little weird
+
+   oh my globbing glob glob
+
+   ugh okay i'll look at the memory maps
+
+   bah! it seems to be the same file mapped!!
+   the inode is the same!!
+
+   okay what if i just set set_tid_address after launching?
+
+   what the heck aaaaaaa
+
+   okay so when we're unsharing memory,
+   we only need to do this if we start another thread in the same address space,
+   because then the stack will stay around
+
+   what does that even mean, how do we even represent that
+
+   bah argh blairhlagh
+
+   okay so, yeah, so launching a futex thread for this is useless when it's in a different address space, right?
+
+   like, we wouldn't do that for a standalone exec
+
+   would we?
+
+   no, it would be useless.
+
+   the address space would close and...
+
+   so yeah let's just make a task that doesn't have this futex thing.
+
+   also it might make sense to have a near pointer and far pointer for memory mappings.
+
+   that way we can refer to ones in other address spaces
+
+   hmmmm we need to support threads setting up the stack right
+
+   wait actually it's quite different because we immediately free the stack
+* great post
+http://www.evanjones.ca/software/threading-linus-msg.html
+
+This shows some of the core idea.
