@@ -522,31 +522,33 @@ class Epoller:
         else:
             running_wait = trio.Event()
             self.running_wait = running_wait
-            logging.info("performing epoll 1.3")
-
-            # yield away first
-            await trio.sleep(0)
-            logging.info("performing epoll 1.4")
-            if self.wait_readable is not None:
-                logging.info("performing epoll 1.5a.1")
-                received_events = await self.wait(maxevents=32, timeout=0)
-                logging.info("performing epoll 1.5a.2")
-                if len(received_events) == 0:
-                    await self.wait_readable()
-                    logging.info("performing epoll 1.5a.3")
+            try:
+                logging.info("performing epoll 1.3")
+    
+                # yield away first
+                # await trio.sleep(0)
+                logging.info("performing epoll 1.4")
+                if self.wait_readable is not None:
+                    logging.info("performing epoll 1.5a.1")
+                    received_events = await self.wait(maxevents=32, timeout=0)
+                    logging.info("performing epoll 1.5a.2")
+                    if len(received_events) == 0:
+                        logging.info("performing epoll 1.5a.3.1")
+                        await self.wait_readable()
+                        logging.info("performing epoll 1.5a.3")
+                        received_events = await self.wait(maxevents=32, timeout=-1)
+                        logging.info("performing epoll 1.5a.4")
+                else:
+                    logging.info("performing epoll 1.5b.1")
                     received_events = await self.wait(maxevents=32, timeout=-1)
-                    logging.info("performing epoll 1.5a.4")
-            else:
-                logging.info("performing epoll 1.5b.1")
-                received_events = await self.wait(maxevents=32, timeout=-1)
-                logging.info("performing epoll 1.5b.2")
-            logging.info("performing epoll 1.6")
-            for event in received_events:
-                queue = self.fd_map[event.data].queue
-                queue.put_nowait(event.events)
-
-            self.running_wait = None
-            running_wait.set()
+                    logging.info("performing epoll 1.5b.2")
+                logging.info("performing epoll 1.6")
+                for event in received_events:
+                    queue = self.fd_map[event.data].queue
+                    queue.put_nowait(event.events)
+            finally:
+                self.running_wait = None
+                running_wait.set()
 
     async def wait(self, maxevents: int, timeout: int) -> t.List[EpollEvent]:
         logging.info("performing epoll 2")
@@ -614,17 +616,18 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             logging.info("performing epoll")
             running_wait = trio.Event()
             self.running_wait = running_wait
-
-            events = await self.epolled.wait()
-            for event in events:
-                if event.in_:   self.is_readable = True
-                if event.out:   self.is_writable = True
-                if event.rdhup: self.read_hangup = True
-                if event.pri:   self.priority = True
-                if event.err:   self.error = True
-                if event.hup:   self.hangup = True
-            self.running_wait = None
-            running_wait.set()
+            try:
+                events = await self.epolled.wait()
+                for event in events:
+                    if event.in_:   self.is_readable = True
+                    if event.out:   self.is_writable = True
+                    if event.rdhup: self.read_hangup = True
+                    if event.pri:   self.priority = True
+                    if event.err:   self.error = True
+                    if event.hup:   self.hangup = True
+            finally:
+                self.running_wait = None
+                running_wait.set()
 
     async def read(self: 'AsyncFileDescriptor[ReadableFile]', count: int=4096) -> bytes:
         while True:
@@ -1467,53 +1470,53 @@ class ChildTaskMonitor:
         else:
             running_wait = trio.Event()
             self.running_wait = running_wait
-
-            # we don't care what information we get from the signal, we just want to
-            # sleep until a SIGCHLD happens
-            await self.signal_queue.read()
-            # loop on waitid to flush all child events
-            task = self.signal_queue.sigfd.epolled.underlying.task
-            # only handle a maximum of 32 child events before returning, to prevent a DOS-through-forkbomb
-            # TODO if we could just detect when the ChildTask that we are wait()ing for
-            # has gotten an event, we could handle events in this function indefinitely,
-            # and only return once we've sent an event to that ChildTask.
-            # maybe by passing in the waiting queue?
-            # could do the same for epoll too.
-            # though we have to wake other people up too...
-            for _ in range(32):
-                try:
-                    # have to serialize against things which use pids; we can't do a wait
-                    # while something else is making a syscall with a pid, because we
-                    # might collect the zombie for that pid and cause pid reuse
-                    async with self.wait_lock:
-                        logger.info("waiting on waitid")
-                        siginfo = await memsys.waitid(task.syscall, task.gateway, task.allocator,
-                                                      None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
-                        logger.info("done with waitid")
-                except ChildProcessError:
-                    # no more children
-                    break
-                struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
-                if struct.si_pid == 0:
-                    # no more waitable events, but we still have children
-                    break
-                child_event = ChildEvent.make(ChildCode(struct.si_code),
-                                              pid=int(struct.si_pid), uid=int(struct.si_uid),
-                                              status=int(struct.si_status))
-                logger.info("got child event %s", child_event)
-                if child_event.pid in self.task_map:
-                    self.task_map[child_event.pid].queue.put_nowait(child_event)
-                else:
-                    # some unknown child. this will happen if we're a subreaper, as
-                    # things get reparented to us and die
-                    self.unknown_queue.put_nowait(child_event)
-                if child_event.died():
-                    # this child is dead. if its pid is reused, we don't want to send
-                    # any more events to the same ChildTask.
-                    del self.task_map[child_event.pid]
-
-            self.running_wait = None
-            running_wait.set()
+            try:
+                # we don't care what information we get from the signal, we just want to
+                # sleep until a SIGCHLD happens
+                await self.signal_queue.read()
+                # loop on waitid to flush all child events
+                task = self.signal_queue.sigfd.epolled.underlying.task
+                # only handle a maximum of 32 child events before returning, to prevent a DOS-through-forkbomb
+                # TODO if we could just detect when the ChildTask that we are wait()ing for
+                # has gotten an event, we could handle events in this function indefinitely,
+                # and only return once we've sent an event to that ChildTask.
+                # maybe by passing in the waiting queue?
+                # could do the same for epoll too.
+                # though we have to wake other people up too...
+                for _ in range(32):
+                    try:
+                        # have to serialize against things which use pids; we can't do a wait
+                        # while something else is making a syscall with a pid, because we
+                        # might collect the zombie for that pid and cause pid reuse
+                        async with self.wait_lock:
+                            logger.info("waiting on waitid")
+                            siginfo = await memsys.waitid(task.syscall, task.gateway, task.allocator,
+                                                          None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
+                            logger.info("done with waitid")
+                    except ChildProcessError:
+                        # no more children
+                        break
+                    struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
+                    if struct.si_pid == 0:
+                        # no more waitable events, but we still have children
+                        break
+                    child_event = ChildEvent.make(ChildCode(struct.si_code),
+                                                  pid=int(struct.si_pid), uid=int(struct.si_uid),
+                                                  status=int(struct.si_status))
+                    logger.info("got child event %s", child_event)
+                    if child_event.pid in self.task_map:
+                        self.task_map[child_event.pid].queue.put_nowait(child_event)
+                    else:
+                        # some unknown child. this will happen if we're a subreaper, as
+                        # things get reparented to us and die
+                        self.unknown_queue.put_nowait(child_event)
+                    if child_event.died():
+                        # this child is dead. if its pid is reused, we don't want to send
+                        # any more events to the same ChildTask.
+                        del self.task_map[child_event.pid]
+            finally:
+                self.running_wait = None
+                running_wait.set()
 
     async def close(self) -> None:
         await self.signal_queue.close()

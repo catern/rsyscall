@@ -4892,6 +4892,10 @@ I guess a logger per syscallinterface seems fine.
    you spawn a process using a thread?
    and are passing resources through your address space and file descriptors and stuff?
    I guess maybe the need for that notification is why people don't do that.
+** blocking memcpy
+   OK so it looks like trio is not even monitoring our epoll fd.
+
+   Somehow it's blocked.
 * garbage collection
   I think I will just neglect freeing things from now on.
 
