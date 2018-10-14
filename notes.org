@@ -3389,6 +3389,8 @@ hmm, actually it just occurred to me that this question is essentially the same 
    we could just have a single interface that operates on file descriptors.
 
    Anyone who wants to operate on memory has to wrap it up in a memfd first.
+** clone_child_settid doesn't seem to work without clone_vm
+   i.e. it doesn't work when the child is in a different address space
 * design decisions
 ** TODO should we grab the Task out of other objects, or pass it explicitly?
    Consider RsyscallTask.make as an example.
@@ -4896,6 +4898,72 @@ I guess a logger per syscallinterface seems fine.
    OK so it looks like trio is not even monitoring our epoll fd.
 
    Somehow it's blocked.
+
+   Oops it was my fault, I cancelled the thing
+** TODO make sure cancellation is all good
+** ok
+   so things are working.
+
+   what's this division between things with an exec monitoring thing,
+   and things without?
+
+   things either have an "active tid address" object or an "inactive tid address" object,
+   and they move from one to the other.
+
+   otherwise we'd not be able to track erroneous creation of one invalidating the other.
+
+   how do we compare to make sure it's valid?
+
+   I guess that's a thing inside the Task?
+
+   a tid address thingy?
+
+   how would I handle this with my ideal API, something coming through wait?
+
+   well I'd need to turn it on again after each fork I guess?
+   or maybe it'd be inherited?
+
+   in any case I'd store the current state of it.
+   no i'd just force it on..
+   no wait, it would break my grandchildren so I'd need to turn it on explicitly.
+
+   so I have to activate it for each new thread
+   I activate it after the fact, after spawning.
+
+   Then I can only exec in threads with it on?
+
+   Would it be inherited over exec?
+   No I guess not.
+
+   so I have two things:
+   a monitoring for exec complete thing,
+   and a flag-of-whether-that's-enabled thing
+** TODO yikes i really hacked this together
+** just do ssh too
+   okay so I probably need to do this by socket forwarding?
+
+   that is distasteful because it places requirements on the remote side
+
+   hmm using an ssh library directly would be good
+
+   no let's do it with openssh command line
+** openssh unix socket forwarding bootstrap
+   1. Run bootstrap command on remote host using ssh.
+   2. Bootstrap command prints out environment,
+      and binds a Unix socket at some path and prints the path and file descriptor number.
+   3. Run a second ssh command forwarding a local unix socket to the remote unix socket path.
+   4. Connect twice to the local Unix socket.
+   5. Bootstrap calls accept twice on its bound Unix socket,
+      and prints out the fd numbers,
+      and execs rsyscall binary with those fd numbers in arguments.
+   6. rsyscall binary prints out relevant C library function addresses,
+      then calls rsyscall main loop function
+
+
+   We don't specify ControlMaster; if the user wants connection sharing, they should configure it!
+
+   Need to start with the rsyscall binary thing
+   and starting threads in there.
 * garbage collection
   I think I will just neglect freeing things from now on.
 
