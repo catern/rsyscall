@@ -316,11 +316,7 @@ async def execveat(sysif: SyscallInterface,
     logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
     if dirfd is None:
         dirfd = lib.AT_FDCWD # type: ignore
-    try:
-        await sysif.syscall(SYS.execveat, dirfd, path, argv, envp, flags)
-    except RsyscallHangup:
-        # a hangup means the exec was successful. other exceptions will propagate through
-        pass
+    await sysif.syscall(SYS.execveat, dirfd, path, argv, envp, flags)
 
 # socket stuff
 async def socketpair(sysif: SyscallInterface, domain: int, type: int, protocol: int, sv: Pointer) -> None:

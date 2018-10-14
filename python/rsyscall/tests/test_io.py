@@ -384,6 +384,7 @@ class TestIO(unittest.TestCase):
                         # hmm
                         # we sigkill the process...
                         # then we try to read from something?
+                        # logger.info("sleeping %s", rsyscall_task.thread.thread.child_task.process)
                         logger.info("sleeping %s", rsyscall_task.child_task.process)
                         # await trio.sleep(30923023940)
                     logger.info("finished destructing pipe")

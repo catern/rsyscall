@@ -478,8 +478,10 @@ class EpolledFileDescriptor(t.Generic[T_file_co]):
     async def wait(self) -> t.List[EpollEvent]:
         while True:
             try:
+                logging.info("performing epoll 1.1")
                 return self.queue.get_batch_nowait()
             except trio.WouldBlock:
+                logging.info("performing epoll 1.2")
                 await self.epoller.do_wait()
 
     async def aclose(self) -> None:
@@ -515,20 +517,30 @@ class Epoller:
 
     async def do_wait(self) -> None:
         if self.running_wait is not None:
+            logging.info("wait already running")
             await self.running_wait.wait()
         else:
             running_wait = trio.Event()
             self.running_wait = running_wait
+            logging.info("performing epoll 1.3")
 
             # yield away first
             await trio.sleep(0)
+            logging.info("performing epoll 1.4")
             if self.wait_readable is not None:
+                logging.info("performing epoll 1.5a.1")
                 received_events = await self.wait(maxevents=32, timeout=0)
+                logging.info("performing epoll 1.5a.2")
                 if len(received_events) == 0:
                     await self.wait_readable()
+                    logging.info("performing epoll 1.5a.3")
                     received_events = await self.wait(maxevents=32, timeout=-1)
+                    logging.info("performing epoll 1.5a.4")
             else:
+                logging.info("performing epoll 1.5b.1")
                 received_events = await self.wait(maxevents=32, timeout=-1)
+                logging.info("performing epoll 1.5b.2")
+            logging.info("performing epoll 1.6")
             for event in received_events:
                 queue = self.fd_map[event.data].queue
                 queue.put_nowait(event.events)
@@ -537,12 +549,15 @@ class Epoller:
             running_wait.set()
 
     async def wait(self, maxevents: int, timeout: int) -> t.List[EpollEvent]:
+        logging.info("performing epoll 2")
         bufsize = maxevents * EpollEvent.bytesize()
         localbuf = bytearray(bufsize)
         with await self.remote_new.memory_allocator.malloc(bufsize) as events_ptr:
+            logging.info("performing epoll 3")
             count = await self.epfd.wait(events_ptr, maxevents, timeout)
             await self.remote_new.memory_gateway.memcpy(
                 to_local_pointer(localbuf), events_ptr, bufsize)
+            logging.info("performing epoll 4")
         ret: t.List[EpollEvent] = []
         cur = 0
         for _ in range(count):
@@ -593,8 +608,10 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
 
     async def _wait_once(self):
         if self.running_wait is not None:
+            logging.info("wait already running")
             await self.running_wait.wait()
         else:
+            logging.info("performing epoll")
             running_wait = trio.Event()
             self.running_wait = running_wait
 
@@ -627,6 +644,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 return (await near.read(sysif, fd, pointer, count))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
+                    logging.info("got eagain and waiting")
                     self.is_readable = False
                     while not (self.is_readable or self.read_hangup or self.hangup or self.error):
                         await self._wait_once()
@@ -638,6 +656,20 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             try:
                 written = await self.epolled.underlying.write(buf)
                 buf = buf[written:]
+            except OSError as e:
+                if e.errno == errno.EAGAIN:
+                    # TODO this is not really quite right if it's possible to concurrently call methods on this object.
+                    # we really need to lock while we're making the async call, right? maybe...
+                    self.is_writable = False
+                    while not (self.is_writable or self.error):
+                        await self._wait_once()
+                else:
+                    raise
+
+    async def write_raw(self, sysif: near.SyscallInterface, fd: near.FileDescriptor, pointer: near.Pointer, count: int) -> int:
+        while True:
+            try:
+                return (await near.write(sysif, fd, pointer, count))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
                     # TODO this is not really quite right if it's possible to concurrently call methods on this object.
@@ -1175,6 +1207,7 @@ class StandardTask:
                     shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple['RsyscallThread', t.List[FileDescriptor]]:
         thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor)
+        # task, cthread, fds = await rsyscall_spawn_no_clone_vm(
         task, child_task, fds = await rsyscall_spawn_exec(
             self.task, thread_maker, self.resources.epoller, self.process.server_func,
             user_fds, shared)
@@ -1182,6 +1215,7 @@ class StandardTask:
         # for that matter, could I inherit the epollfd and signalfd across tasks?
         stdtask = StandardTask(task, await TaskResources.make(task),
                                self.process, self.filesystem, {**self.environment})
+        # return RsyscallThread(stdtask, cthread), fds
         return RsyscallProcess(stdtask, child_task), fds
 
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
@@ -1523,6 +1557,40 @@ class Thread:
         self.futex_mapping = futex_mapping
         self.released = False
 
+    async def execveat(self, sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
+                       path: base.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> ChildTask:
+        # so what's our argument? I guess we need to take, like... a stdtask?
+        # or we could jsut call it directly
+        child_task = None # type: ignore
+        async with trio.open_nursery() as nursery:
+            async def syscall() -> None:
+                logger.info("SBAUGH starting syscall")
+                # this will only ever terminate with an exception, which will be propagated up
+                try:
+                    await memsys.execveat(sysif, gateway, allocator, path, argv, envp, flags)
+                except trio.Cancelled:
+                    logger.info("SBAUGH oops i lost")
+                    if child_task:
+                        pass
+                    else:
+                        raise
+                except RsyscallHangup:
+                    pass
+                except:
+                    logger.info("SBAUGH we all lost")
+                    raise
+                else:
+                    raise Exception("execveat unexpectedly returned?")
+            async def wait_for_success() -> None:
+                logger.info("SBAUGH starting %s", self.child_task)
+                nonlocal child_task
+                child_task = await self.wait_for_mm_release()
+                logger.info("SBAUGH hello I WON %s %s", self.child_task, child_task)
+                nursery.cancel_scope.cancel()
+            nursery.start_soon(syscall)
+            nursery.start_soon(wait_for_success)
+        return child_task
+
     async def wait_for_mm_release(self) -> ChildTask:
         """Wait for the task to leave the parent's address space, and return the ChildTask.
 
@@ -1860,12 +1928,48 @@ class ReceiveMemoryGateway(MemoryGateway):
             i = 0
             while (n - i) > 0:
                 ret = await self.read.read_raw(rtask.sysif, near_read_fd, near_dest+i, n-i)
-                logger.debug("write successful %d", ret)
+                logger.debug("read successful %d %d %d", ret, i, n)
                 i += ret
         async def write() -> None:
             i = 0
             while (n - i) > 0:
                 ret = await near.write(wtask.sysif, near_write_fd, near_src+i, n-i)
+                logger.debug("write successful %d %d %d", ret, i, n)
+                i += ret
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(read)
+            nursery.start_soon(write)
+
+    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
+        # TODO we should try to coalesce adjacent buffers, so one or both sides of the copy can be
+        # implemented with a single read or write instead of readv/writev.
+        for dest, src, n in ops:
+            await self.memcpy(dest, src, n)
+@dataclass
+class SendMemoryGateway(MemoryGateway):
+    """From the perspective of the side "closer" to us"""
+    read: active.FileDescriptor
+    write: AsyncFileDescriptor[WritableFile]
+
+    async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
+        rtask = self.read.task
+        near_dest = rtask.to_near_pointer(dest)
+        near_read_fd = self.read.to_near()
+        wtask = self.write.epolled.underlying.task.base
+        near_src = wtask.to_near_pointer(src)
+        near_write_fd = self.write.epolled.underlying.active.to_near()
+        logger.debug("selected read: %s %s %s", rtask, near_dest, near_read_fd)
+        logger.debug("selected write: %s %s %s", wtask, near_src, near_write_fd)
+        async def read() -> None:
+            i = 0
+            while (n - i) > 0:
+                ret = await near.read(rtask.sysif, near_read_fd, near_dest+i, n-i)
+                logger.debug("read successful %d", ret)
+                i += ret
+        async def write() -> None:
+            i = 0
+            while (n - i) > 0:
+                ret = await self.write.write_raw(wtask.sysif, near_write_fd, near_src+i, n-i)
                 logger.debug("write successful %d", ret)
                 i += ret
         async with trio.open_nursery() as nursery:
@@ -1937,7 +2041,7 @@ class ComposedMemoryGateway(MemoryGateway):
 async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: FunctionPointer,
                                      user_fds: t.List[FileDescriptor],
                                      shared: UnshareFlag=UnshareFlag.FS,
-    ) -> t.Tuple[Task, ChildTask, t.List[FileDescriptor]]:
+    ) -> t.Tuple[Task, CThread, t.List[FileDescriptor]]:
     "Spawn an rsyscall server running in a child task, without specifying CLONE_VM, so it's in a new (copied) address space"
     for fd in user_fds:
         if fd.pure.fd_table is not task.fd_table:
@@ -1947,10 +2051,9 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
     mem_pipe_in = await task.pipe()
     mem_pipe_out = await task.pipe()
     # new fd namespace and address space are created here
-    child_task = await make_bread(
-        thread_maker.gateway, thread_maker.monitor,
+    cthread = await thread_maker.make_cthread(
         shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
-    process = child_task.process
+    process = cthread.thread.child_task.process
     address_space = base.AddressSpace(process.id)
     fd_table = base.FDTable(process.id)
 
@@ -1963,9 +2066,10 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
     def inherit(fd: active.FileDescriptor) -> active.FileDescriptor:
         return active.FileDescriptor(new_base_task, far.FileDescriptor(fd_table, fd.far.near))
     gateway = ComposedMemoryGateway([
-        PipeMemoryGateway(active.Pipe(read=inherit(mem_pipe_in.rfd.active), write=mem_pipe_in.wfd.active)),
+        SendMemoryGateway(read=inherit(mem_pipe_in.rfd.active),
+                          write=await AsyncFileDescriptor.make(epoller, mem_pipe_in.wfd)),
         ReceiveMemoryGateway(read=await AsyncFileDescriptor.make(epoller, mem_pipe_out.rfd),
-                             write=inherit(mem_pipe_out.wfd.active))
+                             write=inherit(mem_pipe_out.wfd.active)),
     ])
     new_task = Task(new_base_task,
                     gateway,
@@ -1991,7 +2095,7 @@ async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epol
 
     # close everything that's cloexec and not explicitly passed down
     await do_cloexec_except(new_task, inherited_fd_numbers)
-    return new_task, child_task, inherited_user_fds
+    return new_task, cthread, inherited_user_fds
 
 async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: FunctionPointer,
                               user_fds: t.List[far.FileDescriptor],
@@ -2003,10 +2107,9 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
     mem_pipe_in = await task.pipe()
     mem_pipe_out = await task.pipe()
     # new fd namespace and address space are created here
-    child_task = await make_bread(
-        thread_maker.gateway, thread_maker.monitor,
-        shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
-    process = child_task.process
+    cthread = await thread_maker.make_cthread(
+        lib.CLONE_VM|shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
+    process = cthread.thread.child_task.process
     address_space = base.AddressSpace(process.id)
     fd_table = base.FDTable(process.id)
     parent_fd_table = task.fd_table
@@ -2026,14 +2129,17 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
     def inherit_active(fd: active.FileDescriptor) -> active.FileDescriptor:
         return active.FileDescriptor(new_base_task, inherit(fd.far))
     gateway = ComposedMemoryGateway([
-        PipeMemoryGateway(active.Pipe(read=inherit_active(mem_pipe_in.rfd.active), write=mem_pipe_in.wfd.active)),
+        SendMemoryGateway(read=inherit_active(mem_pipe_in.rfd.active),
+                          write=await AsyncFileDescriptor.make(epoller, mem_pipe_in.wfd)),
         ReceiveMemoryGateway(read=await AsyncFileDescriptor.make(epoller, mem_pipe_out.rfd),
-                             write=inherit_active(mem_pipe_out.wfd.active))
+                             write=inherit_active(mem_pipe_out.wfd.active)),
+        LocalMemoryGateway(),
     ])
     new_task = Task(new_base_task,
                     gateway,
                     # TODO whether these things are shared depends on the `shared` flags
                     task.mount, task.fs, task.sigmask.inherit(), task.process_namespace)
+    new_task.allocator = task.allocator
     if len(new_task.sigmask.mask) != 0:
         # clear this non-empty signal mask because it's pointlessly inherited across fork
         await new_task.sigmask.setmask(new_task, set())
@@ -2056,13 +2162,23 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
     # wow! the task just keeps working! neat!
     # TODO need to validate that path matches up with the task
     path = base.Path(base.RootPathBase(None, None),
-                     [b"nix", b"store", b"v7z07536aiknhknr2nix8sl8p0nn98rh-rsyscall", b"bin", b"rsyscall_server"])
+                     [b"nix", b"store", b"g44fkpxbggbj6wh5ckpw447qqgs8ap1h-rsyscall", b"bin", b"rsyscall_server"])
     # TODO hmm argh we don't get a response from this execveat so the thing just hangs
     # HMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
     # maybe we *do* need the futex waiting thing, ugh.
-    await memsys.execveat(syscall, gateway, new_task.allocator, path,
-                          [b"rsyscall"] + [str(syscall.infd).encode(), str(syscall.outfd).encode()] +
-                          [str(int(fd)).encode() for fd in inherited_fds], [], 0)
+    # ARGH! the processes of execing allocates a bunch of memory in the allocator,
+    # which is no longer valid when done.
+    # I guess... I could just flush the allocator...
+    # well, no, none of that memory will actually be freed then...
+    # maybe I should use the parent's allocator?
+    # hmm hmm
+    # if i'm not in the same address space as my parent, then freeing will happen automatically.
+    # if I am, then I can use my parent's allocator.
+    child_task = await cthread.thread.execveat(
+        syscall, gateway, task.allocator, path,
+        [b"rsyscall"] + [str(int(syscall.infd)).encode(), str(int(syscall.outfd)).encode()] +
+        [str(int(fd)).encode() for fd in inherited_fds], [], 0)
+    new_task.allocator = memory.Allocator(syscall, address_space)
     return new_task, child_task, inherited_user_fds
 
 class RsyscallTask:

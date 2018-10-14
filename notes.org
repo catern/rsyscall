@@ -4808,6 +4808,90 @@ I guess a logger per syscallinterface seems fine.
    we can use a pre-existing stack memory so we don't have to allocate
 
    then it would be good
+** okay so we do need the futex
+   and it does seem to work at home so let's move on
+
+   (possibly a kernel bug? luckily my home kernel is more recent I think so it should be fixed)
+
+   so we just need to figure out a nice api for detecing the finishing of an exec or exit
+
+   it needs to incoporate both waiting for a message on the fd,
+   and also waiting for a child event.
+
+   And when I get either I cancel the other
+
+   And when I cancel a system call, I close the interface;
+   that's the cleanest way to work,
+   since otherwise I have weird races.
+
+   OK yeah seems really clean
+
+   and, to exec, we need to have one of these monitor things
+
+   or I could just even close the the interface rather than cancel.
+
+   oh nooooo aaaa okay I see
+
+   so if I want to just pass the sysif down... without closing the fds...
+
+   then I need to treat this somewhat specially.
+
+   ok so, really, closing the interface is not going to help.
+
+   more specifically, I still need to cancel on thingy.
+
+   Then the close interface shouldn't actually close stuff?
+
+   Hmm tricky
+
+   So we definitely, probably, maybe,
+   need to make a new syscall interface after exec.
+
+   even if it's the same...
+
+   bah maybe I should do all the stuff twice
+
+   no hmm hmm I think I can do it externally I guess
+
+   if I can just harvest the fds from the syscall interface.
+
+   hmm
+
+   so what do I need
+
+   the infd and outfd need to stay around
+
+   I probably need to make a new gateway???
+   but if it's already a different address space it'll stay with that gateway?
+
+   but what if that address space is already shared with others?
+   well.
+
+   we could be on a shared gateway
+
+   yes hmm
+
+   meh, let's just use additional file descriptors for now.
+
+   so wait, um
+
+   so we're talking about that because,
+   achieving a clean execve requires cancelling the syscall
+   and cancelling the syscall requires or suggests closing the interface so it can't be reused
+   we don't *have* to do that though
+
+   what will we pass down?
+   nothing perhaps, we can do the cancel outside.
+
+   it doesn't make *that* much sense to have the Thread be the thing
+   after all, we can make an MMReleaseMonitor after the fact,
+   in a separate process.
+
+   hmm so getting notified of when the exec is successful is fairly important for,
+   a scenario where,
+   you spawn a process using a thread?
+   and are passing resources through your address space and file descriptors and stuff?
+   I guess maybe the need for that notification is why people don't do that.
 * garbage collection
   I think I will just neglect freeing things from now on.
 
@@ -4830,3 +4914,5 @@ I guess a logger per syscallinterface seems fine.
 http://www.evanjones.ca/software/threading-linus-msg.html
 
 This shows some of the core idea.
+* user namespaces
+very important caveat: they don't nest!
