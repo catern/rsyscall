@@ -4964,6 +4964,9 @@ I guess a logger per syscallinterface seems fine.
 
    Need to start with the rsyscall binary thing
    and starting threads in there.
+
+   so the binary needs a stdout passed down
+   to which it will write various addresses
 * garbage collection
   I think I will just neglect freeing things from now on.
 
