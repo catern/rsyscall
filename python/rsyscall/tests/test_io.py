@@ -368,6 +368,16 @@ class TestIO(unittest.TestCase):
                         await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
         trio.run(test)
 
+    def test_unshared_thread_nest(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                rsyscall_task, _ = await stdtask.spawn([])
+                async with rsyscall_task as stdtask2:
+                    rsyscall_task3, _ = await stdtask2.spawn([])
+                    async with rsyscall_task3 as stdtask3:
+                        await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
+        trio.run(test)
+
     def test_unshared_thread_pipe(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:

@@ -112,10 +112,9 @@ class InvalidAddressSpaceError(Exception):
 from rsyscall._raw import ffi, lib # type: ignore
 class LocalMemoryGateway(MemoryGateway):
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
-        if dest.address_space == src.address_space == local_address_space:
-            lib.memcpy(ffi.cast('void*', int(dest.near)), ffi.cast('void*', int(src.near)), n)
-        else:
-            raise InvalidAddressSpaceError("some pointer isn't in the local address space", dest, src, n)
+        neardest = local_address_space.to_near(dest)
+        nearsrc = local_address_space.to_near(src)
+        lib.memcpy(ffi.cast('void*', int(neardest)), ffi.cast('void*', int(nearsrc)), n)
 
     async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
         # TODO when we implement the remote support, we should try to coalesce adjacent buffers,

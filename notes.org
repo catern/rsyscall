@@ -3391,6 +3391,22 @@ hmm, actually it just occurred to me that this question is essentially the same 
    Anyone who wants to operate on memory has to wrap it up in a memfd first.
 ** clone_child_settid doesn't seem to work without clone_vm
    i.e. it doesn't work when the child is in a different address space
+** exec needs to take a list of fds
+   fds that it should pass down through exec.
+
+   Even if they are cloexec.
+
+   Then cloexec can be inherited.
+
+   This allows us to use execveat on scripts and things.
+
+   We just put the fd in the pass-down list.
+
+   Of equal relevance, this also allows shared-fd-space tasks to exec and pass down fds.
+   (otherwise they can't remove cloexec because it's racy)
+
+   Hey, and exec has a remaining argument left!
+   We could add it!
 * design decisions
 ** TODO should we grab the Task out of other objects, or pass it explicitly?
    Consider RsyscallTask.make as an example.
@@ -4959,7 +4975,6 @@ I guess a logger per syscallinterface seems fine.
    6. rsyscall binary prints out relevant C library function addresses,
       then calls rsyscall main loop function
 
-
    We don't specify ControlMaster; if the user wants connection sharing, they should configure it!
 
    Need to start with the rsyscall binary thing
@@ -4967,6 +4982,29 @@ I guess a logger per syscallinterface seems fine.
 
    so the binary needs a stdout passed down
    to which it will write various addresses
+** rsyscall binary thing
+   OK so I did that
+
+   But to test, I want to run a thread inside it:
+   which requires multi-hop memory copying, I think.
+
+   Or some kind of scheme or awareness or something.
+** multi-hop memory handling
+   Let's figure this out.
+
+   This is also in general the problem of data at more that one remove;
+   a datafd that isn't direct. hm.
+
+   I think we should try to support direct stuff,
+   and just not support indirect stuff for the moment.
+
+   I guess that's 0 or 1 hops are allowed, in a sense, hm.
+** efficient socketpipe
+   We want to be opening direct connections for all our things.
+
+   Actually doesn't this include, like, pipes to subprocesses too?
+
+   That should be good, very clean and nice.
 * garbage collection
   I think I will just neglect freeing things from now on.
 

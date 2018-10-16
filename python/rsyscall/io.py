@@ -86,9 +86,10 @@ class LocalSyscall(base.SyscallInterface):
             raise OSError(err, os.strerror(err))
         return ret
 
-class FunctionPointer(Pointer):
+class FunctionPointer:
     "A function pointer."
-    pass
+    def __init__(self, pointer: far.Pointer) -> None:
+        self.pointer = pointer
 
 class SignalMask:
     def __init__(self, mask: t.Set[signal.Signals]) -> None:
@@ -1102,22 +1103,32 @@ class TaskResources:
 class ProcessResources:
     server_func: FunctionPointer
     do_cloexec_func: FunctionPointer
+    trampoline_func: FunctionPointer
     futex_helper_func: FunctionPointer
-    memory_allocator: memory.Allocator
-
-    @staticmethod
-    def make_from_local(task: Task) -> 'ProcessResources':
-        return ProcessResources(
-            server_func=FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_server)),
-            do_cloexec_func=FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_do_cloexec)),
-            futex_helper_func=FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_futex_helper)),
-            memory_allocator=memory.Allocator(task.syscall, task.address_space),
-        )
 
     async def decref(self) -> None:
-        # TODO oops this won't work probably humm
-        # we need some kind of reference counting
-        await self.memory_allocator.close()
+        pass
+
+    def build_trampoline_stack(self, function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> bytes:
+        # TODO clean this up with dicts or tuples or something
+        stack_struct = ffi.new('struct rsyscall_trampoline_stack*')
+        stack_struct.rdi = int(arg1)
+        stack_struct.rsi = int(arg2)
+        stack_struct.rdx = int(arg3)
+        stack_struct.rcx = int(arg4)
+        stack_struct.r8  = int(arg5)
+        stack_struct.r9  = int(arg6)
+        stack_struct.function = ffi.cast('void*', int(function.pointer.near))
+        packed_trampoline_addr = struct.pack('Q', int(self.trampoline_func.pointer.near))
+        stack = packed_trampoline_addr + bytes(ffi.buffer(stack_struct))
+        return stack
+
+local_process_resources = ProcessResources(
+    server_func=FunctionPointer(far.Pointer(base.local_address_space, ffi.cast('long', lib.rsyscall_server))),
+    do_cloexec_func=FunctionPointer(far.Pointer(base.local_address_space, ffi.cast('long', lib.rsyscall_do_cloexec))),
+    trampoline_func=FunctionPointer(far.Pointer(base.local_address_space, ffi.cast('long', lib.rsyscall_trampoline))),
+    futex_helper_func=FunctionPointer(far.Pointer(base.local_address_space, ffi.cast('long', lib.rsyscall_futex_helper))),
+)
 
 @dataclass
 class FilesystemResources:
@@ -1192,7 +1203,7 @@ class StandardTask:
     async def make_from_bootstrap(bootstrap: UnixBootstrap) -> 'StandardTask':
         task = bootstrap.task
         # TODO fix this to... pull it from the bootstrap or something...
-        process_resources = ProcessResources.make_from_local(task)
+        process_resources = local_process_resources
         task_resources = await TaskResources.make(task)
         filesystem_resources = await FilesystemResources.make_from_bootstrap(task, bootstrap)
         return StandardTask(task, task_resources, process_resources, filesystem_resources,
@@ -1209,15 +1220,26 @@ class StandardTask:
                     user_fds: t.List[FileDescriptor],
                     shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple['RsyscallThread', t.List[FileDescriptor]]:
-        thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor)
+        thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor, self.process)
         # task, cthread, fds = await rsyscall_spawn_no_clone_vm(
-        task, child_task, fds = await rsyscall_spawn_exec(
+        task, child_task, symbols, fds = await rsyscall_spawn_exec(
             self.task, thread_maker, self.resources.epoller, self.process.server_func,
             user_fds, shared)
+        proc_resources = ProcessResources(
+            server_func=FunctionPointer(symbols[b"rsyscall_server"]),
+            do_cloexec_func=FunctionPointer(symbols[b"rsyscall_do_cloexec"]),
+            trampoline_func=FunctionPointer(symbols[b"rsyscall_trampoline"]),
+            futex_helper_func=FunctionPointer(symbols[b"rsyscall_futex_helper"]),
+        )
         # TODO maybe need to think some more about how this resource inheriting works
         # for that matter, could I inherit the epollfd and signalfd across tasks?
+        # inheriting the epollfd and signalfd across tasks would be pretty good wouldn't it?
+        # because we'd be centralizing the event loop more, reducing the amount of traffic I think
+        # at some point it essentially becomes a dedicate event loop thread.
+        # though that's not good if we actually are performing operations on that event loop thread.
+        # meh, better to inherit and share since it's possible; if it turns out worse we can fix that later.
         stdtask = StandardTask(task, await TaskResources.make(task),
-                               self.process, self.filesystem, {**self.environment})
+                               proc_resources, self.filesystem, {**self.environment})
         # return RsyscallThread(stdtask, cthread), fds
         return RsyscallProcess(stdtask, child_task), fds
 
@@ -1564,7 +1586,7 @@ class Thread:
                        path: base.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> ChildTask:
         # so what's our argument? I guess we need to take, like... a stdtask?
         # or we could jsut call it directly
-        child_task = None # type: ignore
+        child_task: ChildTask = None # type: ignore
         async with trio.open_nursery() as nursery:
             async def syscall() -> None:
                 logger.info("SBAUGH starting syscall")
@@ -1661,21 +1683,6 @@ class CThread:
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
-def build_trampoline_stack(function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> bytes:
-    # TODO clean this up with dicts or tuples or something
-    stack_struct = ffi.new('struct rsyscall_trampoline_stack*')
-    stack_struct.rdi = int(arg1)
-    stack_struct.rsi = int(arg2)
-    stack_struct.rdx = int(arg3)
-    stack_struct.rcx = int(arg4)
-    stack_struct.r8  = int(arg5)
-    stack_struct.r9  = int(arg6)
-    stack_struct.function = ffi.cast('void*', int(function.near))
-    trampoline_addr = int(ffi.cast('long', lib.rsyscall_trampoline))
-    packed_trampoline_addr = struct.pack('Q', trampoline_addr)
-    stack = packed_trampoline_addr + bytes(ffi.buffer(stack_struct))
-    return stack
-
 class BufferedStack:
     def __init__(self, base: Pointer) -> None:
         self.base = base
@@ -1697,12 +1704,12 @@ class BufferedStack:
         return self.allocation_pointer
 
 class ThreadMaker:
-    def __init__(self, gateway: MemoryGateway, monitor: ChildTaskMonitor) -> None:
+    def __init__(self, gateway: MemoryGateway, monitor: ChildTaskMonitor, process_resources: ProcessResources) -> None:
         self.gateway = gateway
         self.monitor = monitor
         task = monitor.signal_queue.sigfd.epolled.underlying.task
         # TODO pull this function out of somewhere sensible
-        self.futex_func = FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_futex_helper))
+        self.process_resources = process_resources
 
     async def clone(self, flags: int, child_stack: Pointer, newtls: Pointer) -> Thread:
         """Provides an asynchronous interface to the CLONE_CHILD_CLEARTID functionality
@@ -1724,7 +1731,7 @@ class ThreadMaker:
         # which the trampoline will all pop off, the stack will be aligned.
         stack.align()
         # build the trampoline and push it on the stack
-        stack.push(build_trampoline_stack(self.futex_func, futex_pointer))
+        stack.push(self.process_resources.build_trampoline_stack(self.process_resources.futex_helper_func, futex_pointer))
         # copy the stack over
         stack_pointer = await stack.flush(self.gateway)
         # start the task
@@ -1754,31 +1761,13 @@ class ThreadMaker:
         mapping = await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)
         stack = BufferedStack(mapping.pointer + stack_size)
         # build stack
-        stack.push(build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
+        stack.push(self.process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
         # copy the stack over
         stack_pointer = await stack.flush(self.gateway)
         # TODO actually allocate TLS
         tls = task.address_space.null()
         thread = await self.clone(flags|signal.SIGCHLD, stack_pointer, tls)
         return CThread(thread, mapping)
-
-async def make_bread(gateway: MemoryGateway, monitor: ChildTaskMonitor,
-                     flags: int,
-                     function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
-) -> ChildTask:
-    task = monitor.signal_queue.sigfd.epolled.underlying.task
-    # allocate memory for the stack
-    stack_size = 4096
-    mapping = await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)
-    async with mapping:
-        stack = BufferedStack(mapping.pointer + stack_size)
-        # build stack
-        stack.push(build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
-        # copy the stack over
-        stack_pointer = await stack.flush(gateway)
-        # TODO actually allocate TLS
-        tls = task.address_space.null()
-        return (await monitor.clone(flags, stack_pointer, ctid=task.address_space.null(), newtls=tls))
 
 class RsyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
@@ -1819,10 +1808,10 @@ class RsyscallConnection:
 class RsyscallInterface(base.SyscallInterface):
     def __init__(self, rsyscall_connection: RsyscallConnection,
                  process: base.Process,
-                 infd: base.FileDescriptor, outfd: base.FileDescriptor) -> None:
+                 infd: far.FileDescriptor, outfd: far.FileDescriptor) -> None:
         self.rsyscall_connection = rsyscall_connection
         self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{process.id}")
-        self.activity_fd = near.FileDescriptor(infd.number)
+        self.activity_fd = infd.near
         # these are needed so that we don't accidentally close them when doing a do_cloexec_except
         self.infd = infd
         self.outfd = outfd
@@ -1841,10 +1830,11 @@ class RsyscallInterface(base.SyscallInterface):
             raise OSError(err, os.strerror(err))
         return ret
 
-async def call_function(task: Task, stack: BufferedStack, function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> ChildEvent:
+async def call_function(task: Task, stack: BufferedStack, process_resources: ProcessResources,
+                        function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> ChildEvent:
     "Calls a C function and waits for it to complete. Returns the ChildEvent that the child thread terminated with."
     stack.align()
-    stack.push(build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
+    stack.push(process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
     stack_pointer = await stack.flush(task.gateway)
     # we directly spawn a thread for the function and wait on it
     pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
@@ -1857,60 +1847,60 @@ async def call_function(task: Task, stack: BufferedStack, function: FunctionPoin
                                   status=int(struct.si_status))
     return child_event
 
-async def do_cloexec_except(task: Task, excluded_fd_numbers: t.Iterable[int]) -> None:
+async def do_cloexec_except(task: Task, process_resources: ProcessResources, excluded_fd_numbers: t.Iterable[int]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
-    function = FunctionPointer(task.address_space, ffi.cast('long', lib.rsyscall_do_cloexec))
     stack_size = 4096
     async with (await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)) as mapping:
         stack = BufferedStack(mapping.pointer + stack_size)
         fd_array = array.array('i', excluded_fd_numbers)
         fd_array_ptr = stack.push(fd_array.tobytes())
-        child_event = await call_function(task, stack, function, fd_array_ptr, len(fd_array))
+        child_event = await call_function(task, stack, process_resources,
+                                          process_resources.do_cloexec_func, fd_array_ptr, len(fd_array))
         if not child_event.clean():
             raise Exception("cloexec function child died!", child_event)
 
-async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: FunctionPointer,
-                         user_fds: t.List[FileDescriptor],
-                         shared: UnshareFlag=UnshareFlag.FS,
-    ) -> t.Tuple[Task, CThread, t.List[FileDescriptor]]:
-    "Spawn an rsyscall server running in a child task"
-    for fd in user_fds:
-        if fd.pure.fd_table is not task.fd_table:
-            raise Exception("can only translate file descriptors from my fd namespace")
-    pipe_in = await task.pipe()
-    pipe_out = await task.pipe()
-    # new fd namespace is created here
-    cthread = await thread_maker.make_cthread(
-        lib.CLONE_VM|shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
-    process = cthread.thread.child_task.process
+# async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: FunctionPointer,
+#                          user_fds: t.List[FileDescriptor],
+#                          shared: UnshareFlag=UnshareFlag.FS,
+#     ) -> t.Tuple[Task, CThread, t.List[FileDescriptor]]:
+#     "Spawn an rsyscall server running in a child task"
+#     for fd in user_fds:
+#         if fd.pure.fd_table is not task.fd_table:
+#             raise Exception("can only translate file descriptors from my fd namespace")
+#     pipe_in = await task.pipe()
+#     pipe_out = await task.pipe()
+#     # new fd namespace is created here
+#     cthread = await thread_maker.make_cthread(
+#         lib.CLONE_VM|shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
+#     process = cthread.thread.child_task.process
 
-    async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
-    async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
-    syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
-                                cthread.thread.child_task.process,
-                                pipe_in.rfd.pure, pipe_out.wfd.pure)
-    # TODO remove assumption that we are local
-    gateway = LocalMemoryGateway()
+#     async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
+#     async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
+#     syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
+#                                 cthread.thread.child_task.process,
+#                                 pipe_in.rfd.pure, pipe_out.wfd.pure)
+#     # TODO remove assumption that we are local
+#     gateway = LocalMemoryGateway()
 
-    new_task = Task(base.Task(syscall, base.FDTable(process.id), task.address_space),
-                    gateway, task.mount, task.fs,
-                    task.sigmask.inherit(), task.process_namespace)
-    if len(new_task.sigmask.mask) != 0:
-        # clear this non-empty signal mask because it's pointlessly inherited across fork
-        await new_task.sigmask.setmask(new_task, set())
+#     new_task = Task(base.Task(syscall, base.FDTable(process.id), task.address_space),
+#                     gateway, task.mount, task.fs,
+#                     task.sigmask.inherit(), task.process_namespace)
+#     if len(new_task.sigmask.mask) != 0:
+#         # clear this non-empty signal mask because it's pointlessly inherited across fork
+#         await new_task.sigmask.setmask(new_task, set())
 
-    inherited_fd_numbers: t.Set[int] = {pipe_in.rfd.pure.number, pipe_out.wfd.pure.number}
-    await pipe_in.rfd.aclose()
-    await pipe_out.wfd.aclose()
+#     inherited_fd_numbers: t.Set[int] = {pipe_in.rfd.pure.number, pipe_out.wfd.pure.number}
+#     await pipe_in.rfd.aclose()
+#     await pipe_out.wfd.aclose()
 
-    def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
-        inherited_fd_numbers.add(fd.pure.number)
-        return new_task._make_fd(fd.pure.number, fd.file)
-    inherited_user_fds = [translate(fd) for fd in user_fds]
+#     def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
+#         inherited_fd_numbers.add(fd.pure.number)
+#         return new_task._make_fd(fd.pure.number, fd.file)
+#     inherited_user_fds = [translate(fd) for fd in user_fds]
 
-    # close everything that's cloexec and not explicitly passed down
-    await do_cloexec_except(new_task, inherited_fd_numbers)
-    return new_task, cthread, inherited_user_fds
+#     # close everything that's cloexec and not explicitly passed down
+#     await do_cloexec_except(new_task, inherited_fd_numbers)
+#     return new_task, cthread, inherited_user_fds
 
 @dataclass
 class ReceiveMemoryGateway(MemoryGateway):
@@ -1985,41 +1975,6 @@ class SendMemoryGateway(MemoryGateway):
         for dest, src, n in ops:
             await self.memcpy(dest, src, n)
 
-class PipeMemoryGateway(MemoryGateway):
-    def __init__(self, pipe: active.Pipe) -> None:
-        self.pipe = pipe
-
-    async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
-        rtask = self.pipe.read.task
-        near_dest = rtask.to_near_pointer(dest)
-        near_read_fd = self.pipe.read.to_near()
-        wtask = self.pipe.write.task
-        near_src   = wtask.to_near_pointer(src)
-        near_write_fd = self.pipe.write.to_near()
-        logger.debug("selected read: %s %s %s", rtask, near_dest, near_read_fd)
-        logger.debug("selected write: %s %s %s", wtask, near_src, near_write_fd)
-        async def read() -> None:
-            i = 0
-            while (n - i) > 0:
-                ret = await near.read(rtask.sysif, near_read_fd, near_dest, n)
-                logger.debug("read successful %d", ret)
-                i += ret
-        async def write() -> None:
-            i = 0
-            while (n - i) > 0:
-                ret = await near.write(wtask.sysif, near_write_fd, near_src, n)
-                logger.debug("write successful %d", ret)
-                i += ret
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(read)
-            nursery.start_soon(write)
-
-    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
-        # TODO we should try to coalesce adjacent buffers, so one or both sides of the copy can be
-        # implemented with a single read or write instead of readv/writev.
-        for dest, src, n in ops:
-            await self.memcpy(dest, src, n)
-
 class ComposedMemoryGateway(MemoryGateway):
     def __init__(self,
                  components: t.List[MemoryGateway],
@@ -2041,70 +1996,33 @@ class ComposedMemoryGateway(MemoryGateway):
         for dest, src, n in ops:
             await self.memcpy(dest, src, n)
 
-async def rsyscall_spawn_no_clone_vm(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: FunctionPointer,
-                                     user_fds: t.List[FileDescriptor],
-                                     shared: UnshareFlag=UnshareFlag.FS,
-    ) -> t.Tuple[Task, CThread, t.List[FileDescriptor]]:
-    "Spawn an rsyscall server running in a child task, without specifying CLONE_VM, so it's in a new (copied) address space"
-    for fd in user_fds:
-        if fd.pure.fd_table is not task.fd_table:
-            raise Exception("can only translate file descriptors from my fd namespace")
-    pipe_in = await task.pipe()
-    pipe_out = await task.pipe()
-    mem_pipe_in = await task.pipe()
-    mem_pipe_out = await task.pipe()
-    # new fd namespace and address space are created here
-    cthread = await thread_maker.make_cthread(
-        shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
-    process = cthread.thread.child_task.process
-    address_space = base.AddressSpace(process.id)
-    fd_table = base.FDTable(process.id)
-
-    async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
-    async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
-    syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
-                                process,
-                                pipe_in.rfd.pure, pipe_out.wfd.pure)
-    new_base_task = base.Task(syscall, fd_table, address_space)
-    def inherit(fd: active.FileDescriptor) -> active.FileDescriptor:
-        return active.FileDescriptor(new_base_task, far.FileDescriptor(fd_table, fd.far.near))
-    gateway = ComposedMemoryGateway([
-        SendMemoryGateway(read=inherit(mem_pipe_in.rfd.active),
-                          write=await AsyncFileDescriptor.make(epoller, mem_pipe_in.wfd)),
-        ReceiveMemoryGateway(read=await AsyncFileDescriptor.make(epoller, mem_pipe_out.rfd),
-                             write=inherit(mem_pipe_out.wfd.active)),
-    ])
-    new_task = Task(new_base_task,
-                    gateway,
-                    # TODO whether these things are shared depends on the `shared` flags
-                    task.mount, task.fs, task.sigmask.inherit(), task.process_namespace)
-    if len(new_task.sigmask.mask) != 0:
-        # clear this non-empty signal mask because it's pointlessly inherited across fork
-        await new_task.sigmask.setmask(new_task, set())
-
-    inherited_fd_numbers: t.Set[int] = {
-        pipe_in.rfd.pure.number, pipe_out.wfd.pure.number,
-        mem_pipe_in.rfd.pure.number, mem_pipe_out.wfd.pure.number,
-    }
-    await pipe_in.rfd.aclose()
-    await pipe_out.wfd.aclose()
-    await mem_pipe_in.rfd.aclose()
-    await mem_pipe_out.wfd.aclose()
-
-    def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
-        inherited_fd_numbers.add(fd.pure.number)
-        return new_task._make_fd(fd.pure.number, fd.file)
-    inherited_user_fds = [translate(fd) for fd in user_fds]
-
-    # close everything that's cloexec and not explicitly passed down
-    await do_cloexec_except(new_task, inherited_fd_numbers)
-    return new_task, cthread, inherited_user_fds
+async def read_lines(fd: AsyncFileDescriptor[ReadableFile]) -> t.AsyncIterator[bytes]:
+    buf = b""
+    while True:
+        # invariant: buf contains no newlines
+        data = await fd.read()
+        if len(data) == 0:
+            # yield up whatever's left
+            if len(buf) != 0:
+                yield buf
+            break
+        buf += data
+        # buf may contain newlines, yield up the lines
+        while True:
+            try:
+                i = buf.index(b"\n")
+            except ValueError:
+                break
+            else:
+                yield buf[:i]
+                buf = buf[i+1:]
 
 async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: FunctionPointer,
                               user_fds: t.List[far.FileDescriptor],
                               shared: UnshareFlag=UnshareFlag.FS,
-    ) -> t.Tuple[Task, ChildTask, t.List[far.FileDescriptor]]:
+    ) -> t.Tuple[Task, ChildTask, t.Mapping[bytes, far.Pointer], t.List[far.FileDescriptor]]:
     "Spawn an rsyscall server running in a child task, without specifying CLONE_VM, so it's in a new (copied) address space"
+    describe_out = await task.pipe()
     pipe_in = await task.pipe()
     pipe_out = await task.pipe()
     mem_pipe_in = await task.pipe()
@@ -2125,9 +2043,8 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
     async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
     syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
                                 process,
-                                pipe_in.rfd.pure, pipe_out.wfd.pure)
-    inherit(pipe_in.rfd.active.far)
-    inherit(pipe_out.wfd.active.far)
+                                inherit(pipe_in.rfd.active.far),
+                                inherit(pipe_out.wfd.active.far))
     new_base_task = base.Task(syscall, fd_table, address_space)
     def inherit_active(fd: active.FileDescriptor) -> active.FileDescriptor:
         return active.FileDescriptor(new_base_task, inherit(fd.far))
@@ -2143,6 +2060,9 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
                     # TODO whether these things are shared depends on the `shared` flags
                     task.mount, task.fs, task.sigmask.inherit(), task.process_namespace)
     new_task.allocator = task.allocator
+    logger.info("sbaugh old address space %s new address space %s", task.address_space, address_space)
+    # aaaargh so this is the issue of multi-hop stuff.
+    # TODO multi-hop memory stuff
     if len(new_task.sigmask.mask) != 0:
         # clear this non-empty signal mask because it's pointlessly inherited across fork
         await new_task.sigmask.setmask(new_task, set())
@@ -2152,8 +2072,10 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
     await pipe_out.wfd.aclose()
     await mem_pipe_in.rfd.aclose()
     await mem_pipe_out.wfd.aclose()
+    await describe_out.wfd.aclose()
 
     inherited_user_fds = [inherit(fd) for fd in user_fds]
+    describe_fd = inherit(describe_out.wfd.active.far)
     # OK this needs to be done through the exec.
     # we call exec here.
     # waaaaaait a second.
@@ -2164,8 +2086,8 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
         await near.fcntl(syscall, fd, fcntl.F_SETFD, 0)
     # wow! the task just keeps working! neat!
     # TODO need to validate that path matches up with the task
-    path = base.Path(base.RootPathBase(None, None),
-                     [b"nix", b"store", b"g44fkpxbggbj6wh5ckpw447qqgs8ap1h-rsyscall", b"bin", b"rsyscall_server"])
+    path = base.Path(base.RootPathBase(None, None), # type: ignore
+                     [b"nix", b"store", b"5vw6lr1vj1wnc1xigaf6nk1wgx0nb4bi-rsyscall", b"bin", b"rsyscall_server"])
     # TODO hmm argh we don't get a response from this execveat so the thing just hangs
     # HMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
     # maybe we *do* need the futex waiting thing, ugh.
@@ -2177,12 +2099,21 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
     # hmm hmm
     # if i'm not in the same address space as my parent, then freeing will happen automatically.
     # if I am, then I can use my parent's allocator.
+    def encode(fd: near.FileDescriptor) -> bytes:
+        return str(int(fd)).encode()
     child_task = await cthread.thread.execveat(
         syscall, gateway, task.allocator, path,
-        [b"rsyscall"] + [str(int(syscall.infd)).encode(), str(int(syscall.outfd)).encode()] +
-        [str(int(fd)).encode() for fd in inherited_fds], [], 0)
+        [b"rsyscall"] + [encode(describe_fd.near), encode(syscall.infd.near), encode(syscall.outfd.near)] +
+        [encode(fd) for fd in inherited_fds], [], 0)
     new_task.allocator = memory.Allocator(syscall, address_space)
-    return new_task, child_task, inherited_user_fds
+    async_describe = await AsyncFileDescriptor.make(epoller, describe_out.rfd)
+    # TODO read from describe and parse
+    symbols: t.Dict[bytes, far.Pointer] = {}
+    async for line in read_lines(async_describe):
+        print("line", line)
+        key, value = line.rstrip().split(b'=', 1)
+        symbols[key] = far.Pointer(address_space, near.Pointer(int(value, 16)))
+    return new_task, child_task, symbols, inherited_user_fds
 
 class RsyscallTask:
     # TODO make this into an interface
