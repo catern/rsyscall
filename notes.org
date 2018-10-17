@@ -5005,6 +5005,74 @@ I guess a logger per syscallinterface seems fine.
    Actually doesn't this include, like, pipes to subprocesses too?
 
    That should be good, very clean and nice.
+
+   We'll explicitly deal with the socketpair and socket passing.
+
+   We'll have some kind of class which contains the connection-maker (abstract),
+   and an optional Unix socketpair (concrete).
+
+   It will have a helper method to make the connection and pass it over the socketpair if necessary.
+
+   OK so I guess what is really going on is,
+   I have a local fd space?
+   And the helper gives me something where one end is in that space?
+
+   Weird.
+   No that's not right
+
+   I have a task,
+   and the helper gives me something where one end is in that task?
+
+   One end is in the local address space, that's clear.
+
+   But an fd is not in any address space!
+
+   It's a matter of task:
+   The fd is in an fd space such that there's at least one task in the local address space.
+
+   I guess that's a bit weird so I guess we'll return an active fd.
+
+   We return an fd, plus a task to use it, where the task is in the local address space.
+
+   This means we can use local pointers.
+
+   And the other fd we return, is just a far FD, in some fd space, who cares where.
+
+   And we pass that around to get it locally???
+
+   No, I think we return a far FD in some concrete known fd space.
+   And then we can pass it around to get it to the fd space we want it to be in.
+
+   so... LocalSocketpair?
+   EfficientSocketpair?
+
+   Bridge?
+   BridgeMaker?
+
+   Wormhole?
+
+   Tuber returning a Tube?
+
+   BridgeMaker
+   Bridge
+   DirectBridgeMaker
+
+   Connection
+
+   ConnectionMaker
+
+   Connection
+
+   We need to do this because,
+   we don't know up front how many children we want to make:
+   we want to do that direct style.
+
+   Which means we need to make new connections to children,
+   which, because we want those connections to be efficient,
+   means we need to make those new connections directly.
+   And in the worst case that means passing fds around.
+
+   But I don't think it's really that crazy.
 * garbage collection
   I think I will just neglect freeing things from now on.
 
@@ -5029,3 +5097,5 @@ http://www.evanjones.ca/software/threading-linus-msg.html
 This shows some of the core idea.
 * user namespaces
 very important caveat: they don't nest!
+* secure usage of rsyscall when you setuid to untrusted users
+  prctl(PR_SET_DUMPABLE, SUID_DUMP_DISABLE);

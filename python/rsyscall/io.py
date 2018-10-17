@@ -1996,6 +1996,42 @@ class ComposedMemoryGateway(MemoryGateway):
         for dest, src, n in ops:
             await self.memcpy(dest, src, n)
 
+@dataclass
+class Bridge:
+    local: active.FileDescriptor
+    remote: active.FileDescriptor
+
+@dataclass
+class BridgeMaker:
+    task: Task
+
+    async def make_bridge(self) -> Bridge:
+        l, r = memsys.socketpair(self.task.syscall, self.task.gateway, self.task.allocator,
+                                 socket.AF_UNIX, socket.SOCK_STREAM, 0)
+        return Bridge(l, r)
+
+@dataclass
+class Socketpair:
+    local: far.FileDescriptor
+    remote: far.FileDescriptor
+
+@dataclass
+class DirectBridgeMaker:
+    bridge_maker: BridgeMaker
+    socketpair: Socketpair
+    async def make_direct_bridge_with(self, mytask: Task) -> Bridge:
+        bridge = self.bridge_maker.make_bridge()
+        # need to make a nice API for passing an fd, I guess.
+        # that's the first step?
+        # well, I guess the first step is tasks started by level zero.
+        # then a nice api for fd passing, then tasks started by level one.
+        # then tasks started by level two and on forward.
+        # then, tasks in a different subprocess
+        # meh let's do the fd passing API first
+        await socketpair.local.put_fd(bridge.remote)
+        goodfd = await socketpair.remote.get_fd()
+        return Bridge(bridge.local, goodfd)
+
 async def read_lines(fd: AsyncFileDescriptor[ReadableFile]) -> t.AsyncIterator[bytes]:
     buf = b""
     while True:
