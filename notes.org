@@ -5073,6 +5073,27 @@ I guess a logger per syscallinterface seems fine.
    And in the worst case that means passing fds around.
 
    But I don't think it's really that crazy.
+* socket passing
+  So CMSG structures are aligned to sizeof(size_t).
+
+  Interestingly I guess this is true even for struct cmsghdr and len independently?
+
+  I guess yeah so things are aligned like that.
+
+  So I guess I'll support CMSG_LEN stuff
+
+  Oh I can just use CMSG_LEN from the standard library, that's convenient.
+
+  So I support I can use this array thingy.
+
+  I guess I just build the struct???
+
+  I'll use it with cffi I guess
+
+  Yeah I'll define the structure in cffi.
+  that'll check compatibility nicely
+
+  same with msghdr
 * garbage collection
   I think I will just neglect freeing things from now on.
 
@@ -5099,3 +5120,5 @@ This shows some of the core idea.
 very important caveat: they don't nest!
 * secure usage of rsyscall when you setuid to untrusted users
   prctl(PR_SET_DUMPABLE, SUID_DUMP_DISABLE);
+* TODO look into using msg_dontwait for pipes
+  Maybe we don't need to use O_NONBLOCK at all.

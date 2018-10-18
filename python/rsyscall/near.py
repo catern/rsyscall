@@ -65,3 +65,9 @@ async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: int, arg: t.Op
     if arg is None:
         arg = 0
     return (await sysif.syscall(SYS.fcntl, fd, cmd, arg))
+
+async def sendmsg(sysif: SyscallInterface, fd: FileDescriptor, msg: Pointer, flags: int) -> int:
+    return (await sysif.syscall(SYS.sendmsg, fd, msg, flags))
+
+async def recvmsg(sysif: SyscallInterface, fd: FileDescriptor, msg: Pointer, flags: int) -> int:
+    return (await sysif.syscall(SYS.recvmsg, fd, msg, flags))

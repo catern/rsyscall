@@ -318,6 +318,37 @@ struct rsyscall_syscall {
     int64_t sys;
     int64_t args[6];
 };
+
+#define SYS_sendmsg ...
+#define SYS_recvmsg ...
+
+struct iovec {
+    void *iov_base;	/* Pointer to data.  */
+    size_t iov_len;	/* Length of data.  */
+};
+
+typedef unsigned... socklen_t;
+struct msghdr {
+    void *msg_name;		/* Address to send to/receive from.  */
+    socklen_t msg_namelen;	/* Length of address data.  */
+  
+    struct iovec *msg_iov;	/* Vector of data to send/receive into.  */
+    int msg_iovlen;		/* Number of elements in the vector.  */
+  
+    void *msg_control;		/* Ancillary data (eg BSD filedesc passing). */
+    socklen_t msg_controllen;	/* Ancillary data buffer length.  */
+  
+    int msg_flags;		/* Flags in received message.  */
+};
+
+struct cmsghdr {
+    socklen_t cmsg_len;		/* Length of data in cmsg_data plus length
+				   of cmsghdr structure.  */
+    int cmsg_level;		/* Originating protocol.  */
+    int cmsg_type;		/* Protocol specific type.  */
+    ...;
+};
+
 """)
 # TODO need to get the struct definition
 # TODO need to get the syscall numbers

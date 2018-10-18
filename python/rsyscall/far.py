@@ -105,3 +105,8 @@ async def write(task: Task, fd: FileDescriptor, buf: Pointer, count: int) -> int
     assert task.address_space == buf.address_space
     return (await rsyscall.near.write(task.sysif, fd.near, buf.near, count))
 
+async def sendmsg(task: Task, fd: FileDescriptor, msg: Pointer, flags: int) -> int:
+    return (await rsyscall.near.sendmsg(task.sysif, task.to_near_fd(fd), task.to_near_pointer(msg), flags))
+
+async def recvmsg(sysif: SyscallInterface, fd: FileDescriptor, msg: Pointer, flags: int) -> int:
+    return (await rsyscall.near.recvmsg(task.sysif, task.to_near_fd(fd), task.to_near_pointer(msg), flags))

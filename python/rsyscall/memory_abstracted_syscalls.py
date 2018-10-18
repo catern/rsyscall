@@ -204,7 +204,8 @@ async def readlinkat(sysif: SyscallInterface, gateway: MemoryGateway, allocator:
 
 #### execveat, which requires a lot of memory fiddling ####
 class SerializedPointer:
-    def __init__(self) -> None:
+    def __init__(self, size: int) -> None:
+        self.size = size
         self._real_pointer: t.Optional[base.Pointer] = None
 
     @property
@@ -219,13 +220,20 @@ class Serializer:
         self.operations: t.List[t.Tuple[SerializedPointer, int, t.Union[bytes, t.Callable[[], bytes]]]] = []
 
     def serialize_data(self, data: bytes) -> SerializedPointer:
-        ptr = SerializedPointer()
-        self.operations.append((ptr, len(data), data))
+        size = len(data)
+        ptr = SerializedPointer(size)
+        self.operations.append((ptr, size, data))
         return ptr
 
     def serialize_lambda(self, size: int, func: t.Callable[[], bytes]) -> SerializedPointer:
-        ptr = SerializedPointer()
+        ptr = SerializedPointer(size)
         self.operations.append((ptr, size, func))
+        return ptr
+
+    def serialize_cffi(self, typ: str, func: t.Callable[[], t.Any]) -> SerializedPointer:
+        size = ffi.sizeof(typ)
+        ptr = SerializedPointer(size)
+        self.operations.append((ptr, size, lambda: bytes(ffi.buffer(ffi.new(typ, func())))))
         return ptr
 
     @contextlib.asynccontextmanager
@@ -271,6 +279,20 @@ async def execveat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: m
         async with serializer.with_flushed(gateway, allocator):
             await raw_syscall.execveat(sysif, dirfd, pathname, argv_ser_ptr.pointer, envp_ser_ptr.pointer, flags)
 
+async def sendmsg_control(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
+                          fd: far.FileDescriptor, send_fds: t.List[fd.far.FileDescriptor]) -> bytes:
+    logger.debug("sendmsg(%s, %s, %s)", fd, msg, flags)
+    serializer = Serializer()
+    dummy_data = serializer.serialize_data(b"\0")
+    iovec = serializer.serialize_cffi('struct iovec', lambda: (dummy_data.pointer, 1))
+    cmsg_fds_bytes = array.array('i', int(task.to_near_fd(send_fd)) for send_fd in send_fds).tobytes()
+    cmsghdr = serializer.serialize_bytes(bytes(ffi.buffer(ffi.new(
+        'struct cmsghdr', (ffi.sizeof('struct cmsghdr')+len(cmsg_fds_bytes), socket.SOL_SOCKET, socket.SCM_RIGHTS)))
+    ) + cmsg_fds_bytes)
+    msghdr = serializer.serialize_cffi(
+        'struct msghdr', lambda: (0, 0, iovec.pointer, iovec.size, cmsghdr.pointer, cmsghdr.size, 0))
+    async with serializer.with_flushed(gateway, allocator):
+        await far.sendmsg(task, fd, msghdr.pointer, msghdr.size)
 
 
 #### socket syscalls that write data ####
