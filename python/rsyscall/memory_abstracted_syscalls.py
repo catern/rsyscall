@@ -236,6 +236,11 @@ class Serializer:
         self.operations.append((ptr, size, lambda: bytes(ffi.buffer(ffi.new(typ, func())))))
         return ptr
 
+    def serialize_uninitialized(self, size: int) -> SerializedPointer:
+        ptr = SerializedPointer(size)
+        self.operations.append((ptr, size, None))
+        return ptr
+
     @contextlib.asynccontextmanager
     async def with_flushed(self, gateway: MemoryGateway, allocator: memory.Allocator) -> t.AsyncGenerator[None, None]:
         async with allocator.bulk_malloc([size for _, size, _ in self.operations]) as pointers:
@@ -250,6 +255,9 @@ class Serializer:
                     data_bytes = data()
                     if len(data_bytes) != size:
                         raise Exception("size provided doesn't match provided size")
+                elif data is None:
+                    # skip data which is uninitialized
+                    continue    
                 else:
                     raise Exception("nonsense value in operations", data)
                 real_operations.append((serptr.pointer, data_bytes))
@@ -279,9 +287,8 @@ async def execveat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: m
         async with serializer.with_flushed(gateway, allocator):
             await raw_syscall.execveat(sysif, dirfd, pathname, argv_ser_ptr.pointer, envp_ser_ptr.pointer, flags)
 
-async def sendmsg_control(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
-                          fd: far.FileDescriptor, send_fds: t.List[fd.far.FileDescriptor]) -> bytes:
-    logger.debug("sendmsg(%s, %s, %s)", fd, msg, flags)
+async def sendmsg_fds(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
+                      fd: far.FileDescriptor, send_fds: t.List[fd.far.FileDescriptor]) -> bytes:
     serializer = Serializer()
     dummy_data = serializer.serialize_data(b"\0")
     iovec = serializer.serialize_cffi('struct iovec', lambda: (dummy_data.pointer, 1))
@@ -291,6 +298,18 @@ async def sendmsg_control(task: far.Task, gateway: MemoryGateway, allocator: mem
     ) + cmsg_fds_bytes)
     msghdr = serializer.serialize_cffi(
         'struct msghdr', lambda: (0, 0, iovec.pointer, iovec.size, cmsghdr.pointer, cmsghdr.size, 0))
+    async with serializer.with_flushed(gateway, allocator):
+        await far.sendmsg(task, fd, msghdr.pointer, msghdr.size)
+
+async def recvmsg_fds(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
+                      fd: far.FileDescriptor, num_fds: int) -> bytes:
+    serializer = Serializer()
+    data_buf = serializer.serialize_uninitialized(1)
+    iovec = serializer.serialize_cffi('struct iovec', lambda: (data_buf.pointer, data_buf.size))
+    cmsg_fds_buf = serializer.serialize_uninitialized(ffi.sizeof('struct cmsghdr')+len(cmsg_fds_bytes))
+    msghdr = serializer.serialize_cffi(
+        'struct msghdr', lambda: (0, 0, iovec.pointer, iovec.size, cmsg_fds_buf.pointer, cmsg_fds_buf.size,
+                                  0))
     async with serializer.with_flushed(gateway, allocator):
         await far.sendmsg(task, fd, msghdr.pointer, msghdr.size)
 
