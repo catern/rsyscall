@@ -486,10 +486,8 @@ class EpolledFileDescriptor(t.Generic[T_file_co]):
     async def wait(self) -> t.List[EpollEvent]:
         while True:
             try:
-                logging.info("performing epoll 1.1")
                 return self.queue.get_batch_nowait()
             except trio.WouldBlock:
-                logging.info("performing epoll 1.2")
                 await self.epoller.do_wait()
 
     async def aclose(self) -> None:
@@ -531,26 +529,16 @@ class Epoller:
             running_wait = trio.Event()
             self.running_wait = running_wait
             try:
-                logging.info("performing epoll 1.3")
     
                 # yield away first
                 # await trio.sleep(0)
-                logging.info("performing epoll 1.4")
                 if self.wait_readable is not None:
-                    logging.info("performing epoll 1.5a.1")
                     received_events = await self.wait(maxevents=32, timeout=0)
-                    logging.info("performing epoll 1.5a.2")
                     if len(received_events) == 0:
-                        logging.info("performing epoll 1.5a.3.1")
                         await self.wait_readable()
-                        logging.info("performing epoll 1.5a.3")
                         received_events = await self.wait(maxevents=32, timeout=-1)
-                        logging.info("performing epoll 1.5a.4")
                 else:
-                    logging.info("performing epoll 1.5b.1")
                     received_events = await self.wait(maxevents=32, timeout=-1)
-                    logging.info("performing epoll 1.5b.2")
-                logging.info("performing epoll 1.6")
                 for event in received_events:
                     queue = self.fd_map[event.data].queue
                     queue.put_nowait(event.events)
@@ -559,15 +547,12 @@ class Epoller:
                 running_wait.set()
 
     async def wait(self, maxevents: int, timeout: int) -> t.List[EpollEvent]:
-        logging.info("performing epoll 2")
         bufsize = maxevents * EpollEvent.bytesize()
         localbuf = bytearray(bufsize)
         with await self.remote_new.memory_allocator.malloc(bufsize) as events_ptr:
-            logging.info("performing epoll 3")
             count = await self.epfd.wait(events_ptr, maxevents, timeout)
             await self.remote_new.memory_gateway.memcpy(
                 to_local_pointer(localbuf), events_ptr, bufsize)
-            logging.info("performing epoll 4")
         ret: t.List[EpollEvent] = []
         cur = 0
         for _ in range(count):
@@ -621,7 +606,6 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             logging.info("wait already running")
             await self.running_wait.wait()
         else:
-            logging.info("performing epoll")
             running_wait = trio.Event()
             self.running_wait = running_wait
             try:
@@ -2195,7 +2179,8 @@ async def rsyscall_spawn_exec_full(
     # okay but this is a slight simplification, because there may also be,
     # 4. the proxy task, which is a task that actually gets the fds and passes them down to the parent task?
     if access_task == connecting_task:
-        describe_out = await access_task.pipe()
+        describe_pipe = await access_task.pipe()
+        access_describe_read, connecting_describe_write = describe_pipe.rfd, describe_pipe.wfd
         access_syscall_sock, connecting_syscall_sock = await access_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
         access_data_sock, connecting_data_sock = await access_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     else:
@@ -2203,22 +2188,26 @@ async def rsyscall_spawn_exec_full(
     if connecting_task == parent_task:
         passed_syscall_sock = connecting_syscall_sock.active.far
         passed_data_sock = connecting_data_sock.active.far
+        passed_describe_write = connecting_describe_write.active.far
     else:
         assert connecting_connection is not None
         await memsys.sendmsg_fds(connecting_task.base, connecting_task.gateway, connecting_task.allocator,
                                  connecting_connection[0], [
                                      connecting_syscall_sock.active.far,
                                      connecting_data_sock.active.far,
+                                     connecting_describe_write.active.far,
                                  ])
-        near_passed_syscall_sock, near_passed_data_sock = await memsys.recvmsg_fds(
+        near_passed_syscall_sock, near_passed_data_sock, near_passed_describe_write = await memsys.recvmsg_fds(
             parent_task.base, parent_task.gateway, parent_task.allocator,
-            connecting_connection[1], 2
+            connecting_connection[1], 3
         )
         passed_syscall_sock = far.FileDescriptor(parent_task.fd_table, near_passed_syscall_sock)
         passed_data_sock = far.FileDescriptor(parent_task.fd_table, near_passed_data_sock)
+        passed_describe_write = far.FileDescriptor(parent_task.fd_table, near_passed_describe_write)
         # don't need these in the connecting task anymore
         await connecting_syscall_sock.aclose()
         await connecting_data_sock.aclose()
+        await connecting_describe_write.aclose()
     # new fd namespace created here
     cthread = await thread_maker.make_cthread(
         lib.CLONE_VM|shared, function, passed_syscall_sock.near, passed_syscall_sock.near)
@@ -2259,10 +2248,10 @@ async def rsyscall_spawn_exec_full(
     # We don't need these things in the parent. . .
     await far.close(parent_task.base, passed_syscall_sock)
     await far.close(parent_task.base, passed_data_sock)
-    await describe_out.wfd.aclose()
+    await far.close(parent_task.base, passed_describe_write)
 
     inherited_user_fds = [inherit(fd) for fd in user_fds]
-    describe_fd = inherit(describe_out.wfd.active.far)
+    remote_describe_write = inherit(passed_describe_write)
     # make each inherited fd non-cloexec
     # note that this is racy if our thread is in a shared fd space;
     # this is why each thread has to be in its own fd space.
@@ -2290,17 +2279,17 @@ async def rsyscall_spawn_exec_full(
     # new address space created here
     child_task = await cthread.thread.execveat(
         syscall, gateway, parent_task.allocator, path,
-        [b"rsyscall"] + [encode(describe_fd.near), encode(syscall.infd.near), encode(syscall.outfd.near)] +
+        [b"rsyscall"] + [encode(remote_describe_write.near), encode(syscall.infd.near), encode(syscall.outfd.near)] +
         [encode(fd) for fd in inherited_fds], [], 0)
     new_task.base.address_space = base.AddressSpace(process.id)
     new_task.allocator = memory.Allocator(syscall, new_task.base.address_space)
-    async_describe = await AsyncFileDescriptor.make(access_epoller, describe_out.rfd)
+    async_describe = await AsyncFileDescriptor.make(access_epoller, access_describe_read)
     # TODO read from describe and parse
     symbols: t.Dict[bytes, far.Pointer] = {}
     async for line in read_lines(async_describe):
-        print("line", line)
         key, value = line.rstrip().split(b'=', 1)
         symbols[key] = far.Pointer(new_task.base.address_space, near.Pointer(int(value, 16)))
+    await async_describe.aclose()
     return new_task, child_task, symbols, inherited_user_fds
 
 class RsyscallTask:

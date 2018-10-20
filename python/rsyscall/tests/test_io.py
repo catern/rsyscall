@@ -107,18 +107,18 @@ class TestIO(unittest.TestCase):
     #                 await memsys.read(self.task.syscall, self.task.gateway, self.task.allocator, epoll.pure, 4096)
     #     trio.run(test)
 
-    # async def do_async_things(self, epoller, task: rsyscall.io.Task) -> None:
-    #     async with (await task.pipe()) as pipe:
-    #         async_pipe_rfd = await AsyncFileDescriptor.make(epoller, pipe.rfd)
-    #         async_pipe_wfd = await AsyncFileDescriptor.make(epoller, pipe.wfd)
-    #         data = b"hello world"
-    #         async def stuff():
-    #             result = await async_pipe_rfd.read()
-    #             self.assertEqual(result, data)
-    #         async with trio.open_nursery() as nursery:
-    #             nursery.start_soon(stuff)
-    #             await trio.sleep(0.01)
-    #             await async_pipe_wfd.write(data)
+    async def do_async_things(self, epoller, task: rsyscall.io.Task) -> None:
+        async with (await task.pipe()) as pipe:
+            async_pipe_rfd = await AsyncFileDescriptor.make(epoller, pipe.rfd)
+            async_pipe_wfd = await AsyncFileDescriptor.make(epoller, pipe.wfd)
+            data = b"hello world"
+            async def stuff():
+                result = await async_pipe_rfd.read()
+                self.assertEqual(result, data)
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(stuff)
+                await trio.sleep(0.01)
+                await async_pipe_wfd.write(data)
 
     # def test_async(self) -> None:
     #     async def test() -> None:
