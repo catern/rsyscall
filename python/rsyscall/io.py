@@ -1180,6 +1180,7 @@ class StandardTask:
     def __init__(self,
                  access_task: Task,
                  access_epoller: Epoller,
+                 access_connection: t.Optional[t.Tuple[Address, far.FileDescriptor]],
                  connecting_task: Task,
                  connecting_connection: t.Optional[t.Tuple[far.FileDescriptor, far.FileDescriptor]],
                  task: Task,
@@ -1190,6 +1191,7 @@ class StandardTask:
     ) -> None:
         self.access_task = access_task
         self.access_epoller = access_epoller
+        self.access_connection = access_connection
         self.connecting_task = connecting_task
         self.connecting_connection = connecting_connection
         self.task = task
@@ -1206,7 +1208,7 @@ class StandardTask:
         task_resources = await TaskResources.make(task)
         filesystem_resources = await FilesystemResources.make_from_bootstrap(task, bootstrap)
         return StandardTask(
-            task, task_resources.epoller,
+            task, task_resources.epoller, None,
             task, None,
             task, task_resources, process_resources, filesystem_resources,
             {**bootstrap.environ})
@@ -1236,7 +1238,7 @@ class StandardTask:
                                                                 self.connecting_connection[1], 1)
             parent_child_side = far.FileDescriptor(self.task.fd_table, near_parent_child_side)
         task, child_task, symbols, fds = await rsyscall_spawn_exec_full(
-            self.access_task, self.access_epoller,
+            self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task, self.connecting_connection,
             self.task, thread_maker, self.process.server_func,
             [parent_child_side] + user_fds, shared)
@@ -1255,7 +1257,7 @@ class StandardTask:
         # though that's not good if we actually are performing operations on that event loop thread.
         # meh, better to inherit and share since it's possible; if it turns out worse we can fix that later.
         stdtask = StandardTask(
-            self.access_task, self.access_epoller,
+            self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task, (connecting_side.active.far, child_side),
             task, 
             await TaskResources.make(task),
@@ -2166,6 +2168,9 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
 
 async def rsyscall_spawn_exec_full(
         access_task: Task, access_epoller: Epoller,
+        # regrettably asymmetric...
+        # it would be nice to unify connect/accept with passing file descriptors somehow.
+        access_connection: t.Optional[t.Tuple[Address, far.FileDescriptor]],
         connecting_task: Task, connecting_connection: t.Optional[t.Tuple[far.FileDescriptor, far.FileDescriptor]],
         parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
         user_fds: t.List[far.FileDescriptor],
@@ -2177,14 +2182,18 @@ async def rsyscall_spawn_exec_full(
     # 3. the connection between the access and parent task, so that we can have the parent task pass down the fds,
     # while the access task uses them.
     # okay but this is a slight simplification, because there may also be,
-    # 4. the proxy task, which is a task that actually gets the fds and passes them down to the parent task?
-    if access_task == connecting_task:
+    # 4. the connection task, which is a task that actually gets the fds and passes them down to the parent task?
+    # if access_task == connecting_task:
+    if False:
         describe_pipe = await access_task.pipe()
         access_describe_read, connecting_describe_write = describe_pipe.rfd, describe_pipe.wfd
         access_syscall_sock, connecting_syscall_sock = await access_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
         access_data_sock, connecting_data_sock = await access_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     else:
-        raise Exception("don't know how to create connections when access task isn't the connecting task")
+        assert access_connection is not None
+        access_address, connecting_listening_sock = access_connection
+        access_data_sock = await socket_unix(socket.SOCK_STREAM)
+        await access_data_sock.connect(access_address)
     if connecting_task == parent_task:
         passed_syscall_sock = connecting_syscall_sock.active.far
         passed_data_sock = connecting_data_sock.active.far

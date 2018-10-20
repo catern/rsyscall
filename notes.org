@@ -3407,6 +3407,17 @@ hmm, actually it just occurred to me that this question is essentially the same 
 
    Hey, and exec has a remaining argument left!
    We could add it!
+** make connect(Address), accept(FileDescriptor) symmetric
+   i.e. so it's connect(FileDescriptor) and accept(FileDescriptor)
+** unify connect/accept with passing file descriptors
+   This would be a nice design...
+
+   Even better would be to unify it also with openat.
+
+   Then there'd be only one ways to get a file descriptor:
+   Use openat on another file descriptor.
+
+   (well, and also by passing it in)
 * design decisions
 ** TODO should we grab the Task out of other objects, or pass it explicitly?
    Consider RsyscallTask.make as an example.
@@ -3460,6 +3471,8 @@ it's kind of going back to python's roots and being a distributed scripting lang
    rsc is russ cox's username :(
 
    rsys is better
+** it's a distributed thread library
+** it's a library for building distributed systems
 * explicitly modeling memory
 how would I do this?
 
@@ -5167,3 +5180,25 @@ shifting back to a single process should be an easy optimization after that!
    (I guess it can be abstracted to just a generic address)
 
    Let's begin with all three the same.
+** ok neat
+   so we got subprocesses working.
+
+   now we need to get a different access task working.
+
+   the way we do that is, hm.
+
+   do we even need this connecting task thing?
+
+   oh, yes we do, because otherwise we're forced into using a filesystem unx socket thingy, yuck
+
+   So there will be an optional access_connection.
+
+   Which is, umm...
+
+   A listening socket on the connecting task side,
+   and an address on the access task side.
+
+   And we make the task and we're good.
+
+   We abstract over address family,
+   but hardcode sock_stream.
