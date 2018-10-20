@@ -12,6 +12,8 @@ class SYS(enum.IntEnum):
     read = lib.SYS_read
     write = lib.SYS_write
     fcntl = lib.SYS_fcntl
+    sendmsg = lib.SYS_sendmsg
+    recvmsg = lib.SYS_recvmsg
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallInterface:
@@ -34,6 +36,9 @@ class FileDescriptor:
     def __str__(self) -> str:
         return f"FD({self.number})"
 
+    def __repr__(self) -> str:
+        return str(self)
+
     def __int__(self) -> int:
         return self.number
 
@@ -49,6 +54,9 @@ class Pointer:
 
     def __str__(self) -> str:
         return f"Pointer({hex(self.address)})"
+
+    def __repr__(self) -> str:
+        return str(self)
 
     def __int__(self) -> int:
         return self.address

@@ -327,22 +327,22 @@ struct iovec {
     size_t iov_len;	/* Length of data.  */
 };
 
-typedef unsigned... socklen_t;
+typedef unsigned long int socklen_t;
 struct msghdr {
     void *msg_name;		/* Address to send to/receive from.  */
-    socklen_t msg_namelen;	/* Length of address data.  */
+    int msg_namelen;     	/* Length of address data.  */
   
     struct iovec *msg_iov;	/* Vector of data to send/receive into.  */
-    int msg_iovlen;		/* Number of elements in the vector.  */
+    unsigned long int msg_iovlen;		/* Number of elements in the vector.  */
   
     void *msg_control;		/* Ancillary data (eg BSD filedesc passing). */
-    socklen_t msg_controllen;	/* Ancillary data buffer length.  */
+    unsigned long int msg_controllen;	/* Ancillary data buffer length.  */
   
     int msg_flags;		/* Flags in received message.  */
 };
 
 struct cmsghdr {
-    socklen_t cmsg_len;		/* Length of data in cmsg_data plus length
+    unsigned long int cmsg_len;		/* Length of data in cmsg_data plus length
 				   of cmsghdr structure.  */
     int cmsg_level;		/* Originating protocol.  */
     int cmsg_type;		/* Protocol specific type.  */

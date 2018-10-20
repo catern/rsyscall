@@ -215,6 +215,13 @@ class Task:
         return Pipe(self._make_fd(r, ReadableFile(shared=False)),
                     self._make_fd(w, WritableFile(shared=False)))
 
+    async def socketpair(self, domain: int, type: int, protocol: int
+    ) -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
+        l, r = await memsys.socketpair(self.syscall, self.gateway, self.allocator,
+                                       domain, type, protocol)
+        return (self._make_fd(l, ReadableWritableFile(shared=False)),
+                self._make_fd(r, ReadableWritableFile(shared=False)))
+
     async def epoll_create(self, flags=lib.EPOLL_CLOEXEC) -> FileDescriptor[EpollFile]:
         epfd = await raw_syscall.epoll_create(self.syscall, flags)
         return self._make_fd(epfd, EpollFile())
@@ -1217,11 +1224,10 @@ class StandardTask:
         return TemporaryDirectory(self, parent, name)
 
     async def spawn(self,
-                    user_fds: t.List[FileDescriptor],
+                    user_fds: t.List[far.FileDescriptor],
                     shared: UnshareFlag=UnshareFlag.FS,
-    ) -> t.Tuple['RsyscallThread', t.List[FileDescriptor]]:
+    ) -> t.Tuple['RsyscallProcess', t.List[far.FileDescriptor]]:
         thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor, self.process)
-        # task, cthread, fds = await rsyscall_spawn_no_clone_vm(
         task, child_task, symbols, fds = await rsyscall_spawn_exec(
             self.task, thread_maker, self.resources.epoller, self.process.server_func,
             user_fds, shared)
@@ -2006,8 +2012,8 @@ class BridgeMaker:
     task: Task
 
     async def make_bridge(self) -> Bridge:
-        l, r = memsys.socketpair(self.task.syscall, self.task.gateway, self.task.allocator,
-                                 socket.AF_UNIX, socket.SOCK_STREAM, 0)
+        l, r = await memsys.socketpair(self.task.syscall, self.task.gateway, self.task.allocator,
+                                       socket.AF_UNIX, socket.SOCK_STREAM, 0)
         return Bridge(l, r)
 
 @dataclass
@@ -2123,7 +2129,7 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
     # wow! the task just keeps working! neat!
     # TODO need to validate that path matches up with the task
     path = base.Path(base.RootPathBase(None, None), # type: ignore
-                     [b"nix", b"store", b"5vw6lr1vj1wnc1xigaf6nk1wgx0nb4bi-rsyscall", b"bin", b"rsyscall_server"])
+                     [b"nix", b"store", b"qb44m7nbv3fjgkl2mh6jgcp12wr5xb69-rsyscall", b"bin", b"rsyscall_server"])
     # TODO hmm argh we don't get a response from this execveat so the thing just hangs
     # HMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
     # maybe we *do* need the futex waiting thing, ugh.

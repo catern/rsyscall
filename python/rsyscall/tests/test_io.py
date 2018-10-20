@@ -426,6 +426,61 @@ class TestIO(unittest.TestCase):
             logger.info("finished destructing outer task")
         trio.run(test)
 
+    def test_pass_fd(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+                in_data = b"hello"
+                await l.write(in_data)
+                out_data = await r.read(len(in_data))
+                self.assertEqual(in_data, out_data)
+        trio.run(test)
+
+    def test_socketpair(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+                in_data = b"hello"
+                await l.write(in_data)
+                out_data = await r.read(len(in_data))
+                self.assertEqual(in_data, out_data)
+        trio.run(test)
+
+    def test_pass_fd(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                task = stdtask.task
+                l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+                await memsys.sendmsg_fds(task.base, task.gateway, task.allocator,
+                                         l.active.far, [l.active.far])
+                fds = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator,
+                                               r.active.far, 1)
+                print(fds)
+        trio.run(test)
+
+    def test_pass_fd_thread(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                task = stdtask.task
+                l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+                rsyscall_task, [r_remote] = await stdtask.spawn([r.active.far])
+                async with rsyscall_task as stdtask2:
+                    l2, r2 = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+                    await memsys.sendmsg_fds(task.base, task.gateway, task.allocator,
+                                             l.active.far, [r2.active.far])
+                    [r2_remote] = await memsys.recvmsg_fds(
+                        stdtask2.task.base, stdtask2.task.gateway, stdtask2.task.allocator, r_remote, 1)
+                    await r2.aclose()
+                    in_data = b"hello"
+                    await l2.write(in_data)
+                    out_data = await memsys.read(stdtask2.task.syscall,
+                                                 stdtask2.task.gateway, stdtask2.task.allocator,
+                                                 r2_remote, (len(in_data)))
+                    self.assertEqual(in_data, out_data)
+                    
+                    print(r2_remote)
+        trio.run(test)
+
 if __name__ == '__main__':
     import unittest
     unittest.main()

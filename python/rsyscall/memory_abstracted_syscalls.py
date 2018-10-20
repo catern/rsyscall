@@ -1,9 +1,12 @@
 from rsyscall._raw import ffi, lib # type: ignore
 import os
+import socket
 import rsyscall.raw_syscalls as raw_syscall
 from rsyscall.raw_syscalls import SigprocmaskHow, IdType
 from rsyscall.base import SyscallInterface, MemoryGateway
 import rsyscall.base as base
+import rsyscall.far as far
+import rsyscall.near as near
 import rsyscall.memory as memory
 import array
 import typing as t
@@ -217,7 +220,7 @@ class SerializedPointer:
 
 class Serializer:
     def __init__(self) -> None:
-        self.operations: t.List[t.Tuple[SerializedPointer, int, t.Union[bytes, t.Callable[[], bytes]]]] = []
+        self.operations: t.List[t.Tuple[SerializedPointer, int, t.Union[bytes, t.Callable[[], bytes], None]]] = []
 
     def serialize_data(self, data: bytes) -> SerializedPointer:
         size = len(data)
@@ -233,7 +236,7 @@ class Serializer:
     def serialize_cffi(self, typ: str, func: t.Callable[[], t.Any]) -> SerializedPointer:
         size = ffi.sizeof(typ)
         ptr = SerializedPointer(size)
-        self.operations.append((ptr, size, lambda: bytes(ffi.buffer(ffi.new(typ, func())))))
+        self.operations.append((ptr, size, lambda: bytes(ffi.buffer(ffi.new(typ+"*", func())))))
         return ptr
 
     def serialize_uninitialized(self, size: int) -> SerializedPointer:
@@ -254,10 +257,13 @@ class Serializer:
                 elif callable(data):
                     data_bytes = data()
                     if len(data_bytes) != size:
-                        raise Exception("size provided doesn't match provided size")
+                        print(data)
+                        print(data_bytes)
+                        raise Exception("size provided", size, "doesn't match size of bytes",
+                                        len(data_bytes))
                 elif data is None:
                     # skip data which is uninitialized
-                    continue    
+                    continue
                 else:
                     raise Exception("nonsense value in operations", data)
                 real_operations.append((serptr.pointer, data_bytes))
@@ -288,30 +294,46 @@ async def execveat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: m
             await raw_syscall.execveat(sysif, dirfd, pathname, argv_ser_ptr.pointer, envp_ser_ptr.pointer, flags)
 
 async def sendmsg_fds(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
-                      fd: far.FileDescriptor, send_fds: t.List[fd.far.FileDescriptor]) -> bytes:
+                      fd: far.FileDescriptor, send_fds: t.List[far.FileDescriptor]) -> None:
     serializer = Serializer()
     dummy_data = serializer.serialize_data(b"\0")
-    iovec = serializer.serialize_cffi('struct iovec', lambda: (dummy_data.pointer, 1))
-    cmsg_fds_bytes = array.array('i', int(task.to_near_fd(send_fd)) for send_fd in send_fds).tobytes()
-    cmsghdr = serializer.serialize_bytes(bytes(ffi.buffer(ffi.new(
-        'struct cmsghdr', (ffi.sizeof('struct cmsghdr')+len(cmsg_fds_bytes), socket.SOL_SOCKET, socket.SCM_RIGHTS)))
+    iovec = serializer.serialize_cffi('struct iovec',
+                                      lambda: (ffi.cast('void*', int(dummy_data.pointer)), 1))
+    cmsg_fds_bytes = array.array('i',
+                                 (int(task.to_near_fd(send_fd)) for send_fd in send_fds)).tobytes()
+    cmsghdr = serializer.serialize_data(bytes(ffi.buffer(ffi.new(
+        'struct cmsghdr*', (ffi.sizeof('struct cmsghdr')+len(cmsg_fds_bytes), socket.SOL_SOCKET, socket.SCM_RIGHTS)))
     ) + cmsg_fds_bytes)
     msghdr = serializer.serialize_cffi(
-        'struct msghdr', lambda: (0, 0, iovec.pointer, iovec.size, cmsghdr.pointer, cmsghdr.size, 0))
+        'struct msghdr', lambda: (ffi.cast('void*', 0), 0,
+                                  ffi.cast('void*', int(iovec.pointer)), 1,
+                                  ffi.cast('void*', int(cmsghdr.pointer)), cmsghdr.size, 0))
     async with serializer.with_flushed(gateway, allocator):
         await far.sendmsg(task, fd, msghdr.pointer, msghdr.size)
 
 async def recvmsg_fds(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
-                      fd: far.FileDescriptor, num_fds: int) -> bytes:
+                      fd: far.FileDescriptor, num_fds: int) -> t.List[near.FileDescriptor]:
     serializer = Serializer()
     data_buf = serializer.serialize_uninitialized(1)
-    iovec = serializer.serialize_cffi('struct iovec', lambda: (data_buf.pointer, data_buf.size))
-    cmsg_fds_buf = serializer.serialize_uninitialized(ffi.sizeof('struct cmsghdr')+len(cmsg_fds_bytes))
+    iovec = serializer.serialize_cffi(
+        'struct iovec', lambda: (ffi.cast('void*', int(data_buf.pointer)), data_buf.size))
+    local_fds_buf = array.array('i', [0]*num_fds)
+    address, length = local_fds_buf.buffer_info()
+    buf_len = length * local_fds_buf.itemsize
+    cmsgbuf = serializer.serialize_uninitialized(ffi.sizeof('struct cmsghdr') + buf_len)
     msghdr = serializer.serialize_cffi(
-        'struct msghdr', lambda: (0, 0, iovec.pointer, iovec.size, cmsg_fds_buf.pointer, cmsg_fds_buf.size,
-                                  0))
+        'struct msghdr', lambda: (ffi.cast('void*', 0), 0,
+                                  ffi.cast('void*', int(iovec.pointer)), 1,
+                                  ffi.cast('void*', int(cmsgbuf.pointer)), cmsgbuf.size, 0))
     async with serializer.with_flushed(gateway, allocator):
-        await far.sendmsg(task, fd, msghdr.pointer, msghdr.size)
+        await far.recvmsg(task, fd, msghdr.pointer, msghdr.size)
+        fds_buf = cmsgbuf.pointer + ffi.sizeof('struct cmsghdr')
+        # hmm it would be nice to pass near pointers here
+        # that implies that we should request a specific gateway for a pair of address spaces,
+        # then call a function.
+        await gateway.memcpy(base.Pointer(base.local_address_space, near.Pointer(address)),
+                             fds_buf, buf_len)
+        return [near.FileDescriptor(fd) for fd in local_fds_buf]
 
 
 #### socket syscalls that write data ####
