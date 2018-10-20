@@ -2027,13 +2027,6 @@ class DirectBridgeMaker:
     socketpair: Socketpair
     async def make_direct_bridge_with(self, mytask: Task) -> Bridge:
         bridge = self.bridge_maker.make_bridge()
-        # need to make a nice API for passing an fd, I guess.
-        # that's the first step?
-        # well, I guess the first step is tasks started by level zero.
-        # then a nice api for fd passing, then tasks started by level one.
-        # then tasks started by level two and on forward.
-        # then, tasks in a different subprocess
-        # meh let's do the fd passing API first
         await socketpair.local.put_fd(bridge.remote)
         goodfd = await socketpair.remote.get_fd()
         return Bridge(bridge.local, goodfd)
@@ -2063,15 +2056,19 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
                               user_fds: t.List[far.FileDescriptor],
                               shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple[Task, ChildTask, t.Mapping[bytes, far.Pointer], t.List[far.FileDescriptor]]:
-    "Spawn an rsyscall server running in a child task, without specifying CLONE_VM, so it's in a new (copied) address space"
+    "Spawn an rsyscall server running in a separate process"
+    # so there's 1. the access task, through which we access the syscall and data fds,
+    # 2. the parent task, and
+    # 3. the connection between the access and parent task, so that we can have the parent task pass down the fds,
+    # while the access task uses them.
+    # okay but this is a slight simplification, because there may also be,
+    # 4. the proxy task, which is a task that actually gets the fds and passes them down to the parent task?
     describe_out = await task.pipe()
-    pipe_in = await task.pipe()
-    pipe_out = await task.pipe()
-    mem_pipe_in = await task.pipe()
-    mem_pipe_out = await task.pipe()
+    local_syscall_sock, passed_syscall_sock = await task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    local_data_sock, passed_data_sock = await task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     # new fd namespace and address space are created here
     cthread = await thread_maker.make_cthread(
-        lib.CLONE_VM|shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
+        lib.CLONE_VM|shared, function, passed_syscall_sock.active.far.near, passed_syscall_sock.active.far.near)
     process = cthread.thread.child_task.process
     address_space = base.AddressSpace(process.id)
     fd_table = base.FDTable(process.id)
@@ -2081,20 +2078,19 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
         nearfd = parent_fd_table.to_near(fd)
         inherited_fds.append(nearfd)
         return far.FileDescriptor(fd_table, nearfd)
-    async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
-    async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
-    syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
+    async_local_syscall_sock = await AsyncFileDescriptor.make(epoller, local_syscall_sock)
+    remote_syscall_sock = inherit(passed_syscall_sock.active.far)
+    syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                 process,
-                                inherit(pipe_in.rfd.active.far),
-                                inherit(pipe_out.wfd.active.far))
+                                remote_syscall_sock, remote_syscall_sock)
     new_base_task = base.Task(syscall, fd_table, address_space)
     def inherit_active(fd: active.FileDescriptor) -> active.FileDescriptor:
         return active.FileDescriptor(new_base_task, inherit(fd.far))
+    async_local_data_sock = await AsyncFileDescriptor.make(epoller, local_data_sock)
+    remote_data_sock = inherit_active(passed_data_sock.active)
     gateway = ComposedMemoryGateway([
-        SendMemoryGateway(read=inherit_active(mem_pipe_in.rfd.active),
-                          write=await AsyncFileDescriptor.make(epoller, mem_pipe_in.wfd)),
-        ReceiveMemoryGateway(read=await AsyncFileDescriptor.make(epoller, mem_pipe_out.rfd),
-                             write=inherit_active(mem_pipe_out.wfd.active)),
+        SendMemoryGateway(read=remote_data_sock, write=async_local_data_sock),
+        ReceiveMemoryGateway(read=async_local_data_sock, write=remote_data_sock),
         LocalMemoryGateway(),
     ])
     new_task = Task(new_base_task,
@@ -2110,26 +2106,23 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
         await new_task.sigmask.setmask(new_task, set())
 
     # We don't need these things in the parent. . .
-    await pipe_in.rfd.aclose()
-    await pipe_out.wfd.aclose()
-    await mem_pipe_in.rfd.aclose()
-    await mem_pipe_out.wfd.aclose()
+    await passed_syscall_sock.aclose()
+    await passed_data_sock.aclose()
     await describe_out.wfd.aclose()
 
     inherited_user_fds = [inherit(fd) for fd in user_fds]
     describe_fd = inherit(describe_out.wfd.active.far)
-    # OK this needs to be done through the exec.
-    # we call exec here.
-    # waaaaaait a second.
-    # we need to make them non-cloexec and then re-cloexec them.
-    # make each fd non-cloexec
+    # make each inherited fd non-cloexec
+    # note that this is racy if our thread is in a shared fd space;
+    # this is why each thread has to be in its own fd space.
     for fd in inherited_fds:
         # disable cloexec for the fd
         await near.fcntl(syscall, fd, fcntl.F_SETFD, 0)
     # wow! the task just keeps working! neat!
     # TODO need to validate that path matches up with the task
+    import shutil
     path = base.Path(base.RootPathBase(None, None), # type: ignore
-                     [b"nix", b"store", b"qb44m7nbv3fjgkl2mh6jgcp12wr5xb69-rsyscall", b"bin", b"rsyscall_server"])
+                     [s.encode() for s in shutil.which("rsyscall_server").split("/")[1:]])
     # TODO hmm argh we don't get a response from this execveat so the thing just hangs
     # HMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
     # maybe we *do* need the futex waiting thing, ugh.

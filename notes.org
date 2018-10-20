@@ -5122,3 +5122,48 @@ very important caveat: they don't nest!
   prctl(PR_SET_DUMPABLE, SUID_DUMP_DISABLE);
 * TODO look into using msg_dontwait for pipes
   Maybe we don't need to use O_NONBLOCK at all.
+* plan
+need to make a nice API for passing an fd, I guess.
+that's the first step?
+well, I guess the first step is tasks started by level zero.
+then a nice api for fd passing, then tasks started by level one.
+then tasks started by level two and on forward.
+then, tasks in a different subprocess
+meh let's do the fd passing API first
+
+so, let's just stick to using rsyscall_spawn_exec - i.e., operating in a separate process - for everything.
+
+shifting back to a single process should be an easy optimization after that!
+** passing
+   Three tasks are involved in every child start:
+
+   The access task, through which we access the syscall and data fds.
+   The parent task, which will actually clone off the child.
+   And the connecting task,
+   which has the ability to both create file descriptors to communicate with the access task,
+   and transfer file descriptors to the parent task.
+
+   If the connecting task is the same as the access task,
+   then we just use socketpair.
+
+   If the connecting task is the same as the parent task,
+   then we don't have to transfer file descriptors.
+
+   The capability to create the gateway and to transfer file descriptors,
+   are both optional arguments,
+   which must be supplied if needed.
+
+   The transferring file descriptor capability is simply a socketpair,
+   one end of which is in the connecting task,
+   and one end which is in the parent task.
+
+   The bridge-creation capability is... hmm.
+
+   Well, let's keep it reified for now.
+   It's a (Unix socket address, listening Unix socket) pair,
+   one end of which is in the connecting task,
+   and one end which is in the access task.
+   
+   (I guess it can be abstracted to just a generic address)
+
+   Let's begin with all three the same.
