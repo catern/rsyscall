@@ -1194,12 +1194,20 @@ class Serializer:
 
 class StandardTask:
     def __init__(self,
+                 access_task: Task,
+                 access_epoller: Epoller,
+                 connecting_task: Task,
+                 connecting_connection: t.Optional[t.Tuple[far.FileDescriptor, far.FileDescriptor]],
                  task: Task,
                  task_resources: TaskResources,
                  process_resources: ProcessResources,
                  filesystem_resources: FilesystemResources,
                  environment: t.Dict[bytes, bytes],
     ) -> None:
+        self.access_task = access_task
+        self.access_epoller = access_epoller
+        self.connecting_task = connecting_task
+        self.connecting_connection = connecting_connection
         self.task = task
         self.resources = task_resources
         self.process = process_resources
@@ -1213,8 +1221,11 @@ class StandardTask:
         process_resources = local_process_resources
         task_resources = await TaskResources.make(task)
         filesystem_resources = await FilesystemResources.make_from_bootstrap(task, bootstrap)
-        return StandardTask(task, task_resources, process_resources, filesystem_resources,
-                            {**bootstrap.environ})
+        return StandardTask(
+            task, task_resources.epoller,
+            task, None,
+            task, task_resources, process_resources, filesystem_resources,
+            {**bootstrap.environ})
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
         parent = self.filesystem.tmpdir
@@ -1228,9 +1239,24 @@ class StandardTask:
                     shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple['RsyscallProcess', t.List[far.FileDescriptor]]:
         thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor, self.process)
-        task, child_task, symbols, fds = await rsyscall_spawn_exec(
-            self.task, thread_maker, self.resources.epoller, self.process.server_func,
-            user_fds, shared)
+        if self.connecting_connection is None:
+            connecting_side, full_parent_child_side = await self.connecting_task.socketpair(
+                socket.AF_UNIX, socket.SOCK_STREAM, 0)
+            parent_child_side = full_parent_child_side.active.far
+        else:
+            connecting_side, connecting_parent_child_side = await self.connecting_task.socketpair(
+                socket.AF_UNIX, socket.SOCK_STREAM, 0)
+            await memsys.sendmsg_fds(self.connecting_task.base, self.connecting_task.gateway, self.connecting_task.allocator,
+                                     self.connecting_connection[0], [connecting_parent_child_side.active.far])
+            [near_parent_child_side] = await memsys.recvmsg_fds(self.task.base, self.task.gateway, self.task.allocator,
+                                                                self.connecting_connection[1], 1)
+            parent_child_side = far.FileDescriptor(self.task.fd_table, near_parent_child_side)
+        task, child_task, symbols, fds = await rsyscall_spawn_exec_full(
+            self.access_task, self.access_epoller,
+            self.connecting_task, self.connecting_connection,
+            self.task, thread_maker, self.process.server_func,
+            [parent_child_side] + user_fds, shared)
+        child_side, *fds = fds
         proc_resources = ProcessResources(
             server_func=FunctionPointer(symbols[b"rsyscall_server"]),
             do_cloexec_func=FunctionPointer(symbols[b"rsyscall_do_cloexec"]),
@@ -1244,8 +1270,12 @@ class StandardTask:
         # at some point it essentially becomes a dedicate event loop thread.
         # though that's not good if we actually are performing operations on that event loop thread.
         # meh, better to inherit and share since it's possible; if it turns out worse we can fix that later.
-        stdtask = StandardTask(task, await TaskResources.make(task),
-                               proc_resources, self.filesystem, {**self.environment})
+        stdtask = StandardTask(
+            self.access_task, self.access_epoller,
+            self.connecting_task, (connecting_side.active.far, child_side),
+            task, 
+            await TaskResources.make(task),
+            proc_resources, self.filesystem, {**self.environment})
         # return RsyscallThread(stdtask, cthread), fds
         return RsyscallProcess(stdtask, child_task), fds
 
@@ -2002,34 +2032,34 @@ class ComposedMemoryGateway(MemoryGateway):
         for dest, src, n in ops:
             await self.memcpy(dest, src, n)
 
-@dataclass
-class Bridge:
-    local: active.FileDescriptor
-    remote: active.FileDescriptor
+# @dataclass
+# class Bridge:
+#     local: active.FileDescriptor
+#     remote: active.FileDescriptor
 
-@dataclass
-class BridgeMaker:
-    task: Task
+# @dataclass
+# class BridgeMaker:
+#     task: Task
 
-    async def make_bridge(self) -> Bridge:
-        l, r = await memsys.socketpair(self.task.syscall, self.task.gateway, self.task.allocator,
-                                       socket.AF_UNIX, socket.SOCK_STREAM, 0)
-        return Bridge(l, r)
+#     async def make_bridge(self) -> Bridge:
+#         l, r = await memsys.socketpair(self.task.syscall, self.task.gateway, self.task.allocator,
+#                                        socket.AF_UNIX, socket.SOCK_STREAM, 0)
+#         return Bridge(l, r)
 
-@dataclass
-class Socketpair:
-    local: far.FileDescriptor
-    remote: far.FileDescriptor
+# @dataclass
+# class Socketpair:
+#     local: far.FileDescriptor
+#     remote: far.FileDescriptor
 
-@dataclass
-class DirectBridgeMaker:
-    bridge_maker: BridgeMaker
-    socketpair: Socketpair
-    async def make_direct_bridge_with(self, mytask: Task) -> Bridge:
-        bridge = self.bridge_maker.make_bridge()
-        await socketpair.local.put_fd(bridge.remote)
-        goodfd = await socketpair.remote.get_fd()
-        return Bridge(bridge.local, goodfd)
+# @dataclass
+# class DirectBridgeMaker:
+#     bridge_maker: BridgeMaker
+#     socketpair: Socketpair
+#     async def make_direct_bridge_with(self, mytask: Task) -> Bridge:
+#         bridge = self.bridge_maker.make_bridge()
+#         await socketpair.local.put_fd(bridge.remote)
+#         goodfd = await socketpair.remote.get_fd()
+#         return Bridge(bridge.local, goodfd)
 
 async def read_lines(fd: AsyncFileDescriptor[ReadableFile]) -> t.AsyncIterator[bytes]:
     buf = b""
@@ -2122,7 +2152,7 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
     # TODO need to validate that path matches up with the task
     import shutil
     path = base.Path(base.RootPathBase(None, None), # type: ignore
-                     [s.encode() for s in shutil.which("rsyscall_server").split("/")[1:]])
+                     [s.encode() for s in shutil.which("rsyscall_server").split("/")[1:]]) # type: ignore
     # TODO hmm argh we don't get a response from this execveat so the thing just hangs
     # HMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
     # maybe we *do* need the futex waiting thing, ugh.
@@ -2148,6 +2178,129 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
         print("line", line)
         key, value = line.rstrip().split(b'=', 1)
         symbols[key] = far.Pointer(address_space, near.Pointer(int(value, 16)))
+    return new_task, child_task, symbols, inherited_user_fds
+
+async def rsyscall_spawn_exec_full(
+        access_task: Task, access_epoller: Epoller,
+        connecting_task: Task, connecting_connection: t.Optional[t.Tuple[far.FileDescriptor, far.FileDescriptor]],
+        parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
+        user_fds: t.List[far.FileDescriptor],
+        shared: UnshareFlag=UnshareFlag.FS,
+    ) -> t.Tuple[Task, ChildTask, t.Mapping[bytes, far.Pointer], t.List[far.FileDescriptor]]:
+    "Spawn an rsyscall server running in a separate process"
+    # so there's 1. the access task, through which we access the syscall and data fds,
+    # 2. the parent task, and
+    # 3. the connection between the access and parent task, so that we can have the parent task pass down the fds,
+    # while the access task uses them.
+    # okay but this is a slight simplification, because there may also be,
+    # 4. the proxy task, which is a task that actually gets the fds and passes them down to the parent task?
+    if access_task == connecting_task:
+        describe_out = await access_task.pipe()
+        access_syscall_sock, connecting_syscall_sock = await access_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+        access_data_sock, connecting_data_sock = await access_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    else:
+        raise Exception("don't know how to create connections when access task isn't the connecting task")
+    if connecting_task == parent_task:
+        passed_syscall_sock = connecting_syscall_sock.active.far
+        passed_data_sock = connecting_data_sock.active.far
+    else:
+        assert connecting_connection is not None
+        await memsys.sendmsg_fds(connecting_task.base, connecting_task.gateway, connecting_task.allocator,
+                                 connecting_connection[0], [
+                                     connecting_syscall_sock.active.far,
+                                     connecting_data_sock.active.far,
+                                 ])
+        near_passed_syscall_sock, near_passed_data_sock = await memsys.recvmsg_fds(
+            parent_task.base, parent_task.gateway, parent_task.allocator,
+            connecting_connection[1], 2
+        )
+        passed_syscall_sock = far.FileDescriptor(parent_task.fd_table, near_passed_syscall_sock)
+        passed_data_sock = far.FileDescriptor(parent_task.fd_table, near_passed_data_sock)
+        # don't need these in the connecting task anymore
+        await connecting_syscall_sock.aclose()
+        await connecting_data_sock.aclose()
+    # new fd namespace created here
+    cthread = await thread_maker.make_cthread(
+        lib.CLONE_VM|shared, function, passed_syscall_sock.near, passed_syscall_sock.near)
+    process = cthread.thread.child_task.process
+    fd_table = base.FDTable(process.id)
+    parent_fd_table = parent_task.fd_table
+    inherited_fds: t.List[near.FileDescriptor] = []
+    def inherit(fd: far.FileDescriptor) -> far.FileDescriptor:
+        nearfd = parent_fd_table.to_near(fd)
+        inherited_fds.append(nearfd)
+        return far.FileDescriptor(fd_table, nearfd)
+    async_access_syscall_sock = await AsyncFileDescriptor.make(access_epoller, access_syscall_sock)
+    remote_syscall_sock = inherit(passed_syscall_sock)
+    syscall = RsyscallInterface(RsyscallConnection(async_access_syscall_sock, async_access_syscall_sock),
+                                process,
+                                remote_syscall_sock, remote_syscall_sock)
+    new_base_task = base.Task(syscall, fd_table, parent_task.address_space)
+    def inherit_active(fd: far.FileDescriptor) -> active.FileDescriptor:
+        return active.FileDescriptor(new_base_task, inherit(fd))
+    async_access_data_sock = await AsyncFileDescriptor.make(access_epoller, access_data_sock)
+    remote_data_sock = inherit_active(passed_data_sock)
+    gateway = ComposedMemoryGateway([
+        SendMemoryGateway(read=remote_data_sock, write=async_access_data_sock),
+        ReceiveMemoryGateway(read=async_access_data_sock, write=remote_data_sock),
+        LocalMemoryGateway(),
+    ])
+    new_task = Task(new_base_task,
+                    gateway,
+                    # TODO whether these things are shared depends on the `shared` flags
+                    parent_task.mount, parent_task.fs, parent_task.sigmask.inherit(), parent_task.process_namespace)
+    new_task.allocator = parent_task.allocator
+    # aaaargh so this is the issue of multi-hop stuff.
+    # TODO multi-hop memory stuff
+    if len(new_task.sigmask.mask) != 0:
+        # clear this non-empty signal mask because it's pointlessly inherited across fork
+        await new_task.sigmask.setmask(new_task, set())
+
+    # We don't need these things in the parent. . .
+    await far.close(parent_task.base, passed_syscall_sock)
+    await far.close(parent_task.base, passed_data_sock)
+    await describe_out.wfd.aclose()
+
+    inherited_user_fds = [inherit(fd) for fd in user_fds]
+    describe_fd = inherit(describe_out.wfd.active.far)
+    # make each inherited fd non-cloexec
+    # note that this is racy if our thread is in a shared fd space;
+    # this is why each thread has to be in its own fd space.
+    for fd in inherited_fds:
+        # disable cloexec for the fd
+        await near.fcntl(syscall, fd, fcntl.F_SETFD, 0)
+    # wow! the task just keeps working! neat!
+    # TODO need to validate that path matches up with the task
+    import shutil
+    path = base.Path(base.RootPathBase(None, None), # type: ignore
+                     [s.encode() for s in shutil.which("rsyscall_server").split("/")[1:]]) # type: ignore
+    # TODO hmm argh we don't get a response from this execveat so the thing just hangs
+    # HMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+    # maybe we *do* need the futex waiting thing, ugh.
+    # ARGH! the processes of execing allocates a bunch of memory in the allocator,
+    # which is no longer valid when done.
+    # I guess... I could just flush the allocator...
+    # well, no, none of that memory will actually be freed then...
+    # maybe I should use the parent's allocator?
+    # hmm hmm
+    # if i'm not in the same address space as my parent, then freeing will happen automatically.
+    # if I am, then I can use my parent's allocator.
+    def encode(fd: near.FileDescriptor) -> bytes:
+        return str(int(fd)).encode()
+    # new address space created here
+    child_task = await cthread.thread.execveat(
+        syscall, gateway, parent_task.allocator, path,
+        [b"rsyscall"] + [encode(describe_fd.near), encode(syscall.infd.near), encode(syscall.outfd.near)] +
+        [encode(fd) for fd in inherited_fds], [], 0)
+    new_task.base.address_space = base.AddressSpace(process.id)
+    new_task.allocator = memory.Allocator(syscall, new_task.base.address_space)
+    async_describe = await AsyncFileDescriptor.make(access_epoller, describe_out.rfd)
+    # TODO read from describe and parse
+    symbols: t.Dict[bytes, far.Pointer] = {}
+    async for line in read_lines(async_describe):
+        print("line", line)
+        key, value = line.rstrip().split(b'=', 1)
+        symbols[key] = far.Pointer(new_task.base.address_space, near.Pointer(int(value, 16)))
     return new_task, child_task, symbols, inherited_user_fds
 
 class RsyscallTask:
