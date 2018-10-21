@@ -1737,6 +1737,8 @@ async def launch_futex_monitor(task: Task, futex_pointer: Pointer) -> ChildTask:
     """
     # the futex should have the value "1" in it, I guess?
     # I guess we'll handle that.
+    # we'll use a serializer I guess...?
+    # but preload it with some memory?
     # would be nice to use a serializer
     # allocate memory for the stack
     stack_size = 4096
