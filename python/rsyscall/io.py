@@ -2313,32 +2313,46 @@ async def rsyscall_spawn_exec_full(
     await async_describe.aclose()
     return new_task, child_task, symbols, inherited_user_fds
 
-async def rsyscall_spawn_ssh(
-        task: Task,
-) -> None:
-    stdout = foo
-    socket_binder_task = task.spawn(stdout)
-    socket_binder_task.exec("socket binder stuff")
-    sock_path, pass_path = stdout.read()
+# async def rsyscall_spawn_ssh(
+#         access_task: Task, epoller: Epoller,
+# ) -> None:
+#     describe_pipe = await task.pipe()
+#     binder_task, [describe_write] = await self.stdtask.spawn([describe_pipe.wfd], shared=UnshareFlag.NONE)
+#     if int(describe_write) != 1:
+#         await near.dup3(binder_task, binder_task.to_near_fd(describe_write), 1, 0)
+#     async_describe = await AsyncFileDescriptor.make(epoller, describe_pipe.rfd)
+#     socket_binder_executable = base.Path(
+#         base.RootPathBase(None, None), # type: ignore
+#         [s.encode() for s in shutil.which("rsyscall_server").split("/")[1:]]) # type: ignore
+#     async with binder_task:
+#         child = await binder_task.execve(socket_binder_executable, ["socket_binder"])
+#         data_path, pass_path = [Path.from_bytes(task, data_path) async for line in read_lines(async_describe)]
+#         pass_sock = await access_task.socket_unix(socket.SOCK_STREAM)
+#         await robust_unix_connect(pass_path, pass_sock)
+#         listening_sock, = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator, pass_sock, 1)
+#         (await child.wait_for_exit()).check()
+#     socket_binder_task = task.spawn(stdout)
+#     socket_binder_task.exec("socket binder stuff")
+#     sock_path, pass_path = stdout.read()
 
-    # fake dumbness from here on
-    pass_sock = await connect(pass_path)
+#     # fake dumbness from here on
+#     pass_sock = await connect(pass_path)
 
-    listening_sock = await pass_sock.recv_fd()
+#     listening_sock = await pass_sock.recv_fd()
 
-    await socket_binder_task.wait()
+#     await socket_binder_task.wait()
 
-    access_connection = sock_path, listening_sock
-    # now spawn the normal task with normal stuff.
+#     access_connection = sock_path, listening_sock
+#     # now spawn the normal task with normal stuff.
     
-    # TODO what do we actually print out to?
-    envstuff, path, fdnum = stdout.read()
-    syscall_sock = await connect(path)
-    data_sock = await connect(path)
-    # again where does this print go?
-    # what if we bootstrap the unix socket separately?
-    # with something whose stdout *can* be consumed?
-    fdnum, fdnum = stdout.read()
+#     # TODO what do we actually print out to?
+#     envstuff, path, fdnum = stdout.read()
+#     syscall_sock = await connect(path)
+#     data_sock = await connect(path)
+#     # again where does this print go?
+#     # what if we bootstrap the unix socket separately?
+#     # with something whose stdout *can* be consumed?
+#     fdnum, fdnum = stdout.read()
 
 
 class RsyscallTask:

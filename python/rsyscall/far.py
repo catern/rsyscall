@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import typing as t
 import rsyscall.near
 
 # These are like segment ids.
@@ -113,3 +114,17 @@ async def sendmsg(task: Task, fd: FileDescriptor, msg: Pointer, flags: int) -> i
 
 async def recvmsg(task: Task, fd: FileDescriptor, msg: Pointer, flags: int) -> int:
     return (await rsyscall.near.recvmsg(task.sysif, task.to_near_fd(fd), task.to_near_pointer(msg), flags))
+
+async def dup3(task: Task, oldfd: FileDescriptor, newfd: FileDescriptor, flags: int) -> None:
+    await rsyscall.near.dup3(task.sysif, task.to_near_fd(oldfd), task.to_near_fd(newfd), flags)
+
+async def accept4(task: Task, sockfd: FileDescriptor,
+                  addr: t.Optional[Pointer], addrlen: t.Optional[Pointer], flags: int) -> int:
+    if addr is None:
+        addr = 0 # type: ignore
+    if addrlen is None:
+        addrlen = 0 # type: ignore
+    return (await rsyscall.near.accept4(task.sysif, task.to_near_fd(sockfd),
+                                        task.to_near_pointer(addr) if addr else None,
+                                        task.to_near_pointer(addrlen) if addrlen else None,
+                                        flags))

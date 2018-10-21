@@ -15,6 +15,8 @@ class SYS(enum.IntEnum):
     fcntl = lib.SYS_fcntl
     sendmsg = lib.SYS_sendmsg
     recvmsg = lib.SYS_recvmsg
+    dup3 = lib.SYS_dup3
+    accept4 = lib.SYS_accept4
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallInterface:
@@ -83,3 +85,14 @@ async def sendmsg(sysif: SyscallInterface, fd: FileDescriptor, msg: Pointer, fla
 
 async def recvmsg(sysif: SyscallInterface, fd: FileDescriptor, msg: Pointer, flags: int) -> int:
     return (await sysif.syscall(SYS.recvmsg, fd, msg, flags))
+
+async def dup3(sysif: SyscallInterface, oldfd: FileDescriptor, newfd: FileDescriptor, flags: int) -> None:
+    await sysif.syscall(SYS.dup3, oldfd, newfd, flags)
+
+async def accept4(sysif: SyscallInterface, sockfd: FileDescriptor,
+                  addr: t.Optional[Pointer], addrlen: t.Optional[Pointer], flags: int) -> int:
+    if addr is None:
+        addr = 0 # type: ignore
+    if addrlen is None:
+        addrlen = 0 # type: ignore
+    return (await sysif.syscall(SYS.accept4, sockfd, addr, addrlen, flags))

@@ -2,7 +2,10 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.io import gather_local_bootstrap, wrap_stdin_out_err
 from rsyscall.io import AsyncFileDescriptor
 from rsyscall.epoll import EpollEvent, EpollEventMask
+import shutil
 import rsyscall.base as base
+import rsyscall.near as near
+import rsyscall.far as far
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
 import socket
@@ -479,6 +482,33 @@ class TestIO(unittest.TestCase):
                     self.assertEqual(in_data, out_data)
                     
                     print(r2_remote)
+        trio.run(test)
+
+    def test_socket_binder(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                task = stdtask.task
+                describe_pipe = await task.pipe()
+                binder_process, [describe_write] = await stdtask.spawn([describe_pipe.wfd.active.far])
+                binder_task = binder_process.stdtask.task.base
+                if int(describe_write) != 1:
+                    await near.dup3(binder_task.sysif, binder_task.to_near_fd(describe_write), near.FileDescriptor(1), 0)
+                async_describe = await AsyncFileDescriptor.make(stdtask.resources.epoller, describe_pipe.rfd)
+                socket_binder_executable = rsyscall.io.Path.from_bytes(
+                    binder_process.stdtask.task, shutil.which("rsyscall_server").encode()) # type: ignore
+                async with binder_process:
+                    # hmm so we need a proper Thread thingy, so we can exec properly and deal with RsyscallHangup
+                    child = await binder_process.execve(socket_binder_executable, ["socket_binder"])
+                    data_path, pass_path = [rsyscall.io.Path.from_bytes(task, data_path) async
+                                            for line in rsyscall.io.read_lines(async_describe)]
+                    pass_sock = await task.socket_unix(socket.SOCK_STREAM)
+                    await rsyscall.io.robust_unix_connect(pass_path, pass_sock)
+                    listening_sock, = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator,
+                                                               pass_sock.active.far, 1)
+                    (await child.wait_for_exit()).check()
+                client_sock = await task.socket_unix(socket.SOCK_STREAM)
+                await rsyscall.io.robust_unix_connect(data_path, client_sock)
+                server_fd = await near.accept4(task.base.sysif, listening_sock, None, None, os.O_CLOEXEC)
         trio.run(test)
 
 if __name__ == '__main__':
