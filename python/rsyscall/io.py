@@ -2313,6 +2313,34 @@ async def rsyscall_spawn_exec_full(
     await async_describe.aclose()
     return new_task, child_task, symbols, inherited_user_fds
 
+async def rsyscall_spawn_ssh(
+        task: Task,
+) -> None:
+    stdout = foo
+    socket_binder_task = task.spawn(stdout)
+    socket_binder_task.exec("socket binder stuff")
+    sock_path, pass_path = stdout.read()
+
+    # fake dumbness from here on
+    pass_sock = await connect(pass_path)
+
+    listening_sock = await pass_sock.recv_fd()
+
+    await socket_binder_task.wait()
+
+    access_connection = sock_path, listening_sock
+    # now spawn the normal task with normal stuff.
+    
+    # TODO what do we actually print out to?
+    envstuff, path, fdnum = stdout.read()
+    syscall_sock = await connect(path)
+    data_sock = await connect(path)
+    # again where does this print go?
+    # what if we bootstrap the unix socket separately?
+    # with something whose stdout *can* be consumed?
+    fdnum, fdnum = stdout.read()
+
+
 class RsyscallTask:
     # TODO make this into an interface
     pass

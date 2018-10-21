@@ -5202,3 +5202,42 @@ shifting back to a single process should be an easy optimization after that!
 
    We abstract over address family,
    but hardcode sock_stream.
+** ok now ssh
+   we got the unix socket now ssh
+
+   so what if we have a separate bootstrap for the unix socket,
+   such that we can actually print the path?
+
+   erm hrm part of the issue here is wanting to support multiple terminal applications.
+   multiplexing is a bit tricky
+
+   we really want each process under the control of rsyscall,
+   not spawned by ssh,
+   that's silly.
+
+   so we really want to just pass the terminal fds in to rsyscall,
+   and then spawn something using them.
+** new plan
+   OK so what we'll do instead is:
+
+   1. Run socket_binder on remote host using ssh.
+   2. socket_binder prints out the path of two Unix sockets to stdout.
+   3. Run a second ssh command forwarding a local Unix socket to the first unix socket path,
+      and also running the rsyscall bootstrap.
+   4. The rsyscall bootstrap connects to the second unix socket path,
+      and receives the listening socket for the first socket via fd-passing.
+   5. The first ssh command exits.
+   6. Connect four times to the local (forwarded) Unix socket.
+   7. Bootstrap calls accept four times on its bound Unix socket,
+      using the four fds as (bootstrap_describe, describe, syscall, data) pipes.
+   8. Bootstrap prints out the fd numbers,
+      and the environment,
+      and anything else relevant to the bootstrap_describe pipe,
+      then closes it.
+   9. Bootstrap execs rsyscall binary with (describe, syscall, data) as arguments.
+   10. rsyscall binary prints out relevant C library function addresses to the describe pipe,
+       then closes it.
+   11. Rsyscall binary calls the rsyscall main loop function.
+** socket binder
+   Ok we'll start with socket_binder I guess
+
