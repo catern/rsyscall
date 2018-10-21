@@ -1180,7 +1180,7 @@ class StandardTask:
     def __init__(self,
                  access_task: Task,
                  access_epoller: Epoller,
-                 access_connection: t.Optional[t.Tuple[Address, far.FileDescriptor]],
+                 access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
                  connecting_task: Task,
                  connecting_connection: t.Optional[t.Tuple[far.FileDescriptor, far.FileDescriptor]],
                  task: Task,
@@ -1207,8 +1207,12 @@ class StandardTask:
         process_resources = local_process_resources
         task_resources = await TaskResources.make(task)
         filesystem_resources = await FilesystemResources.make_from_bootstrap(task, bootstrap)
+        connection_listening_socket = await task.socket_unix(socket.SOCK_STREAM)
+        sockpath = Path.from_bytes(task, b"./rsyscall.sock")
+        await robust_unix_bind(sockpath, connection_listening_socket)
+        await connection_listening_socket.listen(10)
         return StandardTask(
-            task, task_resources.epoller, None,
+            task, task_resources.epoller, (sockpath, connection_listening_socket),
             task, None,
             task, task_resources, process_resources, filesystem_resources,
             {**bootstrap.environ})
@@ -2170,7 +2174,7 @@ async def rsyscall_spawn_exec_full(
         access_task: Task, access_epoller: Epoller,
         # regrettably asymmetric...
         # it would be nice to unify connect/accept with passing file descriptors somehow.
-        access_connection: t.Optional[t.Tuple[Address, far.FileDescriptor]],
+        access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
         connecting_task: Task, connecting_connection: t.Optional[t.Tuple[far.FileDescriptor, far.FileDescriptor]],
         parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
         user_fds: t.List[far.FileDescriptor],
@@ -2185,15 +2189,23 @@ async def rsyscall_spawn_exec_full(
     # 4. the connection task, which is a task that actually gets the fds and passes them down to the parent task?
     # if access_task == connecting_task:
     if False:
-        describe_pipe = await access_task.pipe()
-        access_describe_read, connecting_describe_write = describe_pipe.rfd, describe_pipe.wfd
-        access_syscall_sock, connecting_syscall_sock = await access_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+        access_syscall_sock, connecting_syscall_sock = await access_task.socketpair(
+            socket.AF_UNIX, socket.SOCK_STREAM, 0)
         access_data_sock, connecting_data_sock = await access_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+        access_describe_read, connecting_describe_write = await access_task.socketpair(
+            socket.AF_UNIX, socket.SOCK_STREAM, 0)
     else:
         assert access_connection is not None
-        access_address, connecting_listening_sock = access_connection
-        access_data_sock = await socket_unix(socket.SOCK_STREAM)
-        await access_data_sock.connect(access_address)
+        access_path, connecting_listening_sock = access_connection
+        async def make_conn() -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
+            left_sock = await access_task.socket_unix(socket.SOCK_STREAM)
+            await robust_unix_connect(access_path, left_sock)
+            right_sock, _ = await connecting_listening_sock.accept(os.O_CLOEXEC)
+            return left_sock, right_sock
+
+        access_data_sock, connecting_data_sock = await make_conn()
+        access_syscall_sock, connecting_syscall_sock = await make_conn()
+        access_describe_read, connecting_describe_write = await make_conn()
     if connecting_task == parent_task:
         passed_syscall_sock = connecting_syscall_sock.active.far
         passed_data_sock = connecting_data_sock.active.far
