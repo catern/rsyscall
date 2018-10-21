@@ -3320,6 +3320,11 @@ hmm, actually it just occurred to me that this question is essentially the same 
 
    This is especially necessary for threads running arbitrary code.
    We can't just ptrace such threads all the time.
+
+   ptrace doesn't work because ptrace sucks and break gdb/strace.
+
+   Passing down one end of a cloexec pipe doesn't work because if we're a CLONE_FILES thread calling exec,
+   the end will still be open in other threads.
 ** a CLONE_DO_CLOEXEC flag to pass to clone, to close CLOEXEC fds
    This would be good and useful.
 
@@ -3418,6 +3423,16 @@ hmm, actually it just occurred to me that this question is essentially the same 
    Use openat on another file descriptor.
 
    (well, and also by passing it in)
+** being able to pass a NULL name to memfd_create
+   Requiring memory to allocate memory makes it impossible to bootstrap memory allocate using memfd_create.
+* possible kernel bugs
+** MMAP_GROWSDOWN doesn't seem to work
+   It doesn't grow.
+** CLONE_CHILD_CLEARTID doesn't seem to work if you don't pass CLONE_VM
+   Even if the address is in shared memory (mapped with MAP_SHARED, same inode and everything in both processes),
+   it doesn't seem to do a futex wakeup.
+
+   Didn't yet check whether the address is cleared or not - probably not.
 * design decisions
 ** TODO should we grab the Task out of other objects, or pass it explicitly?
    Consider RsyscallTask.make as an example.
@@ -5240,4 +5255,52 @@ shifting back to a single process should be an easy optimization after that!
    11. Rsyscall binary calls the rsyscall main loop function.
 ** socket binder
    Ok we'll start with socket_binder I guess
+** exec
+   OK so to properly exec something,
+   we always need to have the futex around.
 
+   To have the futex around,
+   we need, hm
+
+   Well after calling exec, I think it disengages.
+   So we need to reset it.
+
+   Yes it disengages.
+
+   So after exec, we definitely need to re-engage it.
+
+   The weird thing is that I don't see any reason it should, umm,
+   not fire on the clear_child_tid in a,
+   non-CLONE_VM-created process.
+
+   Weird.
+
+   Seems like a possible bug.
+
+   So anyway, we still need to re-engage the futex after an exec.
+   So let's do that.
+
+   We need to, hmm, share some memory.
+   Possibly we pass down a memfd?
+
+   That seems sensible.
+
+   Man I sure have to do a lot of working around limits in the Linux API! Oh well.
+
+   So I pass down a memfd,
+   I map it into memory,
+   I set_futex_address,
+   I spawn a futex monitoring task elsewhere - likely in the connecting_task maybe.
+
+   Hmm it could be a separate memfd for each task.
+
+   But! We do need to remember the memfd!
+   Because if we exec, we need to save it!
+   Um, well, we are unlikely to exec into the syscall server again...
+
+   So maybe instead we just, hmm...
+   Make a memfd and inherit it right then and there,
+   and mmap it and set_futex_address,
+   and spawn a futex waiting task in addition to the main task.
+
+   That's a bit inefficient to make a memfd each time, but it's fine.

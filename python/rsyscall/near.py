@@ -17,6 +17,7 @@ class SYS(enum.IntEnum):
     recvmsg = lib.SYS_recvmsg
     dup3 = lib.SYS_dup3
     accept4 = lib.SYS_accept4
+    memfd_create = lib.SYS_memfd_create
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallInterface:
@@ -96,3 +97,7 @@ async def accept4(sysif: SyscallInterface, sockfd: FileDescriptor,
     if addrlen is None:
         addrlen = 0 # type: ignore
     return (await sysif.syscall(SYS.accept4, sockfd, addr, addrlen, flags))
+
+async def memfd_create(sysif: SyscallInterface, name: Pointer, flags: int) -> FileDescriptor:
+    ret = await sysif.syscall(SYS.memfd_create, name, flags)
+    return FileDescriptor(ret)

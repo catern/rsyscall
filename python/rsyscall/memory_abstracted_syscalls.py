@@ -48,6 +48,11 @@ async def write(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memo
     async with localize_data(gateway, allocator, buf) as (buf_ptr, buf_len):
         return (await raw_syscall.write(sysif, fd, buf_ptr, buf_len))
 
+async def memfd_create(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
+                       name: bytes, flags: int) -> far.FileDescriptor:
+    async with localize_data(gateway, allocator, name+b"\0") as (name_ptr, _):
+        return (await far.memfd_create(task, name_ptr, flags))
+
 async def getdents64(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
                      fd: base.FileDescriptor, count: int) -> bytes:
     logger.debug("getdents64(%s, %s)", fd, count)

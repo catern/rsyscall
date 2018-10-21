@@ -1729,6 +1729,41 @@ class BufferedStack:
         self.buffer = b""
         return self.allocation_pointer
 
+async def launch_futex_monitor(task: Task, futex_pointer: Pointer) -> ChildTask:
+    """Provides an asynchronous interface to the CLONE_CHILD_CLEARTID functionality
+
+    Executes the instruction "ret" immediately after cloning.
+
+    """
+    # the futex should have the value "1" in it, I guess?
+    # I guess we'll handle that.
+    # would be nice to use a serializer
+    # allocate memory for the stack
+    stack_size = 4096
+    stack = BufferedStack(mapping.pointer + stack_size)
+    # allocate the futex at the base of the stack, with "1" written to it to match
+    # what futex_helper expects
+    futex_pointer = stack.push(struct.pack('i', 1))
+    # align the stack to a 16-bit boundary now, so after pushing the trampoline data,
+    # which the trampoline will all pop off, the stack will be aligned.
+    stack.align()
+    # build the trampoline and push it on the stack
+    stack.push(self.process_resources.build_trampoline_stack(self.process_resources.futex_helper_func, futex_pointer))
+    # copy the stack over
+    stack_pointer = await stack.flush(self.gateway)
+    # start the task
+    futex_task = await self.monitor.clone(
+        lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_pointer,
+        ctid=task.address_space.null(), newtls=task.address_space.null())
+    # wait for futex helper to SIGSTOP itself,
+    # which indicates the trampoline is done and we can deallocate the stack.
+    event = await futex_task.wait_for_stop_or_exit()
+    if event.died():
+        raise Exception("thread internal futex-waiting task died unexpectedly", event)
+    # resume the futex_task so it can start waiting on the futex
+    await futex_task.send_signal(signal.SIGCONT)
+    return futex_task
+
 class ThreadMaker:
     def __init__(self, gateway: MemoryGateway, monitor: ChildTaskMonitor, process_resources: ProcessResources) -> None:
         self.gateway = gateway
@@ -2229,6 +2264,9 @@ async def rsyscall_spawn_exec_full(
         await connecting_syscall_sock.aclose()
         await connecting_data_sock.aclose()
         await connecting_describe_write.aclose()
+    # create this guy and pass him down to the new thread
+    futex_memfd = await memsys.sendmsg_fds(parent_task.base, parent_task.gateway, parent_task.allocator,
+                                           b"child_cleartid", os.O_CLOEXEC)
     # new fd namespace created here
     cthread = await thread_maker.make_cthread(
         lib.CLONE_VM|shared, function, passed_syscall_sock.near, passed_syscall_sock.near)
@@ -2260,12 +2298,16 @@ async def rsyscall_spawn_exec_full(
                     # TODO whether these things are shared depends on the `shared` flags
                     parent_task.mount, parent_task.fs, parent_task.sigmask.inherit(), parent_task.process_namespace)
     new_task.allocator = parent_task.allocator
-    # aaaargh so this is the issue of multi-hop stuff.
-    # TODO multi-hop memory stuff
     if len(new_task.sigmask.mask) != 0:
         # clear this non-empty signal mask because it's pointlessly inherited across fork
         await new_task.sigmask.setmask(new_task, set())
 
+    #### make futex thread
+    # map futex_memfd
+    # allocate a stack, run the thing, all kinds of stuff like that.
+    
+
+    #### clear out waste fds
     # We don't need these things in the parent. . .
     await far.close(parent_task.base, passed_syscall_sock)
     await far.close(parent_task.base, passed_data_sock)

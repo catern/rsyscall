@@ -128,3 +128,7 @@ async def accept4(task: Task, sockfd: FileDescriptor,
                                         task.to_near_pointer(addr) if addr else None,
                                         task.to_near_pointer(addrlen) if addrlen else None,
                                         flags))
+
+async def memfd_create(task: Task, name: Pointer, flags: int) -> FileDescriptor:
+    ret = await rsyscall.near.memfd_create(task.sysif, task.to_near_pointer(name), flags)
+    return FileDescriptor(task.fd_table, ret)
