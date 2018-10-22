@@ -249,17 +249,19 @@ class Serializer:
         self.operations.append((ptr, size, None))
         return ptr
 
-    def serialize_preallocated(self, ptr: base.Pointer, data: bytes) -> SerializedPointer:
+    def serialize_preallocated(self, real_ptr: base.Pointer, data: bytes) -> SerializedPointer:
         size = len(data)
         ptr = SerializedPointer(size)
-        ptr._real_pointer = ptr
+        ptr._real_pointer = real_ptr
         self.operations.append((ptr, size, data))
         return ptr
 
     @contextlib.asynccontextmanager
     async def with_flushed(self, gateway: MemoryGateway, allocator: memory.Allocator) -> t.AsyncGenerator[None, None]:
         # some are already allocated, so we skip them
-        needing_allocation = [ptr, size for ptr, size, _ in self.operations if ptr._real_pointer is None]
+        needing_allocation = [(ptr, size)
+                              for ptr, size, _ in self.operations
+                              if ptr._real_pointer == None]
         async with allocator.bulk_malloc([size for _, size in needing_allocation]) as pointers:
             for ptr, (ser_ptr, _) in zip(pointers, needing_allocation):
                 ser_ptr._real_pointer = ptr

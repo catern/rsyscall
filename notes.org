@@ -5314,3 +5314,26 @@ shifting back to a single process should be an easy optimization after that!
    and spawn a futex waiting task in addition to the main task.
 
    That's a bit inefficient to make a memfd each time, but it's fine.
+** memory mapping object
+   ok, should we have a memory mapping object?
+
+   I guess we can take a memory mapping object and split it.
+   By only mapping part of it.
+
+   I guess I should indeed have a memory mapping object.
+
+   HmmmmmmmmmmmMMMM
+
+   Is it kinda like segments?
+
+   Paging?
+
+   I guess I represent paging explicitly?
+
+   Yes that clearly should be done then.
+
+   But how do I differentiate from pointers then?
+
+   A pointer is something inside a specific range
+
+   MemoryMapping contains a ptr???

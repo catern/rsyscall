@@ -18,6 +18,9 @@ class SYS(enum.IntEnum):
     dup3 = lib.SYS_dup3
     accept4 = lib.SYS_accept4
     memfd_create = lib.SYS_memfd_create
+    ftruncate = lib.SYS_ftruncate
+    mmap = lib.SYS_mmap
+    set_tid_address = lib.SYS_set_tid_address
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallInterface:
@@ -65,6 +68,20 @@ class Pointer:
     def __int__(self) -> int:
         return self.address
 
+@dataclass
+class MemoryMapping:
+    address: int
+    length: int
+    def __post_init_(self) -> None:
+        # the address is page-aligned
+        assert (self.address % 4096) == 0
+
+    def __str__(self) -> str:
+        return f"MMap({hex(self.address)}, {self.length})"
+
+    def __repr__(self) -> str:
+        return str(self)
+
 # This is like an instruction, run with this segment register override prefix and arguments.
 async def read(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int) -> int:
     return (await sysif.syscall(SYS.read, fd, buf, count))
@@ -101,3 +118,19 @@ async def accept4(sysif: SyscallInterface, sockfd: FileDescriptor,
 async def memfd_create(sysif: SyscallInterface, name: Pointer, flags: int) -> FileDescriptor:
     ret = await sysif.syscall(SYS.memfd_create, name, flags)
     return FileDescriptor(ret)
+
+async def ftruncate(sysif: SyscallInterface, fd: FileDescriptor, length: int) -> None:
+    await sysif.syscall(SYS.ftruncate, fd, length)
+
+async def mmap(sysif: SyscallInterface, length: int, prot: int, flags: int,
+               addr: t.Optional[Pointer]=None, 
+               fd: t.Optional[FileDescriptor]=None, offset: int=0) -> Pointer:
+    if addr is None:
+        addr = 0 # type: ignore
+    if fd is None:
+        fd = -1 # type: ignore
+    ret = await sysif.syscall(SYS.mmap, addr, length, prot, flags, fd, offset)
+    return Pointer(ret)
+
+async def set_tid_address(sysif: SyscallInterface, ptr: Pointer) -> None:
+    await sysif.syscall(SYS.set_tid_address, ptr)

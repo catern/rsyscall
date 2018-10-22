@@ -1729,22 +1729,22 @@ class BufferedStack:
         self.buffer = b""
         return self.allocation_pointer
 
-async def launch_futex_monitor(task: Task, futex_pointer: Pointer) -> ChildTask:
+async def launch_futex_monitor(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
+                               process_resources: ProcessResources, monitor: ChildTaskMonitor,
+                               futex_pointer: Pointer) -> ChildTask:
     """Provides an asynchronous interface to the CLONE_CHILD_CLEARTID functionality
 
     Executes the instruction "ret" immediately after cloning.
 
     """
-    # TODO HMMM I wonder if I could pass in the serializer somehow so I'm agnostic to whether the pointer is preallocated?
-    # yeah, just pass in a serialized pointer!
     serializer = memsys.Serializer()
     # futexes are 4 bytes
     serializer.serialize_preallocated(futex_pointer, struct.pack('=i', 1))
     # build the trampoline and push it on the stack
-    stack_data = self.process_resources.build_trampoline_stack(self.process_resources.futex_helper_func, futex_pointer)
+    stack_data = process_resources.build_trampoline_stack(process_resources.futex_helper_func, futex_pointer)
     stack_base_pointer = serializer.serialize_data(stack_data)
     async with serializer.with_flushed(gateway, allocator):
-        futex_task = await self.monitor.clone(
+        futex_task = await monitor.clone(
             lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_base_pointer.pointer + stack_base_pointer.size,
             ctid=task.address_space.null(), newtls=task.address_space.null())
         # wait for futex helper to SIGSTOP itself,
@@ -1772,33 +1772,14 @@ class ThreadMaker:
 
         """
         task = self.monitor.signal_queue.sigfd.epolled.underlying.task
-        # allocate memory for the stack
-        stack_size = 4096
         # the mapping is SHARED rather than PRIVATE so that the futex is shared even if CLONE_VM
         # unshares the address space
-        mapping = await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED)
-        stack = BufferedStack(mapping.pointer + stack_size)
-        # allocate the futex at the base of the stack, with "1" written to it to match
-        # what futex_helper expects
-        futex_pointer = stack.push(struct.pack('i', 1))
-        # align the stack to a 16-bit boundary now, so after pushing the trampoline data,
-        # which the trampoline will all pop off, the stack will be aligned.
-        stack.align()
-        # build the trampoline and push it on the stack
-        stack.push(self.process_resources.build_trampoline_stack(self.process_resources.futex_helper_func, futex_pointer))
-        # copy the stack over
-        stack_pointer = await stack.flush(self.gateway)
-        # start the task
-        futex_task = await self.monitor.clone(
-            lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_pointer,
-            ctid=task.address_space.null(), newtls=task.address_space.null())
-        # wait for futex helper to SIGSTOP itself,
-        # which indicates the trampoline is done and we can deallocate the stack.
-        event = await futex_task.wait_for_stop_or_exit()
-        if event.died():
-            raise Exception("thread internal futex-waiting task died unexpectedly", event)
-        # resume the futex_task so it can start waiting on the futex
-        await futex_task.send_signal(signal.SIGCONT)
+        # TODO not sure that actually works
+        mapping = await task.mmap(4096, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED)
+        futex_pointer = mapping.pointer
+        futex_task = await launch_futex_monitor(
+            task.base, self.gateway, task.allocator, self.process_resources, self.monitor,
+            futex_pointer)
         # the only part of the memory mapping that's being used now is the futex address, which is a
         # huge waste. oh well, later on we can allocate futex addresses out of a shared mapping.
         child_task = await self.monitor.clone(
@@ -2258,8 +2239,8 @@ async def rsyscall_spawn_exec_full(
         await connecting_data_sock.aclose()
         await connecting_describe_write.aclose()
     # create this guy and pass him down to the new thread
-    futex_memfd = await memsys.sendmsg_fds(parent_task.base, parent_task.gateway, parent_task.allocator,
-                                           b"child_cleartid", os.O_CLOEXEC)
+    futex_memfd = await memsys.memfd_create(parent_task.base, parent_task.gateway, parent_task.allocator,
+                                            b"child_cleartid", lib.MFD_CLOEXEC)
     # new fd namespace created here
     cthread = await thread_maker.make_cthread(
         lib.CLONE_VM|shared, function, passed_syscall_sock.near, passed_syscall_sock.near)
@@ -2296,9 +2277,16 @@ async def rsyscall_spawn_exec_full(
         await new_task.sigmask.setmask(new_task, set())
 
     #### make futex thread
-    # map futex_memfd
-    # allocate a stack, run the thing, all kinds of stuff like that.
-    
+    futex_memfd_size = 4096
+    await far.ftruncate(parent_task.base, futex_memfd, futex_memfd_size)
+    mapping = await far.mmap(parent_task.base,
+                             futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED,
+                             fd=futex_memfd)
+    futex_pointer = mapping
+    futex_task = await launch_futex_monitor(parent_task.base, parent_task.gateway, parent_task.allocator,
+                                            thread_maker.process_resources, thread_maker.monitor,
+                                            futex_pointer)
+    remote_futex_memfd = inherit(futex_memfd)
 
     #### clear out waste fds
     # We don't need these things in the parent. . .
@@ -2346,6 +2334,12 @@ async def rsyscall_spawn_exec_full(
         key, value = line.rstrip().split(b'=', 1)
         symbols[key] = far.Pointer(new_task.base.address_space, near.Pointer(int(value, 16)))
     await async_describe.aclose()
+    #### set up child cleartid futex
+    remote_mapping = await far.mmap(new_task.base,
+                                    futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED,
+                                    fd=remote_futex_memfd)
+    remote_futex_pointer = remote_mapping
+    await far.set_tid_address(new_task.base, remote_futex_pointer)
     return new_task, child_task, symbols, inherited_user_fds
 
 # async def rsyscall_spawn_ssh(

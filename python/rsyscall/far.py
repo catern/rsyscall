@@ -132,3 +132,18 @@ async def accept4(task: Task, sockfd: FileDescriptor,
 async def memfd_create(task: Task, name: Pointer, flags: int) -> FileDescriptor:
     ret = await rsyscall.near.memfd_create(task.sysif, task.to_near_pointer(name), flags)
     return FileDescriptor(task.fd_table, ret)
+
+async def ftruncate(task: Task, fd: FileDescriptor, length: int) -> None:
+    await rsyscall.near.ftruncate(task.sysif, task.to_near_fd(fd), length)
+
+async def mmap(task: Task, length: int, prot: int, flags: int,
+               addr: t.Optional[Pointer]=None, 
+               fd: t.Optional[FileDescriptor]=None, offset: int=0) -> Pointer:
+    ret = await rsyscall.near.mmap(task.sysif, length, prot, flags,
+                                   task.to_near_pointer(addr) if addr else None,
+                                   task.to_near_fd(fd) if fd else None,
+                                   offset)
+    return Pointer(task.address_space, ret)
+
+async def set_tid_address(task: Task, ptr: Pointer) -> None:
+    await rsyscall.near.set_tid_address(task.sysif, task.to_near_pointer(ptr))
