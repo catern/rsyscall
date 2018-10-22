@@ -1735,35 +1735,26 @@ async def launch_futex_monitor(task: Task, futex_pointer: Pointer) -> ChildTask:
     Executes the instruction "ret" immediately after cloning.
 
     """
-    # the futex should have the value "1" in it, I guess?
-    # I guess we'll handle that.
-    # we'll use a serializer I guess...?
-    # but preload it with some memory?
-    # would be nice to use a serializer
-    # allocate memory for the stack
-    stack_size = 4096
-    stack = BufferedStack(mapping.pointer + stack_size)
-    # allocate the futex at the base of the stack, with "1" written to it to match
-    # what futex_helper expects
-    futex_pointer = stack.push(struct.pack('i', 1))
-    # align the stack to a 16-bit boundary now, so after pushing the trampoline data,
-    # which the trampoline will all pop off, the stack will be aligned.
-    stack.align()
+    # TODO HMMM I wonder if I could pass in the serializer somehow so I'm agnostic to whether the pointer is preallocated?
+    # yeah, just pass in a serialized pointer!
+    serializer = memsys.Serializer()
+    # futexes are 4 bytes
+    serializer.serialize_preallocated(futex_pointer, struct.pack('=i', 1))
     # build the trampoline and push it on the stack
-    stack.push(self.process_resources.build_trampoline_stack(self.process_resources.futex_helper_func, futex_pointer))
-    # copy the stack over
-    stack_pointer = await stack.flush(self.gateway)
-    # start the task
-    futex_task = await self.monitor.clone(
-        lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_pointer,
-        ctid=task.address_space.null(), newtls=task.address_space.null())
-    # wait for futex helper to SIGSTOP itself,
-    # which indicates the trampoline is done and we can deallocate the stack.
-    event = await futex_task.wait_for_stop_or_exit()
-    if event.died():
-        raise Exception("thread internal futex-waiting task died unexpectedly", event)
-    # resume the futex_task so it can start waiting on the futex
-    await futex_task.send_signal(signal.SIGCONT)
+    stack_data = self.process_resources.build_trampoline_stack(self.process_resources.futex_helper_func, futex_pointer)
+    stack_base_pointer = serializer.serialize_data(stack_data)
+    async with serializer.with_flushed(gateway, allocator):
+        futex_task = await self.monitor.clone(
+            lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_base_pointer.pointer + stack_base_pointer.size,
+            ctid=task.address_space.null(), newtls=task.address_space.null())
+        # wait for futex helper to SIGSTOP itself,
+        # which indicates the trampoline is done and we can deallocate the stack.
+        event = await futex_task.wait_for_stop_or_exit()
+        if event.died():
+            raise Exception("thread internal futex-waiting task died unexpectedly", event)
+        # resume the futex_task so it can start waiting on the futex
+        await futex_task.send_signal(signal.SIGCONT)
+    # the stack will be freed as it is no longer needed, but the futex pointer will live on
     return futex_task
 
 class ThreadMaker:
