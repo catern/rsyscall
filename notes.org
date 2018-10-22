@@ -3315,16 +3315,26 @@ hmm, actually it just occurred to me that this question is essentially the same 
    but that only has a futex interface,
    which is not suitable for an event loop.
 
-   Current workaround:
-   ptrace.
-
-   This is especially necessary for threads running arbitrary code.
-   We can't just ptrace such threads all the time.
+   Currently I'm just starting one thread to monitor each futex,
+   which duplicates the number of threads I run.
 
    ptrace doesn't work because ptrace sucks and break gdb/strace.
 
    Passing down one end of a cloexec pipe doesn't work because if we're a CLONE_FILES thread calling exec,
    the end will still be open in other threads.
+
+   Using futexes from a normal event loop sucks.
+
+   vfork is kind of similar but sucks.
+
+   I think this would allow an asynchronous posix_spawn.
+
+   Currently posix_spawn *must* take over the thread to use vfork.
+   But if you want to spawn another thread to do it...
+
+   ugh then I guess you can just do that, spawn another thread and then posix_spawn.
+
+   Oh but that messes up your child relationship! So yeah, you can't do that!
 ** a CLONE_DO_CLOEXEC flag to pass to clone, to close CLOEXEC fds
    This would be good and useful.
 
