@@ -122,8 +122,11 @@ class LocalMemoryGateway(MemoryGateway):
         for dest, src, n in ops:
             await self.memcpy(dest, src, n)
 
+def cffi_to_local_pointer(cffi_object) -> Pointer:
+    return Pointer(local_address_space, rsyscall.near.Pointer(int(ffi.cast('long', cffi_object))))
+
 def to_local_pointer(data: bytes) -> Pointer:
-    return Pointer(local_address_space, rsyscall.near.Pointer(int(ffi.cast('long', ffi.from_buffer(data)))))
+    return cffi_to_local_pointer(ffi.from_buffer(data))
 
 class PeerMemoryGateway(MemoryGateway):
     def __init__(self, space_a: AddressSpace,

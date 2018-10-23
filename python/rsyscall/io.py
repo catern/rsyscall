@@ -1110,15 +1110,16 @@ class ProcessResources:
         stack_struct.r8  = int(arg5)
         stack_struct.r9  = int(arg6)
         stack_struct.function = ffi.cast('void*', int(function.pointer.near))
+        logger.info("trampoline_func %s", self.trampoline_func.pointer)
         packed_trampoline_addr = struct.pack('Q', int(self.trampoline_func.pointer.near))
         stack = packed_trampoline_addr + bytes(ffi.buffer(stack_struct))
         return stack
 
 local_process_resources = ProcessResources(
-    server_func=FunctionPointer(far.Pointer(base.local_address_space, ffi.cast('long', lib.rsyscall_server))),
-    do_cloexec_func=FunctionPointer(far.Pointer(base.local_address_space, ffi.cast('long', lib.rsyscall_do_cloexec))),
-    trampoline_func=FunctionPointer(far.Pointer(base.local_address_space, ffi.cast('long', lib.rsyscall_trampoline))),
-    futex_helper_func=FunctionPointer(far.Pointer(base.local_address_space, ffi.cast('long', lib.rsyscall_futex_helper))),
+    server_func=FunctionPointer(base.cffi_to_local_pointer(lib.rsyscall_server)),
+    do_cloexec_func=FunctionPointer(base.cffi_to_local_pointer(lib.rsyscall_do_cloexec)),
+    trampoline_func=FunctionPointer(base.cffi_to_local_pointer(lib.rsyscall_trampoline)),
+    futex_helper_func=FunctionPointer(base.cffi_to_local_pointer(lib.rsyscall_futex_helper)),
 )
 
 @dataclass
@@ -1241,7 +1242,7 @@ class StandardTask:
             [near_parent_child_side] = await memsys.recvmsg_fds(self.task.base, self.task.gateway, self.task.allocator,
                                                                 self.connecting_connection[1], 1)
             parent_child_side = far.FileDescriptor(self.task.fd_table, near_parent_child_side)
-        task, child_task, symbols, fds = await rsyscall_spawn_exec_full(
+        task, thread, symbols, fds = await rsyscall_spawn_exec_full(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task, self.connecting_connection,
             self.task, thread_maker, self.process.server_func,
@@ -1742,10 +1743,13 @@ async def launch_futex_monitor(task: far.Task, gateway: MemoryGateway, allocator
     serializer.serialize_preallocated(futex_pointer, struct.pack('=i', 1))
     # build the trampoline and push it on the stack
     stack_data = process_resources.build_trampoline_stack(process_resources.futex_helper_func, futex_pointer)
-    stack_base_pointer = serializer.serialize_data(stack_data)
+    # TODO we need appropriate alignment here, we're just lucky because the alignment works fine by accident right now
+    stack_pointer = serializer.serialize_data(stack_data)
+    logger.info("about to serialize")
     async with serializer.with_flushed(gateway, allocator):
+        logger.info("did serialize")
         futex_task = await monitor.clone(
-            lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_base_pointer.pointer + stack_base_pointer.size,
+            lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_pointer.pointer,
             ctid=task.address_space.null(), newtls=task.address_space.null())
         # wait for futex helper to SIGSTOP itself,
         # which indicates the trampoline is done and we can deallocate the stack.
@@ -2188,7 +2192,7 @@ async def rsyscall_spawn_exec_full(
         parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
         user_fds: t.List[far.FileDescriptor],
         shared: UnshareFlag=UnshareFlag.FS,
-    ) -> t.Tuple[Task, ChildTask, t.Mapping[bytes, far.Pointer], t.List[far.FileDescriptor]]:
+    ) -> t.Tuple[Task, Thread, t.Mapping[bytes, far.Pointer], t.List[far.FileDescriptor]]:
     "Spawn an rsyscall server running in a separate process"
     # so there's 1. the access task, through which we access the syscall and data fds,
     # 2. the parent task, and
@@ -2282,6 +2286,8 @@ async def rsyscall_spawn_exec_full(
     mapping = await far.mmap(parent_task.base,
                              futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED,
                              fd=futex_memfd)
+    # close memfd, we don't need it anymore
+    await far.close(parent_task.base, futex_memfd)
     futex_pointer = mapping
     futex_task = await launch_futex_monitor(parent_task.base, parent_task.gateway, parent_task.allocator,
                                             thread_maker.process_resources, thread_maker.monitor,
@@ -2338,9 +2344,13 @@ async def rsyscall_spawn_exec_full(
     remote_mapping = await far.mmap(new_task.base,
                                     futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED,
                                     fd=remote_futex_memfd)
+    # close remote memfd, we don't need it anymore
+    await far.close(new_task.base, remote_futex_memfd)
     remote_futex_pointer = remote_mapping
     await far.set_tid_address(new_task.base, remote_futex_pointer)
-    return new_task, child_task, symbols, inherited_user_fds
+    # TODO how do we unmap the remote mapping?
+    thread = Thread(child_task, futex_task, mapping)
+    return new_task, thread, symbols, inherited_user_fds
 
 # async def rsyscall_spawn_ssh(
 #         access_task: Task, epoller: Epoller,
