@@ -145,5 +145,8 @@ async def mmap(task: Task, length: int, prot: int, flags: int,
                                    offset)
     return Pointer(task.address_space, ret)
 
+async def munmap(task: Task, addr: Pointer, length: int) -> None:
+    await rsyscall.near.munmap(task.sysif, task.to_near_pointer(addr), length)
+
 async def set_tid_address(task: Task, ptr: Pointer) -> None:
     await rsyscall.near.set_tid_address(task.sysif, task.to_near_pointer(ptr))

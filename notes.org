@@ -3435,6 +3435,22 @@ hmm, actually it just occurred to me that this question is essentially the same 
    (well, and also by passing it in)
 ** being able to pass a NULL name to memfd_create
    Requiring memory to allocate memory makes it impossible to bootstrap memory allocate using memfd_create.
+** add a MAP_DONT_ROUND flag for mmap to not round the length and offset to page size
+   Currently we will round them to the page size,
+   and the page size depends on the arguments and what kind of file descriptor we're mapping.
+
+   But because mmap rounds the length up,
+   munmap on the resulting mapping won't work with the mapping we pass in.
+
+   We'd rather fail to mmap,
+   than get a mapping that unexpectedly can't be munmap'd.
+
+   If we get a file descriptor passed to us from someone else,
+   that file descriptor might have a larger page size than we expect,
+   so if we mmap that file descriptor it will unexpectedly silently round up,
+   and then munmap won't work.
+
+   Plus we probably also want an fcntl to get the page size.
 * possible kernel bugs
 ** MMAP_GROWSDOWN doesn't seem to work
    It doesn't grow.
@@ -5337,3 +5353,54 @@ shifting back to a single process should be an easy optimization after that!
    A pointer is something inside a specific range
 
    MemoryMapping contains a ptr???
+*** huge pages issue
+    so the length is different and rounded up, hmm.
+
+    which means, we should only be sending in correct lengths.
+
+    because we don't want to invoke that rounding, it's weird.
+
+    so that means we need to know the page size.
+
+    the page size is not *inherently* 4096.
+
+    and offset and length must both be multiples of the page size.
+
+    soooo maybe I should, hm.
+
+    have an argument saying what we think the page size is?
+
+    there are multiple sizes of pages...
+
+    so we essentially say,
+
+    "hey, given whatever the page size of this object is,
+    map some number of pages for it."
+
+    yeah, awkwardly we can get hugepages via MAP_HUGETLB,
+    or we can get hugepages via mapping hugetlbfs
+
+    either of them can determine the page size, and we have no idea!
+
+    ideally I guess we'd, hmm.
+
+    so an fd corresponds to some pages of memory
+
+    so maybe munmap should take that fd?
+
+    how else do we know the page size?
+
+    alternatively the system call could take the page size,
+    and assert that it's correct.
+
+    argh or even better, the system call could not do any rounding.
+    that would be the ideal.
+
+    yeah so if I have an optional argument specifying the page size,
+    and it just does a validation that the length and offset match the page size,
+    then I can return a mapping and things are fine.
+
+    ideally the underlying system call would do that validation but it doesn't.
+    oh well!
+
+    and we'll default the page size to 4096 because that's what everything uses.

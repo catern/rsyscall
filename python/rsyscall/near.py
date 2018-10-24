@@ -20,6 +20,7 @@ class SYS(enum.IntEnum):
     memfd_create = lib.SYS_memfd_create
     ftruncate = lib.SYS_ftruncate
     mmap = lib.SYS_mmap
+    munmap = lib.SYS_munmap
     set_tid_address = lib.SYS_set_tid_address
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
@@ -131,6 +132,9 @@ async def mmap(sysif: SyscallInterface, length: int, prot: int, flags: int,
         fd = -1 # type: ignore
     ret = await sysif.syscall(SYS.mmap, addr, length, prot, flags, fd, offset)
     return Pointer(ret)
+
+async def munmap(sysif: SyscallInterface, addr: Pointer, length: int) -> None:
+    await sysif.syscall(SYS.munmap, task.to_near_pointer(addr), length)
 
 async def set_tid_address(sysif: SyscallInterface, ptr: Pointer) -> None:
     await sysif.syscall(SYS.set_tid_address, ptr)

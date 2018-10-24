@@ -1228,7 +1228,7 @@ class StandardTask:
     async def spawn(self,
                     user_fds: t.List[far.FileDescriptor],
                     shared: UnshareFlag=UnshareFlag.FS,
-    ) -> t.Tuple['RsyscallProcess', t.List[far.FileDescriptor]]:
+    ) -> t.Tuple[RsyscallThread, t.List[far.FileDescriptor]]:
         thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor, self.process)
         if self.connecting_connection is None:
             connecting_side, full_parent_child_side = await self.connecting_task.socketpair(
@@ -1267,8 +1267,7 @@ class StandardTask:
             task, 
             await TaskResources.make(task),
             proc_resources, self.filesystem, {**self.environment})
-        # return RsyscallThread(stdtask, cthread), fds
-        return RsyscallProcess(stdtask, child_task), fds
+        return RsyscallThread(stdtask, thread), fds
 
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
@@ -1670,14 +1669,13 @@ class Thread:
             logger.info("done mm release")
         logger.info("done closing class Thread")
 
-
     async def __aenter__(self) -> 'Thread':
         return self
 
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
-class CThread:
+class CThread(Thread):
     """A thread running the C runtime and some C function.
 
     At the moment, that means it has a stack. 
@@ -1686,23 +1684,16 @@ class CThread:
     TODO thread-local-storage.
 
     """
-    thread: Thread
     stack_mapping: memory.AnonymousMapping
     def __init__(self, thread: Thread, stack_mapping: memory.AnonymousMapping) -> None:
         self.thread = thread
         self.stack_mapping = stack_mapping
 
     async def wait_for_mm_release(self) -> ChildTask:
-        result = await self.thread.wait_for_mm_release()
+        result = await super().wait_for_mm_release()
         # we can free the stack mapping now that the thread has left our address space
         await self.stack_mapping.unmap()
         return result
-
-    async def close(self) -> None:
-        await self.thread.close()
-        logger.info("finished closing thread.thread")
-        await self.wait_for_mm_release()
-        logger.info("finished mm wait")
 
     async def __aenter__(self) -> 'CThread':
         return self
@@ -1760,6 +1751,12 @@ async def launch_futex_monitor(task: far.Task, gateway: MemoryGateway, allocator
         await futex_task.send_signal(signal.SIGCONT)
     # the stack will be freed as it is no longer needed, but the futex pointer will live on
     return futex_task
+
+async def do_mmap(self):
+(task: Task, length: int, prot: int, flags: int,
+               addr: t.Optional[Pointer]=None, 
+               fd: t.Optional[FileDescriptor]=None, offset: int=0)
+    pass
 
 class ThreadMaker:
     def __init__(self, gateway: MemoryGateway, monitor: ChildTaskMonitor, process_resources: ProcessResources) -> None:
@@ -2394,14 +2391,10 @@ async def rsyscall_spawn_exec_full(
 #     fdnum, fdnum = stdout.read()
 
 
-class RsyscallTask:
-    # TODO make this into an interface
-    pass
-
-class RsyscallThread(RsyscallTask):
+class RsyscallThread:
     def __init__(self,
                  stdtask: StandardTask,
-                 thread: CThread,
+                 thread: Thread,
     ) -> None:
         self.stdtask = stdtask
         self.thread = thread
@@ -2419,31 +2412,6 @@ class RsyscallThread(RsyscallTask):
         logger.info("finished closing thread")
         await self.stdtask.task.close()
         logger.info("finished closing task")
-
-    async def __aenter__(self) -> StandardTask:
-        return self.stdtask
-
-    async def __aexit__(self, *args, **kwargs) -> None:
-        await self.close()
-
-class RsyscallProcess(RsyscallTask):
-    # this is used for any rsyscall daemon owning its own resources,
-    # rather than having its parent own its resources.
-    def __init__(self,
-                 stdtask: StandardTask,
-                 child_task: ChildTask,
-    ) -> None:
-        self.stdtask = stdtask
-        self.child_task = child_task
-
-    async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
-                     envp: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
-    ) -> ChildTask:
-        await self.stdtask.execve(path, argv, envp)
-        return self.child_task
-
-    async def close(self) -> None:
-        await self.child_task.kill()
 
     async def __aenter__(self) -> StandardTask:
         return self.stdtask

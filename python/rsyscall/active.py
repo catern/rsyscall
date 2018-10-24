@@ -34,3 +34,13 @@ class FileDescriptor:
 class Pipe:
     read: FileDescriptor
     write: FileDescriptor
+
+@dataclass
+class MemoryMapping:
+    task: rsyscall.far.Task
+    address: far.Pointer
+    length: int
+
+    async def munmap(self) -> None:
+        await rsyscall.far.munmap(self.task, self.address, self.length)
+
