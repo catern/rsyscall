@@ -1538,8 +1538,9 @@ class ChildTaskMonitor:
                         # might collect the zombie for that pid and cause pid reuse
                         async with self.wait_lock:
                             logger.info("waiting on waitid")
-                            siginfo = await memsys.waitid(task.syscall, task.gateway, task.allocator,
-                                                          None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
+                            siginfo = await memsys.waitid(
+                                task.syscall, task.gateway, task.allocator,
+                                None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
                             logger.info("done with waitid")
                     except ChildProcessError:
                         # no more children
@@ -1601,8 +1602,8 @@ class Thread:
     """
     child_task: ChildTask
     futex_task: ChildTask
-    futex_mapping: memory.AnonymousMapping
-    def __init__(self, child_task: ChildTask, futex_task: ChildTask, futex_mapping: memory.AnonymousMapping) -> None:
+    futex_mapping: active.MemoryMapping
+    def __init__(self, child_task: ChildTask, futex_task: ChildTask, futex_mapping: active.MemoryMapping) -> None:
         self.child_task = child_task
         self.futex_task = futex_task
         self.futex_mapping = futex_mapping
@@ -1655,7 +1656,7 @@ class Thread:
         if not result.clean():
             raise Exception("the futex task", self.futex_task, "for child task", self.child_task,
                             "unexpectedly exited non-zero", result, "maybe it was SIGKILL'd?")
-        await self.futex_mapping.unmap()
+        await self.futex_mapping.munmap()
         self.released = True
         return self.child_task
 
@@ -1752,12 +1753,6 @@ async def launch_futex_monitor(task: far.Task, gateway: MemoryGateway, allocator
     # the stack will be freed as it is no longer needed, but the futex pointer will live on
     return futex_task
 
-async def do_mmap(self):
-(task: Task, length: int, prot: int, flags: int,
-               addr: t.Optional[Pointer]=None, 
-               fd: t.Optional[FileDescriptor]=None, offset: int=0)
-    pass
-
 class ThreadMaker:
     def __init__(self, gateway: MemoryGateway, monitor: ChildTaskMonitor, process_resources: ProcessResources) -> None:
         self.gateway = gateway
@@ -1776,8 +1771,9 @@ class ThreadMaker:
         # the mapping is SHARED rather than PRIVATE so that the futex is shared even if CLONE_VM
         # unshares the address space
         # TODO not sure that actually works
-        mapping = await task.mmap(4096, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED)
-        futex_pointer = mapping.pointer
+        mapping = await far.mmap(task.base, 4096, memory.ProtFlag.READ|memory.ProtFlag.WRITE,
+                                 memory.MapFlag.SHARED|memory.MapFlag.ANONYMOUS)
+        futex_pointer = mapping.as_pointer()
         futex_task = await launch_futex_monitor(
             task.base, self.gateway, task.allocator, self.process_resources, self.monitor,
             futex_pointer)
@@ -1786,7 +1782,7 @@ class ThreadMaker:
         child_task = await self.monitor.clone(
             flags | lib.CLONE_CHILD_CLEARTID, child_stack,
             ctid=futex_pointer, newtls=newtls)
-        return Thread(child_task, futex_task, mapping)
+        return Thread(child_task, futex_task, active.MemoryMapping(task.base, mapping))
 
     async def make_cthread(self, flags: int,
                           function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
@@ -2285,7 +2281,7 @@ async def rsyscall_spawn_exec_full(
                              fd=futex_memfd)
     # close memfd, we don't need it anymore
     await far.close(parent_task.base, futex_memfd)
-    futex_pointer = mapping
+    futex_pointer = mapping.as_pointer()
     futex_task = await launch_futex_monitor(parent_task.base, parent_task.gateway, parent_task.allocator,
                                             thread_maker.process_resources, thread_maker.monitor,
                                             futex_pointer)
@@ -2343,10 +2339,16 @@ async def rsyscall_spawn_exec_full(
                                     fd=remote_futex_memfd)
     # close remote memfd, we don't need it anymore
     await far.close(new_task.base, remote_futex_memfd)
-    remote_futex_pointer = remote_mapping
+    remote_futex_pointer = remote_mapping.as_pointer()
+    # TODO fuuuuug okay
+    # okay so I need some kind of serializer class which takes a pointer and length specifying an area to serialize into, I guess.
+    # I'll do that instead of allocating memory.......
+    # so it's a simple increment allocator, I guess?
+    # well I guess the allocator I pass in, can be relative to this zone??!??!?
+    # but it's a bit weird because we want to know that the pointer lives past the death of the serializer flush.
     await far.set_tid_address(new_task.base, remote_futex_pointer)
     # TODO how do we unmap the remote mapping?
-    thread = Thread(child_task, futex_task, mapping)
+    thread = Thread(child_task, futex_task, active.MemoryMapping(parent_task.base, mapping))
     return new_task, thread, symbols, inherited_user_fds
 
 # async def rsyscall_spawn_ssh(

@@ -73,12 +73,21 @@ class Pointer:
 class MemoryMapping:
     address: int
     length: int
+    page_size: int
+
     def __post_init_(self) -> None:
-        # the address is page-aligned
-        assert (self.address % 4096) == 0
+        # the address and length are page-aligned
+        assert (self.address % self.page_size) == 0
+        assert (self.length % self.page_size) == 0
+
+    def as_pointer(self) -> Pointer:
+        return Pointer(self.address)
 
     def __str__(self) -> str:
-        return f"MMap({hex(self.address)}, {self.length})"
+        if self.page_size == 4096:
+            return f"MMap({hex(self.address)}, {self.length})"
+        else:
+            return f"MMap(pgsz={self.page_size}, {hex(self.address)}, {self.length})"
 
     def __repr__(self) -> str:
         return str(self)
@@ -125,16 +134,22 @@ async def ftruncate(sysif: SyscallInterface, fd: FileDescriptor, length: int) ->
 
 async def mmap(sysif: SyscallInterface, length: int, prot: int, flags: int,
                addr: t.Optional[Pointer]=None, 
-               fd: t.Optional[FileDescriptor]=None, offset: int=0) -> Pointer:
+               fd: t.Optional[FileDescriptor]=None, offset: int=0,
+               page_size: int=4096) -> MemoryMapping:
     if addr is None:
         addr = 0 # type: ignore
+    else:
+        assert (int(addr) % page_size) == 0
     if fd is None:
         fd = -1 # type: ignore
+    # TODO we want Linux to enforce this for us, but instead it just rounds,
+    # leaving us unable to later munmap.
+    assert (int(length) % page_size) == 0
     ret = await sysif.syscall(SYS.mmap, addr, length, prot, flags, fd, offset)
-    return Pointer(ret)
+    return MemoryMapping(address=ret, length=length, page_size=page_size)
 
-async def munmap(sysif: SyscallInterface, addr: Pointer, length: int) -> None:
-    await sysif.syscall(SYS.munmap, task.to_near_pointer(addr), length)
+async def munmap(sysif: SyscallInterface, mapping: MemoryMapping) -> None:
+    await sysif.syscall(SYS.munmap, mapping.address, mapping.length)
 
 async def set_tid_address(sysif: SyscallInterface, ptr: Pointer) -> None:
     await sysif.syscall(SYS.set_tid_address, ptr)

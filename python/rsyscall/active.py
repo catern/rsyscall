@@ -38,9 +38,8 @@ class Pipe:
 @dataclass
 class MemoryMapping:
     task: rsyscall.far.Task
-    address: far.Pointer
-    length: int
+    far: rsyscall.far.MemoryMapping
 
     async def munmap(self) -> None:
-        await rsyscall.far.munmap(self.task, self.address, self.length)
+        await rsyscall.far.munmap(self.task, self.far)
 

@@ -3451,6 +3451,13 @@ hmm, actually it just occurred to me that this question is essentially the same 
    and then munmap won't work.
 
    Plus we probably also want an fcntl to get the page size.
+
+   Ah, and also this flag should probably require that we pass MAP_HUGETLB and the right size bits
+   if we're mapping a hugetlb file descriptor.
+   That way we won't accidentally pass the correct length?
+   I guess if we accidentally pass the correct length then it's fine.
+
+   Still probably should require the right size bits.
 * possible kernel bugs
 ** MMAP_GROWSDOWN doesn't seem to work
    It doesn't grow.
@@ -3459,6 +3466,12 @@ hmm, actually it just occurred to me that this question is essentially the same 
    it doesn't seem to do a futex wakeup.
 
    Didn't yet check whether the address is cleared or not - probably not.
+** (possibly creates userspace bugs) munmap works differently on hugetlb files
+   This means that if I control the file that some userspace program mmaps,
+   I can ensure that their later munmap will fail.
+
+   That seems at least good enough for a denial of service,
+   and possibly could even cause security problems.
 * design decisions
 ** TODO should we grab the Task out of other objects, or pass it explicitly?
    Consider RsyscallTask.make as an example.
@@ -5404,3 +5417,52 @@ shifting back to a single process should be an easy optimization after that!
     oh well!
 
     and we'll default the page size to 4096 because that's what everything uses.
+
+    Oh and we need the page size in the mapping object.
+* futex goofiness
+  what the heck, I can't get futexes to work across processes! argh!
+
+  or more precisely, I can't get clone_clear_childtid to clear the tid
+
+  I guess
+
+  ffs I can't get futex to work properly in separate address spaces
+
+  FUCK my life
+
+  atomic_read(&mm->mm_users) > 1)
+
+  GOD DAMN IT
+
+  OK so we're fucked
+
+  How are we supposed to figure out whether the exec succeeds??
+
+  this piece of shit...
+  fuck...
+
+  fuck!!!
+
+  okay, what about vfork?
+
+  I could use a robust futex????
+
+  OK so, hm.
+
+  So I could use pthreads?
+
+  I lock a mutex at the start
+
+  OH!
+  The robust list actually is per-process!
+
+  Hmm!
+
+  If I give up completely on running arbitrary code...
+  Then I can do it.
+
+  aaaaa okay okay fine
+** robust list
+  so the only way to do this is by setting the robust list after clone or exec or whatever.
+
+  Let's, I guess, do this in the futex page?

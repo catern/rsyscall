@@ -354,6 +354,26 @@ struct cmsghdr {
     ...;
 };
 
+//// ugh, have to take this over to get notification of thread exec
+#define SYS_set_robust_list
+
+// see kernel source for documentation
+struct robust_list {
+	struct robust_list *next;
+};
+
+struct robust_list_head {
+	struct robust_list list;
+	long futex_offset;
+	struct robust_list *list_op_pending;
+};
+
+struct singleton_robust_list {
+   struct robust_list_head head;
+   struct robust_list entry;
+   uint32_t futex;
+};
+
 """)
 # TODO need to get the struct definition
 # TODO need to get the syscall numbers

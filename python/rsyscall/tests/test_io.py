@@ -308,6 +308,8 @@ class TestIO(unittest.TestCase):
                     rsyscall_task3, _ = await stdtask2.spawn([])
                     async with rsyscall_task3 as stdtask3:
                         await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
+                        print("SBAUGH hello done")
+                    print("SBAUGH hello done again")
         trio.run(test)
 
     # def test_thread_exec(self) -> None:
