@@ -2185,7 +2185,7 @@ async def set_singleton_robust_futex(task: far.Task, gateway: MemoryGateway, all
         'struct robust_list*', (ffi.cast('void*', 0),)))) + memsys.pointer.pack(int(futex_pointer)))
     robust_list_head = serializer.serialize_cffi(
         'struct robust_list_head', lambda:
-        (ffi.cast('void*', robust_list_entry.pointer), futex_offset, ffi.cast('void*', 0)))
+        ((ffi.cast('void*', robust_list_entry.pointer),), futex_offset, ffi.cast('void*', 0)))
     async with serializer.with_flushed(gateway, allocator):
         await far.set_robust_list(task, robust_list_head.pointer, robust_list_head.size)
 

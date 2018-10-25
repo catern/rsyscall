@@ -97,7 +97,8 @@ def align(num: int, alignment: int) -> int:
     return num + (alignment - (num % alignment))
 
 class AllocatorInterface:
-    async def bulk_malloc(self, sizes: t.List[int]) -> t.AsyncContextManager[t.List[Pointer]]:
+    @contextlib.asynccontextmanager
+    async def bulk_malloc(self, sizes: t.List[int]) -> t.AsyncGenerator[t.List[Pointer], None]:
         # A naive bulk allocator
         pointers: t.List[Pointer] = []
         with contextlib.ExitStack() as stack:
@@ -110,12 +111,11 @@ class AllocatorInterface:
         pass
 
 class PreallocatedAllocator(AllocatorInterface):
-    def __init__(self, base_pointer: far.Pointer, length: int) -> None:
+    def __init__(self, base_pointer: rsyscall.far.Pointer, length: int) -> None:
         self.base_pointer = base_pointer
         self.length = length
         self.index = 0
 
-    @contextlib.contextmanager
     async def malloc(self, size: int) -> t.ContextManager[Pointer]:
         if (self.index + size > self.length):
             raise Exception("too much memory allocated")
