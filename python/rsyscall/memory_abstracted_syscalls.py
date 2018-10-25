@@ -257,7 +257,8 @@ class Serializer:
         return ptr
 
     @contextlib.asynccontextmanager
-    async def with_flushed(self, gateway: MemoryGateway, allocator: memory.Allocator) -> t.AsyncGenerator[None, None]:
+    async def with_flushed(self, gateway: MemoryGateway, allocator: memory.AllocatorInterface
+    ) -> t.AsyncGenerator[None, None]:
         # some are already allocated, so we skip them
         needing_allocation = [(ptr, size)
                               for ptr, size, _ in self.operations

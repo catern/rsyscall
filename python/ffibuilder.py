@@ -368,12 +368,6 @@ struct robust_list_head {
 	struct robust_list *list_op_pending;
 };
 
-struct singleton_robust_list {
-   struct robust_list_head head;
-   struct robust_list entry;
-   uint32_t futex;
-};
-
 """)
 # TODO need to get the struct definition
 # TODO need to get the syscall numbers

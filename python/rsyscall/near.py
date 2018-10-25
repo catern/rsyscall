@@ -22,6 +22,7 @@ class SYS(enum.IntEnum):
     mmap = lib.SYS_mmap
     munmap = lib.SYS_munmap
     set_tid_address = lib.SYS_set_tid_address
+    set_robust_list = lib.SYS_set_robust_list
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallInterface:
@@ -153,3 +154,6 @@ async def munmap(sysif: SyscallInterface, mapping: MemoryMapping) -> None:
 
 async def set_tid_address(sysif: SyscallInterface, ptr: Pointer) -> None:
     await sysif.syscall(SYS.set_tid_address, ptr)
+
+async def set_robust_list(sysif: SyscallInterface, head: Pointer, len: int) -> None:
+    await sysif.syscall(SYS.set_robust_list, head, len)

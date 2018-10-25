@@ -3,6 +3,8 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.base import AddressSpace, Pointer, SyscallInterface
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.near
+import rsyscall.far
+import abc
 import enum
 import contextlib
 import typing as t
@@ -94,7 +96,35 @@ class Arena:
 def align(num: int, alignment: int) -> int:
     return num + (alignment - (num % alignment))
 
-class Allocator:
+class AllocatorInterface:
+    async def bulk_malloc(self, sizes: t.List[int]) -> t.AsyncContextManager[t.List[Pointer]]:
+        # A naive bulk allocator
+        pointers: t.List[Pointer] = []
+        with contextlib.ExitStack() as stack:
+            for size in sizes:
+                pointers.append(stack.enter_context(await self.malloc(size)))
+            yield pointers
+
+    @abc.abstractmethod
+    async def malloc(self, size: int) -> t.ContextManager[Pointer]:
+        pass
+
+class PreallocatedAllocator(AllocatorInterface):
+    def __init__(self, base_pointer: far.Pointer, length: int) -> None:
+        self.base_pointer = base_pointer
+        self.length = length
+        self.index = 0
+
+    @contextlib.contextmanager
+    async def malloc(self, size: int) -> t.ContextManager[Pointer]:
+        if (self.index + size > self.length):
+            raise Exception("too much memory allocated")
+        ret = self.base_pointer + self.index
+        self.index += size
+        return contextlib.nullcontext(ret)
+        # we don't free the memory
+
+class Allocator(AllocatorInterface):
     """A somewhat-efficient memory allocator.
 
     Perfect in its foresight, but not so bright.

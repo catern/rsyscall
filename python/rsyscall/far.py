@@ -176,3 +176,6 @@ async def munmap(task: Task, mapping: MemoryMapping) -> None:
 
 async def set_tid_address(task: Task, ptr: Pointer) -> None:
     await rsyscall.near.set_tid_address(task.sysif, task.to_near_pointer(ptr))
+
+async def set_robust_list(task: Task, head: Pointer, len: int) -> None:
+    await rsyscall.near.set_robust_list(task.sysif, task.to_near_pointer(head), len)

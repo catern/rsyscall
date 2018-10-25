@@ -2176,6 +2176,19 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
         symbols[key] = far.Pointer(address_space, near.Pointer(int(value, 16)))
     return new_task, child_task, symbols, inherited_user_fds
 
+async def set_singleton_robust_futex(task: far.Task, gateway: MemoryGateway, allocator: memory.PreallocatedAllocator,
+                                     futex_pointer: Pointer,
+) -> None:
+    serializer = memsys.Serializer()
+    futex_offset = ffi.sizeof('struct robust_list')
+    robust_list_entry = serializer.serialize_data(bytes(ffi.buffer(ffi.new(
+        'struct robust_list*', (ffi.cast('void*', 0),)))) + memsys.pointer.pack(int(futex_pointer)))
+    robust_list_head = serializer.serialize_cffi(
+        'struct robust_list_head', lambda:
+        (ffi.cast('void*', robust_list_entry.pointer), futex_offset, ffi.cast('void*', 0)))
+    async with serializer.with_flushed(gateway, allocator):
+        await far.set_robust_list(task, robust_list_head.pointer, robust_list_head.size)
+
 async def rsyscall_spawn_exec_full(
         access_task: Task, access_epoller: Epoller,
         # regrettably asymmetric...
@@ -2346,7 +2359,9 @@ async def rsyscall_spawn_exec_full(
     # so it's a simple increment allocator, I guess?
     # well I guess the allocator I pass in, can be relative to this zone??!??!?
     # but it's a bit weird because we want to know that the pointer lives past the death of the serializer flush.
-    await far.set_tid_address(new_task.base, remote_futex_pointer)
+    await set_singleton_robust_futex(new_task.base, new_task.gateway,
+                                     memory.PreallocatedAllocator(remote_futex_pointer+8, 4088),
+                                     remote_futex_pointer)
     # TODO how do we unmap the remote mapping?
     thread = Thread(child_task, futex_task, active.MemoryMapping(parent_task.base, mapping))
     return new_task, thread, symbols, inherited_user_fds
