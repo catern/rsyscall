@@ -5466,3 +5466,46 @@ shifting back to a single process should be an easy optimization after that!
   so the only way to do this is by setting the robust list after clone or exec or whatever.
 
   Let's, I guess, do this in the futex page?
+
+  ugh it's not working
+** kernel hacking
+   so I need to get a kernel hacking setup running again, ffs.
+
+   I guess what I want is a Nix expression that builds a disk image and script,
+   which I can pass a kernel image to.
+
+   Ooh, I can do super Emacs integration awesomeness.
+
+   OK so I can start qemu with -qmp pointing to a pipe of my control.
+
+   Then I use that to learn whether it's nographic or not, figuring out the terminal.
+
+   that may be excessive
+
+   ok so basically,
+
+   meh let's just simplify it down to just starting something that gives us the monitor,
+
+   and we do the appropriate attaching on top of that.
+   very simple helper function.
+
+
+   or the more expansive vision would
+   prompt you for a configuration.nix which you could edit on the fly,
+   then build and start it in a VM
+
+   I guess I'd want an emacs command that rebuilds, and hard reboots the VM.
+
+   Then another command that runs a test in the VM?
+
+   bah BAH
+
+   okay so we need to mount it across, hmm
+
+   and we'll start off by kernel debuggin' when we enter this process or something.
+
+   that gives us a test we can run inside the kernel.
+
+   or we can just printk in mm_release
+
+   so yeah we need to run the thing inside the VM now.
