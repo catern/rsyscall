@@ -5509,3 +5509,5 @@ shifting back to a single process should be an easy optimization after that!
    or we can just printk in mm_release
 
    so yeah we need to run the thing inside the VM now.
+* need to remember
+  gotta try using recv/send instead

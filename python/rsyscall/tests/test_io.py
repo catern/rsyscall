@@ -300,26 +300,26 @@ class TestIO(unittest.TestCase):
     #                     await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
     #     trio.run(test)
 
-    # def test_thread_nest(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-    #             rsyscall_task, _ = await stdtask.spawn([])
-    #             async with rsyscall_task as stdtask2:
-    #                 rsyscall_task3, _ = await stdtask2.spawn([])
-    #                 async with rsyscall_task3 as stdtask3:
-    #                     await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
-    #                     print("SBAUGH hello done")
-    #                 print("SBAUGH hello done again")
-    #     trio.run(test)
-
-    def test_thread_exec(self) -> None:
+    def test_thread_nest(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
                 rsyscall_task, _ = await stdtask.spawn([])
-                async with rsyscall_task:
-                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
-                    await child_task.wait_for_exit()
+                async with rsyscall_task as stdtask2:
+                    rsyscall_task3, _ = await stdtask2.spawn([])
+                    async with rsyscall_task3 as stdtask3:
+                        await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
+                        print("SBAUGH hello done")
+                    print("SBAUGH hello done again")
         trio.run(test)
+
+    # def test_thread_exec(self) -> None:
+    #     async def test() -> None:
+    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #             rsyscall_task, _ = await stdtask.spawn([])
+    #             async with rsyscall_task:
+    #                 child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+    #                 await child_task.wait_for_exit()
+    #     trio.run(test)
 
     # def test_thread_mkdtemp(self) -> None:
     #     async def test() -> None:
@@ -483,7 +483,7 @@ class TestIO(unittest.TestCase):
     #                                              r2_remote, (len(in_data)))
     #                 self.assertEqual(in_data, out_data)
                     
-    #                 print(r2_remote)
+    #                 print("HELLO", r2_remote)
     #     trio.run(test)
 
     # def test_socket_binder(self) -> None:

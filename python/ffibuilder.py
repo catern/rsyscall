@@ -1,5 +1,12 @@
 from cffi import FFI
 import pkgconfig
+import pathlib
+
+libexecdir = pathlib.Path(pkgconfig.variables('rsyscall')['libexecdir'])
+rsyscall_server_path = libexecdir/"rsyscall_server"
+assert rsyscall_server_path.exists()
+# We'll store the rsyscall_server_path into the extension module, so
+# we don't have to generate a separate thing.
 
 ffibuilder = FFI()
 # include the rsyscall header
@@ -52,7 +59,8 @@ struct robust_list_head {
   long futex_offset;
   struct robust_list *list_op_pending;
 };
-""", **rsyscall)
+""" + f'const char rsyscall_server_path[] = "{str(rsyscall_server_path)}";\n', **rsyscall)
+ffibuilder.cdef("const char rsyscall_server_path[];")
 ffibuilder.cdef("""
 typedef union epoll_data {
     uint64_t u64;
@@ -378,23 +386,3 @@ struct robust_list_head {
 };
 
 """)
-# TODO need to get the struct definition
-# TODO need to get the syscall numbers
-# urgh
-# include(rsyscall['include_dirs'])
-# python is so terrible ARGH
-# why do I have to repeat the cdefs here, ARGH
-# okay okay I will do it.
-# it's annoying but I'll do it.
-# oh can I do the reading with just memcpy...
-
-# I'll cast the return value of syscall to
-# er no wait
-# i'll take a pointer as an int,
-# cast it to a pointer,
-# make a buffer,
-# copy thing around,
-# all done it's good woo hoo
-
-# for read, I can actually just cast it to a pointer and return it, right? neat.
-# and for write, I just call out to memcpy.

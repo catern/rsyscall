@@ -69,6 +69,14 @@ class Path:
     def split(self) -> t.Tuple[Path, bytes]:
         return Path(self.base, self.components[:-1]), self.components[-1]
 
+    @staticmethod
+    def from_bytes(mount_namespace: MountNamespace, fs_information: FSInformation, path: bytes) -> Path:
+        if path.startswith(b"/"):
+            return Path(RootPathBase(mount_namespace, fs_information), path[1:].split(b"/"))
+        else:
+            return Path(CWDPathBase(mount_namespace, fs_information), path.split(b"/"))
+
+
 @dataclass(eq=False)
 class ProcessNamespace:
     "The namespace for processes and process groups"

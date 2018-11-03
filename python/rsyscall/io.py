@@ -1131,6 +1131,7 @@ class FilesystemResources:
     utilities: UnixUtilities
     # locale?
     # home directory?
+    rsyscall_server_path: base.Path
 
     @staticmethod
     async def make_from_bootstrap(task: Task, bootstrap: UnixBootstrap) -> 'FilesystemResources':
@@ -1138,12 +1139,16 @@ class FilesystemResources:
         for prefix in bootstrap.environ[b"PATH"].split(b":"):
             executable_dirs.append(Path.from_bytes(task, prefix))
         executable_lookup_cache = ExecutableLookupCache(executable_dirs)
-        tmpdir = Path.from_bytes(task, bootstrap.environ[b"TMPDIR"])
+        tmpdir = Path.from_bytes(task, bootstrap.environ.get(b"TMPDIR", b"/tmp"))
         utilities = await build_unix_utilities(executable_lookup_cache)
+        rsyscall_server_path = base.Path.from_bytes(
+            task.mount, task.fs,
+            ffi.string(lib.rsyscall_server_path))
         return FilesystemResources(
             executable_lookup_cache=executable_lookup_cache,
             tmpdir=tmpdir,
             utilities=utilities,
+            rsyscall_server_path=rsyscall_server_path,
         )
 
 class BatchGatewayOperation:
@@ -1248,6 +1253,7 @@ class StandardTask:
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task, self.connecting_connection,
             self.task, thread_maker, self.process.server_func,
+            self.filesystem.rsyscall_server_path,
             [parent_child_side] + user_fds, shared)
         child_side, *fds = fds
         proc_resources = ProcessResources(
@@ -2198,6 +2204,7 @@ async def rsyscall_spawn_exec_full(
         access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
         connecting_task: Task, connecting_connection: t.Optional[t.Tuple[far.FileDescriptor, far.FileDescriptor]],
         parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
+        rsyscall_server_path: base.Path,
         user_fds: t.List[far.FileDescriptor],
         shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple[Task, Thread, t.Mapping[bytes, far.Pointer], t.List[far.FileDescriptor]]:
@@ -2318,9 +2325,6 @@ async def rsyscall_spawn_exec_full(
         await near.fcntl(syscall, fd, fcntl.F_SETFD, 0)
     # wow! the task just keeps working! neat!
     # TODO need to validate that path matches up with the task
-    import shutil
-    path = base.Path(base.RootPathBase(None, None), # type: ignore
-                     [s.encode() for s in shutil.which("rsyscall_server").split("/")[1:]]) # type: ignore
     # TODO hmm argh we don't get a response from this execveat so the thing just hangs
     # HMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
     # maybe we *do* need the futex waiting thing, ugh.
@@ -2336,9 +2340,11 @@ async def rsyscall_spawn_exec_full(
         return str(int(fd)).encode()
     # new address space created here
     child_task = await cthread.thread.execveat(
-        syscall, gateway, parent_task.allocator, path,
-        [b"rsyscall"] + [encode(remote_describe_write.near), encode(syscall.infd.near), encode(syscall.outfd.near)] +
-        [encode(fd) for fd in inherited_fds], [], 0)
+        syscall, gateway, parent_task.allocator, rsyscall_server_path, [
+            b"rsyscall_server",
+            encode(remote_describe_write.near), encode(syscall.infd.near), encode(syscall.outfd.near),
+            *[encode(fd) for fd in inherited_fds],
+        ], [], 0)
     new_task.base.address_space = base.AddressSpace(process.id)
     new_task.allocator = memory.Allocator(syscall, new_task.base.address_space)
     async_describe = await AsyncFileDescriptor.make(access_epoller, access_describe_read)
