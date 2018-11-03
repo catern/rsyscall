@@ -59,6 +59,10 @@ struct robust_list_head {
   long futex_offset;
   struct robust_list *list_op_pending;
 };
+
+// sigh, glibc doesn't export these
+#define FUTEX_WAITERS 0x80000000
+#define FUTEX_TID_MASK 0x3fffffff
 """ + f'const char rsyscall_server_path[] = "{str(rsyscall_server_path)}";\n', **rsyscall)
 ffibuilder.cdef("const char rsyscall_server_path[];")
 ffibuilder.cdef("""
@@ -384,5 +388,8 @@ struct robust_list_head {
   long futex_offset;
   struct robust_list *list_op_pending;
 };
+
+#define FUTEX_WAITERS ...
+#define FUTEX_TID_MASK ...
 
 """)

@@ -33,8 +33,9 @@ rsyscall_trampoline:
 
 .globl rsyscall_futex_helper
 rsyscall_futex_helper:
-	// safely stash the futex address
-	movq %rdi, %r9
+	// safely stash the
+	movq %rdi, %r8 // futex address and
+	movq %rsi, %r9 // futex value.
 	// get my tid
 	movq $__NR_gettid, %rax
 	syscall
@@ -43,10 +44,10 @@ rsyscall_futex_helper:
         movq $19, %rsi
 	movq $__NR_tkill, %rax
 	syscall
-	// futex(futex_address, FUTEX_WAIT, 1)
-	movq %r9, %rdi
+	// futex(futex_address, FUTEX_WAIT, futex_value)
+	movq %r8, %rdi
 	movq $0, %rsi    // FUTEX_WAIT == 0
-	movq $1, %rdx
+	movq %r9, %rdx
 	movq $__NR_futex, %rax
 	syscall
 	// exit(0)

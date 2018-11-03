@@ -5511,3 +5511,6 @@ shifting back to a single process should be an easy optimization after that!
    so yeah we need to run the thing inside the VM now.
 * need to remember
   gotta try using recv/send instead
+
+  also another thought is,
+  I'm kinda doing a distributed dynamic linking thing here.

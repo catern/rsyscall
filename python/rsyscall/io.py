@@ -1637,7 +1637,7 @@ class Thread:
                 except RsyscallHangup:
                     pass
                 except:
-                    logger.info("SBAUGH we all lost")
+                    logger.info("SBAUGH we got cancelled probably")
                     raise
                 else:
                     raise Exception("execveat unexpectedly returned?")
@@ -1649,6 +1649,7 @@ class Thread:
                 nursery.cancel_scope.cancel()
             nursery.start_soon(syscall)
             nursery.start_soon(wait_for_success)
+        logger.info("SBAUGH returning from execveat on %s %s", path, argv)
         return child_task
 
     async def wait_for_mm_release(self) -> ChildTask:
@@ -1732,17 +1733,16 @@ class BufferedStack:
 
 async def launch_futex_monitor(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
                                process_resources: ProcessResources, monitor: ChildTaskMonitor,
-                               futex_pointer: Pointer) -> ChildTask:
+                               futex_pointer: Pointer, futex_value: int) -> ChildTask:
     """Provides an asynchronous interface to the CLONE_CHILD_CLEARTID functionality
 
     Executes the instruction "ret" immediately after cloning.
 
     """
     serializer = memsys.Serializer()
-    # futexes are 4 bytes
-    serializer.serialize_preallocated(futex_pointer, struct.pack('=i', 1))
     # build the trampoline and push it on the stack
-    stack_data = process_resources.build_trampoline_stack(process_resources.futex_helper_func, futex_pointer)
+    print("futex pointer and value", futex_pointer, futex_value)
+    stack_data = process_resources.build_trampoline_stack(process_resources.futex_helper_func, futex_pointer, futex_value)
     # TODO we need appropriate alignment here, we're just lucky because the alignment works fine by accident right now
     stack_pointer = serializer.serialize_data(stack_data)
     logger.info("about to serialize")
@@ -1784,7 +1784,7 @@ class ThreadMaker:
         futex_pointer = mapping.as_pointer()
         futex_task = await launch_futex_monitor(
             task.base, self.gateway, task.allocator, self.process_resources, self.monitor,
-            futex_pointer)
+            futex_pointer, 0)
         # the only part of the memory mapping that's being used now is the futex address, which is a
         # huge waste. oh well, later on we can allocate futex addresses out of a shared mapping.
         child_task = await self.monitor.clone(
@@ -2185,17 +2185,23 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
     return new_task, child_task, symbols, inherited_user_fds
 
 async def set_singleton_robust_futex(task: far.Task, gateway: MemoryGateway, allocator: memory.PreallocatedAllocator,
-                                     futex_pointer: Pointer,
-) -> None:
+                                     futex_value: int,
+) -> Pointer:
     serializer = memsys.Serializer()
     futex_offset = ffi.sizeof('struct robust_list')
-    robust_list_entry = serializer.serialize_data(bytes(ffi.buffer(ffi.new(
-        'struct robust_list*', (ffi.cast('void*', 0),)))) + memsys.pointer.pack(int(futex_pointer)))
+    futex_data = struct.pack('=I', futex_value)
+    robust_list_entry = serializer.serialize_lambda(
+        futex_offset + len(futex_data),
+        # we indicate that this is the last entry in the list by pointing it to itself
+        lambda: (bytes(ffi.buffer(ffi.new('struct robust_list*', (ffi.cast('void*', robust_list_entry.pointer),))))
+                 + futex_data))
     robust_list_head = serializer.serialize_cffi(
         'struct robust_list_head', lambda:
         ((ffi.cast('void*', robust_list_entry.pointer),), futex_offset, ffi.cast('void*', 0)))
     async with serializer.with_flushed(gateway, allocator):
         await far.set_robust_list(task, robust_list_head.pointer, robust_list_head.size)
+    futex_pointer = robust_list_entry.pointer + futex_offset
+    return futex_pointer
 
 async def rsyscall_spawn_exec_full(
         access_task: Task, access_epoller: Epoller,
@@ -2295,18 +2301,7 @@ async def rsyscall_spawn_exec_full(
         # clear this non-empty signal mask because it's pointlessly inherited across fork
         await new_task.sigmask.setmask(new_task, set())
 
-    #### make futex thread
-    futex_memfd_size = 4096
-    await far.ftruncate(parent_task.base, futex_memfd, futex_memfd_size)
-    mapping = await far.mmap(parent_task.base,
-                             futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED,
-                             fd=futex_memfd)
-    # close memfd, we don't need it anymore
-    await far.close(parent_task.base, futex_memfd)
-    futex_pointer = mapping.as_pointer()
-    futex_task = await launch_futex_monitor(parent_task.base, parent_task.gateway, parent_task.allocator,
-                                            thread_maker.process_resources, thread_maker.monitor,
-                                            futex_pointer)
+    # have to pass this down
     remote_futex_memfd = inherit(futex_memfd)
 
     #### clear out waste fds
@@ -2355,23 +2350,37 @@ async def rsyscall_spawn_exec_full(
         symbols[key] = far.Pointer(new_task.base.address_space, near.Pointer(int(value, 16)))
     await async_describe.aclose()
     #### set up child cleartid futex
+
+    #### make futex thread
+    # resize memfd appropriately
+    futex_memfd_size = 4096
+    await far.ftruncate(parent_task.base, futex_memfd, futex_memfd_size)
+    # set up local mapping
+    local_mapping = await far.mmap(parent_task.base,
+                                   futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED,
+                                   fd=futex_memfd)
+    await far.close(parent_task.base, futex_memfd)
+    local_mapping_pointer = local_mapping.as_pointer()
+    # set up remote mapping
     remote_mapping = await far.mmap(new_task.base,
                                     futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED,
                                     fd=remote_futex_memfd)
-    # close remote memfd, we don't need it anymore
     await far.close(new_task.base, remote_futex_memfd)
-    remote_futex_pointer = remote_mapping.as_pointer()
-    # TODO fuuuuug okay
-    # okay so I need some kind of serializer class which takes a pointer and length specifying an area to serialize into, I guess.
-    # I'll do that instead of allocating memory.......
-    # so it's a simple increment allocator, I guess?
-    # well I guess the allocator I pass in, can be relative to this zone??!??!?
-    # but it's a bit weird because we want to know that the pointer lives past the death of the serializer flush.
-    await set_singleton_robust_futex(new_task.base, new_task.gateway,
-                                     memory.PreallocatedAllocator(remote_futex_pointer+8, 4088),
-                                     remote_futex_pointer)
+    remote_mapping_pointer = remote_mapping.as_pointer()
+
+    # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
+    futex_value = lib.FUTEX_WAITERS|(process.id & lib.FUTEX_TID_MASK)
+    # this is distasteful and leaky, we're relying on the fact that the PreallocatedAllocator never frees things
+    remote_futex_pointer = await set_singleton_robust_futex(
+        new_task.base, new_task.gateway,
+        memory.PreallocatedAllocator(remote_mapping_pointer, 4096), futex_value)
+    local_futex_pointer = local_mapping_pointer + (int(remote_futex_pointer) - int(remote_mapping_pointer))
+    # now we start the futex monitor
+    futex_task = await launch_futex_monitor(parent_task.base, parent_task.gateway, parent_task.allocator,
+                                            thread_maker.process_resources, thread_maker.monitor,
+                                            local_futex_pointer, futex_value)
     # TODO how do we unmap the remote mapping?
-    thread = Thread(child_task, futex_task, active.MemoryMapping(parent_task.base, mapping))
+    thread = Thread(child_task, futex_task, active.MemoryMapping(parent_task.base, local_mapping))
     return new_task, thread, symbols, inherited_user_fds
 
 # async def rsyscall_spawn_ssh(
