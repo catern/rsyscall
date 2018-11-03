@@ -312,14 +312,14 @@ class TestIO(unittest.TestCase):
                     print("SBAUGH hello done again")
         trio.run(test)
 
-    # def test_thread_exec(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-    #             rsyscall_task, _ = await stdtask.spawn([])
-    #             async with rsyscall_task:
-    #                 child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
-    #                 await child_task.wait_for_exit()
-    #     trio.run(test)
+    def test_thread_exec(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                rsyscall_task, _ = await stdtask.spawn([])
+                async with rsyscall_task:
+                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                    await child_task.wait_for_exit()
+        trio.run(test)
 
     # def test_thread_mkdtemp(self) -> None:
     #     async def test() -> None:

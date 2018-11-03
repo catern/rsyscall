@@ -2434,11 +2434,18 @@ class RsyscallThread:
         self.thread = thread
 
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
-                     envp: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
+                     env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
     ) -> ChildTask:
-        await self.stdtask.execve(path, argv, envp)
-        # we return the still-running ChildTask that was inside this RsyscallThread
-        return (await self.thread.wait_for_mm_release())
+        envp = {**self.stdtask.environment}
+        for key in env_updates:
+            envp[os.fsencode(key)] = await fspath(env_updates[key])
+        raw_envp: t.List[bytes] = []
+        for key, value in envp.items():
+            raw_envp.append(b''.join([key, b'=', value]))
+        task = self.stdtask.task
+        return (await self.thread.execveat(task.base.sysif, task.gateway, task.allocator,
+                                           path.pure, [await fspath(arg) for arg in argv],
+                                           raw_envp, flags=0))
 
     async def close(self) -> None:
         logger.info("starting closing thread")
