@@ -1208,12 +1208,14 @@ class StandardTask:
         process_resources = local_process_resources
         task_resources = await TaskResources.make(task)
         filesystem_resources = await FilesystemResources.make_from_bootstrap(task, bootstrap)
-        connection_listening_socket = await task.socket_unix(socket.SOCK_STREAM)
-        sockpath = Path.from_bytes(task, b"./rsyscall.sock")
-        await robust_unix_bind(sockpath, connection_listening_socket)
-        await connection_listening_socket.listen(10)
+        # connection_listening_socket = await task.socket_unix(socket.SOCK_STREAM)
+        # sockpath = Path.from_bytes(task, b"./rsyscall.sock")
+        # await robust_unix_bind(sockpath, connection_listening_socket)
+        # await connection_listening_socket.listen(10)
+        # access_connection = (sockpath, connection_listening_socket)
+        access_connection = None
         return StandardTask(
-            task, task_resources.epoller, (sockpath, connection_listening_socket),
+            task, task_resources.epoller, access_connection,
             task, None,
             task, task_resources, process_resources, filesystem_resources,
             {**bootstrap.environ})
@@ -2207,7 +2209,7 @@ async def rsyscall_spawn_exec_full(
     # okay but this is a slight simplification, because there may also be,
     # 4. the connection task, which is a task that actually gets the fds and passes them down to the parent task?
     # if access_task == connecting_task:
-    if False:
+    if access_task == connecting_task:
         access_syscall_sock, connecting_syscall_sock = await access_task.socketpair(
             socket.AF_UNIX, socket.SOCK_STREAM, 0)
         access_data_sock, connecting_data_sock = await access_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)

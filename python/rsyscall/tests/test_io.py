@@ -300,26 +300,26 @@ class TestIO(unittest.TestCase):
     #                     await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
     #     trio.run(test)
 
-    def test_thread_nest(self) -> None:
-        async def test() -> None:
-            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-                rsyscall_task, _ = await stdtask.spawn([])
-                async with rsyscall_task as stdtask2:
-                    rsyscall_task3, _ = await stdtask2.spawn([])
-                    async with rsyscall_task3 as stdtask3:
-                        await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
-                        print("SBAUGH hello done")
-                    print("SBAUGH hello done again")
-        trio.run(test)
-
-    # def test_thread_exec(self) -> None:
+    # def test_thread_nest(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
     #             rsyscall_task, _ = await stdtask.spawn([])
-    #             async with rsyscall_task:
-    #                 child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
-    #                 await child_task.wait_for_exit()
+    #             async with rsyscall_task as stdtask2:
+    #                 rsyscall_task3, _ = await stdtask2.spawn([])
+    #                 async with rsyscall_task3 as stdtask3:
+    #                     await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
+    #                     print("SBAUGH hello done")
+    #                 print("SBAUGH hello done again")
     #     trio.run(test)
+
+    def test_thread_exec(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                rsyscall_task, _ = await stdtask.spawn([])
+                async with rsyscall_task:
+                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                    await child_task.wait_for_exit()
+        trio.run(test)
 
     # def test_thread_mkdtemp(self) -> None:
     #     async def test() -> None:
@@ -463,55 +463,55 @@ class TestIO(unittest.TestCase):
                 print(fds)
         trio.run(test)
 
-    def test_pass_fd_thread(self) -> None:
-        async def test() -> None:
-            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-                task = stdtask.task
-                l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
-                rsyscall_task, [r_remote] = await stdtask.spawn([r.active.far])
-                async with rsyscall_task as stdtask2:
-                    l2, r2 = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
-                    await memsys.sendmsg_fds(task.base, task.gateway, task.allocator,
-                                             l.active.far, [r2.active.far])
-                    [r2_remote] = await memsys.recvmsg_fds(
-                        stdtask2.task.base, stdtask2.task.gateway, stdtask2.task.allocator, r_remote, 1)
-                    await r2.aclose()
-                    in_data = b"hello"
-                    await l2.write(in_data)
-                    out_data = await memsys.read(stdtask2.task.syscall,
-                                                 stdtask2.task.gateway, stdtask2.task.allocator,
-                                                 r2_remote, (len(in_data)))
-                    self.assertEqual(in_data, out_data)
+    # def test_pass_fd_thread(self) -> None:
+    #     async def test() -> None:
+    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #             task = stdtask.task
+    #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    #             rsyscall_task, [r_remote] = await stdtask.spawn([r.active.far])
+    #             async with rsyscall_task as stdtask2:
+    #                 l2, r2 = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    #                 await memsys.sendmsg_fds(task.base, task.gateway, task.allocator,
+    #                                          l.active.far, [r2.active.far])
+    #                 [r2_remote] = await memsys.recvmsg_fds(
+    #                     stdtask2.task.base, stdtask2.task.gateway, stdtask2.task.allocator, r_remote, 1)
+    #                 await r2.aclose()
+    #                 in_data = b"hello"
+    #                 await l2.write(in_data)
+    #                 out_data = await memsys.read(stdtask2.task.syscall,
+    #                                              stdtask2.task.gateway, stdtask2.task.allocator,
+    #                                              r2_remote, (len(in_data)))
+    #                 self.assertEqual(in_data, out_data)
                     
-                    print(r2_remote)
-        trio.run(test)
+    #                 print(r2_remote)
+    #     trio.run(test)
 
-    def test_socket_binder(self) -> None:
-        async def test() -> None:
-            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-                task = stdtask.task
-                describe_pipe = await task.pipe()
-                binder_process, [describe_write] = await stdtask.spawn([describe_pipe.wfd.active.far])
-                binder_task = binder_process.stdtask.task.base
-                if int(describe_write) != 1:
-                    await near.dup3(binder_task.sysif, binder_task.to_near_fd(describe_write), near.FileDescriptor(1), 0)
-                async_describe = await AsyncFileDescriptor.make(stdtask.resources.epoller, describe_pipe.rfd)
-                socket_binder_executable = rsyscall.io.Path.from_bytes(
-                    binder_process.stdtask.task, shutil.which("rsyscall_server").encode()) # type: ignore
-                async with binder_process:
-                    # hmm so we need a proper Thread thingy, so we can exec properly and deal with RsyscallHangup
-                    child = await binder_process.execve(socket_binder_executable, ["socket_binder"])
-                    data_path, pass_path = [rsyscall.io.Path.from_bytes(task, data_path) async
-                                            for line in rsyscall.io.read_lines(async_describe)]
-                    pass_sock = await task.socket_unix(socket.SOCK_STREAM)
-                    await rsyscall.io.robust_unix_connect(pass_path, pass_sock)
-                    listening_sock, = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator,
-                                                               pass_sock.active.far, 1)
-                    (await child.wait_for_exit()).check()
-                client_sock = await task.socket_unix(socket.SOCK_STREAM)
-                await rsyscall.io.robust_unix_connect(data_path, client_sock)
-                server_fd = await near.accept4(task.base.sysif, listening_sock, None, None, os.O_CLOEXEC)
-        trio.run(test)
+    # def test_socket_binder(self) -> None:
+    #     async def test() -> None:
+    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #             task = stdtask.task
+    #             describe_pipe = await task.pipe()
+    #             binder_process, [describe_write] = await stdtask.spawn([describe_pipe.wfd.active.far])
+    #             binder_task = binder_process.stdtask.task.base
+    #             if int(describe_write) != 1:
+    #                 await near.dup3(binder_task.sysif, binder_task.to_near_fd(describe_write), near.FileDescriptor(1), 0)
+    #             async_describe = await AsyncFileDescriptor.make(stdtask.resources.epoller, describe_pipe.rfd)
+    #             socket_binder_executable = rsyscall.io.Path.from_bytes(
+    #                 binder_process.stdtask.task, shutil.which("rsyscall_server").encode()) # type: ignore
+    #             async with binder_process:
+    #                 # hmm so we need a proper Thread thingy, so we can exec properly and deal with RsyscallHangup
+    #                 child = await binder_process.execve(socket_binder_executable, ["socket_binder"])
+    #                 data_path, pass_path = [rsyscall.io.Path.from_bytes(task, data_path) async
+    #                                         for line in rsyscall.io.read_lines(async_describe)]
+    #                 pass_sock = await task.socket_unix(socket.SOCK_STREAM)
+    #                 await rsyscall.io.robust_unix_connect(pass_path, pass_sock)
+    #                 listening_sock, = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator,
+    #                                                            pass_sock.active.far, 1)
+    #                 (await child.wait_for_exit()).check()
+    #             client_sock = await task.socket_unix(socket.SOCK_STREAM)
+    #             await rsyscall.io.robust_unix_connect(data_path, client_sock)
+    #             server_fd = await near.accept4(task.base.sysif, listening_sock, None, None, os.O_CLOEXEC)
+    #     trio.run(test)
 
 if __name__ == '__main__':
     import unittest

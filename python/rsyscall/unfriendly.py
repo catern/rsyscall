@@ -1,8 +1,11 @@
+from __future__ import annotations
+from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.base import Pointer, RsyscallException, RsyscallHangup
 from rsyscall.base import T_addr, UnixAddress, PathTooLongError, InetAddress
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory as memory
 import os
+import typing as t
 
 class Task:
     pass
