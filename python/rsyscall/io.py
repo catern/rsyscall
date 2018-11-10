@@ -2417,6 +2417,11 @@ async def bootstrap(
         pass_path_bytes: bytes,
 ) -> t.Tuple[Task, ChildTask, t.Mapping[bytes, far.Pointer], t.List[far.FileDescriptor]]:
     # Just start a child, and have it perform the handshake on these literal bytes
+    task, child_task, pointers, fds = rsyscall_spawn(
+        access_task, epoller, None, 
+        access_task, None,
+        access_task,
+    )
     rsyscall_task, _ = await access_task.spawn([])
     stdtask = rsyscall_task.stdtask
     pass_sock = await access_task.socket_unix(socket.SOCK_STREAM)

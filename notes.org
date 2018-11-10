@@ -5573,3 +5573,53 @@ shifting back to a single process should be an easy optimization after that!
   Ah, we'll fake the bootstrapping.
 
   We'll just start a new child task which is local instead of remote.
+
+  I want the minimal task required to start a child.
+
+  Well.
+
+  That's nothing.
+
+  What I want really is the minimal task required to start a child *which can exec*.
+
+  That needs a whole buncha things.
+  I need child monitoring,
+  I need thread trampoline...
+
+  Well, if I don't monitor the child, there's no trouble.
+
+  I still need the trampoline though.
+
+  I also need a memory gateway and allocator, of course.
+
+  Why do I ask for this?
+
+  Well, exec_full needs to spawn a thread, so that it can exec into the rsyscall process.
+
+  Hmm I need not just the trampoline but also the syscall function.
+
+  Oh I don't actually need the memory gateway do I?
+  Oh, I do because of the trampoline. Argh.
+
+  Hmmm.
+  Can I avoid that somehow?
+
+  By making something specialized for rsyscall_server?
+  So, I need to communicate the fds that it will use.
+
+  If it's in the same fd namespace, those can't be hardcoded.
+
+  OK so I need the memory gateway just to make a thread.
+
+  But then, shouldn't I have everything I need?
+
+  Yes, I do.
+
+  But the resulting task does not have a memory gateway.
+
+  When I start a task that's going to go across ssh,
+  what's the relationship between access task, connecting task, parent task, new task?
+
+  Usually the parent task is the access task.
+  But if that's not the case,
+  then we have to make a memory-gateway which connects two others.
