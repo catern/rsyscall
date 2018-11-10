@@ -31,14 +31,30 @@ class TestIO(unittest.TestCase):
         self.stdout = self.stdstreams.stdout
         self.stderr = self.stdstreams.stderr
 
-    # def test_pipe(self):
-    #     async def test() -> None:
-    #         async with (await self.task.pipe()) as pipe:
-    #             in_data = b"hello"
-    #             await pipe.wfd.write(in_data)
-    #             out_data = await pipe.rfd.read(len(in_data))
-    #             self.assertEqual(in_data, out_data)
-    #     trio.run(test)
+    def test_pipe(self):
+        async def test() -> None:
+            async with (await self.task.pipe()) as pipe:
+                in_data = b"hello"
+                await pipe.wfd.write(in_data)
+                out_data = await pipe.rfd.read(len(in_data))
+                self.assertEqual(in_data, out_data)
+        trio.run(test)
+
+    def test_recv_pipe(self) -> None:
+        """Sadly, recv doesn't work on pipes
+
+        Which is a major bummer, because that would allow us to avoid
+        messing with O_NONBLOCk stuff
+
+        """
+        async def test() -> None:
+            async with (await self.task.pipe()) as pipe:
+                in_data = b"hello"
+                await pipe.wfd.write(in_data)
+                out_data = await memsys.recv(self.task.base, self.task.gateway, self.task.allocator,
+                                             pipe.rfd.active.far, len(in_data), 0)
+                self.assertEqual(in_data, out_data)
+        trio.run(test)
 
     # def test_cat(self) -> None:
     #     async def test() -> None:
@@ -123,12 +139,12 @@ class TestIO(unittest.TestCase):
                 await trio.sleep(0.01)
                 await async_pipe_wfd.write(data)
 
-    # def test_async(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-    #             epoller = stdtask.resources.epoller
-    #             await self.do_async_things(epoller, self.task)
-    #     trio.run(test)
+    def test_async(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                epoller = stdtask.resources.epoller
+                await self.do_async_things(epoller, self.task)
+        trio.run(test)
 
     # def test_async_multi(self) -> None:
     #     async def test() -> None:

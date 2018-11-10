@@ -5187,8 +5187,10 @@ This shows some of the core idea.
 very important caveat: they don't nest!
 * secure usage of rsyscall when you setuid to untrusted users
   prctl(PR_SET_DUMPABLE, SUID_DUMP_DISABLE);
-* TODO look into using msg_dontwait for pipes
+* DONE look into using msg_dontwait for pipes
   Maybe we don't need to use O_NONBLOCK at all.
+
+  Nope, doesn't work.
 * plan
 need to make a nice API for passing an fd, I guess.
 that's the first step?
@@ -5509,8 +5511,65 @@ shifting back to a single process should be an easy optimization after that!
    or we can just printk in mm_release
 
    so yeah we need to run the thing inside the VM now.
+** yay it works!
+   everything is good once more!
 * need to remember
+** DONE recv/send
   gotta try using recv/send instead
 
+  now for recv/send stuff!
+
+  oh it doesn't work oh well
+
+  at least that's resolved!
+** using main epoll
+  also the using the epollfd in different threads
+
+  what we need then on an asyncfd is,
+
+  the fd,
+  an epoll in the same fd space as that fd so we can add/remove/modify the fd,
+  an epoll in any space so we can wait on the fd.
+** linking
   also another thought is,
   I'm kinda doing a distributed dynamic linking thing here.
+
+  you know, if I went full-in on Nix,
+  I could nicely not have to specify the path to the bootstrap.
+  Instead I specify from the source host,
+  exactly what I want on the remote host,
+  and Nix satisfies it.
+
+  of course this requires Nix to be on the PATH on the remote host,
+  but that's more expected than the rsyscall bootstrap being there.
+
+  I might go ahead and do that
+* alright okay
+  moving on, we need to get remoteness working
+
+  for automated tests we'll probably have to set up our own SSH environment, y'know?
+
+  which might be useful for at TS
+
+  anyway remoteness
+
+  we theoretically just need to run a bootstrapper task,
+  which will be self-contained,
+  and the parent of that task will be the access task,
+  and the resulting task will be the connecting task.
+
+  that task can't exec, right
+
+  oh, right, my first step was to run the socket_binder
+
+  On the local host
+
+  And connect to it from Python and get the bound socket.
+
+  Hmm no we will run it over ssh, and do the ssh forwarding, and all that.
+
+  And then launch a process using that as our connection.
+
+  Ah, we'll fake the bootstrapping.
+
+  We'll just start a new child task which is local instead of remote.

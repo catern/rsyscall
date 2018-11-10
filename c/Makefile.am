@@ -11,7 +11,7 @@ include_HEADERS = src/rsyscall.h
 
 # Programs
 bin_PROGRAMS = cat remote_cat socket_binder
-libexec_PROGRAMS = rsyscall_server
+pkglibexec_PROGRAMS = rsyscall-server
 # bin_PROGRAMS = rsyscall_server cat remote_in_to_out in_to_remote_out
 rsyscall_server_SOURCES = src/rsyscall_server_main.c
 rsyscall_server_LDADD = librsyscall.la

@@ -11,6 +11,7 @@ logger.setLevel(logging.INFO)
 class SYS(enum.IntEnum):
     read = lib.SYS_read
     write = lib.SYS_write
+    recvfrom = lib.SYS_recvfrom
     close = lib.SYS_close
     fcntl = lib.SYS_fcntl
     sendmsg = lib.SYS_sendmsg
@@ -99,6 +100,9 @@ async def read(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count:
 
 async def write(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int) -> int:
     return (await sysif.syscall(SYS.write, fd, buf, count))
+
+async def recv(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int, flags: int) -> int:
+    return (await sysif.syscall(SYS.recvfrom, fd, buf, count, flags))
 
 async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
     await sysif.syscall(SYS.close, fd)

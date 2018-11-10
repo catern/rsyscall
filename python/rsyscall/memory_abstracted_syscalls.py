@@ -48,6 +48,13 @@ async def write(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memo
     async with localize_data(gateway, allocator, buf) as (buf_ptr, buf_len):
         return (await raw_syscall.write(sysif, fd, buf_ptr, buf_len))
 
+async def recv(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
+               fd: far.FileDescriptor, count: int, flags: int) -> bytes:
+    logger.debug("recv(%s, %s, %s)", fd, count, flags)
+    with await allocator.malloc(count) as buf_ptr:
+        ret = await far.recv(task, fd, buf_ptr, count, flags)
+        return (await read_to_bytes(gateway, buf_ptr, ret))
+
 async def memfd_create(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
                        name: bytes, flags: int) -> far.FileDescriptor:
     async with localize_data(gateway, allocator, name+b"\0") as (name_ptr, _):

@@ -1144,11 +1144,15 @@ class FilesystemResources:
         rsyscall_server_path = base.Path.from_bytes(
             task.mount, task.fs,
             ffi.string(lib.rsyscall_server_path))
+        socket_binder_path = base.Path.from_bytes(
+            task.mount, task.fs,
+            ffi.string(lib.socket_binder_path))
         return FilesystemResources(
             executable_lookup_cache=executable_lookup_cache,
             tmpdir=tmpdir,
             utilities=utilities,
             rsyscall_server_path=rsyscall_server_path,
+            socket_binder_path=socket_binder_path,
         )
 
 class BatchGatewayOperation:
@@ -2382,6 +2386,58 @@ async def rsyscall_spawn_exec_full(
     # TODO how do we unmap the remote mapping?
     thread = Thread(child_task, futex_task, active.MemoryMapping(parent_task.base, local_mapping))
     return new_task, thread, symbols, inherited_user_fds
+
+# Need to identify the host, I guess
+# I shouldn't abstract this too much - I should just use ssh.
+@contextlib.asynccontextmanager
+async def run_socket_binder(
+        access_task: Task, epoller: Epoller,
+        ssh_path: Path,
+        ssh_host: bytes,
+        socket_binder_path: bytes,
+) -> None:
+    describe_pipe = await task.pipe()
+    binder_task, [describe_write] = await self.stdtask.spawn([describe_pipe.wfd], shared=UnshareFlag.NONE)
+    # move describe_write to 1
+    # TODO we should really just pass down stdout to here instead of hardcoding 1
+    if int(describe_write) != 1:
+        await near.dup3(binder_task, binder_task.to_near_fd(describe_write), 1, 0)
+    async_describe = await AsyncFileDescriptor.make(epoller, describe_pipe.rfd)
+    async with binder_task:
+        child = await binder_task.execve(ssh_path, [ssh_host, socket_binder_path])
+        data_path_bytes, pass_path_bytes = [line async for line in read_lines(async_describe)]
+        yield data_path_bytes, pass_path_bytes
+        (await child.wait_for_exit()).check()
+
+async def bootstrap(
+        access_task: Task, epoller: Epoller,
+        ssh_path: Path,
+        ssh_host: bytes,
+        data_path_bytes: bytes,
+        pass_path_bytes: bytes,
+) -> t.Tuple[Task, ChildTask, t.Mapping[bytes, far.Pointer], t.List[far.FileDescriptor]]:
+    # Just start a child, and have it perform the handshake on these literal bytes
+    rsyscall_task, _ = await access_task.spawn([])
+    stdtask = rsyscall_task.stdtask
+    pass_sock = await access_task.socket_unix(socket.SOCK_STREAM)
+    await robust_unix_connect(pass_path_bytes, pass_sock)
+    listening_sock, = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator, pass_sock, 1)
+
+    # nowe we overwrite the connecting task to be us, instead of access_task,
+    # and we use um...
+    # oh yeah we also need to do the forwarding I guess.
+    # or no we don't.
+    # the path is local, we can just construct it
+    access_connection = (Path.from_bytes(access_task, data_path_bytes), listening_sock)
+    connecting_task = rsyscall_task.stdtask.task
+    pass
+
+async def rsyscall_spawn_ssh(
+        access_task: Task, epoller: Epoller,
+) -> None:
+    # maybe I should have the process this starts, set PDEATHSIG so it dies if we do?
+    async with run_socket_binder(access_task) as data_path_bytes, pass_path_bytes:
+        local_process, remote_task = await bootstrap_and_forward(data_path_bytes, pass_path_bytes)
 
 # async def rsyscall_spawn_ssh(
 #         access_task: Task, epoller: Epoller,
