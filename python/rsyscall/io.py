@@ -1242,15 +1242,22 @@ class StandardTask:
                     shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple[RsyscallThread, t.List[far.FileDescriptor]]:
         thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor, self.process)
-        if self.connecting_connection is None:
+        if self.connecting_task == self.task:
+            # Set up the future connection between the connecting task and the new task we're making.
+            # If we are the same task as our connecting task, we can just socketpair directly and pass it down.
             connecting_side, full_parent_child_side = await self.connecting_task.socketpair(
                 socket.AF_UNIX, socket.SOCK_STREAM, 0)
             parent_child_side = full_parent_child_side.active.far
         else:
+            # If we're not the same task as our connecting task, we need to use our connecting_connection.
+            assert self.connecting_connection is not None
+            # Make a socketpair in the connecting task.
             connecting_side, connecting_parent_child_side = await self.connecting_task.socketpair(
                 socket.AF_UNIX, socket.SOCK_STREAM, 0)
+            # Send one side from the connecting task over the connecting_connection
             await memsys.sendmsg_fds(self.connecting_task.base, self.connecting_task.gateway, self.connecting_task.allocator,
                                      self.connecting_connection[0], [connecting_parent_child_side.active.far])
+            # Receive that side on our side of the connecting_connection
             [near_parent_child_side] = await memsys.recvmsg_fds(self.task.base, self.task.gateway, self.task.allocator,
                                                                 self.connecting_connection[1], 1)
             parent_child_side = far.FileDescriptor(self.task.fd_table, near_parent_child_side)
@@ -2448,11 +2455,11 @@ async def ssh_bootstrap(
 
 async def spawn_ssh(
         task: StandardTask, ssh_path: Path, ssh_host: bytes,
-) -> None:
+) -> t.Tuple[ChildTask, StandardTask]:
     socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
     async with run_socket_binder(task, ssh_path, ssh_host, socket_binder_path) as (data_path_bytes, pass_path_bytes):
-        local_process, remote_task = await ssh_bootstrap(task, ssh_path, ssh_host,
-                                                         data_path_bytes, pass_path_bytes)
+        return (await ssh_bootstrap(task, ssh_path, ssh_host,
+                                    data_path_bytes, pass_path_bytes))
 
 # async def rsyscall_spawn_ssh(
 #         access_task: Task, epoller: Epoller,

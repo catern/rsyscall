@@ -341,8 +341,12 @@ class TestIO(unittest.TestCase):
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
                 # TODO argh ok so I need to build an ssh test environment since my sandbox VM doesn't support self-ssh.
-                await rsyscall.io.spawn_ssh(stdtask, stdtask.filesystem.utilities.ssh, b"localhost")
-                pass
+                local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
+                    stdtask, stdtask.filesystem.utilities.ssh, b"localhost")
+                rsyscall_task, _ = await remote_stdtask.spawn([])
+                async with rsyscall_task:
+                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh.pure, ['sh', '-c', 'sleep .01'])
+                    await child_task.wait_for_exit()
         trio.run(test)
 
     # def test_thread_mkdtemp(self) -> None:

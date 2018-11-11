@@ -58,18 +58,18 @@ int main()
     if (connsock < 0) err(1, "accept4(passsock)");
     if (close(passsock) < 0) err(1, "close(passsock)");
     if (unlinkat(dirfd, "pass", 0) < 0) err(1, "unlinkat");
-    struct {
+    union {
         struct cmsghdr hdr;
-        int fd;
+        char buf[CMSG_SPACE(sizeof(int))];
     } cmsg = {
         .hdr = {
-            .cmsg_len = sizeof(cmsg),
+            .cmsg_len = CMSG_LEN(sizeof(int)),
             .cmsg_level = SOL_SOCKET,
             .cmsg_type = SCM_RIGHTS,
         },
-        .fd = datasock,
     };
-    char waste_data[1] = {0};
+    *((int *) CMSG_DATA(&cmsg.hdr)) = datasock;
+    char waste_data = 0;
     struct iovec io = {
         .iov_base = &waste_data,
         .iov_len = sizeof(waste_data),
@@ -78,7 +78,7 @@ int main()
         .msg_name = NULL,
         .msg_namelen = 0,
         .msg_iov = &io,
-        .msg_iovlen = sizeof(io),
+        .msg_iovlen = 1,
         .msg_control = &cmsg,
         .msg_controllen = sizeof(cmsg),
     };
