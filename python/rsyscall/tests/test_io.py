@@ -333,14 +333,15 @@ class TestIO(unittest.TestCase):
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
                 rsyscall_task, _ = await stdtask.spawn([])
                 async with rsyscall_task:
-                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh.pure, ['sh', '-c', 'sleep .01'])
                     await child_task.wait_for_exit()
         trio.run(test)
 
     def test_ssh_basic(self) -> None:
         async def test() -> None:
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-                await spawn_ssh(stdtask, stdtask.filesystem.utilities.ssh, b"localhost")
+                # TODO argh ok so I need to build an ssh test environment since my sandbox VM doesn't support self-ssh.
+                await rsyscall.io.spawn_ssh(stdtask, stdtask.filesystem.utilities.ssh, b"localhost")
                 pass
         trio.run(test)
 

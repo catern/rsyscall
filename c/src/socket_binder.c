@@ -55,6 +55,7 @@ int main()
     dprintf(1, "%s/pass\n", dir);
     if (close(1) < 0) err(1, "close(1)");
     const int connsock = accept4(passsock, NULL, NULL, SOCK_CLOEXEC);
+    if (connsock < 0) err(1, "accept4(passsock)");
     if (close(passsock) < 0) err(1, "close(passsock)");
     if (unlinkat(dirfd, "pass", 0) < 0) err(1, "unlinkat");
     struct {
@@ -68,15 +69,20 @@ int main()
         },
         .fd = datasock,
     };
+    char waste_data[1] = {0};
+    struct iovec io = {
+        .iov_base = &waste_data,
+        .iov_len = sizeof(waste_data),
+    };
     struct msghdr msg = {
         .msg_name = NULL,
         .msg_namelen = 0,
-        .msg_iov = NULL,
-        .msg_iovlen = 0,
+        .msg_iov = &io,
+        .msg_iovlen = sizeof(io),
         .msg_control = &cmsg,
         .msg_controllen = sizeof(cmsg),
     };
-    if (sendmsg(connsock, &msg, 0) < 0) err(1, "sendmsg");
+    if (sendmsg(connsock, &msg, 0) < 0) err(1, "sendmsg(connsock=%d, {msg={datasock=%d}})", connsock, datasock);
     if (close(connsock) < 0) err(1, "close(connsock)");
     free(dir);
     if (close(datasock) < 0) err(1, "close(connsock)");

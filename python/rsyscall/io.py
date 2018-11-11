@@ -367,7 +367,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         """
         if self.open:
             self.open = False
-            return self.__class__(self.task, self.pure, self.file)
+            return self.__class__(self.task, self.active.far, self.file)
         else:
             raise Exception("file descriptor already closed")
 
@@ -1322,7 +1322,7 @@ class TemporaryDirectory:
         async with new_task:
             # TODO would be nice if unsharing the fs information gave us a cap to chdir
             await new_task.stdtask.task.chdir(self.parent)
-            child = await new_task.execve(self.stdtask.filesystem.utilities.rm, ["rm", "-r", self.name])
+            child = await new_task.execve(self.stdtask.filesystem.utilities.rm.pure, ["rm", "-r", self.name])
             (await child.wait_for_exit()).check()
 
     async def __aenter__(self) -> 'Path':
@@ -2077,6 +2077,7 @@ async def read_lines(fd: AsyncFileDescriptor[ReadableFile]) -> t.AsyncIterator[b
         data = await fd.read()
         if len(data) == 0:
             # yield up whatever's left
+            print("got EOF while reading lines")
             if len(buf) != 0:
                 yield buf
             break
@@ -2088,7 +2089,9 @@ async def read_lines(fd: AsyncFileDescriptor[ReadableFile]) -> t.AsyncIterator[b
             except ValueError:
                 break
             else:
-                yield buf[:i]
+                line = buf[:i]
+                print("read line", line)
+                yield line
                 buf = buf[i+1:]
 
 async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: FunctionPointer,
@@ -2184,7 +2187,6 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
     # TODO read from describe and parse
     symbols: t.Dict[bytes, far.Pointer] = {}
     async for line in read_lines(async_describe):
-        print("line", line)
         key, value = line.rstrip().split(b'=', 1)
         symbols[key] = far.Pointer(address_space, near.Pointer(int(value, 16)))
     return new_task, child_task, symbols, inherited_user_fds
@@ -2406,9 +2408,13 @@ async def run_socket_binder(
     if int(describe_write) != 1:
         await near.dup3(binder_task.stdtask.task.base.sysif, binder_task.stdtask.task.base.to_near_fd(describe_write),
                         near.FileDescriptor(1), 0)
+        await far.close(binder_task.stdtask.task.base, describe_write)
+    await describe_pipe.wfd.aclose()
     async with binder_task:
-        child = await binder_task.execve(ssh_path, [ssh_host, socket_binder_path])
+        child = await binder_task.execve(task.filesystem.socket_binder_path, ["socket-binder"])
+        # I bet ssh will keep this open, dang it
         data_path_bytes, pass_path_bytes = [line async for line in read_lines(async_describe)]
+        logger.info("socket binder done, got paths %s", (data_path_bytes, pass_path_bytes))
         yield data_path_bytes, pass_path_bytes
         (await child.wait_for_exit()).check()
 
@@ -2498,7 +2504,7 @@ class RsyscallThread:
         self.stdtask = stdtask
         self.thread = thread
 
-    async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
+    async def execve(self, path: base.Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
     ) -> ChildTask:
         envp = {**self.stdtask.environment}
@@ -2509,7 +2515,7 @@ class RsyscallThread:
             raw_envp.append(b''.join([key, b'=', value]))
         task = self.stdtask.task
         return (await self.thread.execveat(task.base.sysif, task.gateway, task.allocator,
-                                           path.pure, [await fspath(arg) for arg in argv],
+                                           path, [await fspath(arg) for arg in argv],
                                            raw_envp, flags=0))
 
     async def close(self) -> None:
