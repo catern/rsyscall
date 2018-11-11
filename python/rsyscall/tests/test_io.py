@@ -337,6 +337,13 @@ class TestIO(unittest.TestCase):
                     await child_task.wait_for_exit()
         trio.run(test)
 
+    def test_ssh_basic(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                await spawn_ssh(stdtask, stdtask.filesystem.utilities.ssh, b"localhost")
+                pass
+        trio.run(test)
+
     # def test_thread_mkdtemp(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:

@@ -4,6 +4,7 @@ import pathlib
 
 pkglibexecdir = pathlib.Path(pkgconfig.variables('rsyscall')['pkglibexecdir'])
 rsyscall_server_path = pkglibexecdir/"rsyscall-server"
+socket_binder_path = pkglibexecdir/"socket-binder"
 assert rsyscall_server_path.exists()
 # We'll store the rsyscall_server_path into the extension module, so
 # we don't have to generate a separate thing.

@@ -208,7 +208,7 @@ class Task:
         raise NotImplementedError
 
     def _make_fd(self, num: int, file: T_file) -> FileDescriptor[T_file]:
-        return FileDescriptor(self, base.FileDescriptor(self.base.fd_table, num), file)
+        return FileDescriptor(self, far.FileDescriptor(self.base.fd_table, near.FileDescriptor(num)), file)
 
     async def pipe(self, flags=os.O_CLOEXEC) -> Pipe:
         r, w = await memsys.pipe(self.syscall, self.gateway, self.allocator, flags)
@@ -325,7 +325,7 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
         fdnum, data = await memsys.accept(fd.task.syscall, fd.task.gateway, fd.task.allocator,
                                           fd.pure, self.address_type.addrlen, flags)
         addr = self.address_type.parse(data)
-        fd = FileDescriptor(fd.task, base.FileDescriptor(fd.pure.fd_table, fdnum), type(self)())
+        fd = FileDescriptor(fd.task, far.FileDescriptor(fd.pure.fd_table, near.FileDescriptor(fdnum)), type(self)())
         return fd, addr
 
 class UnixSocketFile(SocketFile[UnixAddress]):
@@ -337,15 +337,13 @@ class InetSocketFile(SocketFile[InetAddress]):
 class FileDescriptor(t.Generic[T_file_co]):
     "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."
     task: Task
-    pure: base.FileDescriptor
     file: T_file_co
-    def __init__(self, task: Task, pure: base.FileDescriptor, file: T_file_co) -> None:
+    def __init__(self, task: Task, farfd: far.FileDescriptor, file: T_file_co) -> None:
         self.task = task
-        self.pure = pure
+        self.active = active.FileDescriptor(task.base, farfd)
         self.file = file
+        self.pure = base.FileDescriptor(task.base.fd_table, farfd.near.number)
         self.open = True
-        self.active = active.FileDescriptor(
-            task.base, far.FileDescriptor(task.base.fd_table, near.FileDescriptor(pure.number)))
 
     async def aclose(self):
         if self.open:
@@ -1032,11 +1030,13 @@ class ExecutableLookupCache:
 class UnixUtilities:
     rm: Path
     sh: Path
+    ssh: Path
 
 async def build_unix_utilities(exec_cache: ExecutableLookupCache) -> UnixUtilities:
     rm = await exec_cache.lookup("rm")
     sh = await exec_cache.lookup("sh")
-    return UnixUtilities(rm=rm, sh=sh)
+    ssh = await exec_cache.lookup("ssh")
+    return UnixUtilities(rm=rm, sh=sh, ssh=ssh)
 
 async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
     """Open a file, creating and truncating it, and write the passed text to it
@@ -1132,6 +1132,7 @@ class FilesystemResources:
     # locale?
     # home directory?
     rsyscall_server_path: base.Path
+    socket_binder_path: base.Path
 
     @staticmethod
     async def make_from_bootstrap(task: Task, bootstrap: UnixBootstrap) -> 'FilesystemResources':
@@ -2391,58 +2392,61 @@ async def rsyscall_spawn_exec_full(
 # I shouldn't abstract this too much - I should just use ssh.
 @contextlib.asynccontextmanager
 async def run_socket_binder(
-        access_task: Task, epoller: Epoller,
+        task: StandardTask,
         ssh_path: Path,
         ssh_host: bytes,
         socket_binder_path: bytes,
-) -> None:
-    describe_pipe = await task.pipe()
-    binder_task, [describe_write] = await self.stdtask.spawn([describe_pipe.wfd], shared=UnshareFlag.NONE)
+) -> t.AsyncGenerator[t.Tuple[bytes, bytes], None]:
+    describe_pipe = await task.task.pipe()
+    async_describe = await AsyncFileDescriptor.make(task.resources.epoller, describe_pipe.rfd)
+    # TODO maybe I should have this process set PDEATHSIG so that even if we hard crash, it will exit too
+    binder_task, [describe_write] = await task.spawn([describe_pipe.wfd.active.far], shared=UnshareFlag.NONE)
     # move describe_write to 1
     # TODO we should really just pass down stdout to here instead of hardcoding 1
     if int(describe_write) != 1:
-        await near.dup3(binder_task, binder_task.to_near_fd(describe_write), 1, 0)
-    async_describe = await AsyncFileDescriptor.make(epoller, describe_pipe.rfd)
+        await near.dup3(binder_task.stdtask.task.base.sysif, binder_task.stdtask.task.base.to_near_fd(describe_write),
+                        near.FileDescriptor(1), 0)
     async with binder_task:
         child = await binder_task.execve(ssh_path, [ssh_host, socket_binder_path])
         data_path_bytes, pass_path_bytes = [line async for line in read_lines(async_describe)]
         yield data_path_bytes, pass_path_bytes
         (await child.wait_for_exit()).check()
 
-async def bootstrap(
-        access_task: Task, epoller: Epoller,
+# robust or not robust?
+# clearly, robust. since that's what bootstrap should be.
+async def ssh_bootstrap(
+        parent_task: StandardTask,
         ssh_path: Path,
         ssh_host: bytes,
+        # the path of the socket on the remote host
         data_path_bytes: bytes,
+        # the path of a socket which you can connect to to get the listening socket for data_path_bytes
         pass_path_bytes: bytes,
-) -> t.Tuple[Task, ChildTask, t.Mapping[bytes, far.Pointer], t.List[far.FileDescriptor]]:
+) -> t.Tuple[ChildTask, StandardTask]:
     # Just start a child, and have it perform the handshake on these literal bytes
-    task, child_task, pointers, fds = rsyscall_spawn(
-        access_task, epoller, None, 
-        access_task, None,
-        access_task,
-    )
-    rsyscall_task, _ = await access_task.spawn([])
+    rsyscall_task, _ = await parent_task.spawn([])
     stdtask = rsyscall_task.stdtask
-    pass_sock = await access_task.socket_unix(socket.SOCK_STREAM)
-    await robust_unix_connect(pass_path_bytes, pass_sock)
-    listening_sock, = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator, pass_sock, 1)
+    task = stdtask.task
+    pass_sock = await task.socket_unix(socket.SOCK_STREAM)
+    pass_path = Path.from_bytes(task, pass_path_bytes)
+    await robust_unix_connect(pass_path, pass_sock)
+    near_listening_sock, = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator, pass_sock.active.far, 1)
+    listening_sock = FileDescriptor(task, far.FileDescriptor(task.base.fd_table, near_listening_sock), UnixSocketFile())
 
-    # nowe we overwrite the connecting task to be us, instead of access_task,
-    # and we use um...
-    # oh yeah we also need to do the forwarding I guess.
-    # or no we don't.
-    # the path is local, we can just construct it
-    access_connection = (Path.from_bytes(access_task, data_path_bytes), listening_sock)
-    connecting_task = rsyscall_task.stdtask.task
-    pass
+    # now we have a usable access_connection; we'll just mutate the stdtask to use it
+    stdtask.access_connection = (Path.from_bytes(task, data_path_bytes), listening_sock)
+    # we also overwrite the connecting task so the access_connection is actually used
+    stdtask.connecting_task = stdtask.task
+    # TODO resource leakage cuz we won't have those resources in a real usage
+    return rsyscall_task.thread.child_task, stdtask
 
-async def rsyscall_spawn_ssh(
-        access_task: Task, epoller: Epoller,
+async def spawn_ssh(
+        task: StandardTask, ssh_path: Path, ssh_host: bytes,
 ) -> None:
-    # maybe I should have the process this starts, set PDEATHSIG so it dies if we do?
-    async with run_socket_binder(access_task) as data_path_bytes, pass_path_bytes:
-        local_process, remote_task = await bootstrap_and_forward(data_path_bytes, pass_path_bytes)
+    socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
+    async with run_socket_binder(task, ssh_path, ssh_host, socket_binder_path) as (data_path_bytes, pass_path_bytes):
+        local_process, remote_task = await ssh_bootstrap(task, ssh_path, ssh_host,
+                                                         data_path_bytes, pass_path_bytes)
 
 # async def rsyscall_spawn_ssh(
 #         access_task: Task, epoller: Epoller,
