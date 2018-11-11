@@ -5630,3 +5630,15 @@ shifting back to a single process should be an easy optimization after that!
 
   the complexity of rsyscall_spawn is that it needs to work with remote processes?
   but bootstrapping is in userspace?
+** ok it seems like it worked kinda
+   I was able to spawn a child and exec and everything. Which is cool...
+
+   So now the next step is adding actual ssh?
+   And a bootstrap binary?
+
+   Ah, hmm, no, we can do the real bootstrap binary first.
+
+   Then we'll add ssh after that - ssh is gonna require building an ssh test env.
+   Which will be the first real useful application - nginx wasn't actually motivated by anything.
+** bootstrap binary
+   So this is just a C program, I can write this.
