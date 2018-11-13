@@ -65,7 +65,8 @@ struct robust_list_head {
 #define FUTEX_WAITERS 0x80000000
 #define FUTEX_TID_MASK 0x3fffffff
 """ + f'const char rsyscall_server_path[] = "{str(rsyscall_server_path)}";\n'
-    + f'const char socket_binder_path[] = "{str(socket_binder_path)}";\n', **rsyscall)
+    + f'const char socket_binder_path[] = "{str(socket_binder_path)}";\n'
+    + f'const char pkglibexecdir[] = "{str(pkglibexecdir)}";\n', **rsyscall)
 ffibuilder.cdef("const char rsyscall_server_path[];")
 ffibuilder.cdef("const char socket_binder_path[];")
 ffibuilder.cdef("""

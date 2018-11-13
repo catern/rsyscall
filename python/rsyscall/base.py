@@ -69,6 +69,12 @@ class Path:
     def split(self) -> t.Tuple[Path, bytes]:
         return Path(self.base, self.components[:-1]), self.components[-1]
 
+    def __truediv__(self, path_element: t.Union[str, bytes]) -> Path:
+        element: bytes = os.fsencode(path_element)
+        if b"/" in element:
+            raise Exception("no / allowed in path elements, do it one by one")
+        return Path(self.base, self.components+[element])
+
     @staticmethod
     def from_bytes(mount_namespace: MountNamespace, fs_information: FSInformation, path: bytes) -> Path:
         if path.startswith(b"/"):

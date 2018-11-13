@@ -99,6 +99,9 @@ int main(int argc, char** argv, char** envp)
             size -= ret;
             cur += ret;
         }
+        if (write(bootstrap_describe_sock, ",", 1) != 1) {
+            err(1, "write(bootstrap_describe_sock=%d, \",\", 1)", bootstrap_describe_sock);
+        }
     }
     if (close(bootstrap_describe_sock < 0)) {
         err(1, "close(bootstrap_describe_sock=%d)", bootstrap_describe_sock);

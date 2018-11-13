@@ -1133,6 +1133,7 @@ class FilesystemResources:
     # home directory?
     rsyscall_server_path: base.Path
     socket_binder_path: base.Path
+    rsyscall_bootstrap_path: base.Path
 
     @staticmethod
     async def make_from_bootstrap(task: Task, bootstrap: UnixBootstrap) -> 'FilesystemResources':
@@ -1142,50 +1143,20 @@ class FilesystemResources:
         executable_lookup_cache = ExecutableLookupCache(executable_dirs)
         tmpdir = Path.from_bytes(task, bootstrap.environ.get(b"TMPDIR", b"/tmp"))
         utilities = await build_unix_utilities(executable_lookup_cache)
-        rsyscall_server_path = base.Path.from_bytes(
+        rsyscall_pkglibexecdir = base.Path.from_bytes(
             task.mount, task.fs,
-            ffi.string(lib.rsyscall_server_path))
-        socket_binder_path = base.Path.from_bytes(
-            task.mount, task.fs,
-            ffi.string(lib.socket_binder_path))
+            ffi.string(lib.pkglibexecdir))
+        rsyscall_server_path = rsyscall_pkglibexecdir/"rsyscall-server"
+        socket_binder_path = rsyscall_pkglibexecdir/"socket-binder"
+        rsyscall_bootstrap_path = rsyscall_pkglibexecdir/"rsyscall-bootstrap"
         return FilesystemResources(
             executable_lookup_cache=executable_lookup_cache,
             tmpdir=tmpdir,
             utilities=utilities,
             rsyscall_server_path=rsyscall_server_path,
             socket_binder_path=socket_binder_path,
+            rsyscall_bootstrap_path=rsyscall_bootstrap_path,
         )
-
-class BatchGatewayOperation:
-    def __init__(self, gateway: MemoryGateway) -> None:
-        self.gateway = gateway
-        self.operations: t.List[t.Tuple[Pointer, Pointer, int]] = []
-
-    def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
-        self.operations.append((dest, src, n))
-
-    async def flush(self) -> None:
-        raise Exception("use iovec magic to do the copy, woo")
-
-class Serializer:
-    def __init__(self, memory_allocator: memory.Allocator, async_exit_stack: contextlib.AsyncExitStack) -> None:
-        self.memory_allocator = memory_allocator
-        self.async_exit_stack = async_exit_stack
-        self.operations: t.List[t.Tuple[Pointer, bytes]] = []
-
-    async def serialize(self, data: bytes) -> Pointer:
-        # we could defer allocation to the end and do it in bulk, but I can't figure out how to
-        # model that, since we need to have the pointers to the allocated memory to serialize argv.
-        allocation = await self.memory_allocator.malloc(len(data))
-        ptr: Pointer = self.async_exit_stack.enter_context(allocation)
-        self.operations.append((ptr, data))
-        return ptr
-
-    async def flush(self, gateway: MemoryGateway) -> None:
-        batch = BatchGatewayOperation(gateway)
-        for ptr, data in self.operations:
-            batch.memcpy(ptr, to_local_pointer(data), len(data))
-        await batch.flush()
 
 class StandardTask:
     def __init__(self,
@@ -2048,34 +2019,65 @@ class ComposedMemoryGateway(MemoryGateway):
         for dest, src, n in ops:
             await self.memcpy(dest, src, n)
 
-# @dataclass
-# class Bridge:
-#     local: active.FileDescriptor
-#     remote: active.FileDescriptor
+class AsyncReadBuffer:
+    def __init__(self, fd: AsyncFileDescriptor[ReadableFile]) -> None:
+        self.fd = fd
+        self.buf = b""
 
-# @dataclass
-# class BridgeMaker:
-#     task: Task
+    async def _read(self) -> t.Optional[bytes]:
+        data = await self.fd.read()
+        if len(data) == 0:
+            if len(self.buf) != 0:
+                raise Exception("got EOF while we still hold unhandled buffered data")
+            else:
+                return None
+        else:
+            return data
 
-#     async def make_bridge(self) -> Bridge:
-#         l, r = await memsys.socketpair(self.task.syscall, self.task.gateway, self.task.allocator,
-#                                        socket.AF_UNIX, socket.SOCK_STREAM, 0)
-#         return Bridge(l, r)
+    async def read_length(self, length: int) -> t.Optional[bytes]:
+        while len(self.buf) < length:
+            data = await self._read()
+            if data is None:
+                return None
+            self.buf += data
+        section = self.buf[:length]
+        self.buf = self.buf[length:]
+        return section
 
-# @dataclass
-# class Socketpair:
-#     local: far.FileDescriptor
-#     remote: far.FileDescriptor
+    async def read_until_delimiter(self, delim: bytes) -> t.Optional[bytes]:
+        while True:
+            try:
+                i = self.buf.index(delim)
+            except ValueError:
+                pass
+            else:
+                section = self.buf[:i]
+                # skip the delimiter
+                self.buf = self.buf[i+1:]
+                return section
+            # buf contains no copies of "delim", gotta read some more data
+            data = await self._read()
+            if data is None:
+                return None
+            self.buf += data
 
-# @dataclass
-# class DirectBridgeMaker:
-#     bridge_maker: BridgeMaker
-#     socketpair: Socketpair
-#     async def make_direct_bridge_with(self, mytask: Task) -> Bridge:
-#         bridge = self.bridge_maker.make_bridge()
-#         await socketpair.local.put_fd(bridge.remote)
-#         goodfd = await socketpair.remote.get_fd()
-#         return Bridge(bridge.local, goodfd)
+    async def read_line(self) -> t.Optional[bytes]:
+        return (await self.read_until_delimiter(b"\n"))
+
+    async def read_netstring(self) -> t.Optional[bytes]:
+        length_bytes = await self.read_until_delimiter(b':')
+        if length_bytes is None:
+            return None
+        length = int(length_bytes)
+        data = await self.read_length(length)
+        if data is None:
+            raise Exception("hangup before netstring data")
+        comma = await self.read_length(1)        
+        if comma is None:
+            raise Exception("hangup before comma at end of netstring")
+        if comma != b",":
+            raise Exception("bad netstring delimiter", comma)
+        return data
 
 async def read_lines(fd: AsyncFileDescriptor[ReadableFile]) -> t.AsyncIterator[bytes]:
     buf = b""
@@ -2452,6 +2454,74 @@ async def ssh_bootstrap(
     stdtask.connecting_task = stdtask.task
     # TODO resource leakage cuz we won't have those resources in a real usage
     return rsyscall_task.thread.child_task, stdtask
+
+async def real_ssh_bootstrap(
+        parent_task: StandardTask,
+        ssh_path: Path,
+        ssh_host: bytes,
+        # the path of the socket on the remote host
+        data_path_bytes: bytes,
+        # the path of a socket which you can connect to to get the listening socket for data_path_bytes
+        pass_path_bytes: bytes,
+) -> t.Tuple[ChildTask, StandardTask]:
+    # identify local path
+    # TODO forward local path to remote path over ssh
+    task = parent_task.task
+    local_data_path = Path.from_bytes(task, data_path_bytes)
+    # start bootstrap
+    # TODO start bootstrap over ssh
+    rsyscall_thread, _ = await parent_task.spawn([])
+    bootstrap_child_task = await rsyscall_thread.execve(
+        parent_task.filesystem.rsyscall_bootstrap_path, [b"rsyscall-bootstrap", pass_path_bytes])
+    # Connect to local socket 4 times
+    bootstrap_describe_sock = await task.socket_unix(socket.SOCK_STREAM)
+    await robust_unix_connect(local_data_path, bootstrap_describe_sock)
+    describe_sock = await task.socket_unix(socket.SOCK_STREAM)
+    await robust_unix_connect(local_data_path, describe_sock)
+    local_syscall_sock = await task.socket_unix(socket.SOCK_STREAM)
+    await robust_unix_connect(local_data_path, local_syscall_sock)
+    local_data_sock = await task.socket_unix(socket.SOCK_STREAM)
+    await robust_unix_connect(local_data_path, local_data_sock)
+    # Read description off of bootstrap_describe
+    async_bootstrap_describe = await AsyncFileDescriptor.make(parent_task.resources.epoller, bootstrap_describe_sock)
+    bootstrap_describe_buf = AsyncReadBuffer(async_bootstrap_describe)
+    def read_keyval(expected_key: bytes) -> bytes:
+        keyval = await bootstrap_describe_buf.read_line()
+        key, val = keyval.split(b"=", 1)
+        if key != expected_key:
+            raise Exception("expected key", expected_key, "got", key)
+        return val
+    listening_fd = near.FileDescriptor(int(await read_keyval(b"listening_sock")))
+    remote_syscall_fd = near.FileDescriptor(int(await read_keyval(b"syscall_sock")))
+    remote_data_fd = near.FileDescriptor(int(await read_keyval(b"data_sock")))
+    environ_tag = await bootstrap_describe_buf.read_line()
+    if environ_tag != b"environ":
+        raise Exception("expected to start reading the environment, instead got", environ_tag)
+    environ: t.Dict[bytes, bytes] = {}
+    while True:
+        environ_elem = await buf.read_netstring()
+        if environ_elem is None:
+            break
+        # if someone passes us a malformed environment element without =, we'll just break, whatever
+        key, val = environ_elem.split(b"=", 1)
+        environ[key] = val
+    await async_bootstrap_describe.aclose()
+    # Read even more description off of describe
+    async_describe = await AsyncFileDescriptor.make(access_epoller, access_describe_read)
+    symbols: t.Dict[bytes, far.Pointer] = {}
+    async for line in read_lines(async_describe):
+        key, value = line.rstrip().split(b'=', 1)
+        symbols[key] = far.Pointer(new_task.base.address_space, near.Pointer(int(value, 16)))
+    await async_describe.aclose()
+    # Assemble and return resulting StandardTask
+    # looking up utilities in the PATH is really lame and boring!!!
+    # and more importantly, inefficient!!!
+    # it sure! would! be! nice! to be able to just use Nix for this.
+    # hmm hmmm
+    # we can have some kinda pre-bootstrap which runs nix to find things
+    # and prints out the path of things? no, prints out the path of nix
+    # maybe the pre-bootstrap is specialized to the package manager in use?
+    return bootstrap_child_task, None
 
 async def spawn_ssh(
         task: StandardTask, ssh_path: Path, ssh_host: bytes,
