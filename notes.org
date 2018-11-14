@@ -5642,3 +5642,18 @@ shifting back to a single process should be an easy optimization after that!
    Which will be the first real useful application - nginx wasn't actually motivated by anything.
 ** bootstrap binary
    So this is just a C program, I can write this.
+   
+   I wrote it.
+* locations of things in the filesystem
+  Do we really want to look up standard utilities in PATH?
+  That seems lame.
+
+  Should we bind ourselves to Nix?
+
+  We can have FilesystemResources be an interface which Nix or other things can implement.
+
+  For now, let's just find the locations of executables we depend on,
+  at build time.
+  That will work with Nix and also some other systems - namely, when it's installed system-wide.
+
+  So we'll do this in ffibuilder?

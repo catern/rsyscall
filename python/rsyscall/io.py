@@ -1028,15 +1028,9 @@ class ExecutableLookupCache:
 
 @dataclass
 class UnixUtilities:
-    rm: Path
-    sh: Path
-    ssh: Path
-
-async def build_unix_utilities(exec_cache: ExecutableLookupCache) -> UnixUtilities:
-    rm = await exec_cache.lookup("rm")
-    sh = await exec_cache.lookup("sh")
-    ssh = await exec_cache.lookup("ssh")
-    return UnixUtilities(rm=rm, sh=sh, ssh=ssh)
+    rm: base.Path
+    sh: base.Path
+    ssh: base.Path
 
 async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
     """Open a file, creating and truncating it, and write the passed text to it
@@ -1100,6 +1094,17 @@ class ProcessResources:
     async def decref(self) -> None:
         pass
 
+    @staticmethod
+    def make_from_symbols(task: Task, symbols: t.Mapping[bytes, bytes]) -> ProcessResources:
+        def make_pointer(ptr: int) -> FunctionPointer:
+            return FunctionPointer(far.Pointer(task.address_space, ptr))
+        return ProcessResources(
+            server_func=make_pointer(symbols[b"rsyscall_server"]),
+            do_cloexec_func=make_pointer(symbols[b"rsyscall_do_cloexec"]),
+            trampoline_func=make_pointer(symbols[b"rsyscall_trampoline"]),
+            futex_helper_func=make_pointer(symbols[b"rsyscall_futex_helper"]),
+        )
+
     def build_trampoline_stack(self, function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> bytes:
         # TODO clean this up with dicts or tuples or something
         stack_struct = ffi.new('struct rsyscall_trampoline_stack*')
@@ -1127,7 +1132,6 @@ class FilesystemResources:
     # various things picked up by environment variables
     executable_lookup_cache: ExecutableLookupCache
     tmpdir: Path
-    # utilities are eagerly looked up in PATH
     utilities: UnixUtilities
     # locale?
     # home directory?
@@ -1142,10 +1146,41 @@ class FilesystemResources:
             executable_dirs.append(Path.from_bytes(task, prefix))
         executable_lookup_cache = ExecutableLookupCache(executable_dirs)
         tmpdir = Path.from_bytes(task, bootstrap.environ.get(b"TMPDIR", b"/tmp"))
-        utilities = await build_unix_utilities(executable_lookup_cache)
-        rsyscall_pkglibexecdir = base.Path.from_bytes(
-            task.mount, task.fs,
-            ffi.string(lib.pkglibexecdir))
+        def to_path(cffi_char_array) -> base.Path:
+            return base.Path.from_bytes(task.mount, task.fs, ffi.string(cffi_char_array))
+        utilities = UnixUtilities(
+            rm=to_path(lib.rm_path),
+            sh=to_path(lib.sh_path),
+            ssh=to_path(lib.ssh_path),
+        )
+        rsyscall_pkglibexecdir = to_path(lib.pkglibexecdir)
+        rsyscall_server_path = rsyscall_pkglibexecdir/"rsyscall-server"
+        socket_binder_path = rsyscall_pkglibexecdir/"socket-binder"
+        rsyscall_bootstrap_path = rsyscall_pkglibexecdir/"rsyscall-bootstrap"
+        return FilesystemResources(
+            executable_lookup_cache=executable_lookup_cache,
+            tmpdir=tmpdir,
+            utilities=utilities,
+            rsyscall_server_path=rsyscall_server_path,
+            socket_binder_path=socket_binder_path,
+            rsyscall_bootstrap_path=rsyscall_bootstrap_path,
+        )
+
+    @staticmethod
+    async def make_from_environ(task: Task, environ: t.Mapping[bytes, bytes]) -> 'FilesystemResources':
+        executable_dirs: t.List[Path] = []
+        for prefix in environ[b"PATH"].split(b":"):
+            executable_dirs.append(Path.from_bytes(task, prefix))
+        executable_lookup_cache = ExecutableLookupCache(executable_dirs)
+        tmpdir = Path.from_bytes(task, environ.get(b"TMPDIR", b"/tmp"))
+        def to_path(cffi_char_array) -> base.Path:
+            return base.Path.from_bytes(task.mount, task.fs, ffi.string(cffi_char_array))
+        utilities = UnixUtilities(
+            rm=to_path(lib.rm_path),
+            sh=to_path(lib.sh_path),
+            ssh=to_path(lib.ssh_path),
+        )
+        rsyscall_pkglibexecdir = to_path(lib.pkglibexecdir)
         rsyscall_server_path = rsyscall_pkglibexecdir/"rsyscall-server"
         socket_binder_path = rsyscall_pkglibexecdir/"socket-binder"
         rsyscall_bootstrap_path = rsyscall_pkglibexecdir/"rsyscall-bootstrap"
@@ -1300,7 +1335,7 @@ class TemporaryDirectory:
         async with new_task:
             # TODO would be nice if unsharing the fs information gave us a cap to chdir
             await new_task.stdtask.task.chdir(self.parent)
-            child = await new_task.execve(self.stdtask.filesystem.utilities.rm.pure, ["rm", "-r", self.name])
+            child = await new_task.execve(self.stdtask.filesystem.utilities.rm, ["rm", "-r", self.name])
             (await child.wait_for_exit()).check()
 
     async def __aenter__(self) -> 'Path':
@@ -2485,8 +2520,10 @@ async def real_ssh_bootstrap(
     # Read description off of bootstrap_describe
     async_bootstrap_describe = await AsyncFileDescriptor.make(parent_task.resources.epoller, bootstrap_describe_sock)
     bootstrap_describe_buf = AsyncReadBuffer(async_bootstrap_describe)
-    def read_keyval(expected_key: bytes) -> bytes:
+    async def read_keyval(expected_key: bytes) -> bytes:
         keyval = await bootstrap_describe_buf.read_line()
+        if keyval is None:
+            raise Exception("expected key", expected_key, "got EOF instead")
         key, val = keyval.split(b"=", 1)
         if key != expected_key:
             raise Exception("expected key", expected_key, "got", key)
@@ -2499,7 +2536,7 @@ async def real_ssh_bootstrap(
         raise Exception("expected to start reading the environment, instead got", environ_tag)
     environ: t.Dict[bytes, bytes] = {}
     while True:
-        environ_elem = await buf.read_netstring()
+        environ_elem = await bootstrap_describe_buf.read_netstring()
         if environ_elem is None:
             break
         # if someone passes us a malformed environment element without =, we'll just break, whatever
@@ -2507,12 +2544,28 @@ async def real_ssh_bootstrap(
         environ[key] = val
     await async_bootstrap_describe.aclose()
     # Read even more description off of describe
-    async_describe = await AsyncFileDescriptor.make(access_epoller, access_describe_read)
+    async_describe = await AsyncFileDescriptor.make(parent_task.resources.epoller, describe_sock)
     symbols: t.Dict[bytes, far.Pointer] = {}
     async for line in read_lines(async_describe):
         key, value = line.rstrip().split(b'=', 1)
         symbols[key] = far.Pointer(new_task.base.address_space, near.Pointer(int(value, 16)))
     await async_describe.aclose()
+    new_task = Task()
+    new_stdtask = StandardTask(
+        # hmmm what do we put here for access_task?
+        # we could put parent_task.task, or we could put parent_task.access_task.
+        # we want to do the one which is correct... umm......
+        # we need to be able to open the path from the access_task...
+        # well, eh, probably clearly the parent_task.task, that makes sure nesting works.
+        # and we'll just take care to call ssh spawning with the root task
+        access_connection=(data_pass_bytes, listening_sock),
+        connecting_task=new_task, connectiong_connection=None,
+        task=new_task,
+        task_resources=await TaskResources.make(task),
+        process_resources=ProcessResources.make_from_symbols(new_task, symbols),
+        filesystem_resources=await FilesystemResources.make_from_environ(new_task, environ),
+        environment=environ,
+    )
     # Assemble and return resulting StandardTask
     # looking up utilities in the PATH is really lame and boring!!!
     # and more importantly, inefficient!!!

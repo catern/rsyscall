@@ -1,13 +1,15 @@
 from cffi import FFI
 import pkgconfig
 import pathlib
+import shutil
 
-pkglibexecdir = pathlib.Path(pkgconfig.variables('rsyscall')['pkglibexecdir'])
-rsyscall_server_path = pkglibexecdir/"rsyscall-server"
-socket_binder_path = pkglibexecdir/"socket-binder"
-assert rsyscall_server_path.exists()
-# We'll store the rsyscall_server_path into the extension module, so
-# we don't have to generate a separate thing.
+# We store paths at build time
+stored_paths = {
+    "pkglibexecdir": pkgconfig.variables('rsyscall')['pkglibexecdir'],
+    "rm_path": shutil.which("rm"),
+    "sh_path": shutil.which("sh"),
+    "ssh_path": shutil.which("ssh"),
+}
 
 ffibuilder = FFI()
 # include the rsyscall header
@@ -64,11 +66,9 @@ struct robust_list_head {
 // sigh, glibc doesn't export these
 #define FUTEX_WAITERS 0x80000000
 #define FUTEX_TID_MASK 0x3fffffff
-""" + f'const char rsyscall_server_path[] = "{str(rsyscall_server_path)}";\n'
-    + f'const char socket_binder_path[] = "{str(socket_binder_path)}";\n'
-    + f'const char pkglibexecdir[] = "{str(pkglibexecdir)}";\n', **rsyscall)
-ffibuilder.cdef("const char rsyscall_server_path[];")
-ffibuilder.cdef("const char socket_binder_path[];")
+""" + "\n".join(f'const char {name}[] = "{value}";' for name, value in stored_paths.items()), **rsyscall)
+for name in stored_paths:
+    ffibuilder.cdef(f"const char {name}[];")
 ffibuilder.cdef("""
 typedef union epoll_data {
     uint64_t u64;
