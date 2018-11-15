@@ -40,7 +40,7 @@ int accept_on(const int listening_sock) {
 
 int main(int argc, char** argv, char** envp)
 {
-    if (argc != 3) err(1, "usage: rsyscall_bootstrap <pass_sock_path>");
+    if (argc != 2) errx(1, "usage: rsyscall_bootstrap <pass_sock_path>");
     const char* pass_sock_path = argv[1];
     const int pass_conn_sock = connect_unix_socket(pass_sock_path);
     // receive listening socket
@@ -67,9 +67,9 @@ int main(int argc, char** argv, char** envp)
     if (msg.msg_controllen != sizeof(cmsg)) {
         err(1, "Message has wrong controllen");
     }
-    if (cmsg.hdr.cmsg_len != sizeof(int)) {
-        err(1, "Control message has wrong length");
-    }
+    // if (cmsg.hdr.cmsg_len != sizeof(cmsg.buf)) {
+    //     err(1, "Control message has wrong length");
+    // }
     if (cmsg.hdr.cmsg_level != SOL_SOCKET) {
         err(1, "Control message has wrong level");
     }
@@ -103,7 +103,7 @@ int main(int argc, char** argv, char** envp)
             err(1, "write(bootstrap_describe_sock=%d, \",\", 1)", bootstrap_describe_sock);
         }
     }
-    if (close(bootstrap_describe_sock < 0)) {
+    if (close(bootstrap_describe_sock) < 0) {
         err(1, "close(bootstrap_describe_sock=%d)", bootstrap_describe_sock);
     }
     char describe_sock_str[16];
@@ -120,9 +120,9 @@ int main(int argc, char** argv, char** envp)
     }
     char* new_argv[] = {
         "rsyscall-server",
-        // as their actual arguments
-        describe_sock_str, syscall_sock_str, data_sock_str,
-        // as passedfd arguments
+        // the actual arguments
+        describe_sock_str, syscall_sock_str, syscall_sock_str,
+        // passedfd arguments
         describe_sock_str, syscall_sock_str, data_sock_str,
     };
     execve(RSYSCALL_SERVER_PATH, new_argv, envp);

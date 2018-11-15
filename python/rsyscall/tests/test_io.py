@@ -333,7 +333,7 @@ class TestIO(unittest.TestCase):
             async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
                 rsyscall_task, _ = await stdtask.spawn([])
                 async with rsyscall_task:
-                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh.pure, ['sh', '-c', 'sleep .01'])
+                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
                     await child_task.wait_for_exit()
         trio.run(test)
 
@@ -345,7 +345,7 @@ class TestIO(unittest.TestCase):
                     stdtask, stdtask.filesystem.utilities.ssh, b"localhost")
                 rsyscall_task, _ = await remote_stdtask.spawn([])
                 async with rsyscall_task:
-                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh.pure, ['sh', '-c', 'sleep .01'])
+                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
                     await child_task.wait_for_exit()
         trio.run(test)
 

@@ -2509,13 +2509,15 @@ async def real_ssh_bootstrap(
     new_fs_information = base.FSInformation(identifier_pid)
     new_task = Task(new_base_task, new_gateway,
                     new_mount_namespace, new_fs_information, SignalMask(set()), new_process_namespace)
+    # unconditionally zero the sigmask, we don't know what we inherited
+    await memsys.rt_sigprocmask(new_syscall, new_gateway, new_task.allocator, SigprocmaskHow.SETMASK, set())
     new_stdtask = StandardTask(
         access_task=parent_task.task,
         access_epoller=parent_task.resources.epoller,
         access_connection=(local_data_path, FileDescriptor(new_task, listening_fd, UnixSocketFile())),
         connecting_task=new_task, connecting_connection=None,
         task=new_task,
-        task_resources=await TaskResources.make(task),
+        task_resources=await TaskResources.make(new_task),
         process_resources=ProcessResources.make_from_symbols(symbols),
         filesystem_resources=FilesystemResources.make_from_environ(new_mount_namespace, new_fs_information, environ),
         environment=environ,
@@ -2527,8 +2529,7 @@ async def spawn_ssh(
 ) -> t.Tuple[ChildTask, StandardTask]:
     socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
     async with run_socket_binder(task, ssh_path, ssh_host, socket_binder_path) as (data_path_bytes, pass_path_bytes):
-        return (await ssh_bootstrap(task, ssh_path, ssh_host,
-                                    data_path_bytes, pass_path_bytes))
+        return (await real_ssh_bootstrap(task, ssh_path, ssh_host, data_path_bytes, pass_path_bytes))
 
 # async def rsyscall_spawn_ssh(
 #         access_task: Task, epoller: Epoller,
