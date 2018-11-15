@@ -5658,5 +5658,43 @@ shifting back to a single process should be an easy optimization after that!
 
   So we'll do this in ffibuilder?
 ** building standardtask
+   ok, so, surprisingly, it worked without a nightmare of debugging.
 
+   so, now we wrap in ssh, I guess?
   
+   yes, we've done the bootstrap binary, so now we need to build an ssh test env.
+* ssh environment
+   this is the kinda thing that Nix should be able to do
+
+   y'know it would be cool if we got a whole, local environment thing, set up
+
+   your own self-contained userspace
+
+   OK so we can use sshd -i, that's a good improvement.
+
+   Is it? Well, it at least prevents using the network... well, whatever...
+
+   Let's just run regular sshd, ummmmm wait no let's not. I hate hardcoded ports!
+
+   So we'll spawn sshd -i from us, that's fine.
+
+   This guy's legit engineering concerns about efficiency, are,
+   well,
+   we can get a global view from our python script no problem.
+   Saving on startup work is trickier, but if ssh was designed differently,
+   we could achieve it.
+   by, like, pre-setting-up everything in our own thread,
+   and forking it off each time,
+   or something.
+
+   So sshd -i, sure.
+
+   Something like:
+/nix/store/2kbxp7w3wfmisn71pkf5cx721hsp5gk6-openssh-7.7p1/bin/sshd -d -e -h host_rsa_key -f /dev/null -i
+
+But actually:
+openssl genpkey thing | sshd -d -e -h /dev/stdin -f /dev/null -i
+   
+also viable for key generation is:
+echo y | ssh-keygen -t rsa -N '' -f /dev/stdout
+but that's not a very nice interface
