@@ -208,7 +208,10 @@ class Task:
         raise NotImplementedError
 
     def _make_fd(self, num: int, file: T_file) -> FileDescriptor[T_file]:
-        return FileDescriptor(self, far.FileDescriptor(self.base.fd_table, near.FileDescriptor(num)), file)
+        return self.make_fd(near.FileDescriptor(num), file)
+
+    def make_fd(self, fd: near.FileDescriptor, file: T_file) -> FileDescriptor[T_file]:
+        return FileDescriptor(self, far.FileDescriptor(self.base.fd_table, fd), file)
 
     async def pipe(self, flags=os.O_CLOEXEC) -> Pipe:
         r, w = await memsys.pipe(self.syscall, self.gateway, self.allocator, flags)
@@ -994,38 +997,6 @@ def gather_local_bootstrap() -> UnixBootstrap:
     stdstreams = wrap_stdin_out_err(task)
     return UnixBootstrap(task, argv, environ, stdstreams)
 
-
-class ExecutableLookupCache:
-    "Find executables by name, with a cache for the lookups"
-    def __init__(self, paths: t.List[Path]) -> None:
-        # we don't enforce that the paths are in the same mount
-        # namespace or even the same host. that might lead to some
-        # interesting/weird functionality.
-        # execveat(fd) might be helpful here.
-        self.paths = paths
-        self.cache: t.Dict[bytes, Path] = {}
-
-    async def uncached_lookup(self, name: bytes) -> t.Optional[Path]:
-        if b"/" in name:
-            raise Exception("name should be a single path element without any / present")
-        for path in self.paths:
-            filename = path/name
-            if (await filename.access(read=True, execute=True)):
-                return filename
-        return None
-
-    async def lookup(self, name: t.Union[str, bytes]) -> Path:
-        basename: bytes = os.fsencode(name)
-        if basename in self.cache:
-            return self.cache[basename]
-        else:
-            result = await self.uncached_lookup(basename)
-            if result is None:
-                raise Exception(f"couldn't find {name}")
-            # we don't cache negative lookups
-            self.cache[basename] = result
-            return result
-
 @dataclass
 class UnixUtilities:
     rm: base.Path
@@ -1095,14 +1066,12 @@ class ProcessResources:
         pass
 
     @staticmethod
-    def make_from_symbols(task: Task, symbols: t.Mapping[bytes, bytes]) -> ProcessResources:
-        def make_pointer(ptr: int) -> FunctionPointer:
-            return FunctionPointer(far.Pointer(task.address_space, ptr))
+    def make_from_symbols(symbols: t.Mapping[bytes, far.Pointer]) -> ProcessResources:
         return ProcessResources(
-            server_func=make_pointer(symbols[b"rsyscall_server"]),
-            do_cloexec_func=make_pointer(symbols[b"rsyscall_do_cloexec"]),
-            trampoline_func=make_pointer(symbols[b"rsyscall_trampoline"]),
-            futex_helper_func=make_pointer(symbols[b"rsyscall_futex_helper"]),
+            server_func=FunctionPointer(symbols[b"rsyscall_server"]),
+            do_cloexec_func=FunctionPointer(symbols[b"rsyscall_do_cloexec"]),
+            trampoline_func=FunctionPointer(symbols[b"rsyscall_trampoline"]),
+            futex_helper_func=FunctionPointer(symbols[b"rsyscall_futex_helper"]),
         )
 
     def build_trampoline_stack(self, function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> bytes:
@@ -1129,9 +1098,7 @@ local_process_resources = ProcessResources(
 
 @dataclass
 class FilesystemResources:
-    # various things picked up by environment variables
-    executable_lookup_cache: ExecutableLookupCache
-    tmpdir: Path
+    tmpdir: base.Path
     utilities: UnixUtilities
     # locale?
     # home directory?
@@ -1140,52 +1107,24 @@ class FilesystemResources:
     rsyscall_bootstrap_path: base.Path
 
     @staticmethod
-    async def make_from_bootstrap(task: Task, bootstrap: UnixBootstrap) -> 'FilesystemResources':
-        executable_dirs: t.List[Path] = []
-        for prefix in bootstrap.environ[b"PATH"].split(b":"):
-            executable_dirs.append(Path.from_bytes(task, prefix))
-        executable_lookup_cache = ExecutableLookupCache(executable_dirs)
-        tmpdir = Path.from_bytes(task, bootstrap.environ.get(b"TMPDIR", b"/tmp"))
-        def to_path(cffi_char_array) -> base.Path:
-            return base.Path.from_bytes(task.mount, task.fs, ffi.string(cffi_char_array))
+    def make_from_environ(mount_namespace: base.MountNamespace,
+                          fs_information: base.FSInformation,
+                          environ: t.Mapping[bytes, bytes]) -> FilesystemResources:
+        def to_path(pathbytes: bytes) -> base.Path:
+            return base.Path.from_bytes(mount_namespace, fs_information, pathbytes)
+        tmpdir = to_path(environ.get(b"TMPDIR", b"/tmp"))
+        def cffi_to_path(cffi_char_array) -> base.Path:
+            return to_path(ffi.string(cffi_char_array))
         utilities = UnixUtilities(
-            rm=to_path(lib.rm_path),
-            sh=to_path(lib.sh_path),
-            ssh=to_path(lib.ssh_path),
+            rm=cffi_to_path(lib.rm_path),
+            sh=cffi_to_path(lib.sh_path),
+            ssh=cffi_to_path(lib.ssh_path),
         )
-        rsyscall_pkglibexecdir = to_path(lib.pkglibexecdir)
+        rsyscall_pkglibexecdir = cffi_to_path(lib.pkglibexecdir)
         rsyscall_server_path = rsyscall_pkglibexecdir/"rsyscall-server"
         socket_binder_path = rsyscall_pkglibexecdir/"socket-binder"
         rsyscall_bootstrap_path = rsyscall_pkglibexecdir/"rsyscall-bootstrap"
         return FilesystemResources(
-            executable_lookup_cache=executable_lookup_cache,
-            tmpdir=tmpdir,
-            utilities=utilities,
-            rsyscall_server_path=rsyscall_server_path,
-            socket_binder_path=socket_binder_path,
-            rsyscall_bootstrap_path=rsyscall_bootstrap_path,
-        )
-
-    @staticmethod
-    async def make_from_environ(task: Task, environ: t.Mapping[bytes, bytes]) -> 'FilesystemResources':
-        executable_dirs: t.List[Path] = []
-        for prefix in environ[b"PATH"].split(b":"):
-            executable_dirs.append(Path.from_bytes(task, prefix))
-        executable_lookup_cache = ExecutableLookupCache(executable_dirs)
-        tmpdir = Path.from_bytes(task, environ.get(b"TMPDIR", b"/tmp"))
-        def to_path(cffi_char_array) -> base.Path:
-            return base.Path.from_bytes(task.mount, task.fs, ffi.string(cffi_char_array))
-        utilities = UnixUtilities(
-            rm=to_path(lib.rm_path),
-            sh=to_path(lib.sh_path),
-            ssh=to_path(lib.ssh_path),
-        )
-        rsyscall_pkglibexecdir = to_path(lib.pkglibexecdir)
-        rsyscall_server_path = rsyscall_pkglibexecdir/"rsyscall-server"
-        socket_binder_path = rsyscall_pkglibexecdir/"socket-binder"
-        rsyscall_bootstrap_path = rsyscall_pkglibexecdir/"rsyscall-bootstrap"
-        return FilesystemResources(
-            executable_lookup_cache=executable_lookup_cache,
             tmpdir=tmpdir,
             utilities=utilities,
             rsyscall_server_path=rsyscall_server_path,
@@ -1223,7 +1162,7 @@ class StandardTask:
         # TODO fix this to... pull it from the bootstrap or something...
         process_resources = local_process_resources
         task_resources = await TaskResources.make(task)
-        filesystem_resources = await FilesystemResources.make_from_bootstrap(task, bootstrap)
+        filesystem_resources = FilesystemResources.make_from_environ(task.mount, task.fs, bootstrap.environ)
         # connection_listening_socket = await task.socket_unix(socket.SOCK_STREAM)
         # sockpath = Path.from_bytes(task, b"./rsyscall.sock")
         # await robust_unix_bind(sockpath, connection_listening_socket)
@@ -1237,7 +1176,7 @@ class StandardTask:
             {**bootstrap.environ})
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
-        parent = self.filesystem.tmpdir
+        parent = Path(self.task, self.filesystem.tmpdir)
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (prefix+"."+random_suffix).encode()
         await (parent/name).mkdir(mode=0o700)
@@ -1865,10 +1804,11 @@ class RsyscallConnection:
 
 class RsyscallInterface(base.SyscallInterface):
     def __init__(self, rsyscall_connection: RsyscallConnection,
-                 process: base.Process,
+                 # usually the same pid that's inside the namespaces
+                 identifier_pid: int,
                  infd: far.FileDescriptor, outfd: far.FileDescriptor) -> None:
         self.rsyscall_connection = rsyscall_connection
-        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{process.id}")
+        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{identifier_pid}")
         self.activity_fd = infd.near
         # these are needed so that we don't accidentally close them when doing a do_cloexec_except
         self.infd = infd
@@ -2167,7 +2107,7 @@ async def rsyscall_spawn_exec(task: Task, thread_maker: ThreadMaker, epoller: Ep
     async_local_syscall_sock = await AsyncFileDescriptor.make(epoller, local_syscall_sock)
     remote_syscall_sock = inherit(passed_syscall_sock.active.far)
     syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
-                                process,
+                                process.id,
                                 remote_syscall_sock, remote_syscall_sock)
     new_base_task = base.Task(syscall, fd_table, address_space)
     def inherit_active(fd: active.FileDescriptor) -> active.FileDescriptor:
@@ -2331,7 +2271,7 @@ async def rsyscall_spawn_exec_full(
     async_access_syscall_sock = await AsyncFileDescriptor.make(access_epoller, access_syscall_sock)
     remote_syscall_sock = inherit(passed_syscall_sock)
     syscall = RsyscallInterface(RsyscallConnection(async_access_syscall_sock, async_access_syscall_sock),
-                                process,
+                                process.id,
                                 remote_syscall_sock, remote_syscall_sock)
     new_base_task = base.Task(syscall, fd_table, parent_task.address_space)
     def inherit_active(fd: far.FileDescriptor) -> active.FileDescriptor:
@@ -2466,7 +2406,7 @@ async def run_socket_binder(
 # clearly, robust. since that's what bootstrap should be.
 async def ssh_bootstrap(
         parent_task: StandardTask,
-        ssh_path: Path,
+        ssh_path: base.Path,
         ssh_host: bytes,
         # the path of the socket on the remote host
         data_path_bytes: bytes,
@@ -2492,7 +2432,7 @@ async def ssh_bootstrap(
 
 async def real_ssh_bootstrap(
         parent_task: StandardTask,
-        ssh_path: Path,
+        ssh_path: base.Path,
         ssh_host: bytes,
         # the path of the socket on the remote host
         data_path_bytes: bytes,
@@ -2509,17 +2449,16 @@ async def real_ssh_bootstrap(
     bootstrap_child_task = await rsyscall_thread.execve(
         parent_task.filesystem.rsyscall_bootstrap_path, [b"rsyscall-bootstrap", pass_path_bytes])
     # Connect to local socket 4 times
-    bootstrap_describe_sock = await task.socket_unix(socket.SOCK_STREAM)
-    await robust_unix_connect(local_data_path, bootstrap_describe_sock)
-    describe_sock = await task.socket_unix(socket.SOCK_STREAM)
-    await robust_unix_connect(local_data_path, describe_sock)
-    local_syscall_sock = await task.socket_unix(socket.SOCK_STREAM)
-    await robust_unix_connect(local_data_path, local_syscall_sock)
-    local_data_sock = await task.socket_unix(socket.SOCK_STREAM)
-    await robust_unix_connect(local_data_path, local_data_sock)
+    async def make_async_connection() -> AsyncFileDescriptor[UnixSocketFile]:
+        sock = await task.socket_unix(socket.SOCK_STREAM)
+        await robust_unix_connect(local_data_path, sock)
+        return (await AsyncFileDescriptor.make(parent_task.resources.epoller, sock))
+    async_bootstrap_describe_sock = await make_async_connection()
+    async_describe_sock = await make_async_connection()
+    async_local_syscall_sock = await make_async_connection()
+    async_local_data_sock = await make_async_connection()
     # Read description off of bootstrap_describe
-    async_bootstrap_describe = await AsyncFileDescriptor.make(parent_task.resources.epoller, bootstrap_describe_sock)
-    bootstrap_describe_buf = AsyncReadBuffer(async_bootstrap_describe)
+    bootstrap_describe_buf = AsyncReadBuffer(async_bootstrap_describe_sock)
     async def read_keyval(expected_key: bytes) -> bytes:
         keyval = await bootstrap_describe_buf.read_line()
         if keyval is None:
@@ -2528,9 +2467,15 @@ async def real_ssh_bootstrap(
         if key != expected_key:
             raise Exception("expected key", expected_key, "got", key)
         return val
-    listening_fd = near.FileDescriptor(int(await read_keyval(b"listening_sock")))
-    remote_syscall_fd = near.FileDescriptor(int(await read_keyval(b"syscall_sock")))
-    remote_data_fd = near.FileDescriptor(int(await read_keyval(b"data_sock")))
+    # we use the pid of the local ssh process as our human-facing namespace identifier, since it is
+    # more likely to be unique, and we already have it available.
+    identifier_pid = bootstrap_child_task.process.id
+    new_fd_table = far.FDTable(identifier_pid)
+    async def read_fd(key: bytes) -> far.FileDescriptor:
+        return far.FileDescriptor(new_fd_table, near.FileDescriptor(int(await read_keyval(key))))
+    listening_fd = await read_fd(b"listening_sock")
+    remote_syscall_fd = await read_fd(b"syscall_sock")
+    remote_data_fd = await read_fd(b"data_sock")
     environ_tag = await bootstrap_describe_buf.read_line()
     if environ_tag != b"environ":
         raise Exception("expected to start reading the environment, instead got", environ_tag)
@@ -2542,42 +2487,43 @@ async def real_ssh_bootstrap(
         # if someone passes us a malformed environment element without =, we'll just break, whatever
         key, val = environ_elem.split(b"=", 1)
         environ[key] = val
-    await async_bootstrap_describe.aclose()
+    await async_bootstrap_describe_sock.aclose()
     # Read even more description off of describe
-    async_describe = await AsyncFileDescriptor.make(parent_task.resources.epoller, describe_sock)
+    new_address_space = far.AddressSpace(identifier_pid)
     symbols: t.Dict[bytes, far.Pointer] = {}
-    async for line in read_lines(async_describe):
+    async for line in read_lines(async_describe_sock):
         key, value = line.rstrip().split(b'=', 1)
-        symbols[key] = far.Pointer(new_task.base.address_space, near.Pointer(int(value, 16)))
-    await async_describe.aclose()
-    new_task = Task()
+        symbols[key] = far.Pointer(new_address_space, near.Pointer(int(value, 16)))
+    await async_describe_sock.aclose()
+    # Build the new task!
+    new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
+                                    identifier_pid, remote_syscall_fd, remote_syscall_fd)
+    new_base_task = base.Task(new_syscall, new_fd_table, new_address_space)
+    active_remote_data_fd = active.FileDescriptor(new_base_task, remote_data_fd)
+    new_gateway = ComposedMemoryGateway([
+        SendMemoryGateway(read=active_remote_data_fd, write=async_local_data_sock),
+        ReceiveMemoryGateway(read=async_local_data_sock, write=active_remote_data_fd),
+    ])
+    new_process_namespace = base.ProcessNamespace(identifier_pid)
+    new_mount_namespace = base.MountNamespace(identifier_pid)
+    new_fs_information = base.FSInformation(identifier_pid)
+    new_task = Task(new_base_task, new_gateway,
+                    new_mount_namespace, new_fs_information, SignalMask(set()), new_process_namespace)
     new_stdtask = StandardTask(
-        # hmmm what do we put here for access_task?
-        # we could put parent_task.task, or we could put parent_task.access_task.
-        # we want to do the one which is correct... umm......
-        # we need to be able to open the path from the access_task...
-        # well, eh, probably clearly the parent_task.task, that makes sure nesting works.
-        # and we'll just take care to call ssh spawning with the root task
-        access_connection=(data_pass_bytes, listening_sock),
-        connecting_task=new_task, connectiong_connection=None,
+        access_task=parent_task.task,
+        access_epoller=parent_task.resources.epoller,
+        access_connection=(local_data_path, FileDescriptor(new_task, listening_fd, UnixSocketFile())),
+        connecting_task=new_task, connecting_connection=None,
         task=new_task,
         task_resources=await TaskResources.make(task),
-        process_resources=ProcessResources.make_from_symbols(new_task, symbols),
-        filesystem_resources=await FilesystemResources.make_from_environ(new_task, environ),
+        process_resources=ProcessResources.make_from_symbols(symbols),
+        filesystem_resources=FilesystemResources.make_from_environ(new_mount_namespace, new_fs_information, environ),
         environment=environ,
     )
-    # Assemble and return resulting StandardTask
-    # looking up utilities in the PATH is really lame and boring!!!
-    # and more importantly, inefficient!!!
-    # it sure! would! be! nice! to be able to just use Nix for this.
-    # hmm hmmm
-    # we can have some kinda pre-bootstrap which runs nix to find things
-    # and prints out the path of things? no, prints out the path of nix
-    # maybe the pre-bootstrap is specialized to the package manager in use?
-    return bootstrap_child_task, None
+    return bootstrap_child_task, new_stdtask
 
 async def spawn_ssh(
-        task: StandardTask, ssh_path: Path, ssh_host: bytes,
+        task: StandardTask, ssh_path: base.Path, ssh_host: bytes,
 ) -> t.Tuple[ChildTask, StandardTask]:
     socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
     async with run_socket_binder(task, ssh_path, ssh_host, socket_binder_path) as (data_path_bytes, pass_path_bytes):

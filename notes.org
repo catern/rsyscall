@@ -5657,3 +5657,6 @@ shifting back to a single process should be an easy optimization after that!
   That will work with Nix and also some other systems - namely, when it's installed system-wide.
 
   So we'll do this in ffibuilder?
+** building standardtask
+
+  

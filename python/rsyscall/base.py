@@ -19,7 +19,7 @@ import rsyscall.near
 
 # The ones in io.py carry a reference to a Task, and so are more convenient for users.
 
-@dataclass(eq=False)
+@dataclass
 class FileDescriptor:
     fd_table: FDTable
     number: int
@@ -39,21 +39,21 @@ class FSInformation:
     "Filesystem root, current working directory, and umask; controlled by CLONE_FS."
     creator_pid: int
 
-@dataclass(eq=False)
+@dataclass
 class DirfdPathBase:
     dirfd: FileDescriptor
 
-@dataclass(eq=False)
+@dataclass
 class RootPathBase:
     mount_namespace: MountNamespace
     fs_information: FSInformation
 
-@dataclass(eq=False)
+@dataclass
 class CWDPathBase:
     mount_namespace: MountNamespace
     fs_information: FSInformation
 
-@dataclass(eq=False)
+@dataclass
 class Path:
     base: t.Union[DirfdPathBase, RootPathBase, CWDPathBase]
     # The typical representation of a path as foo/bar/baz\0,
