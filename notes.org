@@ -5698,3 +5698,18 @@ openssl genpkey thing | sshd -d -e -h /dev/stdin -f /dev/null -i
 also viable for key generation is:
 echo y | ssh-keygen -t rsa -N '' -f /dev/stdout
 but that's not a very nice interface
+
+I guess we generate keys for both halves and let 'er rip?
+
+Let's go ahead and do this with a test_ssh file.
+
+That way we can use -i?
+
+Ah so we need an absolute path to the host key, mhm
+
+
+OH Neat cool!!!
+
+I could just have ssh -o ProxyCommand 'sshd -i'!!
+
+That would be super mega rad!!!
