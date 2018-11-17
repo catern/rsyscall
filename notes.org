@@ -3527,6 +3527,16 @@ it's kind of going back to python's roots and being a distributed scripting lang
    rsys is better
 ** it's a distributed thread library
 ** it's a library for building distributed systems
+** it's a way around the reduced expressiveness of existing IPC/RPC APIs
+my current thought is that we resolve the problem of reduced expressiveness,
+by having everything in one single program,
+which is able to act across remote hosts directly if it needs to.
+(somewhat inefficiently)
+
+and if we want to increase efficiency for some task,
+we'll explicitly describe some limited protocol,
+for performing that specific task.
+so we don't have to be generic.
 * explicitly modeling memory
 how would I do this?
 
