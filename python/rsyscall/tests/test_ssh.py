@@ -4,6 +4,7 @@ import unittest
 from rsyscall.ssh import Command, SSHCommand, SSHDCommand
 from rsyscall.io import local_stdtask, Task, Path
 import rsyscall.base as base
+import logging
 
 executable_dirs: t.List[base.Path] = []
 for prefix in local_stdtask.environment[b"PATH"].split(b":"):
@@ -20,7 +21,8 @@ async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
 
 ssh = SSHCommand.make(local_stdtask.filesystem.utilities.ssh)
 sshd = SSHDCommand.make(trio.run(which, local_stdtask.task, executable_dirs, b"sshd"))
-ssh_keygen = Command.make(trio.run(which, local_stdtask.task, executable_dirs, b"ssh-keygen"), b"ssh-keygen")
+ssh_keygen = Command.make(trio.run(which, local_stdtask.task, executable_dirs, b"ssh-keygen"),
+                          b"ssh-keygen")
 
 class TestSSH(unittest.TestCase):
     async def runner(self, test: t.Callable[[], t.Awaitable[None]]) -> None:
@@ -78,17 +80,17 @@ class TestSSH(unittest.TestCase):
             sshd_command = sshd.args([
                 '-i', '-f', '/dev/null',
             ]).sshd_options({
-                'LogLevel': 'DEBUG',
+                'LogLevel': 'QUIET',
                 'HostKey': str(self.privkey),
                 'AuthorizedKeysFile': str(self.pubkey),
                 'StrictModes': 'no',
                 'PrintLastLog': 'no',
                 'PrintMotd': 'no',
             })
-            command = ssh.args([
+            ssh_command = ssh.args([
                 '-F', '/dev/null',
             ]).ssh_options({
-                'LogLevel': 'DEBUG',
+                'LogLevel': 'QUIET',
                 'IdentityFile': str(self.privkey),
                 'BatchMode': 'yes',
                 'StrictHostKeyChecking': 'no',
@@ -96,27 +98,9 @@ class TestSSH(unittest.TestCase):
             }).proxy_command(sshd_command).args([
                 'localhost',
             ])
-            # TODO hmm, I suspect my children are inheriting my block of sigchld.
-            # so we need to serialize relative to the signal mask
-            # on exec we need to clean up some resources
-            # are there any other cases like this?
-            # cloexec is not really necessary anymore in this scenario, right?
-            # we'd just... clone into a new fd space, and close files there.
-            # oh but resources you don't know about might be in the space. hm.
-            # so a cloexec-style approach would be to, um.. globally register.
-            # oh, cloexec just means you serialize file descriptor registration relative to you.
-            # so having singalfd represent a block, would serialize blocking relative to execing.
-            # so, if we just have a global sigmask - which we already have,
-            # we can know to optionally clear it before exec.
-            # uggghh. memory is auto-cleared, fds are auto-closed...
-            # this is an annoying thing that has to be done before every exec
-            # it reduces our clarity :(
-            # passing fds to inherit, passing paths to inherit...
-            # passing a block to inherit?
-            # a flag, perhaps?
-            # ah yeah just specify the new set, we can set it in one bunch.
             child_thread = await local_stdtask.fork()
-            child_task = await command.args(['head ' + str(self.privkey)]).exec(child_thread)
+            # redirect stdout so we can get this output of head...
+            child_task = await ssh_command.args(['head ' + str(self.privkey)]).exec(child_thread)
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
 

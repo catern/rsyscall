@@ -2601,7 +2601,12 @@ class RsyscallThread:
 
     async def execve(self, path: base.Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
+                     inherited_signal_blocks: t.List[SignalBlock]=[],
     ) -> ChildTask:
+        sigmask: t.Set[signal.Signals] = set()
+        for block in inherited_signal_blocks:
+            sigmask = sigmask.union(block.mask)
+        await self.stdtask.task.sigmask.setmask(self.stdtask.task, sigmask)
         envp = {**self.stdtask.environment}
         for key in env_updates:
             envp[os.fsencode(key)] = await fspath(env_updates[key])
