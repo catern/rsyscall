@@ -5779,3 +5779,5 @@ That would be super mega rad!!!
   since blocked signals are inherited.
 
   that would really reduce the number of syscalls required for a new thread!
+
+  Though, I still have to register the signalfd on the epollfd in the new thread.
