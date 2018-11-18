@@ -5781,3 +5781,87 @@ That would be super mega rad!!!
   that would really reduce the number of syscalls required for a new thread!
 
   Though, I still have to register the signalfd on the epollfd in the new thread.
+* signals and fds and inheritance
+  So with cloexec and fd inheritance and all that stuff,
+
+  the core problem is that we start in space A, shared by other threads/libraries,
+  and we want to go to space B, where only we exist and we know explicitly all the things we have.
+
+  So, in going to space B, we explicitly specify which resources from space A will be inherited into it.
+
+  That works for both fds and signal blocks.
+
+  And close the rest.
+
+  But how does this relate to a style where we, um.
+
+  Close everything by default,
+  and explicitly denote things which shouldn't be closed,
+  by marking them globally before the copy?
+
+  Well, that's not library/thread-safe.
+
+  So this suggests I should have an fd list argument on exec.
+
+  Though, that is not actually library-safe.
+
+  Well, the traditional Unix environment is all about mutating in place.
+  So really I should embrace that.
+
+  It's the user's fault if they screw that up!!!
+
+  So then I have two styles.
+
+  Style uno: explicitly pass things into new space (used with clone/fork)
+  Style dos: mutate old space to create new space. (used with exec)
+
+  nbd nbd nbd
+
+  So in style uno, I would do the thing with passing in.
+  With style two, I would make the user do it themselves.
+
+  Both are good.
+  For user convenience I will have exec wipe the mask even in style two.
+
+  Though...
+
+  If i just only optionally set up to start child processes, everything is fine.
+
+  Meh let's go ahead and do that since that will solve the problems,
+  without forcing me to contort my interface.
+
+  So how do I do that?
+
+  Before shifting gears, have I fully serialized my thoughts here?
+
+  The core insight/point is this notion of moving between shared space and exclusive space,
+  and copying things out of shared space to make exclusive space.
+  A to B, selecting some resources from A to go to B.
+** okay so now how do I only optionally start a ChildTaskMonitor?
+   So, I guess one way to do it would be to have a different Task class,
+   which only has enough things to exec, not to clone.
+
+   But I guess it would have all the things to exec anyway, so...
+
+   Oh and we inherit the signal block anyway... fug...
+   Unsetting it and resetting it is dumb...
+
+   So if it was done by signalfd...
+
+   I'd just inherit the signalfd...
+
+   By unsetting cloexec on it...
+
+   And otherwise it would be closed automatically.
+
+   Now for signal mask, there's nothing that will close it automatically.
+
+   So I'd have to unset in the case where I wanted to not pass down any blocks.
+
+   Which is opposite of the direction I want, I guess.
+
+   Bah! Okay! exec will take a signal set! Fine!
+
+   Or a list of signal blocks?
+
+   Yes, a list of signal blocks! Fine!

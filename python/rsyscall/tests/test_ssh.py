@@ -97,6 +97,24 @@ class TestSSH(unittest.TestCase):
                 'localhost',
             ])
             # TODO hmm, I suspect my children are inheriting my block of sigchld.
+            # so we need to serialize relative to the signal mask
+            # on exec we need to clean up some resources
+            # are there any other cases like this?
+            # cloexec is not really necessary anymore in this scenario, right?
+            # we'd just... clone into a new fd space, and close files there.
+            # oh but resources you don't know about might be in the space. hm.
+            # so a cloexec-style approach would be to, um.. globally register.
+            # oh, cloexec just means you serialize file descriptor registration relative to you.
+            # so having singalfd represent a block, would serialize blocking relative to execing.
+            # so, if we just have a global sigmask - which we already have,
+            # we can know to optionally clear it before exec.
+            # uggghh. memory is auto-cleared, fds are auto-closed...
+            # this is an annoying thing that has to be done before every exec
+            # it reduces our clarity :(
+            # passing fds to inherit, passing paths to inherit...
+            # passing a block to inherit?
+            # a flag, perhaps?
+            # ah yeah just specify the new set, we can set it in one bunch.
             child_thread = await local_stdtask.fork()
             child_task = await command.args(['head ' + str(self.privkey)]).exec(child_thread)
             await child_task.wait_for_exit()
