@@ -389,6 +389,11 @@ class FileDescriptor(t.Generic[T_file_co]):
         self.file.shared = True
         return new_fd
 
+    async def move_to(self, target: 'FileDescriptor') -> 'FileDescriptor[T_file_co]':
+        ret = await self.dup2(target)
+        await self.aclose()
+        return ret
+
     async def as_argument(self) -> int:
         # TODO unset cloexec
         await self.disable_cloexec()
@@ -1154,6 +1159,9 @@ class StandardTask:
                  process_resources: ProcessResources,
                  filesystem_resources: FilesystemResources,
                  environment: t.Dict[bytes, bytes],
+                 stdin: FileDescriptor[ReadableFile],
+                 stdout: FileDescriptor[WritableFile],
+                 stderr: FileDescriptor[WritableFile],
     ) -> None:
         self.access_task = access_task
         self.access_epoller = access_epoller
@@ -1165,6 +1173,9 @@ class StandardTask:
         self.process = process_resources
         self.filesystem = filesystem_resources
         self.environment = environment
+        self.stdin = stdin
+        self.stdout = stdout
+        self.stderr = stderr
 
     @staticmethod
     async def make_from_bootstrap(bootstrap: UnixBootstrap) -> 'StandardTask':
@@ -1183,7 +1194,11 @@ class StandardTask:
             task, task_resources.epoller, access_connection,
             task, None,
             task, task_resources, process_resources, filesystem_resources,
-            {**bootstrap.environ})
+            {**bootstrap.environ},
+            bootstrap.stdstreams.stdin,
+            bootstrap.stdstreams.stdout,
+            bootstrap.stdstreams.stderr,
+        )
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
         parent = Path(self.task, self.filesystem.tmpdir)
@@ -1216,13 +1231,12 @@ class StandardTask:
             [near_parent_child_side] = await memsys.recvmsg_fds(self.task.base, self.task.gateway, self.task.allocator,
                                                                 self.connecting_connection[1], 1)
             parent_child_side = far.FileDescriptor(self.task.fd_table, near_parent_child_side)
-        task, thread, symbols, fds = await rsyscall_spawn_exec_full(
+        task, thread, symbols, [child_side, stdin, stdout, stderr, fds] = await rsyscall_spawn_exec_full(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task, self.connecting_connection,
             self.task, thread_maker, self.process.server_func,
             self.filesystem.rsyscall_server_path,
             [parent_child_side] + user_fds, shared)
-        child_side, *fds = fds
         proc_resources = ProcessResources(
             server_func=FunctionPointer(symbols[b"rsyscall_server"]),
             do_cloexec_func=FunctionPointer(symbols[b"rsyscall_do_cloexec"]),
@@ -1241,16 +1255,22 @@ class StandardTask:
             self.connecting_task, (connecting_side.active.far, child_side),
             task, 
             await TaskResources.make(task),
-            proc_resources, self.filesystem, {**self.environment})
+            proc_resources, self.filesystem, {**self.environment},
+            # TODO
+            # urghhhhhhh the typessss
+            # I guess I'll have these be untyped.
+            # no that's just laziness, I'll do it, I guess.
+            stdin, stdout, stderr,
+        )
         return RsyscallThread(stdtask, thread), fds
 
     async def fork(self,
+                   user_fds: t.List[far.FileDescriptor],
                    shared: UnshareFlag=UnshareFlag.FS,
-    ) -> RsyscallThread:
+    ) -> t.Tuple[RsyscallThread, t.List[far.FileDescriptor]]:
         # we share FS so we don't have to also have a list of paths that we want to translate into the new path.
         # TODO we should really figure out some clean way of representing fd inheritance...
-        thread, _ = await self.spawn([], shared=shared)
-        return thread
+        return (await self.spawn(user_fds, shared=shared))
 
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
@@ -2526,9 +2546,10 @@ async def real_ssh_bootstrap(
     new_mount_namespace = base.MountNamespace(identifier_pid)
     new_fs_information = base.FSInformation(identifier_pid)
     new_task = Task(new_base_task, new_gateway,
-                    new_mount_namespace, new_fs_information, SignalMask(set()), new_process_namespace)
-    # unconditionally zero the sigmask, we don't know what we inherited
-    await memsys.rt_sigprocmask(new_syscall, new_gateway, new_task.allocator, SigprocmaskHow.SETMASK, set())
+                    new_mount_namespace, new_fs_information,
+                    # we assume ssh zeroes the sigmask before starting us
+                    SignalMask(set()),
+                    new_process_namespace)
     new_stdtask = StandardTask(
         access_task=parent_task.task,
         access_epoller=parent_task.resources.epoller,
