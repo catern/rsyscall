@@ -1,24 +1,26 @@
 from __future__ import annotations
 import rsyscall.base as base
 from rsyscall.io import RsyscallThread, ChildTask
+from dataclasses import dataclass
 import typing as t
 
+T = t.TypeVar('T')
 @dataclass
 class Command:
     executable_path: base.Path
     arguments: t.List[str]
-    env_updates: t.Dict[str, str]
+    env_updates: t.Mapping[str, str]
 
     @classmethod
     def make(cls, executable_path: base.Path, argv0: str) -> Command:
         return cls(executable_path, [argv0], {})
 
-    def add_args(self, args: t.List[str]) -> Command:
+    def args(self: T, args: t.List[str]) -> T:
         return type(self)(self.executable_path,
                              self.arguments + args,
                              self.env_updates)
 
-    def update_env(self, env_updates: t.Dict[str, str]) -> Command:
+    def env(self: T, env_updates: t.Mapping[str, str]) -> T:
         return type(self)(self.executable_path,
                              self.arguments,
                              {**self.env_updates, **env_updates})
@@ -27,9 +29,11 @@ class Command:
         ret = ""
         for key, value in self.env_updates.items():
             ret += f"{key}={value} "
-        ret += str(executable_path)
-        for arg in self.arguments:
+        ret += str(self.executable_path)
+        # skip first argument
+        for arg in self.arguments[1:]:
             ret += f" {arg}"
+        return ret
 
     # hmm we actually need an rsyscallthread to properly exec
     # would be nice to call this just "Thread".
@@ -38,25 +42,25 @@ class Command:
         return (await thread.execve(self.executable_path, self.arguments, self.env_updates))
 
 class SSHCommand(Command):
-    def add_ssh_options(self, config: t.Dict[str, str]) -> SSHCommand:
+    def ssh_options(self, config: t.Mapping[str, str]) -> SSHCommand:
         option_list: t.List[str] = []
         for key, value in config.items():
             option_list += ["-o", f"{key}={value}"]
-        return self.add_args(option_list)
+        return self.args(option_list)
 
-    def add_proxy_command(self, command: Command) -> SSHCommand:
-        return self.add_ssh_options({'ProxyCommand': str(command)})
+    def proxy_command(self: T, command: Command) -> T:
+        return self.ssh_options({'ProxyCommand': str(command)})
 
     @classmethod
     def make(cls, executable_path: base.Path) -> SSHCommand:
         return super().make(executable_path, "ssh")
 
 class SSHDCommand(Command):
-    def add_sshd_options(self, config: t.Dict[str, str]) -> SSHDCommand:
+    def sshd_options(self, config: t.Mapping[str, str]) -> SSHDCommand:
         option_list: t.List[str] = []
         for key, value in config.items():
             option_list += ["-o", f"{key}={value}"]
-        return self.add_args(option_list)
+        return self.args(option_list)
 
     @classmethod
     def make(cls, executable_path: base.Path) -> SSHDCommand:

@@ -1132,6 +1132,16 @@ class FilesystemResources:
             rsyscall_bootstrap_path=rsyscall_bootstrap_path,
         )
 
+async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
+    "Find an executable by this name in this list of paths"
+    if b"/" in name:
+        raise Exception("name should be a single path element without any / present")
+    for path in paths:
+        filename = Path(task, path)/name
+        if (await filename.access(read=True, execute=True)):
+            return filename.pure
+    raise Exception("executable not found", name)
+
 class StandardTask:
     def __init__(self,
                  access_task: Task,
@@ -1233,6 +1243,14 @@ class StandardTask:
             await TaskResources.make(task),
             proc_resources, self.filesystem, {**self.environment})
         return RsyscallThread(stdtask, thread), fds
+
+    async def fork(self,
+                   shared: UnshareFlag=UnshareFlag.FS,
+    ) -> RsyscallThread:
+        # we share FS so we don't have to also have a list of paths that we want to translate into the new path.
+        # TODO we should really figure out some clean way of representing fd inheritance...
+        thread, _ = await self.spawn([], shared=shared)
+        return thread
 
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
@@ -2640,3 +2658,5 @@ def assert_same_task(task: Task, *args) -> None:
                 raise Exception("desired task", task, "doesn't match task", arg.task, "in arg", arg)
         else:
             raise Exception("can't validate argument", arg)
+
+local_stdtask = trio.run(StandardTask.make_from_bootstrap, gather_local_bootstrap())

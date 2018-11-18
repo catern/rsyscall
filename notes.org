@@ -5723,3 +5723,59 @@ OH Neat cool!!!
 I could just have ssh -o ProxyCommand 'sshd -i'!!
 
 That would be super mega rad!!!
+* friendly api
+  So, it would be nice to have a local_stdtask just sitting there ready to go.
+  And I can just use it, and call .fork to get another thread.
+
+  And that would be great.
+
+  But! I need to handle ownership! Closing resources, y'know?
+
+  Don't I need a thread running in the background to do that?
+
+  Well, hmm.
+
+  So somewhere down the stack, for async things,
+  there's a call to wait_readable - or possibly other trio functions - that's the core primitive.
+
+  And that is only valid in a specific event loop.
+
+
+  Hmm I should ask the trio people how to approach this.
+
+  Also whatever I do should work in asyncio as well, hmm.
+
+  Running is all fine. Probably.
+
+  It's really the garbage collection that's tricky.
+
+  Hmm. System thread?
+
+  I guess theoretically I can start a coroutine as soon as someone allocates a resource that needs to be freed.
+
+  Maybe this isn't so important really
+
+  If I start a coroutine as soon as someone allocates..
+
+  But there's still the issue of, how do I myself clean up my resources?
+
+  Well... I guess they are never cleaned up.
+
+  I can say, "put these in a garbage collector which never runs"?
+  Could be manually flushed.
+
+  So yeah, that's no issue.
+* inheriting epollfd and signalfd
+  hey neat, according to some random guy on the internet,
+  signalfd on epollfd results in wakeups based on where it's registered.
+
+  perfect!
+  that's exactly what I want
+
+  so I can inherit the epoller,
+  and I can inherit the signalfd that is part of the ChildTaskMonitor.
+
+  I could even inherit the entire SignalBlock, hmm.
+  since blocked signals are inherited.
+
+  that would really reduce the number of syscalls required for a new thread!

@@ -6,6 +6,8 @@ import shutil
 import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
+from rsyscall.ssh import Command
+from rsyscall.io import local_stdtask
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
 import socket
@@ -489,6 +491,14 @@ class TestIO(unittest.TestCase):
                 fds = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator,
                                                r.active.far, 1)
                 print(fds)
+        trio.run(test)
+
+    def test_fork_exec(self) -> None:
+        async def test() -> None:
+            child_thread = await local_stdtask.fork()
+            sh = Command.make(local_stdtask.filesystem.utilities.sh, 'sh')
+            child_task = await sh.args(['-c', 'true']).exec(child_thread)
+            await child_task.wait_for_exit()
         trio.run(test)
 
     # def test_pass_fd_thread(self) -> None:
