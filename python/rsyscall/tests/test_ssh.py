@@ -68,11 +68,17 @@ class TestSSH(unittest.TestCase):
                 'localhost',
             ])
             pipe = await local_stdtask.task.pipe()
-            child_thread, [child_write] = await local_stdtask.fork([pipe.w])
-            await child_write.move_to(child_thread.stdtask.stdout)
-            # TODO redirect stdout so we can get this output of head...
+            child_thread, [child_write] = await local_stdtask.fork([pipe.wfd.active.far])
+            await child_thread.stdtask.stdout.replace_with(child_write)
+            await pipe.wfd.aclose()
             child_task = await ssh_command.args(['head ' + str(self.privkey)]).exec(child_thread)
-            await child_task.wait_for_exit()
+            data = await pipe.rfd.read()
+            # TODO open file and compare data
+            privkey = await local_stdtask.task.open(self.privkey)
+            # paths don't own so I don't like this path object abstraction anymore
+            # but I do need it for file descriptors...
+            privkey
+            print(data)
         trio.run(self.runner, test)
 
 

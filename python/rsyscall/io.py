@@ -213,6 +213,16 @@ class Task:
     def make_fd(self, fd: near.FileDescriptor, file: T_file) -> FileDescriptor[T_file]:
         return FileDescriptor(self, far.FileDescriptor(self.base.fd_table, fd), file)
 
+    async def open(self, path: base.Path, flags: int, mode=0o644) -> far.FileDescriptor:
+        """Open a path
+
+        Note that this can block forever if we're opening a FIFO
+
+        """
+        fd = await memsys.openat(self.syscall, self.gateway, self.allocator,
+                                 path, flags, mode)
+        return far.FileDescriptor(self.base.fd_table, near.FileDescriptor(fd))
+
     async def pipe(self, flags=os.O_CLOEXEC) -> Pipe:
         r, w = await memsys.pipe(self.syscall, self.gateway, self.allocator, flags)
         return Pipe(self._make_fd(r, ReadableFile(shared=False)),
@@ -393,6 +403,14 @@ class FileDescriptor(t.Generic[T_file_co]):
         ret = await self.dup2(target)
         await self.aclose()
         return ret
+
+    async def replace_with(self, source: far.FileDescriptor, flags=0) -> None:
+        if self.active.far.fd_table != source.fd_table:
+            raise Exception("two fds are not in the same FDTable")
+        if self.active.far.near == source.near:
+            return
+        await far.dup3(self.task.base, source, self.active.far, flags)
+        await far.close(self.task.base, source)
 
     async def as_argument(self) -> int:
         # TODO unset cloexec
@@ -1231,12 +1249,12 @@ class StandardTask:
             [near_parent_child_side] = await memsys.recvmsg_fds(self.task.base, self.task.gateway, self.task.allocator,
                                                                 self.connecting_connection[1], 1)
             parent_child_side = far.FileDescriptor(self.task.fd_table, near_parent_child_side)
-        task, thread, symbols, [child_side, stdin, stdout, stderr, fds] = await rsyscall_spawn_exec_full(
+        task, thread, symbols, [child_side, stdin, stdout, stderr, *fds] = await rsyscall_spawn_exec_full(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task, self.connecting_connection,
             self.task, thread_maker, self.process.server_func,
             self.filesystem.rsyscall_server_path,
-            [parent_child_side] + user_fds, shared)
+            [parent_child_side, self.stdin.active.far, self.stdout.active.far, self.stderr.active.far] + user_fds, shared)
         proc_resources = ProcessResources(
             server_func=FunctionPointer(symbols[b"rsyscall_server"]),
             do_cloexec_func=FunctionPointer(symbols[b"rsyscall_do_cloexec"]),
@@ -1256,16 +1274,14 @@ class StandardTask:
             task, 
             await TaskResources.make(task),
             proc_resources, self.filesystem, {**self.environment},
-            # TODO
-            # urghhhhhhh the typessss
-            # I guess I'll have these be untyped.
-            # no that's just laziness, I'll do it, I guess.
-            stdin, stdout, stderr,
+            stdin=FileDescriptor(task, stdin, self.stdin.file),
+            stdout=FileDescriptor(task, stdout, self.stdout.file),
+            stderr=FileDescriptor(task, stderr, self.stderr.file),
         )
         return RsyscallThread(stdtask, thread), fds
 
     async def fork(self,
-                   user_fds: t.List[far.FileDescriptor],
+                   user_fds: t.List[far.FileDescriptor]=[],
                    shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple[RsyscallThread, t.List[far.FileDescriptor]]:
         # we share FS so we don't have to also have a list of paths that we want to translate into the new path.
@@ -2560,6 +2576,9 @@ async def real_ssh_bootstrap(
         process_resources=ProcessResources.make_from_symbols(symbols),
         filesystem_resources=FilesystemResources.make_from_environ(new_mount_namespace, new_fs_information, environ),
         environment=environ,
+        stdin=new_task._make_fd(0, ReadableFile(shared=True)),
+        stdout=new_task._make_fd(1, WritableFile(shared=True)),
+        stderr=new_task._make_fd(2, WritableFile(shared=True)),
     )
     return bootstrap_child_task, new_stdtask
 

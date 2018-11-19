@@ -89,7 +89,7 @@ class Path:
         elif isinstance(self.base, CWDPathBase):
             ret = pathdata
         elif isinstance(self.base, DirfdPathBase):
-            ret = b"/proc/self/fd/" + str(int(self.base.dirfd)) + b"/" + pathdata
+            ret = b"/proc/self/fd/" + bytes(int(self.base.dirfd)) + b"/" + pathdata
         else:
             raise Exception("invalid base type")
         return ret.decode()
