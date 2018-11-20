@@ -15,6 +15,6 @@ ssh -F /dev/null \
 -o PrintLastLog=no \
 -o PrintMotd=no \
 "\
-    -L 2345:localhost:2346 localhost echo
+ localhost "$@"
 rm "$tmpdir/key" "$tmpdir/key.pub"
 rmdir "$tmpdir"

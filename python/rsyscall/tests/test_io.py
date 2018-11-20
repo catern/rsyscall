@@ -1,12 +1,12 @@
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.io import gather_local_bootstrap, wrap_stdin_out_err
 from rsyscall.io import AsyncFileDescriptor
+from rsyscall.io import local_stdtask
 from rsyscall.epoll import EpollEvent, EpollEventMask
 import shutil
 import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
-from rsyscall.ssh import Command
 from rsyscall.io import local_stdtask
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
@@ -320,35 +320,33 @@ class TestIO(unittest.TestCase):
 
     def test_thread_nest(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-                rsyscall_task, _ = await stdtask.spawn([])
-                async with rsyscall_task as stdtask2:
-                    rsyscall_task3, _ = await stdtask2.spawn([])
-                    async with rsyscall_task3 as stdtask3:
-                        await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
-                        print("SBAUGH hello done")
-                    print("SBAUGH hello done again")
+            stdtask = local_stdtask
+            rsyscall_task, _ = await stdtask.spawn([])
+            async with rsyscall_task as stdtask2:
+                rsyscall_task3, _ = await stdtask2.spawn([])
+                async with rsyscall_task3 as stdtask3:
+                    await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
+                    print("SBAUGH hello done")
+                print("SBAUGH hello done again")
         trio.run(test)
 
     def test_thread_exec(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-                rsyscall_task, _ = await stdtask.spawn([])
-                async with rsyscall_task:
-                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
-                    await child_task.wait_for_exit()
+            rsyscall_task, _ = await local_stdtask.spawn([])
+            async with rsyscall_task:
+                child_task = await rsyscall_task.execve(local_stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                await child_task.wait_for_exit()
         trio.run(test)
 
     def test_ssh_basic(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-                # TODO argh ok so I need to build an ssh test environment since my sandbox VM doesn't support self-ssh.
-                local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
-                    stdtask, stdtask.filesystem.utilities.ssh, b"localhost")
-                rsyscall_task, _ = await remote_stdtask.spawn([])
-                async with rsyscall_task:
-                    child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
-                    await child_task.wait_for_exit()
+            # TODO argh ok so I need to build an ssh test environment since my sandbox VM doesn't support self-ssh.
+            local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
+                local_stdtask, local_stdtask.filesystem.utilities.ssh.args([b"localhost"]))
+            rsyscall_task, _ = await remote_stdtask.spawn([])
+            async with rsyscall_task:
+                child_task = await rsyscall_task.execve(local_stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                await child_task.wait_for_exit()
         trio.run(test)
 
     # def test_thread_mkdtemp(self) -> None:

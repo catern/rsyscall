@@ -1033,7 +1033,7 @@ def gather_local_bootstrap() -> UnixBootstrap:
 class UnixUtilities:
     rm: base.Path
     sh: base.Path
-    ssh: base.Path
+    ssh: SSHCommand
 
 async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
     """Open a file, creating and truncating it, and write the passed text to it
@@ -1150,7 +1150,7 @@ class FilesystemResources:
         utilities = UnixUtilities(
             rm=cffi_to_path(lib.rm_path),
             sh=cffi_to_path(lib.sh_path),
-            ssh=cffi_to_path(lib.ssh_path),
+            ssh=SSHCommand.make(cffi_to_path(lib.ssh_path)),
         )
         rsyscall_pkglibexecdir = cffi_to_path(lib.pkglibexecdir)
         rsyscall_server_path = rsyscall_pkglibexecdir/"rsyscall-server"
@@ -2442,8 +2442,7 @@ async def rsyscall_spawn_exec_full(
 @contextlib.asynccontextmanager
 async def run_socket_binder(
         task: StandardTask,
-        ssh_path: Path,
-        ssh_host: bytes,
+        ssh_command: SSHCommand,
         socket_binder_path: bytes,
 ) -> t.AsyncGenerator[t.Tuple[bytes, bytes], None]:
     describe_pipe = await task.task.pipe()
@@ -2495,8 +2494,7 @@ async def ssh_bootstrap(
 
 async def real_ssh_bootstrap(
         parent_task: StandardTask,
-        ssh_path: base.Path,
-        ssh_host: bytes,
+        ssh_command: SSHCommand,
         # the path of the socket on the remote host
         data_path_bytes: bytes,
         # the path of a socket which you can connect to to get the listening socket for data_path_bytes
@@ -2592,11 +2590,11 @@ async def real_ssh_bootstrap(
     return bootstrap_child_task, new_stdtask
 
 async def spawn_ssh(
-        task: StandardTask, ssh_path: base.Path, ssh_host: bytes,
+        task: StandardTask, ssh_command: SSHCommand,
 ) -> t.Tuple[ChildTask, StandardTask]:
     socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
-    async with run_socket_binder(task, ssh_path, ssh_host, socket_binder_path) as (data_path_bytes, pass_path_bytes):
-        return (await real_ssh_bootstrap(task, ssh_path, ssh_host, data_path_bytes, pass_path_bytes))
+    async with run_socket_binder(task, ssh_command, socket_binder_path) as (data_path_bytes, pass_path_bytes):
+        return (await real_ssh_bootstrap(task, ssh_command, data_path_bytes, pass_path_bytes))
 
 # async def rsyscall_spawn_ssh(
 #         access_task: Task, epoller: Epoller,
@@ -2652,6 +2650,22 @@ class RsyscallThread:
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
                      inherited_signal_blocks: t.List[SignalBlock]=[],
     ) -> ChildTask:
+        """Replace the running executable in this thread with another.
+
+        We take inherited_signal_blocks as an argument so that we can default it
+        to "inheriting" an empty signal mask. Most programs expect the signal
+        mask to be cleared on startup. Since we're using signalfd as our signal
+        handling method, we need to block signals with the signal mask; and if
+        those blocked signals were inherited across exec, other programs would
+        break (SIGCHLD is the most obvious example).
+
+        We could depend on the user clearing the signal mask before calling
+        exec, similar to how we require the user to remove CLOEXEC from
+        inherited fds; but that is a fairly novel requirement to most, so for
+        simplicity we just default to clearing the signal mask before exec, and
+        allow the user to explicitly pass down additional signal blocks.
+
+        """
         sigmask: t.Set[signal.Signals] = set()
         for block in inherited_signal_blocks:
             sigmask = sigmask.union(block.mask)
@@ -2712,5 +2726,69 @@ def assert_same_task(task: Task, *args) -> None:
                 raise Exception("desired task", task, "doesn't match task", arg.task, "in arg", arg)
         else:
             raise Exception("can't validate argument", arg)
+
+@dataclass
+class Command:
+    executable_path: base.Path
+    arguments: t.List[str]
+    env_updates: t.Mapping[str, str]
+
+    @classmethod
+    def make(cls, executable_path: base.Path, argv0: str) -> Command:
+        return cls(executable_path, [argv0], {})
+
+    def args(self: T, args: t.List[str]) -> T:
+        return type(self)(self.executable_path,
+                             self.arguments + args,
+                             self.env_updates)
+
+    def env(self: T, env_updates: t.Mapping[str, str]) -> T:
+        return type(self)(self.executable_path,
+                             self.arguments,
+                             {**self.env_updates, **env_updates})
+
+    def __str__(self) -> str:
+        ret = ""
+        for key, value in self.env_updates.items():
+            ret += f"{key}={value} "
+        ret += str(self.executable_path)
+        # skip first argument
+        for arg in self.arguments[1:]:
+            ret += f" {arg}"
+        return ret
+
+    # hmm we actually need an rsyscallthread to properly exec
+    # would be nice to call this just "Thread".
+    # we should namespace the current "Thread" properly, so we can do that...
+    async def exec(self, thread: RsyscallThread) -> ChildTask:
+        return (await thread.execve(self.executable_path, self.arguments, self.env_updates))
+
+class SSHCommand(Command):
+    def ssh_options(self, config: t.Mapping[str, str]) -> SSHCommand:
+        option_list: t.List[str] = []
+        for key, value in config.items():
+            option_list += ["-o", f"{key}={value}"]
+        return self.args(option_list)
+
+    def proxy_command(self: T, command: Command) -> T:
+        return self.ssh_options({'ProxyCommand': str(command)})
+
+    def local_forward(self: T, local_socket: str, remote_socket: str) -> T:
+        return self.args(["-L", f"{local_socket}:{remote_socket}"])
+
+    @classmethod
+    def make(cls, executable_path: base.Path) -> SSHCommand:
+        return super().make(executable_path, "ssh")
+
+class SSHDCommand(Command):
+    def sshd_options(self, config: t.Mapping[str, str]) -> SSHDCommand:
+        option_list: t.List[str] = []
+        for key, value in config.items():
+            option_list += ["-o", f"{key}={value}"]
+        return self.args(option_list)
+
+    @classmethod
+    def make(cls, executable_path: base.Path) -> SSHDCommand:
+        return super().make(executable_path, "sshd")
 
 local_stdtask = trio.run(StandardTask.make_from_bootstrap, gather_local_bootstrap())

@@ -3,7 +3,7 @@ import trio
 import os
 import socket
 import unittest
-from rsyscall.ssh import Command, SSHCommand, SSHDCommand
+from rsyscall.io import Command, SSHCommand, SSHDCommand
 from rsyscall.io import local_stdtask, Task, Path
 import rsyscall.base as base
 import logging
@@ -21,7 +21,7 @@ async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
             return filename.pure
     raise Exception("executable not found", name)
 
-ssh = SSHCommand.make(local_stdtask.filesystem.utilities.ssh)
+ssh = local_stdtask.filesystem.utilities.ssh
 sshd = SSHDCommand.make(trio.run(which, local_stdtask.task, executable_dirs, b"sshd"))
 ssh_keygen = Command.make(trio.run(which, local_stdtask.task, executable_dirs, b"ssh-keygen"),
                           b"ssh-keygen")
