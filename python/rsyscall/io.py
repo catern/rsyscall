@@ -2449,50 +2449,25 @@ async def run_socket_binder(
     async_describe = await AsyncFileDescriptor.make(task.resources.epoller, describe_pipe.rfd)
     # TODO maybe I should have this process set PDEATHSIG so that even if we hard crash, it will exit too
     binder_task, [describe_write] = await task.spawn([describe_pipe.wfd.active.far], shared=UnshareFlag.NONE)
-    # move describe_write to 1
-    # TODO we should really just pass down stdout to here instead of hardcoding 1
-    if int(describe_write) != 1:
-        await near.dup3(binder_task.stdtask.task.base.sysif, binder_task.stdtask.task.base.to_near_fd(describe_write),
-                        near.FileDescriptor(1), 0)
-        await far.close(binder_task.stdtask.task.base, describe_write)
+    await binder_task.stdtask.stdout.replace_with(describe_write)
     await describe_pipe.wfd.aclose()
     async with binder_task:
-        child = await binder_task.execve(task.filesystem.socket_binder_path, ["socket-binder"])
-        # I bet ssh will keep this open, dang it
-        data_path_bytes, pass_path_bytes = [line async for line in read_lines(async_describe)]
+        child = await ssh_command.args([str(task.filesystem.socket_binder_path), "socket-binder"]).exec(binder_task)
+        # sigh, openssh doesn't close its local stdout when it sees HUP/EOF on
+        # the remote stdout. so we can't use EOF to signal end of our lines, and
+        # instead have to have a sentinel to tell us when to stop reading.
+        lines_aiter = read_lines(async_describe)
+        data_path_bytes = await lines_aiter.__anext__()
+        pass_path_bytes = await lines_aiter.__anext__()
+        end = await lines_aiter.__anext__()
+        if end != b"end":
+            raise Exception("socket binder violated protocol")
+        await async_describe.aclose()
         logger.info("socket binder done, got paths %s", (data_path_bytes, pass_path_bytes))
         yield data_path_bytes, pass_path_bytes
         (await child.wait_for_exit()).check()
 
-# robust or not robust?
-# clearly, robust. since that's what bootstrap should be.
 async def ssh_bootstrap(
-        parent_task: StandardTask,
-        ssh_path: base.Path,
-        ssh_host: bytes,
-        # the path of the socket on the remote host
-        data_path_bytes: bytes,
-        # the path of a socket which you can connect to to get the listening socket for data_path_bytes
-        pass_path_bytes: bytes,
-) -> t.Tuple[ChildTask, StandardTask]:
-    # Just start a child, and have it perform the handshake on these literal bytes
-    rsyscall_task, _ = await parent_task.spawn([])
-    stdtask = rsyscall_task.stdtask
-    task = stdtask.task
-    pass_sock = await task.socket_unix(socket.SOCK_STREAM)
-    pass_path = Path.from_bytes(task, pass_path_bytes)
-    await robust_unix_connect(pass_path, pass_sock)
-    near_listening_sock, = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator, pass_sock.active.far, 1)
-    listening_sock = FileDescriptor(task, far.FileDescriptor(task.base.fd_table, near_listening_sock), UnixSocketFile())
-
-    # now we have a usable access_connection; we'll just mutate the stdtask to use it
-    stdtask.access_connection = (Path.from_bytes(task, data_path_bytes), listening_sock)
-    # we also overwrite the connecting task so the access_connection is actually used
-    stdtask.connecting_task = stdtask.task
-    # TODO resource leakage cuz we won't have those resources in a real usage
-    return rsyscall_task.thread.child_task, stdtask
-
-async def real_ssh_bootstrap(
         parent_task: StandardTask,
         ssh_command: SSHCommand,
         # the path of the socket on the remote host
@@ -2594,7 +2569,7 @@ async def spawn_ssh(
 ) -> t.Tuple[ChildTask, StandardTask]:
     socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
     async with run_socket_binder(task, ssh_command, socket_binder_path) as (data_path_bytes, pass_path_bytes):
-        return (await real_ssh_bootstrap(task, ssh_command, data_path_bytes, pass_path_bytes))
+        return (await ssh_bootstrap(task, ssh_command, data_path_bytes, pass_path_bytes))
 
 # async def rsyscall_spawn_ssh(
 #         access_task: Task, epoller: Epoller,

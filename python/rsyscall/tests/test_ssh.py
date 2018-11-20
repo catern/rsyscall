@@ -41,7 +41,7 @@ async def ssh_to_localhost(stdtask) -> t.AsyncGenerator[SSHCommand, None]:
         sshd_command = sshd.args([
             '-i', '-f', '/dev/null',
         ]).sshd_options({
-            'LogLevel': 'DEBUG',
+            'LogLevel': 'INFO',
             'HostKey': str(privkey),
             'AuthorizedKeysFile': str(pubkey),
             'StrictModes': 'no',
@@ -51,7 +51,7 @@ async def ssh_to_localhost(stdtask) -> t.AsyncGenerator[SSHCommand, None]:
         yield ssh.args([
             '-F', '/dev/null',
         ]).ssh_options({
-            'LogLevel': 'DEBUG',
+            'LogLevel': 'INFO',
             'IdentityFile': str(privkey),
             'BatchMode': 'yes',
             'StrictHostKeyChecking': 'no',
@@ -119,7 +119,7 @@ class TestSSH(unittest.TestCase):
             read_data = await local_stdtask.task.read(privkey)
             self.assertEqual(pipe_data, read_data)
         trio.run(self.runner, test)
-    
+
     def test_forward(self):
         async def test() -> None:
             listen_sock = await local_stdtask.task.socket_unix(socket.SOCK_STREAM)
