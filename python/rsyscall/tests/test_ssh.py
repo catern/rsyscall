@@ -1,5 +1,6 @@
 import typing as t
 import trio
+import contextlib
 import os
 import socket
 import unittest
@@ -26,6 +27,39 @@ sshd = SSHDCommand.make(trio.run(which, local_stdtask.task, executable_dirs, b"s
 ssh_keygen = Command.make(trio.run(which, local_stdtask.task, executable_dirs, b"ssh-keygen"),
                           b"ssh-keygen")
 
+@contextlib.asynccontextmanager
+async def ssh_to_localhost(stdtask) -> t.AsyncGenerator[SSHCommand, None]:
+    async with (await stdtask.mkdtemp()) as tmpdir:
+        path = tmpdir.pure
+        await local_stdtask.task.chdir(tmpdir)
+        child_thread, [] = await local_stdtask.fork()
+        keygen_command = ssh_keygen.args(
+            ['-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key'])
+        privkey = path/'key'
+        pubkey = path/'key.pub'
+        await (await keygen_command.exec(child_thread)).wait_for_exit()
+        sshd_command = sshd.args([
+            '-i', '-f', '/dev/null',
+        ]).sshd_options({
+            'LogLevel': 'DEBUG',
+            'HostKey': str(privkey),
+            'AuthorizedKeysFile': str(pubkey),
+            'StrictModes': 'no',
+            'PrintLastLog': 'no',
+            'PrintMotd': 'no',
+        })
+        yield ssh.args([
+            '-F', '/dev/null',
+        ]).ssh_options({
+            'LogLevel': 'DEBUG',
+            'IdentityFile': str(privkey),
+            'BatchMode': 'yes',
+            'StrictHostKeyChecking': 'no',
+            'UserKnownHostsFile': '/dev/null',
+        }).proxy_command(sshd_command).args([
+            "localhost",
+        ])
+            
 class TestSSH(unittest.TestCase):
     async def runner(self, test: t.Callable[[], t.Awaitable[None]]) -> None:
         async with (await local_stdtask.mkdtemp()) as tmpdir:
@@ -65,6 +99,14 @@ class TestSSH(unittest.TestCase):
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
     
+    def test_helper(self):
+        async def test() -> None:
+            async with ssh_to_localhost(local_stdtask) as ssh_command:
+                child_thread, [] = await local_stdtask.fork([])
+                child_task = await ssh_command.args(['head key']).exec(child_thread)
+                await child_task.wait_for_exit()
+        trio.run(test)
+
     def test_ssh(self):
         async def test() -> None:
             pipe = await local_stdtask.task.pipe()

@@ -3,6 +3,7 @@ from rsyscall.io import gather_local_bootstrap, wrap_stdin_out_err
 from rsyscall.io import AsyncFileDescriptor
 from rsyscall.io import local_stdtask
 from rsyscall.epoll import EpollEvent, EpollEventMask
+from rsyscall.tests.test_ssh import ssh_to_localhost
 import shutil
 import rsyscall.base as base
 import rsyscall.near as near
@@ -341,12 +342,13 @@ class TestIO(unittest.TestCase):
     def test_ssh_basic(self) -> None:
         async def test() -> None:
             # TODO argh ok so I need to build an ssh test environment since my sandbox VM doesn't support self-ssh.
-            local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
-                local_stdtask, local_stdtask.filesystem.utilities.ssh.args([b"localhost"]))
-            rsyscall_task, _ = await remote_stdtask.spawn([])
-            async with rsyscall_task:
-                child_task = await rsyscall_task.execve(local_stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
-                await child_task.wait_for_exit()
+            async with ssh_to_localhost(local_stdtask) as ssh_command:
+                local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
+                    local_stdtask, ssh_command)
+                rsyscall_task, [] = await remote_stdtask.fork([])
+                async with rsyscall_task:
+                    child_task = await rsyscall_task.execve(local_stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                    await child_task.wait_for_exit()
         trio.run(test)
 
     # def test_thread_mkdtemp(self) -> None:
