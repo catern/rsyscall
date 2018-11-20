@@ -35,11 +35,11 @@ async def read_to_bytes(gateway: MemoryGateway, data: base.Pointer, count: int) 
 
 
 #### miscellaneous ####
-async def read(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
-               fd: base.FileDescriptor, count: int) -> bytes:
+async def read(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
+               fd: far.FileDescriptor, count: int) -> bytes:
     logger.debug("read(%s, %s)", fd, count)
     with await allocator.malloc(count) as buf_ptr:
-        ret = await raw_syscall.read(sysif, fd, buf_ptr, count)
+        ret = await far.read(task, fd, buf_ptr, count)
         return (await read_to_bytes(gateway, buf_ptr, ret))
 
 async def write(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
@@ -60,11 +60,11 @@ async def memfd_create(task: far.Task, gateway: MemoryGateway, allocator: memory
     async with localize_data(gateway, allocator, name+b"\0") as (name_ptr, _):
         return (await far.memfd_create(task, name_ptr, flags))
 
-async def getdents64(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
-                     fd: base.FileDescriptor, count: int) -> bytes:
+async def getdents64(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
+                     fd: far.FileDescriptor, count: int) -> bytes:
     logger.debug("getdents64(%s, %s)", fd, count)
     with await allocator.malloc(count) as dirp:
-        ret = await raw_syscall.getdents(sysif, fd, dirp, count)
+        ret = await far.getdents64(task, fd, dirp, count)
         return (await read_to_bytes(gateway, dirp, ret))
 
 siginfo_size = ffi.sizeof('siginfo_t')

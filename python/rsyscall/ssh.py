@@ -51,6 +51,9 @@ class SSHCommand(Command):
     def proxy_command(self: T, command: Command) -> T:
         return self.ssh_options({'ProxyCommand': str(command)})
 
+    def local_forward(self: T, local_socket: str, remote_socket: str) -> T:
+        return self.args(["-L", f"{local_socket}:{remote_socket}"])
+
     @classmethod
     def make(cls, executable_path: base.Path) -> SSHCommand:
         return super().make(executable_path, "ssh")

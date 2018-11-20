@@ -223,6 +223,16 @@ class Task:
                                  path, flags, mode)
         return far.FileDescriptor(self.base.fd_table, near.FileDescriptor(fd))
 
+    async def read(self, fd: far.FileDescriptor, count: int=4096) -> bytes:
+        return (await memsys.read(self.base, self.gateway, self.allocator, fd, count))
+
+    # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
+    # and they'll take an active.FileDescriptor.
+    # then we'll directly have StandardTask contain both Task and MemoryAbstractor?
+    async def getdents(self, fd: far.FileDescriptor, count: int=4096) -> t.List[Dirent]:
+        data = await memsys.getdents64(self.base, self.gateway, self.allocator, fd, count)
+        return rsyscall.stat.getdents64_parse(data)
+
     async def pipe(self, flags=os.O_CLOEXEC) -> Pipe:
         r, w = await memsys.pipe(self.syscall, self.gateway, self.allocator, flags)
         return Pipe(self._make_fd(r, ReadableFile(shared=False)),
@@ -274,7 +284,7 @@ class Task:
 
 class ReadableFile(File):
     async def read(self, fd: 'FileDescriptor[ReadableFile]', count: int=4096) -> bytes:
-        return (await memsys.read(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, count))
+        return (await fd.task.read(fd.active.far, count))
 
 class WritableFile(File):
     async def write(self, fd: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
@@ -302,8 +312,7 @@ class DirectoryFile(SeekableFile):
         self.raw_path = raw_path
 
     async def getdents(self, fd: 'FileDescriptor[DirectoryFile]', count: int) -> t.List[Dirent]:
-        data = await memsys.getdents64(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, count)
-        return rsyscall.stat.getdents64_parse(data)
+        return (await fd.task.getdents(fd.active.far, count))
 
     def as_path(self, fd: FileDescriptor[DirectoryFile]) -> Path:
         return Path(fd.task, base.Path(base.DirfdPathBase(fd.pure), []))
@@ -1254,7 +1263,7 @@ class StandardTask:
             self.connecting_task, self.connecting_connection,
             self.task, thread_maker, self.process.server_func,
             self.filesystem.rsyscall_server_path,
-            [parent_child_side, self.stdin.active.far, self.stdout.active.far, self.stderr.active.far] + user_fds, shared)
+            [parent_child_side, self.stdin.active.far, self.stdout.active.far, self.stderr.active.far, *user_fds], shared)
         proc_resources = ProcessResources(
             server_func=FunctionPointer(symbols[b"rsyscall_server"]),
             do_cloexec_func=FunctionPointer(symbols[b"rsyscall_do_cloexec"]),

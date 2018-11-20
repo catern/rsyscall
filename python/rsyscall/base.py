@@ -82,7 +82,10 @@ class Path:
         else:
             return Path(CWDPathBase(mount_namespace, fs_information), path.split(b"/"))
 
-    def __str__(self) -> str:
+    def unix_address(self) -> UnixAddress:
+        return UnixAddress(bytes(self))
+
+    def __bytes__(self) -> bytes:
         pathdata = b"/".join(self.components)
         if isinstance(self.base, RootPathBase):
             ret = b"/" + pathdata
@@ -92,7 +95,10 @@ class Path:
             ret = b"/proc/self/fd/" + bytes(int(self.base.dirfd)) + b"/" + pathdata
         else:
             raise Exception("invalid base type")
-        return ret.decode()
+        return ret
+
+    def __str__(self) -> str:
+        return bytes(self).decode()
 
 @dataclass(eq=False)
 class ProcessNamespace:

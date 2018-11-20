@@ -5865,3 +5865,13 @@ That would be super mega rad!!!
    Or a list of signal blocks?
 
    Yes, a list of signal blocks! Fine!
+* ssh
+** detecting that forwarding is done
+   OK, let's list my desiderata.
+
+   1. I want to be able to use the .ssh/config that people already have, including if they are already using ControlMaster.
+   2. I want to be able to detect when the forwarding is done.
+
+   lol we know the socket is ready once the command starts
+
+   and for bootstrap, we know the command is started once the first command exits.

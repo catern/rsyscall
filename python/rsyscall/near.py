@@ -24,6 +24,7 @@ class SYS(enum.IntEnum):
     munmap = lib.SYS_munmap
     set_tid_address = lib.SYS_set_tid_address
     set_robust_list = lib.SYS_set_robust_list
+    getdents64 = lib.SYS_getdents64
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallInterface:
@@ -161,3 +162,6 @@ async def set_tid_address(sysif: SyscallInterface, ptr: Pointer) -> None:
 
 async def set_robust_list(sysif: SyscallInterface, head: Pointer, len: int) -> None:
     await sysif.syscall(SYS.set_robust_list, head, len)
+
+async def getdents64(sysif: SyscallInterface, fd: FileDescriptor, dirp: Pointer, count: int) -> int:
+    return (await sysif.syscall(SYS.getdents64, fd, dirp, count))
