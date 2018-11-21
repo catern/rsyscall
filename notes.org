@@ -5875,3 +5875,46 @@ That would be super mega rad!!!
    lol we know the socket is ready once the command starts
 
    and for bootstrap, we know the command is started once the first command exits.
+* thought
+TODO consider using pdeathsig to kill off rsyscall threads instead of fd hangups
+though, how do we detect death from the parent?
+I guess we need to closely intertwine child monitoring and sending syscalls.
+
+(For also the reason of, that's how we detect exec)
+
+If we have every syscall go through the,
+"either the child terminates or this syscall returns",
+routine...
+
+That will nicely allow us to stay single-fd-spaced.
+Which is, efficient!
+
+Then I can use only unshare as my unsharing mechanism.
+Which allows for much more type-specific stuff!
+Which would be rad.
+
+I also need to do the fd sharing efficiency thing.
+
+Signals will still be automatically unshared, I guess we can't prevent that.
+
+Which should I do first?
+
+I guess I should separate out the exec-rsyscall-server thing from the
+make-thread thing.
+
+The exec-rsyscall-server thing can just take a thread and exec in it.
+Like with ssh.
+Actually. With ssh can we just go ahead and do that completely?
+
+Instead of spawning a child thread,
+just directly exec from the passed-in rsyscallthread.
+
+Well, yeah, we could do that,
+but I don't see the use right now,
+and also it reduces abstraction;
+currently we actually spawn a separate subprocess for socket_binder.
+Which, we could work around I guess.
+
+WEll
+So yeah that seems good
+Let's convert the full_exec into something taking a thread and execing in it.
