@@ -2470,6 +2470,8 @@ async def run_socket_binder(
 async def ssh_bootstrap(
         parent_task: StandardTask,
         ssh_command: SSHCommand,
+        # the local path we'll use for the socket
+        local_socket_path: base.Path,
         # the path of the socket on the remote host
         data_path_bytes: bytes,
         # the path of a socket which you can connect to to get the listening socket for data_path_bytes
@@ -2477,6 +2479,7 @@ async def ssh_bootstrap(
 ) -> t.Tuple[ChildTask, StandardTask]:
     # identify local path
     # TODO forward local path to remote path over ssh
+    # urgh okay so we need to figure out a local path to run from.
     task = parent_task.task
     local_data_path = Path.from_bytes(task, data_path_bytes)
     # start bootstrap
@@ -2566,51 +2569,21 @@ async def ssh_bootstrap(
 
 async def spawn_ssh(
         task: StandardTask, ssh_command: SSHCommand,
+        local_socket_path: t.Optional[base.Path]=None,
 ) -> t.Tuple[ChildTask, StandardTask]:
+    # we could get rid of the need to touch the local filesystem by directly
+    # speaking the openssh multiplexer protocol. or directly speaking the ssh
+    # protocol for that matter.
+    if local_socket_path is None:
+        # we guess that the last argument of ssh command is the hostname. it
+        # doesn't matter if it isn't, this is just for human-readability.
+        guessed_hostname = ssh_command.arguments[-1]
+        random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        name = (guessed_hostname+random_suffix+".sock").encode()
+        local_socket_path = task.filesystem.tmpdir/name
     socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
     async with run_socket_binder(task, ssh_command, socket_binder_path) as (data_path_bytes, pass_path_bytes):
-        return (await ssh_bootstrap(task, ssh_command, data_path_bytes, pass_path_bytes))
-
-# async def rsyscall_spawn_ssh(
-#         access_task: Task, epoller: Epoller,
-# ) -> None:
-#     describe_pipe = await task.pipe()
-#     binder_task, [describe_write] = await self.stdtask.spawn([describe_pipe.wfd], shared=UnshareFlag.NONE)
-#     if int(describe_write) != 1:
-#         await near.dup3(binder_task, binder_task.to_near_fd(describe_write), 1, 0)
-#     async_describe = await AsyncFileDescriptor.make(epoller, describe_pipe.rfd)
-#     socket_binder_executable = base.Path(
-#         base.RootPathBase(None, None), # type: ignore
-#         [s.encode() for s in shutil.which("rsyscall_server").split("/")[1:]]) # type: ignore
-#     async with binder_task:
-#         child = await binder_task.execve(socket_binder_executable, ["socket_binder"])
-#         data_path, pass_path = [Path.from_bytes(task, data_path) async for line in read_lines(async_describe)]
-#         pass_sock = await access_task.socket_unix(socket.SOCK_STREAM)
-#         await robust_unix_connect(pass_path, pass_sock)
-#         listening_sock, = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator, pass_sock, 1)
-#         (await child.wait_for_exit()).check()
-#     socket_binder_task = task.spawn(stdout)
-#     socket_binder_task.exec("socket binder stuff")
-#     sock_path, pass_path = stdout.read()
-
-#     # fake dumbness from here on
-#     pass_sock = await connect(pass_path)
-
-#     listening_sock = await pass_sock.recv_fd()
-
-#     await socket_binder_task.wait()
-
-#     access_connection = sock_path, listening_sock
-#     # now spawn the normal task with normal stuff.
-    
-#     # TODO what do we actually print out to?
-#     envstuff, path, fdnum = stdout.read()
-#     syscall_sock = await connect(path)
-#     data_sock = await connect(path)
-#     # again where does this print go?
-#     # what if we bootstrap the unix socket separately?
-#     # with something whose stdout *can* be consumed?
-#     fdnum, fdnum = stdout.read()
+        return (await ssh_bootstrap(task, ssh_command, local_socket_path, data_path_bytes, pass_path_bytes))
 
 
 class RsyscallThread:
