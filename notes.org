@@ -5918,3 +5918,5 @@ Which, we could work around I guess.
 WEll
 So yeah that seems good
 Let's convert the full_exec into something taking a thread and execing in it.
+
+behind syscallinterface, childtask thing.
