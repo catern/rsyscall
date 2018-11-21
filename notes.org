@@ -5920,3 +5920,12 @@ So yeah that seems good
 Let's convert the full_exec into something taking a thread and execing in it.
 
 behind syscallinterface, childtask thing.
+** connecting task
+   I don't think I actually need the connecting task.
+   I can just pass down the listening socket wherever.
+
+   I'll defer doing that for now though.
+** bah okay priority is to put the childtask behind the syscallinterface
+   Then we can detect exits easily and throw.
+
+   And then we can stop unsharing the fd table when spawning a new thread.
