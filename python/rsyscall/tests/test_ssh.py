@@ -41,7 +41,7 @@ async def ssh_to_localhost(stdtask) -> t.AsyncGenerator[SSHCommand, None]:
         sshd_command = sshd.args([
             '-i', '-f', '/dev/null',
         ]).sshd_options({
-            'LogLevel': 'INFO',
+            'LogLevel': 'DEBUG',
             'HostKey': str(privkey),
             'AuthorizedKeysFile': str(pubkey),
             'StrictModes': 'no',

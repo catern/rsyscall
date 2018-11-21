@@ -12,11 +12,12 @@
 
 
 int connect_unix_socket(const char *name) {
-    int pathfd = open(name, O_PATH);
+    int pathfd = open(name, O_PATH|O_CLOEXEC);
     if (pathfd < 0) {
-	err(1, "open(%s, O_PATH)", name);
+	err(1, "open(%s, O_PATH|O_CLOEXEC)", name);
     }
     struct sockaddr_un addr = { .sun_family = AF_UNIX, .sun_path = {} };
+    /* TODO close pathfd! just for cleanliness. oh also it's not cloexec... */
     int ret = snprintf(addr.sun_path, sizeof(addr.sun_path), "/proc/self/fd/%d", pathfd);
     if (ret < 0) {
 	err(1, "snprintf");

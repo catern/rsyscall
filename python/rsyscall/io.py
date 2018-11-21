@@ -2478,15 +2478,14 @@ async def ssh_bootstrap(
         pass_path_bytes: bytes,
 ) -> t.Tuple[ChildTask, StandardTask]:
     # identify local path
-    # TODO forward local path to remote path over ssh
-    # urgh okay so we need to figure out a local path to run from.
     task = parent_task.task
-    local_data_path = Path.from_bytes(task, data_path_bytes)
-    # start bootstrap
-    # TODO start bootstrap over ssh
-    rsyscall_thread, _ = await parent_task.spawn([])
-    bootstrap_child_task = await rsyscall_thread.execve(
-        parent_task.filesystem.rsyscall_bootstrap_path, [b"rsyscall-bootstrap", pass_path_bytes])
+    local_data_path = Path(task, local_socket_path)
+    # start bootstrap and forward local socket
+    rsyscall_thread, [] = await parent_task.spawn([])
+    bootstrap_child_task = await ssh_command.local_forward(
+        str(local_socket_path), data_path_bytes.decode(),
+    ).args([str(parent_task.filesystem.rsyscall_bootstrap_path), pass_path_bytes.decode()]).exec(rsyscall_thread)
+    await trio.sleep(.1)
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor[UnixSocketFile]:
         sock = await task.socket_unix(socket.SOCK_STREAM)
