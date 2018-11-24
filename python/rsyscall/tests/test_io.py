@@ -551,6 +551,33 @@ class TestIO(unittest.TestCase):
     #             server_fd = await near.accept4(task.base.sysif, listening_sock, None, None, os.O_CLOEXEC)
     #     trio.run(test)
 
+    async def foo(self) -> None:
+        async with trio.open_nursery() as nursery:
+            async def thing1() -> None:
+                await trio.sleep(0)
+                raise Exception("ha ha")
+            async def thing2() -> None:
+                await trio.sleep(1000)
+            nursery.start_soon(thing1)
+            nursery.start_soon(thing2)
+
+    def test_nursery(self) -> None:
+        async def test() -> None:
+            async with trio.open_nursery() as nursery:
+                async def a1() -> None:
+                    await trio.sleep(10)
+                async def a2() -> None:
+                    try:
+                        await self.foo()
+                    except:
+                        print("hello")
+                    finally:
+                        nursery.cancel_scope.cancel()
+                nursery.start_soon(a1)
+                nursery.start_soon(a2)
+        trio.run(test)
+        
+
 if __name__ == '__main__':
     import unittest
     unittest.main()

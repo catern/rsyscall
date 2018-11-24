@@ -1645,21 +1645,21 @@ class Thread:
         async with trio.open_nursery() as nursery:
             async def syscall() -> None:
                 logger.info("SBAUGH starting syscall")
-                # this will only ever terminate with an exception, which will be propagated up
-                try:
-                    await memsys.execveat(sysif, gateway, allocator, path, argv, envp, flags)
-                except trio.Cancelled:
-                    logger.info("SBAUGH oops i lost")
-                    if child_task:
-                        pass
+                def handler(exc) -> Exception:
+                    if isinstance(exc, trio.Cancelled):
+                        logger.info("SBAUGH oops i lost")
+                        if child_task:
+                            return None
+                        else:
+                            return exc
+                    elif isinstance(exc, RsyscallHangup):
+                        logger.info("SBAUGH um got hangup?")
+                        return None
                     else:
-                        raise
-                except RsyscallHangup:
-                    pass
-                except:
-                    logger.info("SBAUGH we got cancelled probably")
-                    raise
-                else:
+                        return exc
+                # this will only ever terminate with an exception, which will be propagated up
+                with trio.MultiError.catch(handler):
+                    await memsys.execveat(sysif, gateway, allocator, path, argv, envp, flags)
                     raise Exception("execveat unexpectedly returned?")
             async def wait_for_success() -> None:
                 logger.info("SBAUGH starting %s", self.child_task)
@@ -1863,9 +1863,22 @@ class RsyscallConnection:
             # we catch this in the implementations of exec and exit
             raise RsyscallHangup()
         response, = struct.unpack('q', response_bytes)
+        if response < 0:
+            err = -response
+            raise OSError(err, os.strerror(err))
         return response
 
 class RsyscallInterface(base.SyscallInterface):
+    """An rsyscall connection to a task that is not our child.
+
+    For correctness, we should ensure that we'll get HUP/EOF if the task has
+    exited and therefore will never respond. This is most easily achieved by
+    making sure that the fds keeping the other end of the RsyscallConnection
+    open, are only held by one task, and so will be closed when the task
+    exits. Note, though, that that requires that the task be in an unshared file
+    descriptor space.
+
+    """
     def __init__(self, rsyscall_connection: RsyscallConnection,
                  # usually the same pid that's inside the namespaces
                  identifier_pid: int,
@@ -1882,14 +1895,45 @@ class RsyscallInterface(base.SyscallInterface):
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-        ret = await self.rsyscall_connection.syscall(
+        return (await self.rsyscall_connection.syscall(
             number,
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        if ret < 0:
-            err = -ret
-            raise OSError(err, os.strerror(err))
-        return ret
+            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6)))
+
+class ChildExit(RsyscallHangup):
+    pass
+
+class RsyscallChildInterface(base.SyscallInterface):
+    """An rsyscall connection to a task that is our child.
+
+    With a task that is our child, we can be sure that if the task exits, we'll
+    know about it, so we don't have to use HUP/EOF to detect task exit. This
+    allows the task to be in a shared file descriptor space.
+
+    """
+    def __init__(self, rsyscall_connection: RsyscallConnection,
+                 child: ChildTask,
+                 infd: far.FileDescriptor, outfd: far.FileDescriptor) -> None:
+        self.rsyscall_connection = rsyscall_connection
+        self.child = child
+        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{child.process.id}")
+        self.activity_fd = infd.near
+        # these are needed so that we don't accidentally close them when doing a do_cloexec_except
+        self.infd = infd
+        self.outfd = outfd
+
+    async def close_interface(self) -> None:
+        await self.child.kill()
+        await self.rsyscall_connection.close()
+        # we'll throw an exception on exit,
+        # and catch it in the wrapper.
+
+    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+        return (await self.rsyscall_connection.syscall(
+            number,
+            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6)))
 
 async def call_function(task: Task, stack: BufferedStack, process_resources: ProcessResources,
                         function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> ChildEvent:
@@ -2311,9 +2355,10 @@ async def rsyscall_spawn_exec_full(
         inherited_fds.append(nearfd)
         return far.FileDescriptor(fd_table, nearfd)
     remote_syscall_sock = inherit(passed_syscall_sock)
-    syscall = RsyscallInterface(RsyscallConnection(async_access_syscall_sock, async_access_syscall_sock),
-                                process.id,
-                                remote_syscall_sock, remote_syscall_sock)
+    syscall = RsyscallChildInterface(
+        RsyscallConnection(async_access_syscall_sock, async_access_syscall_sock),
+        cthread.thread.child_task,
+        remote_syscall_sock, remote_syscall_sock)
     new_base_task = base.Task(syscall, fd_table, parent_task.address_space)
     def inherit_active(fd: far.FileDescriptor) -> active.FileDescriptor:
         return active.FileDescriptor(new_base_task, inherit(fd))

@@ -5929,3 +5929,391 @@ behind syscallinterface, childtask thing.
    Then we can detect exits easily and throw.
 
    And then we can stop unsharing the fd table when spawning a new thread.
+
+** what do we want for child cleanup
+   okay so we don't want to force not orphaning children,
+   we want to expose all the functionality that is really there.
+
+   but we still want the rsyscall threads to be killed on exit.
+   so, sending them sigkill on parent death seems best for that.
+
+   tempting to enforce the same invariant for all processes, but nah, we don't want to force that on people.
+* we can write a nice supervise library that just does a double fork
+  and gives you that as its interface - neat
+
+  and it will just clone
+
+  oh and the library can um I guess
+   
+* derp
+  Oh I really am getting mismatched syscall return values now.
+  I need to make syscalling cancel-safe.
+
+** making syscalls cancel-safe
+   So I need to have the write done as one unit,
+   because I don't know if it's interrupted, when it is done.
+
+   right right
+
+   and then once it's done, I need to have the read handled right.
+   right right.
+
+   so really I don't even want to cancel
+
+   I just want to stop blocking on the operation, but still run it in the background.
+
+   Because if I interrupt it, that would result in nondeterministic behavior.
+
+   Hmm mmm mm
+
+   Can I special case the things that I want to stop waiting on?
+
+   Well, any syscall can be interrupted by ChildExit.
+
+   When that happens, we can close the connection and we're done - all good.
+
+   Likewise if we interrupt execveat.
+   
+   We will just close the connection.
+
+   On the other hand, if we need to interrupt wait, then...
+
+   In these wait cases, we are just waiting on a specific thing, right?
+
+   When we cancel one of those,
+   it's because...
+   what?
+
+   Well, in the detecting hangup case,
+   it's because we've successfully returned from another syscall.
+
+   Hmmmmmmmm
+
+   I could have a baackground task doing the
+   waiting.
+
+   And sending it to a queue.
+   And I just cancel the queue fetch.
+   Or condition variable or whatever.
+
+   And I guess then when I cancel a syscall I can just close the connection.
+
+   Rather than leave it indeterminate whether the syscall is complete.
+
+   In both of the cases where *I* cancel something, I want to close the connection.
+
+   But what about just, y'know, straightforward cancellation of a system call or process or thread or whatever?
+
+   Well I can do that with OS signals I guess.
+
+   OK so if I go ahead and embrace cancellation == close, then...
+
+   As long as waiting is on a condition variable, I'm good.
+
+   Now, how do I avoid that complexification of waiting?
+
+   So, with the multiple-waiters through one-condition-variable thing,
+   all the other waiters can be cancelled easily.
+
+   Only the main one has difficulty.
+
+   (Also note that when cancelling the execveat one, I don't want to kill the child task)
+
+   Maybe we can also put the futex task behind the syscallinterface
+
+   And then we just throw different kinds of exceptions up out of it
+
+   Yeah that seems like a reasonable interface.
+   We'll just throw MMRelease or Exit out of the SyscallInterface. Or Hangup.
+   I guess Hangup just implies Release. So we can have Hangup/Release and Exit.
+
+   Anyway, so.
+
+   Let's think about a low level way to ensure cancellable waiting.
+
+   We, um...
+
+   Instead of blocking on waiting, of course we are on a signalfd.
+
+   And we're on epollfd on that.
+
+   Maybe we can send a signal into the epollfd to stop waiting?
+
+   Hmmm...
+
+   I guess the notion is, how do we cancel an epollfd wait?
+
+   The same technique can be used for child waiting
+
+   I guess we can do, maybe, some kind of...
+
+   Passed in event fd?
+   Which we monitor and which causes us to return early...
+
+   If we, hmm.
+
+   Then if we actually 
+
+   I guess we want asyncfiledescriptor blocking to be cancel-safe.
+
+   Well.
+
+   We want to be able to stop blocking.
+
+   In ChildTaskMonitor, stopping blocking means going into AsyncFileDescriptor.
+
+   Stopping the blocking of AsyncFileDescriptor means going into Epoller.
+
+   We need to figure out how to stop an epoller from blocking.
+
+   HOW DO????
+   This is the same annoying stuff we had to do before.
+   Figure out how to manage blocking of the epoll...
+
+   We just have an additional requirement now...
+
+   Well, so, one obvious way to "cancel" the epoll wait is,
+   just let it run and ignore the result.
+
+   But, that's not truly usefully cancelling it.
+
+   Well. If we let it run and ignore the result,
+   while sending a new system call to cause it to return early,
+   then... everything is relatively fine.
+
+   But if we're talking really immediately cancelling it,
+   in a way that is really structured,
+   then...
+
+   Well, one way would be to send a signal interrupting it.
+   That's fairly unreliable though.
+
+   Another way would be to send a byte on another pipe.
+   If we genuinely did that and had to clean it up,
+   what would that look like?
+** making epoll calls interruptible
+   Well, so, just interrupting the syscall and letting it finish latter is kind of hard.
+
+   Because that memory that we were using for the syscall,
+   is now leaked.
+
+   I guess the better way to do it is to just keep running it in the background.
+
+   That sure would be ideal.
+
+   Maybe if we could suspend it on cancellation instead of actually stopping it?
+
+   Then the next time someone came around, continue?
+
+   But we're blocking other syscalls though.
+
+   Seems like we have to run to completion, just not on the user's thread.
+
+   If not there, then when?
+
+   If we don't run on the user's thread,
+   maybe we run on the thread of the next person to make a syscall?
+
+   The thing is, we won't actually return for sure until the next user comes along.
+
+   What we really want is to be able to invoke the system call return continuation independently,
+   but not actually do anything with that result until the next user comes along to run the Epoller logic on their thread.
+
+   Hmm I guess we could achieve that by contorting ourselves here.
+   If we did a bunch of stack ripping, anyway...
+   
+   Man! trio does not sufficiently prevent the need for stack ripping.
+
+   So what would I do
+
+   So, I guess, um.
+
+   I'd have the syscall interface create a list of system call requests,
+   and satisfy them in that order,
+
+   using the "shared thread" functionality.
+
+   Again, this seems really lame.
+   
+   I really want shift/reset.
+
+   OK so let's reimplement shift/reset, eh?
+
+   Instead of calling a function,
+   I spawn a thread with a future.
+
+   Let's state what I really need.
+
+   EpolledFileDescriptor calling into
+   Epoller calling into
+   SyscallInterface
+
+   I want to, um.
+
+   OK so um.
+
+   The cancel interface is outside memory abstracted syscall.
+
+   The memsys has to happen anyway. Right?
+
+   Or, I guess this is just a bit pointless.
+   We want the whole thing to actually continue running, just not blocking the higher thing.
+
+   Well, if the higher thing doesn't run...
+
+   Well, at each level, we want the higher thing to continue running,
+   we just don't want to be blocked on it.
+
+   So, um.When we have a thread of A,
+   which is blocked deep into B/C/D etc.
+   We want to stop A at some reset boundary above B/C/D,
+   and continue running B/C/D.
+
+   The more I think about it,
+   the more I think that what I really need is,
+   this core abstraction of,
+   a thread which runs only while some other thread is registered as waiting for its outputs.
+   And just sits suspended while no other thread is waiting for it.
+
+   This would be transitive of course;
+   if shared thread A was waiting on another shared thread B,
+   and no real thread X was waiting on shared thread A,
+   then shared thread A would not run,
+   and therfore shared thread B would not run also.
+
+In more trio-specific terms,
+a shared thread runs as long as there's at least one nursery available for it to run in
+(nurseries made available through some "registration" mechanism to say that this shared thread can run as long as this nursery lives,
+and likewise a deregistration mechanism)
+
+oooooooooookaaaaaaaaaaaaaay
+soooooooooooooo
+
+Ugh I don't think I can abstract over the stack-ripping here
+
+In particular because I need to support stopping in the middle while waiting for an async call to return.
+
+OK so, how are we going to handle this?
+We'll manually stack rip I guess,
+using events to communicate.
+
+blah
+blah blah
+
+ok so hm
+
+we can use yield to avoid stack ripping.
+
+but we need to support, um, not blocking.
+
+so, okay.
+
+remembering,
+the thread needs to run the syscall then.
+
+um blah
+
+what if we literally just use callbacks?
+
+well, that won't help.
+we'll still need to, um.
+support cancelling all the way up when we're blocked on readiness.
+
+argh, all I want to do is support stopping waiting
+
+okay okay okay, so, I just want to run this task when I'm interested,
+and stop running it when I'm not.
+Nothing else.
+
+Specifically, I guess, I need to drive the event loop.
+But suspend driving it when I'm done.
+Hmm.
+
+Well, I could put myself in the middle of the yield stream.
+And forward things up.
+
+It's inefficient, but I can do it.
+
+Then... I have the ability to suspend, don't I?
+I don't quite remember... I think there's something that breaks here.
+
+Anyway, I can forward up at each step,
+and choose to suspend whenever I want.
+
+And, and, hmm.
+What if I choose to suspend while I'm blocked?
+Well that's a tricky one!
+
+Ugh I bet I can't do this without extending trio.
+
+If we were in the event loop we could park something indefinitely, but otherwise...
+
+This is why I need to do the async generator thing, I guess.
+Because then I can control the blocking on my own.
+
+Hmm, alternatively I guess I could decode the yield protocol and handle it myself.
+
+Actually, I guess I only ever actually block on one thing...
+Hmm not true, I do also block on trio datastructures.
+
+OK so if I only ever yield up an event to block on.
+
+And then I myself await on that event.
+
+And then when I'm cancelled I can stop awaiting.
+
+That works, right?
+
+I just have to, instead of awaiting directly on a thing,
+have it return an event to await on.
+
+Then...
+
+Well, what happens when I hit ~the lower level~?
+
+OK so the syscall will return a future, yeah, boring, straightforward.
+
+I'll have to drive it.
+With some helper method I guess.
+
+I'll call some helper on the future.
+Which will run the async generator.
+
+The generator will, as always, yield up events.
+
+The rsyscall connection will yield up events.
+
+The asyncfiledescriptor will yield up events.
+
+Lol fml
+
+Can I fix this with asyncio?
+
+Well, no. I still have the same problem of wanting a suspended task outside an event loop.
+
+If I reluctantly degrade myself by assuming I am running within an event loop, then I can have an easy fix.
+Sigh.
+
+I guess I will just do that.
+
+God Python sucks
+
+So let's just make them as system tasks
+bah maybe we could just have a nursery?
+
+bah bah bah
+
+bah okay we'll just have a nursery. stupid boilerplate
+
+and then a get local task thing
+
+which creates the part of the task that needs background threads
+bah   
+
+
+** running inside a nursery
+
+OK we're decided:
+We have to run inside an explicit trio nursery and pass it down.
+
+let's start with thread_nest
