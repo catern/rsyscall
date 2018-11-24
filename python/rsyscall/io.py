@@ -2759,3 +2759,6 @@ class SSHDCommand(Command):
         return super().make(executable_path, "sshd")
 
 local_stdtask = trio.run(StandardTask.make_from_bootstrap, gather_local_bootstrap())
+
+async def build_local_stdtask(nursery) -> StandardTask:
+    return local_stdtask

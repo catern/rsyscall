@@ -1,7 +1,8 @@
+import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.io import gather_local_bootstrap, wrap_stdin_out_err
 from rsyscall.io import AsyncFileDescriptor
-from rsyscall.io import local_stdtask
+from rsyscall.io import local_stdtask, build_local_stdtask, StandardTask
 from rsyscall.epoll import EpollEvent, EpollEventMask
 from rsyscall.tests.test_ssh import ssh_to_localhost
 import shutil
@@ -319,9 +320,13 @@ class TestIO(unittest.TestCase):
     #                     await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
     #     trio.run(test)
 
+    async def runner(self, test: t.Callable[[StandardTask], t.Awaitable[None]]) -> None:
+        async with trio.open_nursery() as nursery:
+            stdtask = await build_local_stdtask(nursery)
+            await test(stdtask)
+
     def test_thread_nest(self) -> None:
-        async def test() -> None:
-            stdtask = local_stdtask
+        async def test(stdtask: StandardTask) -> None:
             rsyscall_task, _ = await stdtask.spawn([])
             async with rsyscall_task as stdtask2:
                 rsyscall_task3, _ = await stdtask2.spawn([])
@@ -329,27 +334,27 @@ class TestIO(unittest.TestCase):
                     await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
                     print("SBAUGH hello done")
                 print("SBAUGH hello done again")
-        trio.run(test)
+        trio.run(self.runner, test)
 
     def test_thread_exec(self) -> None:
-        async def test() -> None:
-            rsyscall_task, _ = await local_stdtask.spawn([])
+        async def test(stdtask: StandardTask) -> None:
+            rsyscall_task, _ = await stdtask.spawn([])
             async with rsyscall_task:
-                child_task = await rsyscall_task.execve(local_stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
                 await child_task.wait_for_exit()
-        trio.run(test)
+        trio.run(self.runner, test)
 
     def test_ssh_basic(self) -> None:
-        async def test() -> None:
-            # TODO argh ok so I need to build an ssh test environment since my sandbox VM doesn't support self-ssh.
-            async with ssh_to_localhost(local_stdtask) as ssh_command:
+        async def test(stdtask: StandardTask) -> None:
+            async with ssh_to_localhost(stdtask) as ssh_command:
                 local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
-                    local_stdtask, ssh_command)
+                    stdtask, ssh_command)
                 rsyscall_task, [] = await remote_stdtask.fork([])
                 async with rsyscall_task:
+                    # there's no test on mount namespace at the moment, so it works to pull this from local
                     child_task = await rsyscall_task.execve(local_stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
                     await child_task.wait_for_exit()
-        trio.run(test)
+        trio.run(self.runner, test)
 
     # def test_thread_mkdtemp(self) -> None:
     #     async def test() -> None:
