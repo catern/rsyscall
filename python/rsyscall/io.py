@@ -1239,7 +1239,7 @@ class StandardTask:
                     user_fds: t.List[far.FileDescriptor],
                     shared: UnshareFlag=UnshareFlag.FS,
     ) -> t.Tuple[RsyscallThread, t.List[far.FileDescriptor]]:
-        thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor, self.process)
+        thread_maker = ThreadMaker(self.task, self.resources.child_monitor, self.process)
         if self.connecting_task == self.task:
             # Set up the future connection between the connecting task and the new task we're making.
             # If we are the same task as our connecting task, we can just socketpair directly and pass it down.
@@ -1294,7 +1294,7 @@ class StandardTask:
         [(access_sock, remote_sock)] = await make_connections(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task, self.connecting_connection, self.task, 1)
-        thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor, self.process)
+        thread_maker = ThreadMaker(self.task, self.resources.child_monitor, self.process)
         task, thread = await spawn_rsyscall_thread(
             access_sock, remote_sock,
             self.task, thread_maker, self.process.server_func)
@@ -1312,102 +1312,14 @@ class StandardTask:
 
     async def unshare_files(self, fds: t.List[far.FileDescriptor], cloexec=False) -> t.List[far.FileDescriptor]:
         # TODO what I am doing is converting over to nice modular unshare of FDs and VMs
-        inherited_fds: t.List[near.FileDescriptor] = []
+        inherited_fds: t.List[far.FileDescriptor] = []
         # maybe have a non-sync method on fd-holding things which takes a method which inherits an fd
         # things to inherit:
         # epollfd (so we can add new fds to it)
         # signalfd (so we can read it to flush the signals off)
         # I think unshare_files should cloexec by default, and have a going_to_exec parameter,
         # which we can set to true to skip cloexec for efficiency.
-        def inherit(fd: far.FileDescriptor) -> far.FileDescriptor:
-            nearfd = parent_fd_table.to_near(fd)
-            inherited_fds.append(nearfd)
-            return far.FileDescriptor(fd_table, nearfd)
-        remote_syscall_sock = inherit(passed_syscall_sock)
-        syscall = ChildConnection(
-            async_access_syscall_sock, async_access_syscall_sock,
-            cthread.child_task,
-            cthread.futex_task,
-            remote_syscall_sock, remote_syscall_sock)
-        new_base_task = base.Task(syscall, fd_table, parent_task.address_space)
-        def inherit_active(fd: far.FileDescriptor) -> active.FileDescriptor:
-            return active.FileDescriptor(new_base_task, inherit(fd))
-        remote_data_sock = inherit_active(passed_data_sock)
-    
-        inherited_user_fds = [inherit(fd) for fd in user_fds]
-        remote_describe_sock = inherit(passed_describe_sock)
-        # make each inherited fd non-cloexec
-        # note that this is racy if our thread is in a shared fd space;
-        # this is why each thread has to be in its own fd space.
-        for fd in inherited_fds:
-            # disable cloexec for the fd
-            await near.fcntl(syscall, fd, fcntl.F_SETFD, 0)
-        # wow! the task just keeps working! neat!
-        # TODO need to validate that path matches up with the task
-        # TODO hmm argh we don't get a response from this execveat so the thing just hangs
-        # HMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-        # maybe we *do* need the futex waiting thing, ugh.
-        # ARGH! the processes of execing allocates a bunch of memory in the allocator,
-        # which is no longer valid when done.
-        # I guess... I could just flush the allocator...
-        # well, no, none of that memory will actually be freed then...
-        # maybe I should use the parent's allocator?
-        # hmm hmm
-        # if i'm not in the same address space as my parent, then freeing will happen automatically.
-        # if I am, then I can use my parent's allocator.
-        def encode(fd: near.FileDescriptor) -> bytes:
-            return str(int(fd)).encode()
-        # new address space created here
-        child_task = await cthread.execveat(
-            syscall, gateway, parent_task.allocator, rsyscall_server_path, [
-                b"rsyscall_server",
-                encode(remote_describe_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
-                *[encode(fd) for fd in inherited_fds],
-            ], [], 0)
-        # the futex task we used before is dead now that we've exec'd, have
-        # to null it out
-        syscall.futex_task = None
-        new_task.base.address_space = base.AddressSpace(process.id)
-        new_task.allocator = memory.Allocator(syscall, new_task.base.address_space)
-        symbols: t.Dict[bytes, far.Pointer] = {}
-        async for line in read_lines(async_access_describe_sock):
-            key, value = line.rstrip().split(b'=', 1)
-            symbols[key] = far.Pointer(new_task.base.address_space, near.Pointer(int(value, 16)))
-        await async_access_describe_sock.aclose()
-        #### set up child cleartid futex
-    
-        #### make futex thread
-        # resize memfd appropriately
-        futex_memfd_size = 4096
-        await far.ftruncate(parent_task.base, futex_memfd, futex_memfd_size)
-        # set up local mapping
-        local_mapping = await far.mmap(parent_task.base,
-                                       futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED,
-                                       fd=futex_memfd)
-        await far.close(parent_task.base, futex_memfd)
-        local_mapping_pointer = local_mapping.as_pointer()
-        # set up remote mapping
-        remote_mapping = await far.mmap(new_task.base,
-                                        futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED,
-                                        fd=remote_futex_memfd)
-        await far.close(new_task.base, remote_futex_memfd)
-        remote_mapping_pointer = remote_mapping.as_pointer()
-    
-        # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
-        futex_value = lib.FUTEX_WAITERS|(process.id & lib.FUTEX_TID_MASK)
-        # this is distasteful and leaky, we're relying on the fact that the PreallocatedAllocator never frees things
-        remote_futex_pointer = await set_singleton_robust_futex(
-            new_task.base, new_task.gateway,
-            memory.PreallocatedAllocator(remote_mapping_pointer, 4096), futex_value)
-        local_futex_pointer = local_mapping_pointer + (int(remote_futex_pointer) - int(remote_mapping_pointer))
-        # now we start the futex monitor
-        futex_task = await launch_futex_monitor(parent_task.base, parent_task.gateway, parent_task.allocator,
-                                                thread_maker.process_resources, thread_maker.monitor,
-                                                local_futex_pointer, futex_value)
-        syscall.futex_task = futex_task
-        # TODO how do we unmap the remote mapping?
-        thread = Thread(child_task, futex_task, active.MemoryMapping(parent_task.base, local_mapping))
-        return new_task, thread, symbols, inherited_user_fds
+        return inherited_fds
 
 
     async def fork(self,
@@ -1880,10 +1792,12 @@ async def launch_futex_monitor(task: far.Task, gateway: MemoryGateway, allocator
     return futex_task
 
 class ThreadMaker:
-    def __init__(self, gateway: MemoryGateway, monitor: ChildTaskMonitor, process_resources: ProcessResources) -> None:
-        self.gateway = gateway
+    def __init__(self,
+                 task: Task,
+                 monitor: ChildTaskMonitor,
+                 process_resources: ProcessResources) -> None:
+        self.task = task
         self.monitor = monitor
-        task = monitor.signal_queue.sigfd.epolled.underlying.task
         # TODO pull this function out of somewhere sensible
         self.process_resources = process_resources
 
@@ -1893,37 +1807,35 @@ class ThreadMaker:
         Executes the instruction "ret" immediately after cloning.
 
         """
-        task = self.monitor.signal_queue.sigfd.epolled.underlying.task
         # the mapping is SHARED rather than PRIVATE so that the futex is shared even if CLONE_VM
         # unshares the address space
         # TODO not sure that actually works
-        mapping = await far.mmap(task.base, 4096, memory.ProtFlag.READ|memory.ProtFlag.WRITE,
+        mapping = await far.mmap(self.task.base, 4096, memory.ProtFlag.READ|memory.ProtFlag.WRITE,
                                  memory.MapFlag.SHARED|memory.MapFlag.ANONYMOUS)
         futex_pointer = mapping.as_pointer()
         futex_task = await launch_futex_monitor(
-            task.base, self.gateway, task.allocator, self.process_resources, self.monitor,
+            self.task.base, self.task.gateway, self.task.allocator, self.process_resources, self.monitor,
             futex_pointer, 0)
         # the only part of the memory mapping that's being used now is the futex address, which is a
         # huge waste. oh well, later on we can allocate futex addresses out of a shared mapping.
         child_task = await self.monitor.clone(
             flags | lib.CLONE_CHILD_CLEARTID, child_stack,
             ctid=futex_pointer, newtls=newtls)
-        return Thread(child_task, futex_task, active.MemoryMapping(task.base, mapping))
+        return Thread(child_task, futex_task, active.MemoryMapping(self.task.base, mapping))
 
     async def make_cthread(self, flags: int,
                           function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
     ) -> CThread:
-        task = self.monitor.signal_queue.sigfd.epolled.underlying.task
         # allocate memory for the stack
         stack_size = 4096
-        mapping = await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)
+        mapping = await self.task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)
         stack = BufferedStack(mapping.pointer + stack_size)
         # build stack
         stack.push(self.process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
         # copy the stack over
-        stack_pointer = await stack.flush(self.gateway)
+        stack_pointer = await stack.flush(self.task.gateway)
         # TODO actually allocate TLS
-        tls = task.address_space.null()
+        tls = self.task.address_space.null()
         thread = await self.clone(flags|signal.SIGCHLD, stack_pointer, tls)
         return CThread(thread, mapping)
 

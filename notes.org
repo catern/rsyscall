@@ -6357,3 +6357,42 @@ let's start with thread_nest
    then I can choose based on that either to directly clone,
    or clone with clone_parent.
    ChildTaskMonitor needs to take a task to clone off of, then.
+
+   Hmm it would be nice to have an abstraction that just lets me clone directly and adds CLONE_PARENT if necessary,
+   instead of having to do this casing every time.
+
+   Meh I could just pass task into ChildTaskMonitor and do an equality check and if it's not right, add CLONE_PARENT.
+
+   Flub
+
+** how to model parent task thing
+   I really don't know how to model "parent task namespace".
+
+   Oh hmm.
+
+   It really is like a namespace I guess.
+   If we don't unshare our parent task.
+
+   Well, um, hmm, all the things in the same "parent namespace"
+   really are being monitored by the same thing.
+
+   But we don't know what that is.
+
+   And, importantly, it's not safe to unshare the parent namespace if,
+   we don't have a monitor ready.
+
+   Really in general I guess the notion would be, yeah.
+   Default to CLONE_PARENT.
+   Default to telling our parent about our children.
+
+   If we can't parent them properly,
+   then we have to let our parent do it.
+
+   Well, that makes sense, but, in the case of rsyscall,
+   we still need to actually get the child task resulting from when we make our parent do monitoring.
+
+** why do I need connecting task
+   Oh, because if I'm local, and can just use socketpair() directly instead of connecting to a unix socket,
+   I still need some way of getting the other end of the socketpair down to the other end.
+
+   But... really I only need either the listening socket or connecting pair.
