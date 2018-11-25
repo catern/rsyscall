@@ -1556,7 +1556,9 @@ class ChildTaskMonitor:
             raise Exception("ChildTaskMonitor should get a SignalQueue only for SIGCHLD")
         self.running_wait: t.Optional[trio.Event] = None
 
-    async def clone(self, flags: int,
+    async def clone(self,
+                    clone_task: base.Task,
+                    flags: int,
                     child_stack: Pointer, ctid: Pointer, newtls: Pointer) -> ChildTask:
         # I think I need to take the wait_lock here?
         # because... if the child exits...
@@ -1564,10 +1566,12 @@ class ChildTaskMonitor:
         # hmmm....
         # we synchronously waitid...
         task = self.signal_queue.sigfd.epolled.underlying.task
+        if clone_task != task.base:
+            flags |= lib.CLONE_PARENT
         # if we're multithreaded, and our child exits before this syscall returns, we could get the
         # SIGCHLD and call waitid before we actually know what the child's tid is, and be confused.
         # good thing we're single threaded and use signalfd.
-        tid = await raw_syscall.clone(task.syscall, flags, child_stack,
+        tid = await raw_syscall.clone(clone_task.sysif, flags, child_stack,
                                       ptid=None, ctid=ctid, newtls=newtls)
         child_task = ChildTask(base.Process(task.process_namespace, tid), trio.hazmat.UnboundedQueue(), self)
         self.task_map[tid] = child_task
@@ -1779,6 +1783,7 @@ async def launch_futex_monitor(task: far.Task, gateway: MemoryGateway, allocator
     async with serializer.with_flushed(gateway, allocator):
         logger.info("did serialize")
         futex_task = await monitor.clone(
+            task,
             lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_pointer.pointer,
             ctid=task.address_space.null(), newtls=task.address_space.null())
         # wait for futex helper to SIGSTOP itself,
@@ -1819,6 +1824,7 @@ class ThreadMaker:
         # the only part of the memory mapping that's being used now is the futex address, which is a
         # huge waste. oh well, later on we can allocate futex addresses out of a shared mapping.
         child_task = await self.monitor.clone(
+            self.task.base,
             flags | lib.CLONE_CHILD_CLEARTID, child_stack,
             ctid=futex_pointer, newtls=newtls)
         return Thread(child_task, futex_task, active.MemoryMapping(self.task.base, mapping))
@@ -2310,13 +2316,15 @@ async def rsyscall_spawn_exec_full(
      (async_access_data_sock, passed_data_sock),
      (async_access_describe_sock, passed_describe_sock)] = await make_connections(
          access_task, access_epoller, access_connection, connecting_task, connecting_connection, parent_task, 3)
-    new_task, cthread = await spawn_rsyscall_thread(
-        access_sock, remote_sock,
-        self.task, thread_maker, self.process.server_func)
     # create this guy and pass him down to the new thread
     futex_memfd = await memsys.memfd_create(parent_task.base, parent_task.gateway, parent_task.allocator,
                                             b"child_cleartid", lib.MFD_CLOEXEC)
-    # TODO what I am doing is converting over to nice modular unshare of FDs and VMs
+    # new fd namespace created here
+    cthread = await thread_maker.make_cthread(
+        lib.CLONE_VM|shared, function, passed_syscall_sock.near, passed_syscall_sock.near)
+    process = cthread.child_task.process
+    fd_table = base.FDTable(process.id)
+    parent_fd_table = parent_task.fd_table
     inherited_fds: t.List[near.FileDescriptor] = []
     def inherit(fd: far.FileDescriptor) -> far.FileDescriptor:
         nearfd = parent_fd_table.to_near(fd)
