@@ -336,6 +336,28 @@ class TestIO(unittest.TestCase):
                 print("SBAUGH hello done again")
         trio.run(self.runner, test)
 
+    def test_thread_exit(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            rsyscall_task, _ = await stdtask.spawn([])
+            async with rsyscall_task as stdtask2:
+                await stdtask2.exit(0)
+        trio.run(self.runner, test)
+
+    def test_new_thread_exit(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            rsyscall_task = await stdtask.fork_shared()
+            async with rsyscall_task as stdtask2:
+                await stdtask2.exit(0)
+        trio.run(self.runner, test)
+
+    def test_new_thread_exec(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            rsyscall_task = await stdtask.fork_shared()
+            async with rsyscall_task as stdtask2:
+                child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                await child_task.wait_for_exit()
+        trio.run(self.runner, test)
+
     def test_thread_exec(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             rsyscall_task, _ = await stdtask.spawn([])

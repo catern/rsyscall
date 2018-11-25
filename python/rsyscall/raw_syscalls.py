@@ -1,5 +1,6 @@
 from rsyscall.base import SyscallInterface, Task, FileDescriptor, Pointer, Process, ProcessGroup, RsyscallException, RsyscallHangup
 from rsyscall._raw import ffi, lib # type: ignore
+import trio
 import logging
 import signal
 import typing as t
@@ -115,11 +116,13 @@ async def getpid(sysif: SyscallInterface) -> int:
 
 async def exit(sysif: SyscallInterface, status: int) -> None:
     logger.debug("exit(%d)", status)
-    try:
+    def handle(exn):
+        if isinstance(exn, RsyscallHangup):
+            return None
+        else:
+            return exn
+    with trio.MultiError.catch(handle):
         await sysif.syscall(SYS.exit, status)
-    except RsyscallHangup:
-        # a hangup means the exit was successful
-        pass
 
 async def kill(sysif: SyscallInterface, pid: Process, sig: signal.Signals) -> None:
     logger.debug("kill(%s, %s)", pid, sig)

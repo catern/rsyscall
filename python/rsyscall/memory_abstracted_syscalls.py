@@ -1,4 +1,5 @@
 from rsyscall._raw import ffi, lib # type: ignore
+import trio
 import os
 import socket
 import rsyscall.raw_syscalls as raw_syscall
@@ -40,7 +41,8 @@ async def read(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocat
     logger.debug("read(%s, %s)", fd, count)
     with await allocator.malloc(count) as buf_ptr:
         ret = await far.read(task, fd, buf_ptr, count)
-        return (await read_to_bytes(gateway, buf_ptr, ret))
+        with trio.open_cancel_scope(shield=True):
+            return (await read_to_bytes(gateway, buf_ptr, ret))
 
 async def write(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
                 fd: base.FileDescriptor, buf: bytes) -> int:

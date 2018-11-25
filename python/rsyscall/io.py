@@ -1289,6 +1289,26 @@ class StandardTask:
         )
         return RsyscallThread(stdtask, thread), fds
 
+    async def fork_shared(self) -> RsyscallThread:
+        [(access_sock, remote_sock)] = await make_connections(
+            self.access_task, self.access_epoller, self.access_connection,
+            self.connecting_task, self.connecting_connection, self.task, 1)
+        thread_maker = ThreadMaker(self.task.gateway, self.resources.child_monitor, self.process)
+        task, thread = await spawn_rsyscall_thread(
+            access_sock, remote_sock,
+            self.task, thread_maker, self.process.server_func)
+        stdtask = StandardTask(
+            self.access_task, self.access_epoller, self.access_connection,
+            self.connecting_task, self.connecting_connection,
+            task, 
+            self.resources,
+            self.process, self.filesystem, {**self.environment},
+            stdin=self.stdin,
+            stdout=self.stdout,
+            stderr=self.stderr,
+        )
+        return RsyscallThread(stdtask, thread)
+
     async def fork(self,
                    user_fds: t.List[far.FileDescriptor]=[],
                    shared: UnshareFlag=UnshareFlag.FS,
@@ -1642,35 +1662,12 @@ class Thread:
         # so what's our argument? I guess we need to take, like... a stdtask?
         # or we could jsut call it directly
         child_task: ChildTask = None # type: ignore
-        async with trio.open_nursery() as nursery:
-            async def syscall() -> None:
-                logger.info("SBAUGH starting syscall")
-                def handler(exc) -> Exception:
-                    if isinstance(exc, trio.Cancelled):
-                        logger.info("SBAUGH oops i lost")
-                        if child_task:
-                            return None
-                        else:
-                            return exc
-                    elif isinstance(exc, RsyscallHangup):
-                        logger.info("SBAUGH um got hangup?")
-                        return None
-                    else:
-                        return exc
-                # this will only ever terminate with an exception, which will be propagated up
-                with trio.MultiError.catch(handler):
-                    await memsys.execveat(sysif, gateway, allocator, path, argv, envp, flags)
-                    raise Exception("execveat unexpectedly returned?")
-            async def wait_for_success() -> None:
-                logger.info("SBAUGH starting %s", self.child_task)
-                nonlocal child_task
-                child_task = await self.wait_for_mm_release()
-                logger.info("SBAUGH hello I WON %s %s", self.child_task, child_task)
-                nursery.cancel_scope.cancel()
-            nursery.start_soon(syscall)
-            nursery.start_soon(wait_for_success)
-        logger.info("SBAUGH returning from execveat on %s %s", path, argv)
-        return child_task
+        logger.info("SBAUGH starting syscall")
+        try:
+            await memsys.execveat(sysif, gateway, allocator, path, argv, envp, flags)
+        except RsyscallHangup:
+            logger.info("SBAUGH um got hangup?")
+        return self.child_task
 
     async def wait_for_mm_release(self) -> ChildTask:
         """Wait for the task to leave the parent's address space, and return the ChildTask.
@@ -1716,7 +1713,7 @@ class CThread(Thread):
     """
     stack_mapping: memory.AnonymousMapping
     def __init__(self, thread: Thread, stack_mapping: memory.AnonymousMapping) -> None:
-        self.thread = thread
+        super().__init__(thread.child_task, thread.futex_task, thread.futex_mapping)
         self.stack_mapping = stack_mapping
 
     async def wait_for_mm_release(self) -> ChildTask:
@@ -1854,11 +1851,12 @@ class RsyscallConnection:
                 # we raise a different exception so that users can distinguish syscall errors from
                 # transport errors
                 raise RsyscallException() from e
-        async with self.response_fifo_lock:
-            try:
-                response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
-            except OSError as e:
-                raise RsyscallException() from e
+        with trio.open_cancel_scope(shield=True):
+            async with self.response_fifo_lock:
+                try:
+                    response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
+                except OSError as e:
+                    raise RsyscallException() from e
         if len(response_bytes) == 0:
             # we catch this in the implementations of exec and exit
             raise RsyscallHangup()
@@ -1867,6 +1865,91 @@ class RsyscallConnection:
             err = -response
             raise OSError(err, os.strerror(err))
         return response
+
+class ChildExit(RsyscallHangup):
+    pass
+
+class MMRelease(RsyscallHangup):
+    pass
+
+class ChildConnection(base.SyscallInterface):
+    "A connection to some rsyscall server where we can make syscalls"
+    def __init__(self,
+                 tofd: AsyncFileDescriptor[WritableFile],
+                 fromfd: AsyncFileDescriptor[ReadableFile],
+                 server_task: ChildTask,
+                 futex_task: t.Optional[ChildTask],
+                 infd: far.FileDescriptor,
+                 outfd: far.FileDescriptor,
+    ) -> None:
+        self.tofd = tofd
+        self.fromfd = fromfd
+        self.server_task = server_task
+        self.futex_task = futex_task
+        self.activity_fd = infd.near
+        # these are needed so that we don't accidentally close them when doing a do_cloexec_except
+        self.infd = infd
+        self.outfd = outfd
+        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{self.server_task.process.id}")
+        self.request_lock = trio.Lock()
+        self.response_fifo_lock = trio.StrictFIFOLock()
+
+    async def close_interface(self) -> None:
+        await self.tofd.aclose()
+        await self.fromfd.aclose()
+
+    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+        return (await self._syscall(
+            number,
+            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6)))
+
+    async def _syscall(self, number: int, arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> int:
+        request = ffi.new('struct rsyscall_syscall*',
+                          (number, (arg1, arg2, arg3, arg4, arg5, arg6)))
+        async with self.request_lock:
+            try:
+                await self.tofd.write(bytes(ffi.buffer(request)))
+            except OSError as e:
+                # we raise a different exception so that users can distinguish syscall errors from
+                # transport errors
+                raise RsyscallException() from e
+        # we must not be interrupted while reading the response - we need to
+        # return the response so that our parent can deal with the state change
+        # we created.
+        with trio.open_cancel_scope(shield=True):
+            async with self.response_fifo_lock:
+                response: int
+                async with trio.open_nursery() as nursery:
+                    async def read_response() -> None:
+                        nonlocal response
+                        try:
+                            response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
+                        except OSError as e:
+                            raise RsyscallException() from e
+                        if len(response_bytes) == 0:
+                            # we catch this in the implementations of exec and exit
+                            raise RsyscallHangup()
+                        response, = struct.unpack('q', response_bytes)
+                        if response < 0:
+                            err = -response
+                            raise OSError(err, os.strerror(err))
+                        nursery.cancel_scope.cancel()
+                    async def server_exit() -> None:
+                        # meaning the server exited
+                        await self.server_task.wait_for_exit()
+                        raise ChildExit()
+                    async def futex_exit() -> None:
+                        if self.futex_task is not None:
+                            # meaning the server called exec or exited; we don't
+                            # wait to see which one.
+                            await self.futex_task.wait_for_exit()
+                            raise MMRelease()
+                    nursery.start_soon(read_response)
+                    nursery.start_soon(server_exit)
+                    nursery.start_soon(futex_exit)
+                return response
 
 class RsyscallInterface(base.SyscallInterface):
     """An rsyscall connection to a task that is not our child.
@@ -1892,41 +1975,6 @@ class RsyscallInterface(base.SyscallInterface):
 
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
-
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-        return (await self.rsyscall_connection.syscall(
-            number,
-            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6)))
-
-class ChildExit(RsyscallHangup):
-    pass
-
-class RsyscallChildInterface(base.SyscallInterface):
-    """An rsyscall connection to a task that is our child.
-
-    With a task that is our child, we can be sure that if the task exits, we'll
-    know about it, so we don't have to use HUP/EOF to detect task exit. This
-    allows the task to be in a shared file descriptor space.
-
-    """
-    def __init__(self, rsyscall_connection: RsyscallConnection,
-                 child: ChildTask,
-                 infd: far.FileDescriptor, outfd: far.FileDescriptor) -> None:
-        self.rsyscall_connection = rsyscall_connection
-        self.child = child
-        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{child.process.id}")
-        self.activity_fd = infd.near
-        # these are needed so that we don't accidentally close them when doing a do_cloexec_except
-        self.infd = infd
-        self.outfd = outfd
-
-    async def close_interface(self) -> None:
-        await self.child.kill()
-        await self.rsyscall_connection.close()
-        # we'll throw an exception on exit,
-        # and catch it in the wrapper.
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
@@ -1963,49 +2011,6 @@ async def do_cloexec_except(task: Task, process_resources: ProcessResources, exc
                                           process_resources.do_cloexec_func, fd_array_ptr, len(fd_array))
         if not child_event.clean():
             raise Exception("cloexec function child died!", child_event)
-
-# async def rsyscall_spawn(task: Task, thread_maker: ThreadMaker, epoller: Epoller, function: FunctionPointer,
-#                          user_fds: t.List[FileDescriptor],
-#                          shared: UnshareFlag=UnshareFlag.FS,
-#     ) -> t.Tuple[Task, CThread, t.List[FileDescriptor]]:
-#     "Spawn an rsyscall server running in a child task"
-#     for fd in user_fds:
-#         if fd.pure.fd_table is not task.fd_table:
-#             raise Exception("can only translate file descriptors from my fd namespace")
-#     pipe_in = await task.pipe()
-#     pipe_out = await task.pipe()
-#     # new fd namespace is created here
-#     cthread = await thread_maker.make_cthread(
-#         lib.CLONE_VM|shared, function, pipe_in.rfd.pure.number, pipe_out.wfd.pure.number)
-#     process = cthread.thread.child_task.process
-
-#     async_tofd = await AsyncFileDescriptor.make(epoller, pipe_in.wfd)
-#     async_fromfd = await AsyncFileDescriptor.make(epoller, pipe_out.rfd)
-#     syscall = RsyscallInterface(RsyscallConnection(async_tofd, async_fromfd),
-#                                 cthread.thread.child_task.process,
-#                                 pipe_in.rfd.pure, pipe_out.wfd.pure)
-#     # TODO remove assumption that we are local
-#     gateway = LocalMemoryGateway()
-
-#     new_task = Task(base.Task(syscall, base.FDTable(process.id), task.address_space),
-#                     gateway, task.mount, task.fs,
-#                     task.sigmask.inherit(), task.process_namespace)
-#     if len(new_task.sigmask.mask) != 0:
-#         # clear this non-empty signal mask because it's pointlessly inherited across fork
-#         await new_task.sigmask.setmask(new_task, set())
-
-#     inherited_fd_numbers: t.Set[int] = {pipe_in.rfd.pure.number, pipe_out.wfd.pure.number}
-#     await pipe_in.rfd.aclose()
-#     await pipe_out.wfd.aclose()
-
-#     def translate(fd: FileDescriptor[T_file]) -> FileDescriptor[T_file]:
-#         inherited_fd_numbers.add(fd.pure.number)
-#         return new_task._make_fd(fd.pure.number, fd.file)
-#     inherited_user_fds = [translate(fd) for fd in user_fds]
-
-#     # close everything that's cloexec and not explicitly passed down
-#     await do_cloexec_except(new_task, inherited_fd_numbers)
-#     return new_task, cthread, inherited_user_fds
 
 @dataclass
 class ReceiveMemoryGateway(MemoryGateway):
@@ -2223,7 +2228,8 @@ async def make_connections(access_task: Task, access_epoller: Epoller,
         async def make_conn() -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
             return (await access_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0))
     else:
-        assert access_connection is not None
+        if access_connection is None:
+            raise Exception("must pass access connection when access task and connecting task are different")
         async def make_conn() -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
             left_sock = await access_task.socket_unix(socket.SOCK_STREAM)
             await robust_unix_connect(access_connection[0], left_sock)
@@ -2249,80 +2255,31 @@ async def make_connections(access_task: Task, access_epoller: Epoller,
     async_access_socks = [await AsyncFileDescriptor.make(access_epoller, sock) for sock in access_socks]
     return list(zip(async_access_socks, passed_socks))
 
-# async def rsyscall_fork(
-#         access_task: Task, access_epoller: Epoller,
-#         access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
-#         connecting_task: Task, connecting_connection: t.Optional[t.Tuple[far.FileDescriptor, far.FileDescriptor]],
-#         parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
-#         user_fds: t.List[far.FileDescriptor],
-#     ) -> t.Tuple[Task, Thread, t.Mapping[bytes, far.Pointer], t.List[far.FileDescriptor]]:
-#     """Fork off a new rsyscall thread, sharing everything but the file descriptor table.
-
-#     TODO also share the file descriptor table - we need to restructure how we
-#     make syscalls first though, so that we have the ChildTask around so we can
-#     detect child hangup. And we also need to make sure that the child dies when
-#     we die, probably through PDEATHSIG, or IIRC there's some other way to have
-#     the child get signaled on parent death, which isn't inherited through
-#     exec. (Which is what we want, because after exec it's either 1. uncontrolled
-#     and therefore shouldn't be signalled on our death, or 2. in a new file
-#     descriptor space.)
-
-#     Hmm I guess for this kind of fork, we can use child_cleartid instead of
-#     hijacking the robust list.
-
-#     That saves us one syscall, I guess.
-
-#     Meh yes it's a useful optimization, and possibly useful if child_cleartid is
-#     changed to work when the memory space is unshared, so it works for us after
-#     exec.
-
-#     Oh hmm. Actually we mostly don't need this access task and access connection
-#     and connecting task stuff, if we're just spawning a child thread in the same
-#     address space. Since, we can share the memory gateway with our parent! And
-#     also the allocator. And the epoller and child task monitor. Really it's very
-#     cheap.
-
-#     Oh, argh, we do need it. To make the syscall connection.
-
-#     I guess when unsharing the address space we need the access task etc. And
-#     when unsharing the file descriptor space we need to pass down the
-#     userfds. And maybe we'll do these explicitly, before execing into
-#     rsyscall_server. Or execing at all really.
-
-#     """
-#     [(async_access_syscall_sock, passed_syscall_sock)] = await make_connections(
-#          access_task, access_epoller, access_connection, connecting_task, connecting_connection, parent_task, 1)
-#     # new fd namespace created here
-#     # TODO need to pass more flags for sharing
-#     cthread = await thread_maker.make_cthread(
-#         lib.CLONE_VM|lib.CLONE_FS, function, passed_syscall_sock.near, passed_syscall_sock.near)
-#     process = cthread.thread.child_task.process
-#     fd_table = base.FDTable(process.id)
-#     parent_fd_table = parent_task.fd_table
-#     inherited_fds: t.List[near.FileDescriptor] = []
-#     def inherit(fd: far.FileDescriptor) -> far.FileDescriptor:
-#         nearfd = parent_fd_table.to_near(fd)
-#         inherited_fds.append(nearfd)
-#         return far.FileDescriptor(fd_table, nearfd)
-#     remote_syscall_sock = inherit(passed_syscall_sock)
-#     syscall = RsyscallInterface(RsyscallConnection(async_access_syscall_sock, async_access_syscall_sock),
-#                                 process.id,
-#                                 remote_syscall_sock, remote_syscall_sock)
-#     new_base_task = base.Task(syscall, fd_table, parent_task.address_space)
-#     def inherit_active(fd: far.FileDescriptor) -> active.FileDescriptor:
-#         return active.FileDescriptor(new_base_task, inherit(fd))
-#     new_task = Task(new_base_task,
-#                     parent_task.gateway,
-#                     parent_task.mount, parent_task.fs, parent_task.sigmask.inherit(),
-#                     parent_task.process_namespace)
-#     new_task.allocator = parent_task.allocator
-#     if len(new_task.sigmask.mask) != 0:
-#         # clear this non-empty signal mask because it's pointlessly inherited across fork
-#         await new_task.sigmask.setmask(new_task, set())
-
-#     # have to pass this down
-#     remote_futex_memfd = inherit(futex_memfd)
-#     return new_task, thread, symbols, inherited_user_fds
+async def spawn_rsyscall_thread(
+        access_sock: AsyncFileDescriptor[ReadableWritableFile],
+        remote_sock: far.FileDescriptor,
+        parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
+    ) -> t.Tuple[Task, Thread]:
+    # TODO need to pass more flags for sharing: CLONE_IO|CLONE_SIGHAND|CLONE_SYSVSEM
+    cthread = await thread_maker.make_cthread(
+        lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES,
+        function, remote_sock.near, remote_sock.near)
+    syscall = ChildConnection(
+        access_sock, access_sock,
+        cthread.child_task,
+        cthread.futex_task,
+        remote_sock, remote_sock)
+    new_base_task = base.Task(syscall, parent_task.fd_table, parent_task.address_space)
+    new_task = Task(new_base_task,
+                    parent_task.gateway,
+                    parent_task.mount, parent_task.fs, parent_task.sigmask.inherit(),
+                    parent_task.process_namespace)
+    new_task.allocator = parent_task.allocator
+    # TODO need to set up the new child task monitor
+    if len(new_task.sigmask.mask) != 0:
+        # clear this non-empty signal mask because it's pointlessly inherited across fork
+        await new_task.sigmask.setmask(new_task, set())
+    return new_task, cthread
 
 async def rsyscall_spawn_exec_full(
         access_task: Task, access_epoller: Epoller,
@@ -2346,7 +2303,7 @@ async def rsyscall_spawn_exec_full(
     # new fd namespace created here
     cthread = await thread_maker.make_cthread(
         lib.CLONE_VM|shared, function, passed_syscall_sock.near, passed_syscall_sock.near)
-    process = cthread.thread.child_task.process
+    process = cthread.child_task.process
     fd_table = base.FDTable(process.id)
     parent_fd_table = parent_task.fd_table
     inherited_fds: t.List[near.FileDescriptor] = []
@@ -2355,9 +2312,10 @@ async def rsyscall_spawn_exec_full(
         inherited_fds.append(nearfd)
         return far.FileDescriptor(fd_table, nearfd)
     remote_syscall_sock = inherit(passed_syscall_sock)
-    syscall = RsyscallChildInterface(
-        RsyscallConnection(async_access_syscall_sock, async_access_syscall_sock),
-        cthread.thread.child_task,
+    syscall = ChildConnection(
+        async_access_syscall_sock, async_access_syscall_sock,
+        cthread.child_task,
+        cthread.futex_task,
         remote_syscall_sock, remote_syscall_sock)
     new_base_task = base.Task(syscall, fd_table, parent_task.address_space)
     def inherit_active(fd: far.FileDescriptor) -> active.FileDescriptor:
@@ -2410,12 +2368,15 @@ async def rsyscall_spawn_exec_full(
     def encode(fd: near.FileDescriptor) -> bytes:
         return str(int(fd)).encode()
     # new address space created here
-    child_task = await cthread.thread.execveat(
+    child_task = await cthread.execveat(
         syscall, gateway, parent_task.allocator, rsyscall_server_path, [
             b"rsyscall_server",
             encode(remote_describe_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
             *[encode(fd) for fd in inherited_fds],
         ], [], 0)
+    # the futex task we used before is dead now that we've exec'd, have
+    # to null it out
+    syscall.futex_task = None
     new_task.base.address_space = base.AddressSpace(process.id)
     new_task.allocator = memory.Allocator(syscall, new_task.base.address_space)
     symbols: t.Dict[bytes, far.Pointer] = {}
@@ -2453,6 +2414,7 @@ async def rsyscall_spawn_exec_full(
     futex_task = await launch_futex_monitor(parent_task.base, parent_task.gateway, parent_task.allocator,
                                             thread_maker.process_resources, thread_maker.monitor,
                                             local_futex_pointer, futex_value)
+    syscall.futex_task = futex_task
     # TODO how do we unmap the remote mapping?
     thread = Thread(child_task, futex_task, active.MemoryMapping(parent_task.base, local_mapping))
     return new_task, thread, symbols, inherited_user_fds
