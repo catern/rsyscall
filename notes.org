@@ -6317,3 +6317,43 @@ OK we're decided:
 We have to run inside an explicit trio nursery and pass it down.
 
 let's start with thread_nest
+
+** childtaskmonitor
+   okay so things are working fine right now because we're passing down the parent's childtaskmonitor,
+   which means we're spawning a child from the parent.
+
+   but that's not what we want!
+
+   ohhh!!
+
+   we could!! yeah!!
+
+   we could enforce use of CLONE_PARENT!
+
+   which then makes everything transitively fine!
+   cuz we keep having the same parent!
+
+   and if we want to start a new monitor place!
+   we can just do that!
+   and stop setting CLONE_PARENT!
+
+   excellent!!!
+   this saves us the need to set that up!!
+
+   hokay, so.
+
+   I guess I'll save the parent pid in the task.
+
+   Though note that this can change without our intervention.
+
+   Hmm, maybe I should instead have some kinda indicator in the StandardTask,
+   saying that I should use CLONE_PARENT,
+   and pointing to my parent's ChildTaskMonitor.
+
+
+   OK so if I have a Union[ChildTaskMonitor, ChildTask],
+   indicating either I myself am ready to monitor child tasks,
+   or I am at least being monitored by someone else,
+   then I can choose based on that either to directly clone,
+   or clone with clone_parent.
+   ChildTaskMonitor needs to take a task to clone off of, then.

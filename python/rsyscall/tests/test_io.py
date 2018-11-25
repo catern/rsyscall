@@ -350,6 +350,22 @@ class TestIO(unittest.TestCase):
                 await stdtask2.exit(0)
         trio.run(self.runner, test)
 
+    def test_new_thread_nest_exit(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            rsyscall_task = await stdtask.fork_shared()
+            async with rsyscall_task as stdtask2:
+                rsyscall_task3 = await stdtask2.fork_shared()
+                async with rsyscall_task3 as stdtask3:
+                    await stdtask3.exit(0)
+        trio.run(self.runner, test)
+
+    def test_new_thread_async(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            rsyscall_task = await stdtask.fork_shared()
+            async with rsyscall_task as stdtask2:
+                await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
+        trio.run(self.runner, test)
+
     def test_new_thread_exec(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             rsyscall_task = await stdtask.fork_shared()

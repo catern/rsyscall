@@ -25,6 +25,20 @@ class SYS(enum.IntEnum):
     set_tid_address = lib.SYS_set_tid_address
     set_robust_list = lib.SYS_set_robust_list
     getdents64 = lib.SYS_getdents64
+    unshare = lib.SYS_unshare
+
+class UnshareFlag(enum.IntFlag):
+    NONE = 0
+    FILES = lib.CLONE_FILES
+    FS = lib.CLONE_FS
+    NEWCGROUP = lib.CLONE_NEWCGROUP
+    NEWIPC = lib.CLONE_NEWIPC
+    NEWNET = lib.CLONE_NEWNET
+    NEWNS = lib.CLONE_NEWNS
+    NEWPID = lib.CLONE_NEWPID
+    NEWUSER = lib.CLONE_NEWUSER
+    NEWUTS = lib.CLONE_NEWUTS
+    SYSVSEM = lib.CLONE_SYSVSEM
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallInterface:
@@ -165,3 +179,6 @@ async def set_robust_list(sysif: SyscallInterface, head: Pointer, len: int) -> N
 
 async def getdents64(sysif: SyscallInterface, fd: FileDescriptor, dirp: Pointer, count: int) -> int:
     return (await sysif.syscall(SYS.getdents64, fd, dirp, count))
+
+async def unshare(sysif: SyscallInterface, flags: UnshareFlag) -> None:
+    await sysif.syscall(SYS.unshare, flags)

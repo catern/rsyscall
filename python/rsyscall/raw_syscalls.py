@@ -1,5 +1,6 @@
 from rsyscall.base import SyscallInterface, Task, FileDescriptor, Pointer, Process, ProcessGroup, RsyscallException, RsyscallHangup
 from rsyscall._raw import ffi, lib # type: ignore
+from rsyscall.near import UnshareFlag
 import trio
 import logging
 import signal
@@ -16,19 +17,6 @@ class NsType(enum.IntFlag):
     NEWPID = lib.CLONE_NEWPID
     NEWUSER = lib.CLONE_NEWUSER
     NEWUTS = lib.CLONE_NEWUTS
-
-class UnshareFlag(enum.IntFlag):
-    NONE = 0
-    FILES = lib.CLONE_FILES
-    FS = lib.CLONE_FS
-    NEWCGROUP = lib.CLONE_NEWCGROUP
-    NEWIPC = lib.CLONE_NEWIPC
-    NEWNET = lib.CLONE_NEWNET
-    NEWNS = lib.CLONE_NEWNS
-    NEWPID = lib.CLONE_NEWPID
-    NEWUSER = lib.CLONE_NEWUSER
-    NEWUTS = lib.CLONE_NEWUTS
-    SYSVSEM = lib.CLONE_SYSVSEM
 
 class SigprocmaskHow(enum.IntEnum):
     BLOCK = lib.SIG_BLOCK
