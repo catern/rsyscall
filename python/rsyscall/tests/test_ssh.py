@@ -10,22 +10,22 @@ import rsyscall.base as base
 import logging
 
 executable_dirs: t.List[base.Path] = []
-for prefix in local_stdtask.environment[b"PATH"].split(b":"):
-    executable_dirs.append(base.Path.from_bytes(local_stdtask.task.mount, local_stdtask.task.fs, prefix))
-async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
-    "Find an executable by this name in this list of paths"
-    if b"/" in name:
-        raise Exception("name should be a single path element without any / present")
-    for path in paths:
-        filename = Path(task, path)/name
-        if (await filename.access(read=True, execute=True)):
-            return filename.pure
-    raise Exception("executable not found", name)
+# for prefix in local_stdtask.environment[b"PATH"].split(b":"):
+#     executable_dirs.append(base.Path.from_bytes(local_stdtask.task.mount, local_stdtask.task.fs, prefix))
+# async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
+#     "Find an executable by this name in this list of paths"
+#     if b"/" in name:
+#         raise Exception("name should be a single path element without any / present")
+#     for path in paths:
+#         filename = Path(task, path)/name
+#         if (await filename.access(read=True, execute=True)):
+#             return filename.pure
+#     raise Exception("executable not found", name)
 
-ssh = local_stdtask.filesystem.utilities.ssh
-sshd = SSHDCommand.make(trio.run(which, local_stdtask.task, executable_dirs, b"sshd"))
-ssh_keygen = Command.make(trio.run(which, local_stdtask.task, executable_dirs, b"ssh-keygen"),
-                          b"ssh-keygen")
+# ssh = local_stdtask.filesystem.utilities.ssh
+# sshd = SSHDCommand.make(trio.run(which, local_stdtask.task, executable_dirs, b"sshd"))
+# ssh_keygen = Command.make(trio.run(which, local_stdtask.task, executable_dirs, b"ssh-keygen"),
+#                           b"ssh-keygen")
 
 @contextlib.asynccontextmanager
 async def ssh_to_localhost(stdtask) -> t.AsyncGenerator[SSHCommand, None]:

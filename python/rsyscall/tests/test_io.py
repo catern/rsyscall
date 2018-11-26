@@ -354,9 +354,13 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             rsyscall_task = await stdtask.fork_shared()
             async with rsyscall_task as stdtask2:
+                print("SBAUGH okay started first task")
                 rsyscall_task3 = await stdtask2.fork_shared()
+                print("SBAUGH okay started second task")
                 async with rsyscall_task3 as stdtask3:
+                    print("SBAUGH okay with on second task")
                     await stdtask3.exit(0)
+                    print("SBAUGH okay exited second task")
         trio.run(self.runner, test)
 
     def test_new_thread_async(self) -> None:

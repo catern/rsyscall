@@ -6396,3 +6396,31 @@ let's start with thread_nest
    I still need some way of getting the other end of the socketpair down to the other end.
 
    But... really I only need either the listening socket or connecting pair.
+
+** FUG child task gets signal before clone returns
+
+   And since we are waiting for signals in the parent task,
+   we get breakage
+
+   that is inevitable?
+
+   if we had some means of not collecting the zombie, maybe we could do it?
+
+   maybe we could just not collect zombies while a clone is in progress?
+
+   not possible.
+
+   maybe
+
+   so if I grant that I need to take the wait lock,
+   is there some other way to get notified of exit?
+
+   so that, y'know, things work properly?
+
+*** two thoughts
+    This is really tightly related to SUBREAPER, because both cases are times where pid wraps hurt us.
+
+    In fact I think we have this problem with subreaper alone!
+    Well no we don't, if we're single-threaded.
+
+    But being multi-threaded, we do!

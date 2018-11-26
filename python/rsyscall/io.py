@@ -78,9 +78,20 @@ class LocalSyscall(base.SyscallInterface):
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-        ret = await direct_syscall(number,
-                                   arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-                                   arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        try:
+            result = await self._syscall(
+                number,
+                arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+                arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        except Exception as exn:
+            self.logger.debug("%s -> %s", number, exn)
+            raise
+        else:
+            self.logger.debug("%s -> %s", number, result)
+            return result
+
+    async def _syscall(self, number: int, arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> int:
+        ret = await direct_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
         if ret < 0:
             err = -ret
             raise OSError(err, os.strerror(err))
@@ -1586,7 +1597,9 @@ class ChildTaskMonitor:
             try:
                 # we don't care what information we get from the signal, we just want to
                 # sleep until a SIGCHLD happens
+                logger.info("reading from signal queue")
                 await self.signal_queue.read()
+                logger.info("read from signal queue, going on to wait")
                 # loop on waitid to flush all child events
                 task = self.signal_queue.sigfd.epolled.underlying.task
                 # only handle a maximum of 32 child events before returning, to prevent a DOS-through-forkbomb
@@ -1919,10 +1932,17 @@ class ChildConnection(base.SyscallInterface):
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-        return (await self._syscall(
-            number,
-            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6)))
+        try:
+            result = await self._syscall(
+                number,
+                arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+                arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        except Exception as exn:
+            self.logger.debug("%s -> %s", number, exn)
+            raise
+        else:
+            self.logger.debug("%s -> %s", number, result)
+            return result
 
     async def _syscall(self, number: int, arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> int:
         request = ffi.new('struct rsyscall_syscall*',
@@ -1951,6 +1971,7 @@ class ChildConnection(base.SyscallInterface):
                             # we catch this in the implementations of exec and exit
                             raise RsyscallHangup()
                         response, = struct.unpack('q', response_bytes)
+                        self.logger.info("got syscall response")
                         if response < 0:
                             err = -response
                             raise OSError(err, os.strerror(err))
@@ -1958,17 +1979,19 @@ class ChildConnection(base.SyscallInterface):
                     async def server_exit() -> None:
                         # meaning the server exited
                         await self.server_task.wait_for_exit()
+                        self.logger.info("got server task exit")
                         raise ChildExit()
                     async def futex_exit() -> None:
                         if self.futex_task is not None:
                             # meaning the server called exec or exited; we don't
                             # wait to see which one.
                             await self.futex_task.wait_for_exit()
+                            self.logger.info("got futex task exit")
                             raise MMRelease()
                     nursery.start_soon(read_response)
                     nursery.start_soon(server_exit)
                     nursery.start_soon(futex_exit)
-                return response
+            return response
 
 class RsyscallInterface(base.SyscallInterface):
     """An rsyscall connection to a task that is not our child.
@@ -2739,7 +2762,7 @@ class SSHDCommand(Command):
     def make(cls, executable_path: base.Path) -> SSHDCommand:
         return super().make(executable_path, "sshd")
 
-local_stdtask = trio.run(StandardTask.make_from_bootstrap, gather_local_bootstrap())
+local_stdtask = None
 
 async def build_local_stdtask(nursery) -> StandardTask:
-    return local_stdtask
+    return (await StandardTask.make_from_bootstrap(gather_local_bootstrap()))
