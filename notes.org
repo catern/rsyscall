@@ -6424,3 +6424,131 @@ let's start with thread_nest
     Well no we don't, if we're single-threaded.
 
     But being multi-threaded, we do!
+
+*** locking
+    OK so if we lock clone relative to each other,
+    and we don't have subreaper,
+    then we can't have problems.
+
+    But if we have subreaper at all, and we're multi-threaded, then we're in dire straits.
+
+    Well...
+
+    More that, if we clone,
+    and we wait also simultaneously
+
+    possibly useful things!
+
+    I could peek for a child without waiting for it,
+    then decide whether or not to wait.
+
+    Also, I can selectively only wait for EXITED/STOPPED/CONTINUED children
+
+    Really the problem is with multiple people mutating what's in my child set at the same time.
+
+    Hmmmmmmmmmmmmmmm
+
+    I want to leave children still as zombies while I am going to fork.
+
+    Except! For things that I am actually looking for!
+
+    For those, I...
+
+    Well, for children I know about, I can freely dezombify them, right?
+
+    If I know about the child, a
+
+    if I know about the child and I collect it, can fork problem happen?
+
+    No.
+
+    The problem only happens if I collect the zombie of an unknown child.
+
+    It's all about mutation
+
+    OK so what are the requirements?
+
+    Threads, and being pid 1?
+
+    Why not just being pid 1 at all?
+
+    well, because it's serialized relative to other things, y'know!
+
+    If all the forkers fork fork fork,
+    and we pid wrap...
+
+    Well, we can't pid wrap while we aren't collecting. Is that the issue?
+
+    No, we can pid wrap;
+    if someone below us is spawning children and wrapping them,
+    that will wrap.
+    But that's not the annoying thing.
+
+    The annoying thing is, I guess, if we see a wrap?
+
+    Well, hey, wait a second.
+
+    If we collect a child, we already know it's dead.
+
+    If we then return, we know that must not have been our child.
+
+    But wait, that doesn't work; because we don't actually serialize clone with wait.
+
+    The whole issue....
+
+    OK, so!
+
+    If we wait specifically for what we get a signal for,
+    iff we know about it,
+    then we do an additional unrestricted wait(WNOWAIT) to see if there's anything more,
+    then wait for those things as well if we know about them,
+    then...
+
+    Well!
+
+    Doing an unrestricted wait(WNOWAIT) won't help us,
+    if the head of the queue turns out to be!
+    A very vexing!
+    Child we don't know about!
+
+    Hm!
+
+
+    OK, so what if we just consider the problem of CLONE_PARENT alone?
+    Can we robustly solve it?
+
+    Bah, no!
+    The collection causes pid wraps!
+
+    We really need to serialize cloning relative to waiting.
+    If we don't, we have many problems.
+
+
+    So okay we could do the wait for what we got the signal for thing,
+    and then if we get blocked by seeing some unknown thinger...
+
+    Oh, hmm, we're not too blocked though.
+
+    Oh, we are very blocked though, if waitid(P_ALL) returns a child we don't know.
+
+    We could do the PGID thing,
+    grouping our children together in that way.
+
+    But still we could get blocked there.
+    
+    Our only option is to waitid for each one individually!!!!
+
+    We have to do this every time, if we see an unknown pid in a waitid.
+
+    Only while actively forking, though.
+
+*** bah!
+    OK, I can't use CLONE_PARENT.
+
+    Well. That's so defeatist :(
+
+    If only there was some way to serialize cloning and waiting...
+
+    But all syscalls require waiting on the task making the syscall.
+
+    I'm just now for the first time running into a Linux feature that just isn't usable.
