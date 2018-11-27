@@ -6552,3 +6552,10 @@ let's start with thread_nest
     But all syscalls require waiting on the task making the syscall.
 
     I'm just now for the first time running into a Linux feature that just isn't usable.
+
+    many people are vulnerable to this;
+    I could cause my parent to get a child it doesn't know at any time!
+    just through using clone_parent!
+
+    and, any multi-threaded program which doesn't serialize waitid and clone,
+    is vulnerable to this too!
