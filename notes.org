@@ -6790,5 +6790,27 @@ The operating (taskC,fdC) - completely unrelated.
 
     I guess the fact that no-one else has a reference to these files in the new space,
     means they need to be collected.
+*** space
+    cloexec seems very relevant to garbage collection, I guess.
+
+    cloexec is a way to get garbage collection.
+
+    since, presumably, after an exec, all references are gone.
+
+    it's all about gc
+
+    if we know about the whole system,
+    we could handle doing all the closing ourselves
+
+    we'd have to lock around unshare, I guess.
+    hmm.
+
+    and...
+    yes, lock around unshare.
+    we'd ideally build a list of fds to preserve,
+    and close everything else.
+
+    so CLOEXEC really means, "garbage collect me".
+    well, that's how we're overloading it anyway.
 ** add unshare_vm
 ** make full_exec use them
