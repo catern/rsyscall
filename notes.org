@@ -6758,5 +6758,37 @@ The operating (taskC,fdC) - completely unrelated.
    should I do it in place?
 
    hmm how do I work this inheriting thing with active fds?
+
+   like...
+
+   I guess the old ones have to be all deleted?
+
+   OK so I think this is actually closely related to the garbage collection problem.
+
+   In both cases, we're losing access to a namespace.
+
+   Ideally, in the case of unshare_files,
+   we'd have a CLOEXEC thingy to close cloexec files.
+
+   Which would mean we couldn't then! Close them manually...
+
+   Well, yeah! If we're leaving a shared space,
+   and we're the only ones with a reference to a file,
+   we need to close that file in the old space.
+*** question for proglangdesign
+    OK proglangdesign,
+    I've boiled down the big complex beast of fork which does many things,
+    through careful use of Linux primitives,
+    into several distinct primitives.
+    Now I don't know how to represent, in a programming language,
+    the primitive of:
+
+    I'm in a thread,
+    and I have some fds in a file descriptor table,
+    and I call unshare_files on some list of fds,
+    and I get the new fds. thing.
+
+    I guess the fact that no-one else has a reference to these files in the new space,
+    means they need to be collected.
 ** add unshare_vm
 ** make full_exec use them
