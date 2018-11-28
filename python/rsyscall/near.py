@@ -26,6 +26,7 @@ class SYS(enum.IntEnum):
     set_robust_list = lib.SYS_set_robust_list
     getdents64 = lib.SYS_getdents64
     unshare = lib.SYS_unshare
+    epoll_ctl = lib.SYS_epoll_ctl
 
 class UnshareFlag(enum.IntFlag):
     NONE = 0
@@ -182,3 +183,14 @@ async def getdents64(sysif: SyscallInterface, fd: FileDescriptor, dirp: Pointer,
 
 async def unshare(sysif: SyscallInterface, flags: UnshareFlag) -> None:
     await sysif.syscall(SYS.unshare, flags)
+
+class EpollCtlOp(enum.IntEnum):
+    ADD = lib.EPOLL_CTL_ADD
+    MOD = lib.EPOLL_CTL_MOD
+    DEL = lib.EPOLL_CTL_DEL
+
+async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: EpollCtlOp,
+                    fd: FileDescriptor, event: t.Optional[Pointer]=None) -> None:
+    if event is None:
+        event = 0 # type: ignore
+    await sysif.syscall(SYS.epoll_ctl, epfd, op, fd, event)

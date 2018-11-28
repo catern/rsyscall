@@ -6559,3 +6559,204 @@ let's start with thread_nest
 
     and, any multi-threaded program which doesn't serialize waitid and clone,
     is vulnerable to this too!
+
+* doing it full
+  I need to just go ahead and pass down the things.
+
+  I'll construct a new ChildTaskMonitor I guess
+
+** fd ownership when there are multiple tasks using it
+
+   In other words:
+
+   There are multiple different ways we could access the namespace,
+   and multiple things all using the thingy in the namespace.
+
+   So...
+   Do we want some kind of hyperactive fd?
+
+   Which has multiple owners, any of which could use it?
+
+   And, I guess, we'd have a wrapper for each task using it?
+   And when that wrapper goes away, we remove that task from the owner list?
+
+   So... I guess we could have that, like, underneath the active fd.
+
+   Like, ownership thingy, right?
+
+   okay so:
+
+   I've got some number of file descriptors F,
+   file descriptor tables T,
+   processes P,
+   and objects O.
+
+   A file descriptor F is in a single file descriptor table T,
+   and a process P can access a single file descriptor table T.
+
+   A file descriptor table T has many file descriptors in it, and many processes able to access it.
+
+   There is one thing we can do with file descriptors, which is close them.
+   To close a file descriptor F in table T, you need a process P.
+
+   An object O has a reference to a single file descriptor F and a single process P.
+   An object can be destructed at any time.
+
+   We want to ensure that when all objects referencing file descriptor F are destructed,
+   that file descriptor F is closed.
+   What additional structure and design should we use to achieve this?
+
+
+
+
+   I've got a file descriptor, and some number of tasks, which are threads under my control,
+   and some number of various types of object which hold references to file descriptors and tasks.
+   I want to close the file descriptor when all references to it disappear.
+   To close a file descriptor, I need to have a task
+
+** fd ownership
+   so there's a major issue:
+   we have multiple things wanting to use the same fd,
+   through different tasks.
+
+   if we say when object O is destructed, we close fd F,
+   then we can't have multiple objects referencing the same fd with different
+
+   Conventional multithreading can just refcount the fd F,
+   so that for each object O referencing F,
+   we increment a counter,
+   and decrement the counter when the object is destructed;
+   then, when the counter reaches 0,
+   we close the fd F.
+   But, this relies on implicit authority:
+   We need to use a process to close the fd.
+
+   Unlike conventional garbage collection.
+   Hmm.
+
+   Actually, could we just have multiple active things?
+   And track them inside the garbage collector?
+
+   So we're already talking about,
+   "when an active fd is destructed,
+   we use that process to close it".
+
+   But what if instead we keep track of,
+   if we are the last object referencing the fd?
+
+   Like...
+   We have some kind of registry, I guess?
+
+   When the last active fd is closed,
+   then we close the fd.
+
+   We store a refcount inside the fd.
+
+   We want to have other processes with active fds for an fd,
+   automatically take over responsibility for closing the fd.
+
+   So when we go to close a process, I guess we...
+
+   We need to get the list of active fds for that process, right?
+
+   Then we go through that list,
+   and look at each fd that has no other active fds,
+   and close them.
+
+   To find whether an fd has no other active fds,
+   we need to get the list of active fds for the fd.
+
+   So when I go to close an fd, I guess I'd do the similar thing.
+
+   Well, closing an fd doesn't require closing a process.
+   It's not my last chance to close the process.
+
+   Um...
+
+   When I close the process, I might be losing the ability to close an fd.
+   So I need to check and close any that need closing.
+
+   When I close an fd, I might be losing the ability to close a process?
+
+   No, processes can be closed on their own without anything else.
+
+   So why would I need a map from fds to active fds?
+
+   I just need the refcount, I guess.
+
+   I guess the core issue is that I have a bunch of things A, which reference some things B.
+   And before the last reference to B is removed, I need to perform some operation using the last A.
+
+   And also I have a bunch of things C,
+   which reference a bunch of things A,
+   and which when a thing C is removed,
+   that might remove - that definitely removes the last reference to A.
+   And then I need to perform those operations, I guess.
+
+   But the issue, I guess, is that I can also explicitly close these things.
+
+   Which should invalidate all the objects that reference them.
+
+   So, okay, it really does seem like I need a back-list, right?
+   I need a list of Os referencing F, and a list of Os referencing P.
+
+   I guess I could just do that in the constructor of active fd.
+
+   I'd need to key the dict with the far fd, not the active fd.
+   So as to make sure that __del__ is appropriately called.
+
+   or a weakref to the activefd, I guess.
+
+   oh. um.
+   when I construct an O,
+   I guess I need to add a, um.
+
+   I have an fdmap: Dict[far.FD, WeakRef[active.FD]],
+   and an taskmap: Dict[far.Task, WeakRef[active.FD]].
+
+   When I explicitly close an active.FD, I explicitly close the far.FD
+
+   When I explicitly close a far.FD, I need to set the invalid bit on all the active FDs.
+
+   When I __del__ an active.FD, I need to remove it from the fdmap and the taskmap.
+   If it's the last thing in the fdmap, then I need to explicitly close the far.FD.
+
+   When I __del__ a far.FD, I do nothing.
+
+   When I explicitly close a far.Task, I need to call __del__ on all the active.FDs in taskmap.
+   Then I delete the taskmap entry, which should be empty.
+
+   When I __del__ a far.Task, I do nothing.
+
+   OK so we can achieve this without further modifications.
+
+** epoller
+Need... to... split this...
+We'll have an activefd which is the thing we register on, I guess.
+And... that will return an EpolledFileDescriptor which...
+references the EpollWaiter for epolling, and another task for actually operating.
+Or, I guess, the EpolledFileDescriptor is just for epolling.
+And, I guess, it needs to reference the activefd, because it needs to del that off the epoll.
+So the EpolledFileDescriptor references the epolling task, and the registering task.
+But not the operating task.
+And not the operating fd.
+So there are three active.FDs:
+The epolling (task,fd), which is an epollfd
+The registered (task,fd), which is some unknown fd
+The operating (task,fd), which is probably the same unknown fd and task, but maybe not.
+Registering just needs the first two.
+Actually...
+We really need:
+The epolling (taskA,fdA), which is an epollfd
+The registering epollfd (taskB,fdA) and used fd (taskB,fdB)
+The operating (taskC,fdC) - completely unrelated.
+
+* okay so it's nice and inheriting now
+** add unshare_files
+   inheriting...
+
+   should I do it in place?
+
+   hmm how do I work this inheriting thing with active fds?
+** add unshare_vm
+** make full_exec use them

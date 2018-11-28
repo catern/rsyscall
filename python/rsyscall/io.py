@@ -268,8 +268,8 @@ class Task:
         sockfd = await raw_syscall.socket(self.syscall, lib.AF_INET, type, protocol)
         return self._make_fd(sockfd, InetSocketFile())
 
-    async def signalfd_create(self, mask: t.Set[signal.Signals]) -> FileDescriptor[SignalFile]:
-        sigfd = await memsys.signalfd(self.syscall, self.gateway, self.allocator, mask, os.O_CLOEXEC)
+    async def signalfd_create(self, mask: t.Set[signal.Signals], flags: int=0) -> FileDescriptor[SignalFile]:
+        sigfd = await memsys.signalfd(self.syscall, self.gateway, self.allocator, mask, os.O_CLOEXEC|flags)
         return self._make_fd(sigfd, SignalFile(mask))
 
     async def mmap(self, length: int, prot: memory.ProtFlag, flags: memory.MapFlag) -> memory.AnonymousMapping:
@@ -277,20 +277,24 @@ class Task:
         return (await memory.AnonymousMapping.make(
             self.syscall, self.base.address_space, length, prot, flags))
 
-    async def make_epoller(self) -> Epoller:
+    async def make_epoll_center(self) -> EpollCenter:
         epfd = await self.epoll_create()
         # TODO handle deallocating the epoll fd if later steps fail
         if self.syscall.activity_fd is not None:
-            epoller = Epoller(epfd, None)
+            epoll_waiter = EpollWaiter(epfd, None)
+            epoll_center = EpollCenter(epoll_waiter, epfd.active, self.gateway, self.allocator)
             other_activity_fd = self._make_fd(self.syscall.activity_fd.number, File())
-            epolled_other_activity_fd = await epoller.register(other_activity_fd, events=EpollEventMask.make(in_=True))
+            # TODO we need to save this somewhere so it can be collected
+            epolled_other_activity_fd = await epoll_center.register(other_activity_fd.active,
+                                                                    events=EpollEventMask.make(in_=True))
         else:
             # TODO this is a pretty low-level detail, not sure where is the right place to do this
             async def wait_readable():
                 logger.debug("wait_readable(%s)", epfd.pure.number)
                 await trio.hazmat.wait_readable(epfd.pure.number)
-            epoller = Epoller(epfd, wait_readable)
-        return epoller
+            epoll_waiter = EpollWaiter(epfd, wait_readable)
+            epoll_center = EpollCenter(epoll_waiter, epfd.active, self.gateway, self.allocator)
+        return epoll_center
         
 
 class ReadableFile(File):
@@ -514,61 +518,86 @@ class EpollFile(File):
                    events: Pointer, maxevents: int, timeout: int) -> int:
         return (await raw_syscall.epoll_wait(epfd.task.syscall, epfd.pure, events, maxevents, timeout))
 
-class EpolledFileDescriptor(t.Generic[T_file_co]):
-    epoller: Epoller
-    underlying: FileDescriptor[T_file_co]
-    queue: trio.hazmat.UnboundedQueue
-    def __init__(self, epoller: Epoller, underlying: FileDescriptor[T_file_co], queue: trio.hazmat.UnboundedQueue) -> None:
-        self.epoller = epoller
-        self.underlying = underlying
+class EpolledFileDescriptor:
+    def __init__(self,
+                 epoll_center: EpollCenter,
+                 fd: active.FileDescriptor,
+                 queue: trio.hazmat.UnboundedQueue,
+                 number: int) -> None:
+        self.epoll_center = epoll_center
+        self.fd = fd
         self.queue = queue
+        self.number = number
         self.in_epollfd = True
 
+    def inherit_with(self, inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> EpolledFileDescriptor:
+        return EpolledFileDescriptor(self.epoll_center, self.fd.inherit_with(inherit), self.queue, self.number)
+
     async def modify(self, events: EpollEventMask) -> None:
-        await self.epoller.modify(self.underlying, EpollEvent(self.underlying.pure.number, events))
+        await self.epoll_center.modify(self.fd.far, EpollEvent(self.number, events))
 
     async def wait(self) -> t.List[EpollEvent]:
         while True:
             try:
                 return self.queue.get_batch_nowait()
             except trio.WouldBlock:
-                await self.epoller.do_wait()
+                await self.epoll_center.epoller.do_wait()
 
     async def aclose(self) -> None:
         if self.in_epollfd:
-            await self.epoller.delete(self.underlying)
+            # TODO hmm, I guess we need to serialize this removal with calls to epoll?
+            await self.epoll_center.delete(self.fd.far)
             self.in_epollfd = False
-        await self.underlying.aclose()
 
-    async def __aenter__(self) -> EpolledFileDescriptor[T_file_co]:
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.aclose()
-
-class Epoller:
-    def __init__(self, epfd: FileDescriptor[EpollFile], wait_readable: t.Optional[t.Callable[[], t.Awaitable[None]]]) -> None:
+class EpollCenter:
+    "Terribly named class that allows registering fds on epoll, and waiting on them"
+    def __init__(self, epoller: EpollWaiter, epfd: active.FileDescriptor,
+                 gateway: MemoryGateway, allocator: memory.Allocator) -> None:
+        self.epoller = epoller
         self.epfd = epfd
-        self.wait_readable = wait_readable
-        self.register_epfd = epfd
-        self.remote_new = RemoteNew(epfd.task.allocator, epfd.task.gateway)
-        self.fd_map: t.Dict[int, EpolledFileDescriptor] = {}
-        self.running_wait: t.Optional[trio.Event] = None
+        self.gateway = gateway
+        self.allocator = allocator
 
-    async def register(self, fd: FileDescriptor[T_file], events: EpollEventMask=None
-    ) -> EpolledFileDescriptor:
+    def inherit_with(self, inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> EpollCenter:
+        return EpollCenter(self.epoller, self.epfd.inherit_with(inherit), self.gateway, self.allocator)
+
+    async def register(self, fd: active.FileDescriptor, events: EpollEventMask=None) -> EpolledFileDescriptor:
         if events is None:
             events = EpollEventMask.make()
-        fd = fd.release()
         queue = trio.hazmat.UnboundedQueue()
-        wrapper = EpolledFileDescriptor(self, fd, queue)
-        self.fd_map[fd.pure.number] = wrapper
-        await self.add(fd, EpollEvent(fd.pure.number, events))
-        return wrapper
+        number = self.epoller.add_and_allocate_number(queue)
+        await self.add(fd.far, EpollEvent(number, events))
+        return EpolledFileDescriptor(self, fd, queue, number)
+
+    async def add(self, fd: far.FileDescriptor, event: EpollEvent) -> None:
+        await memsys.epoll_ctl_add(self.epfd.task, self.gateway, self.allocator, self.epfd.far, fd, event)
+
+    async def modify(self, fd: far.FileDescriptor, event: EpollEvent) -> None:
+        await memsys.epoll_ctl_mod(self.epfd.task, self.gateway, self.allocator, self.epfd.far, fd, event)
+
+    async def delete(self, fd: far.FileDescriptor) -> None:
+        await memsys.epoll_ctl_del(self.epfd.task, self.epfd.far, fd)
+
+class EpollWaiter:
+    def __init__(self, epfd: FileDescriptor[EpollFile],
+                 wait_readable: t.Optional[t.Callable[[], t.Awaitable[None]]]) -> None:
+        self.waiting_task = epfd.task
+        self.epfd = epfd
+        self.wait_readable = wait_readable
+        self.remote_new = RemoteNew(self.waiting_task.allocator, self.waiting_task.gateway)
+        self.next_number = 0
+        self.number_to_queue: t.Dict[int, trio.hazmat.UnboundedQueue] = {}
+        self.running_wait: t.Optional[trio.Event] = None
+
+    # need to also support removing, I guess!
+    def add_and_allocate_number(self, queue: trio.hazmat.UnboundedQueue) -> int:
+        number = self.next_number
+        self.next_number += 1
+        self.number_to_queue[number] = queue
+        return number
 
     async def do_wait(self) -> None:
         if self.running_wait is not None:
-            logging.info("wait already running")
             await self.running_wait.wait()
         else:
             running_wait = trio.Event()
@@ -585,7 +614,7 @@ class Epoller:
                 else:
                     received_events = await self.wait(maxevents=32, timeout=-1)
                 for event in received_events:
-                    queue = self.fd_map[event.data].queue
+                    queue = self.number_to_queue[event.data]
                     queue.put_nowait(event.events)
             finally:
                 self.running_wait = None
@@ -605,39 +634,24 @@ class Epoller:
             cur += EpollEvent.bytesize()
         return ret
 
-    async def add(self, fd: FileDescriptor, event: EpollEvent) -> None:
-        with await self.remote_new.new(event.to_bytes()) as event_ptr:
-            await self.epfd.add(fd, event_ptr)
-
-    async def modify(self, fd: FileDescriptor, event: EpollEvent) -> None:
-        with await self.remote_new.new(event.to_bytes()) as event_ptr:
-            await self.epfd.modify(fd, event_ptr)
-
-    async def delete(self, fd: FileDescriptor) -> None:
-        await self.epfd.delete(fd)
-
-    async def close(self) -> None:
-        await self.epfd.aclose()
-
-    async def __aenter__(self) -> 'Epoller':
-        return self
-
-    async def __aexit__(self, *args, **kwargs) -> None:
-        await self.close()
-
-
 class AsyncFileDescriptor(t.Generic[T_file_co]):
-    epolled: EpolledFileDescriptor[T_file_co]
+    epolled: EpolledFileDescriptor
 
     @staticmethod
-    async def make(epoller: Epoller, fd: FileDescriptor[T_file]) -> 'AsyncFileDescriptor[T_file]':
-        await fd.set_nonblock()
-        epolled = await epoller.register(fd, EpollEventMask.make(
+    async def make(epoller: EpollCenter, fd: FileDescriptor[T_file], is_nonblock=False) -> 'AsyncFileDescriptor[T_file]':
+        if not is_nonblock:
+            await fd.set_nonblock()
+        epolled = await epoller.register(fd.active, EpollEventMask.make(
             in_=True, out=True, rdhup=True, pri=True, err=True, hup=True, et=True))
-        return AsyncFileDescriptor(epolled)
+        return AsyncFileDescriptor(epolled, fd)
 
-    def __init__(self, epolled: EpolledFileDescriptor[T_file_co]) -> None:
+    def inherit_with(self: AsyncFileDescriptor[T_file],
+                     inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> AsyncFileDescriptor[T_file]:
+        return AsyncFileDescriptor(self.epolled.inherit_with(inherit), self.underlying.inherit_with(inherit))
+
+    def __init__(self, epolled: EpolledFileDescriptor, underlying: FileDescriptor[T_file_co]) -> None:
         self.epolled = epolled
+        self.underlying = underlying
         self.running_wait: t.Optional[trio.Event] = None
         self.is_readable = False
         self.is_writable = False
@@ -648,7 +662,6 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
 
     async def _wait_once(self):
         if self.running_wait is not None:
-            logging.info("wait already running")
             await self.running_wait.wait()
         else:
             running_wait = trio.Event()
@@ -667,9 +680,11 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 running_wait.set()
 
     async def read(self: 'AsyncFileDescriptor[ReadableFile]', count: int=4096) -> bytes:
+        # TODO our program is mostly passive, we should start by epoll waiting first...
+        # except we can't do that, because
         while True:
             try:
-                return (await self.epolled.underlying.read(count))
+                return (await self.underlying.read(count))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
                     self.is_readable = False
@@ -694,7 +709,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     async def write(self: 'AsyncFileDescriptor[WritableFile]', buf: bytes) -> None:
         while len(buf) > 0:
             try:
-                written = await self.epolled.underlying.write(buf)
+                written = await self.underlying.write(buf)
                 buf = buf[written:]
             except OSError as e:
                 if e.errno == errno.EAGAIN:
@@ -724,7 +739,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     ) -> t.Tuple[FileDescriptor[SocketFile[T_addr]], T_addr]:
         while True:
             try:
-                return (await self.epolled.underlying.accept(flags))
+                return (await self.underlying.accept(flags))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
                     self.is_readable = False
@@ -735,12 +750,12 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
 
     async def connect(self: 'AsyncFileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
         try:
-            await self.epolled.underlying.connect(addr)
+            await self.underlying.connect(addr)
         except OSError as e:
             if e.errno == errno.EINPROGRESS:
                 while not self.is_writable:
                     await self._wait_once()
-                retbuf = await self.epolled.underlying.getsockopt(lib.SOL_SOCKET, lib.SO_ERROR, ffi.sizeof('int'))
+                retbuf = await self.underlying.getsockopt(lib.SOL_SOCKET, lib.SO_ERROR, ffi.sizeof('int'))
                 err = ffi.cast('int*', ffi.from_buffer(retbuf))[0]
                 if err != 0:
                     raise OSError(err, os.strerror(err))
@@ -748,13 +763,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 raise
 
     async def aclose(self) -> None:
-        await self.epolled.aclose()
-
-    async def __aenter__(self) -> 'AsyncFileDescriptor[T_file_co]':
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.aclose()
+        pass
 
 def _validate_path_and_task_match(task: Task, path: base.Path) -> None:
     if isinstance(path.base, base.DirfdPathBase):
@@ -1077,20 +1086,22 @@ class RemoteNew:
 
 @dataclass
 class TaskResources:
-    epoller: Epoller
+    epoller: EpollCenter
     child_monitor: ChildTaskMonitor
 
     @staticmethod
     async def make(task: Task) -> TaskResources:
-        epoller = await task.make_epoller()
+        epoller = await task.make_epoll_center()
         child_monitor = await ChildTaskMonitor.make(task, epoller)
         return TaskResources(epoller, child_monitor)
+
+    def inherit_with(self, inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> TaskResources:
+        return TaskResources(self.epoller.inherit_with(inherit), self.child_monitor.inherit_with(inherit))
 
     async def close(self) -> None:
         # have to destruct in opposite order of construction, gee that sounds like C++
         # ¯\_(ツ)_/¯
         await self.child_monitor.close()
-        await self.epoller.close()
 
     async def __aenter__(self) -> TaskResources:
         return self
@@ -1189,7 +1200,7 @@ async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
 class StandardTask:
     def __init__(self,
                  access_task: Task,
-                 access_epoller: Epoller,
+                 access_epoller: EpollCenter,
                  access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
                  connecting_task: Task,
                  connecting_connection: t.Optional[t.Tuple[far.FileDescriptor, far.FileDescriptor]],
@@ -1309,11 +1320,21 @@ class StandardTask:
         task, thread = await spawn_rsyscall_thread(
             access_sock, remote_sock,
             self.task, thread_maker, self.process.server_func)
+        epoller = EpollCenter(self.resources.epoller.epoller,
+                              active.FileDescriptor(task.base, self.resources.epoller.epfd.far),
+                              task.gateway, task.allocator)
+        signal_block = SignalBlock(task, {signal.SIGCHLD})
+        # sadly we can't use the parent's signalfd, epoll doesn't want to add it twice
+        sigfd = await task.signalfd_create({signal.SIGCHLD}, flags=os.O_NONBLOCK)
+        async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd, is_nonblock=True)
+        signal_queue = SignalQueue(signal_block, async_sigfd)
+        child_task_monitor = ChildTaskMonitor(task, signal_queue)
+        resources = TaskResources(self.resources.epoller, child_task_monitor)
         stdtask = StandardTask(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task, self.connecting_connection,
             task, 
-            self.resources,
+            resources,
             self.process, self.filesystem, {**self.environment},
             stdin=self.stdin,
             stdout=self.stdout,
@@ -1321,10 +1342,27 @@ class StandardTask:
         )
         return RsyscallThread(stdtask, thread)
 
-    async def unshare_files(self, fds: t.List[far.FileDescriptor], cloexec=False) -> t.List[far.FileDescriptor]:
+    async def unshare_files(self, fds: t.List[far.FileDescriptor], going_to_exec=False) -> t.List[far.FileDescriptor]:
+        """Unshare the file descriptor table.
+
+        Set going_to_exec to True if you are about to exec; then we'll skip the manual CLOEXEC in
+        userspace that we have to do to avoid keeping stray references around.
+
+        """
         # TODO what I am doing is converting over to nice modular unshare of FDs and VMs
         inherited_fds: t.List[far.FileDescriptor] = []
-        # maybe have a non-sync method on fd-holding things which takes a method which inherits an fd
+        # maybe have a non-async method on fd-holding things which takes a function which inherits an fd
+        # TODO gotta figure out the pid, sigh
+        old_fd_table = self.task.base.fd_table
+        new_fd_table = far.FDTable(0)
+        def inherit(fd: far.FileDescriptor) -> far.FileDescriptor:
+            if old_fd_table != fd.fd_table:
+                raise Exception("tried to inherit fd", fd,
+                                "but the fd_table doesn't match the task's old fd_table", old_fd_table)
+            new_fd = far.FileDescriptor(new_fd_table, fd.near)
+            inherited_fds.append(new_fd)
+            return new_fd
+        self.resources = resources.inherit_with(inherit)
         # things to inherit:
         # epollfd (so we can add new fds to it)
         # signalfd (so we can read it to flush the signals off)
@@ -1424,8 +1462,11 @@ class SignalQueue:
         self.signal_block = signal_block
         self.sigfd = sigfd
 
+    def inherit_with(self, inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> SignalQueue:
+        return SignalQueue(self.signal_block, self.sigfd.inherit_with(inherit))
+
     @classmethod
-    async def make(cls, task: Task, epoller: Epoller, mask: t.Set[signal.Signals]) -> 'SignalQueue':
+    async def make(cls, task: Task, epoller: EpollCenter, mask: t.Set[signal.Signals]) -> 'SignalQueue':
         signal_block = await SignalBlock.make(task, mask)
         sigfd = await task.signalfd_create(mask)
         async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd)
@@ -1493,7 +1534,6 @@ class ChildTask:
         
 
     async def wait_for_exit(self) -> ChildEvent:
-        logger.info("waiting for %s to exit", self.process)
         if self.death_event:
             return self.death_event
         while True:
@@ -1511,7 +1551,7 @@ class ChildTask:
 
     @property
     def syscall(self) -> SyscallInterface:
-        return self.monitor.signal_queue.sigfd.epolled.underlying.task.syscall
+        return self.monitor.signal_queue.sigfd.underlying.task.syscall
 
     @contextlib.asynccontextmanager
     async def get_pid(self) -> t.AsyncGenerator[t.Optional[base.Process], None]:
@@ -1554,16 +1594,20 @@ class ChildTask:
 
 class ChildTaskMonitor:
     @staticmethod
-    async def make(task: Task, epoller: Epoller) -> 'ChildTaskMonitor':
+    async def make(task: Task, epoller: EpollCenter) -> 'ChildTaskMonitor':
         signal_queue = await SignalQueue.make(task, epoller, {signal.SIGCHLD})
-        return ChildTaskMonitor(signal_queue)
+        return ChildTaskMonitor(task, signal_queue)
 
-    def __init__(self, signal_queue: SignalQueue) -> None:
+    def inherit_with(self, inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> ChildTaskMonitor:
+        return ChildTaskMonitor(self.waiting_task, self.signal_queue.inherit_with(inherit))
+
+    def __init__(self, waiting_task: Task, signal_queue: SignalQueue) -> None:
+        self.waiting_task = waiting_task
         self.signal_queue = signal_queue
         self.task_map: t.Dict[int, ChildTask] = {}
         self.unknown_queue = trio.hazmat.UnboundedQueue()
         self.wait_lock = trio.Lock()
-        if self.signal_queue.sigfd.epolled.underlying.file.mask != set([signal.SIGCHLD]):
+        if self.signal_queue.sigfd.underlying.file.mask != set([signal.SIGCHLD]):
             raise Exception("ChildTaskMonitor should get a SignalQueue only for SIGCHLD")
         self.running_wait: t.Optional[trio.Event] = None
 
@@ -1571,21 +1615,32 @@ class ChildTaskMonitor:
                     clone_task: base.Task,
                     flags: int,
                     child_stack: Pointer, ctid: Pointer, newtls: Pointer) -> ChildTask:
-        # I think I need to take the wait_lock here?
-        # because... if the child exits...
-        # children are shared between threads...
-        # hmmm....
-        # we synchronously waitid...
-        task = self.signal_queue.sigfd.epolled.underlying.task
-        if clone_task != task.base:
-            flags |= lib.CLONE_PARENT
-        # if we're multithreaded, and our child exits before this syscall returns, we could get the
-        # SIGCHLD and call waitid before we actually know what the child's tid is, and be confused.
-        # good thing we're single threaded and use signalfd.
-        tid = await raw_syscall.clone(clone_task.sysif, flags, child_stack,
-                                      ptid=None, ctid=ctid, newtls=newtls)
-        child_task = ChildTask(base.Process(task.process_namespace, tid), trio.hazmat.UnboundedQueue(), self)
-        self.task_map[tid] = child_task
+        if clone_task != self.waiting_task.base:
+            # We take a CLONE_TASK argument to allow for future use of multithreading or
+            # CLONE_PARENT, but currently we just enforce it matches the waiting_task.
+            raise Exception("tried to clone from task", clone_task,
+                            "which doesn't matching waiting_task", self.waiting_task)
+        # We need to serialize waits and clones, otherwise we could collect the child process zombie
+        # before we even create the ChildTask object. if we did multiple clones and pid wrapped to
+        # the same pid, we would then have no idea which child events belong to which child.
+        # 
+        # For us, wait_lock is sufficient serialization, since the only thing that can create new
+        # child for this task, is this task itself. But note that if we're using CLONE_PARENT in a
+        # child, or we're cloning in multiple threads, then we can run into this race.
+        # 
+        # This is mitigated in conventional multithreading using ctid/ptid, so we can look up the
+        # pid in memory before clone returns or actually starts the thread. I don't know of any
+        # efficient mitigation for the race when using CLONE_PARENT, so we can't use that flag.
+        # Which is unfortunate, because CLONE_PARENT would be useful, it would allow us to skip
+        # creating a ChildTaskMonitor in child processes.
+        async with self.wait_lock:
+            tid = await raw_syscall.clone(clone_task.sysif, flags, child_stack,
+                                          ptid=None, ctid=ctid, newtls=newtls)
+            # TODO this is wrong! we need to pull the process namespace out of the cloning task!
+            # but it's not yet present on base.Task, so...
+            process = base.Process(self.waiting_task.process_namespace, tid)
+            child_task = ChildTask(process, trio.hazmat.UnboundedQueue(), self)
+            self.task_map[tid] = child_task
         return child_task
 
     async def do_wait(self) -> None:
@@ -1597,11 +1652,9 @@ class ChildTaskMonitor:
             try:
                 # we don't care what information we get from the signal, we just want to
                 # sleep until a SIGCHLD happens
-                logger.info("reading from signal queue")
                 await self.signal_queue.read()
-                logger.info("read from signal queue, going on to wait")
                 # loop on waitid to flush all child events
-                task = self.signal_queue.sigfd.epolled.underlying.task
+                task = self.waiting_task
                 # only handle a maximum of 32 child events before returning, to prevent a DOS-through-forkbomb
                 # TODO if we could just detect when the ChildTask that we are wait()ing for
                 # has gotten an event, we could handle events in this function indefinitely,
@@ -1615,11 +1668,9 @@ class ChildTaskMonitor:
                         # while something else is making a syscall with a pid, because we
                         # might collect the zombie for that pid and cause pid reuse
                         async with self.wait_lock:
-                            logger.info("waiting on waitid")
                             siginfo = await memsys.waitid(
                                 task.syscall, task.gateway, task.allocator,
                                 None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
-                            logger.info("done with waitid")
                     except ChildProcessError:
                         # no more children
                         break
@@ -1706,9 +1757,7 @@ class Thread:
 
         """
         # once the futex task has exited, the child task has left the parent's address space.
-        logger.info("wait for futex task")
         result = await self.futex_task.wait_for_exit()
-        logger.info("futex task exited")
         if not result.clean():
             raise Exception("the futex task", self.futex_task, "for child task", self.child_task,
                             "unexpectedly exited non-zero", result, "maybe it was SIGKILL'd?")
@@ -1717,14 +1766,9 @@ class Thread:
         return self.child_task
 
     async def close(self) -> None:
-        logger.info("starting closing class Thread %s", self.released)
         if not self.released:
-            logger.info("killing")
             await self.child_task.kill()
-            logger.info("done killing")
             await self.wait_for_mm_release()
-            logger.info("done mm release")
-        logger.info("done closing class Thread")
 
     async def __aenter__(self) -> 'Thread':
         return self
@@ -1971,7 +2015,6 @@ class ChildConnection(base.SyscallInterface):
                             # we catch this in the implementations of exec and exit
                             raise RsyscallHangup()
                         response, = struct.unpack('q', response_bytes)
-                        self.logger.info("got syscall response")
                         if response < 0:
                             err = -response
                             raise OSError(err, os.strerror(err))
@@ -1979,14 +2022,12 @@ class ChildConnection(base.SyscallInterface):
                     async def server_exit() -> None:
                         # meaning the server exited
                         await self.server_task.wait_for_exit()
-                        self.logger.info("got server task exit")
                         raise ChildExit()
                     async def futex_exit() -> None:
                         if self.futex_task is not None:
                             # meaning the server called exec or exited; we don't
                             # wait to see which one.
                             await self.futex_task.wait_for_exit()
-                            self.logger.info("got futex task exit")
                             raise MMRelease()
                     nursery.start_soon(read_response)
                     nursery.start_soon(server_exit)
@@ -2061,9 +2102,9 @@ class ReceiveMemoryGateway(MemoryGateway):
     write: active.FileDescriptor
 
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
-        rtask = self.read.epolled.underlying.task.base
+        rtask = self.read.underlying.task.base
         near_dest = rtask.to_near_pointer(dest)
-        near_read_fd = self.read.epolled.underlying.active.to_near()
+        near_read_fd = self.read.underlying.active.to_near()
         wtask = self.write.task
         near_src = wtask.to_near_pointer(src)
         near_write_fd = self.write.to_near()
@@ -2100,9 +2141,9 @@ class SendMemoryGateway(MemoryGateway):
         rtask = self.read.task
         near_dest = rtask.to_near_pointer(dest)
         near_read_fd = self.read.to_near()
-        wtask = self.write.epolled.underlying.task.base
+        wtask = self.write.underlying.task.base
         near_src = wtask.to_near_pointer(src)
-        near_write_fd = self.write.epolled.underlying.active.to_near()
+        near_write_fd = self.write.underlying.active.to_near()
         logger.debug("selected read: %s %s %s", rtask, near_dest, near_read_fd)
         logger.debug("selected write: %s %s %s", wtask, near_src, near_write_fd)
         async def read() -> None:
@@ -2251,7 +2292,7 @@ async def set_singleton_robust_futex(task: far.Task, gateway: MemoryGateway, all
     futex_pointer = robust_list_entry.pointer + futex_offset
     return futex_pointer
 
-async def make_connections(access_task: Task, access_epoller: Epoller,
+async def make_connections(access_task: Task, access_epoller: EpollCenter,
                            # regrettably asymmetric...
                            # it would be nice to unify connect/accept with passing file descriptors somehow.
                            access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
@@ -2302,9 +2343,8 @@ async def spawn_rsyscall_thread(
         remote_sock: far.FileDescriptor,
         parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
     ) -> t.Tuple[Task, CThread]:
-    # TODO need to pass more flags for sharing: CLONE_IO|CLONE_SIGHAND|CLONE_SYSVSEM
     cthread = await thread_maker.make_cthread(
-        lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES,
+        lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SIGHAND|lib.CLONE_SYSVSEM,
         function, remote_sock.near, remote_sock.near)
     syscall = ChildConnection(
         access_sock, access_sock,
@@ -2317,14 +2357,24 @@ async def spawn_rsyscall_thread(
                     parent_task.mount, parent_task.fs, parent_task.sigmask.inherit(),
                     parent_task.process_namespace)
     new_task.allocator = parent_task.allocator
-    # TODO need to set up the new child task monitor
-    if len(new_task.sigmask.mask) != 0:
-        # clear this non-empty signal mask because it's pointlessly inherited across fork
-        await new_task.sigmask.setmask(new_task, set())
+    # okay, so.
+    # we need to:
+    # 1. register the signalfd on epoll, and
+    # 2. attach the new task to the signalfd so we read through that task
+    # okay so we can achieve garbage collection without changing these interfaces.
+    # so let's create a new activefd for the signalfd.
+    # hmm, how will we interact with the epoll thing here?
+    # epoll needs to take ownership, right?
+    # so, I guess, we could have a __del__ on the AsyncFileDescriptor?
+    # or at least, some kind of close?
+    # then, when that reference drops, we drop it?
+    # yeah that makes sense
+    # oh, we do need to save the task that we registered it from.
+    # so we can un-register it.
     return new_task, cthread
 
 async def rsyscall_spawn_exec_full(
-        access_task: Task, access_epoller: Epoller,
+        access_task: Task, access_epoller: EpollCenter,
         # regrettably asymmetric...
         # it would be nice to unify connect/accept with passing file descriptors somehow.
         access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
@@ -2653,11 +2703,8 @@ class RsyscallThread:
                                            raw_envp, flags=0))
 
     async def close(self) -> None:
-        logger.info("starting closing thread")
         await self.thread.close()
-        logger.info("finished closing thread")
         await self.stdtask.task.close()
-        logger.info("finished closing task")
 
     async def __aenter__(self) -> StandardTask:
         return self.stdtask
@@ -2762,7 +2809,7 @@ class SSHDCommand(Command):
     def make(cls, executable_path: base.Path) -> SSHDCommand:
         return super().make(executable_path, "sshd")
 
-local_stdtask = None
+local_stdtask: t.Any = None # type: ignore
 
 async def build_local_stdtask(nursery) -> StandardTask:
     return (await StandardTask.make_from_bootstrap(gather_local_bootstrap()))

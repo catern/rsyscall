@@ -185,3 +185,8 @@ async def set_robust_list(task: Task, head: Pointer, len: int) -> None:
 
 async def getdents64(task: Task, fd: FileDescriptor, dirp: Pointer, count: int) -> int:
     return (await rsyscall.near.getdents64(task.sysif, task.to_near_fd(fd), task.to_near_pointer(dirp), count))
+
+async def epoll_ctl(task: Task, epfd: FileDescriptor, op: rsyscall.near.EpollCtlOp,
+                    fd: FileDescriptor, event: t.Optional[Pointer]=None) -> None:
+    await rsyscall.near.epoll_ctl(task.sysif, task.to_near_fd(epfd), op, task.to_near_fd(fd),
+                                  task.to_near_pointer(event) if event else None)

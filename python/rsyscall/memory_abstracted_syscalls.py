@@ -8,6 +8,7 @@ from rsyscall.base import SyscallInterface, MemoryGateway
 import rsyscall.base as base
 import rsyscall.far as far
 import rsyscall.near as near
+import rsyscall.epoll as epoll
 import rsyscall.memory as memory
 import array
 import typing as t
@@ -77,6 +78,23 @@ async def waitid(sysif: SyscallInterface, gateway: MemoryGateway, allocator: mem
         await raw_syscall.waitid(sysif, id, infop, options, None)
         return (await read_to_bytes(gateway, infop, siginfo_size))
 
+
+#### epoll ####
+async def epoll_ctl_add(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
+                        epfd: far.FileDescriptor, fd: far.FileDescriptor, event: epoll.EpollEvent) -> None:
+    logger.debug("epoll_ctl_add(%s, %s, %s)", epfd, fd, event)
+    async with localize_data(gateway, allocator, event.to_bytes()) as (event_ptr, _):
+        await far.epoll_ctl(task, epfd, near.EpollCtlOp.ADD, fd, event_ptr)
+
+async def epoll_ctl_mod(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
+                        epfd: far.FileDescriptor, fd: far.FileDescriptor, event: epoll.EpollEvent) -> None:
+    logger.debug("epoll_ctl_mod(%s, %s, %s)", epfd, fd, event)
+    async with localize_data(gateway, allocator, event.to_bytes()) as (event_ptr, _):
+        await far.epoll_ctl(task, epfd, near.EpollCtlOp.MOD, fd, event_ptr)
+
+async def epoll_ctl_del(task: far.Task, epfd: far.FileDescriptor, fd: far.FileDescriptor) -> None:
+    logger.debug("epoll_ctl_del(%s, %s)", epfd, fd)
+    await far.epoll_ctl(task, epfd, near.EpollCtlOp.DEL, fd)
 
 
 #### signal mask manipulation ####
