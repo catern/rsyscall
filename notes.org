@@ -6902,5 +6902,30 @@ The operating (taskC,fdC) - completely unrelated.
     and takes a list of fds to preserve through cloexec (or something)
 
     yes perfect yes
+
+    ok so yeah that makes sense
+    and the signature will be someting like:
+
+    unshare_files(int *closed, int closed_count, int *preserved, int preserved_count, int flags)
+
+    Where I guess flags determines whether CLOEXEC is set on the new copies?
+
+    Alternatively we could disable CLOEXEC in exec temporarily,
+    so that some fds are passed down.
+
+    unshare_files(List[far.FileDescriptor], List[far.FileDescriptor], set_cloexec=False)
+
+    Though I guess I will leave off the flag.
+
+    Anyway, that's my primitive.
+    So then how do I build the GC/unshare system on top of that?
+
+    I still need a lock, don't I?
+
+    Hmm, annoying
+
+    well, let's think about it.
+
+    no let's gc with active fds
 ** add unshare_vm
 ** make full_exec use them
