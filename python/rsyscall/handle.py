@@ -45,7 +45,7 @@ import typing as t
 # is much more convenient.
 @dataclass
 class FileDescriptor:
-    task: rsyscall.far.Task
+    task: Task
     far: rsyscall.far.FileDescriptor
 
     def to_near(self) -> rsyscall.near.FileDescriptor:
@@ -59,6 +59,12 @@ class FileDescriptor:
 
     async def write(self, buf: rsyscall.far.Pointer, count: int) -> int:
         return (await rsyscall.far.write(self.task, self.far, buf, count))
+
+@dataclass
+class Task:
+    far: rsyscall.far.Task
+    files_lock: trio.Lock
+    fd_handles: t.List[FileDescriptor]
 
 @dataclass
 class Pipe:
