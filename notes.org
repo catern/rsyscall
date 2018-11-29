@@ -7027,3 +7027,7 @@ The operating (taskC,fdC) - completely unrelated.
     Yeah so the closing only happens in the new namespace, makes sense.
 ** add unshare_vm
 ** make full_exec use them
+** thinking about mapping
+   okay so, environment variable keys.
+
+   I'll just make them strings.

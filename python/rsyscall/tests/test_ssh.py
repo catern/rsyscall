@@ -5,27 +5,28 @@ import os
 import socket
 import unittest
 from rsyscall.io import Command, SSHCommand, SSHDCommand
-from rsyscall.io import local_stdtask, Task, Path
+from rsyscall.io import Task, Path, build_local_stdtask
 import rsyscall.base as base
 import logging
 
+local_stdtask = trio.run(build_local_stdtask, None)
 executable_dirs: t.List[base.Path] = []
-# for prefix in local_stdtask.environment[b"PATH"].split(b":"):
-#     executable_dirs.append(base.Path.from_bytes(local_stdtask.task.mount, local_stdtask.task.fs, prefix))
-# async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
-#     "Find an executable by this name in this list of paths"
-#     if b"/" in name:
-#         raise Exception("name should be a single path element without any / present")
-#     for path in paths:
-#         filename = Path(task, path)/name
-#         if (await filename.access(read=True, execute=True)):
-#             return filename.pure
-#     raise Exception("executable not found", name)
+for prefix in local_stdtask.environment[b"PATH"].split(b":"):
+    executable_dirs.append(base.Path.from_bytes(local_stdtask.task.mount, local_stdtask.task.fs, prefix))
+async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
+    "Find an executable by this name in this list of paths"
+    if b"/" in name:
+        raise Exception("name should be a single path element without any / present")
+    for path in paths:
+        filename = Path(task, path)/name
+        if (await filename.access(read=True, execute=True)):
+            return filename.pure
+    raise Exception("executable not found", name)
 
-# ssh = local_stdtask.filesystem.utilities.ssh
-# sshd = SSHDCommand.make(trio.run(which, local_stdtask.task, executable_dirs, b"sshd"))
-# ssh_keygen = Command.make(trio.run(which, local_stdtask.task, executable_dirs, b"ssh-keygen"),
-#                           b"ssh-keygen")
+ssh = local_stdtask.filesystem.utilities.ssh
+sshd = SSHDCommand.make(trio.run(which, local_stdtask.task, executable_dirs, b"sshd"))
+ssh_keygen = Command(trio.run(which, local_stdtask.task, executable_dirs, b"ssh-keygen"),
+                     ["ssh-keygen"], {})
 
 @contextlib.asynccontextmanager
 async def ssh_to_localhost(stdtask) -> t.AsyncGenerator[SSHCommand, None]:
@@ -93,7 +94,7 @@ class TestSSH(unittest.TestCase):
 
     def test_true(self):
         async def test() -> None:
-            sh = Command.make(local_stdtask.filesystem.utilities.sh, 'sh')
+            sh = Command(local_stdtask.filesystem.utilities.sh, ['sh'], {})
             child_thread = await local_stdtask.fork()
             child_task = await sh.args(['-c', 'head key']).exec(child_thread)
             await child_task.wait_for_exit()

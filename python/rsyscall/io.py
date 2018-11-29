@@ -530,9 +530,6 @@ class EpolledFileDescriptor:
         self.number = number
         self.in_epollfd = True
 
-    def inherit_with(self, inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> EpolledFileDescriptor:
-        return EpolledFileDescriptor(self.epoll_center, self.fd.inherit_with(inherit), self.queue, self.number)
-
     async def modify(self, events: EpollEventMask) -> None:
         await self.epoll_center.modify(self.fd.far, EpollEvent(self.number, events))
 
@@ -557,9 +554,6 @@ class EpollCenter:
         self.epfd = epfd
         self.gateway = gateway
         self.allocator = allocator
-
-    def inherit_with(self, inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> EpollCenter:
-        return EpollCenter(self.epoller, self.epfd.inherit_with(inherit), self.gateway, self.allocator)
 
     async def register(self, fd: handle.FileDescriptor, events: EpollEventMask=None) -> EpolledFileDescriptor:
         if events is None:
@@ -644,10 +638,6 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
         epolled = await epoller.register(fd.handle, EpollEventMask.make(
             in_=True, out=True, rdhup=True, pri=True, err=True, hup=True, et=True))
         return AsyncFileDescriptor(epolled, fd)
-
-    def inherit_with(self: AsyncFileDescriptor[T_file],
-                     inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> AsyncFileDescriptor[T_file]:
-        return AsyncFileDescriptor(self.epolled.inherit_with(inherit), self.underlying.inherit_with(inherit))
 
     def __init__(self, epolled: EpolledFileDescriptor, underlying: FileDescriptor[T_file_co]) -> None:
         self.epolled = epolled
@@ -1095,9 +1085,6 @@ class TaskResources:
         child_monitor = await ChildTaskMonitor.make(task, epoller)
         return TaskResources(epoller, child_monitor)
 
-    def inherit_with(self, inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> TaskResources:
-        return TaskResources(self.epoller.inherit_with(inherit), self.child_monitor.inherit_with(inherit))
-
     async def close(self) -> None:
         # have to destruct in opposite order of construction, gee that sounds like C++
         # ¯\_(ツ)_/¯
@@ -1360,14 +1347,7 @@ class StandardTask:
         # Eh, no, let's put them in the io.Task for now.
         # oh, no, but the handle needs a reference to the task containing the lock.
         # Hmm, hmm. I guess we can have an handle Task then.
-        def inherit(fd: far.FileDescriptor) -> far.FileDescriptor:
-            if old_fd_table != fd.fd_table:
-                raise Exception("tried to inherit fd", fd,
-                                "but the fd_table doesn't match the task's old fd_table", old_fd_table)
-            new_fd = far.FileDescriptor(new_fd_table, fd.near)
-            inherited_fds.append(new_fd)
-            return new_fd
-        self.resources = resources.inherit_with(inherit)
+
         # things to inherit:
         # epollfd (so we can add new fds to it)
         # signalfd (so we can read it to flush the signals off)
@@ -1466,9 +1446,6 @@ class SignalQueue:
     def __init__(self, signal_block: SignalBlock, sigfd: AsyncFileDescriptor[SignalFile]) -> None:
         self.signal_block = signal_block
         self.sigfd = sigfd
-
-    def inherit_with(self, inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> SignalQueue:
-        return SignalQueue(self.signal_block, self.sigfd.inherit_with(inherit))
 
     @classmethod
     async def make(cls, task: Task, epoller: EpollCenter, mask: t.Set[signal.Signals]) -> 'SignalQueue':
@@ -1602,9 +1579,6 @@ class ChildTaskMonitor:
     async def make(task: Task, epoller: EpollCenter) -> 'ChildTaskMonitor':
         signal_queue = await SignalQueue.make(task, epoller, {signal.SIGCHLD})
         return ChildTaskMonitor(task, signal_queue)
-
-    def inherit_with(self, inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> ChildTaskMonitor:
-        return ChildTaskMonitor(self.waiting_task, self.signal_queue.inherit_with(inherit))
 
     def __init__(self, waiting_task: Task, signal_queue: SignalQueue) -> None:
         self.waiting_task = waiting_task
@@ -2316,12 +2290,15 @@ async def make_connections(access_task: Task, access_epoller: EpollCenter,
         async def make_conn() -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
             return (await access_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0))
     else:
-        if access_connection is None:
+        if access_connection is not None:
+            access_connection_path, access_connection_socket = access_connection
+        else:
             raise Exception("must pass access connection when access task and connecting task are different")
         async def make_conn() -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
             left_sock = await access_task.socket_unix(socket.SOCK_STREAM)
-            await robust_unix_connect(access_connection[0], left_sock)
-            right_sock, _ = await access_connection[1].accept(os.O_CLOEXEC)
+            await robust_unix_connect(access_connection_path, left_sock)
+            right_sock: FileDescriptor[UnixSocketFile]
+            right_sock, _ = await access_connection_socket.accept(os.O_CLOEXEC) # type: ignore
             return left_sock, right_sock
     for _ in range(count):
         access_sock, connecting_sock = await make_conn()
@@ -2658,7 +2635,8 @@ async def spawn_ssh(
         guessed_hostname = ssh_command.arguments[-1]
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (guessed_hostname+random_suffix+".sock").encode()
-        local_socket_path = task.filesystem.tmpdir/name
+        path: base.Path = task.filesystem.tmpdir/name
+        local_socket_path = path
     socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
     async with run_socket_binder(task, ssh_command, socket_binder_path) as (data_path_bytes, pass_path_bytes):
         return (await ssh_bootstrap(task, ssh_command, local_socket_path, data_path_bytes, pass_path_bytes))
@@ -2673,7 +2651,7 @@ class RsyscallThread:
         self.thread = thread
 
     async def execve(self, path: base.Path, argv: t.Sequence[t.Union[str, bytes, Path]],
-                     env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
+                     env_updates: t.Mapping[str, t.Union[str, bytes, Path]]={},
                      inherited_signal_blocks: t.List[SignalBlock]=[],
     ) -> ChildTask:
         """Replace the running executable in this thread with another.
@@ -2696,12 +2674,12 @@ class RsyscallThread:
         for block in inherited_signal_blocks:
             sigmask = sigmask.union(block.mask)
         await self.stdtask.task.sigmask.setmask(self.stdtask.task, sigmask)
-        envp = {**self.stdtask.environment}
+        envp: t.Dict[bytes, bytes] = {**self.stdtask.environment}
         for key in env_updates:
             envp[os.fsencode(key)] = await fspath(env_updates[key])
         raw_envp: t.List[bytes] = []
-        for key, value in envp.items():
-            raw_envp.append(b''.join([key, b'=', value]))
+        for key_bytes, value in envp.items():
+            raw_envp.append(b''.join([key_bytes, b'=', value]))
         task = self.stdtask.task
         return (await self.thread.execveat(task.base.sysif, task.gateway, task.allocator,
                                            path, [await fspath(arg) for arg in argv],
@@ -2750,22 +2728,22 @@ def assert_same_task(task: Task, *args) -> None:
         else:
             raise Exception("can't validate argument", arg)
 
-@dataclass
+T_command = t.TypeVar('T_command', bound="Command")
 class Command:
-    executable_path: base.Path
-    arguments: t.List[str]
-    env_updates: t.Mapping[str, str]
+    def __init__(self,
+                 executable_path: base.Path,
+                 arguments: t.List[str],
+                 env_updates: t.Mapping[str, str]) -> None:
+        self.executable_path = executable_path
+        self.arguments = arguments
+        self.env_updates = env_updates
 
-    @classmethod
-    def make(cls, executable_path: base.Path, argv0: str) -> Command:
-        return cls(executable_path, [argv0], {})
-
-    def args(self: T, args: t.List[str]) -> T:
+    def args(self: T_command, args: t.List[str]) -> T_command:
         return type(self)(self.executable_path,
                              self.arguments + args,
                              self.env_updates)
 
-    def env(self: T, env_updates: t.Mapping[str, str]) -> T:
+    def env(self: T_command, env_updates: t.Mapping[str, str]) -> T_command:
         return type(self)(self.executable_path,
                              self.arguments,
                              {**self.env_updates, **env_updates})
@@ -2786,6 +2764,7 @@ class Command:
     async def exec(self, thread: RsyscallThread) -> ChildTask:
         return (await thread.execve(self.executable_path, self.arguments, self.env_updates))
 
+T_ssh_command = t.TypeVar('T_ssh_command', bound="SSHCommand")
 class SSHCommand(Command):
     def ssh_options(self, config: t.Mapping[str, str]) -> SSHCommand:
         option_list: t.List[str] = []
@@ -2793,15 +2772,15 @@ class SSHCommand(Command):
             option_list += ["-o", f"{key}={value}"]
         return self.args(option_list)
 
-    def proxy_command(self: T, command: Command) -> T:
+    def proxy_command(self, command: Command) -> SSHCommand:
         return self.ssh_options({'ProxyCommand': str(command)})
 
-    def local_forward(self: T, local_socket: str, remote_socket: str) -> T:
+    def local_forward(self, local_socket: str, remote_socket: str) -> SSHCommand:
         return self.args(["-L", f"{local_socket}:{remote_socket}"])
 
     @classmethod
-    def make(cls, executable_path: base.Path) -> SSHCommand:
-        return super().make(executable_path, "ssh")
+    def make(cls: t.Type[T_ssh_command], executable_path: base.Path) -> T_ssh_command:
+        return cls(executable_path, ["ssh"], {})
 
 class SSHDCommand(Command):
     def sshd_options(self, config: t.Mapping[str, str]) -> SSHDCommand:
@@ -2812,7 +2791,7 @@ class SSHDCommand(Command):
 
     @classmethod
     def make(cls, executable_path: base.Path) -> SSHDCommand:
-        return super().make(executable_path, "sshd")
+        return cls(executable_path, ["sshd"], {})
 
 local_stdtask: t.Any = None # type: ignore
 

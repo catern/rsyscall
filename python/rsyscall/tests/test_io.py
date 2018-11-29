@@ -3,6 +3,7 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.io import gather_local_bootstrap, wrap_stdin_out_err
 from rsyscall.io import AsyncFileDescriptor
 from rsyscall.io import local_stdtask, build_local_stdtask, StandardTask
+from rsyscall.io import Command
 from rsyscall.epoll import EpollEvent, EpollEventMask
 from rsyscall.tests.test_ssh import ssh_to_localhost
 import shutil
@@ -543,7 +544,7 @@ class TestIO(unittest.TestCase):
     def test_fork_exec(self) -> None:
         async def test() -> None:
             child_thread = await local_stdtask.fork()
-            sh = Command.make(local_stdtask.filesystem.utilities.sh, 'sh')
+            sh = Command(local_stdtask.filesystem.utilities.sh, ['sh'], {})
             child_task = await sh.args(['-c', 'true']).exec(child_thread)
             await child_task.wait_for_exit()
         trio.run(test)

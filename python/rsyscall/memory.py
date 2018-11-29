@@ -121,7 +121,7 @@ class PreallocatedAllocator(AllocatorInterface):
             raise Exception("too much memory allocated")
         ret = self.base_pointer + self.index
         self.index += size
-        return contextlib.nullcontext(ret)
+        return contextlib.nullcontext(ret) # type: ignore
         # we don't free the memory
 
 class Allocator(AllocatorInterface):
