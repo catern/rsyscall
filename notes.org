@@ -6812,5 +6812,95 @@ The operating (taskC,fdC) - completely unrelated.
 
     so CLOEXEC really means, "garbage collect me".
     well, that's how we're overloading it anyway.
+*** think of a whole new ownership model for file descriptors
+    so, okay, obviously we want to,
+    have,
+    fds that are unused in a new space be closed.
+
+    so okay, so, we need to think of unshare and exec separately.
+
+    so if the call to unshare was separate from the exec, then...
+
+    it's only when we enter the new address space,
+    that we remove the references,
+    and need to exec.
+
+    but, I mean, I guess we need to explicitly transition some things into the new fd space.
+    or do we? why can't we just automatically work in the new space?
+    why can't we just update everything under the hood?
+
+    with the active fds, we can, i guess.
+
+    so if we did that, that would be cool.
+
+    what about no-longer-needed fds in the previous space?
+
+    I guess we can close those.
+
+    okay so if we do this then everything that gets the farfd out of active, needs a lock.
+
+    okay, I think having a proper garbage collection model for these is too much.
+    Or, wait, we'll have to do it anyway since we decided on GC, so might as well.
+
+    So, I guess we:
+    Do the unshare.
+
+    And then. Well.
+
+    There may be file descriptors which we were the only reference to?
+
+    And how would we close them? HOW HOW HOW?
+
+    Even if we go with the unshared fd thing.
+
+    How do we close the fds in the previous space before the unshare???
+
+    Our signalfd and stuff is there!
+*** hard core problem
+    So, yeah, if we have some thing with a reference to a space,
+    owning some things in it,
+    and it copies those things out,
+    then loses its reference to the previous space,
+    how does it close the things in the previous space?
+
+    ask osdev?
+
+    think about language-based-system? memory management?
+
+    i guess in a LBS we'd just be able to have references to two spaces...
+    we'd do the copy into a fresh space,
+    and then delete from the old space.
+
+    well, why wouldn't we be able to do that?
+    what would make us need to not do that
+
+    okay so I've got some space A, containing a bunch of things X.
+    I can close any thing X,
+    and I can also make a copy of space A, space B;
+    but that consumes my reference to space A.
+
+    If I'm a person with a reference to some space,
+    how do I make a copy of that space containing a thing X that I want,
+    and close it in the original space?
+
+    i.e. how do I move something from space A to space B.
+
+    how....
+    how.........
+
+    AHA!
+    Kai landed upon the solution!
+    I'll just make another helper thread!
+
+    Just as I have a helper thread to do cloexecing things!
+    I need a helper thread to do closing in the space I'm leaving!
+
+    And this can be a syscall in the future!!
+
+    and we can have a single abstraction that takes a list of fds to close,
+    does the unshare,
+    and takes a list of fds to preserve through cloexec (or something)
+
+    yes perfect yes
 ** add unshare_vm
 ** make full_exec use them
