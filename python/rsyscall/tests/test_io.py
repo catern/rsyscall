@@ -56,7 +56,7 @@ class TestIO(unittest.TestCase):
                 in_data = b"hello"
                 await pipe.wfd.write(in_data)
                 out_data = await memsys.recv(self.task.base, self.task.gateway, self.task.allocator,
-                                             pipe.rfd.active.far, len(in_data), 0)
+                                             pipe.rfd.handle.far, len(in_data), 0)
                 self.assertEqual(in_data, out_data)
         trio.run(test)
 
@@ -534,9 +534,9 @@ class TestIO(unittest.TestCase):
                 task = stdtask.task
                 l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
                 await memsys.sendmsg_fds(task.base, task.gateway, task.allocator,
-                                         l.active.far, [l.active.far])
+                                         l.handle.far, [l.handle.far])
                 fds = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator,
-                                               r.active.far, 1)
+                                               r.handle.far, 1)
                 print(fds)
         trio.run(test)
 
@@ -553,11 +553,11 @@ class TestIO(unittest.TestCase):
     #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
     #             task = stdtask.task
     #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
-    #             rsyscall_task, [r_remote] = await stdtask.spawn([r.active.far])
+    #             rsyscall_task, [r_remote] = await stdtask.spawn([r.handle.far])
     #             async with rsyscall_task as stdtask2:
     #                 l2, r2 = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     #                 await memsys.sendmsg_fds(task.base, task.gateway, task.allocator,
-    #                                          l.active.far, [r2.active.far])
+    #                                          l.handle.far, [r2.handle.far])
     #                 [r2_remote] = await memsys.recvmsg_fds(
     #                     stdtask2.task.base, stdtask2.task.gateway, stdtask2.task.allocator, r_remote, 1)
     #                 await r2.aclose()
@@ -576,7 +576,7 @@ class TestIO(unittest.TestCase):
     #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
     #             task = stdtask.task
     #             describe_pipe = await task.pipe()
-    #             binder_process, [describe_write] = await stdtask.spawn([describe_pipe.wfd.active.far])
+    #             binder_process, [describe_write] = await stdtask.spawn([describe_pipe.wfd.handle.far])
     #             binder_task = binder_process.stdtask.task.base
     #             if int(describe_write) != 1:
     #                 await near.dup3(binder_task.sysif, binder_task.to_near_fd(describe_write), near.FileDescriptor(1), 0)
@@ -591,7 +591,7 @@ class TestIO(unittest.TestCase):
     #                 pass_sock = await task.socket_unix(socket.SOCK_STREAM)
     #                 await rsyscall.io.robust_unix_connect(pass_path, pass_sock)
     #                 listening_sock, = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator,
-    #                                                            pass_sock.active.far, 1)
+    #                                                            pass_sock.handle.far, 1)
     #                 (await child.wait_for_exit()).check()
     #             client_sock = await task.socket_unix(socket.SOCK_STREAM)
     #             await rsyscall.io.robust_unix_connect(data_path, client_sock)

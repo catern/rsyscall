@@ -6927,5 +6927,103 @@ The operating (taskC,fdC) - completely unrelated.
     well, let's think about it.
 
     no let's gc with active fds
+
+    and have a bunch of helpers
+
+    which take locks
+*** can we just use far fds and take a lock on the task?
+    well, no, because it's the active fd that is going to be updated
+*** relocating memory
+    Do linear types help with this?
+
+    I guess I'm hoping for something else
+
+    Bah!
+
+    I think handle is a good name!
+
+    And pinning?
+    Or just locking?
+
+    This is highly intriguing!
+
+    I also have to think about multiple references to the same handle
+
+    But, yeah! I'm excited!
+
+    To put it into these terms:
+    The reason I need handles is, to support far pointers moving between segments.
+
+    Then, I can have multiple references to a single handle?
+    And, when it's done, it's done?
+
+    OK so:
+    Is active FD the right thing to call handle FD?
+
+    A handle is something which is auto-updated.
+
+    Can we do auto-updating without having the task around?
+
+    It wouldn't even make sense to auto-updated, right?
+
+    When something is copied to a new segment...
+
+    Well, I guess it doesn't disappear from the old segment.
+
+    But, we're only able to access the new segment.
+
+    It's like...
+
+    We make a new segment, and um, update our segment register based on it?
+
+    Our only operation is,
+    switch our segment register to contain a new segment that has a copy of the old segment.
+
+    And we therefore need to update all the handles when that happens.
+
+    Well, yeah. We need some kind of list of handles, which are associated with a given task, that need to be updated when that task does.
+
+    So really, yes, the handle FD could be allowed to not contain the task pointer.
+
+    Instead we'd have a list of fds inside the Task. Or something.
+
+    That would work, and is also very interesting because we already need a list of fds for every task.
+    So it could be fine.
+
+    But, let's consider the garbage collection needs.
+
+    If we have a handle.
+    We can update it, of course, when the task is closed.
+
+    Oh, we also need to lock it though.
+    How would we lock it?
+    We'd need to lock the task as a whole.
+
+    Yeah, how do we lock the task?
+    I guess we are just locking the handle?
+    But we can't unshare if any handle is locked,
+    so we might as well have a task-level lock.
+
+    Yeah.
+    A reader-writer lock makes sense too.
+    Because any number of people can be using the fd (reading) simultaneously,
+    but they can't use it while someone is unsharing (writing),
+    and there can only be one person unsharing (writing) at a time.
+*** setting a namespace rather than unsharing
+    When we do this, I guess that we will just invalidate all the previous handles.
+
+    And we can create new handles from the existing handles in the new namespace.
+*** api    
+    So we'll explicitly list the things we want to close,
+
+    but we'll preserve everything.
+
+    We... won't call cloexec?
+
+    I guess we could explicitly list the things we want to preserve too, sure.
+
+    Or, no... I guess we just cloexec away everything that doesn't have a handle. Relatively easy.
+
+    Yeah so the closing only happens in the new namespace, makes sense.
 ** add unshare_vm
 ** make full_exec use them

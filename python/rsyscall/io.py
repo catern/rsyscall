@@ -14,7 +14,7 @@ from rsyscall.raw_syscalls import UnshareFlag, NsType, SigprocmaskHow
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
 import rsyscall.memory as memory
-import rsyscall.active as active
+import rsyscall.handle as handle
 import rsyscall.far as far
 import rsyscall.near as near
 
@@ -238,7 +238,7 @@ class Task:
         return (await memsys.read(self.base, self.gateway, self.allocator, fd, count))
 
     # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
-    # and they'll take an active.FileDescriptor.
+    # and they'll take an handle.FileDescriptor.
     # then we'll directly have StandardTask contain both Task and MemoryAbstractor?
     async def getdents(self, fd: far.FileDescriptor, count: int=4096) -> t.List[Dirent]:
         data = await memsys.getdents64(self.base, self.gateway, self.allocator, fd, count)
@@ -282,10 +282,10 @@ class Task:
         # TODO handle deallocating the epoll fd if later steps fail
         if self.syscall.activity_fd is not None:
             epoll_waiter = EpollWaiter(epfd, None)
-            epoll_center = EpollCenter(epoll_waiter, epfd.active, self.gateway, self.allocator)
+            epoll_center = EpollCenter(epoll_waiter, epfd.handle, self.gateway, self.allocator)
             other_activity_fd = self._make_fd(self.syscall.activity_fd.number, File())
             # TODO we need to save this somewhere so it can be collected
-            epolled_other_activity_fd = await epoll_center.register(other_activity_fd.active,
+            epolled_other_activity_fd = await epoll_center.register(other_activity_fd.handle,
                                                                     events=EpollEventMask.make(in_=True))
         else:
             # TODO this is a pretty low-level detail, not sure where is the right place to do this
@@ -293,13 +293,13 @@ class Task:
                 logger.debug("wait_readable(%s)", epfd.pure.number)
                 await trio.hazmat.wait_readable(epfd.pure.number)
             epoll_waiter = EpollWaiter(epfd, wait_readable)
-            epoll_center = EpollCenter(epoll_waiter, epfd.active, self.gateway, self.allocator)
+            epoll_center = EpollCenter(epoll_waiter, epfd.handle, self.gateway, self.allocator)
         return epoll_center
         
 
 class ReadableFile(File):
     async def read(self, fd: 'FileDescriptor[ReadableFile]', count: int=4096) -> bytes:
-        return (await fd.task.read(fd.active.far, count))
+        return (await fd.task.read(fd.handle.far, count))
 
 class WritableFile(File):
     async def write(self, fd: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
@@ -327,7 +327,7 @@ class DirectoryFile(SeekableFile):
         self.raw_path = raw_path
 
     async def getdents(self, fd: 'FileDescriptor[DirectoryFile]', count: int) -> t.List[Dirent]:
-        return (await fd.task.getdents(fd.active.far, count))
+        return (await fd.task.getdents(fd.handle.far, count))
 
     def as_path(self, fd: FileDescriptor[DirectoryFile]) -> Path:
         return Path(fd.task, base.Path(base.DirfdPathBase(fd.pure), []))
@@ -377,7 +377,7 @@ class FileDescriptor(t.Generic[T_file_co]):
     file: T_file_co
     def __init__(self, task: Task, farfd: far.FileDescriptor, file: T_file_co) -> None:
         self.task = task
-        self.active = active.FileDescriptor(task.base, farfd)
+        self.handle = handle.FileDescriptor(task.base, farfd)
         self.file = file
         self.pure = base.FileDescriptor(task.base.fd_table, farfd.near.number)
         self.open = True
@@ -404,7 +404,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         """
         if self.open:
             self.open = False
-            return self.__class__(self.task, self.active.far, self.file)
+            return self.__class__(self.task, self.handle.far, self.file)
         else:
             raise Exception("file descriptor already closed")
 
@@ -429,11 +429,11 @@ class FileDescriptor(t.Generic[T_file_co]):
         return ret
 
     async def replace_with(self, source: far.FileDescriptor, flags=0) -> None:
-        if self.active.far.fd_table != source.fd_table:
+        if self.handle.far.fd_table != source.fd_table:
             raise Exception("two fds are not in the same FDTable")
-        if self.active.far.near == source.near:
+        if self.handle.far.near == source.near:
             return
-        await far.dup3(self.task.base, source, self.active.far, flags)
+        await far.dup3(self.task.base, source, self.handle.far, flags)
         await far.close(self.task.base, source)
 
     async def as_argument(self) -> int:
@@ -521,7 +521,7 @@ class EpollFile(File):
 class EpolledFileDescriptor:
     def __init__(self,
                  epoll_center: EpollCenter,
-                 fd: active.FileDescriptor,
+                 fd: handle.FileDescriptor,
                  queue: trio.hazmat.UnboundedQueue,
                  number: int) -> None:
         self.epoll_center = epoll_center
@@ -551,7 +551,7 @@ class EpolledFileDescriptor:
 
 class EpollCenter:
     "Terribly named class that allows registering fds on epoll, and waiting on them"
-    def __init__(self, epoller: EpollWaiter, epfd: active.FileDescriptor,
+    def __init__(self, epoller: EpollWaiter, epfd: handle.FileDescriptor,
                  gateway: MemoryGateway, allocator: memory.Allocator) -> None:
         self.epoller = epoller
         self.epfd = epfd
@@ -561,7 +561,7 @@ class EpollCenter:
     def inherit_with(self, inherit: t.Callable[[far.FileDescriptor], far.FileDescriptor]) -> EpollCenter:
         return EpollCenter(self.epoller, self.epfd.inherit_with(inherit), self.gateway, self.allocator)
 
-    async def register(self, fd: active.FileDescriptor, events: EpollEventMask=None) -> EpolledFileDescriptor:
+    async def register(self, fd: handle.FileDescriptor, events: EpollEventMask=None) -> EpolledFileDescriptor:
         if events is None:
             events = EpollEventMask.make()
         queue = trio.hazmat.UnboundedQueue()
@@ -641,7 +641,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     async def make(epoller: EpollCenter, fd: FileDescriptor[T_file], is_nonblock=False) -> 'AsyncFileDescriptor[T_file]':
         if not is_nonblock:
             await fd.set_nonblock()
-        epolled = await epoller.register(fd.active, EpollEventMask.make(
+        epolled = await epoller.register(fd.handle, EpollEventMask.make(
             in_=True, out=True, rdhup=True, pri=True, err=True, hup=True, et=True))
         return AsyncFileDescriptor(epolled, fd)
 
@@ -1267,7 +1267,7 @@ class StandardTask:
             # If we are the same task as our connecting task, we can just socketpair directly and pass it down.
             connecting_side, full_parent_child_side = await self.connecting_task.socketpair(
                 socket.AF_UNIX, socket.SOCK_STREAM, 0)
-            parent_child_side = full_parent_child_side.active.far
+            parent_child_side = full_parent_child_side.handle.far
         else:
             # If we're not the same task as our connecting task, we need to use our connecting_connection.
             assert self.connecting_connection is not None
@@ -1276,7 +1276,7 @@ class StandardTask:
                 socket.AF_UNIX, socket.SOCK_STREAM, 0)
             # Send one side from the connecting task over the connecting_connection
             await memsys.sendmsg_fds(self.connecting_task.base, self.connecting_task.gateway, self.connecting_task.allocator,
-                                     self.connecting_connection[0], [connecting_parent_child_side.active.far])
+                                     self.connecting_connection[0], [connecting_parent_child_side.handle.far])
             # Receive that side on our side of the connecting_connection
             [near_parent_child_side] = await memsys.recvmsg_fds(self.task.base, self.task.gateway, self.task.allocator,
                                                                 self.connecting_connection[1], 1)
@@ -1286,7 +1286,7 @@ class StandardTask:
             self.connecting_task, self.connecting_connection,
             self.task, thread_maker, self.process.server_func,
             self.filesystem.rsyscall_server_path,
-            [parent_child_side, self.stdin.active.far, self.stdout.active.far, self.stderr.active.far, *user_fds], shared)
+            [parent_child_side, self.stdin.handle.far, self.stdout.handle.far, self.stderr.handle.far, *user_fds], shared)
         proc_resources = ProcessResources(
             server_func=FunctionPointer(symbols[b"rsyscall_server"]),
             do_cloexec_func=FunctionPointer(symbols[b"rsyscall_do_cloexec"]),
@@ -1302,7 +1302,7 @@ class StandardTask:
         # meh, better to inherit and share since it's possible; if it turns out worse we can fix that later.
         stdtask = StandardTask(
             self.access_task, self.access_epoller, self.access_connection,
-            self.connecting_task, (connecting_side.active.far, child_side),
+            self.connecting_task, (connecting_side.handle.far, child_side),
             task, 
             await TaskResources.make(task),
             proc_resources, self.filesystem, {**self.environment},
@@ -1321,7 +1321,7 @@ class StandardTask:
             access_sock, remote_sock,
             self.task, thread_maker, self.process.server_func)
         epoller = EpollCenter(self.resources.epoller.epoller,
-                              active.FileDescriptor(task.base, self.resources.epoller.epfd.far),
+                              handle.FileDescriptor(task.base, self.resources.epoller.epfd.far),
                               task.gateway, task.allocator)
         signal_block = SignalBlock(task, {signal.SIGCHLD})
         # sadly we can't use the parent's signalfd, epoll doesn't want to add it twice
@@ -1355,6 +1355,11 @@ class StandardTask:
         # TODO gotta figure out the pid, sigh
         old_fd_table = self.task.base.fd_table
         new_fd_table = far.FDTable(0)
+        # OK! so! We need to use a nice handle API that locks the task when we use the fd.
+        # Should we have a handle.Task? To contain the lock and the list of handle FDs?
+        # Eh, no, let's put them in the io.Task for now.
+        # oh, no, but the handle needs a reference to the task containing the lock.
+        # Hmm, hmm. I guess we can have an handle Task then.
         def inherit(fd: far.FileDescriptor) -> far.FileDescriptor:
             if old_fd_table != fd.fd_table:
                 raise Exception("tried to inherit fd", fd,
@@ -1731,8 +1736,8 @@ class Thread:
     """
     child_task: ChildTask
     futex_task: ChildTask
-    futex_mapping: active.MemoryMapping
-    def __init__(self, child_task: ChildTask, futex_task: ChildTask, futex_mapping: active.MemoryMapping) -> None:
+    futex_mapping: handle.MemoryMapping
+    def __init__(self, child_task: ChildTask, futex_task: ChildTask, futex_mapping: handle.MemoryMapping) -> None:
         self.child_task = child_task
         self.futex_task = futex_task
         self.futex_mapping = futex_mapping
@@ -1884,7 +1889,7 @@ class ThreadMaker:
             self.task.base,
             flags | lib.CLONE_CHILD_CLEARTID, child_stack,
             ctid=futex_pointer, newtls=newtls)
-        return Thread(child_task, futex_task, active.MemoryMapping(self.task.base, mapping))
+        return Thread(child_task, futex_task, handle.MemoryMapping(self.task.base, mapping))
 
     async def make_cthread(self, flags: int,
                           function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
@@ -2099,12 +2104,12 @@ async def do_cloexec_except(task: Task, process_resources: ProcessResources, exc
 class ReceiveMemoryGateway(MemoryGateway):
     """From the perspective of the side "closer" to us"""
     read: AsyncFileDescriptor[ReadableFile]
-    write: active.FileDescriptor
+    write: handle.FileDescriptor
 
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
         rtask = self.read.underlying.task.base
         near_dest = rtask.to_near_pointer(dest)
-        near_read_fd = self.read.underlying.active.to_near()
+        near_read_fd = self.read.underlying.handle.to_near()
         wtask = self.write.task
         near_src = wtask.to_near_pointer(src)
         near_write_fd = self.write.to_near()
@@ -2134,7 +2139,7 @@ class ReceiveMemoryGateway(MemoryGateway):
 @dataclass
 class SendMemoryGateway(MemoryGateway):
     """From the perspective of the side "closer" to us"""
-    read: active.FileDescriptor
+    read: handle.FileDescriptor
     write: AsyncFileDescriptor[WritableFile]
 
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
@@ -2143,7 +2148,7 @@ class SendMemoryGateway(MemoryGateway):
         near_read_fd = self.read.to_near()
         wtask = self.write.underlying.task.base
         near_src = wtask.to_near_pointer(src)
-        near_write_fd = self.write.underlying.active.to_near()
+        near_write_fd = self.write.underlying.handle.to_near()
         logger.debug("selected read: %s %s %s", rtask, near_dest, near_read_fd)
         logger.debug("selected write: %s %s %s", wtask, near_src, near_write_fd)
         async def read() -> None:
@@ -2324,11 +2329,11 @@ async def make_connections(access_task: Task, access_epoller: EpollCenter,
         connecting_socks.append(connecting_sock)
     passed_socks: t.List[far.FileDescriptor]
     if connecting_task.base.fd_table == parent_task.base.fd_table:
-        passed_socks = [sock.active.far for sock in connecting_socks]
+        passed_socks = [sock.handle.far for sock in connecting_socks]
     else:
         assert connecting_connection is not None
         await memsys.sendmsg_fds(connecting_task.base, connecting_task.gateway, connecting_task.allocator,
-                                 connecting_connection[0], [sock.active.far for sock in connecting_socks])
+                                 connecting_connection[0], [sock.handle.far for sock in connecting_socks])
         near_passed_socks = await memsys.recvmsg_fds(parent_task.base, parent_task.gateway, parent_task.allocator,
                                                      connecting_connection[1], count)
         passed_socks = [far.FileDescriptor(parent_task.fd_table, sock) for sock in near_passed_socks]
@@ -2362,7 +2367,7 @@ async def spawn_rsyscall_thread(
     # 1. register the signalfd on epoll, and
     # 2. attach the new task to the signalfd so we read through that task
     # okay so we can achieve garbage collection without changing these interfaces.
-    # so let's create a new activefd for the signalfd.
+    # so let's create a new handlefd for the signalfd.
     # hmm, how will we interact with the epoll thing here?
     # epoll needs to take ownership, right?
     # so, I guess, we could have a __del__ on the AsyncFileDescriptor?
@@ -2410,9 +2415,9 @@ async def rsyscall_spawn_exec_full(
         cthread.futex_task,
         remote_syscall_sock, remote_syscall_sock)
     new_base_task = base.Task(syscall, fd_table, parent_task.address_space)
-    def inherit_active(fd: far.FileDescriptor) -> active.FileDescriptor:
-        return active.FileDescriptor(new_base_task, inherit(fd))
-    remote_data_sock = inherit_active(passed_data_sock)
+    def inherit_handle(fd: far.FileDescriptor) -> handle.FileDescriptor:
+        return handle.FileDescriptor(new_base_task, inherit(fd))
+    remote_data_sock = inherit_handle(passed_data_sock)
     gateway = ComposedMemoryGateway([
         SendMemoryGateway(read=remote_data_sock, write=async_access_data_sock),
         ReceiveMemoryGateway(read=async_access_data_sock, write=remote_data_sock),
@@ -2508,7 +2513,7 @@ async def rsyscall_spawn_exec_full(
                                             local_futex_pointer, futex_value)
     syscall.futex_task = futex_task
     # TODO how do we unmap the remote mapping?
-    thread = Thread(child_task, futex_task, active.MemoryMapping(parent_task.base, local_mapping))
+    thread = Thread(child_task, futex_task, handle.MemoryMapping(parent_task.base, local_mapping))
     return new_task, thread, symbols, inherited_user_fds
 
 # Need to identify the host, I guess
@@ -2522,7 +2527,7 @@ async def run_socket_binder(
     describe_pipe = await task.task.pipe()
     async_describe = await AsyncFileDescriptor.make(task.resources.epoller, describe_pipe.rfd)
     # TODO maybe I should have this process set PDEATHSIG so that even if we hard crash, it will exit too
-    binder_task, [describe_write] = await task.spawn([describe_pipe.wfd.active.far], shared=UnshareFlag.NONE)
+    binder_task, [describe_write] = await task.spawn([describe_pipe.wfd.handle.far], shared=UnshareFlag.NONE)
     await binder_task.stdtask.stdout.replace_with(describe_write)
     await describe_pipe.wfd.aclose()
     async with binder_task:
@@ -2611,10 +2616,10 @@ async def ssh_bootstrap(
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                     identifier_pid, remote_syscall_fd, remote_syscall_fd)
     new_base_task = base.Task(new_syscall, new_fd_table, new_address_space)
-    active_remote_data_fd = active.FileDescriptor(new_base_task, remote_data_fd)
+    handle_remote_data_fd = handle.FileDescriptor(new_base_task, remote_data_fd)
     new_gateway = ComposedMemoryGateway([
-        SendMemoryGateway(read=active_remote_data_fd, write=async_local_data_sock),
-        ReceiveMemoryGateway(read=async_local_data_sock, write=active_remote_data_fd),
+        SendMemoryGateway(read=handle_remote_data_fd, write=async_local_data_sock),
+        ReceiveMemoryGateway(read=async_local_data_sock, write=handle_remote_data_fd),
     ])
     new_process_namespace = base.ProcessNamespace(identifier_pid)
     new_mount_namespace = base.MountNamespace(identifier_pid)

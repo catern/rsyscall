@@ -110,7 +110,7 @@ class TestSSH(unittest.TestCase):
     def test_ssh(self):
         async def test() -> None:
             pipe = await local_stdtask.task.pipe()
-            child_thread, [child_write] = await local_stdtask.fork([pipe.wfd.active.far])
+            child_thread, [child_write] = await local_stdtask.fork([pipe.wfd.handle.far])
             await child_thread.stdtask.stdout.replace_with(child_write)
             await pipe.wfd.aclose()
             child_task = await self.ssh_command.args(['localhost', 'cat ' + str(self.privkey)]).exec(child_thread)
@@ -131,7 +131,7 @@ class TestSSH(unittest.TestCase):
             # set up some pipes for ssh
             pipe_stdout = await local_stdtask.task.pipe()
             pipe_stdin = await local_stdtask.task.pipe()
-            child_thread, [stdin, stdout] = await local_stdtask.fork([pipe_stdin.rfd.active.far, pipe_stdout.wfd.active.far])
+            child_thread, [stdin, stdout] = await local_stdtask.fork([pipe_stdin.rfd.handle.far, pipe_stdout.wfd.handle.far])
             await child_thread.stdtask.stdout.replace_with(stdout)
             await child_thread.stdtask.stdin.replace_with(stdin)
             await pipe_stdin.rfd.aclose()
