@@ -7025,6 +7025,8 @@ The operating (taskC,fdC) - completely unrelated.
     Or, no... I guess we just cloexec away everything that doesn't have a handle. Relatively easy.
 
     Yeah so the closing only happens in the new namespace, makes sense.
+
+    maybe I can have the handle object contain only a near fd?
 ** add unshare_vm
 ** make full_exec use them
 ** thinking about mapping

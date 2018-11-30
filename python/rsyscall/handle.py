@@ -6,6 +6,7 @@ import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory as memory
 import rsyscall.far
 import rsyscall.near
+import trio
 import os
 import typing as t
 
@@ -48,6 +49,12 @@ class FileDescriptor:
     task: Task
     far: rsyscall.far.FileDescriptor
 
+    async def __aenter__(self) -> rsyscall.far.FileDescriptor:
+        return self.far
+
+    async def __aexit__(self, *args, **kwargs) -> None:
+        pass
+
     def to_near(self) -> rsyscall.near.FileDescriptor:
         return self.task.to_near_fd(self.far)
 
@@ -55,10 +62,12 @@ class FileDescriptor:
         return f"FD({self.task}, {self.far.fd_table}, {self.far.near.number})"
 
     async def read(self, buf: rsyscall.far.Pointer, count: int) -> int:
-        return (await rsyscall.far.read(self.task, self.far, buf, count))
+        async with self as far:
+            return (await rsyscall.far.read(self.task.far, far, buf, count))
 
     async def write(self, buf: rsyscall.far.Pointer, count: int) -> int:
-        return (await rsyscall.far.write(self.task, self.far, buf, count))
+        async with self as far:
+            return (await rsyscall.far.write(self.task.far, far, buf, count))
 
 @dataclass
 class Task:

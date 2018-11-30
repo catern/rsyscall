@@ -8,7 +8,8 @@ import socket
 import struct
 import enum
 import signal
-from rsyscall.far import AddressSpace, FDTable, Task, Pointer
+from rsyscall.far import AddressSpace, FDTable, Pointer
+from rsyscall.handle import Task
 from rsyscall.near import SyscallInterface
 import rsyscall.near
 
