@@ -7024,9 +7024,101 @@ The operating (taskC,fdC) - completely unrelated.
 
     Or, no... I guess we just cloexec away everything that doesn't have a handle. Relatively easy.
 
-    Yeah so the closing only happens in the new namespace, makes sense.
+    Yeah so the auto-closing only happens in the new namespace, makes sense.
 
     maybe I can have the handle object contain only a near fd?
+
+    OK! I'll convert all my APIs this weekend.
+
+    For now let's do real work.
+
+    Wait so if we just contain a near fd, do we even need the lock?
+
+    Assuming that we don't check far/near.
+
+    We'd need to serialize relative to setns calls.
+    But not unshare calls.
+
+    Unshare calls...
+
+    Yeah, so I mean, as long as we don't check far/near, then we're good.
+
+    We can do the unshare and things will just continue working fine, right?
+
+    No locks needed...
+
+    If we have the invariant that everything was valid before,
+    everything will continue to be valid after an unshare.
+
+    What about the unshare API?
+
+    Again, we'll list the things we want to close in the old space.
+    Right...?
+
+    And we'll automatically preserve things that we have handles for in the new space,
+    and cloexec away everything else.
+
+    So, because of setns, we still need a lock.
+    But... oh, maybe we don't need one for files at all!
+    I guess indeed we can go without a lock, possibly.
+
+    Which makes sense, I guess.
+
+    Well, there's still the issue of multiple coroutines, or multiple threads, closing something as we're using it.
+    But, no, that's not something we need to handle.
+
+    I guess we don't even need the fd_handles list either.
+    Hmm! This is promising. Less infrastructure!
+
+    Oh, no, we do need that list, to determine what to not cloexec in the new task.
+    That's the real thing we need to handle:
+    The GC of fds in the new space.
+
+    Hmm!!!!
+
+    Should I take handles in the handle helper functions?
+    Or should I not require ownership in that way?
+
+    And, if I do take handles,
+    how does it work if it's coming from another task?
+
+    Well.
+    I guess I need to take a temporary reference to it, right?
+    Well, I already have a reference to it.
+
+    But, I need a reference to it, in the same space as me.
+
+    So, hmm.
+    Maybe I do need a lock?
+
+    OK so say I don't take a reference to it with my task.
+
+    Then, the following events could happen before the syscall:
+
+    I could unshare.
+    And I could GC away the fd.
+
+    And then execute my syscall.
+    And it would be on some random thing.
+
+    So really, I do need to keep the fd around.
+    Not with a lock, but at least with an active fd.
+
+    So, if the space matches,
+    then I'll adopt the fd.
+    Making a new active fd,
+    and then shortly thereafter deleting it.
+
+    This isn't a matter of space movement.
+    This is a matter of references going away once I've moved into a new space.
+
+    Which, is related to space movement,
+    but it's really about making sure that I preserve a reference to the thing,
+    even when I move into a new space.
+
+    So, yeah, I think it's just a matter of making sure I hold a reference while I'm doing the syscall.
+
+    Then invalidate it immediately after.
 ** add unshare_vm
 ** make full_exec use them
 ** thinking about mapping

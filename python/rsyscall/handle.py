@@ -44,36 +44,54 @@ import typing as t
 # 5. Instead of passing both a task and a far pointer as two arguments
 # to a function, a handle (which contains both) can be passed, which
 # is much more convenient.
-@dataclass
+
+# We don't want elementwise equality, because each instance of this
+# should be treated as a separate reference to the file descriptor;
+# only if all the instances are invalid can we close the fd.
+@dataclass(eq=False)
 class FileDescriptor:
     task: Task
-    far: rsyscall.far.FileDescriptor
+    near: rsyscall.near.FileDescriptor
+    valid: bool = True
 
-    async def __aenter__(self) -> rsyscall.far.FileDescriptor:
-        return self.far
+    @property
+    def far(self) -> rsyscall.far.FileDescriptor:
+        # TODO delete this property, we should go through handle
+        # helper methods only, which don't check the fd table.
+        if not self.valid:
+            raise Exception("handle is no longer valid")
+        return rsyscall.far.FileDescriptor(self.task.fd_table, self.near)
 
-    async def __aexit__(self, *args, **kwargs) -> None:
-        pass
-
-    def to_near(self) -> rsyscall.near.FileDescriptor:
-        return self.task.to_near_fd(self.far)
+    async def invalidate(self) -> None:
+        self.valid = False
+        self.task.fd_handles.remove(self)
 
     def __str__(self) -> str:
-        return f"FD({self.task}, {self.far.fd_table}, {self.far.near.number})"
+        return f"FD({self.task}, {self.near.number})"
 
-    async def read(self, buf: rsyscall.far.Pointer, count: int) -> int:
-        async with self as far:
-            return (await rsyscall.far.read(self.task.far, far, buf, count))
+    # should I just take handle.Pointers instead of near or far stuff? hmm.
+    # should I really require ownership in this way?
+    # well, the invalidation needs to work.
+    # oh hmm! if the pointer comes from another task, how does that work?
+    async def read(self, buf: Pointer, count: int) -> int:
+        return (await rsyscall.near.read(task.sysif, self.near, task.to_near_pointer(buf), count))
 
     async def write(self, buf: rsyscall.far.Pointer, count: int) -> int:
         async with self as far:
-            return (await rsyscall.far.write(self.task.far, far, buf, count))
+            return (await rsyscall.far.write(self.task, far, buf, count))
 
 @dataclass
-class Task:
-    far: rsyscall.far.Task
-    files_lock: trio.Lock
+class Task(rsyscall.far.Task):
     fd_handles: t.List[FileDescriptor]
+
+    def make_fd_handle(far: rsyscall.far.FileDescriptor) -> FileDescriptor:
+        fd = FileDescriptor(Task, task.to_near_fd(far))
+        self.fd_handles.append(fd)
+        return fd
+
+    async def unshare_files(self) -> None:
+        async with self.files_lock:
+            pass
 
 @dataclass
 class Pipe:

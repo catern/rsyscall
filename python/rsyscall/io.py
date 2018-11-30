@@ -49,6 +49,11 @@ async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0)
     ret = lib.rsyscall_raw_syscall(*args)
     return ret
 
+def raise_if_error(response: int) -> None:
+    if -4095 < response < 0:
+        err = -response
+        raise OSError(err, os.strerror(err))
+
 def log_syscall(logger, number, arg1, arg2, arg3, arg4, arg5, arg6) -> None:
     if arg6 == 0:
         if arg5 == 0:
@@ -92,9 +97,7 @@ class LocalSyscall(base.SyscallInterface):
 
     async def _syscall(self, number: int, arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> int:
         ret = await direct_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        if ret < 0:
-            err = -ret
-            raise OSError(err, os.strerror(err))
+        raise_if_error(ret)
         return ret
 
 class FunctionPointer:
@@ -1916,9 +1919,7 @@ class RsyscallConnection:
             # we catch this in the implementations of exec and exit
             raise RsyscallHangup()
         response, = struct.unpack('q', response_bytes)
-        if response < 0:
-            err = -response
-            raise OSError(err, os.strerror(err))
+        raise_if_error(response)
         return response
 
 class ChildExit(RsyscallHangup):
@@ -1994,9 +1995,7 @@ class ChildConnection(base.SyscallInterface):
                             # we catch this in the implementations of exec and exit
                             raise RsyscallHangup()
                         response, = struct.unpack('q', response_bytes)
-                        if response < 0:
-                            err = -response
-                            raise OSError(err, os.strerror(err))
+                        raise_if_error(response)
                         nursery.cancel_scope.cancel()
                     async def server_exit() -> None:
                         # meaning the server exited
