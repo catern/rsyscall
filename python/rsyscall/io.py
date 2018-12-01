@@ -1345,21 +1345,17 @@ class StandardTask:
         """
         # TODO what I am doing is converting over to nice modular unshare of FDs and VMs
         inherited_fds: t.List[far.FileDescriptor] = []
-        # maybe have a non-async method on fd-holding things which takes a function which inherits an fd
-        # TODO gotta figure out the pid, sigh
-        old_fd_table = self.task.base.fd_table
-        new_fd_table = far.FDTable(0)
-        # OK! so! We need to use a nice handle API that locks the task when we use the fd.
-        # Should we have a handle.Task? To contain the lock and the list of handle FDs?
-        # Eh, no, let's put them in the io.Task for now.
-        # oh, no, but the handle needs a reference to the task containing the lock.
-        # Hmm, hmm. I guess we can have an handle Task then.
-
-        # things to inherit:
-        # epollfd (so we can add new fds to it)
-        # signalfd (so we can read it to flush the signals off)
-        # I think unshare_files should cloexec by default, and have a going_to_exec parameter,
-        # which we can set to true to skip cloexec for efficiency.
+        # TODO spawn closifying thread which keeps reference around to old fd table
+        needs_close = await self.task.base.unshare_files()
+        async def do_unshare(close_in_old_space: t.List[rsyscall.near.FileDescriptor],
+                             copy_to_new_space: t.List[rsyscall.near.FileDescriptor]) -> None:
+            # TODO spawn closifying thread which keeps reference around to old fd table and stops itself
+            await rsyscall.near.unshare(self.task.base.sysif, rsyscall.near.UnshareFlag.FILES)
+            # TODO perform GC on old fd table using closifying thread
+            # also close some fds that were explicitly passed in as needing to be closed, I guess?
+            if not going_to_exec:
+                await do_cloexec_except(self.task, self.resources, copy_to_new_space)
+        await self.task.base.unshare_files(do_unshare)
         return inherited_fds
 
 
@@ -2065,12 +2061,13 @@ async def call_function(task: Task, stack: BufferedStack, process_resources: Pro
                                   status=int(struct.si_status))
     return child_event
 
-async def do_cloexec_except(task: Task, process_resources: ProcessResources, excluded_fd_numbers: t.Iterable[int]) -> None:
+async def do_cloexec_except(task: Task, process_resources: ProcessResources,
+                            excluded_fds: t.Iterable[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
     stack_size = 4096
     async with (await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)) as mapping:
         stack = BufferedStack(mapping.pointer + stack_size)
-        fd_array = array.array('i', excluded_fd_numbers)
+        fd_array = array.array('i', [int(fd) for fd in excluded_fds])
         fd_array_ptr = stack.push(fd_array.tobytes())
         child_event = await call_function(task, stack, process_resources,
                                           process_resources.do_cloexec_func, fd_array_ptr, len(fd_array))

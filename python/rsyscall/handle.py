@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory as memory
+import gc
 import rsyscall.far
 import rsyscall.near
 import trio
@@ -78,6 +79,8 @@ class FileDescriptor:
     async def write(self, buf: rsyscall.far.Pointer, count: int) -> int:
         return (await rsyscall.near.write(self.task.sysif, self.near, self.task.to_near_pointer(buf), count))
 
+fd_table_to_near_to_handles: t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]] = {}
+
 class Task(rsyscall.far.Task):
     # work around breakage in mypy - it doesn't understand dataclass inheritance
     # TODO delete this
@@ -103,10 +106,42 @@ class Task(rsyscall.far.Task):
             raise Exception("bad fd type", fd, type(fd))
         handle = FileDescriptor(self, near)
         self.fd_handles.append(handle)
+        fd_table_to_near_to_handles.setdefault(self.fd_table, {}).setdefault(near, []).append(handle)
         return handle
 
-    async def unshare_files(self) -> None:
-        pass
+    async def unshare_files(self, do_unshare: t.Callable[[
+            # fds to close in the old space
+            t.List[rsyscall.near.FileDescriptor],
+            # fds to copy into the new space
+            t.List[rsyscall.near.FileDescriptor]
+    ], t.Awaitable[None]]) -> None:
+        old_fd_table = self.fd_table
+        # TODO get the pid from the SyscallInterface
+        new_fd_table = rsyscall.far.FDTable(0)
+        new_near_to_handles = {}
+        fd_table_to_near_to_handles[new_fd_table] = new_near_to_handles
+        for handle in self.fd_handles:
+            new_near_to_handles.setdefault(handle.near, []).append(handle)
+        self.fd_table = new_fd_table
+        snapshot_old_near_to_handles = copy.deepcopy(old_near_to_handles)
+        needs_close: t.Set[rsyscall.near.FileDescriptor] = []
+        for handle in self.fd_handles:
+            near = handle.near
+            snapshot_old_near_to_handles[near].remove(handle)
+            # If the list is empty, it means the only handles for this fd in the old fd
+            # table are our own, and we therefore want to close this fd. No further
+            # handles for this fd can be created, even while we are asynchronously calling
+            # unshare, because no-one can make a new handle from one of ours, because we
+            # changed our Task.fd_table to point to a new fd table.
+            if len(old_near_to_handles[near]) == 0:
+                needs_close.append(near)
+        await do_unshare(needs_close, [fd.near for fd in self.fd_handles])
+        # We can only remove our handles from the handle lists after the unshare is done
+        # and the fds are safely copied, because otherwise someone else running GC on the
+        # old fd table would close our fds when they notice there are no more handles.
+        old_near_to_handles = fd_table_to_near_to_handles.setdefault(old_fd_table, {})
+        for handle in self.fd_handles:
+            old_near_to_handles[near].remove(handle)
 
 @dataclass
 class Pipe:
