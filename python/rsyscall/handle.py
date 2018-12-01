@@ -1,7 +1,5 @@
 from __future__ import annotations
-from rsyscall.base import Pointer, RsyscallException, RsyscallHangup
-from rsyscall.base import T_addr, UnixAddress, PathTooLongError, InetAddress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory as memory
 import rsyscall.far
@@ -73,25 +71,42 @@ class FileDescriptor:
     # should I really require ownership in this way?
     # well, the invalidation needs to work.
     # oh hmm! if the pointer comes from another task, how does that work?
-    async def read(self, buf: Pointer, count: int) -> int:
-        return (await rsyscall.near.read(task.sysif, self.near, task.to_near_pointer(buf), count))
+    # so I'll take far Pointers, and Union[handle.FileDescriptor, far.FileDescriptor]
+    async def read(self, buf: rsyscall.far.Pointer, count: int) -> int:
+        return (await rsyscall.near.read(self.task.sysif, self.near, self.task.to_near_pointer(buf), count))
 
     async def write(self, buf: rsyscall.far.Pointer, count: int) -> int:
-        async with self as far:
-            return (await rsyscall.far.write(self.task, far, buf, count))
+        return (await rsyscall.near.write(self.task.sysif, self.near, self.task.to_near_pointer(buf), count))
 
-@dataclass
 class Task(rsyscall.far.Task):
-    fd_handles: t.List[FileDescriptor]
+    # work around breakage in mypy - it doesn't understand dataclass inheritance
+    # TODO delete this
+    def __init__(self,
+                 sysif: rsyscall.near.SyscallInterface,
+                 fd_table: rsyscall.far.FDTable,
+                 address_space: rsyscall.far.AddressSpace) -> None:
+        self.sysif = sysif
+        self.fd_table = fd_table
+        self.address_space = address_space
+        self.fd_handles: t.List[FileDescriptor] = []
 
-    def make_fd_handle(far: rsyscall.far.FileDescriptor) -> FileDescriptor:
-        fd = FileDescriptor(Task, task.to_near_fd(far))
-        self.fd_handles.append(fd)
-        return fd
+    def make_fd_handle(self, fd: t.Union[rsyscall.near.FileDescriptor,
+                                         rsyscall.far.FileDescriptor,
+                                         FileDescriptor]) -> FileDescriptor:
+        if isinstance(fd, rsyscall.near.FileDescriptor):
+            near = fd
+        elif isinstance(fd, rsyscall.far.FileDescriptor):
+            near = self.to_near_fd(fd)
+        elif isinstance(fd, FileDescriptor):
+            near = self.to_near_fd(fd.far)
+        else:
+            raise Exception("bad fd type", fd, type(fd))
+        handle = FileDescriptor(self, near)
+        self.fd_handles.append(handle)
+        return handle
 
     async def unshare_files(self) -> None:
-        async with self.files_lock:
-            pass
+        pass
 
 @dataclass
 class Pipe:

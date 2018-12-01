@@ -110,6 +110,20 @@ class MemoryMapping:
     def __repr__(self) -> str:
         return str(self)
 
+@dataclass
+class Process:
+    id: int
+
+    def __int__(self) -> int:
+        return self.id
+
+@dataclass
+class ProcessGroup:
+    id: int
+
+    def __int__(self) -> int:
+        return self.id
+
 # This is like an instruction, run with this segment register override prefix and arguments.
 async def read(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int) -> int:
     return (await sysif.syscall(SYS.read, fd, buf, count))

@@ -121,21 +121,24 @@ class SignalMask:
         syscall = self._validate(task)
         old_mask = await memsys.rt_sigprocmask(syscall, task.gateway, task.allocator, SigprocmaskHow.BLOCK, mask)
         if self.mask != old_mask:
-            raise Exception("SignalMask tracking got out of sync?")
+            raise Exception("SignalMask tracking got out of sync, thought mask was",
+                            self.mask, "but was actually", old_mask)
         self.mask = self.mask.union(mask)
 
     async def unblock(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
         syscall = self._validate(task)
         old_mask = await memsys.rt_sigprocmask(syscall, task.gateway, task.allocator, SigprocmaskHow.UNBLOCK, mask)
         if self.mask != old_mask:
-            raise Exception("SignalMask tracking got out of sync?")
+            raise Exception("SignalMask tracking got out of sync, thought mask was",
+                            self.mask, "but was actually", old_mask)
         self.mask = self.mask - mask
 
     async def setmask(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
         syscall = self._validate(task)
         old_mask = await memsys.rt_sigprocmask(syscall, task.gateway, task.allocator, SigprocmaskHow.SETMASK, mask)
         if self.mask != old_mask:
-            raise Exception("SignalMask tracking got out of sync?")
+            raise Exception("SignalMask tracking got out of sync, thought mask was",
+                            self.mask, "but was actually", old_mask)
         self.mask = mask
 
 T = t.TypeVar('T')
@@ -176,7 +179,7 @@ class Task:
                  mount: base.MountNamespace,
                  fs: base.FSInformation,
                  sigmask: SignalMask,
-                 process_namespace: base.ProcessNamespace,
+                 process_namespace: far.ProcessNamespace,
     ) -> None:
         self.base = base_
         self.gateway = gateway
@@ -225,7 +228,7 @@ class Task:
         return self.make_fd(near.FileDescriptor(num), file)
 
     def make_fd(self, fd: near.FileDescriptor, file: T_file) -> FileDescriptor[T_file]:
-        return FileDescriptor(self, far.FileDescriptor(self.base.fd_table, fd), file)
+        return FileDescriptor(self, self.base.make_fd_handle(fd), file)
 
     async def open(self, path: base.Path, flags: int, mode=0o644) -> far.FileDescriptor:
         """Open a path
@@ -293,8 +296,8 @@ class Task:
         else:
             # TODO this is a pretty low-level detail, not sure where is the right place to do this
             async def wait_readable():
-                logger.debug("wait_readable(%s)", epfd.pure.number)
-                await trio.hazmat.wait_readable(epfd.pure.number)
+                logger.debug("wait_readable(%s)", epfd.handle.near.number)
+                await trio.hazmat.wait_readable(epfd.handle.near.number)
             epoll_waiter = EpollWaiter(epfd, wait_readable)
             epoll_center = EpollCenter(epoll_waiter, epfd.handle, self.gateway, self.allocator)
         return epoll_center
@@ -365,7 +368,7 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
         fdnum, data = await memsys.accept(fd.task.syscall, fd.task.gateway, fd.task.allocator,
                                           fd.pure, self.address_type.addrlen, flags)
         addr = self.address_type.parse(data)
-        fd = FileDescriptor(fd.task, far.FileDescriptor(fd.pure.fd_table, near.FileDescriptor(fdnum)), type(self)())
+        fd = fd.task.make_fd(near.FileDescriptor(fdnum), type(self)())
         return fd, addr
 
 class UnixSocketFile(SocketFile[UnixAddress]):
@@ -378,11 +381,11 @@ class FileDescriptor(t.Generic[T_file_co]):
     "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."
     task: Task
     file: T_file_co
-    def __init__(self, task: Task, farfd: far.FileDescriptor, file: T_file_co) -> None:
+    def __init__(self, task: Task, handle: handle.FileDescriptor, file: T_file_co) -> None:
         self.task = task
-        self.handle = handle.FileDescriptor(task.base, farfd)
+        self.handle = handle
         self.file = file
-        self.pure = base.FileDescriptor(task.base.fd_table, farfd.near.number)
+        self.pure = handle.far
         self.open = True
 
     async def aclose(self):
@@ -407,7 +410,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         """
         if self.open:
             self.open = False
-            return self.__class__(self.task, self.handle.far, self.file)
+            return self.__class__(self.task, self.handle, self.file)
         else:
             raise Exception("file descriptor already closed")
 
@@ -421,7 +424,7 @@ class FileDescriptor(t.Generic[T_file_co]):
             return self
         await raw_syscall.dup3(self.task.syscall, self.pure, target.pure, 0)
         target.open = False
-        new_fd = self.task._make_fd(target.pure.number, self.file)
+        new_fd = self.task.make_fd(target.handle.near, self.file)
         # dup2 unsets cloexec on the new copy, so:
         self.file.shared = True
         return new_fd
@@ -442,7 +445,7 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def as_argument(self) -> int:
         # TODO unset cloexec
         await self.disable_cloexec()
-        return self.pure.number
+        return self.handle.near.number
 
     async def enable_cloexec(self) -> None:
         raise NotImplementedError
@@ -890,7 +893,7 @@ class Path:
         purebase = self.pure.base
         pathdata = b"/".join(self.pure.components)
         if isinstance(purebase, base.DirfdPathBase):
-            return b"/".join([b"/proc/self/fd", str(purebase.dirfd.number).encode(), pathdata])
+            return b"/".join([b"/proc/self/fd", str(purebase.dirfd.near.number).encode(), pathdata])
         elif isinstance(purebase, base.RootPathBase):
             return b"/" + pathdata
         else:
@@ -992,7 +995,7 @@ async def robust_unix_connect(path: Path, sock: FileDescriptor[UnixSocketFile]) 
         except PathTooLongError:
             # connectat with AT_EMPTY_PATH would make this cleaner
             pathfd = await stack.enter_async_context(await path.open_path())
-            addr = UnixAddress(b"/".join([b"/proc/self/fd", str(pathfd.pure.number).encode()]))
+            addr = UnixAddress(b"/".join([b"/proc/self/fd", str(pathfd.handle.near.number).encode()]))
         await sock.connect(addr)
 
 async def fspath(arg: t.Union[str, bytes, Path]) -> bytes:
@@ -1034,10 +1037,11 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
 def gather_local_bootstrap() -> UnixBootstrap:
     syscall = LocalSyscall()
     pid = os.getpid()
-    task = Task(base.Task(syscall, base.FDTable(pid), base.local_address_space),
+    base_task = handle.Task(syscall, base.FDTable(pid), base.local_address_space)
+    task = Task(base_task,
                 LocalMemoryGateway(),
                 base.MountNamespace(pid), base.FSInformation(pid),
-                SignalMask(set()), base.ProcessNamespace(pid))
+                SignalMask(set()), far.ProcessNamespace(pid))
     argv = [arg.encode() for arg in sys.argv]
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
     stdstreams = wrap_stdin_out_err(task)
@@ -1296,9 +1300,9 @@ class StandardTask:
             task, 
             await TaskResources.make(task),
             proc_resources, self.filesystem, {**self.environment},
-            stdin=FileDescriptor(task, stdin, self.stdin.file),
-            stdout=FileDescriptor(task, stdout, self.stdout.file),
-            stderr=FileDescriptor(task, stderr, self.stderr.file),
+            stdin=task.make_fd(stdin.near, self.stdin.file),
+            stdout=task.make_fd(stdout.near, self.stdout.file),
+            stderr=task.make_fd(stderr.near, self.stderr.file),
         )
         return RsyscallThread(stdtask, thread), fds
 
@@ -1311,7 +1315,7 @@ class StandardTask:
             access_sock, remote_sock,
             self.task, thread_maker, self.process.server_func)
         epoller = EpollCenter(self.resources.epoller.epoller,
-                              handle.FileDescriptor(task.base, self.resources.epoller.epfd.far),
+                              task.base.make_fd_handle(self.resources.epoller.epfd),
                               task.gateway, task.allocator)
         signal_block = SignalBlock(task, {signal.SIGCHLD})
         # sadly we can't use the parent's signalfd, epoll doesn't want to add it twice
@@ -1620,7 +1624,7 @@ class ChildTaskMonitor:
                                           ptid=None, ctid=ctid, newtls=newtls)
             # TODO this is wrong! we need to pull the process namespace out of the cloning task!
             # but it's not yet present on base.Task, so...
-            process = base.Process(self.waiting_task.process_namespace, tid)
+            process = base.Process(self.waiting_task.process_namespace, near.Process(tid))
             child_task = ChildTask(process, trio.hazmat.UnboundedQueue(), self)
             self.task_map[tid] = child_task
         return child_task
@@ -1684,7 +1688,7 @@ class ChildTaskMonitor:
     async def __aenter__(self) -> 'ChildTaskMonitor':
         return self
 
-    async def __aexit__(self, *args, **kwargs):
+    async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
 class Thread:
@@ -1804,7 +1808,7 @@ class BufferedStack:
         self.buffer = b""
         return self.allocation_pointer
 
-async def launch_futex_monitor(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocator,
+async def launch_futex_monitor(task: base.Task, gateway: MemoryGateway, allocator: memory.Allocator,
                                process_resources: ProcessResources, monitor: ChildTaskMonitor,
                                futex_pointer: Pointer, futex_value: int) -> ChildTask:
     """Provides an asynchronous interface to the CLONE_CHILD_CLEARTID functionality
@@ -1946,7 +1950,7 @@ class ChildConnection(base.SyscallInterface):
         # these are needed so that we don't accidentally close them when doing a do_cloexec_except
         self.infd = infd
         self.outfd = outfd
-        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{self.server_task.process.id}")
+        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{int(self.server_task.process)}")
         self.request_lock = trio.Lock()
         self.response_fifo_lock = trio.StrictFIFOLock()
 
@@ -2052,7 +2056,7 @@ async def call_function(task: Task, stack: BufferedStack, process_resources: Pro
     stack_pointer = await stack.flush(task.gateway)
     # we directly spawn a thread for the function and wait on it
     pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
-    process = base.Process(task.process_namespace, pid)
+    process = base.Process(task.process_namespace, near.Process(pid))
     siginfo = await memsys.waitid(task.syscall, task.gateway, task.allocator,
                                   process, lib._WALL|lib.WEXITED)
     struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
@@ -2082,10 +2086,10 @@ class ReceiveMemoryGateway(MemoryGateway):
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
         rtask = self.read.underlying.task.base
         near_dest = rtask.to_near_pointer(dest)
-        near_read_fd = self.read.underlying.handle.to_near()
+        near_read_fd = self.read.underlying.handle.near
         wtask = self.write.task
         near_src = wtask.to_near_pointer(src)
-        near_write_fd = self.write.to_near()
+        near_write_fd = self.write.near
         logger.debug("selected read: %s %s %s", rtask, near_dest, near_read_fd)
         logger.debug("selected write: %s %s %s", wtask, near_src, near_write_fd)
         async def read() -> None:
@@ -2118,10 +2122,10 @@ class SendMemoryGateway(MemoryGateway):
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
         rtask = self.read.task
         near_dest = rtask.to_near_pointer(dest)
-        near_read_fd = self.read.to_near()
+        near_read_fd = self.read.near
         wtask = self.write.underlying.task.base
         near_src = wtask.to_near_pointer(src)
-        near_write_fd = self.write.underlying.handle.to_near()
+        near_write_fd = self.write.underlying.handle.near
         logger.debug("selected read: %s %s %s", rtask, near_dest, near_read_fd)
         logger.debug("selected write: %s %s %s", wtask, near_src, near_write_fd)
         async def read() -> None:
@@ -2377,7 +2381,7 @@ async def rsyscall_spawn_exec_full(
     cthread = await thread_maker.make_cthread(
         lib.CLONE_VM|shared, function, passed_syscall_sock.near, passed_syscall_sock.near)
     process = cthread.child_task.process
-    fd_table = base.FDTable(process.id)
+    fd_table = base.FDTable(int(process))
     parent_fd_table = parent_task.fd_table
     inherited_fds: t.List[near.FileDescriptor] = []
     def inherit(fd: far.FileDescriptor) -> far.FileDescriptor:
@@ -2392,7 +2396,7 @@ async def rsyscall_spawn_exec_full(
         remote_syscall_sock, remote_syscall_sock)
     new_base_task = base.Task(syscall, fd_table, parent_task.address_space)
     def inherit_handle(fd: far.FileDescriptor) -> handle.FileDescriptor:
-        return handle.FileDescriptor(new_base_task, inherit(fd))
+        return new_base_task.make_fd_handle(inherit(fd))
     remote_data_sock = inherit_handle(passed_data_sock)
     gateway = ComposedMemoryGateway([
         SendMemoryGateway(read=remote_data_sock, write=async_access_data_sock),
@@ -2450,7 +2454,7 @@ async def rsyscall_spawn_exec_full(
     # the futex task we used before is dead now that we've exec'd, have
     # to null it out
     syscall.futex_task = None
-    new_task.base.address_space = base.AddressSpace(process.id)
+    new_task.base.address_space = base.AddressSpace(int(process))
     new_task.allocator = memory.Allocator(syscall, new_task.base.address_space)
     symbols: t.Dict[bytes, far.Pointer] = {}
     async for line in read_lines(async_access_describe_sock):
@@ -2477,7 +2481,7 @@ async def rsyscall_spawn_exec_full(
     remote_mapping_pointer = remote_mapping.as_pointer()
 
     # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
-    futex_value = lib.FUTEX_WAITERS|(process.id & lib.FUTEX_TID_MASK)
+    futex_value = lib.FUTEX_WAITERS|(int(process) & lib.FUTEX_TID_MASK)
     # this is distasteful and leaky, we're relying on the fact that the PreallocatedAllocator never frees things
     remote_futex_pointer = await set_singleton_robust_futex(
         new_task.base, new_task.gateway,
@@ -2562,7 +2566,7 @@ async def ssh_bootstrap(
         return val
     # we use the pid of the local ssh process as our human-facing namespace identifier, since it is
     # more likely to be unique, and we already have it available.
-    identifier_pid = bootstrap_child_task.process.id
+    identifier_pid = int(bootstrap_child_task.process)
     new_fd_table = far.FDTable(identifier_pid)
     async def read_fd(key: bytes) -> far.FileDescriptor:
         return far.FileDescriptor(new_fd_table, near.FileDescriptor(int(await read_keyval(key))))
@@ -2592,12 +2596,12 @@ async def ssh_bootstrap(
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                     identifier_pid, remote_syscall_fd, remote_syscall_fd)
     new_base_task = base.Task(new_syscall, new_fd_table, new_address_space)
-    handle_remote_data_fd = handle.FileDescriptor(new_base_task, remote_data_fd)
+    handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
     new_gateway = ComposedMemoryGateway([
         SendMemoryGateway(read=handle_remote_data_fd, write=async_local_data_sock),
         ReceiveMemoryGateway(read=async_local_data_sock, write=handle_remote_data_fd),
     ])
-    new_process_namespace = base.ProcessNamespace(identifier_pid)
+    new_process_namespace = far.ProcessNamespace(identifier_pid)
     new_mount_namespace = base.MountNamespace(identifier_pid)
     new_fs_information = base.FSInformation(identifier_pid)
     new_task = Task(new_base_task, new_gateway,
@@ -2608,7 +2612,7 @@ async def ssh_bootstrap(
     new_stdtask = StandardTask(
         access_task=parent_task.task,
         access_epoller=parent_task.resources.epoller,
-        access_connection=(local_data_path, FileDescriptor(new_task, listening_fd, UnixSocketFile())),
+        access_connection=(local_data_path, new_task.make_fd(listening_fd.near, UnixSocketFile())),
         connecting_task=new_task, connecting_connection=None,
         task=new_task,
         task_resources=await TaskResources.make(new_task),

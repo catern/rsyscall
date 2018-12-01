@@ -5,7 +5,9 @@ buildPythonPackage {
   name = "rsyscall";
   src = ./.;
   # doCheck = false;
-  checkInputs = [ mypy pytest ];
+  checkInputs = [
+  (mypy.overrideAttrs (_: { src = /home/sbaugh/.local/src/mypy; }))
+pytest ];
   buildInputs = [ pkgs.openssh ];
   propagatedBuildInputs = [ (import ../c)
       trio cffi pkgconfig python-prctl pkgs.nginx ];

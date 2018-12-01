@@ -9,8 +9,10 @@ import struct
 import enum
 import signal
 from rsyscall.far import AddressSpace, FDTable, Pointer
+from rsyscall.far import Process, ProcessGroup, FileDescriptor
 from rsyscall.handle import Task
 from rsyscall.near import SyscallInterface
+from rsyscall.exceptions import RsyscallException, RsyscallHangup
 import rsyscall.near
 
 # Here we have base dataclasses which don't carry around references to a task.
@@ -19,17 +21,6 @@ import rsyscall.near
 # These things are all "far pointers" in terms of memory segmentation.
 
 # The ones in io.py carry a reference to a Task, and so are more convenient for users.
-
-@dataclass
-class FileDescriptor:
-    fd_table: FDTable
-    number: int
-
-    def __str__(self) -> str:
-        return f"FD({self.number}, {self.fd_table})"
-
-    def __int__(self) -> int:
-        return self.number
 
 @dataclass(eq=False)
 class MountNamespace:
@@ -101,27 +92,6 @@ class Path:
     def __str__(self) -> str:
         return bytes(self).decode()
 
-@dataclass(eq=False)
-class ProcessNamespace:
-    "The namespace for processes and process groups"
-    creator_pid: int
-
-@dataclass(eq=False)
-class Process:
-    namespace: ProcessNamespace
-    id: int
-
-    def __int__(self) -> int:
-        return self.id
-
-@dataclass(eq=False)
-class ProcessGroup:
-    namespace: ProcessNamespace
-    id: int
-
-    def __int__(self) -> int:
-        return self.id
-
 # TODO later on we'll have user namespaces too
 
 class MemoryGateway:
@@ -185,12 +155,6 @@ class PeerMemoryGateway(MemoryGateway):
         # so one or both sides of the copy can be implemented with a single read or write instead of readv/writev.
         for dest, src, n in ops:
             await self.memcpy(dest, src, n)
-
-class RsyscallException(Exception):
-    pass
-
-class RsyscallHangup(Exception):
-    pass
 
 T_addr = t.TypeVar('T_addr', bound='Address')
 class Address:

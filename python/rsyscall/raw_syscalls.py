@@ -1,6 +1,7 @@
-from rsyscall.base import SyscallInterface, Task, FileDescriptor, Pointer, Process, ProcessGroup, RsyscallException, RsyscallHangup
+from rsyscall.exceptions import RsyscallException, RsyscallHangup
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.near import UnshareFlag
+from rsyscall.near import SyscallInterface, UnshareFlag
+from rsyscall.far import Pointer, Process, ProcessGroup, FileDescriptor
 import trio
 import logging
 import signal
@@ -149,18 +150,19 @@ async def waitid(sysif: SyscallInterface,
                  id: t.Union[Process, ProcessGroup, None], infop: t.Optional[Pointer], options: int, rusage: t.Optional[Pointer]) -> int:
     logger.debug("waitid(%s, %s, %s, %s)", id, infop, options, rusage)
     if isinstance(id, Process):
-        idtype, idnum = IdType.PID, id.id
+        idtype = IdType.PID
     elif isinstance(id, ProcessGroup):
-        idtype, idnum = IdType.PGID, id.id
+        idtype = IdType.PGID
     elif id is None:
-        idtype, idnum = IdType.ALL, 0
+        idtype = IdType.ALL
+        id = 0 # type: ignore
     else:
         raise ValueError("unknown id type", id)
     if infop is None:
         infop = 0 # type: ignore
     if rusage is None:
         rusage = 0 # type: ignore
-    return (await sysif.syscall(SYS.waitid, idtype, idnum, infop, options, rusage))
+    return (await sysif.syscall(SYS.waitid, idtype, id, infop, options, rusage))
 
 #### Syscalls which need read or write memory access and allocation to be used. ####
 async def pipe2(sysif: SyscallInterface, pipefd: Pointer, flags: int) -> None:

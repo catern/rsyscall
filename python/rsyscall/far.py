@@ -94,6 +94,27 @@ class MemoryMapping:
     def __repr__(self) -> str:
         return str(self)
 
+@dataclass(eq=False)
+class ProcessNamespace:
+    "The namespace for processes and process groups"
+    creator_pid: int
+
+@dataclass
+class Process:
+    namespace: ProcessNamespace
+    near: rsyscall.near.Process
+
+    def __int__(self) -> int:
+        return int(self.near)
+
+@dataclass
+class ProcessGroup:
+    namespace: ProcessNamespace
+    near: rsyscall.near.ProcessGroup
+
+    def __int__(self) -> int:
+        return int(self.near)
+
 class NamespaceMismatchError(Exception):
     pass
 
