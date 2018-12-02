@@ -69,19 +69,24 @@ class FileDescriptor:
 
     async def invalidate(self) -> None:
         self.valid = False
-        if self._remove_from_tracking():
+        handles = self._remove_from_tracking()
+        print("invalidating", self)
+        if len(handles) == 0:
             # we were the last handle for this fd, we should close it
+            print("no handles remaining", handles)
             await rsyscall.near.close(self.task.sysif, self.near)
+        else:
+            print("remaining handles", handles)
 
-    def _remove_from_tracking(self) -> bool:
+    def _remove_from_tracking(self) -> t.List[FileDescriptor]:
         self.task.fd_handles.remove(self)
         handles = fd_table_to_near_to_handles[self.task.fd_table][self.near]
         handles.remove(self)
-        return len(handles) == 0
+        return handles
 
     def __del__(self) -> None:
         if self.valid:
-            if self._remove_from_tracking():
+            if len(self._remove_from_tracking()) == 0:
                 print("leaked fd:", self)
 
     def __str__(self) -> str:
@@ -128,6 +133,7 @@ class Task(rsyscall.far.Task):
         else:
             raise Exception("bad fd type", fd, type(fd))
         handle = FileDescriptor(self, near)
+        print("made handle", handle)
         self.fd_handles.append(handle)
         fd_table_to_near_to_handles[self.fd_table].setdefault(near, []).append(handle)
         return handle

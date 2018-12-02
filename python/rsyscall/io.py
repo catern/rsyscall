@@ -2336,7 +2336,10 @@ async def make_connections(access_task: Task, access_epoller: EpollCenter,
         connecting_socks.append(connecting_sock)
     passed_socks: t.List[handle.FileDescriptor]
     if connecting_task.base.fd_table == parent_task.base.fd_table:
-        passed_socks = [parent_task.base.make_fd_handle(sock.handle) for sock in connecting_socks]
+        passed_socks = []
+        for sock in connecting_socks:
+            passed_socks.append(parent_task.base.make_fd_handle(sock.handle))
+            await sock.handle.invalidate()
     else:
         assert connecting_connection is not None
         await memsys.sendmsg_fds(connecting_task.base, connecting_task.gateway, connecting_task.allocator,
@@ -2443,15 +2446,15 @@ async def rsyscall_spawn_exec_full(
 
     # have to pass this down
     remote_futex_memfd = inherit(futex_memfd)
+    inherited_user_fds = [inherit(fd) for fd in user_fds]
+    remote_describe_sock = inherit(passed_describe_sock.far)
 
     #### clear out waste fds
     # We don't need these things in the parent. . .
-    await far.close(parent_task.base, passed_syscall_sock.far)
-    await far.close(parent_task.base, passed_data_sock.far)
-    await far.close(parent_task.base, passed_describe_sock.far)
+    await passed_syscall_sock.invalidate()
+    await passed_data_sock.invalidate()
+    await passed_describe_sock.invalidate()
 
-    inherited_user_fds = [inherit(fd) for fd in user_fds]
-    remote_describe_sock = inherit(passed_describe_sock.far)
     # make each inherited fd non-cloexec
     # note that this is racy if our thread is in a shared fd space;
     # this is why each thread has to be in its own fd space.
