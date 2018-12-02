@@ -1761,7 +1761,6 @@ async def launch_futex_monitor(task: base.Task, gateway: MemoryGateway, allocato
                                futex_pointer: Pointer, futex_value: int) -> ChildTask:
     serializer = memsys.Serializer()
     # build the trampoline and push it on the stack
-    print("futex pointer and value", futex_pointer, futex_value)
     stack_data = process_resources.build_trampoline_stack(process_resources.futex_helper_func, futex_pointer, futex_value)
     # TODO we need appropriate alignment here, we're just lucky because the alignment works fine by accident right now
     stack_pointer = serializer.serialize_data(stack_data)

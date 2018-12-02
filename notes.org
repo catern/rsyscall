@@ -7202,3 +7202,35 @@ The operating (taskC,fdC) - completely unrelated.
    OK so actually maybe the memory gateway should indeed have a "bytes" interface?
 
    No no no we discussed this, pointer is best.
+** extensible bootstrap
+   It would be nice we could have specific applications,
+   add additional things to the bootstrap.
+
+   I guess it's just a matter of,
+   do we dynamically bootstrap?
+   Or rely on the bootstrap to have everything statically?
+
+   Nix allows us to be static,
+   but if we aren't using Nix that we want dynamic.
+
+   Also, if we want to manage the deployment with rsyscall,
+   we want dynamic.
+   Though we can copy over the bootstrap without much problems.
+
+   Well, to copy something over, we'd want to be bootstrapped first.
+
+   So maybe it's a matter of multiple layers of bootstrap?
+
+   Instead of trying to stick everything into the standardtask.
+
+   mm, yes.
+
+   I guess when we bootstrap to the other side,
+   we'll hardcode the path of the rsyscall bootstrap,
+   but also the path of the application bootstrap.
+
+   Or, actually, the everything bootstrap.
+
+   Meh so I can have it take the bootstrap location as a parameter.
+
+   And the Nix wrapper hardcodes it.

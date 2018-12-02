@@ -402,6 +402,21 @@ class TestIO(unittest.TestCase):
                     await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
+    def test_ssh_copy(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with ssh_to_localhost(stdtask) as ssh_command:
+                local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
+                    stdtask, ssh_command)
+                async with (await stdtask.mkdtemp()) as local_tmpdir:
+                    async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
+                        remote_path = remote_tmpdir/"file"
+                        remote_file = await remote_path.open(os.O_RDWR)
+                        # hmm note that it's important not to mkdtemp
+                        # from the threads otherwise things will break
+                        # we want to copy between two different hosts
+                        pass
+        trio.run(self.runner, test)
+
     # def test_thread_mkdtemp(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
