@@ -1271,14 +1271,10 @@ class StandardTask:
         await (parent/name).mkdir(mode=0o700)
         return TemporaryDirectory(self, parent, name)
 
-    async def spawn(self, user_fds: t.List[far.FileDescriptor]
-    ) -> t.Tuple[RsyscallThread, t.List[far.FileDescriptor]]:
-        rsyscall_thread = await self.fork_shared()
-        fds: t.List[handle.FileDescriptor] = []
-        for user_fd in user_fds:
-            fds.append(rsyscall_thread.stdtask.task.base.make_fd_handle(user_fd))
+    async def spawn_exec(self) -> RsyscallThread:
+        rsyscall_thread = await self.fork()
         await rsyscall_exec(self, rsyscall_thread, self.filesystem.rsyscall_server_path)
-        return rsyscall_thread, [fd.far for fd in fds]
+        return rsyscall_thread
 
     async def make_connections(self, count: int) -> t.List[
             t.Tuple[AsyncFileDescriptor[ReadableWritableFile], handle.FileDescriptor]
@@ -1287,7 +1283,7 @@ class StandardTask:
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task, self.connecting_connection, self.task, count))
 
-    async def fork_shared(self) -> RsyscallThread:
+    async def fork(self) -> RsyscallThread:
         [(access_sock, remote_sock)] = await self.make_connections(1)
         thread_maker = ThreadMaker(self.task, self.resources.child_monitor, self.process)
         task, thread = await spawn_rsyscall_thread(
@@ -1366,11 +1362,11 @@ class TemporaryDirectory:
         self.path = parent/name
 
     async def cleanup(self) -> None:
-        new_task, _ = await self.stdtask.spawn([])
-        async with new_task:
+        cleanup_thread = await self.stdtask.fork()
+        async with cleanup_thread:
             # TODO would be nice if unsharing the fs information gave us a cap to chdir
-            await new_task.stdtask.task.chdir(self.parent)
-            child = await new_task.execve(self.stdtask.filesystem.utilities.rm, ["rm", "-r", self.name])
+            await cleanup_thread.stdtask.task.chdir(self.parent)
+            child = await cleanup_thread.execve(self.stdtask.filesystem.utilities.rm, ["rm", "-r", self.name])
             (await child.wait_for_exit()).check()
 
     async def __aenter__(self) -> 'Path':
@@ -2435,11 +2431,11 @@ async def run_socket_binder(
     describe_pipe = await task.task.pipe()
     async_describe = await AsyncFileDescriptor.make(task.resources.epoller, describe_pipe.rfd)
     # TODO maybe I should have this process set PDEATHSIG so that even if we hard crash, it will exit too
-    binder_task, [describe_write] = await task.spawn([describe_pipe.wfd.handle.far])
-    await binder_task.stdtask.stdout.replace_with(describe_write)
-    await describe_pipe.wfd.aclose()
-    async with binder_task:
-        child = await ssh_command.args([str(task.filesystem.socket_binder_path), "socket-binder"]).exec(binder_task)
+    binder_thread = await task.fork()
+    describe_write = binder_thread.stdtask.task.base.make_fd_handle(describe_pipe.wfd.handle.far)
+    await binder_thread.stdtask.stdout.replace_with(describe_write.far)
+    async with binder_thread:
+        child = await ssh_command.args([str(task.filesystem.socket_binder_path), "socket-binder"]).exec(binder_thread)
         # sigh, openssh doesn't close its local stdout when it sees HUP/EOF on
         # the remote stdout. so we can't use EOF to signal end of our lines, and
         # instead have to have a sentinel to tell us when to stop reading.
@@ -2468,10 +2464,11 @@ async def ssh_bootstrap(
     task = parent_task.task
     local_data_path = Path(task, local_socket_path)
     # start bootstrap and forward local socket
-    rsyscall_thread, [] = await parent_task.spawn([])
+    bootstrap_thread = await parent_task.fork()
     bootstrap_child_task = await ssh_command.local_forward(
         str(local_socket_path), data_path_bytes.decode(),
-    ).args([str(parent_task.filesystem.rsyscall_bootstrap_path), pass_path_bytes.decode()]).exec(rsyscall_thread)
+    ).args([str(parent_task.filesystem.rsyscall_bootstrap_path), pass_path_bytes.decode()]).exec(bootstrap_thread)
+    # TODO TODO this is dumb! waiting for the ssh forwarding to be established!
     await trio.sleep(.1)
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor[UnixSocketFile]:
@@ -2539,7 +2536,7 @@ async def ssh_bootstrap(
                     # we assume ssh zeroes the sigmask before starting us
                     SignalMask(set()),
                     new_process_namespace)
-    left_connecting_connection, right_connecting_connection = await task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    left_connecting_connection, right_connecting_connection = await new_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     connecting_connection = (left_connecting_connection.handle, right_connecting_connection.handle)
     new_stdtask = StandardTask(
         access_task=parent_task.task,

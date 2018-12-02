@@ -358,7 +358,7 @@ def serialize_null_terminated_array(serializer: Serializer, args: t.List[bytes])
 
 async def execveat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
                    path: base.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> None:
-    logger.info("execveat(%s, %s, <len(envp): %d>, %s)", path, argv, len(envp), flags)
+    logger.debug("execveat(%s, %s, <len(envp): %d>, %s)", path, argv, len(envp), flags)
     # TODO we should batch this localize_path with the rest
     async with localize_path(gateway, allocator, path) as (dirfd, pathname):
         serializer = Serializer()

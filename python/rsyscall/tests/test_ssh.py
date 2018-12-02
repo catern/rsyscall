@@ -5,7 +5,7 @@ import os
 import socket
 import unittest
 from rsyscall.io import Command, SSHCommand, SSHDCommand
-from rsyscall.io import Task, Path, build_local_stdtask
+from rsyscall.io import Task, Path, build_local_stdtask, StandardTask
 import rsyscall.base as base
 import logging
 
@@ -29,23 +29,23 @@ async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
 #                      ["ssh-keygen"], {})
 
 @contextlib.asynccontextmanager
-async def ssh_to_localhost(stdtask) -> t.AsyncGenerator[SSHCommand, None]:
+async def ssh_to_localhost(stdtask: StandardTask) -> t.AsyncGenerator[SSHCommand, None]:
     async with (await stdtask.mkdtemp()) as tmpdir:
         path = tmpdir.pure
         await stdtask.task.chdir(tmpdir)
-        child_thread, [] = await stdtask.fork()
+        keygen_thread = await stdtask.fork()
         executable_dirs: t.List[base.Path] = []
         for prefix in stdtask.environment[b"PATH"].split(b":"):
              executable_dirs.append(base.Path.from_bytes(stdtask.task.mount, stdtask.task.fs, prefix))
-        ssh_keygen = Command(trio.run(which, stdtask.task, executable_dirs, b"ssh-keygen"),
+        ssh_keygen = Command(await which(stdtask.task, executable_dirs, b"ssh-keygen"),
                              ["ssh-keygen"], {})
         keygen_command = ssh_keygen.args(
             ['-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key'])
         privkey = path/'key'
         pubkey = path/'key.pub'
-        await (await keygen_command.exec(child_thread)).wait_for_exit()
+        await (await keygen_command.exec(keygen_thread)).wait_for_exit()
         ssh = stdtask.filesystem.utilities.ssh
-        sshd = SSHDCommand.make(trio.run(which, stdtask.task, executable_dirs, b"sshd"))
+        sshd = SSHDCommand.make(await which(stdtask.task, executable_dirs, b"sshd"))
         sshd_command = sshd.args([
             '-i', '-f', '/dev/null',
         ]).sshd_options({

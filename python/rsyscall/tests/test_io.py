@@ -326,82 +326,67 @@ class TestIO(unittest.TestCase):
             stdtask = await build_local_stdtask(nursery)
             await test(stdtask)
 
-    def test_thread_nest(self) -> None:
+    def test_spawn_nest(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            rsyscall_task, _ = await stdtask.spawn([])
-            async with rsyscall_task as stdtask2:
-                rsyscall_task3, _ = await stdtask2.spawn([])
-                async with rsyscall_task3 as stdtask3:
+            thread1 = await stdtask.spawn_exec()
+            async with thread1 as stdtask2:
+                thread2 = await stdtask2.spawn_exec()
+                async with thread2 as stdtask3:
                     await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
-                    print("SBAUGH hello done")
-                print("SBAUGH hello done again")
         trio.run(self.runner, test)
 
-    def test_thread_async(self) -> None:
+    def test_thread_nest(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            rsyscall_task, _ = await stdtask.spawn([])
-            async with rsyscall_task as stdtask2:
-                await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
+            thread1 = await stdtask.fork()
+            async with thread1 as stdtask2:
+                thread2 = await stdtask2.fork()
+                async with thread2 as stdtask3:
+                    await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
         trio.run(self.runner, test)
 
     def test_thread_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            rsyscall_task, _ = await stdtask.spawn([])
-            async with rsyscall_task as stdtask2:
+            thread = await stdtask.fork()
+            async with thread as stdtask2:
                 await stdtask2.exit(0)
         trio.run(self.runner, test)
 
-    def test_new_thread_exit(self) -> None:
+    def test_thread_nest_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            rsyscall_task = await stdtask.fork_shared()
-            async with rsyscall_task as stdtask2:
-                await stdtask2.exit(0)
-        trio.run(self.runner, test)
-
-    def test_new_thread_nest_exit(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            rsyscall_task = await stdtask.fork_shared()
-            async with rsyscall_task as stdtask2:
+            thread = await stdtask.fork()
+            async with thread as stdtask2:
                 print("SBAUGH okay started first task")
-                rsyscall_task3 = await stdtask2.fork_shared()
+                thread3 = await stdtask2.fork()
                 print("SBAUGH okay started second task")
-                async with rsyscall_task3 as stdtask3:
+                async with thread3 as stdtask3:
                     print("SBAUGH okay with on second task")
                     await stdtask3.exit(0)
                     print("SBAUGH okay exited second task")
         trio.run(self.runner, test)
 
-    def test_new_thread_unshare(self) -> None:
+    def test_thread_unshare(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            rsyscall_task = await stdtask.fork_shared()
-            async with rsyscall_task as stdtask2:
+            thread = await stdtask.fork()
+            async with thread as stdtask2:
                 await stdtask2.unshare_files()
-                rsyscall_task3 = await stdtask2.fork_shared()
-                async with rsyscall_task3 as stdtask3:
+                thread3 = await stdtask2.fork()
+                async with thread3 as stdtask3:
                     await stdtask3.unshare_files()
                     await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
         trio.run(self.runner, test)
 
-    def test_new_thread_async(self) -> None:
+    def test_thread_async(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            rsyscall_task = await stdtask.fork_shared()
-            async with rsyscall_task as stdtask2:
+            thread = await stdtask.fork()
+            async with thread as stdtask2:
                 await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
-        trio.run(self.runner, test)
-
-    def test_new_thread_exec(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            rsyscall_task = await stdtask.fork_shared()
-            async with rsyscall_task as stdtask2:
-                child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
-                await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
     def test_thread_exec(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            rsyscall_task, _ = await stdtask.spawn([])
-            async with rsyscall_task:
-                child_task = await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+            thread = await stdtask.fork()
+            async with thread as stdtask2:
+                child_task = await thread.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
                 await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
@@ -410,10 +395,10 @@ class TestIO(unittest.TestCase):
             async with ssh_to_localhost(stdtask) as ssh_command:
                 local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
                     stdtask, ssh_command)
-                rsyscall_task, [] = await remote_stdtask.spawn([])
-                async with rsyscall_task:
+                remote_thread = await remote_stdtask.fork()
+                async with remote_thread:
                     # there's no test on mount namespace at the moment, so it works to pull this from local
-                    child_task = await rsyscall_task.execve(local_stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                    child_task = await remote_thread.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
                     await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
