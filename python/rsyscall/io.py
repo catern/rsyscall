@@ -1344,8 +1344,8 @@ class StandardTask:
     async def unshare_files(self, going_to_exec=False) -> None:
         """Unshare the file descriptor table.
 
-        Set going_to_exec to True if you are about to exec; then we'll skip the manual CLOEXEC in
-        userspace that we have to do to avoid keeping stray references around.
+        Set going_to_exec to True if you are about to exec with this task; then we'll skip the
+        manual CLOEXEC in userspace that we have to do to avoid keeping stray references around.
 
         """
         async def do_unshare(close_in_old_space: t.List[near.FileDescriptor],
