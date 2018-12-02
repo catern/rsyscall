@@ -55,7 +55,7 @@ class SyscallInterface:
     activity_fd: t.Optional[FileDescriptor]
 
 # This is like a near pointer.
-@dataclass
+@dataclass(frozen=True)
 class FileDescriptor:
     number: int
 

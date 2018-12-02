@@ -87,8 +87,20 @@ long myopen(char* path, int flags) {
     return rsyscall_raw_syscall((long)path, flags, 0, 0, 0, 0, SYS_open);
 }
 
-long close(int fd) {
+static long close(int fd) {
     return rsyscall_raw_syscall(fd, 0, 0, 0, 0, 0, SYS_close);
+}
+
+static long getpid() {
+    return rsyscall_raw_syscall(0, 0, 0, 0, 0, 0, SYS_getpid);
+}
+
+static long tkill(int tid, int sig) {
+    return rsyscall_raw_syscall(tid, sig, 0, 0, 0, 0, SYS_tkill);
+}
+
+static int myraise(int sig) {
+    return tkill(getpid(), sig);
 }
 
 char getdents64_failed[] = "getdents64(fd, buf, count) failed\n";
@@ -144,6 +156,14 @@ void rsyscall_do_cloexec(int* excluded_fds, int fd_count) {
                 }
             }
         }
+    }
+}
+
+// Signals itself with SIGSTOP, then closes a list of file descriptors.
+void rsyscall_stop_then_close(int* fds_to_close, int fd_count) {
+    myraise(SIGSTOP);
+    for (int i = 0; i < fd_count; i++) {
+        close(fds_to_close[i]);
     }
 }
 

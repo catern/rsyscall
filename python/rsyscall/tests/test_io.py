@@ -364,6 +364,18 @@ class TestIO(unittest.TestCase):
                     print("SBAUGH okay exited second task")
         trio.run(self.runner, test)
 
+    def test_new_thread_unshare(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            rsyscall_task = await stdtask.fork_shared()
+            async with rsyscall_task as stdtask2:
+                await stdtask2.unshare_files()
+                await trio.sleep(120)
+                # rsyscall_task3 = await stdtask2.fork_shared()
+                # async with rsyscall_task3 as stdtask3:
+                #     await stdtask3.unshare_files()
+                #     await trio.sleep(120)
+        trio.run(self.runner, test)
+
     def test_new_thread_async(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             rsyscall_task = await stdtask.fork_shared()

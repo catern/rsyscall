@@ -337,6 +337,7 @@ void (*const rsyscall_server)(const int infd, const int outfd, const int ppid);
 void (*const rsyscall_futex_helper)(void *futex_addr);
 void (*const rsyscall_trampoline)(void);
 void (*const rsyscall_do_cloexec)(int* excluded_fds, int fd_count);
+void (*const rsyscall_stop_then_close)(int* excluded_fds, int fd_count);
 
 struct rsyscall_trampoline_stack {
     int64_t rdi;

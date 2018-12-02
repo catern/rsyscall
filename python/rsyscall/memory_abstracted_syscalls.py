@@ -5,6 +5,7 @@ import socket
 import rsyscall.raw_syscalls as raw_syscall
 from rsyscall.raw_syscalls import SigprocmaskHow, IdType
 from rsyscall.base import SyscallInterface, MemoryGateway
+from dataclasses import dataclass
 import rsyscall.base as base
 import rsyscall.far as far
 import rsyscall.near as near
@@ -250,67 +251,96 @@ class SerializedPointer:
         else:
             return self._real_pointer
 
+def align_pointer(ptr: base.Pointer, alignment: int) -> base.Pointer:
+    misalignment = int(ptr) % alignment
+    if misalignment == 0:
+        return ptr
+    else:
+        return ptr + (alignment - misalignment)
+
+@dataclass
+class SerializerOperation:
+    ptr: SerializedPointer
+    data: t.Union[bytes, t.Callable[[], bytes], None]
+    alignment: int = 1
+    def __post_init__(self) -> None:
+        assert self.alignment > 0
+
+    def size_to_allocate(self) -> t.Optional[int]:
+        if self.ptr._real_pointer is not None:
+            return None
+        else:
+            return self.ptr.size + (self.alignment-1)
+
+    def supply_allocation(self, ptr: base.Pointer) -> None:
+        self.ptr._real_pointer = align_pointer(ptr, self.alignment)
+
+    def data_to_copy(self) -> t.Optional[bytes]:
+        if isinstance(self.data, bytes):
+            return self.data
+        elif callable(self.data):
+            data_bytes = self.data()
+            if len(data_bytes) != self.ptr.size:
+                print(self.data)
+                print(data_bytes)
+                raise Exception("size provided", self.ptr.size, "doesn't match size of bytes",
+                                len(data_bytes))
+            return data_bytes
+        elif self.data is None:
+            return None
+        else:
+            raise Exception("nonsense value in operations", self.data)
+
 class Serializer:
     def __init__(self) -> None:
-        self.operations: t.List[t.Tuple[SerializedPointer, int, t.Union[bytes, t.Callable[[], bytes], None]]] = []
+        self.operations: t.List[SerializerOperation] = []
 
     def serialize_data(self, data: bytes) -> SerializedPointer:
         size = len(data)
         ptr = SerializedPointer(size)
-        self.operations.append((ptr, size, data))
+        self.operations.append(SerializerOperation(ptr, data))
         return ptr
 
-    def serialize_lambda(self, size: int, func: t.Callable[[], bytes]) -> SerializedPointer:
+    def serialize_lambda(self, size: int, func: t.Callable[[], bytes], alignment=1) -> SerializedPointer:
         ptr = SerializedPointer(size)
-        self.operations.append((ptr, size, func))
+        self.operations.append(SerializerOperation(ptr, func, alignment))
         return ptr
 
     def serialize_cffi(self, typ: str, func: t.Callable[[], t.Any]) -> SerializedPointer:
         size = ffi.sizeof(typ)
         ptr = SerializedPointer(size)
-        self.operations.append((ptr, size, lambda: bytes(ffi.buffer(ffi.new(typ+"*", func())))))
+        self.operations.append(SerializerOperation(ptr, lambda: bytes(ffi.buffer(ffi.new(typ+"*", func())))))
         return ptr
 
     def serialize_uninitialized(self, size: int) -> SerializedPointer:
         ptr = SerializedPointer(size)
-        self.operations.append((ptr, size, None))
+        self.operations.append(SerializerOperation(ptr, None))
         return ptr
 
     def serialize_preallocated(self, real_ptr: base.Pointer, data: bytes) -> SerializedPointer:
         size = len(data)
         ptr = SerializedPointer(size)
         ptr._real_pointer = real_ptr
-        self.operations.append((ptr, size, data))
+        self.operations.append(SerializerOperation(ptr, data))
         return ptr
 
     @contextlib.asynccontextmanager
     async def with_flushed(self, gateway: MemoryGateway, allocator: memory.AllocatorInterface
     ) -> t.AsyncGenerator[None, None]:
         # some are already allocated, so we skip them
-        needing_allocation = [(ptr, size)
-                              for ptr, size, _ in self.operations
-                              if ptr._real_pointer == None]
-        async with allocator.bulk_malloc([size for _, size in needing_allocation]) as pointers:
-            for ptr, (ser_ptr, _) in zip(pointers, needing_allocation):
-                ser_ptr._real_pointer = ptr
-            # call all the functions to build all the bytes
+        needs_allocation: t.List[t.Tuple[SerializerOperation, int]] = []
+        for op in self.operations:
+            size = op.size_to_allocate()
+            if size:
+                needs_allocation.append((op, size))
+        async with allocator.bulk_malloc([size for (op, size) in needs_allocation]) as pointers:
+            for ptr, (op, _) in zip(pointers, needs_allocation):
+                op.supply_allocation(ptr)
             real_operations: t.List[t.Tuple[base.Pointer, bytes]] = []
-            for serptr, size, data in self.operations:
-                if isinstance(data, bytes):
-                    data_bytes = data
-                elif callable(data):
-                    data_bytes = data()
-                    if len(data_bytes) != size:
-                        print(data)
-                        print(data_bytes)
-                        raise Exception("size provided", size, "doesn't match size of bytes",
-                                        len(data_bytes))
-                elif data is None:
-                    # skip data which is uninitialized
-                    continue
-                else:
-                    raise Exception("nonsense value in operations", data)
-                real_operations.append((serptr.pointer, data_bytes))
+            for op in self.operations:
+                data = op.data_to_copy()
+                if data:
+                    real_operations.append((op.ptr.pointer, data))
             # copy all the bytes in bulk
             await gateway.batch_memcpy([
                 (ptr, base.to_local_pointer(data), len(data)) for ptr, data in real_operations

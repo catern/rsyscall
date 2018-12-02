@@ -52,6 +52,7 @@ int main(int argc, char** argv)
     dprintf(opt.describefd, "rsyscall_futex_helper=%p\n", rsyscall_futex_helper);
     dprintf(opt.describefd, "rsyscall_trampoline=%p\n", rsyscall_trampoline);
     dprintf(opt.describefd, "rsyscall_do_cloexec=%p\n", rsyscall_do_cloexec);
+    dprintf(opt.describefd, "rsyscall_stop_then_close=%p\n", rsyscall_stop_then_close);
     close(opt.describefd);
     rsyscall_server(opt.infd, opt.outfd);
 }

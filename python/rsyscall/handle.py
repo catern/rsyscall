@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
+import copy
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory as memory
 import gc
@@ -55,18 +56,39 @@ class FileDescriptor:
 
     @property
     def far(self) -> rsyscall.far.FileDescriptor:
-        # TODO delete this property, we should go through handle
-        # helper methods only, which don't check the fd table.
+        # TODO delete this property, we should go through handle helper methods
+        # only, which don't check the fd table.
+        # I think the only ill effect of using the "far" property is that
+        # exceptions will be erroneously thrown if you use the resulting "far"
+        # fd at the same time as an unshare is happening; no actual correctness
+        # problems result, and the syscall would be fine if the exception wasn't
+        # thrown.
         if not self.valid:
             raise Exception("handle is no longer valid")
         return rsyscall.far.FileDescriptor(self.task.fd_table, self.near)
 
     async def invalidate(self) -> None:
         self.valid = False
+        if self._remove_from_tracking():
+            # we were the last handle for this fd, we should close it
+            await rsyscall.near.close(self.task.sysif, self.near)
+
+    def _remove_from_tracking(self) -> bool:
         self.task.fd_handles.remove(self)
+        handles = fd_table_to_near_to_handles[self.task.fd_table][self.near]
+        handles.remove(self)
+        return len(handles) == 0
+
+    def __del__(self) -> None:
+        if self.valid:
+            if self._remove_from_tracking():
+                print("leaked fd:", self)
 
     def __str__(self) -> str:
         return f"FD({self.task}, {self.near.number})"
+
+    def __repr__(self) -> str:
+        return f"FD({self.task}, {self.near.number}, valid={self.valid})"
 
     # should I just take handle.Pointers instead of near or far stuff? hmm.
     # should I really require ownership in this way?
@@ -79,7 +101,7 @@ class FileDescriptor:
     async def write(self, buf: rsyscall.far.Pointer, count: int) -> int:
         return (await rsyscall.near.write(self.task.sysif, self.near, self.task.to_near_pointer(buf), count))
 
-fd_table_to_near_to_handles: t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]] = {}
+fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
 
 class Task(rsyscall.far.Task):
     # work around breakage in mypy - it doesn't understand dataclass inheritance
@@ -92,6 +114,7 @@ class Task(rsyscall.far.Task):
         self.fd_table = fd_table
         self.address_space = address_space
         self.fd_handles: t.List[FileDescriptor] = []
+        fd_table_to_near_to_handles.setdefault(self.fd_table, {})
 
     def make_fd_handle(self, fd: t.Union[rsyscall.near.FileDescriptor,
                                          rsyscall.far.FileDescriptor,
@@ -106,7 +129,7 @@ class Task(rsyscall.far.Task):
             raise Exception("bad fd type", fd, type(fd))
         handle = FileDescriptor(self, near)
         self.fd_handles.append(handle)
-        fd_table_to_near_to_handles.setdefault(self.fd_table, {}).setdefault(near, []).append(handle)
+        fd_table_to_near_to_handles[self.fd_table].setdefault(near, []).append(handle)
         return handle
 
     async def unshare_files(self, do_unshare: t.Callable[[
@@ -118,13 +141,18 @@ class Task(rsyscall.far.Task):
         old_fd_table = self.fd_table
         # TODO get the pid from the SyscallInterface
         new_fd_table = rsyscall.far.FDTable(0)
-        new_near_to_handles = {}
+        # force a garbage collection to improve efficiency
+        gc.collect()
+        new_near_to_handles: t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]] = {}
         fd_table_to_near_to_handles[new_fd_table] = new_near_to_handles
         for handle in self.fd_handles:
             new_near_to_handles.setdefault(handle.near, []).append(handle)
         self.fd_table = new_fd_table
-        snapshot_old_near_to_handles = copy.deepcopy(old_near_to_handles)
-        needs_close: t.Set[rsyscall.near.FileDescriptor] = []
+        old_near_to_handles = fd_table_to_near_to_handles[old_fd_table]
+        snapshot_old_near_to_handles: t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]] = {}
+        for key in old_near_to_handles:
+            snapshot_old_near_to_handles[key] = [fd for fd in old_near_to_handles[key]]
+        needs_close: t.List[rsyscall.near.FileDescriptor] = []
         for handle in self.fd_handles:
             near = handle.near
             snapshot_old_near_to_handles[near].remove(handle)
@@ -133,15 +161,14 @@ class Task(rsyscall.far.Task):
             # handles for this fd can be created, even while we are asynchronously calling
             # unshare, because no-one can make a new handle from one of ours, because we
             # changed our Task.fd_table to point to a new fd table.
-            if len(old_near_to_handles[near]) == 0:
+            if len(snapshot_old_near_to_handles[near]) == 0:
                 needs_close.append(near)
         await do_unshare(needs_close, [fd.near for fd in self.fd_handles])
         # We can only remove our handles from the handle lists after the unshare is done
         # and the fds are safely copied, because otherwise someone else running GC on the
         # old fd table would close our fds when they notice there are no more handles.
-        old_near_to_handles = fd_table_to_near_to_handles.setdefault(old_fd_table, {})
         for handle in self.fd_handles:
-            old_near_to_handles[near].remove(handle)
+            old_near_to_handles[handle.near].remove(handle)
 
 @dataclass
 class Pipe:
