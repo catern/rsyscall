@@ -53,6 +53,8 @@ class SyscallInterface:
     # Users of the SyscallInterface should ensure that when they block, they are monitoring this fd as well.
     # Typically, this is in fact the fd which the rsyscall server reads for incoming system calls!
     activity_fd: t.Optional[FileDescriptor]
+    # This is some process which is useful to identify this syscall interface.
+    identifier_process: Process
 
 # This is like a near pointer.
 @dataclass(frozen=True)

@@ -18,7 +18,7 @@ class FDTable:
         if file_descriptor.fd_table == self:
             return file_descriptor.near
         else:
-            raise FDTableMismatchError()
+            raise FDTableMismatchError(file_descriptor.fd_table, self)
 
 @dataclass(eq=False)
 class AddressSpace:

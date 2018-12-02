@@ -369,11 +369,10 @@ class TestIO(unittest.TestCase):
             rsyscall_task = await stdtask.fork_shared()
             async with rsyscall_task as stdtask2:
                 await stdtask2.unshare_files()
-                await trio.sleep(120)
-                # rsyscall_task3 = await stdtask2.fork_shared()
-                # async with rsyscall_task3 as stdtask3:
-                #     await stdtask3.unshare_files()
-                #     await trio.sleep(120)
+                rsyscall_task3 = await stdtask2.fork_shared()
+                async with rsyscall_task3 as stdtask3:
+                    await stdtask3.unshare_files()
+                    await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
         trio.run(self.runner, test)
 
     def test_new_thread_async(self) -> None:

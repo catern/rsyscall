@@ -145,8 +145,7 @@ class Task(rsyscall.far.Task):
             t.List[rsyscall.near.FileDescriptor]
     ], t.Awaitable[None]]) -> None:
         old_fd_table = self.fd_table
-        # TODO get the pid from the SyscallInterface
-        new_fd_table = rsyscall.far.FDTable(0)
+        new_fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
         # force a garbage collection to improve efficiency
         gc.collect()
         new_near_to_handles: t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]] = {}

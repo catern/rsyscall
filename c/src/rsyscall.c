@@ -140,9 +140,11 @@ void rsyscall_do_cloexec(int* excluded_fds, int fd_count) {
     for (;;) {
         int const nread = getdents64(dirfd, buf, sizeof(buf));
         if (nread < 0) {
+            close(dirfd);
             error(getdents64_failed, sizeof(getdents64_failed) - 1);
         } else if (nread == 0) {
             /* no more fds, we're done */
+            close(dirfd);
             return;
         }
         for (int bpos = 0; bpos < nread; bpos += ((struct linux_dirent64 *) &buf[bpos])->d_reclen) {

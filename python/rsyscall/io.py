@@ -77,6 +77,7 @@ def log_syscall(logger, number, arg1, arg2, arg3, arg4, arg5, arg6) -> None:
 
 class LocalSyscall(base.SyscallInterface):
     activity_fd = None
+    identifier_process = near.Process(os.getpid())
     logger = logging.getLogger("rsyscall.LocalSyscall")
     async def close_interface(self) -> None:
         pass
@@ -1202,6 +1203,8 @@ class StandardTask:
                  access_epoller: EpollCenter,
                  access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
                  connecting_task: Task,
+                 # TODO we need to lock this, and the access_connection also.
+                 # they are shared between processes...
                  connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
                  task: Task,
                  task_resources: TaskResources,
@@ -1320,12 +1323,12 @@ class StandardTask:
                               task.base.make_fd_handle(self.resources.epoller.epfd),
                               task.gateway, task.allocator)
         signal_block = SignalBlock(task, {signal.SIGCHLD})
-        # sadly we can't use the parent's signalfd, epoll doesn't want to add it twice
+        # sadly we can't use an inherited signalfd, epoll doesn't want to add the same signalfd twice
         sigfd = await task.signalfd_create({signal.SIGCHLD}, flags=os.O_NONBLOCK)
         async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd, is_nonblock=True)
         signal_queue = SignalQueue(signal_block, async_sigfd)
         child_task_monitor = ChildTaskMonitor(task, signal_queue)
-        resources = TaskResources(self.resources.epoller, child_task_monitor)
+        resources = TaskResources(epoller, child_task_monitor)
         stdtask = StandardTask(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task, (self.connecting_connection[0], task.base.make_fd_handle(self.connecting_connection[1])),
@@ -1351,11 +1354,6 @@ class StandardTask:
             print("copying new", copy_to_new_space)
             await unshare_files(self.task, self.resources.child_monitor, self.process,
                                 close_in_old_space, copy_to_new_space, going_to_exec)
-        # need to make a connecting connection so that we can fork off children.
-        # if we're not going to exec, anyway...
-        # can we reuse a single connecting task in multiple threads? that would reduce inefficiency here,
-        # and allow us to just do this all the time...
-        # yeah let's just have one connecting connection, and we need to lock it also.
         await self.task.base.unshare_files(do_unshare)
 
 
@@ -1935,6 +1933,7 @@ class ChildConnection(base.SyscallInterface):
         self.fromfd = fromfd
         self.server_task = server_task
         self.futex_task = futex_task
+        self.identifier_process = self.server_task.process.near
         self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{int(self.server_task.process)}")
         self.request_lock = trio.Lock()
         self.response_fifo_lock = trio.StrictFIFOLock()
@@ -2024,10 +2023,11 @@ class RsyscallInterface(base.SyscallInterface):
     """
     def __init__(self, rsyscall_connection: RsyscallConnection,
                  # usually the same pid that's inside the namespaces
-                 identifier_pid: int,
+                 identifier_process: near.Process,
                  infd: far.FileDescriptor, outfd: far.FileDescriptor) -> None:
         self.rsyscall_connection = rsyscall_connection
-        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{identifier_pid}")
+        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{identifier_process.id}")
+        self.identifier_process = identifier_process
         self.activity_fd = infd.near
         # these are needed so that we don't accidentally close them when doing a do_cloexec_except
         self.infd = infd
@@ -2598,7 +2598,8 @@ async def ssh_bootstrap(
         return val
     # we use the pid of the local ssh process as our human-facing namespace identifier, since it is
     # more likely to be unique, and we already have it available.
-    identifier_pid = int(bootstrap_child_task.process)
+    identifier_process = bootstrap_child_task.process
+    identifier_pid = int(identifier_process)
     new_fd_table = far.FDTable(identifier_pid)
     async def read_fd(key: bytes) -> far.FileDescriptor:
         return far.FileDescriptor(new_fd_table, near.FileDescriptor(int(await read_keyval(key))))
@@ -2626,7 +2627,7 @@ async def ssh_bootstrap(
     await async_describe_sock.aclose()
     # Build the new task!
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
-                                    identifier_pid, remote_syscall_fd, remote_syscall_fd)
+                                    identifier_process.near, remote_syscall_fd, remote_syscall_fd)
     new_base_task = base.Task(new_syscall, new_fd_table, new_address_space)
     handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
     new_gateway = ComposedMemoryGateway([
