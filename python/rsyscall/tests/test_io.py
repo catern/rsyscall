@@ -337,6 +337,13 @@ class TestIO(unittest.TestCase):
                 print("SBAUGH hello done again")
         trio.run(self.runner, test)
 
+    def test_thread_async(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            rsyscall_task, _ = await stdtask.spawn([])
+            async with rsyscall_task as stdtask2:
+                await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
+        trio.run(self.runner, test)
+
     def test_thread_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             rsyscall_task, _ = await stdtask.spawn([])
@@ -403,7 +410,7 @@ class TestIO(unittest.TestCase):
             async with ssh_to_localhost(stdtask) as ssh_command:
                 local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
                     stdtask, ssh_command)
-                rsyscall_task, [] = await remote_stdtask.fork([])
+                rsyscall_task, [] = await remote_stdtask.spawn([])
                 async with rsyscall_task:
                     # there's no test on mount namespace at the moment, so it works to pull this from local
                     child_task = await rsyscall_task.execve(local_stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])

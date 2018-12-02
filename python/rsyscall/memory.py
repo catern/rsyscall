@@ -130,14 +130,13 @@ class Allocator:
 
     Perfect in its foresight, but not so bright.
     """
-    def __init__(self, address_space: AddressSpace) -> None:
-        self.address_space = address_space
+    def __init__(self, task: far.Task) -> None:
+        self.task = task
         self.lock = trio.Lock()
         self.arenas: t.List[Arena] = []
 
     @contextlib.asynccontextmanager
-    async def bulk_malloc(self, syscall_interface: SyscallInterface,
-                          sizes: t.List[int]) -> t.AsyncGenerator[t.List[Pointer], None]:
+    async def bulk_malloc(self, sizes: t.List[int]) -> t.AsyncGenerator[t.List[Pointer], None]:
             pointers: t.List[Pointer] = []
             async with contextlib.AsyncExitStack() as stack:
                 async with self.lock:
@@ -155,7 +154,7 @@ class Allocator:
                         rest_sizes = sizes[size_index:]
                         # let's do it in bulk:
                         remaining_size = sum(rest_sizes)
-                        mapping = await AnonymousMapping.make(syscall_interface, self.address_space,
+                        mapping = await AnonymousMapping.make(self.task.sysif, self.task.address_space,
                                                               align(remaining_size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
                         arena = Arena(mapping)
                         for size in rest_sizes:
@@ -166,14 +165,14 @@ class Allocator:
                                 pointers.append(stack.enter_context(alloc))
                 yield pointers
 
-    async def malloc(self, syscall_interface: SyscallInterface, size: int) -> Allocation:
+    async def malloc(self, size: int) -> Allocation:
         # TODO should coalesce together multiple pending mallocs waiting on the lock
         async with self.lock:
             for arena in self.arenas:
                 alloc = arena.malloc(size)
                 if alloc:
                     return alloc
-            mapping = await AnonymousMapping.make(syscall_interface, self.address_space,
+            mapping = await AnonymousMapping.make(self.task.sysif, self.task.address_space,
                                                   align(size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
             arena = Arena(mapping)
             self.arenas.append(arena)
@@ -191,25 +190,25 @@ class AllocatorClient(AllocatorInterface):
     def __init__(self, task: far.Task, allocator: Allocator) -> None:
         self.task = task
         self.allocator = allocator
-        if self.task.address_space != self.allocator.address_space:
+        if self.task.address_space != self.allocator.task.address_space:
             raise Exception("task and allocator are in different address spaces",
-                            self.task.address_space, self.allocator.address_space)
+                            self.task.address_space, self.allocator.task.address_space)
 
     @staticmethod
     def make_allocator(task: far.Task) -> AllocatorClient:
-        return AllocatorClient(task, Allocator(task.address_space))
+        return AllocatorClient(task, Allocator(task))
 
     def inherit(self, task: far.Task) -> AllocatorClient:
         return AllocatorClient(task, self.allocator)
 
     def bulk_malloc(self, sizes: t.List[int]) -> t.AsyncContextManager[t.List[Pointer]]:
-        if self.task.address_space != self.allocator.address_space:
+        if self.task.address_space != self.allocator.task.address_space:
             raise Exception("task and allocator are in different address spaces",
-                            self.task.address_space, self.allocator.address_space)
-        return self.allocator.bulk_malloc(self.task.sysif, sizes)
+                            self.task.address_space, self.allocator.task.address_space)
+        return self.allocator.bulk_malloc(sizes)
 
     def malloc(self, size: int) -> t.Awaitable[Allocation]:
-        if self.task.address_space != self.allocator.address_space:
+        if self.task.address_space != self.allocator.task.address_space:
             raise Exception("task and allocator are in different address spaces",
-                            self.task.address_space, self.allocator.address_space)
-        return self.allocator.malloc(self.task.sysif, size)
+                            self.task.address_space, self.allocator.task.address_space)
+        return self.allocator.malloc(size)

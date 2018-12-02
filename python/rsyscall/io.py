@@ -1271,56 +1271,14 @@ class StandardTask:
         await (parent/name).mkdir(mode=0o700)
         return TemporaryDirectory(self, parent, name)
 
-    async def spawn(self,
-                    user_fds: t.List[far.FileDescriptor],
-                    shared: UnshareFlag=UnshareFlag.FS,
+    async def spawn(self, user_fds: t.List[far.FileDescriptor]
     ) -> t.Tuple[RsyscallThread, t.List[far.FileDescriptor]]:
-        thread_maker = ThreadMaker(self.task, self.resources.child_monitor, self.process)
-        if self.connecting_task == self.task:
-            # Set up the future connection between the connecting task and the new task we're making.
-            # If we are the same task as our connecting task, we can just socketpair directly and pass it down.
-            connecting_side, full_parent_child_side = await self.connecting_task.socketpair(
-                socket.AF_UNIX, socket.SOCK_STREAM, 0)
-            parent_child_side = full_parent_child_side.handle.far
-        else:
-            # If we're not the same task as our connecting task, we need to use our connecting_connection.
-            assert self.connecting_connection is not None
-            # Make a socketpair in the connecting task.
-            connecting_side, connecting_parent_child_side = await self.connecting_task.socketpair(
-                socket.AF_UNIX, socket.SOCK_STREAM, 0)
-            # Send one side from the connecting task over the connecting_connection
-            await memsys.sendmsg_fds(self.connecting_task.base, self.connecting_task.gateway, self.connecting_task.allocator,
-                                     self.connecting_connection[0].far, [connecting_parent_child_side.handle.far])
-            # Receive that side on our side of the connecting_connection
-            [near_parent_child_side] = await memsys.recvmsg_fds(self.task.base, self.task.gateway, self.task.allocator,
-                                                                self.connecting_connection[1].far, 1)
-            parent_child_side = far.FileDescriptor(self.task.fd_table, near_parent_child_side)
-        task, thread, symbols, [child_side, stdin, stdout, stderr, *fds] = await rsyscall_spawn_exec_full(
-            self.access_task, self.access_epoller, self.access_connection,
-            self.connecting_task, self.connecting_connection,
-            self.task, thread_maker, self.process.server_func,
-            self,
-            self.filesystem.rsyscall_server_path,
-            [parent_child_side, self.stdin.handle.far, self.stdout.handle.far, self.stderr.handle.far, *user_fds], shared)
-        proc_resources = ProcessResources.make_from_symbols(symbols)
-        # TODO maybe need to think some more about how this resource inheriting works
-        # for that matter, could I inherit the epollfd and signalfd across tasks?
-        # inheriting the epollfd and signalfd across tasks would be pretty good wouldn't it?
-        # because we'd be centralizing the event loop more, reducing the amount of traffic I think
-        # at some point it essentially becomes a dedicate event loop thread.
-        # though that's not good if we actually are performing operations on that event loop thread.
-        # meh, better to inherit and share since it's possible; if it turns out worse we can fix that later.
-        stdtask = StandardTask(
-            self.access_task, self.access_epoller, self.access_connection,
-            self.connecting_task, (connecting_side.handle, task.base.make_fd_handle(child_side)),
-            task, 
-            await TaskResources.make(task),
-            proc_resources, self.filesystem, {**self.environment},
-            stdin=task.make_fd(stdin.near, self.stdin.file),
-            stdout=task.make_fd(stdout.near, self.stdout.file),
-            stderr=task.make_fd(stderr.near, self.stderr.file),
-        )
-        return RsyscallThread(stdtask, thread), fds
+        rsyscall_thread = await self.fork_shared()
+        fds: t.List[handle.FileDescriptor] = []
+        for user_fd in user_fds:
+            fds.append(rsyscall_thread.stdtask.task.base.make_fd_handle(user_fd))
+        await rsyscall_exec(self, rsyscall_thread, self.filesystem.rsyscall_server_path)
+        return rsyscall_thread, [fd.far for fd in fds]
 
     async def make_connections(self, count: int) -> t.List[
             t.Tuple[AsyncFileDescriptor[ReadableWritableFile], handle.FileDescriptor]
@@ -1372,15 +1330,6 @@ class StandardTask:
                                 close_in_old_space, copy_to_new_space, going_to_exec)
         await self.task.base.unshare_files(do_unshare)
 
-
-    async def fork(self,
-                   user_fds: t.List[far.FileDescriptor]=[],
-                   shared: UnshareFlag=UnshareFlag.FS,
-    ) -> t.Tuple[RsyscallThread, t.List[far.FileDescriptor]]:
-        # we share FS so we don't have to also have a list of paths that we want to translate into the new path.
-        # TODO we should really figure out some clean way of representing fd inheritance...
-        return (await self.spawn(user_fds, shared=shared))
-
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
     ) -> None:
@@ -1417,7 +1366,7 @@ class TemporaryDirectory:
         self.path = parent/name
 
     async def cleanup(self) -> None:
-        new_task, _ = await self.stdtask.spawn([], shared=UnshareFlag.NONE)
+        new_task, _ = await self.stdtask.spawn([])
         async with new_task:
             # TODO would be nice if unsharing the fs information gave us a cap to chdir
             await new_task.stdtask.task.chdir(self.parent)
@@ -1736,14 +1685,7 @@ class Thread:
 
     async def execveat(self, sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
                        path: base.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> ChildTask:
-        # so what's our argument? I guess we need to take, like... a stdtask?
-        # or we could jsut call it directly
-        child_task: ChildTask = None # type: ignore
-        logger.info("SBAUGH starting syscall")
-        try:
-            await memsys.execveat(sysif, gateway, allocator, path, argv, envp, flags)
-        except RsyscallHangup:
-            logger.info("SBAUGH um got hangup?")
+        await memsys.execveat(sysif, gateway, allocator, path, argv, envp, flags)
         return self.child_task
 
     async def wait_for_mm_release(self) -> ChildTask:
@@ -2137,19 +2079,15 @@ class ReceiveMemoryGateway(MemoryGateway):
         wtask = self.write.task
         near_src = wtask.to_near_pointer(src)
         near_write_fd = self.write.near
-        logger.debug("selected read: %s %s %s", rtask, near_dest, near_read_fd)
-        logger.debug("selected write: %s %s %s", wtask, near_src, near_write_fd)
         async def read() -> None:
             i = 0
             while (n - i) > 0:
                 ret = await self.read.read_raw(rtask.sysif, near_read_fd, near_dest+i, n-i)
-                logger.debug("read successful %d %d %d", ret, i, n)
                 i += ret
         async def write() -> None:
             i = 0
             while (n - i) > 0:
                 ret = await near.write(wtask.sysif, near_write_fd, near_src+i, n-i)
-                logger.debug("write successful %d %d %d", ret, i, n)
                 i += ret
         async with self.lock:
             async with trio.open_nursery() as nursery:
@@ -2178,19 +2116,15 @@ class SendMemoryGateway(MemoryGateway):
         wtask = self.write.underlying.task.base
         near_src = wtask.to_near_pointer(src)
         near_write_fd = self.write.underlying.handle.near
-        logger.debug("selected read: %s %s %s", rtask, near_dest, near_read_fd)
-        logger.debug("selected write: %s %s %s", wtask, near_src, near_write_fd)
         async def read() -> None:
             i = 0
             while (n - i) > 0:
                 ret = await near.read(rtask.sysif, near_read_fd, near_dest+i, n-i)
-                logger.debug("read successful %d", ret)
                 i += ret
         async def write() -> None:
             i = 0
             while (n - i) > 0:
                 ret = await self.write.write_raw(wtask.sysif, near_write_fd, near_src+i, n-i)
-                logger.debug("write successful %d", ret)
                 i += ret
         async with self.lock:
             async with trio.open_nursery() as nursery:
@@ -2222,7 +2156,7 @@ class ComposedMemoryGateway(MemoryGateway):
                 await component.memcpy(dest, src, n)
                 return
             except far.AddressSpaceMismatchError as e:
-                logger.debug("failed on %s", component, exc_info=True)
+                pass
         raise far.AddressSpaceMismatchError("none of my components support this combination of address spaces", dest, src)
 
     async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
@@ -2406,162 +2340,89 @@ async def spawn_rsyscall_thread(
                     parent_task.allocator.inherit(new_base_task),
                     parent_task.mount, parent_task.fs, parent_task.sigmask.inherit(),
                     parent_task.process_namespace)
-    new_task.allocator = parent_task.allocator
-    # okay, so.
-    # we need to:
-    # 1. register the signalfd on epoll, and
-    # 2. attach the new task to the signalfd so we read through that task
-    # okay so we can achieve garbage collection without changing these interfaces.
-    # so let's create a new handlefd for the signalfd.
-    # hmm, how will we interact with the epoll thing here?
-    # epoll needs to take ownership, right?
-    # so, I guess, we could have a __del__ on the AsyncFileDescriptor?
-    # or at least, some kind of close?
-    # then, when that reference drops, we drop it?
-    # yeah that makes sense
-    # oh, we do need to save the task that we registered it from.
-    # so we can un-register it.
     return new_task, cthread
 
-async def rsyscall_spawn_exec_full(
-        access_task: Task, access_epoller: EpollCenter,
-        # regrettably asymmetric...
-        # it would be nice to unify connect/accept with passing file descriptors somehow.
-        access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
-        connecting_task: Task, connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
-        parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
+async def rsyscall_exec(
         parent_stdtask: StandardTask,
+        rsyscall_thread: RsyscallThread,
         rsyscall_server_path: base.Path,
-        user_fds: t.List[far.FileDescriptor],
-        shared: UnshareFlag=UnshareFlag.FS,
-    ) -> t.Tuple[Task, Thread, t.Mapping[bytes, far.Pointer], t.List[far.FileDescriptor]]:
-    "Spawn an rsyscall server running in a separate process"
-    [(async_access_syscall_sock, passed_syscall_sock),
-     (async_access_data_sock, passed_data_sock),
-     (async_access_describe_sock, passed_describe_sock)] = await make_connections(
-         access_task, access_epoller, access_connection, connecting_task, connecting_connection, parent_task, 3)
+    ) -> None:
+    "Exec into the standalone rsyscall_server executable"
+    stdtask = rsyscall_thread.stdtask
+    [(async_access_describe_sock, passed_describe_sock)] = await stdtask.make_connections(1)
     # create this guy and pass him down to the new thread
-    futex_memfd = await memsys.memfd_create(parent_task.base, parent_task.gateway, parent_task.allocator,
-                                            b"child_cleartid", lib.MFD_CLOEXEC)
-    # new fd namespace created here
-    cthread = await thread_maker.make_cthread(
-        lib.CLONE_VM|shared, function, passed_syscall_sock.near, passed_syscall_sock.near)
-    process = cthread.child_task.process
-    fd_table = base.FDTable(int(process))
-    parent_fd_table = parent_task.fd_table
-    inherited_fds: t.List[near.FileDescriptor] = []
-    def inherit(fd: far.FileDescriptor) -> far.FileDescriptor:
-        nearfd = parent_fd_table.to_near(fd)
-        inherited_fds.append(nearfd)
-        return far.FileDescriptor(fd_table, nearfd)
-    remote_syscall_sock = inherit(passed_syscall_sock.far)
-    syscall = ChildConnection(
-        async_access_syscall_sock, async_access_syscall_sock,
-        cthread.child_task,
-        cthread.futex_task)
-    new_base_task = base.Task(syscall, fd_table, parent_task.address_space)
-    remote_syscall_sock_handle = new_base_task.make_fd_handle(remote_syscall_sock)
-    syscall.store_remote_side_handles(remote_syscall_sock_handle, remote_syscall_sock_handle)
-    def inherit_handle(fd: far.FileDescriptor) -> handle.FileDescriptor:
-        return new_base_task.make_fd_handle(inherit(fd))
-    remote_data_sock = inherit_handle(passed_data_sock.far)
-    gateway = ComposedMemoryGateway([
-        SendMemoryGateway(read=remote_data_sock, write=async_access_data_sock, lock=trio.Lock()),
-        ReceiveMemoryGateway(read=async_access_data_sock, write=remote_data_sock, lock=trio.Lock()),
-        LocalMemoryGateway(),
-    ])
-    new_task = Task(new_base_task,
-                    gateway,
-                    parent_task.allocator.inherit(new_base_task),
-                    # TODO whether these things are shared depends on the `shared` flags
-                    parent_task.mount, parent_task.fs, parent_task.sigmask.inherit(), parent_task.process_namespace)
-    if len(new_task.sigmask.mask) != 0:
-        # clear this non-empty signal mask because it's pointlessly inherited across fork
-        await new_task.sigmask.setmask(new_task, set())
-
-    # have to pass this down
-    remote_futex_memfd = inherit(futex_memfd)
-    inherited_user_fds = [inherit(fd) for fd in user_fds]
-    remote_describe_sock = inherit(passed_describe_sock.far)
-
-    #### clear out waste fds
-    # We don't need these things in the parent. . .
-    await passed_syscall_sock.invalidate()
-    await passed_data_sock.invalidate()
-    await passed_describe_sock.invalidate()
-
-    # make each inherited fd non-cloexec
-    # note that this is racy if our thread is in a shared fd space;
-    # this is why each thread has to be in its own fd space.
-    for fd in inherited_fds:
-        # disable cloexec for the fd
-        await near.fcntl(syscall, fd, fcntl.F_SETFD, 0)
-    # wow! the task just keeps working! neat!
-    # TODO need to validate that path matches up with the task
-    # TODO hmm argh we don't get a response from this execveat so the thing just hangs
-    # HMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-    # maybe we *do* need the futex waiting thing, ugh.
-    # ARGH! the processes of execing allocates a bunch of memory in the allocator,
-    # which is no longer valid when done.
-    # I guess... I could just flush the allocator...
-    # well, no, none of that memory will actually be freed then...
-    # maybe I should use the parent's allocator?
-    # hmm hmm
-    # if i'm not in the same address space as my parent, then freeing will happen automatically.
-    # if I am, then I can use my parent's allocator.
+    futex_memfd = await memsys.memfd_create(stdtask.task.base, stdtask.task.gateway, stdtask.task.allocator,
+                                                  b"child_robust_futex_list", lib.MFD_CLOEXEC)
+    child_futex_memfd = stdtask.task.base.make_fd_handle(futex_memfd)
+    parent_futex_memfd = parent_stdtask.task.base.make_fd_handle(futex_memfd)
+    syscall: ChildConnection = stdtask.task.base.sysif # type: ignore
     def encode(fd: near.FileDescriptor) -> bytes:
         return str(int(fd)).encode()
-    # new address space created here
-    child_task = await cthread.execveat(
-        syscall, gateway, parent_task.allocator, rsyscall_server_path, [
-            b"rsyscall_server",
-            encode(remote_describe_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
-            *[encode(fd) for fd in inherited_fds],
-        ], [], 0)
-    # the futex task we used before is dead now that we've exec'd, have
-    # to null it out
-    syscall.futex_task = None
-    new_task.base.address_space = base.AddressSpace(int(process))
-    new_task.allocator = memory.AllocatorClient.make_allocator(new_task.base)
+    async def do_unshare(close_in_old_space: t.List[near.FileDescriptor],
+                         copy_to_new_space: t.List[near.FileDescriptor]) -> None:
+        # unset cloexec on all the fds we want to copy to the new space
+        for copying_fd in copy_to_new_space:
+            await near.fcntl(syscall, copying_fd, fcntl.F_SETFD, 0)
+        child_task = await rsyscall_thread.execve(
+            rsyscall_server_path, [
+                b"rsyscall_server",
+                encode(passed_describe_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
+                *[encode(fd) for fd in copy_to_new_space],
+            ], {}, [stdtask.resources.child_monitor.signal_queue.signal_block])
+        # the futex task we used before is dead now that we've exec'd, have
+        # to null it out
+        syscall.futex_task = None
+        # TODO maybe remove dependence on parent task for closing?
+        for fd in close_in_old_space:
+            await near.close(parent_stdtask.task.base.sysif, fd)
+        stdtask.task.base.address_space = base.AddressSpace(rsyscall_thread.thread.child_task.process.near.id)
+        # we mutate the allocator instead of replacing to so that anything that
+        # has stored the allocator continues to work
+        stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)
+        print("allocators")
+        print("base", stdtask.task.base)
+        print("allocator task", stdtask.task.allocator.task)
+    await stdtask.task.base.unshare_files(do_unshare)
+
+    #### read symbols from describe fd
     symbols: t.Dict[bytes, far.Pointer] = {}
     async for line in read_lines(async_access_describe_sock):
         key, value = line.rstrip().split(b'=', 1)
-        symbols[key] = far.Pointer(new_task.base.address_space, near.Pointer(int(value, 16)))
+        symbols[key] = far.Pointer(stdtask.task.base.address_space, near.Pointer(int(value, 16)))
     await async_access_describe_sock.aclose()
-    #### set up child cleartid futex
+    stdtask.process = ProcessResources.make_from_symbols(symbols)
 
-    #### make futex thread
+    #### make new futex task
     # resize memfd appropriately
     futex_memfd_size = 4096
-    await far.ftruncate(parent_task.base, futex_memfd, futex_memfd_size)
+    await parent_futex_memfd.ftruncate(futex_memfd_size)
     # set up local mapping
-    local_mapping = await far.mmap(parent_task.base,
-                                   futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED,
-                                   fd=futex_memfd)
-    await far.close(parent_task.base, futex_memfd)
+    local_mapping = await parent_futex_memfd.mmap(
+        futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED)
+    await parent_futex_memfd.invalidate()
     local_mapping_pointer = local_mapping.as_pointer()
     # set up remote mapping
-    remote_mapping = await far.mmap(new_task.base,
-                                    futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED,
-                                    fd=remote_futex_memfd)
-    await far.close(new_task.base, remote_futex_memfd)
+    remote_mapping = await child_futex_memfd.mmap(
+        futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED)
+    await child_futex_memfd.invalidate()
     remote_mapping_pointer = remote_mapping.as_pointer()
 
     # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
-    futex_value = lib.FUTEX_WAITERS|(int(process) & lib.FUTEX_TID_MASK)
+    futex_value = lib.FUTEX_WAITERS|(int(rsyscall_thread.thread.child_task.process) & lib.FUTEX_TID_MASK)
     # this is distasteful and leaky, we're relying on the fact that the PreallocatedAllocator never frees things
     remote_futex_pointer = await set_singleton_robust_futex(
-        new_task.base, new_task.gateway,
-        memory.PreallocatedAllocator(remote_mapping_pointer, 4096), futex_value)
+        stdtask.task.base, stdtask.task.gateway,
+        memory.PreallocatedAllocator(remote_mapping_pointer, futex_memfd_size), futex_value)
     local_futex_pointer = local_mapping_pointer + (int(remote_futex_pointer) - int(remote_mapping_pointer))
     # now we start the futex monitor
-    futex_task = await launch_futex_monitor(parent_task.base, parent_task.gateway, parent_task.allocator,
-                                            thread_maker.process_resources, thread_maker.monitor,
+    futex_task = await launch_futex_monitor(parent_stdtask.task.base, parent_stdtask.task.gateway,
+                                            parent_stdtask.task.allocator,
+                                            parent_stdtask.process, parent_stdtask.resources.child_monitor,
                                             local_futex_pointer, futex_value)
     syscall.futex_task = futex_task
     # TODO how do we unmap the remote mapping?
-    thread = Thread(child_task, futex_task, handle.MemoryMapping(parent_task.base, local_mapping))
-    return new_task, thread, symbols, inherited_user_fds
+    rsyscall_thread.thread = Thread(rsyscall_thread.thread.child_task, futex_task,
+                                    handle.MemoryMapping(parent_stdtask.task.base, local_mapping))
 
 # Need to identify the host, I guess
 # I shouldn't abstract this too much - I should just use ssh.
@@ -2574,7 +2435,7 @@ async def run_socket_binder(
     describe_pipe = await task.task.pipe()
     async_describe = await AsyncFileDescriptor.make(task.resources.epoller, describe_pipe.rfd)
     # TODO maybe I should have this process set PDEATHSIG so that even if we hard crash, it will exit too
-    binder_task, [describe_write] = await task.spawn([describe_pipe.wfd.handle.far], shared=UnshareFlag.NONE)
+    binder_task, [describe_write] = await task.spawn([describe_pipe.wfd.handle.far])
     await binder_task.stdtask.stdout.replace_with(describe_write)
     await describe_pipe.wfd.aclose()
     async with binder_task:

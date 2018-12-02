@@ -9,6 +9,8 @@ import rsyscall.near
 import trio
 import os
 import typing as t
+import logging
+logger = logging.getLogger(__name__)
 
 # This is like a far pointer plus a segment register.
 # It means that, as long as it doesn't throw an exception,
@@ -70,13 +72,12 @@ class FileDescriptor:
     async def invalidate(self) -> None:
         self.valid = False
         handles = self._remove_from_tracking()
-        print("invalidating", self)
         if len(handles) == 0:
             # we were the last handle for this fd, we should close it
-            print("no handles remaining", handles)
+            logging.debug("invalidating %s, no handles remaining, closing", self)
             await rsyscall.near.close(self.task.sysif, self.near)
         else:
-            print("remaining handles", handles)
+            logging.debug("invalidating %s, handles remaining: %s", self, handles)
 
     def _remove_from_tracking(self) -> t.List[FileDescriptor]:
         self.task.fd_handles.remove(self)
@@ -87,7 +88,7 @@ class FileDescriptor:
     def __del__(self) -> None:
         if self.valid:
             if len(self._remove_from_tracking()) == 0:
-                print("leaked fd:", self)
+                logging.debug("leaked fd: %s", self)
 
     def __str__(self) -> str:
         return f"FD({self.task}, {self.near.number})"
@@ -101,10 +102,28 @@ class FileDescriptor:
     # oh hmm! if the pointer comes from another task, how does that work?
     # so I'll take far Pointers, and Union[handle.FileDescriptor, far.FileDescriptor]
     async def read(self, buf: rsyscall.far.Pointer, count: int) -> int:
-        return (await rsyscall.near.read(self.task.sysif, self.near, self.task.to_near_pointer(buf), count))
+        if not self.valid:
+            raise Exception("handle is no longer valid")
+        return (await rsyscall.near.read(self.task.sysif, self.near,
+                                         self.task.to_near_pointer(buf), count))
 
     async def write(self, buf: rsyscall.far.Pointer, count: int) -> int:
-        return (await rsyscall.near.write(self.task.sysif, self.near, self.task.to_near_pointer(buf), count))
+        if not self.valid:
+            raise Exception("handle is no longer valid")
+        return (await rsyscall.near.write(self.task.sysif, self.near,
+                                          self.task.to_near_pointer(buf), count))
+
+    async def ftruncate(self, length: int) -> None:
+        await rsyscall.near.ftruncate(self.task.sysif, self.near, length)
+
+    async def mmap(self, length: int, prot: int, flags: int,
+                   addr: t.Optional[rsyscall.far.Pointer]=None, offset: int=0,
+    ) -> rsyscall.far.MemoryMapping:
+        ret = await rsyscall.near.mmap(self.task.sysif, length, prot, flags,
+                                       self.task.to_near_pointer(addr) if addr else None,
+                                       self.near, offset)
+        return rsyscall.far.MemoryMapping(self.task.address_space, ret)
+
 
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
 
@@ -133,7 +152,7 @@ class Task(rsyscall.far.Task):
         else:
             raise Exception("bad fd type", fd, type(fd))
         handle = FileDescriptor(self, near)
-        print("made handle", handle)
+        logging.debug("made handle: %s", self)
         self.fd_handles.append(handle)
         fd_table_to_near_to_handles[self.fd_table].setdefault(near, []).append(handle)
         return handle
