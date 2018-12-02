@@ -100,6 +100,8 @@ class MemoryGateway:
     Or more specifically between their address spaces and file descriptor namespaces.
 
     """
+    @abc.abstractmethod
+    def inherit(self, task: Task) -> MemoryGateway: ...
     # future methods will support copying between file descriptors
     @abc.abstractmethod
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None: ...
@@ -113,6 +115,9 @@ class InvalidAddressSpaceError(Exception):
 
 from rsyscall._raw import ffi, lib # type: ignore
 class LocalMemoryGateway(MemoryGateway):
+    def inherit(self, task: Task) -> LocalMemoryGateway:
+        return self
+
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
         neardest = local_address_space.to_near(dest)
         nearsrc = local_address_space.to_near(src)

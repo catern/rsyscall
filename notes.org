@@ -7125,3 +7125,80 @@ The operating (taskC,fdC) - completely unrelated.
    okay so, environment variable keys.
 
    I'll just make them strings.
+** unsharing memory
+   Lots of cool things
+
+   You could have segment based handles kind of things, where pointers are offsets into memory mappings,
+   which could be actually mapped at different addresses,
+   but are recognized as being the same.
+
+   More importantly:
+   Why not just having the data gateway be shared?
+   That would be nice and efficient.
+
+   We're already talking about locking over the connecting connection.
+   Why not the same for the data pipes?
+
+   Then I just have to inherit them down, and all is good.
+
+   Does this result in tasks blocking each other, though?
+
+   It kinda does...
+
+   Well, for the most part I won't be using multiple address spaces for the same pipes, I guess...
+
+   I mean, the real use case is that I'll have a single data sock,
+   shared between a bunch of... fork_shared tasks... which use them to exec.
+
+   Dang! I already need a lock on it!
+
+   OK, so then let's just go ahead and inherit it!
+   Creating a new one is an optimization.
+
+   Like we did with the connecting connection,
+   we'll make one in the root task,
+   and just as an optimization,
+   not use it.
+
+   What about this describe sock?
+   That's genuinely new, innit?
+
+   We could take the lock on some descriptor maybe...
+
+   If we don't signal end of message with eof, then we could reuse something else, yeah...
+
+   The pair inside the memory gateway seems like a pretty reasonable thing.
+
+   It's already async and everything.
+
+   Seems fine to support an API of temporarily borrowing it, right?
+   Hmm.
+
+   That does block all syscalls on the remote host though :)
+
+   How would I work around that?
+
+
+   OK, keep in mind we aren't talking about sharing the syscall sock pair.
+   Just, because it's, really hard to do that.
+   We don't control when the response comes back,
+   so there'd be lotsa interleaving.
+
+   But for, say, this data transfer stuff,
+   we do control the responses.
+
+   Well, it's not that expensive to make a connection, let's just do it.
+
+   Sharing the gateway...
+
+   We'll need some backing class which holds the lock,
+   then a class in front which is inherited around to different tasks.
+
+   Basically the same split between "access task object" and "user task object" as with Epoller.
+
+   And, fancy fancy, it will just keep working when we change memory namespace.
+   As long as we appropriately take ownership at task creation time.
+
+   OK so actually maybe the memory gateway should indeed have a "bytes" interface?
+
+   No no no we discussed this, pointer is best.

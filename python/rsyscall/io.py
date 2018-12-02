@@ -1244,7 +1244,7 @@ class StandardTask:
         access_connection = None
         left_fd, right_fd = await task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
         connecting_connection = (left_fd.handle, right_fd.handle)
-        return StandardTask(
+        stdtask = StandardTask(
             task, task_resources.epoller, access_connection,
             task, connecting_connection,
             task, task_resources, process_resources, filesystem_resources,
@@ -1253,6 +1253,14 @@ class StandardTask:
             bootstrap.stdstreams.stdout,
             bootstrap.stdstreams.stderr,
         )
+        # We don't need this ourselves, but we keep it around so others can inherit it.
+        [(access_sock, remote_sock)] = await stdtask.make_connections(1)
+        task.gateway = ComposedMemoryGateway([
+            LocalMemoryGateway(),
+            SendMemoryGateway(read=remote_sock, write=access_sock, lock=trio.Lock()),
+            ReceiveMemoryGateway(read=access_sock, write=remote_sock, lock=trio.Lock()),
+        ])
+        return stdtask
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
         parent = Path(self.task, self.filesystem.tmpdir)
@@ -1289,6 +1297,7 @@ class StandardTask:
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task, self.connecting_connection,
             self.task, thread_maker, self.process.server_func,
+            self,
             self.filesystem.rsyscall_server_path,
             [parent_child_side, self.stdin.handle.far, self.stdout.handle.far, self.stderr.handle.far, *user_fds], shared)
         proc_resources = ProcessResources.make_from_symbols(symbols)
@@ -1311,10 +1320,15 @@ class StandardTask:
         )
         return RsyscallThread(stdtask, thread), fds
 
-    async def fork_shared(self) -> RsyscallThread:
-        [(access_sock, remote_sock)] = await make_connections(
+    async def make_connections(self, count: int) -> t.List[
+            t.Tuple[AsyncFileDescriptor[ReadableWritableFile], handle.FileDescriptor]
+    ]:
+        return (await make_connections(
             self.access_task, self.access_epoller, self.access_connection,
-            self.connecting_task, self.connecting_connection, self.task, 1)
+            self.connecting_task, self.connecting_connection, self.task, count))
+
+    async def fork_shared(self) -> RsyscallThread:
+        [(access_sock, remote_sock)] = await self.make_connections(1)
         thread_maker = ThreadMaker(self.task, self.resources.child_monitor, self.process)
         task, thread = await spawn_rsyscall_thread(
             access_sock, remote_sock,
@@ -2109,6 +2123,10 @@ class ReceiveMemoryGateway(MemoryGateway):
     """From the perspective of the side "closer" to us"""
     read: AsyncFileDescriptor[ReadableFile]
     write: handle.FileDescriptor
+    lock: trio.Lock
+
+    def inherit(self, task: handle.Task) -> ReceiveMemoryGateway:
+        return ReceiveMemoryGateway(self.read, task.make_fd_handle(self.write), self.lock)
 
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
         rtask = self.read.underlying.task.base
@@ -2131,9 +2149,10 @@ class ReceiveMemoryGateway(MemoryGateway):
                 ret = await near.write(wtask.sysif, near_write_fd, near_src+i, n-i)
                 logger.debug("write successful %d %d %d", ret, i, n)
                 i += ret
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(read)
-            nursery.start_soon(write)
+        async with self.lock:
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(read)
+                nursery.start_soon(write)
 
     async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
         # TODO we should try to coalesce adjacent buffers, so one or both sides of the copy can be
@@ -2145,6 +2164,10 @@ class SendMemoryGateway(MemoryGateway):
     """From the perspective of the side "closer" to us"""
     read: handle.FileDescriptor
     write: AsyncFileDescriptor[WritableFile]
+    lock: trio.Lock
+
+    def inherit(self, task: handle.Task) -> SendMemoryGateway:
+        return SendMemoryGateway(task.make_fd_handle(self.read), self.write, self.lock)
 
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
         rtask = self.read.task
@@ -2167,9 +2190,10 @@ class SendMemoryGateway(MemoryGateway):
                 ret = await self.write.write_raw(wtask.sysif, near_write_fd, near_src+i, n-i)
                 logger.debug("write successful %d", ret)
                 i += ret
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(read)
-            nursery.start_soon(write)
+        async with self.lock:
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(read)
+                nursery.start_soon(write)
 
     async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
         # TODO we should try to coalesce adjacent buffers, so one or both sides of the copy can be
@@ -2177,11 +2201,18 @@ class SendMemoryGateway(MemoryGateway):
         for dest, src, n in ops:
             await self.memcpy(dest, src, n)
 
+# TODO we should just hardcode this to check for local, send, receive...
+# The point of the gateway is simple:
+# It lets us copy between local_address_space pointers and some remote address space.
+# In both directions.
 class ComposedMemoryGateway(MemoryGateway):
     def __init__(self,
                  components: t.List[MemoryGateway],
     ) -> None:
         self.components = components
+
+    def inherit(self, task: handle.Task) -> ComposedMemoryGateway:
+        return ComposedMemoryGateway([component.inherit(task) for component in self.components])
 
     async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
         for component in self.components:
@@ -2369,7 +2400,7 @@ async def spawn_rsyscall_thread(
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
-                    parent_task.gateway,
+                    parent_task.gateway.inherit(new_base_task),
                     parent_task.mount, parent_task.fs, parent_task.sigmask.inherit(),
                     parent_task.process_namespace)
     new_task.allocator = parent_task.allocator
@@ -2396,6 +2427,7 @@ async def rsyscall_spawn_exec_full(
         access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
         connecting_task: Task, connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
         parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
+        parent_stdtask: StandardTask,
         rsyscall_server_path: base.Path,
         user_fds: t.List[far.FileDescriptor],
         shared: UnshareFlag=UnshareFlag.FS,
@@ -2431,8 +2463,8 @@ async def rsyscall_spawn_exec_full(
         return new_base_task.make_fd_handle(inherit(fd))
     remote_data_sock = inherit_handle(passed_data_sock.far)
     gateway = ComposedMemoryGateway([
-        SendMemoryGateway(read=remote_data_sock, write=async_access_data_sock),
-        ReceiveMemoryGateway(read=async_access_data_sock, write=remote_data_sock),
+        SendMemoryGateway(read=remote_data_sock, write=async_access_data_sock, lock=trio.Lock()),
+        ReceiveMemoryGateway(read=async_access_data_sock, write=remote_data_sock, lock=trio.Lock()),
         LocalMemoryGateway(),
     ])
     new_task = Task(new_base_task,
@@ -2631,8 +2663,8 @@ async def ssh_bootstrap(
     new_base_task = base.Task(new_syscall, new_fd_table, new_address_space)
     handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
     new_gateway = ComposedMemoryGateway([
-        SendMemoryGateway(read=handle_remote_data_fd, write=async_local_data_sock),
-        ReceiveMemoryGateway(read=async_local_data_sock, write=handle_remote_data_fd),
+        SendMemoryGateway(read=handle_remote_data_fd, write=async_local_data_sock, lock=trio.Lock()),
+        ReceiveMemoryGateway(read=async_local_data_sock, write=handle_remote_data_fd, lock=trio.Lock()),
     ])
     new_process_namespace = far.ProcessNamespace(identifier_pid)
     new_mount_namespace = base.MountNamespace(identifier_pid)
