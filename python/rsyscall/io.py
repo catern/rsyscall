@@ -177,6 +177,7 @@ class Task:
     def __init__(self,
                  base_: base.Task,
                  gateway: MemoryGateway,
+                 allocator: memory.AllocatorClient,
                  mount: base.MountNamespace,
                  fs: base.FSInformation,
                  sigmask: SignalMask,
@@ -186,7 +187,7 @@ class Task:
         self.gateway = gateway
         # Being able to allocate memory is like having a stack.
         # we really need to be able to allocate memory to get anything done - namely, to call syscalls.
-        self.allocator = memory.Allocator(self.base.sysif, base_.address_space)
+        self.allocator = allocator
         self.mount = mount
         self.fs = fs
         self.sigmask = sigmask
@@ -556,7 +557,7 @@ class EpolledFileDescriptor:
 class EpollCenter:
     "Terribly named class that allows registering fds on epoll, and waiting on them"
     def __init__(self, epoller: EpollWaiter, epfd: handle.FileDescriptor,
-                 gateway: MemoryGateway, allocator: memory.Allocator) -> None:
+                 gateway: MemoryGateway, allocator: memory.AllocatorInterface) -> None:
         self.epoller = epoller
         self.epfd = epfd
         self.gateway = gateway
@@ -1041,6 +1042,7 @@ def gather_local_bootstrap() -> UnixBootstrap:
     base_task = handle.Task(syscall, base.FDTable(pid), base.local_address_space)
     task = Task(base_task,
                 LocalMemoryGateway(),
+                memory.AllocatorClient.make_allocator(base_task),
                 base.MountNamespace(pid), base.FSInformation(pid),
                 SignalMask(set()), far.ProcessNamespace(pid))
     argv = [arg.encode() for arg in sys.argv]
@@ -1070,7 +1072,7 @@ async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
     return path
 
 class RemoteNew:
-    def __init__(self, memory_allocator: memory.Allocator, memory_gateway: MemoryGateway) -> None:
+    def __init__(self, memory_allocator: memory.AllocatorClient, memory_gateway: MemoryGateway) -> None:
         self.memory_allocator = memory_allocator
         self.memory_gateway = memory_gateway
 
@@ -1732,7 +1734,7 @@ class Thread:
         self.futex_mapping = futex_mapping
         self.released = False
 
-    async def execveat(self, sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.Allocator,
+    async def execveat(self, sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
                        path: base.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> ChildTask:
         # so what's our argument? I guess we need to take, like... a stdtask?
         # or we could jsut call it directly
@@ -1816,7 +1818,7 @@ class BufferedStack:
         self.buffer = b""
         return self.allocation_pointer
 
-async def launch_futex_monitor(task: base.Task, gateway: MemoryGateway, allocator: memory.Allocator,
+async def launch_futex_monitor(task: base.Task, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
                                process_resources: ProcessResources, monitor: ChildTaskMonitor,
                                futex_pointer: Pointer, futex_value: int) -> ChildTask:
     serializer = memsys.Serializer()
@@ -2401,6 +2403,7 @@ async def spawn_rsyscall_thread(
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
                     parent_task.gateway.inherit(new_base_task),
+                    parent_task.allocator.inherit(new_base_task),
                     parent_task.mount, parent_task.fs, parent_task.sigmask.inherit(),
                     parent_task.process_namespace)
     new_task.allocator = parent_task.allocator
@@ -2469,9 +2472,9 @@ async def rsyscall_spawn_exec_full(
     ])
     new_task = Task(new_base_task,
                     gateway,
+                    parent_task.allocator.inherit(new_base_task),
                     # TODO whether these things are shared depends on the `shared` flags
                     parent_task.mount, parent_task.fs, parent_task.sigmask.inherit(), parent_task.process_namespace)
-    new_task.allocator = parent_task.allocator
     if len(new_task.sigmask.mask) != 0:
         # clear this non-empty signal mask because it's pointlessly inherited across fork
         await new_task.sigmask.setmask(new_task, set())
@@ -2519,7 +2522,7 @@ async def rsyscall_spawn_exec_full(
     # to null it out
     syscall.futex_task = None
     new_task.base.address_space = base.AddressSpace(int(process))
-    new_task.allocator = memory.Allocator(syscall, new_task.base.address_space)
+    new_task.allocator = memory.AllocatorClient.make_allocator(new_task.base)
     symbols: t.Dict[bytes, far.Pointer] = {}
     async for line in read_lines(async_access_describe_sock):
         key, value = line.rstrip().split(b'=', 1)
@@ -2670,6 +2673,7 @@ async def ssh_bootstrap(
     new_mount_namespace = base.MountNamespace(identifier_pid)
     new_fs_information = base.FSInformation(identifier_pid)
     new_task = Task(new_base_task, new_gateway,
+                    memory.AllocatorClient.make_allocator(new_base_task),
                     new_mount_namespace, new_fs_information,
                     # we assume ssh zeroes the sigmask before starting us
                     SignalMask(set()),

@@ -4,7 +4,8 @@ from rsyscall.far import AddressSpace, Pointer
 from rsyscall.near import SyscallInterface
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.near
-import rsyscall.far
+import rsyscall.far as far
+import trio
 import abc
 import enum
 import contextlib
@@ -108,11 +109,10 @@ class AllocatorInterface:
             yield pointers
 
     @abc.abstractmethod
-    async def malloc(self, size: int) -> t.ContextManager[Pointer]:
-        pass
+    def malloc(self, size: int) -> t.Awaitable[t.ContextManager[Pointer]]: ...
 
 class PreallocatedAllocator(AllocatorInterface):
-    def __init__(self, base_pointer: rsyscall.far.Pointer, length: int) -> None:
+    def __init__(self, base_pointer: far.Pointer, length: int) -> None:
         self.base_pointer = base_pointer
         self.length = length
         self.index = 0
@@ -125,60 +125,91 @@ class PreallocatedAllocator(AllocatorInterface):
         return contextlib.nullcontext(ret) # type: ignore
         # we don't free the memory
 
-class Allocator(AllocatorInterface):
+class Allocator:
     """A somewhat-efficient memory allocator.
 
     Perfect in its foresight, but not so bright.
     """
-    def __init__(self, syscall_interface: SyscallInterface, address_space: AddressSpace) -> None:
-        self.syscall_interface = syscall_interface
+    def __init__(self, address_space: AddressSpace) -> None:
         self.address_space = address_space
+        self.lock = trio.Lock()
         self.arenas: t.List[Arena] = []
 
     @contextlib.asynccontextmanager
-    async def bulk_malloc(self, sizes: t.List[int]) -> t.AsyncGenerator[t.List[Pointer], None]:
-        pointers: t.List[Pointer] = []
-        async with contextlib.AsyncExitStack() as stack:
-            size_index = 0
-            for arena in self.arenas:
-                alloc = arena.malloc(sizes[size_index])
-                if alloc:
-                    pointers.append(stack.enter_context(alloc))
-                    size_index += 1
-                    if size_index == len(sizes):
-                        # we finished all the allocations, yield up the pointers and return
-                        yield pointers
-                        return
-            # we hit the end of the arena and now need to allocate more for the remaining sizes:
-            rest_sizes = sizes[size_index:]
-            # let's do it in bulk:
-            remaining_size = sum(rest_sizes)
-            mapping = await AnonymousMapping.make(self.syscall_interface, self.address_space,
-                                                  align(remaining_size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
-            arena = Arena(mapping)
-            for size in rest_sizes:
-                alloc = arena.malloc(size)
-                if alloc is None:
-                    raise Exception("some kind of internal error caused a freshly created memory arena to return null for an allocation")
-                else:
-                    pointers.append(stack.enter_context(alloc))
-            yield pointers
+    async def bulk_malloc(self, syscall_interface: SyscallInterface,
+                          sizes: t.List[int]) -> t.AsyncGenerator[t.List[Pointer], None]:
+            pointers: t.List[Pointer] = []
+            async with contextlib.AsyncExitStack() as stack:
+                async with self.lock:
+                    size_index = 0
+                    for arena in self.arenas:
+                        alloc = arena.malloc(sizes[size_index])
+                        if alloc:
+                            pointers.append(stack.enter_context(alloc))
+                            size_index += 1
+                            if size_index == len(sizes):
+                                # we finished all the allocations, stop allocating
+                                break
+                    if size_index != len(sizes):
+                        # we hit the end of the arena and now need to allocate more for the remaining sizes:
+                        rest_sizes = sizes[size_index:]
+                        # let's do it in bulk:
+                        remaining_size = sum(rest_sizes)
+                        mapping = await AnonymousMapping.make(syscall_interface, self.address_space,
+                                                              align(remaining_size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
+                        arena = Arena(mapping)
+                        for size in rest_sizes:
+                            alloc = arena.malloc(size)
+                            if alloc is None:
+                                raise Exception("some kind of internal error caused a freshly created memory arena to return null for an allocation")
+                            else:
+                                pointers.append(stack.enter_context(alloc))
+                yield pointers
 
-    async def malloc(self, size: int) -> Allocation:
-        for arena in self.arenas:
-            alloc = arena.malloc(size)
-            if alloc:
-                return alloc
-        mapping = await AnonymousMapping.make(self.syscall_interface, self.address_space,
-                                              align(size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
-        arena = Arena(mapping)
-        self.arenas.append(arena)
-        result = arena.malloc(size)
-        if result is None:
-            raise Exception("some kind of internal error caused a freshly created memory arena to return null for an allocation")
-        else:
-            return result
+    async def malloc(self, syscall_interface: SyscallInterface, size: int) -> Allocation:
+        # TODO should coalesce together multiple pending mallocs waiting on the lock
+        async with self.lock:
+            for arena in self.arenas:
+                alloc = arena.malloc(size)
+                if alloc:
+                    return alloc
+            mapping = await AnonymousMapping.make(syscall_interface, self.address_space,
+                                                  align(size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
+            arena = Arena(mapping)
+            self.arenas.append(arena)
+            result = arena.malloc(size)
+            if result is None:
+                raise Exception("some kind of internal error caused a freshly created memory arena to return null for an allocation")
+            else:
+                return result
 
     async def close(self) -> None:
         for arena in self.arenas:
             await arena.close()
+
+class AllocatorClient(AllocatorInterface):
+    def __init__(self, task: far.Task, allocator: Allocator) -> None:
+        self.task = task
+        self.allocator = allocator
+        if self.task.address_space != self.allocator.address_space:
+            raise Exception("task and allocator are in different address spaces",
+                            self.task.address_space, self.allocator.address_space)
+
+    @staticmethod
+    def make_allocator(task: far.Task) -> AllocatorClient:
+        return AllocatorClient(task, Allocator(task.address_space))
+
+    def inherit(self, task: far.Task) -> AllocatorClient:
+        return AllocatorClient(task, self.allocator)
+
+    def bulk_malloc(self, sizes: t.List[int]) -> t.AsyncContextManager[t.List[Pointer]]:
+        if self.task.address_space != self.allocator.address_space:
+            raise Exception("task and allocator are in different address spaces",
+                            self.task.address_space, self.allocator.address_space)
+        return self.allocator.bulk_malloc(self.task.sysif, sizes)
+
+    def malloc(self, size: int) -> t.Awaitable[Allocation]:
+        if self.task.address_space != self.allocator.address_space:
+            raise Exception("task and allocator are in different address spaces",
+                            self.task.address_space, self.allocator.address_space)
+        return self.allocator.malloc(self.task.sysif, size)
