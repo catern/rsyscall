@@ -7315,6 +7315,16 @@ The operating (taskC,fdC) - completely unrelated.
    Meh so I can have it take the bootstrap location as a parameter.
 
    And the Nix wrapper hardcodes it.
+
+   Yeah I don't think it makes sense to have this utilities stuff.
+
+   Though I guess having a tmpdir is nice, hmm.
+
+   It would be best for those to be in a separate class.
+
+   At least the socket binder and rsyscall bootstrap and ssh, definitely.
+
+   Probably sh and rm too.
 ** next step
    Writing a Nix-daemon-running script/library thing.
 

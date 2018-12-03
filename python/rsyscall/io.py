@@ -2786,3 +2786,10 @@ local_stdtask: t.Any = None # type: ignore
 
 async def build_local_stdtask(nursery) -> StandardTask:
     return (await StandardTask.make_from_bootstrap(gather_local_bootstrap()))
+
+async def exec_cat(thread: RsyscallThread, infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> ChildTask:
+    await thread.stdtask.unshare_files()
+    await thread.stdtask.stdin.replace_with(infd)
+    await thread.stdtask.stdout.replace_with(outfd)
+    child_task = await thread.execve(thread.stdtask.filesystem.utilities.cat)
+    return child_task
