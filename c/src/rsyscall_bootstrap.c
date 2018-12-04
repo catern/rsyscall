@@ -5,33 +5,13 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdnoreturn.h>
 #include <err.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
-static char *make_private_dir() {
-    char *tmpdir;
-    tmpdir = getenv("XDG_RUNTIME_DIR");
-    if (!tmpdir) tmpdir = getenv("TMPDIR");
-    if (!tmpdir) tmpdir = "/tmp";
-    char *template;
-    if (asprintf(&template, "%s/XXXXXX", tmpdir) < 0) {
-	err(1, "asprintf");
-    };
-    char *dirname = mkdtemp(template);
-    if (!dirname) {
-	err(1, "mkdtemp");
-    }
-    return dirname;
-}
-
-static int listen_unix_socket(int dirfd, const char *name) {
-    struct sockaddr_un addr = { .sun_family = AF_UNIX, .sun_path = {} };
-    int ret = snprintf(addr.sun_path, sizeof(addr.sun_path), "/proc/self/fd/%d/%s", dirfd, name);
-    if (ret < 0) {
-	err(1, "snprintf");
-    }
+static int listen_unix_socket(const struct sockaddr_un addr) {
     int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sockfd < 0) {
 	err(1, "socket");
@@ -47,19 +27,16 @@ static int listen_unix_socket(int dirfd, const char *name) {
 
 static void socket_binder()
 {
-    char *dir = make_private_dir();
-    const int dirfd = open(dir, O_DIRECTORY|O_CLOEXEC);
-    if (dirfd < 0) err(1, "open");
-    const int datasock = listen_unix_socket(dirfd, "data");
-    dprintf(1, "%s/data\n", dir);
-    const int passsock = listen_unix_socket(dirfd, "pass");
-    dprintf(1, "%s/pass\n", dir);
-    dprintf(1, "end\n");
+    struct sockaddr_un data_addr = { .sun_family = AF_UNIX, .sun_path = "./data" };
+    const int datasock = listen_unix_socket(data_addr);
+    struct sockaddr_un pass_addr = { .sun_family = AF_UNIX, .sun_path = "./pass" };
+    const int passsock = listen_unix_socket(pass_addr);
+    dprintf(1, "done\n");
     if (close(1) < 0) err(1, "close(1)");
     const int connsock = accept4(passsock, NULL, NULL, SOCK_CLOEXEC);
     if (connsock < 0) err(1, "accept4(passsock)");
     if (close(passsock) < 0) err(1, "close(passsock)");
-    if (unlinkat(dirfd, "pass", 0) < 0) err(1, "unlinkat");
+    if (unlink("./pass") < 0) err(1, "unlink");
     union {
         struct cmsghdr hdr;
         char buf[CMSG_SPACE(sizeof(int))];
@@ -70,7 +47,7 @@ static void socket_binder()
             .cmsg_type = SCM_RIGHTS,
         },
     };
-    *((int *) CMSG_DATA(&cmsg.hdr)) = datasock;
+    memcpy(CMSG_DATA(&cmsg.hdr), &datasock, sizeof(datasock));
     char waste_data = 0;
     struct iovec io = {
         .iov_base = &waste_data,
@@ -86,22 +63,10 @@ static void socket_binder()
     };
     if (sendmsg(connsock, &msg, 0) < 0) err(1, "sendmsg(connsock=%d, {msg={datasock=%d}})", connsock, datasock);
     if (close(connsock) < 0) err(1, "close(connsock)");
-    free(dir);
-    if (close(datasock) < 0) err(1, "close(connsock)");
-    if (close(dirfd) < 0) err(1, "close(connsock)");
+    if (close(datasock) < 0) err(1, "close(datasock)");
 }
 
-static int connect_unix_socket(const char *name) {
-    int pathfd = open(name, O_PATH|O_CLOEXEC);
-    if (pathfd < 0) {
-	err(1, "open(%s, O_PATH|O_CLOEXEC)", name);
-    }
-    struct sockaddr_un addr = { .sun_family = AF_UNIX, .sun_path = {} };
-    /* TODO close pathfd! just for cleanliness. oh also it's not cloexec... */
-    int ret = snprintf(addr.sun_path, sizeof(addr.sun_path), "/proc/self/fd/%d", pathfd);
-    if (ret < 0) {
-	err(1, "snprintf");
-    }
+static int connect_unix_socket(struct sockaddr_un addr) {
     int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sockfd < 0) {
 	err(1, "socket");
@@ -119,9 +84,10 @@ static int accept_on(const int listening_sock) {
     return connsock;
 }
 
-noreturn static void bootstrap(const char* pass_sock_path, char** envp)
+noreturn static void bootstrap(char** envp)
 {
-    const int pass_conn_sock = connect_unix_socket(pass_sock_path);
+    struct sockaddr_un pass_addr = { .sun_family = AF_UNIX, .sun_path = "./pass" };
+    const int pass_conn_sock = connect_unix_socket(pass_addr);
     // receive listening socket
     union {
         struct cmsghdr hdr;
@@ -155,7 +121,8 @@ noreturn static void bootstrap(const char* pass_sock_path, char** envp)
     if (cmsg.hdr.cmsg_type != SCM_RIGHTS) {
         err(1, "Control message has wrong type");
     }
-    const int listening_sock = *((int *) CMSG_DATA(&cmsg.hdr));
+    int listening_sock;
+    memcpy(&listening_sock, CMSG_DATA(&cmsg.hdr), sizeof(listening_sock));
     // accept connections
     const int bootstrap_describe_sock = accept_on(listening_sock);
     const int describe_sock = accept_on(listening_sock);
@@ -197,6 +164,7 @@ noreturn static void bootstrap(const char* pass_sock_path, char** envp)
     if (snprintf(data_sock_str, sizeof(data_sock_str), "%d", data_sock) < 0) {
         err(1, "snprintf(data_sock_str, data_sock=%d)", data_sock);
     }
+    // TODO we should just call the rsyscall_server function directly here
     char* new_argv[] = {
         "rsyscall-server",
         // the actual arguments
@@ -210,12 +178,12 @@ noreturn static void bootstrap(const char* pass_sock_path, char** envp)
 
 int main(int argc, char** argv, char** envp)
 {
-    if (argv < 2) errx(1, "usage: %s <type> <pass_sock_path>", argv[0]);
+    if (argc < 2) errx(1, "usage: %s <type>", argv[0]);
     const char* type = argv[1];
-    if (strcmp(type, "bootstrap") == 0) {
-        const char* pass_sock_path = argv[1];
-        bootstrap(pass_sock_path, envp);
-    } else if (strcmp(type, "socket_binder") == 0) {
+    if (strcmp(type, "rsyscall") == 0) {
+        bootstrap(envp);
+    } else if (strcmp(type, "socket") == 0) {
+        socket_binder();
     } else {
         errx(1, "unknown type %s", type);
     }

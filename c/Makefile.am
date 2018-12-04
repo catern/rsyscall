@@ -14,8 +14,6 @@ pkglibexec_PROGRAMS = rsyscall-server socket-binder rsyscall-bootstrap
 rsyscall_server_SOURCES = src/rsyscall_server_main.c
 rsyscall_server_LDADD = librsyscall.la
 
-socket_binder_SOURCES = src/socket_binder.c
-
 rsyscall_bootstrap_CPPFLAGS = -DRSYSCALL_SERVER_PATH=\"$(pkglibexecdir)/rsyscall-server\"
 rsyscall_bootstrap_SOURCES = src/rsyscall_bootstrap.c
 

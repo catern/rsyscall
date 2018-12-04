@@ -184,10 +184,10 @@ async def chdir(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memo
         await raw_syscall.chdir(sysif, pathname)
 
 async def openat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
-                 path: base.Path, flags: int, mode: int) -> int:
+                 path: base.Path, flags: int, mode: int) -> near.FileDescriptor:
     logger.debug("openat(%s, %s, %s)", path, flags, mode)
     async with localize_path(gateway, allocator, path) as (dirfd, pathname):
-        return (await raw_syscall.openat(sysif, dirfd, pathname, flags, mode))
+        return near.FileDescriptor(await raw_syscall.openat(sysif, dirfd, pathname, flags, mode))
 
 async def faccessat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
                     path: base.Path, flags: int, mode: int) -> None:

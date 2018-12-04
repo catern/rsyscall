@@ -3,6 +3,8 @@ from rsyscall._raw import ffi, lib # type: ignore
 
 from rsyscall.epoll import EpollEvent, EpollEventMask
 import rsyscall.epoll
+import importlib.resources
+ssh_bootstrap_script_contents = importlib.resources.read_text('rsyscall', 'ssh_bootstrap.sh')
 
 from rsyscall.base import Pointer, RsyscallException, RsyscallHangup
 from rsyscall.base import MemoryGateway, LocalMemoryGateway, to_local_pointer
@@ -232,7 +234,7 @@ class Task:
     def make_fd(self, fd: near.FileDescriptor, file: T_file) -> FileDescriptor[T_file]:
         return FileDescriptor(self, self.base.make_fd_handle(fd), file)
 
-    async def open(self, path: base.Path, flags: int, mode=0o644) -> far.FileDescriptor:
+    async def open(self, path: base.Path, flags: int, mode=0o644) -> handle.FileDescriptor:
         """Open a path
 
         Note that this can block forever if we're opening a FIFO
@@ -240,7 +242,7 @@ class Task:
         """
         fd = await memsys.openat(self.syscall, self.gateway, self.allocator,
                                  path, flags, mode)
-        return far.FileDescriptor(self.base.fd_table, near.FileDescriptor(fd))
+        return self.base.make_fd_handle(fd)
 
     async def read(self, fd: far.FileDescriptor, count: int=4096) -> bytes:
         return (await memsys.read(self.base, self.gateway, self.allocator, fd, count))
@@ -416,6 +418,15 @@ class FileDescriptor(t.Generic[T_file_co]):
         else:
             raise Exception("file descriptor already closed")
 
+    def borrow(self, task: base.Task) -> 'FileDescriptor[T_file_co]':
+        """Disassociate the file descriptor from this object
+
+        """
+        if self.open:
+            return self.__class__(self.task, task.make_fd_handle(self.handle), self.file)
+        else:
+            raise Exception("file descriptor already closed")
+
     async def dup2(self, target: 'FileDescriptor') -> 'FileDescriptor[T_file_co]':
         """Make a copy of this file descriptor at target.number
 
@@ -436,13 +447,14 @@ class FileDescriptor(t.Generic[T_file_co]):
         await self.aclose()
         return ret
 
-    async def replace_with(self, source: far.FileDescriptor, flags=0) -> None:
-        if self.handle.far.fd_table != source.fd_table:
-            raise Exception("two fds are not in the same FDTable")
-        if self.handle.far.near == source.near:
+    async def replace_with(self, source: handle.FileDescriptor, flags=0) -> None:
+        if self.handle.task.fd_table != source.task.fd_table:
+            raise Exception("two fds are not in the same file descriptor tables",
+                            self.handle.task.fd_table, source.task.fd_table)
+        if self.handle.near == source.near:
             return
-        await far.dup3(self.task.base, source, self.handle.far, flags)
-        await far.close(self.task.base, source)
+        await source.dup3(self.handle, flags)
+        await source.invalidate()
 
     async def as_argument(self) -> int:
         # TODO unset cloexec
@@ -821,7 +833,7 @@ class Path:
             file = ReadableFile()
         fd = await memsys.openat(self.task.syscall, self.task.gateway, self.task.allocator,
                                  self.pure, flags, mode)
-        return self.task._make_fd(fd, file)
+        return self.task.make_fd(fd, file)
 
     async def open_directory(self) -> FileDescriptor[DirectoryFile]:
         return (await self.open(os.O_DIRECTORY))
@@ -832,7 +844,7 @@ class Path:
     async def creat(self, mode=0o644) -> FileDescriptor[WritableFile]:
         fd = await memsys.openat(self.task.syscall, self.task.gateway, self.task.allocator,
                                  self.pure, os.O_WRONLY|os.O_CREAT|os.O_TRUNC, mode)
-        return self.task._make_fd(fd, WritableFile())
+        return self.task.make_fd(fd, WritableFile())
 
     async def access(self, *, read=False, write=False, execute=False) -> bool:
         mode = 0
@@ -1305,9 +1317,9 @@ class StandardTask:
             task, 
             resources,
             self.process, self.filesystem, {**self.environment},
-            stdin=self.stdin,
-            stdout=self.stdout,
-            stderr=self.stderr,
+            stdin=self.stdin.borrow(task.base),
+            stdout=self.stdout.borrow(task.base),
+            stderr=self.stderr.borrow(task.base),
         )
         return RsyscallThread(stdtask, thread)
 
@@ -2425,28 +2437,37 @@ async def rsyscall_exec(
 async def run_socket_binder(
         task: StandardTask,
         ssh_command: SSHCommand,
-        socket_binder_path: bytes,
-) -> t.AsyncGenerator[t.Tuple[bytes, bytes], None]:
-    describe_pipe = await task.task.pipe()
-    async_describe = await AsyncFileDescriptor.make(task.resources.epoller, describe_pipe.rfd)
-    # TODO maybe I should have this process set PDEATHSIG so that even if we hard crash, it will exit too
-    binder_thread = await task.fork()
-    describe_write = binder_thread.stdtask.task.base.make_fd_handle(describe_pipe.wfd.handle.far)
-    await binder_thread.stdtask.stdout.replace_with(describe_write.far)
-    async with binder_thread:
-        child = await ssh_command.args([str(task.filesystem.socket_binder_path), "socket-binder"]).exec(binder_thread)
+) -> t.AsyncGenerator[bytes, None]:
+    stdout_pipe = await task.task.pipe()
+    async_stdout = await AsyncFileDescriptor.make(task.resources.epoller, stdout_pipe.rfd)
+    # TODO I should have this process set PDEATHSIG so that even if we hard crash, it will exit too
+    thread = await task.fork()
+    bootstrap_executable = await thread.stdtask.task.open(thread.stdtask.filesystem.rsyscall_bootstrap_path, os.O_RDONLY)
+    stdout = thread.stdtask.task.base.make_fd_handle(stdout_pipe.wfd.handle)
+    await stdout_pipe.wfd.handle.invalidate()
+    await thread.stdtask.unshare_files()
+    await thread.stdtask.stdout.replace_with(stdout)
+    await thread.stdtask.stdin.replace_with(bootstrap_executable)
+    async with thread:
+        child = await ssh_command.args([ssh_bootstrap_script_contents]).exec(thread)
+        # from... local?
+        # I guess this throws into sharper relief the distinction between core and module.
+        # The ssh bootstrapping stuff should come from a different class,
+        # which hardcodes the path,
+        # and which works only for local tasks.
+        # So in the meantime we'll continue to get it from task.filesystem.
+
         # sigh, openssh doesn't close its local stdout when it sees HUP/EOF on
         # the remote stdout. so we can't use EOF to signal end of our lines, and
         # instead have to have a sentinel to tell us when to stop reading.
-        lines_aiter = read_lines(async_describe)
-        data_path_bytes = await lines_aiter.__anext__()
-        pass_path_bytes = await lines_aiter.__anext__()
-        end = await lines_aiter.__anext__()
-        if end != b"end":
-            raise Exception("socket binder violated protocol")
-        await async_describe.aclose()
-        logger.info("socket binder done, got paths %s", (data_path_bytes, pass_path_bytes))
-        yield data_path_bytes, pass_path_bytes
+        lines_aiter = read_lines(async_stdout)
+        tmp_path_bytes = await lines_aiter.__anext__()
+        done = await lines_aiter.__anext__()
+        if done != b"done":
+            raise Exception("socket binder violated protocol, got instead of done:", done)
+        await async_stdout.aclose()
+        logger.info("socket bootstrap done, got tmp path %s", tmp_path_bytes)
+        yield tmp_path_bytes
         (await child.wait_for_exit()).check()
 
 async def ssh_bootstrap(
@@ -2454,10 +2475,8 @@ async def ssh_bootstrap(
         ssh_command: SSHCommand,
         # the local path we'll use for the socket
         local_socket_path: base.Path,
-        # the path of the socket on the remote host
-        data_path_bytes: bytes,
-        # the path of a socket which you can connect to to get the listening socket for data_path_bytes
-        pass_path_bytes: bytes,
+        # the directory we're bootstrapping out of
+        tmp_path_bytes: bytes,
 ) -> t.Tuple[ChildTask, StandardTask]:
     # identify local path
     task = parent_task.task
@@ -2465,9 +2484,18 @@ async def ssh_bootstrap(
     # start bootstrap and forward local socket
     bootstrap_thread = await parent_task.fork()
     bootstrap_child_task = await ssh_command.local_forward(
-        str(local_socket_path), data_path_bytes.decode(),
-    ).args([str(parent_task.filesystem.rsyscall_bootstrap_path), pass_path_bytes.decode()]).exec(bootstrap_thread)
+        str(local_socket_path), (tmp_path_bytes + b"/data").decode(),
+    ).args([f"cd {tmp_path_bytes}; ./bootstrap rsyscall"]).exec(bootstrap_thread)
+    # TODO should unlink the bootstrap after I'm done execing.
+    # it would be better if sh supported fexecve, then I could unlink it before I exec...
     # TODO TODO this is dumb! waiting for the ssh forwarding to be established!
+    # Oh, I guess we could... um...
+    # We could have a third ssh command, just for the forwarding, which just echos something when done.
+    # I feel that I'm forced into doing that, yeah.
+    # Either that or we can do it with the other bootstrap. The socket bootstrap.
+    # If we can somehow set up the forwarding after startup...
+    # Urgh, we can't send the escape character since we're sending binary data over stdin.
+    # Meh, let's continue.
     await trio.sleep(.1)
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor[UnixSocketFile]:
@@ -2569,8 +2597,8 @@ async def spawn_ssh(
         path: base.Path = task.filesystem.tmpdir/name
         local_socket_path = path
     socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
-    async with run_socket_binder(task, ssh_command, socket_binder_path) as (data_path_bytes, pass_path_bytes):
-        return (await ssh_bootstrap(task, ssh_command, local_socket_path, data_path_bytes, pass_path_bytes))
+    async with run_socket_binder(task, ssh_command, socket_binder_path) as tmp_path_bytes:
+        return (await ssh_bootstrap(task, ssh_command, local_socket_path, tmp_path_bytes))
 
 
 class RsyscallThread:

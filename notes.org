@@ -3537,6 +3537,15 @@ and if we want to increase efficiency for some task,
 we'll explicitly describe some limited protocol,
 for performing that specific task.
 so we don't have to be generic.
+** salespitch, Unix style
+   do you feel a deep joy at hearing about ucspi, pipelines, socket activation and inetd?
+
+   do you feel frustrated that so many new ways to run processes across multiple machines are cropping up
+   and inventing their own new ways to compose processes "inspired by Unix",
+   instead of just actually using the literal Unix model that works so well?
+
+   well worry no more,
+   rsyscall is here.
 * explicitly modeling memory
 how would I do this?
 
@@ -7397,3 +7406,17 @@ Though execing stdin still requires proc... wait no it won't! Because we'll be e
 connect unix socket still uses proc, but we can get rid of that too.
 
 Nice, removing that proc dependency is good.
+
+It will be nice to be able to just start up on an arbitrary host,
+it's obvious in retrospect that that is what we want.
+** working on things
+   OK so
+
+   Why is this exec from stdin thing,
+   getting an empty stdin???
+
+   Oh, that's right, I remember now, it's because I set cloexec on stdin,
+   with replace_with.
+
+   I need to do a new thing.
+   

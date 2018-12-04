@@ -81,9 +81,9 @@ async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
     logger.debug("close(%s)", fd)
     await sysif.syscall(SYS.close, fd)
 
-async def dup3(sysif: SyscallInterface, oldfd: FileDescriptor, newfd: FileDescriptor, flags: int) -> None:
+async def dup3(sysif: SyscallInterface, oldfd: FileDescriptor, newfd: FileDescriptor, flags: int) -> int:
     logger.debug("dup3(%s, %s, %d)", oldfd, newfd, flags)
-    await sysif.syscall(SYS.dup3, oldfd, newfd, flags)
+    return (await sysif.syscall(SYS.dup3, oldfd, newfd, flags))
 
 async def mmap(sysif: SyscallInterface, length: int, prot: int, flags: int,
                addr: t.Optional[Pointer]=None, 

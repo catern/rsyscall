@@ -53,7 +53,7 @@ int main()
     dprintf(1, "%s/data\n", dir);
     const int passsock = listen_unix_socket(dirfd, "pass");
     dprintf(1, "%s/pass\n", dir);
-    dprintf(1, "end\n");
+    dprintf(1, "done\n");
     if (close(1) < 0) err(1, "close(1)");
     const int connsock = accept4(passsock, NULL, NULL, SOCK_CLOEXEC);
     if (connsock < 0) err(1, "accept4(passsock)");

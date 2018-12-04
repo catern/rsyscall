@@ -85,6 +85,11 @@ class FileDescriptor:
         handles.remove(self)
         return handles
 
+    def _invalidate_all_existing_handles(self) -> None:
+        for handle in fd_table_to_near_to_handles[self.task.fd_table][self.near]:
+            handle.valid = False
+        del fd_table_to_near_to_handles[self.task.fd_table][self.near]
+
     def __del__(self) -> None:
         if self.valid:
             if len(self._remove_from_tracking()) == 0:
@@ -114,15 +119,30 @@ class FileDescriptor:
                                           self.task.to_near_pointer(buf), count))
 
     async def ftruncate(self, length: int) -> None:
+        if not self.valid:
+            raise Exception("handle is no longer valid")
         await rsyscall.near.ftruncate(self.task.sysif, self.near, length)
 
     async def mmap(self, length: int, prot: int, flags: int,
                    addr: t.Optional[rsyscall.far.Pointer]=None, offset: int=0,
     ) -> rsyscall.far.MemoryMapping:
+        if not self.valid:
+            raise Exception("handle is no longer valid")
         ret = await rsyscall.near.mmap(self.task.sysif, length, prot, flags,
                                        self.task.to_near_pointer(addr) if addr else None,
                                        self.near, offset)
         return rsyscall.far.MemoryMapping(self.task.address_space, ret)
+
+    # oldfd has to be a valid file descriptor. newfd is not, technically, required to be
+    # open, but that's the best practice for avoiding races, so we require it anyway here.
+    async def dup3(self, newfd: FileDescriptor, flags: int) -> FileDescriptor:
+        if not self.valid:
+            raise Exception("handle is no longer valid")
+        newfd_near = self.task.to_near_fd(newfd.far)
+        # we take responsibility here for closing newfd (which we're doing through dup3)
+        newfd._invalidate_all_existing_handles()
+        await rsyscall.near.dup3(self.task.sysif, self.near, newfd_near, flags)
+        return self.task.make_fd_handle(newfd_near)
 
 
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
