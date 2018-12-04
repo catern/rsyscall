@@ -7234,3 +7234,166 @@ The operating (taskC,fdC) - completely unrelated.
    Meh so I can have it take the bootstrap location as a parameter.
 
    And the Nix wrapper hardcodes it.
+** next step
+   Writing a Nix-daemon-running script/library thing.
+
+   Considering doing it makes me realize that self-bootstrap is very important.
+   Depending on the bootstrap to exist on the other side is lame.
+   So let's just figure out a way to run where,
+   we don't have that dependency on already being deployed on the other side.
+
+
+   Maybe have a small shell snippet?
+   Which takes the executable from stdin and runs it?
+
+   fexecve would be nice here :)
+   But that's not an option I guess.
+   We have to have something on disk.
+
+   Is there some way I can manage to call exec on a binary I supply,
+   without a dependency on anything in the filesystem?
+
+   Yes: execveat.
+   But, then I have another problem: How do I call execveat?
+
+   hey #openssh, so, with execveat and memfd_create on Linux,
+   I can exec into a (static) binary of my creation without touching the filesystem.
+
+   I want to be able to bootstrap into a static binary of my creation,
+   over ssh,
+   without touching the filesystem.
+
+   If I could call execveat and memfd_create from sh,
+   then this would work.
+   But I can't.
+   Any ideas?
+
+   Hey #openssh, I want to run a static "bootstrap binary" on a remote host over ssh,
+   which will talk to m
+
+   Oh, I already have a dependence on the filesystem. Dang.
+   From socketbinder...
+
+   I could exec a heredoc :)
+
+   Haha, yes! I can just do that! Awesome!
+
+#+BEGIN_SRC bash
+exec {fd}<<<foo; cat >/dev/fd/$fd; chmod +x /dev/fd/$fd; exec /dev/fd/$fd
+#+END_SRC   
+
+OK so I do this and...
+
+Hmm...
+
+How do I preserve stdin for interactive use?
+
+I can do this for socket-binder,
+and it just works,
+very naturally.
+
+But not the rsyscall bootstrap, hmm.
+
+I guess I could have a single bootstrap.
+
+Er hmm.
+
+I could embed the binary on the command line?
+
+Then use that to connect to the socket path and exec?
+
+Bah...
+
+I already have the filesystem dependence one I've got the socket binder.
+
+I'll just have the socket binder contain the stage 2 bootstrap as well.
+
+Which...
+I guess I can copy into the filesystem tmpdir place.
+
+OK, so that's the next step for me:
+Hacking together this static binary ssh bootstrapping thing.
+
+hmm, depending on bash does seem bad though.
+
+we depend on cat and chmod
+
+OK, I reduced the dependency to just POSIX sh + cat + chmod + mktemp.
+That should be minimal enough.
+
+Now let's make that static binary.
+
+Note that it also must contain the rsyscall server. Hmm.
+
+I guess we were talking before about the rsyscall server being a static binary,
+embedded into the library.
+
+I don't think we want the socket_binder to itself also be the rsyscall bootstrap.
+
+We'll pass it its own fd number as an arg I guess,
+so it can search its binary...
+
+Or, really, everything should be linked into memory, so maybe we don't need that.
+
+hm mmm
+
+if we had true ssh control,
+we could do it all at once:
+stream the binary over on a higher fd,
+then exec into the right thing.
+
+but, we don't, and that will make us less portable,
+so let's continue not having it
+
+OK, so I guess we could in fact do the two-stage bootstrap in a single binary.
+
+We stream it over, then we copy it out and save it as "bootstrap".
+That invocation causes it to do the second stage of the bootstrapping.
+
+Seems good.
+
+I guess we could have the shell script do the temp dir creation...
+
+Well, it won't take XDG_RUNTIME_DIR into account.
+But I suppose I could do it manually.
+
+Oh that won't allow for long-path unix sockets.
+
+Oh, well, yes it will, I just have to open the dirfd.
+
+Oh, I can't use long-path Unix sockets anyway.
+Because ssh doesn't support forwarding them.
+Drat.
+
+Well, it could be patched to support it at some point, shrug.
+
+OK, so yeah, let's have the shell script do the temp dir creation.
+Hmm, will it also print it?
+
+Yes, I guess.
+We'll print the temp dir location.
+
+Oh, we can only actually do it once the bind is done.
+So I guess it will print the executable path.
+
+Nah, we'll just copy it twice.
+
+Or, I guess we could do a linkat.
+
+No we can't do a linkat.
+Let's just copy it, it's not a major thing.
+
+Ugh, but I don't want to write that loop.
+Let's not then.
+
+Let's indeed have the shell script make the tempdir.
+And change directory to it, I guess?
+
+Then we don't have to open it, which is nice.
+It also removes that specific dependence on /proc.
+
+Though execing stdin still requires proc... wait no it won't! Because we'll be execing something in the filesystem!
+
+connect unix socket still uses proc, but we can get rid of that too.
+
+Nice, removing that proc dependency is good.

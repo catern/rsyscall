@@ -10,8 +10,88 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+static char *make_private_dir() {
+    char *tmpdir;
+    tmpdir = getenv("XDG_RUNTIME_DIR");
+    if (!tmpdir) tmpdir = getenv("TMPDIR");
+    if (!tmpdir) tmpdir = "/tmp";
+    char *template;
+    if (asprintf(&template, "%s/XXXXXX", tmpdir) < 0) {
+	err(1, "asprintf");
+    };
+    char *dirname = mkdtemp(template);
+    if (!dirname) {
+	err(1, "mkdtemp");
+    }
+    return dirname;
+}
 
-int connect_unix_socket(const char *name) {
+static int listen_unix_socket(int dirfd, const char *name) {
+    struct sockaddr_un addr = { .sun_family = AF_UNIX, .sun_path = {} };
+    int ret = snprintf(addr.sun_path, sizeof(addr.sun_path), "/proc/self/fd/%d/%s", dirfd, name);
+    if (ret < 0) {
+	err(1, "snprintf");
+    }
+    int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+	err(1, "socket");
+    }
+    if (bind(sockfd, &addr, sizeof(addr)) < 0) {
+	err(1, "bind");
+    }
+    if (listen(sockfd, 10) < 0) {
+	err(1, "listen");
+    }
+    return sockfd;
+}
+
+static void socket_binder()
+{
+    char *dir = make_private_dir();
+    const int dirfd = open(dir, O_DIRECTORY|O_CLOEXEC);
+    if (dirfd < 0) err(1, "open");
+    const int datasock = listen_unix_socket(dirfd, "data");
+    dprintf(1, "%s/data\n", dir);
+    const int passsock = listen_unix_socket(dirfd, "pass");
+    dprintf(1, "%s/pass\n", dir);
+    dprintf(1, "end\n");
+    if (close(1) < 0) err(1, "close(1)");
+    const int connsock = accept4(passsock, NULL, NULL, SOCK_CLOEXEC);
+    if (connsock < 0) err(1, "accept4(passsock)");
+    if (close(passsock) < 0) err(1, "close(passsock)");
+    if (unlinkat(dirfd, "pass", 0) < 0) err(1, "unlinkat");
+    union {
+        struct cmsghdr hdr;
+        char buf[CMSG_SPACE(sizeof(int))];
+    } cmsg = {
+        .hdr = {
+            .cmsg_len = CMSG_LEN(sizeof(int)),
+            .cmsg_level = SOL_SOCKET,
+            .cmsg_type = SCM_RIGHTS,
+        },
+    };
+    *((int *) CMSG_DATA(&cmsg.hdr)) = datasock;
+    char waste_data = 0;
+    struct iovec io = {
+        .iov_base = &waste_data,
+        .iov_len = sizeof(waste_data),
+    };
+    struct msghdr msg = {
+        .msg_name = NULL,
+        .msg_namelen = 0,
+        .msg_iov = &io,
+        .msg_iovlen = 1,
+        .msg_control = &cmsg,
+        .msg_controllen = sizeof(cmsg),
+    };
+    if (sendmsg(connsock, &msg, 0) < 0) err(1, "sendmsg(connsock=%d, {msg={datasock=%d}})", connsock, datasock);
+    if (close(connsock) < 0) err(1, "close(connsock)");
+    free(dir);
+    if (close(datasock) < 0) err(1, "close(connsock)");
+    if (close(dirfd) < 0) err(1, "close(connsock)");
+}
+
+static int connect_unix_socket(const char *name) {
     int pathfd = open(name, O_PATH|O_CLOEXEC);
     if (pathfd < 0) {
 	err(1, "open(%s, O_PATH|O_CLOEXEC)", name);
@@ -32,17 +112,15 @@ int connect_unix_socket(const char *name) {
     return sockfd;
 }
 
-int accept_on(const int listening_sock) {
+static int accept_on(const int listening_sock) {
     // no cloexec because we want to pass these down
     const int connsock = accept4(listening_sock, NULL, NULL, 0);
     if (connsock < 0) err(1, "accept4(listening_sock=%d)", listening_sock);
     return connsock;
 }
 
-int main(int argc, char** argv, char** envp)
+noreturn static void bootstrap(const char* pass_sock_path, char** envp)
 {
-    if (argc != 2) errx(1, "usage: rsyscall_bootstrap <pass_sock_path>");
-    const char* pass_sock_path = argv[1];
     const int pass_conn_sock = connect_unix_socket(pass_sock_path);
     // receive listening socket
     union {
@@ -128,4 +206,17 @@ int main(int argc, char** argv, char** envp)
     };
     execve(RSYSCALL_SERVER_PATH, new_argv, envp);
     err(1, "exec(" RSYSCALL_SERVER_PATH ", NULL, envp)");
+}
+
+int main(int argc, char** argv, char** envp)
+{
+    if (argv < 2) errx(1, "usage: %s <type> <pass_sock_path>", argv[0]);
+    const char* type = argv[1];
+    if (strcmp(type, "bootstrap") == 0) {
+        const char* pass_sock_path = argv[1];
+        bootstrap(pass_sock_path, envp);
+    } else if (strcmp(type, "socket_binder") == 0) {
+    } else {
+        errx(1, "unknown type %s", type);
+    }
 }
