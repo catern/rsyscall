@@ -624,7 +624,33 @@ class EpollWaiter:
                     received_events = await self.wait(maxevents=32, timeout=0)
                     if len(received_events) == 0:
                         await self.wait_readable()
-                        received_events = await self.wait(maxevents=32, timeout=-1)
+                        # Note that we are not actually guaranteed to get some events here!  epoll
+                        # has an annoying behavior where, e.g., if a file descriptor A registered
+                        # with EPOLLIN on epollfd X becomes readable, then epollfd X will be marked
+                        # as readable. But if A is read to EAGAIN before epoll_wait(X), then no
+                        # event will be delivered for A. Therefore, we have to epoll_wait in a
+                        # non-blocking way.
+
+                        # If you think about it, this is really just the same policy that we have to
+                        # use for all non-blocking FDs. We always read them in a non-blocking way,
+                        # since we're relying on epoll to do the blocking. We just have to make sure
+                        # to do the same for epoll itself, when we're relying on yet another layer
+                        # above epoll to do the blocking.
+
+                        # Double argh!
+                        # If we enter this do_wait,
+                        # and wait_readable is called,
+                        # er...
+                        # right, if we enter this do_wait,
+                        # and we're waiting on something,
+                        # which has already been flushed away by another waiter...
+                        # we deadlock!
+                        # argh, that's something that would be fixed by a background thread.
+                        # but I reject background threads!
+                        # so how do we fix this right?
+                        # baaah
+                        # is this really a problem? let's think some more.
+                        received_events = await self.wait(maxevents=32, timeout=0)
                 else:
                     received_events = await self.wait(maxevents=32, timeout=-1)
                 for event in received_events:
@@ -2446,6 +2472,9 @@ async def run_socket_binder(
     stdout = thread.stdtask.task.base.make_fd_handle(stdout_pipe.wfd.handle)
     await stdout_pipe.wfd.handle.invalidate()
     await thread.stdtask.unshare_files()
+    # TODO we are relying here on the fact that replace_with doesn't set cloexec on the new fd.
+    # maybe we should explicitly list what we want to pass down...
+    # or no, let's tag things as inheritable, maybe?
     await thread.stdtask.stdout.replace_with(stdout)
     await thread.stdtask.stdin.replace_with(bootstrap_executable)
     async with thread:
@@ -2485,7 +2514,7 @@ async def ssh_bootstrap(
     bootstrap_thread = await parent_task.fork()
     bootstrap_child_task = await ssh_command.local_forward(
         str(local_socket_path), (tmp_path_bytes + b"/data").decode(),
-    ).args([f"cd {tmp_path_bytes}; ./bootstrap rsyscall"]).exec(bootstrap_thread)
+    ).args([f"cd {tmp_path_bytes.decode()}; ./bootstrap rsyscall"]).exec(bootstrap_thread)
     # TODO should unlink the bootstrap after I'm done execing.
     # it would be better if sh supported fexecve, then I could unlink it before I exec...
     # TODO TODO this is dumb! waiting for the ssh forwarding to be established!
@@ -2529,6 +2558,7 @@ async def ssh_bootstrap(
     environ_tag = await bootstrap_describe_buf.read_line()
     if environ_tag != b"environ":
         raise Exception("expected to start reading the environment, instead got", environ_tag)
+    print("HELLO reading environ now", remote_syscall_fd, remote_data_fd)
     environ: t.Dict[bytes, bytes] = {}
     while True:
         environ_elem = await bootstrap_describe_buf.read_netstring()
@@ -2597,7 +2627,7 @@ async def spawn_ssh(
         path: base.Path = task.filesystem.tmpdir/name
         local_socket_path = path
     socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
-    async with run_socket_binder(task, ssh_command, socket_binder_path) as tmp_path_bytes:
+    async with run_socket_binder(task, ssh_command) as tmp_path_bytes:
         return (await ssh_bootstrap(task, ssh_command, local_socket_path, tmp_path_bytes))
 
 

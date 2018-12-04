@@ -3466,12 +3466,84 @@ hmm, actually it just occurred to me that this question is essentially the same 
    it doesn't seem to do a futex wakeup.
 
    Didn't yet check whether the address is cleared or not - probably not.
+
+   Oh, this is probably due to the number of mm owners being 1.
+   It skips the wakeup in that case. Infuriatingly...
 ** (possibly creates userspace bugs) munmap works differently on hugetlb files
    This means that if I control the file that some userspace program mmaps,
    I can ensure that their later munmap will fail.
 
    That seems at least good enough for a denial of service,
    and possibly could even cause security problems.
+** epoll with EPOLLET doesn't report up-edges if the down-edge has already happened
+   I bet epoll doesn't actually send me every edge.
+
+   I guess I can test this.
+   
+   blaaah
+
+   argh this makes sense, and it applies even more clearly for level triggered
+   if the epollfd is readable, and then it's not readable, i'll be screwed.
+
+   nesting epolls doesn't really work
+
+
+   aaargh
+
+   so the scenario is as follows:
+
+   add readable pipe fd to epollfd with EPOLLIN|EPOLLET
+   select() or poll() or nested-epoll on the epollfd, see that the epollfd is readable
+   read from pipe fd until EAGAIN
+   read from epollfd, get no events, boo!
+
+   ok whatever i guess this can also happen with signalfd
+
+   couldn't fixing it cause bugs?
+
+   after all...
+
+   if in response to an epoll readability notification,
+   you perform a blocking read on a pipe FD A,
+   as is currently safe...
+
+   so, the fix would make it so that,
+   if you add stream socket FD A to an epollfd (with EPOLLIN|EPOLLET),
+   then the FD becomes readable,
+   and you happen to perform a nonblocking read to flush anything remaining in the pipe buffer,
+   then the next time you wait on the epollfd, with a fix, you would get an EPOLLIN event.
+
+   without the fix, getting the EPOLLIN event means it's safe to perform a *blocking* read,
+   so you might go ahead and do that,
+   and then deadlock.
+
+   the people in #kernelnewbies said to report a bug so I guess I will
+
+> argh
+> epollfd has an annoying behavior where if an FD registered on it becomes readable, the epollfd will indicates as readable when checked with select/poll/another epoll instance...
+> but if the FD is read to EAGAIN before the epollfd is epoll_waited on, you won't actually get an event for it, and the epoll_wait will block
+<sarnold> that sounds squarely in the "do not do that" category to me
+> well - I would expect that if an fd A is marked as readable, that performing seemingly totally separate operations before "reading" fd A, would not cause fd A to longer be readable
+> but thinking about it, I guess you could probably get a similar behavior from signalfd if you unblocked the signals it's monitoring before reading it
+> but I still think it's pretty weird for EPOLLET to effectively drop events - my mental model for epoll in edge-triggered mode was that I'm getting a stream of *all* the edges
+> not just the edges that happen to be "visible" at the time I epoll_wait
+<ukleinek> catern: sounds like a bug to me
+> (I seem to also recall reading, possibly in some manpage or maybe TLPI, that when readability is indicated on an FD, it's safe to perform at least one blocking read, though maybe that's only for pipe/stream sockets... bah)
+> pipes*
+> ukleinek: well... I worry that fixing it could cause bugs, in fact
+<ukleinek> catern: escalate it to the right maintainer?
+> hmm, who would be the right maintainer for epoll? it isn't listed in MAINTAINERS
+> I guess I'd just send it to lkml, linux-api, and CC some people who've recently touched epoll?
+<derRichard> catern: btw: did you check https://idea.popcount.org/2017-02-20-epoll-is-fundamentally-broken-12/?
+<derRichard> maybe it covers your case
+<derRichard> epoll is very hard to use right
+<derRichard> it is full of pitfalls
+> yes, I saw it, and I disagree with that article :)
+> IMO it's perfectly straightforward to use if you use EPOLLET and you don't try to rely on auto-closing
+> you just have to have a proper ownership model, so that fds registered on epoll can't be closed without going through epoll
+<derRichard> yeah
+<derRichard> and if you know that, you better report a bug
+
 * design decisions
 ** TODO should we grab the Task out of other objects, or pass it explicitly?
    Consider RsyscallTask.make as an example.
@@ -7419,4 +7491,65 @@ it's obvious in retrospect that that is what we want.
    with replace_with.
 
    I need to do a new thing.
-   
+
+   Ugh what a nightmare.
+
+   I'll just ignore the issue and stop setting cloexec.
+
+   I think some kind of set-inheritable API is nicer anyway.
+** epoll problems
+   OK so if we non-blocking epoll_wait and get nothing,
+   then someone else runs and picks up an event so it doesn't go through epoll,
+   then we wait_readable,
+   we can block forever in wait_readable,
+   even though we were waiting for the event that is already picked up.
+
+   Annoying.
+
+   so yeah.
+
+   Hmm, this is kind of a major issue with an "eager" epoll strategy.
+
+   If I ever "eagerly" look for events,
+   I'll run into this.
+
+   So if I instead just go straight to the blocking thing...
+
+   Right, so, the issue is, I'm someone monitoring some event source.
+   And my code allows for multiple people to look at that event source,
+   and even eagerly pull events out of it.
+
+   And if one of my threads is blocked in epoll while I do that,
+   it won't be woken up.
+
+   Since the event won't show up through epoll.
+
+   Specifically...
+   One of my threads could be suspended, about to epoll again.
+   Or it could be selecting on epoll.
+
+   In either case, there's a window for another thread to pluck the event before it actually is visible in epoll.
+
+   Hmmm.
+
+   A thread could be woken up for something else,
+   and go back to blocking on epoll without first checking for the event.
+
+   Hmm, but perhaps it should check for the event rather than block on epoll?
+
+   I guess if the notion is,
+   we receive neg-edges from EAGAIN,
+   we can also receive pos-edges from successful reads.
+
+   Aha, then this behavior is fine.
+
+   I just need to make sure to catch posedges outside epoll.
+
+   Hmm, how to structure that?
+
+   posedges!
+   Hm!!!!
+
+   Hmm!!
+
+   HMMMMM!!!!

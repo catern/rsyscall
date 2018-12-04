@@ -171,9 +171,10 @@ noreturn static void bootstrap(char** envp)
         describe_sock_str, syscall_sock_str, syscall_sock_str,
         // passedfd arguments
         describe_sock_str, syscall_sock_str, data_sock_str,
+        0,
     };
     execve(RSYSCALL_SERVER_PATH, new_argv, envp);
-    err(1, "exec(" RSYSCALL_SERVER_PATH ", NULL, envp)");
+    err(1, "exec(" RSYSCALL_SERVER_PATH ", new_argv=%p, envp=%p)", new_argv, envp);
 }
 
 int main(int argc, char** argv, char** envp)

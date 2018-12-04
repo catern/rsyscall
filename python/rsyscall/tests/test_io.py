@@ -410,6 +410,12 @@ class TestIO(unittest.TestCase):
                 async with (await stdtask.mkdtemp()) as local_tmpdir:
                     async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
                         remote_path = remote_tmpdir/"file"
+                        # why is an exception here causing a permanent block?
+                        # it seems to be taking an already-took lock.
+                        # if I don't fix this, debugging will be hard
+                        # it'll be like searching for typos in a punch card
+                        # aaaaaaieee!!! it's non-deterministic!
+                        # hm!
                         remote_file = await remote_path.open(os.O_RDWR)
                         # hmm note that it's important not to mkdtemp
                         # from the threads otherwise things will break

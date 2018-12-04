@@ -10,7 +10,7 @@ librsyscall_la_SOURCES = src/rsyscall.c src/rsyscall_x86_64.S
 include_HEADERS = src/rsyscall.h
 
 # Programs
-pkglibexec_PROGRAMS = rsyscall-server socket-binder rsyscall-bootstrap
+pkglibexec_PROGRAMS = rsyscall-server rsyscall-bootstrap
 rsyscall_server_SOURCES = src/rsyscall_server_main.c
 rsyscall_server_LDADD = librsyscall.la
 
