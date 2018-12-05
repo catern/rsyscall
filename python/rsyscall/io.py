@@ -665,8 +665,9 @@ class EpollWaiter:
         localbuf = bytearray(bufsize)
         with await self.remote_new.memory_allocator.malloc(bufsize) as events_ptr:
             count = await self.epfd.wait(events_ptr, maxevents, timeout)
-            await self.remote_new.memory_gateway.memcpy(
-                to_local_pointer(localbuf), events_ptr, bufsize)
+            with trio.open_cancel_scope(shield=True):
+                await self.remote_new.memory_gateway.memcpy(
+                    to_local_pointer(localbuf), events_ptr, bufsize)
         ret: t.List[EpollEvent] = []
         cur = 0
         for _ in range(count):
@@ -689,8 +690,10 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
         self.epolled = epolled
         self.underlying = underlying
         self.running_wait: t.Optional[trio.Event] = None
-        self.is_readable = False
-        self.is_writable = False
+        # we assume that when we add the fd, it's readable and writable.
+        # this seems to be required but I can't tell why
+        self.is_readable = True
+        self.is_writable = True
         self.read_hangup = False
         self.priority = False
         self.error = False
@@ -698,8 +701,10 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
 
     async def _wait_once(self):
         if self.running_wait is not None:
+            logger.info("waiting on wait", self.underlying)
             await self.running_wait.wait()
         else:
+            logger.info("doing wait myself %s", self.underlying)
             running_wait = trio.Event()
             self.running_wait = running_wait
             try:
@@ -716,34 +721,36 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 running_wait.set()
 
     async def read(self: 'AsyncFileDescriptor[ReadableFile]', count: int=4096) -> bytes:
-        # TODO our program is mostly passive, we should start by epoll waiting first...
-        # except we can't do that, because
         while True:
+            while not (self.is_readable or self.read_hangup or self.hangup or self.error):
+                logger.info("waiting on %s", self.underlying)
+                await self._wait_once()
+            logger.info("reading %s", self.underlying)
             try:
                 return (await self.underlying.read(count))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
+                    logger.info("eagain on %s", self.underlying)
                     self.is_readable = False
-                    while not (self.is_readable or self.read_hangup or self.hangup or self.error):
-                        await self._wait_once()
                 else:
                     raise
 
     async def read_raw(self, sysif: near.SyscallInterface, fd: near.FileDescriptor, pointer: near.Pointer, count: int) -> int:
         while True:
+            while not (self.is_readable or self.read_hangup or self.hangup or self.error):
+                await self._wait_once()
             try:
                 return (await near.read(sysif, fd, pointer, count))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    logging.info("got eagain and waiting")
                     self.is_readable = False
-                    while not (self.is_readable or self.read_hangup or self.hangup or self.error):
-                        await self._wait_once()
                 else:
                     raise
 
     async def write(self: 'AsyncFileDescriptor[WritableFile]', buf: bytes) -> None:
         while len(buf) > 0:
+            while not (self.is_writable or self.error):
+                await self._wait_once()
             try:
                 written = await self.underlying.write(buf)
                 buf = buf[written:]
@@ -752,13 +759,13 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                     # TODO this is not really quite right if it's possible to concurrently call methods on this object.
                     # we really need to lock while we're making the async call, right? maybe...
                     self.is_writable = False
-                    while not (self.is_writable or self.error):
-                        await self._wait_once()
                 else:
                     raise
 
     async def write_raw(self, sysif: near.SyscallInterface, fd: near.FileDescriptor, pointer: near.Pointer, count: int) -> int:
         while True:
+            while not (self.is_writable or self.error):
+                await self._wait_once()
             try:
                 return (await near.write(sysif, fd, pointer, count))
             except OSError as e:
@@ -766,21 +773,19 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                     # TODO this is not really quite right if it's possible to concurrently call methods on this object.
                     # we really need to lock while we're making the async call, right? maybe...
                     self.is_writable = False
-                    while not (self.is_writable or self.error):
-                        await self._wait_once()
                 else:
                     raise
 
     async def accept(self: 'AsyncFileDescriptor[SocketFile[T_addr]]', flags: int=lib.SOCK_CLOEXEC
     ) -> t.Tuple[FileDescriptor[SocketFile[T_addr]], T_addr]:
         while True:
+            while not (self.is_readable or self.hangup):
+                await self._wait_once()
             try:
                 return (await self.underlying.accept(flags))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
                     self.is_readable = False
-                    while not (self.is_readable or self.hangup):
-                        await self._wait_once()
                 else:
                     raise
 
@@ -1455,7 +1460,15 @@ class SignalQueue:
         return cls(signal_block, async_sigfd)
 
     async def read(self) -> t.Any:
-        data = await self.sigfd.read()
+        print("CALLING READ ON SIGNALQUEUE", self.sigfd.underlying)
+        try:
+            data = await self.sigfd.read()
+        except:
+            # I sense concurrency exception cancellation fuckery
+            logger.exception("EXCEPTIONING FROM READ ON SIGNALQUEUE %s", self.sigfd.underlying)
+            raise
+        else:
+            print("RETURNING FROM READ ON SIGNALQUEUE", self.sigfd.underlying)
         # TODO need to return this data in some more parsed form
         return ffi.cast('struct signalfd_siginfo*', ffi.from_buffer(data))
 
@@ -1925,7 +1938,7 @@ class ChildConnection(base.SyscallInterface):
         self.server_task = server_task
         self.futex_task = futex_task
         self.identifier_process = self.server_task.process.near
-        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{int(self.server_task.process)}")
+        self.logger = logging.getLogger(f"rsyscall.ChildConnection.{int(self.server_task.process)}")
         self.request_lock = trio.Lock()
         self.response_fifo_lock = trio.StrictFIFOLock()
         self.infd: handle.FileDescriptor
@@ -1943,63 +1956,67 @@ class ChildConnection(base.SyscallInterface):
         await self.tofd.aclose()
         await self.fromfd.aclose()
 
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+    async def _write_syscall_request(self, number: int,
+                                     arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> None:
+        request = ffi.new('struct rsyscall_syscall*',
+                          (number, (arg1, arg2, arg3, arg4, arg5, arg6)))
         try:
-            result = await self._syscall(
+            await self.tofd.write(bytes(ffi.buffer(request)))
+        except OSError as e:
+            # we raise a different exception so that users can distinguish syscall errors from
+            # transport errors
+            raise RsyscallException() from e
+
+    async def _read_syscall_response(self) -> int:
+        response: int
+        async with trio.open_nursery() as nursery:
+            async def read_response() -> None:
+                nonlocal response
+                try:
+                    response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
+                except OSError as e:
+                    raise RsyscallException() from e
+                if len(response_bytes) == 0:
+                    # we catch this in the implementations of exec and exit
+                    raise RsyscallHangup()
+                response, = struct.unpack('q', response_bytes)
+                raise_if_error(response)
+                nursery.cancel_scope.cancel()
+            async def server_exit() -> None:
+                # meaning the server exited
+                await self.server_task.wait_for_exit()
+                raise ChildExit()
+            async def futex_exit() -> None:
+                if self.futex_task is not None:
+                    # meaning the server called exec or exited; we don't
+                    # wait to see which one.
+                    await self.futex_task.wait_for_exit()
+                    raise MMRelease()
+            nursery.start_soon(read_response)
+            nursery.start_soon(server_exit)
+            nursery.start_soon(futex_exit)
+        return response
+
+    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        async with self.request_lock:
+            await self._write_syscall_request(
                 number,
                 arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
                 arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+        try:
+            # we must not be interrupted while reading the response - we need to
+            # return the response so that our parent can deal with the state change
+            # we created.
+            with trio.open_cancel_scope(shield=True):
+                async with self.response_fifo_lock:
+                    result = await self._read_syscall_response()
         except Exception as exn:
             self.logger.debug("%s -> %s", number, exn)
             raise
         else:
             self.logger.debug("%s -> %s", number, result)
             return result
-
-    async def _syscall(self, number: int, arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> int:
-        request = ffi.new('struct rsyscall_syscall*',
-                          (number, (arg1, arg2, arg3, arg4, arg5, arg6)))
-        async with self.request_lock:
-            try:
-                await self.tofd.write(bytes(ffi.buffer(request)))
-            except OSError as e:
-                # we raise a different exception so that users can distinguish syscall errors from
-                # transport errors
-                raise RsyscallException() from e
-        # we must not be interrupted while reading the response - we need to
-        # return the response so that our parent can deal with the state change
-        # we created.
-        with trio.open_cancel_scope(shield=True):
-            async with self.response_fifo_lock:
-                response: int
-                async with trio.open_nursery() as nursery:
-                    async def read_response() -> None:
-                        nonlocal response
-                        try:
-                            response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
-                        except OSError as e:
-                            raise RsyscallException() from e
-                        if len(response_bytes) == 0:
-                            # we catch this in the implementations of exec and exit
-                            raise RsyscallHangup()
-                        response, = struct.unpack('q', response_bytes)
-                        raise_if_error(response)
-                        nursery.cancel_scope.cancel()
-                    async def server_exit() -> None:
-                        # meaning the server exited
-                        await self.server_task.wait_for_exit()
-                        raise ChildExit()
-                    async def futex_exit() -> None:
-                        if self.futex_task is not None:
-                            # meaning the server called exec or exited; we don't
-                            # wait to see which one.
-                            await self.futex_task.wait_for_exit()
-                            raise MMRelease()
-                    nursery.start_soon(read_response)
-                    nursery.start_soon(server_exit)
-                    nursery.start_soon(futex_exit)
-            return response
 
 class RsyscallInterface(base.SyscallInterface):
     """An rsyscall connection to a task that is not our child.
@@ -2791,5 +2808,5 @@ async def exec_cat(thread: RsyscallThread, infd: handle.FileDescriptor, outfd: h
     await thread.stdtask.unshare_files()
     await thread.stdtask.stdin.replace_with(infd)
     await thread.stdtask.stdout.replace_with(outfd)
-    child_task = await thread.execve(thread.stdtask.filesystem.utilities.cat)
+    child_task = await thread.execve(thread.stdtask.filesystem.utilities.cat, ["cat"]) # type: ignore
     return child_task
