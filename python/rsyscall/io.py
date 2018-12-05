@@ -1,5 +1,6 @@
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
+import traceback
 
 from rsyscall.epoll import EpollEvent, EpollEventMask
 import rsyscall.epoll
@@ -692,8 +693,8 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
         self.running_wait: t.Optional[trio.Event] = None
         # we assume that when we add the fd, it's readable and writable.
         # this seems to be required but I can't tell why
-        self.is_readable = True
-        self.is_writable = True
+        self.is_readable = False
+        self.is_writable = False
         self.read_hangup = False
         self.priority = False
         self.error = False
@@ -701,10 +702,8 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
 
     async def _wait_once(self):
         if self.running_wait is not None:
-            logger.info("waiting on wait", self.underlying)
             await self.running_wait.wait()
         else:
-            logger.info("doing wait myself %s", self.underlying)
             running_wait = trio.Event()
             self.running_wait = running_wait
             try:
@@ -720,20 +719,23 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 self.running_wait = None
                 running_wait.set()
 
+    async def read_nonblock(self: 'AsyncFileDescriptor[ReadableFile]', count: int=4096) -> t.Optional[bytes]:
+        try:
+            return (await self.underlying.read(count))
+        except OSError as e:
+            if e.errno == errno.EAGAIN:
+                self.is_readable = False
+                return None
+            else:
+                raise
+
     async def read(self: 'AsyncFileDescriptor[ReadableFile]', count: int=4096) -> bytes:
         while True:
             while not (self.is_readable or self.read_hangup or self.hangup or self.error):
-                logger.info("waiting on %s", self.underlying)
                 await self._wait_once()
-            logger.info("reading %s", self.underlying)
-            try:
-                return (await self.underlying.read(count))
-            except OSError as e:
-                if e.errno == errno.EAGAIN:
-                    logger.info("eagain on %s", self.underlying)
-                    self.is_readable = False
-                else:
-                    raise
+            data = await self.read_nonblock()
+            if data is not None:
+                return data
 
     async def read_raw(self, sysif: near.SyscallInterface, fd: near.FileDescriptor, pointer: near.Pointer, count: int) -> int:
         while True:
@@ -1460,16 +1462,7 @@ class SignalQueue:
         return cls(signal_block, async_sigfd)
 
     async def read(self) -> t.Any:
-        print("CALLING READ ON SIGNALQUEUE", self.sigfd.underlying)
-        try:
-            data = await self.sigfd.read()
-        except:
-            # I sense concurrency exception cancellation fuckery
-            logger.exception("EXCEPTIONING FROM READ ON SIGNALQUEUE %s", self.sigfd.underlying)
-            raise
-        else:
-            print("RETURNING FROM READ ON SIGNALQUEUE", self.sigfd.underlying)
-        # TODO need to return this data in some more parsed form
+        data = await self.sigfd.read()
         return ffi.cast('struct signalfd_siginfo*', ffi.from_buffer(data))
 
     async def close(self) -> None:
@@ -1999,11 +1992,11 @@ class ChildConnection(base.SyscallInterface):
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         async with self.request_lock:
+            log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
             await self._write_syscall_request(
                 number,
                 arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
                 arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         try:
             # we must not be interrupted while reading the response - we need to
             # return the response so that our parent can deal with the state change

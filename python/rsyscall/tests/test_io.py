@@ -16,6 +16,7 @@ import rsyscall.memory_abstracted_syscalls as memsys
 import socket
 import struct
 import time
+import signal
 import unittest
 import trio
 import trio.hazmat
@@ -390,6 +391,29 @@ class TestIO(unittest.TestCase):
                 await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
+    def test_thread_signal_queue(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            thread = await stdtask.fork()
+            async with thread as stdtask2:
+                sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, stdtask2.resources.epoller, {signal.SIGINT})
+                print("epfd", stdtask.resources.epoller.epfd)
+                await thread.thread.child_task.send_signal(signal.SIGINT)
+                orig_mask = await rsyscall.io.SignalBlock.make(stdtask.task, {signal.SIGINT})
+                data = await sigqueue.sigfd.read_nonblock()
+                print("read", data)
+                data = await sigqueue.sigfd.read_nonblock()
+                print("read", data)
+                data = await sigqueue.sigfd.read()
+        trio.run(self.runner, test)
+
+    # bah, fug.
+    # we can't monitor our child's signalfd from the parent.
+    # I guess?
+    # Urggghhhhh
+    # Well, okay, luckily sigchld is the only signal we need.
+    # Can we use clone_parent instead?
+    # Yes, if we just lock clone relative to wait.
+    # ughhhh or something like that anyway
     def test_ssh_basic(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with ssh_to_localhost(stdtask) as ssh_command:

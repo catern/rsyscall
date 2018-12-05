@@ -7565,3 +7565,41 @@ it's obvious in retrospect that that is what we want.
    HMMMMM!!!!
 
    Ah no I do need to structure it so all posedges come from epoll.
+* introduction of usage
+  Hmmm.
+
+  I could just use this stuff locally.
+
+  After all a bunch of this is stuff that is useful for me locally.
+  The thread-library-ish stuff, say.
+
+  Yes mm
+* debug weird thing with signals
+  OK, so the signal seems to be pending,
+  but we're still waiting for a posedge from epoll.
+  Why?
+
+  is there a possibility that we, um...
+  read from it and... um...
+
+  Ugh, what if there's a bug in epoll monitoring multiple signalfds?
+
+  oh god, what if when I epoll_wait I don't get notifications for signalfds from other processes?
+
+  ugh, that may be it.
+
+  Aaaaaah, I only have kenton's word for it being otherwise!
+
+  I need to confirm it! Argh!
+
+  same as with the other epoll test.
+
+  maybe it was only working before because I was optimistically reading.
+
+  baaaaaaaaaaaaah
+
+
+  okay, okay....
+
+  at least some kernel changelogs seem to suggest that signalfd should indeed be registered at ADD time,
+  not epoll_wait time.
