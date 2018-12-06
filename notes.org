@@ -7667,3 +7667,298 @@ LOL if I actually kill the child, then it seems to work...
 
     OK, so then I'll just have forking not be possibly by default.
     It's an additional capability.
+*** new design
+    I'll have perhaps something called BaseTask.
+
+    RsyscallThread only actually needs the io.Task.
+
+    And the environment I guess.
+
+    We can probably get rid of taskresources, filesystemresources, all the access/connecting things.
+
+    I think we can call it BaseTask?
+    Or perhaps RootTask?
+
+    Or something else?
+
+    I'm naming the thing which will contain all the stuff required to fork off a task.
+
+    Since it is now optional and separate from StandardTask.
+
+    BaseTask
+
+    ParentingKit
+
+    ThreadMaker
+
+    Hmm
+
+    I could indeed call it ThreadMaker, I suppose.
+
+    Aw crap
+    I'm relying on starting child threads for unshare.
+
+    God damn it
+
+    Okay, okay...
+
+    So, both do_cloexec and stop_then_close require starting child threads.
+    Specifically, do_cloexec means we have to start a child thread in our new sub-space.
+
+    Also, if we ever want to run C function in a sub-space,
+    that is, a namespace we've unshare'd or setns'd into in a thread,
+    then we need the ability to start children.
+
+    So, I guess, let's think about how to do that.
+
+    CLONE_PARENT is the obvious mechanism.
+
+    Another alternative is making epolls and event loops in every task, but that will be annoying.
+
+
+    Let's just do CLONE_PARENT.
+
+    Bah! Need to think about it more.
+
+    If a child gets a signal,
+    is there any way that we can get that signal to be directed to the parent?
+    Say it has its own signal handlers.
+
+    Could we actually use signal handlers?
+
+    Ugh, the question then is,
+    do I really want to deal with EINTR?
+
+    If I deal with EINTR, then I could support interrupting blocked threads.
+
+    uggghhhh
+
+    signalfd only handles threads from current context.
+
+    hmmm.
+
+    okay, so...
+
+    I could have rsyscall monitor both signalfd and infd.
+    and on signalfd yielding something... what would I do?
+    I could have another fd which I write to on signal...
+
+    I guess the same would be true if I actually used signal handlers.
+
+    Hmmm.
+
+    Ah, I've got it.
+
+    I could have just a conventional pipe,
+    which I copy signalfd events to.
+    And, I add that on to the epollfd.
+
+    No, an eventfd, so we don't block.
+    And then we'll have to use um, that thing.
+
+    Oh wow, sigwaitinfo doesn't require memory!
+
+    Oh no it does actually.
+    But at least less memory, since we don't care about siginfo.
+
+    OK, sigh, so to plot out the userspace workaround:
+
+    I'll block signals as normal for using signalfd.
+    I'll have each thread block both on signalfd and the "perform new syscall" pipe.
+    If it gets a signal from signalfd, it'll read it off and discard it,
+    and write to an eventfd.
+    That eventfd will be registered on an epoll instance like before.
+    I'll see the signal has been received,
+    and call sigwaitinfo to actually handle it.
+
+    The reason I use an eventfd instead of a pipe is to avoid blocking;
+    note that if I made the pipe nonblocking, signals could be lost.
+
+    I also, don't think this is really any worse than using a pipe.
+
+    Well, actually it is.
+    I have to read both the signal with sigwaitinfo, and from the eventfd.
+
+    What if I did block, would that be fine...
+    probably not...
+    it would be nice if I could coalesce pending signals, sigh...
+
+    I guess I can make the signal dequeuing efficient by getting the signal number as the integer return value,
+    so I don't have to copy any memory back.
+
+    Mmm
+    At least I figured out some hack for how to do this 'v'
+
+    What are the eventfd and epoll semantics?
+    I guess I have to read it to EAGAIN?
+    Which will just work, okay.
+
+    put short:
+    i'll just have each thread block on signalfd among its other things,
+    and send it into an eventfd,
+    then use sigwaitinfo to actually retrieve signals
+
+    Note: how does this interact with the thread actually blocking on a bunch of things?
+    Ah, we need to add the signalfd to the list of extra fds to monitor,
+    to cause "spurious" wakeups.
+
+    hmm, signals interrupting system calls actually seems better from that point of view.
+    heh, could we convert incoming data on the infd to a signal? :)
+
+    anyway... I think it's fine.
+    Even with old signalfd plan,
+    we still needed to make a waitid call in thread to actually collect children.
+    So, if the thread is blocked forever, we can't collect children.
+
+    The same is true now:
+    if the thread is blocked forever, we can't get sigwaitinfo to get signals,
+    so we can't collect children.
+
+    Oh, wait! Damn!
+    When we read from the signalfd, we collect the signal.
+    Hmm.
+    Tricky.
+
+    We could store the signal in memory,
+    then just copy that memory with write?
+    I guess that's equivalent, so we can do that.
+
+    Though... we really just need a single 64-bit mask, hm.
+
+    Well, again, we could store that mask in memory.
+    And when eventfd is read, we write it.
+
+    Meh, can't we have multiple eventfds for different signals?
+
+    That seems relatively easy, sure.
+    But! How do we register an eventfd with our little hack?
+    So that signals get sent to the right eventfd for the right signal?
+
+    But we don't waste time on other signals?
+
+    Well... we could maintain some memory for them.
+
+    It seems like either way, we need memory! Ugly.
+
+    Either we have memory where we record which signal we got,
+    and read that memory it on eventfd readability.
+
+    Or we have memory where we register multiple eventfds,
+    and have signalfd read that to dispatch a signal.
+
+    Ok, or I could just use signalfd as a wakeup?
+    Is there some way I can avoid consuming the signal from signalfd?
+
+    Like...
+    Maybe if it's ET, and whenever all the signals are consumed,
+    the next signal indicates an edge?
+
+    I don't really want a new epfd for each individual thread.
+
+    Well, then I can't be edge-triggered right?
+
+    Hmm.
+    OK so if we were ET-waiting on the signalfd,
+    then we could propagate the edge up with the eventfd.
+    Without reading the signalfd.
+    Which would allow us to then read the signalfd from our own code.
+
+    But, we can't ET-wait on the signalfd.
+    So unfortunately, we...
+    Hm. Tempting.
+    Maybe we can ET-wait on the signalfd after all.
+    I don't really care about propagating epollfds.
+
+    So, let's try an ET wait on a signalfd.
+    I guess we'll naturally, um...
+    I guess the eventfd will be the AsyncFD.
+    Then we'll have the signalqueue wrapped around that and the signalfd.
+
+    And the signalqueue will reproduce a bit of the logic in the AFD.
+    So that it reads the sigfd until EAGAIN.
+
+    Then the syscalls made remotely are:
+    epoll_wait -> 1
+    read(eventfd, remote_memory) -> 1
+    read(signalfd, remote_memory) -> 1
+    ...
+    read(signalfd, remote_memory) -> 1
+    ...
+    read(signalfd, remote_memory) -> EAGAIN
+    epoll_wait -> 1
+    read(eventfd, remote_memory) -> 1
+    read(signalfd, remote_memory) -> 1
+
+    Or, alternatively:
+    um, if we write configuration in memory,
+    there's a risk of atomicity screwups.
+    that's pretty frightening!
+
+    if we instead have just a 64-bit mask,
+    and read it at eventfd read time...
+    then we'll be fine.
+** closing fds on exit or exec
+    Though what about leaking fds when a thread exits?
+
+    How do we handle that?
+
+    Well, when we exit... I guess we...
+    Need to go through the handle?
+
+    Hm.
+
+    Also when we exec, we also need to go through the handle, don't we?
+
+    To close things in the old namespace.
+
+    I guess we could just unshare first before execing or exiting. Hmm.
+    Forcing an unshare before an exec or an exit seems weird.
+
+    Hm. Curious, curious.
+
+    I guess when we exec or exit, we know for sure that we have a parent which can clean up after us.
+
+    Perhaps we should use that.
+
+    Actually, the same is true for unshare, isn't it?
+    Well, I guess we could spawn children and then unshare away from them.
+    We could also setns in the parent, too.
+
+    OK, so we need to have exec/exit routed through the thread.
+
+    So there are two cases:
+    Either we continue to exist after the operation,
+    in which case we can have a child clean up,
+    or we don't continue to exist after the operation,
+    in which case we must have a parent monitoring us.
+
+    Hmm, I think having to manually manage cloexec is a drag.
+
+    Instead we want to just explicitly say what to (additionally) inherit.
+    Everything else will be closed.
+
+    But that further abstracts us away - is it a good idea?
+
+    Plus I really hate that Python makes everything non-inheritable by default.
+    Do I really want to follow that?
+
+    Yes, it makes sense to explicitly list things to be inherited down.
+    Fine.
+
+    I can only do that when unshared, though, right?
+
+    I guess unsharing should give me a token that allows me to inherit additional FDs down...
+    Or at least unset cloexec on some things.
+
+    Maybe it should have the replace_with method.
+
+    That would be clean I guess.
+
+    And, if I'm already in an isolated namespace... I guess I... already have unshared files stuff...
+
+    Oh, and furthermore I don't need any magic when I exec or exit to clean up left over fds -
+    I'm already in my own space!
+
+    Hmm okay all this is tricky, but for now, I guess there's no problem with an epfd per thread.
+    Since I can solve the leaking later.
+    
