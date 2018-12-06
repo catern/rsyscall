@@ -7612,3 +7612,38 @@ it's obvious in retrospect that that is what we want.
 can you guess which of these happens:
 epoll returns an event whenever
 1. a signal is pending for process A or 2. process B gets a signal or 3. 
+** scenarios
+*** working
+kill child
+kill parent
+wait
+
+kill parent
+kill child
+wait
+
+kill parent
+wait
+kill child
+
+wait
+kill parent
+kill child
+*** hanging
+kill child
+wait
+kill parent
+
+wait
+kill child
+kill parent
+*** what
+yes, the order seems to matter.
+what...
+
+LOL if I actually kill the child, then it seems to work...
+*** while we're fixing kernel bugs
+    I'd like to be able to register the same signalfd on epoll twice,
+    from different processes...
+
+    Rather than create a new signalfd each time
