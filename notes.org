@@ -7603,3 +7603,12 @@ it's obvious in retrospect that that is what we want.
 
   at least some kernel changelogs seem to suggest that signalfd should indeed be registered at ADD time,
   not epoll_wait time.
+
+  UGH! it doesn't seem to work
+
+  I need to confirm this manually...
+  With a test C program.
+
+can you guess which of these happens:
+epoll returns an event whenever
+1. a signal is pending for process A or 2. process B gets a signal or 3. 
