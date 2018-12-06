@@ -7647,3 +7647,23 @@ LOL if I actually kill the child, then it seems to work...
     from different processes...
 
     Rather than create a new signalfd each time
+*** ugh
+    this is known insanity, 
+    the discussion on the last patch to signalfd+epollfd had Linus and Oleg Nesterov,
+    explicitly saying that people who use signalfd+epollfd across SIGHAND boundaries
+    can keep both pieces.
+
+    and furthermore, when I do CLONE_SIGHAND,
+    I get nice consistent obvious behavior:
+    only the signals in the person calling epoll_wait matter.
+    UGH!
+
+    I'll have to resort to CLONE_PARENT.
+
+    Or, I guess, just don't bother with trying to make it possible to double fork.
+    That seems easiest.
+
+    Well, it's convenient to double fork for supervise, maybe...
+
+    OK, so then I'll just have forking not be possibly by default.
+    It's an additional capability.
