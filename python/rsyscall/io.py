@@ -1257,6 +1257,8 @@ class StandardTask:
                  task_resources: TaskResources,
                  process_resources: ProcessResources,
                  filesystem_resources: FilesystemResources,
+                 thread_epoller: EpollCenter,
+                 child_monitor: ChildTaskMonitor,
                  environment: t.Dict[bytes, bytes],
                  stdin: FileDescriptor[ReadableFile],
                  stdout: FileDescriptor[WritableFile],

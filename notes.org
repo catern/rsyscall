@@ -7647,6 +7647,11 @@ LOL if I actually kill the child, then it seems to work...
     from different processes...
 
     Rather than create a new signalfd each time
+
+    Also, come on!
+
+    I want to be able to process thread-directed signals with my signalfd!
+    How the heck is this not possible???
 *** ugh
     this is known insanity, 
     the discussion on the last patch to signalfd+epollfd had Linus and Oleg Nesterov,
@@ -7897,6 +7902,14 @@ LOL if I actually kill the child, then it seems to work...
     if we instead have just a 64-bit mask,
     and read it at eventfd read time...
     then we'll be fine.
+
+    No, this is all dumb.
+
+    The fix is easy!
+    Just make a new epoller from Python and use that for the childtask.
+
+    I'll still share the overall epoller,
+    this one will just be thread-specific, for the purpose of child monitoring.
 ** closing fds on exit or exec
     Though what about leaking fds when a thread exits?
 
@@ -7961,4 +7974,5 @@ LOL if I actually kill the child, then it seems to work...
 
     Hmm okay all this is tricky, but for now, I guess there's no problem with an epfd per thread.
     Since I can solve the leaking later.
-    
+** new epoller
+   I guess I'll have a thread-specific-epoller field on StandardTask.
