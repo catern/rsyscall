@@ -7987,3 +7987,10 @@ LOL if I actually kill the child, then it seems to work...
    HMMMM
 
    OK, so I guess I'll add a new thing to the interface.
+** possible name
+   dthreads!
+   instead of pthreads!
+
+   Because, this is a distributed thread library.
+
+   Aw, someone's already taken dthreads.

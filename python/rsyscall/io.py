@@ -1912,8 +1912,42 @@ class MMRelease(RsyscallHangup):
 
 @dataclass
 class SyscallResponse(near.SyscallResponse):
+    connection: ChildConnection
+    result: t.Optional[t.Union[Exception, int]] = None
+
     async def receive(self) -> int:
-        pass
+        while self.result is None:
+            await self.connection._process_one_response()
+        else:
+            if isinstance(self.result, int):
+                return self.result
+            else:
+                raise self.result
+
+    def set_exception(self, exn: Exception) -> None:
+        if self.result is not None:
+            raise Exception("trying to set result on SyscallResponse twice")
+        self.result = exn
+
+    def set_result(self, result: int) -> None:
+        if self.result is not None:
+            raise Exception("trying to set result on SyscallResponse twice")
+        self.result = result
+
+class ReadBuffer:
+    def __init__(self) -> None:
+        self.buf = b""
+
+    def feed_bytes(self, data: bytes) -> None:
+        self.buf += data
+
+    def read_length(self, length: int) -> t.Optional[bytes]:
+        if length <= len(self.buf):
+            section = self.buf[:length]
+            self.buf = self.buf[length:]
+            return section
+        else:
+            return None
 
 class ChildConnection(base.SyscallInterface):
     "A connection to some rsyscall server where we can make syscalls"
@@ -1935,6 +1969,8 @@ class ChildConnection(base.SyscallInterface):
         self.outfd: handle.FileDescriptor
         self.activity_fd: near.FileDescriptor
         self.pending_responses: t.List[SyscallResponse] = []
+        self.running: trio.Event = None
+        self.buffer = ReadBuffer()
 
     def store_remote_side_handles(self, infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> None:
         # these are needed so that we don't close them with garbage collection
@@ -1958,19 +1994,26 @@ class ChildConnection(base.SyscallInterface):
             # transport errors
             raise RsyscallException() from e
 
+    async def _read_syscall_response_direct(self) -> int:
+        # baaah this needs to be larger
+        size = ffi.sizeof('unsigned long')
+        response_bytes = self.buffer.read_length(size)
+        while response_bytes is None:
+            new_data = await self.fromfd.read()
+            if len(new_data) == 0:
+                raise RsyscallHangup()
+            self.buffer.feed_bytes(new_data)
+            response_bytes = self.buffer.read_length(size)
+        else:
+            response, = struct.unpack('q', response_bytes)
+            return response
+
     async def _read_syscall_response(self) -> int:
         response: int
         async with trio.open_nursery() as nursery:
             async def read_response() -> None:
                 nonlocal response
-                try:
-                    response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
-                except OSError as e:
-                    raise RsyscallException() from e
-                if len(response_bytes) == 0:
-                    # we catch this in the implementations of exec and exit
-                    raise RsyscallHangup()
-                response, = struct.unpack('q', response_bytes)
+                response = await self._read_syscall_response_direct()
                 raise_if_error(response)
                 nursery.cancel_scope.cancel()
             async def server_exit() -> None:
@@ -1988,23 +2031,51 @@ class ChildConnection(base.SyscallInterface):
             nursery.start_soon(futex_exit)
         return response
 
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
-        pass
+    async def _process_response_for(self, response: SyscallResponse) -> None:
+        try:
+            ret = await self._read_syscall_response()
+        except Exception as e:
+            response.set_exception(e)
+        else:
+            response.set_result(ret)
 
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+    async def _process_one_response_direct(self) -> None:
+        if len(self.pending_responses) == 0:
+            raise Exception("somehow we are trying to process a syscall response, when there are no pending syscalls.")
+        next = self.pending_responses[0]
+        await self._process_response_for(next)
+        self.pending_responses = self.pending_responses[1:]
+
+    async def _process_one_response(self) -> None:
+        if self.running is not None:
+            await self.running.wait()
+        else:
+            running = trio.Event()
+            self.running = running
+            try:
+                await self._process_one_response_direct()
+            finally:
+                self.running = None
+                running.set()
+
+    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
         async with self.request_lock:
             log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
             await self._write_syscall_request(
                 number,
                 arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
                 arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        response = SyscallResponse(self)
+        self.pending_responses.append(response)
+        return response
+
+    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        response = await self.submit_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
         try:
-            # we must not be interrupted while reading the response - we need to
-            # return the response so that our parent can deal with the state change
-            # we created.
+            # we must not be interrupted while reading the response - we need to return
+            # the response so that our parent can deal with the state change we created.
             with trio.open_cancel_scope(shield=True):
-                async with self.response_fifo_lock:
-                    result = await self._read_syscall_response()
+                result = await response.receive()
         except Exception as exn:
             self.logger.debug("%s -> %s", number, exn)
             raise
@@ -2037,6 +2108,9 @@ class RsyscallInterface(base.SyscallInterface):
 
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
+
+    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> near.SyscallResponse:
+        raise Exception("todo for non-child interfaces")
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)

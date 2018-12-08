@@ -344,7 +344,7 @@ class TestIO(unittest.TestCase):
                 thread2 = await stdtask2.fork()
                 print("DONE FORk")
                 async with thread2 as stdtask3:
-                    await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
+                    await self.do_async_things(stdtask3.epoller, stdtask3.task)
         trio.run(self.runner, test)
 
     def test_thread_exit(self) -> None:
@@ -382,7 +382,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
             async with thread as stdtask2:
-                await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
+                await self.do_async_things(stdtask2.local_epoller, stdtask2.task)
         trio.run(self.runner, test)
 
     def test_thread_exec(self) -> None:
