@@ -7976,3 +7976,14 @@ LOL if I actually kill the child, then it seems to work...
     Since I can solve the leaking later.
 ** new epoller
    I guess I'll have a thread-specific-epoller field on StandardTask.
+
+   Argh argh
+
+   This is going to be too inefficient - syscalls in any task will require making an epoll call in their parent,
+   which applies transitively, so a call deep in the tree requires calls all the way up.
+
+   Though maybe that's fine if we don't habitually nest things?
+
+   HMMMM
+
+   OK, so I guess I'll add a new thing to the interface.

@@ -85,6 +85,9 @@ class LocalSyscall(base.SyscallInterface):
     async def close_interface(self) -> None:
         pass
 
+    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> near.SyscallResponse:
+        raise Exception("not supported for local syscaller")
+
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         try:
@@ -720,6 +723,9 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 running_wait.set()
 
     async def read_nonblock(self: 'AsyncFileDescriptor[ReadableFile]', count: int=4096) -> t.Optional[bytes]:
+        if not self.is_readable:
+            # we must only learn something is readable by going through epoll
+            return None
         try:
             return (await self.underlying.read(count))
         except OSError as e:
@@ -1129,28 +1135,6 @@ class RemoteNew:
             allocation.free()
         return allocation
 
-@dataclass
-class TaskResources:
-    epoller: EpollCenter
-    child_monitor: ChildTaskMonitor
-
-    @staticmethod
-    async def make(task: Task) -> TaskResources:
-        epoller = await task.make_epoll_center()
-        child_monitor = await ChildTaskMonitor.make(task, epoller)
-        return TaskResources(epoller, child_monitor)
-
-    async def close(self) -> None:
-        # have to destruct in opposite order of construction, gee that sounds like C++
-        # ¯\_(ツ)_/¯
-        await self.child_monitor.close()
-
-    async def __aenter__(self) -> TaskResources:
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.close()
-
 
 @dataclass
 class ProcessResources:
@@ -1254,11 +1238,11 @@ class StandardTask:
                  # they are shared between processes...
                  connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
                  task: Task,
-                 task_resources: TaskResources,
                  process_resources: ProcessResources,
                  filesystem_resources: FilesystemResources,
-                 thread_epoller: EpollCenter,
+                 epoller: EpollCenter,
                  child_monitor: ChildTaskMonitor,
+                 local_epoller: EpollCenter,
                  environment: t.Dict[bytes, bytes],
                  stdin: FileDescriptor[ReadableFile],
                  stdout: FileDescriptor[WritableFile],
@@ -1270,9 +1254,11 @@ class StandardTask:
         self.connecting_task = connecting_task
         self.connecting_connection = connecting_connection
         self.task = task
-        self.resources = task_resources
         self.process = process_resources
         self.filesystem = filesystem_resources
+        self.epoller = epoller
+        self.child_monitor = child_monitor
+        self.local_epoller = local_epoller
         self.environment = environment
         self.stdin = stdin
         self.stdout = stdout
@@ -1283,8 +1269,9 @@ class StandardTask:
         task = bootstrap.task
         # TODO fix this to... pull it from the bootstrap or something...
         process_resources = local_process_resources
-        task_resources = await TaskResources.make(task)
         filesystem_resources = FilesystemResources.make_from_environ(task.mount, task.fs, bootstrap.environ)
+        epoller = await task.make_epoll_center()
+        child_monitor = await ChildTaskMonitor.make(task, epoller)
         # connection_listening_socket = await task.socket_unix(socket.SOCK_STREAM)
         # sockpath = Path.from_bytes(task, b"./rsyscall.sock")
         # await robust_unix_bind(sockpath, connection_listening_socket)
@@ -1294,9 +1281,10 @@ class StandardTask:
         left_fd, right_fd = await task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
         connecting_connection = (left_fd.handle, right_fd.handle)
         stdtask = StandardTask(
-            task, task_resources.epoller, access_connection,
+            task, epoller, access_connection,
             task, connecting_connection,
-            task, task_resources, process_resources, filesystem_resources,
+            task, process_resources, filesystem_resources,
+            epoller, child_monitor, epoller,
             {**bootstrap.environ},
             bootstrap.stdstreams.stdin,
             bootstrap.stdstreams.stdout,
@@ -1332,26 +1320,29 @@ class StandardTask:
 
     async def fork(self) -> RsyscallThread:
         [(access_sock, remote_sock)] = await self.make_connections(1)
-        thread_maker = ThreadMaker(self.task, self.resources.child_monitor, self.process)
+        thread_maker = ThreadMaker(self.task, self.child_monitor, self.process)
         task, thread = await spawn_rsyscall_thread(
             access_sock, remote_sock,
             self.task, thread_maker, self.process.server_func)
-        epoller = EpollCenter(self.resources.epoller.epoller,
-                              task.base.make_fd_handle(self.resources.epoller.epfd),
+        epoller = EpollCenter(self.epoller.epoller,
+                              task.base.make_fd_handle(self.epoller.epfd),
                               task.gateway, task.allocator)
+        local_epoller = await task.make_epoll_center()
         signal_block = SignalBlock(task, {signal.SIGCHLD})
         # sadly we can't use an inherited signalfd, epoll doesn't want to add the same signalfd twice
+        # TODO now we can use an inherited signalfd actually
         sigfd = await task.signalfd_create({signal.SIGCHLD}, flags=os.O_NONBLOCK)
-        async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd, is_nonblock=True)
+        async_sigfd = await AsyncFileDescriptor.make(local_epoller, sigfd, is_nonblock=True)
         signal_queue = SignalQueue(signal_block, async_sigfd)
         child_task_monitor = ChildTaskMonitor(task, signal_queue)
-        resources = TaskResources(epoller, child_task_monitor)
         stdtask = StandardTask(
             self.access_task, self.access_epoller, self.access_connection,
-            self.connecting_task, (self.connecting_connection[0], task.base.make_fd_handle(self.connecting_connection[1])),
+            self.connecting_task,
+            (self.connecting_connection[0], task.base.make_fd_handle(self.connecting_connection[1])),
             task, 
-            resources,
-            self.process, self.filesystem, {**self.environment},
+            self.process, self.filesystem,
+            epoller, child_task_monitor, local_epoller,
+            {**self.environment},
             stdin=self.stdin.borrow(task.base),
             stdout=self.stdout.borrow(task.base),
             stderr=self.stderr.borrow(task.base),
@@ -1369,7 +1360,7 @@ class StandardTask:
                              copy_to_new_space: t.List[near.FileDescriptor]) -> None:
             print("closing old", close_in_old_space)
             print("copying new", copy_to_new_space)
-            await unshare_files(self.task, self.resources.child_monitor, self.process,
+            await unshare_files(self.task, self.child_monitor, self.process,
                                 close_in_old_space, copy_to_new_space, going_to_exec)
         await self.task.base.unshare_files(do_unshare)
 
@@ -1391,7 +1382,6 @@ class StandardTask:
 
     async def close(self) -> None:
         await self.process.decref()
-        await self.resources.close()
         await self.task.close()
 
     async def __aenter__(self) -> 'StandardTask':
@@ -1920,6 +1910,11 @@ class ChildExit(RsyscallHangup):
 class MMRelease(RsyscallHangup):
     pass
 
+@dataclass
+class SyscallResponse(near.SyscallResponse):
+    async def receive(self) -> int:
+        pass
+
 class ChildConnection(base.SyscallInterface):
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
@@ -1939,6 +1934,7 @@ class ChildConnection(base.SyscallInterface):
         self.infd: handle.FileDescriptor
         self.outfd: handle.FileDescriptor
         self.activity_fd: near.FileDescriptor
+        self.pending_responses: t.List[SyscallResponse] = []
 
     def store_remote_side_handles(self, infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> None:
         # these are needed so that we don't close them with garbage collection
@@ -1991,6 +1987,9 @@ class ChildConnection(base.SyscallInterface):
             nursery.start_soon(server_exit)
             nursery.start_soon(futex_exit)
         return response
+
+    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
+        pass
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         async with self.request_lock:
@@ -2413,7 +2412,7 @@ async def rsyscall_exec(
                 b"rsyscall_server",
                 encode(passed_describe_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
                 *[encode(fd) for fd in copy_to_new_space],
-            ], {}, [stdtask.resources.child_monitor.signal_queue.signal_block])
+            ], {}, [stdtask.child_monitor.signal_queue.signal_block])
         # the futex task we used before is dead now that we've exec'd, have
         # to null it out
         syscall.futex_task = None
@@ -2462,7 +2461,7 @@ async def rsyscall_exec(
     # now we start the futex monitor
     futex_task = await launch_futex_monitor(parent_stdtask.task.base, parent_stdtask.task.gateway,
                                             parent_stdtask.task.allocator,
-                                            parent_stdtask.process, parent_stdtask.resources.child_monitor,
+                                            parent_stdtask.process, parent_stdtask.child_monitor,
                                             local_futex_pointer, futex_value)
     syscall.futex_task = futex_task
     # TODO how do we unmap the remote mapping?
@@ -2477,7 +2476,7 @@ async def run_socket_binder(
         ssh_command: SSHCommand,
 ) -> t.AsyncGenerator[bytes, None]:
     stdout_pipe = await task.task.pipe()
-    async_stdout = await AsyncFileDescriptor.make(task.resources.epoller, stdout_pipe.rfd)
+    async_stdout = await AsyncFileDescriptor.make(task.epoller, stdout_pipe.rfd)
     # TODO I should have this process set PDEATHSIG so that even if we hard crash, it will exit too
     thread = await task.fork()
     bootstrap_executable = await thread.stdtask.task.open(thread.stdtask.filesystem.rsyscall_bootstrap_path, os.O_RDONLY)
@@ -2542,7 +2541,7 @@ async def ssh_bootstrap(
     async def make_async_connection() -> AsyncFileDescriptor[UnixSocketFile]:
         sock = await task.socket_unix(socket.SOCK_STREAM)
         await robust_unix_connect(local_data_path, sock)
-        return (await AsyncFileDescriptor.make(parent_task.resources.epoller, sock))
+        return (await AsyncFileDescriptor.make(parent_task.epoller, sock))
     async_bootstrap_describe_sock = await make_async_connection()
     async_describe_sock = await make_async_connection()
     async_local_syscall_sock = await make_async_connection()
@@ -2607,15 +2606,19 @@ async def ssh_bootstrap(
                     new_process_namespace)
     left_connecting_connection, right_connecting_connection = await new_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     connecting_connection = (left_connecting_connection.handle, right_connecting_connection.handle)
+    epoller = await task.make_epoll_center()
+    child_monitor = await ChildTaskMonitor.make(task, epoller)
     new_stdtask = StandardTask(
         access_task=parent_task.task,
-        access_epoller=parent_task.resources.epoller,
+        access_epoller=parent_task.epoller,
         access_connection=(local_data_path, new_task.make_fd(listening_fd.near, UnixSocketFile())),
         connecting_task=new_task, connecting_connection=connecting_connection,
         task=new_task,
-        task_resources=await TaskResources.make(new_task),
         process_resources=ProcessResources.make_from_symbols(symbols),
         filesystem_resources=FilesystemResources.make_from_environ(new_mount_namespace, new_fs_information, environ),
+        epoller=epoller,
+        child_monitor=child_monitor,
+        local_epoller=epoller,
         environment=environ,
         stdin=new_task._make_fd(0, ReadableFile(shared=True)),
         stdout=new_task._make_fd(1, WritableFile(shared=True)),

@@ -42,10 +42,19 @@ class UnshareFlag(enum.IntFlag):
     SYSVSEM = lib.CLONE_SYSVSEM
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
+class SyscallResponse:
+    # Throws on negative return value
+    @abc.abstractmethod
+    async def receive(self) -> int:
+        pass
+
 class SyscallInterface:
     # Throws on negative return value
     @abc.abstractmethod
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int: ...
+    # Only implemented for remote syscall interfaces.
+    @abc.abstractmethod
+    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse: ...
     # non-syscall operations which we haven't figured out how to get rid of yet
     @abc.abstractmethod
     async def close_interface(self) -> None: ...
