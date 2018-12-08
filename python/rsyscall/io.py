@@ -596,6 +596,30 @@ class EpollCenter:
     async def delete(self, fd: far.FileDescriptor) -> None:
         await memsys.epoll_ctl_del(self.epfd.task, self.epfd.far, fd)
 
+@dataclass
+class PendingEpollWait:
+    allocation: memory.Allocation
+    syscall_response: near.SyscallResponse
+    memory_gateway: MemoryGateway
+    received_events: t.Optional[t.List[EpollEvent]] = None
+
+    async def receive(self) -> t.List[EpollEvent]:
+        if self.received_events is not None:
+            return self.received_events
+        else:
+            count = await self.syscall_response.receive()
+            bufsize = self.allocation.end - self.allocation.start
+            localbuf = bytearray(bufsize)
+            await self.memory_gateway.memcpy(to_local_pointer(localbuf), self.allocation.pointer, bufsize)
+            ret: t.List[EpollEvent] = []
+            cur = 0
+            for _ in range(count):
+                ret.append(EpollEvent.from_bytes(localbuf[cur:cur+EpollEvent.bytesize()]))
+                cur += EpollEvent.bytesize()
+            self.received_events = ret
+            self.allocation.free()
+            return ret
+
 class EpollWaiter:
     def __init__(self, epfd: FileDescriptor[EpollFile],
                  wait_readable: t.Optional[t.Callable[[], t.Awaitable[None]]]) -> None:
@@ -606,6 +630,7 @@ class EpollWaiter:
         self.next_number = 0
         self.number_to_queue: t.Dict[int, trio.hazmat.UnboundedQueue] = {}
         self.running_wait: t.Optional[trio.Event] = None
+        self.pending_epoll_wait: t.Optional[PendingEpollWait] = None
 
     # need to also support removing, I guess!
     def add_and_allocate_number(self, queue: trio.hazmat.UnboundedQueue) -> int:
@@ -621,48 +646,72 @@ class EpollWaiter:
             running_wait = trio.Event()
             self.running_wait = running_wait
             try:
-    
-                # yield away first
-                # await trio.sleep(0)
                 if self.wait_readable is not None:
+                    # yield away first
+                    await trio.sleep(0)
                     received_events = await self.wait(maxevents=32, timeout=0)
                     if len(received_events) == 0:
                         await self.wait_readable()
-                        # Note that we are not actually guaranteed to get some events here!  epoll
-                        # has an annoying behavior where, e.g., if a file descriptor A registered
-                        # with EPOLLIN on epollfd X becomes readable, then epollfd X will be marked
-                        # as readable. But if A is read to EAGAIN before epoll_wait(X), then no
-                        # event will be delivered for A. Therefore, we have to epoll_wait in a
-                        # non-blocking way.
+                        # We are only guaranteed to receive events from the following line because
+                        # we are careful in our usage of epoll.  Some background: Given that we are
+                        # using EPOLLET, we can view epoll_wait as providing us a stream of posedges
+                        # for readability, writability, etc. We receive negedges in the form of
+                        # EAGAINs when we try to read, write, etc.
 
-                        # If you think about it, this is really just the same policy that we have to
-                        # use for all non-blocking FDs. We always read them in a non-blocking way,
-                        # since we're relying on epoll to do the blocking. We just have to make sure
-                        # to do the same for epoll itself, when we're relying on yet another layer
-                        # above epoll to do the blocking.
+                        # We could try to optimistically read or write without first receiving a
+                        # posedge from epoll. If the read/write succeeds, that serves as a
+                        # posedge. Importantly, that posedge might not then be delivered through
+                        # epoll.  The posedge is definitely not delivered through epoll if the fd is
+                        # read to EAGAIN before the next epoll call, and may also not be delivered
+                        # in other scenarios as well.
 
-                        # Double argh!
-                        # If we enter this do_wait,
-                        # and wait_readable is called,
-                        # er...
-                        # right, if we enter this do_wait,
-                        # and we're waiting on something,
-                        # which has already been flushed away by another waiter...
-                        # we deadlock!
-                        # argh, that's something that would be fixed by a background thread.
-                        # but I reject background threads!
-                        # so how do we fix this right?
-                        # baaah
-                        # is this really a problem? let's think some more.
+                        # This can cause deadlocks.  If a thread is blocked in epoll waiting for
+                        # some file to become readable, and some other thread goes ahead and reads
+                        # off the posedge from the file itself, then the first thread will never get
+                        # woken up since epoll will never have an event for readability.
+
+                        # Also, epoll will be indicated as readable to poll when a posedge is ready
+                        # for reading; but if we consume that posedge through reading the fd
+                        # directly instead, we won't actually get anything when we call epoll_wait.
+
+                        # Therefore, we must make sure to receive all posedges exclusively through
+                        # epoll. We can't optimistically read the file descriptor before we have
+                        # actually received an initial posedge. (This doesn't hurt performance that
+                        # much because we can still optimistically read the fd if we haven't yet
+                        # seen an EAGAIN since the last epoll_wait posedge.)
+
+                        # Given that we follow that behavior, we are guaranteed here to get some
+                        # event, since wait_readable returning has informed us that there is a
+                        # posedge to be read, and all posedges are consume exclusively through
+                        # epoll.
                         received_events = await self.wait(maxevents=32, timeout=0)
+                        if len(received_events) == 0:
+                            raise Exception("got no events back from epoll_wait even after epfd was indicated as readable")
                 else:
-                    received_events = await self.wait(maxevents=32, timeout=-1)
+                    if self.pending_epoll_wait is None:
+                        pending = await self.submit_wait(maxevents=32, timeout=-1)
+                        self.pending_epoll_wait = pending
+                    else:
+                        pending = self.pending_epoll_wait
+                    received_events = await pending.receive()
+                    self.pending_epoll_wait = None
                 for event in received_events:
                     queue = self.number_to_queue[event.data]
                     queue.put_nowait(event.events)
             finally:
                 self.running_wait = None
                 running_wait.set()
+
+    async def submit_wait(self, maxevents: int, timeout: int) -> PendingEpollWait:
+        allocation = await self.remote_new.memory_allocator.malloc(maxevents * EpollEvent.bytesize())
+        try:
+            syscall_response = await self.epfd.handle.task.sysif.submit_syscall(
+                near.SYS.epoll_wait, self.epfd.handle.near, allocation.pointer, maxevents, timeout)
+        except:
+            allocation.free()
+            raise
+        else:
+            return PendingEpollWait(allocation, syscall_response, self.remote_new.memory_gateway)
 
     async def wait(self, maxevents: int, timeout: int) -> t.List[EpollEvent]:
         bufsize = maxevents * EpollEvent.bytesize()
@@ -694,8 +743,6 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
         self.epolled = epolled
         self.underlying = underlying
         self.running_wait: t.Optional[trio.Event] = None
-        # we assume that when we add the fd, it's readable and writable.
-        # this seems to be required but I can't tell why
         self.is_readable = False
         self.is_writable = False
         self.read_hangup = False
@@ -722,9 +769,11 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 self.running_wait = None
                 running_wait.set()
 
+    def could_read(self) -> bool:
+        return self.is_readable or self.read_hangup or self.hangup or self.error
+
     async def read_nonblock(self: 'AsyncFileDescriptor[ReadableFile]', count: int=4096) -> t.Optional[bytes]:
-        if not self.is_readable:
-            # we must only learn something is readable by going through epoll
+        if not self.could_read():
             return None
         try:
             return (await self.underlying.read(count))
@@ -737,7 +786,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
 
     async def read(self: 'AsyncFileDescriptor[ReadableFile]', count: int=4096) -> bytes:
         while True:
-            while not (self.is_readable or self.read_hangup or self.hangup or self.error):
+            while not self.could_read():
                 await self._wait_once()
             data = await self.read_nonblock()
             if data is not None:
@@ -745,7 +794,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
 
     async def read_raw(self, sysif: near.SyscallInterface, fd: near.FileDescriptor, pointer: near.Pointer, count: int) -> int:
         while True:
-            while not (self.is_readable or self.read_hangup or self.hangup or self.error):
+            while not self.could_read():
                 await self._wait_once()
             try:
                 return (await near.read(sysif, fd, pointer, count))

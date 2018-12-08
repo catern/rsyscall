@@ -41,6 +41,27 @@ class EpollEventMask:
         ret.et = et
         return ret
 
+    def __str__(self) -> None:
+        conditions: t.List[str] = []
+        if self.in_:
+            conditions.append('in')
+        if self.out:
+            conditions.append('out')
+        if self.rdhup:
+            conditions.append('rdhup')
+        if self.pri:
+            conditions.append('pri')
+        if self.err:
+            conditions.append('err')
+        if self.hup:
+            conditions.append('hup')
+        if self.et:
+            conditions.append('et')
+        return 'EpollEventMask(' + ','.join(conditions) + ')'
+
+    def __repr__(self) -> None:
+        return str(self)
+
 @dataclass
 class EpollEvent:
     data: int

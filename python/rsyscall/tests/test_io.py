@@ -138,11 +138,15 @@ class TestIO(unittest.TestCase):
             async_pipe_wfd = await AsyncFileDescriptor.make(epoller, pipe.wfd)
             data = b"hello world"
             async def stuff():
+                logger.info("performing read")
                 result = await async_pipe_rfd.read()
                 self.assertEqual(result, data)
             async with trio.open_nursery() as nursery:
                 nursery.start_soon(stuff)
                 await trio.sleep(0.01)
+                logger.info("performing write")
+                # hmmm MMM MMMmmmm MMM mmm MMm mm MM mmm MM mm MM
+                # does this make sense?
                 await async_pipe_wfd.write(data)
 
     def test_async(self) -> None:
@@ -374,8 +378,10 @@ class TestIO(unittest.TestCase):
                 await stdtask2.unshare_files()
                 thread3 = await stdtask2.fork()
                 async with thread3 as stdtask3:
+                    print("DOING UNSHARE")
                     await stdtask3.unshare_files()
-                    await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
+                    print("UNSHARE DONE")
+                    await self.do_async_things(stdtask3.local_epoller, stdtask3.task)
         trio.run(self.runner, test)
 
     def test_thread_async(self) -> None:
@@ -397,8 +403,8 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
             async with thread as stdtask2:
-                sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, stdtask2.resources.epoller, {signal.SIGINT})
-                print("epfd", stdtask.resources.epoller.epfd)
+                sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, stdtask2.epoller, {signal.SIGINT})
+                print("epfd", stdtask.epoller.epfd)
                 await thread.thread.child_task.send_signal(signal.SIGINT)
                 orig_mask = await rsyscall.io.SignalBlock.make(stdtask.task, {signal.SIGINT})
                 data = await sigqueue.sigfd.read_nonblock()

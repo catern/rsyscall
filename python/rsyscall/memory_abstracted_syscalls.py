@@ -48,7 +48,6 @@ async def read(task: far.Task, gateway: MemoryGateway, allocator: memory.Allocat
 
 async def write(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
                 fd: base.FileDescriptor, buf: bytes) -> int:
-    logger.debug("write(%s, %s)", fd, buf)
     async with localize_data(gateway, allocator, buf) as (buf_ptr, buf_len):
         return (await raw_syscall.write(sysif, fd, buf_ptr, buf_len))
 

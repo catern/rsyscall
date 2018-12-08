@@ -27,6 +27,7 @@ class SYS(enum.IntEnum):
     getdents64 = lib.SYS_getdents64
     unshare = lib.SYS_unshare
     epoll_ctl = lib.SYS_epoll_ctl
+    epoll_wait = lib.SYS_epoll_wait
 
 class UnshareFlag(enum.IntFlag):
     NONE = 0

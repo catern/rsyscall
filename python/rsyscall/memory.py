@@ -10,6 +10,9 @@ import abc
 import enum
 import contextlib
 import typing as t
+import logging
+from dataclasses import dataclass
+logger = logging.getLogger(__name__)
 
 class ProtFlag(enum.IntFlag):
     EXEC = lib.PROT_EXEC
@@ -22,11 +25,11 @@ class MapFlag(enum.IntFlag):
     SHARED = lib.MAP_SHARED
     ANONYMOUS = lib.MAP_ANONYMOUS
 
+@dataclass
 class Allocation:
-    def __init__(self, arena: Arena, start: int, end: int) -> None:
-        self.arena = arena
-        self.start = start
-        self.end = end
+    arena: Arena
+    start: int
+    end: int
 
     @property
     def pointer(self) -> Pointer:
@@ -75,19 +78,18 @@ class Arena:
         self.mapping = mapping
         self.allocations: t.List[Allocation] = []
 
-    def _alloc(self, start: int, end: int) -> Allocation:
-        newalloc = Allocation(self, start, end)
-        self.allocations.append(newalloc)
-        return newalloc
-
     def malloc(self, size: int) -> t.Optional[Allocation]:
         newstart = 0
-        for alloc in self.allocations:
+        for i, alloc in enumerate(self.allocations):
             if (newstart+size) <= alloc.start:
-                return self._alloc(newstart, newstart+size)
+                newalloc = Allocation(self, newstart, newstart+size)
+                self.allocations.insert(i, newalloc)
+                return newalloc
             newstart = alloc.end
         if (newstart+size) <= self.mapping.length:
-            return self._alloc(newstart, newstart+size)
+            newalloc = Allocation(self, newstart, newstart+size)
+            self.allocations.append(newalloc)
+            return newalloc
         return None
 
     async def close(self) -> None:
