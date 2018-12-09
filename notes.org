@@ -8007,3 +8007,75 @@ LOL if I actually kill the child, then it seems to work...
    OK resolved that.
    I think, anyway.
    By rewriting the ChildTaskMonitor to maintain a bit of state about whether it has seen a sigchld.
+** okay so
+   back into setting up copying, and truly bootstrappy bootstrap
+
+   The bootstrap is not truly portable, but the interface is correct,
+   so I don't care for the moment.
+
+   Let's set up copying over ssh.
+
+   ALSO!
+   Let's please rename things so that RsyscallThread is just "Thread".
+
+   OK so we did the cat thing.
+
+   Let's actually list what we need for the Nix bootstrap.
+
+   And... let's maybe even think about how to do it???
+
+   We can probably just do it on localhost.
+
+   Or we can redirect to a different directory.
+
+   OK, so!
+
+   What we need to do is:
+
+   Build the tarball?
+
+   No, we'll have it built already as an input to our script.
+
+   We'll build and that will give us a script to run.
+
+   We'll check if a remote path exists;
+   if it doesn't exist, we'll copy over the tarball and run it.
+
+   We could stream over the tarball instead of copying it?
+
+   We make a bunch of directories I guess.
+
+   And we run the nix-daemon directly under ourselves.
+
+   That's it! Pretty easy.
+
+   I guess before we copy the tarball,
+   we should check for writability,
+   so we don't waste time.
+
+   Streaming the tarball sounds like it will break a lot.
+
+   It's only 30M anyway, we can just copy it to tmp, then delete it once we're done.
+
+   So what's the goal here? "Convergence"? Or just running on a clean slate?
+
+   I guess the answer depends on how we do upgrades.
+
+   I guess I don't have to fully replace all concepts right away.
+   I can have this "convergence" concept, that's fine.
+
+   Though I do like this "start from scratch" concept that I have done with these run directories.
+
+   Yeah I mean, if I was going fully "start from scratch", wouldn't the ideal be Nix?
+
+   Well... no, I still need to create a bunch of state and communication directories and things.
+
+   Beyond the reach of Nix.
+
+   Meh, converge for now.
+
+   So how do I handle establishing a connection to the remote host?
+
+   make_connections on remote_stdtask I guess.
+
+   

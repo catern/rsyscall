@@ -3,6 +3,7 @@ from rsyscall._raw import ffi, lib # type: ignore
 import traceback
 
 from rsyscall.epoll import EpollEvent, EpollEventMask
+import math
 import rsyscall.epoll
 import importlib.resources
 ssh_bootstrap_script_contents = importlib.resources.read_text('rsyscall', 'ssh_bootstrap.sh')
@@ -176,6 +177,9 @@ class File:
             raise Exception("can't set a file to nonblocking through a file descriptor that doesn't point to it")
         await raw_syscall.fcntl(fd.task.syscall, fd.pure, fcntl.F_SETFL, os.O_NONBLOCK)
 
+    async def lseek(self, fd: 'FileDescriptor[File]', offset: int, whence: int) -> int:
+        return (await raw_syscall.lseek(fd.task.syscall, fd.pure, offset, whence))
+
 T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
@@ -320,8 +324,7 @@ class WritableFile(File):
         return (await memsys.write(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, buf))
 
 class SeekableFile(File):
-    async def lseek(self, fd: 'FileDescriptor[SeekableFile]', offset: int, whence: int) -> int:
-        return (await raw_syscall.lseek(fd.task.syscall, fd.pure, offset, whence))
+    pass
 
 class ReadableWritableFile(ReadableFile, WritableFile):
     pass
@@ -546,7 +549,7 @@ class EpolledFileDescriptor:
     def __init__(self,
                  epoll_center: EpollCenter,
                  fd: handle.FileDescriptor,
-                 queue: trio.hazmat.UnboundedQueue,
+                 queue: trio.abc.ReceiveChannel,
                  number: int) -> None:
         self.epoll_center = epoll_center
         self.fd = fd
@@ -560,7 +563,7 @@ class EpolledFileDescriptor:
     async def wait(self) -> t.List[EpollEvent]:
         while True:
             try:
-                return self.queue.get_batch_nowait()
+                return [self.queue.receive_nowait()]
             except trio.WouldBlock:
                 await self.epoll_center.epoller.do_wait()
 
@@ -582,10 +585,10 @@ class EpollCenter:
     async def register(self, fd: handle.FileDescriptor, events: EpollEventMask=None) -> EpolledFileDescriptor:
         if events is None:
             events = EpollEventMask.make()
-        queue = trio.hazmat.UnboundedQueue()
-        number = self.epoller.add_and_allocate_number(queue)
+        send, receive = trio.open_memory_channel(math.inf)
+        number = self.epoller.add_and_allocate_number(send)
         await self.add(fd.far, EpollEvent(number, events))
-        return EpolledFileDescriptor(self, fd, queue, number)
+        return EpolledFileDescriptor(self, fd, receive, number)
 
     async def add(self, fd: far.FileDescriptor, event: EpollEvent) -> None:
         await memsys.epoll_ctl_add(self.epfd.task, self.gateway, self.allocator, self.epfd.far, fd, event)
@@ -628,12 +631,12 @@ class EpollWaiter:
         self.wait_readable = wait_readable
         self.remote_new = RemoteNew(self.waiting_task.allocator, self.waiting_task.gateway)
         self.next_number = 0
-        self.number_to_queue: t.Dict[int, trio.hazmat.UnboundedQueue] = {}
+        self.number_to_queue: t.Dict[int, trio.abc.SendChannel] = {}
         self.running_wait: t.Optional[trio.Event] = None
         self.pending_epoll_wait: t.Optional[PendingEpollWait] = None
 
     # need to also support removing, I guess!
-    def add_and_allocate_number(self, queue: trio.hazmat.UnboundedQueue) -> int:
+    def add_and_allocate_number(self, queue: trio.abc.SendChannel) -> int:
         number = self.next_number
         self.next_number += 1
         self.number_to_queue[number] = queue
@@ -697,7 +700,7 @@ class EpollWaiter:
                     self.pending_epoll_wait = None
                 for event in received_events:
                     queue = self.number_to_queue[event.data]
-                    queue.put_nowait(event.events)
+                    queue.send_nowait(event.events)
             finally:
                 self.running_wait = None
                 running_wait.set()
@@ -1267,7 +1270,7 @@ class FilesystemResources:
             rsyscall_bootstrap_path=rsyscall_bootstrap_path,
         )
 
-async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
+async def lookup_executable(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
     "Find an executable by this name in this list of paths"
     if b"/" in name:
         raise Exception("name should be a single path element without any / present")
@@ -1276,6 +1279,14 @@ async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
         if (await filename.access(read=True, execute=True)):
             return filename.pure
     raise Exception("executable not found", name)
+
+async def which(stdtask: StandardTask, name: bytes) -> Command:
+    "Find an executable by this name in PATH"
+    executable_dirs: t.List[base.Path] = []
+    for prefix in stdtask.environment[b"PATH"].split(b":"):
+        executable_dirs.append(base.Path.from_bytes(stdtask.task.mount, stdtask.task.fs, prefix))
+    executable_path = await lookup_executable(stdtask.task, executable_dirs, name)
+    return Command(executable_path, [name.decode()], {})
 
 class StandardTask:
     def __init__(self,
@@ -1340,7 +1351,7 @@ class StandardTask:
             bootstrap.stdstreams.stderr,
         )
         # We don't need this ourselves, but we keep it around so others can inherit it.
-        [(access_sock, remote_sock)] = await stdtask.make_connections(1)
+        [(access_sock, remote_sock)] = await stdtask.make_async_connections(1)
         task.gateway = ComposedMemoryGateway([
             LocalMemoryGateway(),
             SendMemoryGateway(read=remote_sock, write=access_sock, lock=trio.Lock()),
@@ -1360,15 +1371,24 @@ class StandardTask:
         await rsyscall_exec(self, rsyscall_thread, self.filesystem.rsyscall_server_path)
         return rsyscall_thread
 
-    async def make_connections(self, count: int) -> t.List[
+    async def make_async_connections(self, count: int) -> t.List[
             t.Tuple[AsyncFileDescriptor[ReadableWritableFile], handle.FileDescriptor]
     ]:
+        conns = await self.make_connections(count)
+        access_socks, local_socks = zip(*conns)
+        async_access_socks = [await AsyncFileDescriptor.make(self.access_epoller, sock) for sock in access_socks]
+        return list(zip(async_access_socks, local_socks))
+
+    async def make_connections(self, count: int) -> t.List[
+            t.Tuple[FileDescriptor[ReadableWritableFile], handle.FileDescriptor]
+    ]:
         return (await make_connections(
-            self.access_task, self.access_epoller, self.access_connection,
-            self.connecting_task, self.connecting_connection, self.task, count))
+            self.access_task, self.access_connection,
+            self.connecting_task, self.connecting_connection,
+            self.task, count))
 
     async def fork(self) -> RsyscallThread:
-        [(access_sock, remote_sock)] = await self.make_connections(1)
+        [(access_sock, remote_sock)] = await self.make_async_connections(1)
         thread_maker = ThreadMaker(self.task, self.child_monitor, self.process)
         task, thread = await spawn_rsyscall_thread(
             access_sock, remote_sock,
@@ -2455,13 +2475,14 @@ async def set_singleton_robust_futex(task: far.Task, gateway: MemoryGateway, all
     futex_pointer = robust_list_entry.pointer + futex_offset
     return futex_pointer
 
-async def make_connections(access_task: Task, access_epoller: EpollCenter,
+async def make_connections(access_task: Task,
                            # regrettably asymmetric...
                            # it would be nice to unify connect/accept with passing file descriptors somehow.
                            access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
-                           connecting_task: Task, connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
+                           connecting_task: Task,
+                           connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
                            parent_task: Task,
-                           count: int) -> t.List[t.Tuple[AsyncFileDescriptor[ReadableWritableFile], handle.FileDescriptor]]:
+                           count: int) -> t.List[t.Tuple[FileDescriptor[ReadableWritableFile], handle.FileDescriptor]]:
     # so there's 1. the access task, through which we access the syscall and data fds,
     # 2. the parent task, and
     # 3. the connection between the access and parent task, so that we can have the parent task pass down the fds,
@@ -2504,8 +2525,7 @@ async def make_connections(access_task: Task, access_epoller: EpollCenter,
         # don't need these in the connecting task anymore
         for sock in connecting_socks:
             await sock.aclose()
-    async_access_socks = [await AsyncFileDescriptor.make(access_epoller, sock) for sock in access_socks]
-    return list(zip(async_access_socks, passed_socks))
+    return list(zip(access_socks, passed_socks))
 
 async def spawn_rsyscall_thread(
         access_sock: AsyncFileDescriptor[ReadableWritableFile],
@@ -2536,7 +2556,7 @@ async def rsyscall_exec(
     ) -> None:
     "Exec into the standalone rsyscall_server executable"
     stdtask = rsyscall_thread.stdtask
-    [(async_access_describe_sock, passed_describe_sock)] = await stdtask.make_connections(1)
+    [(async_access_describe_sock, passed_describe_sock)] = await stdtask.make_async_connections(1)
     # create this guy and pass him down to the new thread
     futex_memfd = await memsys.memfd_create(stdtask.task.base, stdtask.task.gateway, stdtask.task.allocator,
                                                   b"child_robust_futex_list", lib.MFD_CLOEXEC)
@@ -2945,9 +2965,12 @@ local_stdtask: t.Any = None # type: ignore
 async def build_local_stdtask(nursery) -> StandardTask:
     return (await StandardTask.make_from_bootstrap(gather_local_bootstrap()))
 
-async def exec_cat(thread: RsyscallThread, infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> ChildTask:
+async def exec_cat(thread: RsyscallThread, cat: Command,
+                   infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> ChildTask:
+    stdin = thread.stdtask.task.base.make_fd_handle(infd)
+    stdout = thread.stdtask.task.base.make_fd_handle(outfd)
     await thread.stdtask.unshare_files()
-    await thread.stdtask.stdin.replace_with(infd)
-    await thread.stdtask.stdout.replace_with(outfd)
-    child_task = await thread.execve(thread.stdtask.filesystem.utilities.cat, ["cat"]) # type: ignore
+    await thread.stdtask.stdin.replace_with(stdin)
+    await thread.stdtask.stdout.replace_with(stdout)
+    child_task = await cat.exec(thread)
     return child_task

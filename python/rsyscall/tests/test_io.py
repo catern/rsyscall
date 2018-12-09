@@ -433,18 +433,49 @@ class TestIO(unittest.TestCase):
                     stdtask, ssh_command)
                 async with (await stdtask.mkdtemp()) as local_tmpdir:
                     async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
-                        remote_path = remote_tmpdir/"file"
-                        # why is an exception here causing a permanent block?
-                        # it seems to be taking an already-took lock.
-                        # if I don't fix this, debugging will be hard
-                        # it'll be like searching for typos in a punch card
-                        # aaaaaaieee!!! it's non-deterministic!
-                        # hm!
-                        remote_file = await remote_path.open(os.O_RDWR)
-                        # hmm note that it's important not to mkdtemp
-                        # from the threads otherwise things will break
-                        # we want to copy between two different hosts
-                        pass
+                        remote_file = await (remote_tmpdir/"dest").open(os.O_RDWR|os.O_CREAT)
+                        local_file = await (local_tmpdir/"source").open(os.O_RDWR|os.O_CREAT)
+                        data = b'hello world'
+                        await local_file.write(data)
+                        await local_file.lseek(0, os.SEEK_SET)
+
+                        local_thread = await stdtask.fork()
+                        remote_thread = await remote_stdtask.fork()
+
+                        local_cat = await rsyscall.io.which(stdtask, b"cat")
+                        remote_cat = await rsyscall.io.which(remote_stdtask, b"cat")
+
+                        [(local_sock, remote_sock)] = await remote_stdtask.make_connections(1)
+                        print("local_sock remote_sock", local_sock, remote_sock)
+                        local_child_task = await rsyscall.io.exec_cat(
+                            local_thread, local_cat, infd=local_file.handle, outfd=local_sock.handle)
+                        remote_child_task = await rsyscall.io.exec_cat(
+                            remote_thread, remote_cat, infd=remote_file.handle, outfd=remote_sock)
+                        await local_sock.handle.invalidate()
+                        await remote_sock.invalidate()
+                        await local_child_task.wait_for_exit()
+                        await remote_child_task.wait_for_exit()
+
+                        await remote_file.lseek(0, os.SEEK_SET)
+                        self.assertEqual(await remote_file.read(), data)
+        trio.run(self.runner, test)
+
+    def test_copy(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with (await stdtask.mkdtemp()) as tmpdir:
+                source_file = await (tmpdir/"source").open(os.O_RDWR|os.O_CREAT)
+                data = b'hello world'
+                await source_file.write(data)
+                await source_file.lseek(0, os.SEEK_SET)
+                dest_file = await (tmpdir/"dest").open(os.O_RDWR|os.O_CREAT)
+
+                thread = await stdtask.fork()
+                cat = await rsyscall.io.which(stdtask, b"cat")
+                child_task = await rsyscall.io.exec_cat(thread, cat, source_file.handle, dest_file.handle)
+                await child_task.wait_for_exit()
+
+                await dest_file.lseek(0, os.SEEK_SET)
+                self.assertEqual(await dest_file.read(), data)
         trio.run(self.runner, test)
 
     # def test_thread_mkdtemp(self) -> None:
