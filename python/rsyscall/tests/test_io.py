@@ -451,6 +451,7 @@ class TestIO(unittest.TestCase):
                             local_thread, local_cat, infd=local_file.handle, outfd=local_sock.handle)
                         remote_child_task = await rsyscall.io.exec_cat(
                             remote_thread, remote_cat, infd=remote_file.handle, outfd=remote_sock)
+                        # await trio.sleep(99)
                         await local_sock.handle.invalidate()
                         await remote_sock.invalidate()
                         await local_child_task.wait_for_exit()

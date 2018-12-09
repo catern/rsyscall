@@ -8077,5 +8077,20 @@ LOL if I actually kill the child, then it seems to work...
    So how do I handle establishing a connection to the remote host?
 
    make_connections on remote_stdtask I guess.
+** memory caching and batching
+   So three things:
+   1. Need to implement batch_memcpy.
+   2. Need to have Paths store a cached ptr on themselves.
+   3. Need to batch faccessat things all the time.
 
-   
+   Handling the batching here is tricky.
+* cooperative concurrency
+   the reason people like cooperative concurrency is,
+   because it allows writing functions which are atomic relative to other threads.
+
+   that's the same writing pure functions, or writing functions that don't throw exceptions.
+
+   they're all the same thing... effects!!!!....
+* batching
+  I could implement easy batching by just having requests be enqueued,
+  and then performing all pending requests at once.

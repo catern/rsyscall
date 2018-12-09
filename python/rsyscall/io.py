@@ -2306,6 +2306,24 @@ class ReceiveMemoryGateway(MemoryGateway):
         # implemented with a single read or write instead of readv/writev.
         for dest, src, n in ops:
             await self.memcpy(dest, src, n)
+
+def merge_adjacent(spans: t.List[t.Tuple[Pointer, int]]) -> t.List[t.Tuple[Pointer, int]]:
+    if len(spans) == 0:
+        return []
+    spans = sorted(spans, key=lambda elem: int(elem[0]))
+    outputs: t.List[t.Tuple[Pointer, int]] = []
+    last_pointer, last_size = spans[0]
+    for pointer, size in spans[1:]:
+        if int(last_pointer + last_size) == int(pointer):
+            last_size += size
+        elif int(last_pointer + last_size) > int(pointer):
+            raise Exception("pointers passed to memcpy are overlapping!")
+        else:
+            outputs.append((last_pointer, last_size))
+            last_pointer, last_size = pointer, size
+    outputs.append((last_pointer, last_size))
+    return outputs
+
 @dataclass
 class SendMemoryGateway(MemoryGateway):
     """From the perspective of the side "closer" to us"""
@@ -2338,11 +2356,48 @@ class SendMemoryGateway(MemoryGateway):
                 nursery.start_soon(read)
                 nursery.start_soon(write)
 
+    async def iovec_memcpy(self,
+                           dests: t.List[t.Tuple[Pointer, int]],
+                           srcs: t.List[t.Tuple[Pointer, int]]
+    ) -> None:
+        dests = merge_adjacent(dests)
+        srcs = merge_adjacent(srcs)
+        rtask = self.read.task
+        near_read_fd = self.read.near
+        near_dests = [(rtask.to_near_pointer(dest), n) for (dest, n) in dests]
+        wtask = self.write.underlying.task.base
+        near_write_fd = self.write.underlying.handle.near
+        near_srcs = [(wtask.to_near_pointer(src), n) for (src, n) in srcs]
+        async def read() -> None:
+            # TODO we should use readv, but only if there's more than two operations after coalescing.
+            remaining = near_dests:
+            while len(remaining) > 0:
+                if len(remaining) > 2:
+                    raise Exception("use readv")
+                else:
+                    # need to iterate through remaining, I guess
+                    # actually this is all a fairly reusable thing.
+                    pass
+            for near_dest, n in near_dests:
+                i = 0
+                while (n - i) > 0:
+                    ret = await near.read(rtask.sysif, near_read_fd, near_dest+i, n-i)
+                    i += ret
+        async def write() -> None:
+            for near_src, n in near_srcs:
+                i = 0
+                while (n - i) > 0:
+                    ret = await self.write.write_raw(wtask.sysif, near_write_fd, near_src+i, n-i)
+                    i += ret
+        async with self.lock:
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(read)
+                nursery.start_soon(write)
+
     async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
-        # TODO we should try to coalesce adjacent buffers, so one or both sides of the copy can be
-        # implemented with a single read or write instead of readv/writev.
-        for dest, src, n in ops:
-            await self.memcpy(dest, src, n)
+        dests = [(dest, n) for (dest, src, n) in ops]
+        srcs = [(src, n) for (dest, src, n) in ops]
+        await self.iovec_memcpy(dests, srcs)
 
 # TODO we should just hardcode this to check for local, send, receive...
 # The point of the gateway is simple:
