@@ -41,7 +41,7 @@ class EpollEventMask:
         ret.et = et
         return ret
 
-    def __str__(self) -> None:
+    def __str__(self) -> str:
         conditions: t.List[str] = []
         if self.in_:
             conditions.append('in')
@@ -59,7 +59,7 @@ class EpollEventMask:
             conditions.append('et')
         return 'EpollEventMask(' + ','.join(conditions) + ')'
 
-    def __repr__(self) -> None:
+    def __repr__(self) -> str:
         return str(self)
 
 @dataclass

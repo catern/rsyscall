@@ -1473,7 +1473,8 @@ class SignalBlock:
     @staticmethod
     async def make(task: Task, mask: t.Set[signal.Signals]) -> 'SignalBlock':
         if len(mask.intersection(task.sigmask.mask)) != 0:
-            raise Exception("can't allocate a SignalBlock for a signal that was already blocked")
+            raise Exception("can't allocate a SignalBlock for a signal that was already blocked",
+                            mask, task.sigmask.mask)
         await task.sigmask.block(task, mask)
         return SignalBlock(task, mask)
 
@@ -1636,6 +1637,7 @@ class ChildTaskMonitor:
         if self.signal_queue.sigfd.underlying.file.mask != set([signal.SIGCHLD]):
             raise Exception("ChildTaskMonitor should get a SignalQueue only for SIGCHLD")
         self.running_wait: t.Optional[trio.Event] = None
+        self.can_waitid = False
 
     async def clone(self,
                     clone_task: base.Task,
@@ -1676,48 +1678,50 @@ class ChildTaskMonitor:
             running_wait = trio.Event()
             self.running_wait = running_wait
             try:
-                # we don't care what information we get from the signal, we just want to
-                # sleep until a SIGCHLD happens
-                await self.signal_queue.read()
+                if not self.can_waitid:
+                    # we don't care what information we get from the signal, we just want to
+                    # sleep until a SIGCHLD happens
+                    await self.signal_queue.read()
+                    self.can_waitid = True
                 # loop on waitid to flush all child events
                 task = self.waiting_task
-                # only handle a maximum of 32 child events before returning, to prevent a DOS-through-forkbomb
                 # TODO if we could just detect when the ChildTask that we are wait()ing for
                 # has gotten an event, we could handle events in this function indefinitely,
                 # and only return once we've sent an event to that ChildTask.
                 # maybe by passing in the waiting queue?
                 # could do the same for epoll too.
                 # though we have to wake other people up too...
-                for _ in range(32):
-                    try:
-                        # have to serialize against things which use pids; we can't do a wait
-                        # while something else is making a syscall with a pid, because we
-                        # might collect the zombie for that pid and cause pid reuse
-                        async with self.wait_lock:
-                            siginfo = await memsys.waitid(
-                                task.syscall, task.gateway, task.allocator,
-                                None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
-                    except ChildProcessError:
-                        # no more children
-                        break
-                    struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
-                    if struct.si_pid == 0:
-                        # no more waitable events, but we still have children
-                        break
-                    child_event = ChildEvent.make(ChildCode(struct.si_code),
-                                                  pid=int(struct.si_pid), uid=int(struct.si_uid),
-                                                  status=int(struct.si_status))
-                    logger.info("got child event %s", child_event)
-                    if child_event.pid in self.task_map:
-                        self.task_map[child_event.pid].queue.put_nowait(child_event)
-                    else:
-                        # some unknown child. this will happen if we're a subreaper, as
-                        # things get reparented to us and die
-                        self.unknown_queue.put_nowait(child_event)
-                    if child_event.died():
-                        # this child is dead. if its pid is reused, we don't want to send
-                        # any more events to the same ChildTask.
-                        del self.task_map[child_event.pid]
+                try:
+                    # have to serialize against things which use pids; we can't do a wait
+                    # while something else is making a syscall with a pid, because we
+                    # might collect the zombie for that pid and cause pid reuse
+                    async with self.wait_lock:
+                        siginfo = await memsys.waitid(
+                            task.syscall, task.gateway, task.allocator,
+                            None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
+                except ChildProcessError:
+                    # no more children
+                    self.can_waitid = False
+                    return
+                struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
+                if struct.si_pid == 0:
+                    # no more waitable events, but we still have children
+                    self.can_waitid = False
+                    return
+                child_event = ChildEvent.make(ChildCode(struct.si_code),
+                                              pid=int(struct.si_pid), uid=int(struct.si_uid),
+                                              status=int(struct.si_status))
+                logger.info("got child event %s", child_event)
+                if child_event.pid in self.task_map:
+                    self.task_map[child_event.pid].queue.put_nowait(child_event)
+                else:
+                    # some unknown child. this will happen if we're a subreaper, as
+                    # things get reparented to us and die
+                    self.unknown_queue.put_nowait(child_event)
+                if child_event.died():
+                    # this child is dead. if its pid is reused, we don't want to send
+                    # any more events to the same ChildTask.
+                    del self.task_map[child_event.pid]
             finally:
                 self.running_wait = None
                 running_wait.set()
@@ -1923,35 +1927,35 @@ class RsyscallConnection:
     ) -> None:
         self.tofd = tofd
         self.fromfd = fromfd
-        self.request_lock = trio.Lock()
-        self.response_fifo_lock = trio.StrictFIFOLock()
+        self.buffer = ReadBuffer()
 
     async def close(self) -> None:
         await self.tofd.aclose()
         await self.fromfd.aclose()
 
-    async def syscall(self, number: int, arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> int:
+    async def write_request(self, number: int,
+                            arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> None:
         request = ffi.new('struct rsyscall_syscall*',
                           (number, (arg1, arg2, arg3, arg4, arg5, arg6)))
-        async with self.request_lock:
-            try:
-                await self.tofd.write(bytes(ffi.buffer(request)))
-            except OSError as e:
-                # we raise a different exception so that users can distinguish syscall errors from
-                # transport errors
-                raise RsyscallException() from e
-        with trio.open_cancel_scope(shield=True):
-            async with self.response_fifo_lock:
-                try:
-                    response_bytes = await self.fromfd.read(ffi.sizeof('unsigned long'))
-                except OSError as e:
-                    raise RsyscallException() from e
-        if len(response_bytes) == 0:
-            # we catch this in the implementations of exec and exit
-            raise RsyscallHangup()
-        response, = struct.unpack('q', response_bytes)
-        raise_if_error(response)
-        return response
+        try:
+            await self.tofd.write(bytes(ffi.buffer(request)))
+        except OSError as e:
+            # we raise a different exception so that users can distinguish syscall errors from
+            # transport errors
+            raise RsyscallException() from e
+
+    async def read_response(self) -> int:
+        size = ffi.sizeof('unsigned long')
+        response_bytes = self.buffer.read_length(size)
+        while response_bytes is None:
+            new_data = await self.fromfd.read()
+            if len(new_data) == 0:
+                raise RsyscallHangup()
+            self.buffer.feed_bytes(new_data)
+            response_bytes = self.buffer.read_length(size)
+        else:
+            response, = struct.unpack('q', response_bytes)
+            return response
 
 class ChildExit(RsyscallHangup):
     pass
@@ -1961,12 +1965,12 @@ class MMRelease(RsyscallHangup):
 
 @dataclass
 class SyscallResponse(near.SyscallResponse):
-    connection: ChildConnection
+    process_one_response: t.Any
     result: t.Optional[t.Union[Exception, int]] = None
 
     async def receive(self) -> int:
         while self.result is None:
-            await self.connection._process_one_response()
+            await self.process_one_response()
         else:
             if isinstance(self.result, int):
                 return self.result
@@ -2001,25 +2005,21 @@ class ReadBuffer:
 class ChildConnection(base.SyscallInterface):
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
-                 tofd: AsyncFileDescriptor[WritableFile],
-                 fromfd: AsyncFileDescriptor[ReadableFile],
+                 rsyscall_connection: RsyscallConnection,
                  server_task: ChildTask,
                  futex_task: t.Optional[ChildTask],
     ) -> None:
-        self.tofd = tofd
-        self.fromfd = fromfd
+        self.rsyscall_connection = rsyscall_connection
         self.server_task = server_task
         self.futex_task = futex_task
         self.identifier_process = self.server_task.process.near
         self.logger = logging.getLogger(f"rsyscall.ChildConnection.{int(self.server_task.process)}")
-        self.request_lock = trio.Lock()
-        self.response_fifo_lock = trio.StrictFIFOLock()
         self.infd: handle.FileDescriptor
         self.outfd: handle.FileDescriptor
         self.activity_fd: near.FileDescriptor
+        self.request_lock = trio.Lock()
         self.pending_responses: t.List[SyscallResponse] = []
         self.running: trio.Event = None
-        self.buffer = ReadBuffer()
 
     def store_remote_side_handles(self, infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> None:
         # these are needed so that we don't close them with garbage collection
@@ -2029,40 +2029,14 @@ class ChildConnection(base.SyscallInterface):
         self.activity_fd = infd.near
 
     async def close_interface(self) -> None:
-        await self.tofd.aclose()
-        await self.fromfd.aclose()
-
-    async def _write_syscall_request(self, number: int,
-                                     arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> None:
-        request = ffi.new('struct rsyscall_syscall*',
-                          (number, (arg1, arg2, arg3, arg4, arg5, arg6)))
-        try:
-            await self.tofd.write(bytes(ffi.buffer(request)))
-        except OSError as e:
-            # we raise a different exception so that users can distinguish syscall errors from
-            # transport errors
-            raise RsyscallException() from e
-
-    async def _read_syscall_response_direct(self) -> int:
-        # baaah this needs to be larger
-        size = ffi.sizeof('unsigned long')
-        response_bytes = self.buffer.read_length(size)
-        while response_bytes is None:
-            new_data = await self.fromfd.read()
-            if len(new_data) == 0:
-                raise RsyscallHangup()
-            self.buffer.feed_bytes(new_data)
-            response_bytes = self.buffer.read_length(size)
-        else:
-            response, = struct.unpack('q', response_bytes)
-            return response
+        await self.rsyscall_connection.close()
 
     async def _read_syscall_response(self) -> int:
         response: int
         async with trio.open_nursery() as nursery:
             async def read_response() -> None:
                 nonlocal response
-                response = await self._read_syscall_response_direct()
+                response = await self.rsyscall_connection.read_response()
                 raise_if_error(response)
                 nursery.cancel_scope.cancel()
             async def server_exit() -> None:
@@ -2110,11 +2084,11 @@ class ChildConnection(base.SyscallInterface):
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
         async with self.request_lock:
             log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-            await self._write_syscall_request(
+            await self.rsyscall_connection.write_request(
                 number,
                 arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
                 arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        response = SyscallResponse(self)
+        response = SyscallResponse(self._process_one_response)
         self.pending_responses.append(response)
         return response
 
@@ -2154,19 +2128,65 @@ class RsyscallInterface(base.SyscallInterface):
         # these are needed so that we don't accidentally close them when doing a do_cloexec_except
         self.infd = infd
         self.outfd = outfd
+        self.request_lock = trio.Lock()
+        self.pending_responses: t.List[SyscallResponse] = []
+        self.running: trio.Event = None
 
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
 
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> near.SyscallResponse:
-        raise Exception("todo for non-child interfaces")
+    async def _process_response_for(self, response: SyscallResponse) -> None:
+        try:
+            ret = await self.rsyscall_connection.read_response()
+            raise_if_error(ret)
+        except Exception as e:
+            response.set_exception(e)
+        else:
+            response.set_result(ret)
+
+    async def _process_one_response_direct(self) -> None:
+        if len(self.pending_responses) == 0:
+            raise Exception("somehow we are trying to process a syscall response, when there are no pending syscalls.")
+        next = self.pending_responses[0]
+        await self._process_response_for(next)
+        self.pending_responses = self.pending_responses[1:]
+
+    async def _process_one_response(self) -> None:
+        if self.running is not None:
+            await self.running.wait()
+        else:
+            running = trio.Event()
+            self.running = running
+            try:
+                await self._process_one_response_direct()
+            finally:
+                self.running = None
+                running.set()
+
+    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
+        async with self.request_lock:
+            log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+            await self.rsyscall_connection.write_request(
+                number,
+                arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+                arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        response = SyscallResponse(self._process_one_response)
+        self.pending_responses.append(response)
+        return response
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-        return (await self.rsyscall_connection.syscall(
-            number,
-            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6)))
+        response = await self.submit_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
+        try:
+            # we must not be interrupted while reading the response - we need to return
+            # the response so that our parent can deal with the state change we created.
+            with trio.open_cancel_scope(shield=True):
+                result = await response.receive()
+        except Exception as exn:
+            self.logger.debug("%s -> %s", number, exn)
+            raise
+        else:
+            self.logger.debug("%s -> %s", number, result)
+            return result
 
 async def call_function(task: Task, stack: BufferedStack, process_resources: ProcessResources,
                         function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> ChildEvent:
@@ -2496,7 +2516,7 @@ async def spawn_rsyscall_thread(
         lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SIGHAND|lib.CLONE_SYSVSEM|signal.SIGCHLD,
         function, remote_sock.near, remote_sock.near)
     syscall = ChildConnection(
-        access_sock, access_sock,
+        RsyscallConnection(access_sock, access_sock),
         cthread.child_task,
         cthread.futex_task)
     new_base_task = base.Task(syscall, parent_task.fd_table, parent_task.address_space)
@@ -2729,8 +2749,8 @@ async def ssh_bootstrap(
                     new_process_namespace)
     left_connecting_connection, right_connecting_connection = await new_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     connecting_connection = (left_connecting_connection.handle, right_connecting_connection.handle)
-    epoller = await task.make_epoll_center()
-    child_monitor = await ChildTaskMonitor.make(task, epoller)
+    epoller = await new_task.make_epoll_center()
+    child_monitor = await ChildTaskMonitor.make(new_task, epoller)
     new_stdtask = StandardTask(
         access_task=parent_task.task,
         access_epoller=parent_task.epoller,

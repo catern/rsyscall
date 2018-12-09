@@ -180,20 +180,20 @@ class TestIO(unittest.TestCase):
     #         pass
     #     trio.run(test)
 
-    # def test_mkdtemp(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-    #             async with (await stdtask.mkdtemp()) as path:
-    #                 async with (await path.open_directory()) as dirfd:
-    #                     self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..'])
-    #                     text = b"Hello world!"
-    #                     name = b"hello"
-    #                     hello_path = await rsyscall.io.spit(path/name, text)
-    #                     async with (await hello_path.open(os.O_RDONLY)) as readable:
-    #                         self.assertEqual(await readable.read(), text)
-    #                     await dirfd.lseek(0, os.SEEK_SET)
-    #                     self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..', name])
-    #     trio.run(test)
+    def test_mkdtemp(self) -> None:
+        async def test() -> None:
+            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+                async with (await stdtask.mkdtemp()) as path:
+                    async with (await path.open_directory()) as dirfd:
+                        self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..'])
+                        text = b"Hello world!"
+                        name = b"hello"
+                        hello_path = await rsyscall.io.spit(path/name, text)
+                        async with (await hello_path.open(os.O_RDONLY)) as readable:
+                            self.assertEqual(await readable.read(), text)
+                        await dirfd.lseek(0, os.SEEK_SET)
+                        self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..', name])
+        trio.run(test)
 
     # def test_bind(self) -> None:
     #     async def test() -> None:
@@ -403,7 +403,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
             async with thread as stdtask2:
-                sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, stdtask2.epoller, {signal.SIGINT})
+                sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, stdtask2.local_epoller, {signal.SIGINT})
                 print("epfd", stdtask.epoller.epfd)
                 await thread.thread.child_task.send_signal(signal.SIGINT)
                 orig_mask = await rsyscall.io.SignalBlock.make(stdtask.task, {signal.SIGINT})
@@ -414,14 +414,6 @@ class TestIO(unittest.TestCase):
                 data = await sigqueue.sigfd.read()
         trio.run(self.runner, test)
 
-    # bah, fug.
-    # we can't monitor our child's signalfd from the parent.
-    # I guess?
-    # Urggghhhhh
-    # Well, okay, luckily sigchld is the only signal we need.
-    # Can we use clone_parent instead?
-    # Yes, if we just lock clone relative to wait.
-    # ughhhh or something like that anyway
     def test_ssh_basic(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with ssh_to_localhost(stdtask) as ssh_command:

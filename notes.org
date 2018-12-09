@@ -7999,3 +7999,11 @@ LOL if I actually kill the child, then it seems to work...
 
    ah there was just a bug in my memory allocator, I wasn't keeping the allocations sorted,
    so I was allocating the same thing twice.
+
+   OK so now I need to implement submit_syscall in a nice shareable way.
+
+   Hmmm blug I should really fix these blocks and weirdnesses that happen when I throw an exception.
+
+   OK resolved that.
+   I think, anyway.
+   By rewriting the ChildTaskMonitor to maintain a bit of state about whether it has seen a sigchld.
