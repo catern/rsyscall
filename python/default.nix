@@ -1,4 +1,4 @@
-let pkgs = import <nixpkgs> {}; in
+let pkgs = import ../pinned.nix; in
 with pkgs.python37Packages;
 
 buildPythonPackage {

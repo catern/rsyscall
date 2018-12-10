@@ -414,8 +414,24 @@ class TestIO(unittest.TestCase):
                 remote_thread = await remote_stdtask.fork()
                 async with remote_thread:
                     # there's no test on mount namespace at the moment, so it works to pull this from local
+                    logger.info("about to exec")
                     child_task = await remote_thread.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                    logger.info("done exec, waiting now")
                     await child_task.wait_for_exit()
+        trio.run(self.runner, test)
+
+    def test_ssh_transmit(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with ssh_to_localhost(stdtask) as ssh_command:
+                local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
+                    stdtask, ssh_command)
+                async with (await stdtask.mkdtemp()) as local_tmpdir:
+                    async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
+                        [(local_sock, remote_sock)] = await remote_stdtask.make_connections(1)
+                        data = b"hello world"
+                        await local_sock.write(data)
+                        read_data = await remote_stdtask.task.read(remote_sock.far)
+                        self.assertEqual(read_data, data)
         trio.run(self.runner, test)
 
     def test_ssh_copy(self) -> None:
@@ -431,26 +447,39 @@ class TestIO(unittest.TestCase):
                         await local_file.write(data)
                         await local_file.lseek(0, os.SEEK_SET)
 
-                        local_thread = await stdtask.fork()
-                        remote_thread = await remote_stdtask.fork()
-
-                        local_cat = await rsyscall.io.which(stdtask, b"cat")
-                        remote_cat = await rsyscall.io.which(remote_stdtask, b"cat")
-
                         [(local_sock, remote_sock)] = await remote_stdtask.make_connections(1)
                         print("local_sock remote_sock", local_sock, remote_sock)
+
+                        local_thread = await stdtask.fork()
+                        local_cat = await rsyscall.io.which(stdtask, b"cat")
                         local_child_task = await rsyscall.io.exec_cat(
                             local_thread, local_cat, infd=local_file.handle, outfd=local_sock.handle)
-                        remote_child_task = await rsyscall.io.exec_cat(
-                            remote_thread, remote_cat, infd=remote_file.handle, outfd=remote_sock)
-                        # await trio.sleep(99)
                         await local_sock.handle.invalidate()
-                        await remote_sock.invalidate()
                         await local_child_task.wait_for_exit()
+
+                        remote_thread = await remote_stdtask.fork()
+                        remote_cat = await rsyscall.io.which(remote_stdtask, b"cat")
+                        remote_child_task = await rsyscall.io.exec_cat(
+                            remote_thread, remote_cat, infd=remote_sock, outfd=remote_file.handle)
+                        await remote_sock.invalidate()
                         await remote_child_task.wait_for_exit()
 
                         await remote_file.lseek(0, os.SEEK_SET)
                         self.assertEqual(await remote_file.read(), data)
+        trio.run(self.runner, test)
+
+    def test_ssh_shell(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with ssh_to_localhost(stdtask) as ssh_command:
+                local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
+                    stdtask, ssh_command)
+                async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
+                    thread = await remote_stdtask.fork()
+                    bash = await rsyscall.io.which(remote_stdtask, b"bash")
+                    await thread.stdtask.task.chdir(remote_tmpdir)
+                    await ((await (remote_tmpdir/"var").mkdir())/"stuff").mkdir()
+                    child_task = await bash.exec(thread)
+                    await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
     def test_copy(self) -> None:

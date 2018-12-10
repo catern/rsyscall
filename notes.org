@@ -8144,4 +8144,9 @@ where it just falls back to a direct memcpy instead of going through the pipe?
 OK, and we can have a read method on the local socketpair,
 which directly allocates a local buffer and copies from the remote into it.
 Seems fine.
+* handles
+  To express changing directory, I guess I need paths which will be inherited when I unshare fs.
+  So... that's kind of a sense in which paths are attached to a task.
 
+  But, when I chdir, I invalidate all previous cwd-relative paths.
+  I guess I can just actually invalidate them.

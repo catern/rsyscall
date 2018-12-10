@@ -54,7 +54,8 @@ async def recv(task: far.Task, transport: MemoryTransport, allocator: memory.All
     logger.debug("recv(%s, %s, %s)", fd, count, flags)
     with await allocator.malloc(count) as buf_ptr:
         ret = await far.recv(task, fd, buf_ptr, count, flags)
-        return (await read_to_bytes(transport, buf_ptr, ret))
+        with trio.open_cancel_scope(shield=True):
+            return (await read_to_bytes(transport, buf_ptr, ret))
 
 async def memfd_create(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                        name: bytes, flags: int) -> far.FileDescriptor:
@@ -66,7 +67,8 @@ async def getdents64(task: far.Task, transport: MemoryTransport, allocator: memo
     logger.debug("getdents64(%s, %s)", fd, count)
     with await allocator.malloc(count) as dirp:
         ret = await far.getdents64(task, fd, dirp, count)
-        return (await read_to_bytes(transport, dirp, ret))
+        with trio.open_cancel_scope(shield=True):
+            return (await read_to_bytes(transport, dirp, ret))
 
 siginfo_size = ffi.sizeof('siginfo_t')
 async def waitid(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
@@ -74,7 +76,8 @@ async def waitid(sysif: SyscallInterface, transport: MemoryTransport, allocator:
     logger.debug("waitid(%s, %s)", id, options)
     with await allocator.malloc(siginfo_size) as infop:
         await raw_syscall.waitid(sysif, id, infop, options, None)
-        return (await read_to_bytes(transport, infop, siginfo_size))
+        with trio.open_cancel_scope(shield=True):
+            return (await read_to_bytes(transport, infop, siginfo_size))
 
 
 #### epoll ####
@@ -128,7 +131,8 @@ async def rt_sigprocmask(sysif: SyscallInterface, transport: MemoryTransport, al
     async with localize_data(transport, allocator, sigset_to_bytes(newset)) as (newset_ptr, _):
         with await allocator.malloc(sigset.size) as oldset_ptr:
             await raw_syscall.rt_sigprocmask(sysif, (how, newset_ptr), oldset_ptr, sigset.size)
-            oldset_data = await read_to_bytes(transport, oldset_ptr, sigset.size)
+            with trio.open_cancel_scope(shield=True):
+                oldset_data = await read_to_bytes(transport, oldset_ptr, sigset.size)
             return bytes_to_sigset(oldset_data)
 
 
@@ -145,14 +149,16 @@ async def pipe(sysif: SyscallInterface, transport: MemoryTransport, allocator: m
     logger.debug("pipe(%s)", flags)
     with await allocator.malloc(intpair.size) as bufptr:
         await raw_syscall.pipe2(sysif, bufptr, flags)
-        return (await read_to_intpair(transport, bufptr))
+        with trio.open_cancel_scope(shield=True):
+            return (await read_to_intpair(transport, bufptr))
 
 async def socketpair(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                      domain: int, type: int, protocol: int) -> t.Tuple[int, int]:
     logger.debug("socketpair(%s, %s, %s)", domain, type, protocol)
     with await allocator.malloc(intpair.size) as bufptr:
         await raw_syscall.socketpair(sysif, domain, type, protocol, bufptr)
-        return (await read_to_intpair(transport, bufptr))
+        with trio.open_cancel_scope(shield=True):
+            return (await read_to_intpair(transport, bufptr))
 
 
 #### filesystem operations which take a dirfd and path ####
@@ -473,5 +479,6 @@ async def accept(sysif: SyscallInterface, transport: MemoryTransport, allocator:
     logger.debug("accept(%s, %s, %s)", sockfd, addrlen, flags)
     async with alloc_sockbuf(transport, allocator, addrlen) as (addr_ptr, addrlen_ptr):
         fd = await raw_syscall.accept(sysif, sockfd, addr_ptr, addrlen_ptr, flags)
-        addr = await read_sockbuf(transport, addr_ptr, addrlen, addrlen_ptr)
+        with trio.open_cancel_scope(shield=True):
+            addr = await read_sockbuf(transport, addr_ptr, addrlen, addrlen_ptr)
         return fd, addr

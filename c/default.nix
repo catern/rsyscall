@@ -1,4 +1,4 @@
-with import <nixpkgs> {};
+with import ../pinned.nix;
 
 stdenv.mkDerivation {
   name = "rsyscall";

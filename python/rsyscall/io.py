@@ -1401,6 +1401,7 @@ class StandardTask:
         Set going_to_exec to True if you are about to exec with this task; then we'll skip the
         manual CLOEXEC in userspace that we have to do to avoid keeping stray references around.
 
+        TODO maybe this should return an object that lets us unset CLOEXEC on things?
         """
         async def do_unshare(close_in_old_space: t.List[near.FileDescriptor],
                              copy_to_new_space: t.List[near.FileDescriptor]) -> None:
@@ -1409,6 +1410,11 @@ class StandardTask:
             await unshare_files(self.task, self.child_monitor, self.process,
                                 close_in_old_space, copy_to_new_space, going_to_exec)
         await self.task.base.unshare_files(do_unshare)
+
+    async def unshare_fs(self) -> ChangeCWD:
+        # 
+        await self.task.base.unshare_files(do_unshare)
+        pass
 
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
@@ -1698,11 +1704,13 @@ class ChildTaskMonitor:
                             None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
                 except ChildProcessError:
                     # no more children
+                    logger.info("no more children")
                     self.can_waitid = False
                     return
                 struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
                 if struct.si_pid == 0:
                     # no more waitable events, but we still have children
+                    logger.info("no more waitable events")
                     self.can_waitid = False
                     return
                 child_event = ChildEvent.make(ChildCode(struct.si_code),
