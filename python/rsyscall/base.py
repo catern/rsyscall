@@ -94,19 +94,21 @@ class Path:
 
 # TODO later on we'll have user namespaces too
 
-class MemoryGateway:
-    """A gateway between two tasks.
-    
-    Or more specifically between their address spaces and file descriptor namespaces.
+class MemoryWriter:
+    @abc.abstractmethod
+    async def write(self, dest: Pointer, data: bytes) -> None: ...
+    @abc.abstractmethod
+    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None: ...
 
-    """
+class MemoryReader:
     @abc.abstractmethod
-    def inherit(self, task: Task) -> MemoryGateway: ...
-    # future methods will support copying between file descriptors
+    async def read(self, src: Pointer, n: int) -> bytes: ...
     @abc.abstractmethod
-    async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None: ...
+    async def batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]: ...
+
+class MemoryTransport(MemoryWriter, MemoryReader):
     @abc.abstractmethod
-    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None: ...
+    def inherit(self, task: Task) -> MemoryTransport: ...
 
 local_address_space = AddressSpace(os.getpid())
 
@@ -114,52 +116,16 @@ class InvalidAddressSpaceError(Exception):
     pass
 
 from rsyscall._raw import ffi, lib # type: ignore
-class LocalMemoryGateway(MemoryGateway):
-    def inherit(self, task: Task) -> LocalMemoryGateway:
-        return self
-
-    async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
-        neardest = local_address_space.to_near(dest)
-        nearsrc = local_address_space.to_near(src)
-        lib.memcpy(ffi.cast('void*', int(neardest)), ffi.cast('void*', int(nearsrc)), n)
-
-    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
-        # TODO when we implement the remote support, we should try to coalesce adjacent buffers,
-        # so one or both sides of the copy can be implemented with a single read or write instead of readv/writev.
-        for dest, src, n in ops:
-            await self.memcpy(dest, src, n)
+def memcpy(dest: Pointer, src: Pointer, n: int) -> None:
+    neardest = local_address_space.to_near(dest)
+    nearsrc = local_address_space.to_near(src)
+    lib.memcpy(ffi.cast('void*', int(neardest)), ffi.cast('void*', int(nearsrc)), n)
 
 def cffi_to_local_pointer(cffi_object) -> Pointer:
     return Pointer(local_address_space, rsyscall.near.Pointer(int(ffi.cast('long', cffi_object))))
 
 def to_local_pointer(data: bytes) -> Pointer:
     return cffi_to_local_pointer(ffi.from_buffer(data))
-
-class PeerMemoryGateway(MemoryGateway):
-    def __init__(self, space_a: AddressSpace,
-                 space_b: AddressSpace) -> None:
-        pass
-
-    async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
-        # write memory from dest pointer into that pointer's address space's data sending fd
-        # read from src pointer's address space's data receiving fd into src pointer
-        # they definitely need to be async since the reads and writes can block a lot.
-        # do we need to prepare the async fd in advance? the epollfd? is that it?
-        # that's certainly one trick we could do.
-        # how will that work on a remote host? I guess the rsyscall bootstrap will prepare it autonomously... and tell us it...
-        # um, well in that case we could have the bootstrap do that even locally
-        # well we will never actually be in a different address space locally, there's no benefit to it, so...
-        # for now let's prepare it in the parent and pass it down, yeah
-        # and we'll send the write and the read in parallel, which should be fine.
-        # ok! seems good.
-        # we'll register things in the host process, and also make things in the host process, then inherit them down
-        raise InvalidAddressSpaceError("some pointer isn't in the local address space", dest, src, n)
-
-    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
-        # TODO when we implement the remote support, we should try to coalesce adjacent buffers,
-        # so one or both sides of the copy can be implemented with a single read or write instead of readv/writev.
-        for dest, src, n in ops:
-            await self.memcpy(dest, src, n)
 
 T_addr = t.TypeVar('T_addr', bound='Address')
 class Address:

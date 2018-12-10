@@ -1,6 +1,6 @@
 import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.io import gather_local_bootstrap, wrap_stdin_out_err
+from rsyscall.io import wrap_stdin_out_err
 from rsyscall.io import AsyncFileDescriptor
 from rsyscall.io import local_stdtask, build_local_stdtask, StandardTask
 from rsyscall.io import Command
@@ -29,14 +29,6 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 class TestIO(unittest.TestCase):
-    def setUp(self) -> None:
-        self.bootstrap = gather_local_bootstrap()
-        self.task = self.bootstrap.task
-        self.stdstreams = self.bootstrap.stdstreams
-        self.stdin = self.stdstreams.stdin
-        self.stdout = self.stdstreams.stdout
-        self.stderr = self.stdstreams.stderr
-
     def test_pipe(self):
         async def test() -> None:
             async with (await self.task.pipe()) as pipe:
@@ -64,7 +56,7 @@ class TestIO(unittest.TestCase):
 
     # def test_cat(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             async with (await self.task.pipe()) as pipe_in:
     #                 async with (await self.task.pipe()) as pipe_out:
     #                     rsyscall_task, (stdin, stdout, new_stdin, new_stdout) = await stdtask.spawn(
@@ -81,7 +73,7 @@ class TestIO(unittest.TestCase):
 
     # def test_cat_async(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             async with (await self.task.pipe()) as pipe_in:
     #                 async with (await self.task.pipe()) as pipe_out:
     #                     rsyscall_task, (stdin, stdout, new_stdin, new_stdout) = await stdtask.spawn(
@@ -112,13 +104,13 @@ class TestIO(unittest.TestCase):
 
     # def test_epoll(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             await self.do_epoll_things(stdtask.resources.epoller)
     #     trio.run(test)
 
     # def test_epoll_multi(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             epoller = stdtask.resources.epoller
     #             async with trio.open_nursery() as nursery:
     #                 for i in range(5):
@@ -151,14 +143,14 @@ class TestIO(unittest.TestCase):
 
     def test_async(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
-                epoller = stdtask.resources.epoller
-                await self.do_async_things(epoller, self.task)
+            async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
+                epoller = stdtask.epoller
+                await self.do_async_things(epoller, stdtask.task)
         trio.run(test)
 
     # def test_async_multi(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             epoller = stdtask.resources.epoller
     #             async with trio.open_nursery() as nursery:
     #                 for i in range(5):
@@ -182,7 +174,7 @@ class TestIO(unittest.TestCase):
 
     def test_mkdtemp(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+            async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
                 async with (await stdtask.mkdtemp()) as path:
                     async with (await path.open_directory()) as dirfd:
                         self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], [b'.', b'..'])
@@ -197,7 +189,7 @@ class TestIO(unittest.TestCase):
 
     # def test_bind(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             async with (await stdtask.mkdtemp()) as path:
     #                 async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
     #                     addr = (path/"sock").unix_address()
@@ -206,7 +198,7 @@ class TestIO(unittest.TestCase):
 
     # def test_listen(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             async with (await stdtask.mkdtemp()) as path:
     #                 async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
     #                     addr = (path/"sock").unix_address()
@@ -221,7 +213,7 @@ class TestIO(unittest.TestCase):
 
     # def test_listen_async(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             async with (await stdtask.mkdtemp()) as path:
     #                 async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
     #                     addr = (path/"sock").unix_address()
@@ -240,7 +232,7 @@ class TestIO(unittest.TestCase):
     # def test_robust_bind_connect(self) -> None:
     #     "robust_unix_bind and robust_unix_connect work correctly on long Unix socket paths"
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             async with (await stdtask.mkdtemp()) as path:
     #                 async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
     #                     sockpath = path/("long"*25 + "sock")
@@ -259,7 +251,7 @@ class TestIO(unittest.TestCase):
 
     # def test_ip_listen_async(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #              async with (await stdtask.task.socket_inet(socket.SOCK_STREAM)) as sockfd:
     #                  bind_addr = sockfd.file.address_type(0, 0x7F_00_00_01)
     #                  await sockfd.bind(bind_addr)
@@ -277,7 +269,7 @@ class TestIO(unittest.TestCase):
 
     # def test_ip_dgram_connect(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #              async with (await stdtask.task.socket_inet(socket.SOCK_DGRAM)) as recv_sockfd:
     #                  await recv_sockfd.bind(recv_sockfd.file.address_type(0, 0x7F_00_00_01))
     #                  addr_recv = await recv_sockfd.getsockname()
@@ -301,7 +293,7 @@ class TestIO(unittest.TestCase):
     # def test_getdents_noent(self) -> None:
     #     "getdents on a removed directory throws FileNotFoundError"
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             async with (await stdtask.mkdtemp()) as path:
     #                 new_path = await (path/"foo").mkdir()
     #                 async with (await new_path.open_directory()) as new_dirfd:
@@ -312,7 +304,7 @@ class TestIO(unittest.TestCase):
 
     # def test_thread_exit(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             rsyscall_task, _ = await stdtask.spawn([])
     #             async with rsyscall_task as stdtask2:
     #                 await stdtask2.exit(0)
@@ -320,7 +312,7 @@ class TestIO(unittest.TestCase):
 
     # def test_thread_epoll(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             rsyscall_task, _ = await stdtask.spawn([])
     #             async with rsyscall_task as stdtask2:
     #                     await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
@@ -481,14 +473,14 @@ class TestIO(unittest.TestCase):
 
     # def test_thread_mkdtemp(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             async with (await stdtask.mkdtemp()) as tmpdir:
     #                 pass
     #     trio.run(test)
 
     # def test_do_cloexec_except(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             rsyscall_task, _ = await stdtask.spawn([])
     #             async with rsyscall_task as stdtask2:
     #                 pipe = await stdtask2.task.pipe()
@@ -501,7 +493,7 @@ class TestIO(unittest.TestCase):
 
     # def test_epoll_two(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as local_stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as local_stdtask:
     #             rsyscall_task, _ = await local_stdtask.spawn([])
     #             async with rsyscall_task as stdtask:
     #                 epoller1 = stdtask.resources.epoller
@@ -525,7 +517,7 @@ class TestIO(unittest.TestCase):
 
     # def test_unshared_thread_epoll(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             rsyscall_task, _ = await stdtask.spawn([])
     #             async with rsyscall_task as stdtask2:
     #                     await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
@@ -533,7 +525,7 @@ class TestIO(unittest.TestCase):
 
     # def test_unshared_thread_nest(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             rsyscall_task, _ = await stdtask.spawn([])
     #             async with rsyscall_task as stdtask2:
     #                 rsyscall_task3, _ = await stdtask2.spawn([])
@@ -543,7 +535,7 @@ class TestIO(unittest.TestCase):
 
     # def test_unshared_thread_pipe(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             rsyscall_task, _ = await stdtask.spawn([])
     #             async with rsyscall_task as stdtask2:
     #                 async with (await stdtask2.task.pipe()) as pipe:
@@ -567,7 +559,7 @@ class TestIO(unittest.TestCase):
 
     # def test_subprocess_pipe(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             rsyscall_task, _ = await stdtask.spawn([])
     #             async with rsyscall_task as stdtask2:
     #                 # need to exec into a task
@@ -591,7 +583,7 @@ class TestIO(unittest.TestCase):
 
     # def test_pass_fd(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     #             in_data = b"hello"
     #             await l.write(in_data)
@@ -601,7 +593,7 @@ class TestIO(unittest.TestCase):
 
     # def test_socketpair(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     #             in_data = b"hello"
     #             await l.write(in_data)
@@ -611,7 +603,7 @@ class TestIO(unittest.TestCase):
 
     def test_pass_fd(self) -> None:
         async def test() -> None:
-            async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+            async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
                 task = stdtask.task
                 l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
                 await memsys.sendmsg_fds(task.base, task.gateway, task.allocator,
@@ -631,7 +623,7 @@ class TestIO(unittest.TestCase):
 
     # def test_pass_fd_thread(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             task = stdtask.task
     #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     #             rsyscall_task, [r_remote] = await stdtask.spawn([r.handle.far])
@@ -654,7 +646,7 @@ class TestIO(unittest.TestCase):
 
     # def test_socket_binder(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_from_bootstrap(self.bootstrap)) as stdtask:
+    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             task = stdtask.task
     #             describe_pipe = await task.pipe()
     #             binder_process, [describe_write] = await stdtask.spawn([describe_pipe.wfd.handle.far])

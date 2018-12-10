@@ -4,7 +4,7 @@ import os
 import socket
 import rsyscall.raw_syscalls as raw_syscall
 from rsyscall.raw_syscalls import SigprocmaskHow, IdType
-from rsyscall.base import SyscallInterface, MemoryGateway
+from rsyscall.base import SyscallInterface, MemoryTransport, MemoryWriter, MemoryReader
 from dataclasses import dataclass
 import rsyscall.base as base
 import rsyscall.far as far
@@ -24,72 +24,70 @@ logger.setLevel(logging.INFO)
 
 @contextlib.asynccontextmanager
 async def localize_data(
-        gateway: MemoryGateway, allocator: memory.AllocatorInterface, data: bytes
+        transport: MemoryWriter, allocator: memory.AllocatorInterface, data: bytes
 ) -> t.AsyncGenerator[t.Tuple[base.Pointer, int], None]:
     data_len = len(data)
     with await allocator.malloc(data_len) as data_ptr:
-        await gateway.memcpy(data_ptr, base.to_local_pointer(data), data_len)
+        await transport.write(data_ptr, data)
         yield data_ptr, data_len
 
-async def read_to_bytes(gateway: MemoryGateway, data: base.Pointer, count: int) -> bytes:
-    local_data = ffi.new('char[]', count)
-    await gateway.memcpy(base.to_local_pointer(ffi.buffer(local_data)), data, count)
-    return bytes(ffi.buffer(local_data, count))
+async def read_to_bytes(transport: MemoryReader, data: base.Pointer, count: int) -> bytes:
+    return (await transport.read(data, count))
 
 
 #### miscellaneous ####
-async def read(task: far.Task, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def read(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                fd: far.FileDescriptor, count: int) -> bytes:
     logger.debug("read(%s, %s)", fd, count)
     with await allocator.malloc(count) as buf_ptr:
         ret = await far.read(task, fd, buf_ptr, count)
         with trio.open_cancel_scope(shield=True):
-            return (await read_to_bytes(gateway, buf_ptr, ret))
+            return (await read_to_bytes(transport, buf_ptr, ret))
 
-async def write(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def write(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                 fd: base.FileDescriptor, buf: bytes) -> int:
-    async with localize_data(gateway, allocator, buf) as (buf_ptr, buf_len):
+    async with localize_data(transport, allocator, buf) as (buf_ptr, buf_len):
         return (await raw_syscall.write(sysif, fd, buf_ptr, buf_len))
 
-async def recv(task: far.Task, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def recv(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                fd: far.FileDescriptor, count: int, flags: int) -> bytes:
     logger.debug("recv(%s, %s, %s)", fd, count, flags)
     with await allocator.malloc(count) as buf_ptr:
         ret = await far.recv(task, fd, buf_ptr, count, flags)
-        return (await read_to_bytes(gateway, buf_ptr, ret))
+        return (await read_to_bytes(transport, buf_ptr, ret))
 
-async def memfd_create(task: far.Task, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def memfd_create(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                        name: bytes, flags: int) -> far.FileDescriptor:
-    async with localize_data(gateway, allocator, name+b"\0") as (name_ptr, _):
+    async with localize_data(transport, allocator, name+b"\0") as (name_ptr, _):
         return (await far.memfd_create(task, name_ptr, flags))
 
-async def getdents64(task: far.Task, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def getdents64(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                      fd: far.FileDescriptor, count: int) -> bytes:
     logger.debug("getdents64(%s, %s)", fd, count)
     with await allocator.malloc(count) as dirp:
         ret = await far.getdents64(task, fd, dirp, count)
-        return (await read_to_bytes(gateway, dirp, ret))
+        return (await read_to_bytes(transport, dirp, ret))
 
 siginfo_size = ffi.sizeof('siginfo_t')
-async def waitid(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def waitid(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                  id: t.Union[base.Process, base.ProcessGroup, None], options: int) -> bytes:
     logger.debug("waitid(%s, %s)", id, options)
     with await allocator.malloc(siginfo_size) as infop:
         await raw_syscall.waitid(sysif, id, infop, options, None)
-        return (await read_to_bytes(gateway, infop, siginfo_size))
+        return (await read_to_bytes(transport, infop, siginfo_size))
 
 
 #### epoll ####
-async def epoll_ctl_add(task: far.Task, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def epoll_ctl_add(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                         epfd: far.FileDescriptor, fd: far.FileDescriptor, event: epoll.EpollEvent) -> None:
     logger.debug("epoll_ctl_add(%s, %s, %s)", epfd, fd, event)
-    async with localize_data(gateway, allocator, event.to_bytes()) as (event_ptr, _):
+    async with localize_data(transport, allocator, event.to_bytes()) as (event_ptr, _):
         await far.epoll_ctl(task, epfd, near.EpollCtlOp.ADD, fd, event_ptr)
 
-async def epoll_ctl_mod(task: far.Task, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def epoll_ctl_mod(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                         epfd: far.FileDescriptor, fd: far.FileDescriptor, event: epoll.EpollEvent) -> None:
     logger.debug("epoll_ctl_mod(%s, %s, %s)", epfd, fd, event)
-    async with localize_data(gateway, allocator, event.to_bytes()) as (event_ptr, _):
+    async with localize_data(transport, allocator, event.to_bytes()) as (event_ptr, _):
         await far.epoll_ctl(task, epfd, near.EpollCtlOp.MOD, fd, event_ptr)
 
 async def epoll_ctl_del(task: far.Task, epfd: far.FileDescriptor, fd: far.FileDescriptor) -> None:
@@ -106,11 +104,11 @@ def sigset_to_bytes(set: t.Set[signal.Signals]) -> bytes:
         set_integer |= 1 << (sig-1)
     return sigset.pack(set_integer)
 
-async def signalfd(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def signalfd(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                    mask: t.Set[signal.Signals], flags: int,
                    fd: t.Optional[base.FileDescriptor]=None) -> int:
     logger.debug("signalfd(%s, %s, %s)", mask, flags, fd)
-    async with localize_data(gateway, allocator, sigset_to_bytes(mask)) as (mask_ptr, mask_len):
+    async with localize_data(transport, allocator, sigset_to_bytes(mask)) as (mask_ptr, mask_len):
         return (await raw_syscall.signalfd4(sysif, mask_ptr, mask_len, flags, fd=fd))
 
 def bits(n: int):
@@ -124,43 +122,43 @@ def bytes_to_sigset(data: bytes) -> t.Set[signal.Signals]:
     set_integer, = sigset.unpack(data)
     return {signal.Signals(bit) for bit in bits(set_integer)}
 
-async def rt_sigprocmask(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def rt_sigprocmask(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                          how: SigprocmaskHow, newset: t.Set[signal.Signals]) -> t.Set[signal.Signals]:
     logger.debug("rt_sigprocmask(%s, %s)", how, set)
-    async with localize_data(gateway, allocator, sigset_to_bytes(newset)) as (newset_ptr, _):
+    async with localize_data(transport, allocator, sigset_to_bytes(newset)) as (newset_ptr, _):
         with await allocator.malloc(sigset.size) as oldset_ptr:
             await raw_syscall.rt_sigprocmask(sysif, (how, newset_ptr), oldset_ptr, sigset.size)
-            oldset_data = await read_to_bytes(gateway, oldset_ptr, sigset.size)
+            oldset_data = await read_to_bytes(transport, oldset_ptr, sigset.size)
             return bytes_to_sigset(oldset_data)
 
 
 #### two syscalls returning a pair of integers ####
 intpair = struct.Struct("II")
 
-async def read_to_intpair(gateway: MemoryGateway, pair_ptr: base.Pointer) -> t.Tuple[int, int]:
-    data = await read_to_bytes(gateway, pair_ptr, intpair.size)
+async def read_to_intpair(transport: MemoryTransport, pair_ptr: base.Pointer) -> t.Tuple[int, int]:
+    data = await read_to_bytes(transport, pair_ptr, intpair.size)
     a, b = intpair.unpack(data)
     return a, b
 
-async def pipe(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def pipe(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                flags: int) -> t.Tuple[int, int]:
     logger.debug("pipe(%s)", flags)
     with await allocator.malloc(intpair.size) as bufptr:
         await raw_syscall.pipe2(sysif, bufptr, flags)
-        return (await read_to_intpair(gateway, bufptr))
+        return (await read_to_intpair(transport, bufptr))
 
-async def socketpair(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def socketpair(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                      domain: int, type: int, protocol: int) -> t.Tuple[int, int]:
     logger.debug("socketpair(%s, %s, %s)", domain, type, protocol)
     with await allocator.malloc(intpair.size) as bufptr:
         await raw_syscall.socketpair(sysif, domain, type, protocol, bufptr)
-        return (await read_to_intpair(gateway, bufptr))
+        return (await read_to_intpair(transport, bufptr))
 
 
 #### filesystem operations which take a dirfd and path ####
 @contextlib.asynccontextmanager
 async def localize_path(
-        gateway: MemoryGateway, allocator: memory.AllocatorInterface, path: base.Path
+        transport: MemoryTransport, allocator: memory.AllocatorInterface, path: base.Path
 ) -> t.AsyncGenerator[t.Tuple[t.Optional[base.FileDescriptor], base.Pointer], None]:
     pathdata = b"/".join(path.components)
     if isinstance(path.base, base.RootPathBase):
@@ -168,73 +166,73 @@ async def localize_path(
         pathname = b"/" + pathdata + b"\0"
     else:
         pathname = pathdata + b"\0"
-    async with localize_data(gateway, allocator, pathname) as (pathname_ptr, pathname_len):
+    async with localize_data(transport, allocator, pathname) as (pathname_ptr, pathname_len):
         if isinstance(path.base, base.DirfdPathBase):
             yield path.base.dirfd, pathname_ptr
         else:
             yield None, pathname_ptr
 
-async def chdir(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def chdir(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                 path: base.Path) -> None:
     logger.debug("chdir(%s)", path)
-    async with localize_path(gateway, allocator, path) as (dirfd, pathname):
+    async with localize_path(transport, allocator, path) as (dirfd, pathname):
         if dirfd is not None:
             await raw_syscall.fchdir(sysif, dirfd)
         await raw_syscall.chdir(sysif, pathname)
 
-async def openat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def openat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                  path: base.Path, flags: int, mode: int) -> near.FileDescriptor:
     logger.debug("openat(%s, %s, %s)", path, flags, mode)
-    async with localize_path(gateway, allocator, path) as (dirfd, pathname):
+    async with localize_path(transport, allocator, path) as (dirfd, pathname):
         return near.FileDescriptor(await raw_syscall.openat(sysif, dirfd, pathname, flags, mode))
 
-async def faccessat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def faccessat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                     path: base.Path, flags: int, mode: int) -> None:
     # TODO
     # logger.debug("faccessat(%s, %s, %s)", path, flags, mode)
-    async with localize_path(gateway, allocator, path) as (dirfd, pathname):
+    async with localize_path(transport, allocator, path) as (dirfd, pathname):
         await raw_syscall.faccessat(sysif, dirfd, pathname, flags, mode)
 
-async def mkdirat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def mkdirat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                   path: base.Path, mode: int) -> None:
     logger.debug("mkdirat(%s, %s)", path, mode)
-    async with localize_path(gateway, allocator, path) as (dirfd, pathname):
+    async with localize_path(transport, allocator, path) as (dirfd, pathname):
         await raw_syscall.mkdirat(sysif, dirfd, pathname, mode)
 
-async def unlinkat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def unlinkat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                    path: base.Path, flags: int) -> None:
     logger.debug("unlinkat(%s, %s)", path, flags)
-    async with localize_path(gateway, allocator, path) as (dirfd, pathname):
+    async with localize_path(transport, allocator, path) as (dirfd, pathname):
         await raw_syscall.unlinkat(sysif, dirfd, pathname, flags)
 
-async def linkat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def linkat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                  oldpath: base.Path, newpath: base.Path, flags: int) -> None:
     logger.debug("linkat(%s, %s, %s)", oldpath, newpath, flags)
-    async with localize_path(gateway, allocator, oldpath) as (olddirfd, oldpathname):
-        async with localize_path(gateway, allocator, newpath) as (newdirfd, newpathname):
+    async with localize_path(transport, allocator, oldpath) as (olddirfd, oldpathname):
+        async with localize_path(transport, allocator, newpath) as (newdirfd, newpathname):
             await raw_syscall.linkat(sysif, olddirfd, oldpathname, newdirfd, newpathname, flags)
 
-async def renameat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def renameat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                    oldpath: base.Path, newpath: base.Path, flags: int) -> None:
     logger.debug("renameat2(%s, %s, %s)", oldpath, newpath, flags)
-    async with localize_path(gateway, allocator, oldpath) as (olddirfd, oldpathname):
-        async with localize_path(gateway, allocator, newpath) as (newdirfd, newpathname):
+    async with localize_path(transport, allocator, oldpath) as (olddirfd, oldpathname):
+        async with localize_path(transport, allocator, newpath) as (newdirfd, newpathname):
             await raw_syscall.renameat2(sysif, olddirfd, oldpathname, newdirfd, newpathname, flags)
 
-async def symlinkat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def symlinkat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                     linkpath: base.Path, target: bytes) -> None:
     logger.debug("symlinkat(%s, %s)", linkpath, target)
-    async with localize_path(gateway, allocator, linkpath) as (linkdirfd, linkpathname):
-        async with localize_data(gateway, allocator, target+b"\0") as (target_ptr, _):
+    async with localize_path(transport, allocator, linkpath) as (linkdirfd, linkpathname):
+        async with localize_data(transport, allocator, target+b"\0") as (target_ptr, _):
             await raw_syscall.symlinkat(sysif, linkdirfd, linkpathname, target_ptr)
 
-async def readlinkat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def readlinkat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                      path: base.Path, bufsiz: int) -> bytes:
     logger.debug("readlinkat(%s, %s)", path, bufsiz)
     with await allocator.malloc(bufsiz) as buf:
-        async with localize_path(gateway, allocator, path) as (dirfd, pathname):
+        async with localize_path(transport, allocator, path) as (dirfd, pathname):
             ret = await raw_syscall.readlinkat(sysif, dirfd, pathname, buf, bufsiz)
-        return (await read_to_bytes(gateway, buf, ret))
+        return (await read_to_bytes(transport, buf, ret))
 
 
 #### execveat, which requires a lot of memory fiddling ####
@@ -324,7 +322,7 @@ class Serializer:
         return ptr
 
     @contextlib.asynccontextmanager
-    async def with_flushed(self, gateway: MemoryGateway, allocator: memory.AllocatorInterface
+    async def with_flushed(self, transport: MemoryTransport, allocator: memory.AllocatorInterface
     ) -> t.AsyncGenerator[None, None]:
         # some are already allocated, so we skip them
         needs_allocation: t.List[t.Tuple[SerializerOperation, int]] = []
@@ -340,10 +338,10 @@ class Serializer:
                 data = op.data_to_copy()
                 if data:
                     real_operations.append((op.ptr.pointer, data))
+            if len(real_operations) > 5:
+                logger.info("DOING BIG ONE %s", real_operations[:3])
             # copy all the bytes in bulk
-            await gateway.batch_memcpy([
-                (ptr, base.to_local_pointer(data), len(data)) for ptr, data in real_operations
-            ])
+            await transport.batch_write(real_operations)
             yield
 
 pointer = struct.Struct("Q")
@@ -355,18 +353,18 @@ def serialize_null_terminated_array(serializer: Serializer, args: t.List[bytes])
     )
     return argv_ser_ptr
 
-async def execveat(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def execveat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                    path: base.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> None:
     logger.debug("execveat(%s, %s, <len(envp): %d>, %s)", path, argv, len(envp), flags)
     # TODO we should batch this localize_path with the rest
-    async with localize_path(gateway, allocator, path) as (dirfd, pathname):
+    async with localize_path(transport, allocator, path) as (dirfd, pathname):
         serializer = Serializer()
         argv_ser_ptr = serialize_null_terminated_array(serializer, argv)
         envp_ser_ptr = serialize_null_terminated_array(serializer, envp)
-        async with serializer.with_flushed(gateway, allocator):
+        async with serializer.with_flushed(transport, allocator):
             await raw_syscall.execveat(sysif, dirfd, pathname, argv_ser_ptr.pointer, envp_ser_ptr.pointer, flags)
 
-async def sendmsg_fds(task: far.Task, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def sendmsg_fds(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                       fd: far.FileDescriptor, send_fds: t.List[far.FileDescriptor]) -> None:
     serializer = Serializer()
     dummy_data = serializer.serialize_data(b"\0")
@@ -381,51 +379,48 @@ async def sendmsg_fds(task: far.Task, gateway: MemoryGateway, allocator: memory.
         'struct msghdr', lambda: (ffi.cast('void*', 0), 0,
                                   ffi.cast('void*', int(iovec.pointer)), 1,
                                   ffi.cast('void*', int(cmsghdr.pointer)), cmsghdr.size, 0))
-    async with serializer.with_flushed(gateway, allocator):
+    async with serializer.with_flushed(transport, allocator):
         await far.sendmsg(task, fd, msghdr.pointer, msghdr.size)
 
-async def recvmsg_fds(task: far.Task, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+fd_struct = struct.Struct('i')
+async def recvmsg_fds(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                       fd: far.FileDescriptor, num_fds: int) -> t.List[near.FileDescriptor]:
     serializer = Serializer()
     data_buf = serializer.serialize_uninitialized(1)
     iovec = serializer.serialize_cffi(
         'struct iovec', lambda: (ffi.cast('void*', int(data_buf.pointer)), data_buf.size))
-    local_fds_buf = array.array('i', [0]*num_fds)
-    address, length = local_fds_buf.buffer_info()
-    buf_len = length * local_fds_buf.itemsize
+    buf_len = fd_struct.size * num_fds
     cmsgbuf = serializer.serialize_uninitialized(ffi.sizeof('struct cmsghdr') + buf_len)
     msghdr = serializer.serialize_cffi(
         'struct msghdr', lambda: (ffi.cast('void*', 0), 0,
                                   ffi.cast('void*', int(iovec.pointer)), 1,
                                   ffi.cast('void*', int(cmsgbuf.pointer)), cmsgbuf.size, 0))
-    async with serializer.with_flushed(gateway, allocator):
+    async with serializer.with_flushed(transport, allocator):
         await far.recvmsg(task, fd, msghdr.pointer, msghdr.size)
         fds_buf = cmsgbuf.pointer + ffi.sizeof('struct cmsghdr')
-        # hmm it would be nice to pass near pointers here
-        # that implies that we should request a specific gateway for a pair of address spaces,
-        # then call a function.
-        await gateway.memcpy(base.Pointer(base.local_address_space, near.Pointer(address)),
-                             fds_buf, buf_len)
-        return [near.FileDescriptor(fd) for fd in local_fds_buf]
+        # TODO I should really actually look at how many fds I got rather than assume I got all of them
+        local_fds_bytes = await transport.read(fds_buf, buf_len)
+        received_fds = fd_struct.unpack_from(local_fds_bytes)
+        return [near.FileDescriptor(fd) for fd in received_fds]
 
 
 #### socket syscalls that write data ####
-async def setsockopt(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def setsockopt(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                      sockfd: base.FileDescriptor, level: int, optname: int, optval: bytes) -> None:
     logger.debug("setsockopt(%s, %s, %s, %s)", sockfd, level, optname, optval)
-    async with localize_data(gateway, allocator, optval) as (optval_ptr, optlen):
+    async with localize_data(transport, allocator, optval) as (optval_ptr, optlen):
         await raw_syscall.setsockopt(sysif, sockfd, level, optname, optval_ptr, optlen)
 
-async def bind(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def bind(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                sockfd: base.FileDescriptor, addr: bytes) -> None:
     logger.debug("bind(%s, %s)", sockfd, addr)
-    async with localize_data(gateway, allocator, addr) as (addr_ptr, addr_len):
+    async with localize_data(transport, allocator, addr) as (addr_ptr, addr_len):
         await raw_syscall.bind(sysif, sockfd, addr_ptr, addr_len)
 
-async def connect(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def connect(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                   sockfd: base.FileDescriptor, addr: bytes) -> None:
     logger.debug("connect(%s, %s)", sockfd, addr)
-    async with localize_data(gateway, allocator, addr) as (addr_ptr, addr_len):
+    async with localize_data(transport, allocator, addr) as (addr_ptr, addr_len):
         await raw_syscall.connect(sysif, sockfd, addr_ptr, addr_len)
 
 
@@ -433,50 +428,50 @@ async def connect(sysif: SyscallInterface, gateway: MemoryGateway, allocator: me
 socklen = struct.Struct("Q")
 @contextlib.asynccontextmanager
 async def alloc_sockbuf(
-        gateway: MemoryGateway, allocator: memory.AllocatorInterface, buflen: int
+        transport: MemoryTransport, allocator: memory.AllocatorInterface, buflen: int
 ) -> t.AsyncGenerator[t.Tuple[base.Pointer, base.Pointer], None]:
     # TODO we should batch these allocations together
     with await allocator.malloc(buflen) as buf_ptr:
         buflen_data = socklen.pack(buflen)
-        async with localize_data(gateway, allocator, buflen_data) as (buflen_ptr, buflen_len):
+        async with localize_data(transport, allocator, buflen_data) as (buflen_ptr, buflen_len):
             yield buf_ptr, buflen_ptr
 
 async def read_sockbuf(
-        gateway: MemoryGateway, buf_ptr: base.Pointer, buflen: int, buflen_ptr: base.Pointer
+        transport: MemoryTransport, buf_ptr: base.Pointer, buflen: int, buflen_ptr: base.Pointer
 ) -> bytes:
     # TODO we should optimize this to just do a single batch memcpy
-    buflen_data = await read_to_bytes(gateway, buflen_ptr, socklen.size)
+    buflen_data = await read_to_bytes(transport, buflen_ptr, socklen.size)
     buflen_result, = socklen.unpack(buflen_data)
-    buf = await read_to_bytes(gateway, buf_ptr, buflen_result)
+    buf = await read_to_bytes(transport, buf_ptr, buflen_result)
     return buf
 
-async def getsockname(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def getsockname(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                       sockfd: base.FileDescriptor, addrlen: int) -> bytes:
     logger.debug("getsockname(%s, %s)", sockfd, addrlen)
-    async with alloc_sockbuf(gateway, allocator, addrlen) as (addr_ptr, addrlen_ptr):
+    async with alloc_sockbuf(transport, allocator, addrlen) as (addr_ptr, addrlen_ptr):
         # uggghh, the socket api requires a write before, a syscall, and a read after - so much overhead!
         # whyyy doesn't it just return the possible read length as an integer?
         await raw_syscall.getsockname(sysif, sockfd, addr_ptr, addrlen_ptr)
-        return (await read_sockbuf(gateway, addr_ptr, addrlen, addrlen_ptr))
+        return (await read_sockbuf(transport, addr_ptr, addrlen, addrlen_ptr))
 
-async def getpeername(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def getpeername(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                       sockfd: base.FileDescriptor, addrlen: int) -> bytes:
     logger.debug("getpeername(%s, %s)", sockfd, addrlen)
-    async with alloc_sockbuf(gateway, allocator, addrlen) as (addr_ptr, addrlen_ptr):
+    async with alloc_sockbuf(transport, allocator, addrlen) as (addr_ptr, addrlen_ptr):
         await raw_syscall.getpeername(sysif, sockfd, addr_ptr, addrlen_ptr)
-        return (await read_sockbuf(gateway, addr_ptr, addrlen, addrlen_ptr))
+        return (await read_sockbuf(transport, addr_ptr, addrlen, addrlen_ptr))
 
-async def getsockopt(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def getsockopt(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                      sockfd: base.FileDescriptor, level: int, optname: int, optlen: int) -> bytes:
     logger.debug("getsockopt(%s, %s, %s, %s)", sockfd, level, optname, optlen)
-    async with alloc_sockbuf(gateway, allocator, optlen) as (opt_ptr, optlen_ptr):
+    async with alloc_sockbuf(transport, allocator, optlen) as (opt_ptr, optlen_ptr):
         await raw_syscall.getsockopt(sysif, sockfd, level, optname, opt_ptr, optlen_ptr)
-        return (await read_sockbuf(gateway, opt_ptr, optlen, optlen_ptr))
+        return (await read_sockbuf(transport, opt_ptr, optlen, optlen_ptr))
 
-async def accept(sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def accept(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                  sockfd: base.FileDescriptor, addrlen: int, flags: int) -> t.Tuple[int, bytes]:
     logger.debug("accept(%s, %s, %s)", sockfd, addrlen, flags)
-    async with alloc_sockbuf(gateway, allocator, addrlen) as (addr_ptr, addrlen_ptr):
+    async with alloc_sockbuf(transport, allocator, addrlen) as (addr_ptr, addrlen_ptr):
         fd = await raw_syscall.accept(sysif, sockfd, addr_ptr, addrlen_ptr, flags)
-        addr = await read_sockbuf(gateway, addr_ptr, addrlen, addrlen_ptr)
+        addr = await read_sockbuf(transport, addr_ptr, addrlen, addrlen_ptr)
         return fd, addr

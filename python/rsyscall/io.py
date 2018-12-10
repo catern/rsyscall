@@ -9,7 +9,7 @@ import importlib.resources
 ssh_bootstrap_script_contents = importlib.resources.read_text('rsyscall', 'ssh_bootstrap.sh')
 
 from rsyscall.base import Pointer, RsyscallException, RsyscallHangup
-from rsyscall.base import MemoryGateway, LocalMemoryGateway, to_local_pointer
+from rsyscall.base import to_local_pointer
 from rsyscall.base import SyscallInterface
 from rsyscall.base import T_addr, UnixAddress, PathTooLongError, InetAddress
 from rsyscall.base import IdType, EpollCtlOp, ChildCode, UncleanExit, ChildEvent
@@ -127,7 +127,7 @@ class SignalMask:
 
     async def block(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
         syscall = self._validate(task)
-        old_mask = await memsys.rt_sigprocmask(syscall, task.gateway, task.allocator, SigprocmaskHow.BLOCK, mask)
+        old_mask = await memsys.rt_sigprocmask(syscall, task.transport, task.allocator, SigprocmaskHow.BLOCK, mask)
         if self.mask != old_mask:
             raise Exception("SignalMask tracking got out of sync, thought mask was",
                             self.mask, "but was actually", old_mask)
@@ -135,7 +135,7 @@ class SignalMask:
 
     async def unblock(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
         syscall = self._validate(task)
-        old_mask = await memsys.rt_sigprocmask(syscall, task.gateway, task.allocator, SigprocmaskHow.UNBLOCK, mask)
+        old_mask = await memsys.rt_sigprocmask(syscall, task.transport, task.allocator, SigprocmaskHow.UNBLOCK, mask)
         if self.mask != old_mask:
             raise Exception("SignalMask tracking got out of sync, thought mask was",
                             self.mask, "but was actually", old_mask)
@@ -143,7 +143,7 @@ class SignalMask:
 
     async def setmask(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
         syscall = self._validate(task)
-        old_mask = await memsys.rt_sigprocmask(syscall, task.gateway, task.allocator, SigprocmaskHow.SETMASK, mask)
+        old_mask = await memsys.rt_sigprocmask(syscall, task.transport, task.allocator, SigprocmaskHow.SETMASK, mask)
         if self.mask != old_mask:
             raise Exception("SignalMask tracking got out of sync, thought mask was",
                             self.mask, "but was actually", old_mask)
@@ -186,7 +186,7 @@ T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 class Task:
     def __init__(self,
                  base_: base.Task,
-                 gateway: MemoryGateway,
+                 transport: base.MemoryTransport,
                  allocator: memory.AllocatorClient,
                  mount: base.MountNamespace,
                  fs: base.FSInformation,
@@ -194,7 +194,7 @@ class Task:
                  process_namespace: far.ProcessNamespace,
     ) -> None:
         self.base = base_
-        self.gateway = gateway
+        self.transport = transport
         # Being able to allocate memory is like having a stack.
         # we really need to be able to allocate memory to get anything done - namely, to call syscalls.
         self.allocator = allocator
@@ -226,11 +226,11 @@ class Task:
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> None:
         _validate_path_and_task_match(self, path.pure)
-        await memsys.execveat(self.syscall, self.gateway, self.allocator, path.pure, argv, envp, flags)
+        await memsys.execveat(self.syscall, self.transport, self.allocator, path.pure, argv, envp, flags)
         await self.close()
 
     async def chdir(self, path: 'Path') -> None:
-        await memsys.chdir(self.syscall, self.gateway, self.allocator, path.pure)
+        await memsys.chdir(self.syscall, self.transport, self.allocator, path.pure)
 
     async def unshare_fs(self) -> None:
         # we want this to return something that we can use to chdir
@@ -248,28 +248,28 @@ class Task:
         Note that this can block forever if we're opening a FIFO
 
         """
-        fd = await memsys.openat(self.syscall, self.gateway, self.allocator,
+        fd = await memsys.openat(self.syscall, self.transport, self.allocator,
                                  path, flags, mode)
         return self.base.make_fd_handle(fd)
 
     async def read(self, fd: far.FileDescriptor, count: int=4096) -> bytes:
-        return (await memsys.read(self.base, self.gateway, self.allocator, fd, count))
+        return (await memsys.read(self.base, self.transport, self.allocator, fd, count))
 
     # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
     # and they'll take an handle.FileDescriptor.
     # then we'll directly have StandardTask contain both Task and MemoryAbstractor?
     async def getdents(self, fd: far.FileDescriptor, count: int=4096) -> t.List[Dirent]:
-        data = await memsys.getdents64(self.base, self.gateway, self.allocator, fd, count)
+        data = await memsys.getdents64(self.base, self.transport, self.allocator, fd, count)
         return rsyscall.stat.getdents64_parse(data)
 
     async def pipe(self, flags=os.O_CLOEXEC) -> Pipe:
-        r, w = await memsys.pipe(self.syscall, self.gateway, self.allocator, flags)
+        r, w = await memsys.pipe(self.syscall, self.transport, self.allocator, flags)
         return Pipe(self._make_fd(r, ReadableFile(shared=False)),
                     self._make_fd(w, WritableFile(shared=False)))
 
     async def socketpair(self, domain: int, type: int, protocol: int
     ) -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
-        l, r = await memsys.socketpair(self.syscall, self.gateway, self.allocator,
+        l, r = await memsys.socketpair(self.syscall, self.transport, self.allocator,
                                        domain, type|lib.SOCK_CLOEXEC, protocol)
         return (self._make_fd(l, ReadableWritableFile(shared=False)),
                 self._make_fd(r, ReadableWritableFile(shared=False)))
@@ -287,7 +287,7 @@ class Task:
         return self._make_fd(sockfd, InetSocketFile())
 
     async def signalfd_create(self, mask: t.Set[signal.Signals], flags: int=0) -> FileDescriptor[SignalFile]:
-        sigfd = await memsys.signalfd(self.syscall, self.gateway, self.allocator, mask, os.O_CLOEXEC|flags)
+        sigfd = await memsys.signalfd(self.syscall, self.transport, self.allocator, mask, os.O_CLOEXEC|flags)
         return self._make_fd(sigfd, SignalFile(mask))
 
     async def mmap(self, length: int, prot: memory.ProtFlag, flags: memory.MapFlag) -> memory.AnonymousMapping:
@@ -300,7 +300,7 @@ class Task:
         # TODO handle deallocating the epoll fd if later steps fail
         if self.syscall.activity_fd is not None:
             epoll_waiter = EpollWaiter(epfd, None)
-            epoll_center = EpollCenter(epoll_waiter, epfd.handle, self.gateway, self.allocator)
+            epoll_center = EpollCenter(epoll_waiter, epfd.handle, self.transport, self.allocator)
             other_activity_fd = self._make_fd(self.syscall.activity_fd.number, File())
             # TODO we need to save this somewhere so it can be collected
             epolled_other_activity_fd = await epoll_center.register(other_activity_fd.handle,
@@ -311,7 +311,7 @@ class Task:
                 logger.debug("wait_readable(%s)", epfd.handle.near.number)
                 await trio.hazmat.wait_readable(epfd.handle.near.number)
             epoll_waiter = EpollWaiter(epfd, wait_readable)
-            epoll_center = EpollCenter(epoll_waiter, epfd.handle, self.gateway, self.allocator)
+            epoll_center = EpollCenter(epoll_waiter, epfd.handle, self.transport, self.allocator)
         return epoll_center
         
 
@@ -321,7 +321,7 @@ class ReadableFile(File):
 
 class WritableFile(File):
     async def write(self, fd: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
-        return (await memsys.write(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, buf))
+        return (await memsys.write(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, buf))
 
 class SeekableFile(File):
     pass
@@ -335,7 +335,7 @@ class SignalFile(ReadableFile):
         self.mask = mask
 
     async def signalfd(self, fd: 'FileDescriptor[SignalFile]', mask: t.Set[signal.Signals]) -> None:
-        await memsys.signalfd(fd.task.syscall, fd.task.gateway, fd.task.allocator, mask, 0, fd=fd.pure)
+        await memsys.signalfd(fd.task.syscall, fd.task.transport, fd.task.allocator, mask, 0, fd=fd.pure)
         self.mask = mask
 
 class DirectoryFile(SeekableFile):
@@ -353,30 +353,30 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     address_type: t.Type[T_addr]
 
     async def bind(self, fd: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
-        await memsys.bind(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, addr.to_bytes())
+        await memsys.bind(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, addr.to_bytes())
 
     async def listen(self, fd: 'FileDescriptor[SocketFile]', backlog: int) -> None:
         await raw_syscall.listen(fd.task.syscall, fd.pure, backlog)
 
     async def connect(self, fd: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
-        await memsys.connect(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, addr.to_bytes())
+        await memsys.connect(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, addr.to_bytes())
 
     async def getsockname(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        data = await memsys.getsockname(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, self.address_type.addrlen)
+        data = await memsys.getsockname(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, self.address_type.addrlen)
         return self.address_type.parse(data)
 
     async def getpeername(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        data = await memsys.getpeername(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, self.address_type.addrlen)
+        data = await memsys.getpeername(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, self.address_type.addrlen)
         return self.address_type.parse(data)
 
     async def getsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
-        return (await memsys.getsockopt(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, level, optname, optlen))
+        return (await memsys.getsockopt(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, level, optname, optlen))
 
     async def setsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optval: bytes) -> None:
-        return (await memsys.setsockopt(fd.task.syscall, fd.task.gateway, fd.task.allocator, fd.pure, level, optname, optval))
+        return (await memsys.setsockopt(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, level, optname, optval))
 
     async def accept(self, fd: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
-        fdnum, data = await memsys.accept(fd.task.syscall, fd.task.gateway, fd.task.allocator,
+        fdnum, data = await memsys.accept(fd.task.syscall, fd.task.transport, fd.task.allocator,
                                           fd.pure, self.address_type.addrlen, flags)
         addr = self.address_type.parse(data)
         fd = fd.task.make_fd(near.FileDescriptor(fdnum), type(self)())
@@ -576,10 +576,10 @@ class EpolledFileDescriptor:
 class EpollCenter:
     "Terribly named class that allows registering fds on epoll, and waiting on them"
     def __init__(self, epoller: EpollWaiter, epfd: handle.FileDescriptor,
-                 gateway: MemoryGateway, allocator: memory.AllocatorInterface) -> None:
+                 transport: base.MemoryTransport, allocator: memory.AllocatorInterface) -> None:
         self.epoller = epoller
         self.epfd = epfd
-        self.gateway = gateway
+        self.transport = transport
         self.allocator = allocator
 
     async def register(self, fd: handle.FileDescriptor, events: EpollEventMask=None) -> EpolledFileDescriptor:
@@ -591,10 +591,10 @@ class EpollCenter:
         return EpolledFileDescriptor(self, fd, receive, number)
 
     async def add(self, fd: far.FileDescriptor, event: EpollEvent) -> None:
-        await memsys.epoll_ctl_add(self.epfd.task, self.gateway, self.allocator, self.epfd.far, fd, event)
+        await memsys.epoll_ctl_add(self.epfd.task, self.transport, self.allocator, self.epfd.far, fd, event)
 
     async def modify(self, fd: far.FileDescriptor, event: EpollEvent) -> None:
-        await memsys.epoll_ctl_mod(self.epfd.task, self.gateway, self.allocator, self.epfd.far, fd, event)
+        await memsys.epoll_ctl_mod(self.epfd.task, self.transport, self.allocator, self.epfd.far, fd, event)
 
     async def delete(self, fd: far.FileDescriptor) -> None:
         await memsys.epoll_ctl_del(self.epfd.task, self.epfd.far, fd)
@@ -603,7 +603,7 @@ class EpollCenter:
 class PendingEpollWait:
     allocation: memory.Allocation
     syscall_response: near.SyscallResponse
-    memory_gateway: MemoryGateway
+    memory_transport: base.MemoryTransport
     received_events: t.Optional[t.List[EpollEvent]] = None
 
     async def receive(self) -> t.List[EpollEvent]:
@@ -612,8 +612,7 @@ class PendingEpollWait:
         else:
             count = await self.syscall_response.receive()
             bufsize = self.allocation.end - self.allocation.start
-            localbuf = bytearray(bufsize)
-            await self.memory_gateway.memcpy(to_local_pointer(localbuf), self.allocation.pointer, bufsize)
+            localbuf = await self.memory_transport.read(self.allocation.pointer, bufsize)
             ret: t.List[EpollEvent] = []
             cur = 0
             for _ in range(count):
@@ -629,7 +628,6 @@ class EpollWaiter:
         self.waiting_task = epfd.task
         self.epfd = epfd
         self.wait_readable = wait_readable
-        self.remote_new = RemoteNew(self.waiting_task.allocator, self.waiting_task.gateway)
         self.next_number = 0
         self.number_to_queue: t.Dict[int, trio.abc.SendChannel] = {}
         self.running_wait: t.Optional[trio.Event] = None
@@ -706,7 +704,7 @@ class EpollWaiter:
                 running_wait.set()
 
     async def submit_wait(self, maxevents: int, timeout: int) -> PendingEpollWait:
-        allocation = await self.remote_new.memory_allocator.malloc(maxevents * EpollEvent.bytesize())
+        allocation = await self.waiting_task.allocator.malloc(maxevents * EpollEvent.bytesize())
         try:
             syscall_response = await self.epfd.handle.task.sysif.submit_syscall(
                 near.SYS.epoll_wait, self.epfd.handle.near, allocation.pointer, maxevents, timeout)
@@ -714,16 +712,14 @@ class EpollWaiter:
             allocation.free()
             raise
         else:
-            return PendingEpollWait(allocation, syscall_response, self.remote_new.memory_gateway)
+            return PendingEpollWait(allocation, syscall_response, self.waiting_task.transport)
 
     async def wait(self, maxevents: int, timeout: int) -> t.List[EpollEvent]:
         bufsize = maxevents * EpollEvent.bytesize()
-        localbuf = bytearray(bufsize)
-        with await self.remote_new.memory_allocator.malloc(bufsize) as events_ptr:
+        with await self.waiting_task.allocator.malloc(bufsize) as events_ptr:
             count = await self.epfd.wait(events_ptr, maxevents, timeout)
             with trio.open_cancel_scope(shield=True):
-                await self.remote_new.memory_gateway.memcpy(
-                    to_local_pointer(localbuf), events_ptr, bufsize)
+                localbuf = await self.waiting_task.transport.read(events_ptr, bufsize)
         ret: t.List[EpollEvent] = []
         cur = 0
         for _ in range(count):
@@ -900,7 +896,7 @@ class Path:
             return Path(task, base.Path(base.CWDPathBase(task.mount, task.fs), path.split(b"/")))
 
     async def mkdir(self, mode=0o777) -> Path:
-        await memsys.mkdirat(self.task.syscall, self.task.gateway, self.task.allocator,
+        await memsys.mkdirat(self.task.syscall, self.task.transport, self.task.allocator,
                              self.pure, mode)
         return self
 
@@ -922,7 +918,7 @@ class Path:
         else:
             # os.O_RDONLY is 0, so if we don't have any of the rest, then...
             file = ReadableFile()
-        fd = await memsys.openat(self.task.syscall, self.task.gateway, self.task.allocator,
+        fd = await memsys.openat(self.task.syscall, self.task.transport, self.task.allocator,
                                  self.pure, flags, mode)
         return self.task.make_fd(fd, file)
 
@@ -933,7 +929,7 @@ class Path:
         return (await self.open(os.O_PATH))
 
     async def creat(self, mode=0o644) -> FileDescriptor[WritableFile]:
-        fd = await memsys.openat(self.task.syscall, self.task.gateway, self.task.allocator,
+        fd = await memsys.openat(self.task.syscall, self.task.transport, self.task.allocator,
                                  self.pure, os.O_WRONLY|os.O_CREAT|os.O_TRUNC, mode)
         return self.task.make_fd(fd, WritableFile())
 
@@ -949,41 +945,41 @@ class Path:
         if mode == 0:
             mode = os.F_OK
         try:
-            await memsys.faccessat(self.task.syscall, self.task.gateway, self.task.allocator,
+            await memsys.faccessat(self.task.syscall, self.task.transport, self.task.allocator,
                                    self.pure, mode, 0)
             return True
         except OSError:
             return False
 
     async def unlink(self, flags: int=0) -> None:
-        await memsys.unlinkat(self.task.syscall, self.task.gateway, self.task.allocator,
+        await memsys.unlinkat(self.task.syscall, self.task.transport, self.task.allocator,
                               self.pure, flags)
 
     async def rmdir(self) -> None:
-        await memsys.unlinkat(self.task.syscall, self.task.gateway, self.task.allocator,
+        await memsys.unlinkat(self.task.syscall, self.task.transport, self.task.allocator,
                               self.pure, rsyscall.stat.AT_REMOVEDIR)
 
     async def link(self, oldpath: 'Path', flags: int=0) -> 'Path':
         "Create a hardlink at Path 'self' to the file at Path 'oldpath'"
-        await memsys.linkat(self.task.syscall, self.task.gateway, self.task.allocator,
+        await memsys.linkat(self.task.syscall, self.task.transport, self.task.allocator,
                             oldpath.pure, self.pure, flags)
         return self
 
     async def symlink(self, target: bytes) -> 'Path':
         "Create a symlink at Path 'self' pointing to the passed-in target"
-        await memsys.symlinkat(self.task.syscall, self.task.gateway, self.task.allocator,
+        await memsys.symlinkat(self.task.syscall, self.task.transport, self.task.allocator,
                                self.pure, target)
         return self
 
 
     async def rename(self, oldpath: 'Path', flags: int=0) -> 'Path':
         "Create a file at Path 'self' by renaming the file at Path 'oldpath'"
-        await memsys.renameat(self.task.syscall, self.task.gateway, self.task.allocator,
+        await memsys.renameat(self.task.syscall, self.task.transport, self.task.allocator,
                               oldpath.pure, self.pure, flags)
         return self
 
     async def readlink(self, bufsiz: int=4096) -> bytes:
-        return (await memsys.readlinkat(self.task.syscall, self.task.gateway, self.task.allocator,
+        return (await memsys.readlinkat(self.task.syscall, self.task.transport, self.task.allocator,
                                         self.pure, bufsiz))
     
     def _as_proc_path(self) -> bytes:
@@ -1139,20 +1135,6 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
     stderr = task._make_fd(2, WritableFile(shared=True))
     return StandardStreams(stdin, stdout, stderr)
 
-def gather_local_bootstrap() -> UnixBootstrap:
-    syscall = LocalSyscall()
-    pid = os.getpid()
-    base_task = handle.Task(syscall, base.FDTable(pid), base.local_address_space)
-    task = Task(base_task,
-                LocalMemoryGateway(),
-                memory.AllocatorClient.make_allocator(base_task),
-                base.MountNamespace(pid), base.FSInformation(pid),
-                SignalMask(set()), far.ProcessNamespace(pid))
-    argv = [arg.encode() for arg in sys.argv]
-    environ = {key.encode(): value.encode() for key, value in os.environ.items()}
-    stdstreams = wrap_stdin_out_err(task)
-    return UnixBootstrap(task, argv, environ, stdstreams)
-
 @dataclass
 class UnixUtilities:
     rm: base.Path
@@ -1173,20 +1155,6 @@ async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
             ret = await fd.write(data)
             data = data[ret:]
     return path
-
-class RemoteNew:
-    def __init__(self, memory_allocator: memory.AllocatorClient, memory_gateway: MemoryGateway) -> None:
-        self.memory_allocator = memory_allocator
-        self.memory_gateway = memory_gateway
-
-    async def new(self, data: bytes) -> memory.Allocation:
-        allocation = await self.memory_allocator.malloc(len(data))
-        try:
-            await self.memory_gateway.memcpy(allocation.pointer, to_local_pointer(data), len(data))
-        except Exception:
-            allocation.free()
-        return allocation
-
 
 @dataclass
 class ProcessResources:
@@ -1325,11 +1293,24 @@ class StandardTask:
         self.stderr = stderr
 
     @staticmethod
-    async def make_from_bootstrap(bootstrap: UnixBootstrap) -> 'StandardTask':
-        task = bootstrap.task
+    async def make_local() -> StandardTask:
+        syscall = LocalSyscall()
+        pid = os.getpid()
+        # how do I make a socketpair without a socketpair...
+        # guess I can just use the near syscall.
+        # oh no I also need to register on the epoller, I can't do that.
+        base_task = handle.Task(syscall, base.FDTable(pid), base.local_address_space)
+        task = Task(base_task,
+                    LocalMemoryTransport(),
+                    memory.AllocatorClient.make_allocator(base_task),
+                    base.MountNamespace(pid), base.FSInformation(pid),
+                    SignalMask(set()), far.ProcessNamespace(pid))
+        environ = {key.encode(): value.encode() for key, value in os.environ.items()}
+        stdstreams = wrap_stdin_out_err(task)
+
         # TODO fix this to... pull it from the bootstrap or something...
         process_resources = local_process_resources
-        filesystem_resources = FilesystemResources.make_from_environ(task.mount, task.fs, bootstrap.environ)
+        filesystem_resources = FilesystemResources.make_from_environ(task.mount, task.fs, environ)
         epoller = await task.make_epoll_center()
         child_monitor = await ChildTaskMonitor.make(task, epoller)
         # connection_listening_socket = await task.socket_unix(socket.SOCK_STREAM)
@@ -1345,18 +1326,14 @@ class StandardTask:
             task, connecting_connection,
             task, process_resources, filesystem_resources,
             epoller, child_monitor, epoller,
-            {**bootstrap.environ},
-            bootstrap.stdstreams.stdin,
-            bootstrap.stdstreams.stdout,
-            bootstrap.stdstreams.stderr,
+            {**environ},
+            stdstreams.stdin,
+            stdstreams.stdout,
+            stdstreams.stderr,
         )
         # We don't need this ourselves, but we keep it around so others can inherit it.
         [(access_sock, remote_sock)] = await stdtask.make_async_connections(1)
-        task.gateway = ComposedMemoryGateway([
-            LocalMemoryGateway(),
-            SendMemoryGateway(read=remote_sock, write=access_sock, lock=trio.Lock()),
-            ReceiveMemoryGateway(read=access_sock, write=remote_sock, lock=trio.Lock()),
-        ])
+        task.transport = SocketMemoryTransport(access_sock, remote_sock, trio.Lock())
         return stdtask
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
@@ -1395,7 +1372,7 @@ class StandardTask:
             self.task, thread_maker, self.process.server_func)
         epoller = EpollCenter(self.epoller.epoller,
                               task.base.make_fd_handle(self.epoller.epfd),
-                              task.gateway, task.allocator)
+                              task.transport, task.allocator)
         local_epoller = await task.make_epoll_center()
         signal_block = SignalBlock(task, {signal.SIGCHLD})
         # sadly we can't use an inherited signalfd, epoll doesn't want to add the same signalfd twice
@@ -1717,7 +1694,7 @@ class ChildTaskMonitor:
                     # might collect the zombie for that pid and cause pid reuse
                     async with self.wait_lock:
                         siginfo = await memsys.waitid(
-                            task.syscall, task.gateway, task.allocator,
+                            task.syscall, task.transport, task.allocator,
                             None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
                 except ChildProcessError:
                     # no more children
@@ -1788,9 +1765,9 @@ class Thread:
         self.futex_mapping = futex_mapping
         self.released = False
 
-    async def execveat(self, sysif: SyscallInterface, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+    async def execveat(self, sysif: SyscallInterface, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
                        path: base.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> ChildTask:
-        await memsys.execveat(sysif, gateway, allocator, path, argv, envp, flags)
+        await memsys.execveat(sysif, transport, allocator, path, argv, envp, flags)
         return self.child_task
 
     async def wait_for_mm_release(self) -> ChildTask:
@@ -1860,12 +1837,12 @@ class BufferedStack:
         offset = int(self.allocation_pointer.near) % alignment
         self.push(bytes(offset))
 
-    async def flush(self, gateway) -> Pointer:
-        await gateway.memcpy(self.allocation_pointer, to_local_pointer(self.buffer), len(self.buffer))
+    async def flush(self, transport: base.MemoryWriter) -> Pointer:
+        await transport.write(self.allocation_pointer, self.buffer)
         self.buffer = b""
         return self.allocation_pointer
 
-async def launch_futex_monitor(task: base.Task, gateway: MemoryGateway, allocator: memory.AllocatorInterface,
+async def launch_futex_monitor(task: base.Task, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
                                process_resources: ProcessResources, monitor: ChildTaskMonitor,
                                futex_pointer: Pointer, futex_value: int) -> ChildTask:
     serializer = memsys.Serializer()
@@ -1874,7 +1851,7 @@ async def launch_futex_monitor(task: base.Task, gateway: MemoryGateway, allocato
     # TODO we need appropriate alignment here, we're just lucky because the alignment works fine by accident right now
     stack_pointer = serializer.serialize_data(stack_data)
     logger.info("about to serialize")
-    async with serializer.with_flushed(gateway, allocator):
+    async with serializer.with_flushed(transport, allocator):
         logger.info("did serialize")
         futex_task = await monitor.clone(
             task,
@@ -1913,7 +1890,7 @@ class ThreadMaker:
                                  memory.MapFlag.SHARED|memory.MapFlag.ANONYMOUS)
         futex_pointer = mapping.as_pointer()
         futex_task = await launch_futex_monitor(
-            self.task.base, self.task.gateway, self.task.allocator, self.process_resources, self.monitor,
+            self.task.base, self.task.transport, self.task.allocator, self.process_resources, self.monitor,
             futex_pointer, 0)
         # the only part of the memory mapping that's being used now is the futex address, which is a
         # huge waste. oh well, later on we can allocate futex addresses out of a shared mapping.
@@ -1933,7 +1910,7 @@ class ThreadMaker:
         # build stack
         stack.push(self.process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
         # copy the stack over
-        stack_pointer = await stack.flush(self.task.gateway)
+        stack_pointer = await stack.flush(self.task.transport)
         # TODO actually allocate TLS
         tls = self.task.address_space.null()
         thread = await self.clone(flags|signal.SIGCHLD, stack_pointer, tls)
@@ -2213,11 +2190,11 @@ async def call_function(task: Task, stack: BufferedStack, process_resources: Pro
     "Calls a C function and waits for it to complete. Returns the ChildEvent that the child thread terminated with."
     stack.align()
     stack.push(process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
-    stack_pointer = await stack.flush(task.gateway)
+    stack_pointer = await stack.flush(task.transport)
     # we directly spawn a thread for the function and wait on it
     pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
     process = base.Process(task.process_namespace, near.Process(pid))
-    siginfo = await memsys.waitid(task.syscall, task.gateway, task.allocator,
+    siginfo = await memsys.waitid(task.syscall, task.transport, task.allocator,
                                   process, lib._WALL|lib.WEXITED)
     struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
     child_event = ChildEvent.make(ChildCode(struct.si_code),
@@ -2251,7 +2228,7 @@ async def unshare_files(
                                                          fds_ptr.pointer, len(close_in_old_space)),
                                             # aligned for the stack
                                             alignment=16)
-    async with serializer.with_flushed(task.gateway, task.allocator):
+    async with serializer.with_flushed(task.transport, task.allocator):
         closer_task = await monitor.clone(
             task.base,
             lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SIGHAND|lib.CLONE_SYSVSEM|signal.SIGCHLD,
@@ -2269,51 +2246,32 @@ async def unshare_files(
     if not going_to_exec:
         await do_cloexec_except(task, process_resources, copy_to_new_space)
 
-@dataclass
-class ReceiveMemoryGateway(MemoryGateway):
-    """From the perspective of the side "closer" to us"""
-    read: AsyncFileDescriptor[ReadableFile]
-    write: handle.FileDescriptor
-    lock: trio.Lock
-
-    def inherit(self, task: handle.Task) -> ReceiveMemoryGateway:
-        return ReceiveMemoryGateway(self.read, task.make_fd_handle(self.write), self.lock)
-
-    async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
-        rtask = self.read.underlying.task.base
-        near_dest = rtask.to_near_pointer(dest)
-        near_read_fd = self.read.underlying.handle.near
-        wtask = self.write.task
-        near_src = wtask.to_near_pointer(src)
-        near_write_fd = self.write.near
-        async def read() -> None:
-            i = 0
-            while (n - i) > 0:
-                ret = await self.read.read_raw(rtask.sysif, near_read_fd, near_dest+i, n-i)
-                i += ret
-        async def write() -> None:
-            i = 0
-            while (n - i) > 0:
-                ret = await near.write(wtask.sysif, near_write_fd, near_src+i, n-i)
-                i += ret
-        async with self.lock:
-            async with trio.open_nursery() as nursery:
-                nursery.start_soon(read)
-                nursery.start_soon(write)
-
-    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
-        # TODO we should try to coalesce adjacent buffers, so one or both sides of the copy can be
-        # implemented with a single read or write instead of readv/writev.
-        for dest, src, n in ops:
-            await self.memcpy(dest, src, n)
-
-def merge_adjacent(spans: t.List[t.Tuple[Pointer, int]]) -> t.List[t.Tuple[Pointer, int]]:
-    if len(spans) == 0:
+def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[t.Tuple[Pointer, bytes]]:
+    "Note that this is only effective inasmuch as the list is sorted."
+    if len(write_ops) == 0:
         return []
-    spans = sorted(spans, key=lambda elem: int(elem[0]))
+    write_ops = sorted(write_ops, key=lambda op: int(op[0]))
+    outputs: t.List[t.Tuple[Pointer, bytes]] = []
+    last_pointer, last_data = write_ops[0]
+    for pointer, data in write_ops[1:]:
+        if int(last_pointer + len(last_data)) == int(pointer):
+            last_data += data
+        elif int(last_pointer + len(last_data)) > int(pointer):
+            raise Exception("pointers passed to memcpy are overlapping!")
+        else:
+            outputs.append((last_pointer, last_data))
+            last_pointer, last_data = pointer, data
+    outputs.append((last_pointer, last_data))
+    return outputs
+
+def merge_adjacent_reads(read_ops: t.List[t.Tuple[Pointer, int]]) -> t.List[t.Tuple[Pointer, int]]:
+    "Note that this is only effective inasmuch as the list is sorted."
+    if len(read_ops) == 0:
+        return []
+    read_ops = sorted(read_ops, key=lambda op: int(op[0]))
     outputs: t.List[t.Tuple[Pointer, int]] = []
-    last_pointer, last_size = spans[0]
-    for pointer, size in spans[1:]:
+    last_pointer, last_size = read_ops[0]
+    for pointer, size in read_ops[1:]:
         if int(last_pointer + last_size) == int(pointer):
             last_size += size
         elif int(last_pointer + last_size) > int(pointer):
@@ -2324,23 +2282,70 @@ def merge_adjacent(spans: t.List[t.Tuple[Pointer, int]]) -> t.List[t.Tuple[Point
     outputs.append((last_pointer, last_size))
     return outputs
 
+class LocalMemoryTransport(base.MemoryTransport):
+    "This is a memory transport that only works on local pointers."
+    def inherit(self, task: handle.Task) -> LocalMemoryTransport:
+        return self
+
+    async def write(self, dest: Pointer, data: bytes) -> None:
+        await self.batch_write([(dest, data)])
+
+    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
+        for dest, data in ops:
+            src = base.to_local_pointer(data)
+            n = len(data)
+            base.memcpy(dest, src, n)
+
+    async def read(self, src: Pointer, n: int) -> bytes:
+        [data] = await self.batch_read([(src, n)])
+        return data
+
+    async def batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
+        ret: t.List[bytes] = []
+        for src, n in ops:
+            buf = bytearray(n)
+            dest = base.to_local_pointer(buf)
+            base.memcpy(dest, src, n)
+            ret.append(bytes(buf))
+        return ret
+
 @dataclass
-class SendMemoryGateway(MemoryGateway):
-    """From the perspective of the side "closer" to us"""
-    read: handle.FileDescriptor
-    write: AsyncFileDescriptor[WritableFile]
+class SocketMemoryTransport(base.MemoryTransport):
+    """This class wraps a pair of connected file descriptors, one of which is in the local address space.
+
+    The task owning the "local" file descriptor is guaranteed to be in the local address space. This
+    means Python runtime memory, such as bytes objects, can be written to it without fear.  The
+    "remote" file descriptor is somewhere else - possibly in the same task, possibly on some other
+    system halfway across the planet.
+
+    This pair can be used through the helper methods on this class, or borrowed for direct use. When
+    directly used, care must be taken to ensure that at the end of use, the buffer between the pair
+    is empty; otherwise later users will get that stray leftover data when they try to use it.
+
+    """
+    local: AsyncFileDescriptor[ReadableWritableFile]
+    remote: handle.FileDescriptor
     lock: trio.Lock
 
-    def inherit(self, task: handle.Task) -> SendMemoryGateway:
-        return SendMemoryGateway(task.make_fd_handle(self.read), self.write, self.lock)
+    @property
+    def remote_is_local(self) -> bool:
+        return self.remote.task.address_space == base.local_address_space
 
-    async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
-        rtask = self.read.task
+    def inherit(self, task: handle.Task) -> SocketMemoryTransport:
+        return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote), self.lock)
+
+    async def _unlocked_single_write(self, dest: Pointer, data: bytes) -> None:
+        src = base.to_local_pointer(data)
+        n = len(data)
+        if self.remote_is_local:
+            base.memcpy(dest, src, n)
+            return
+        rtask = self.remote.task
+        near_read_fd = self.remote.near
         near_dest = rtask.to_near_pointer(dest)
-        near_read_fd = self.read.near
-        wtask = self.write.underlying.task.base
+        wtask = self.local.underlying.task.base
+        near_write_fd = self.local.underlying.handle.near
         near_src = wtask.to_near_pointer(src)
-        near_write_fd = self.write.underlying.handle.near
         async def read() -> None:
             i = 0
             while (n - i) > 0:
@@ -2349,83 +2354,77 @@ class SendMemoryGateway(MemoryGateway):
         async def write() -> None:
             i = 0
             while (n - i) > 0:
-                ret = await self.write.write_raw(wtask.sysif, near_write_fd, near_src+i, n-i)
+                ret = await self.local.write_raw(wtask.sysif, near_write_fd, near_src+i, n-i)
                 i += ret
-        async with self.lock:
-            async with trio.open_nursery() as nursery:
-                nursery.start_soon(read)
-                nursery.start_soon(write)
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(read)
+            nursery.start_soon(write)
 
-    async def iovec_memcpy(self,
-                           dests: t.List[t.Tuple[Pointer, int]],
-                           srcs: t.List[t.Tuple[Pointer, int]]
-    ) -> None:
-        dests = merge_adjacent(dests)
-        srcs = merge_adjacent(srcs)
-        rtask = self.read.task
-        near_read_fd = self.read.near
-        near_dests = [(rtask.to_near_pointer(dest), n) for (dest, n) in dests]
-        wtask = self.write.underlying.task.base
-        near_write_fd = self.write.underlying.handle.near
-        near_srcs = [(wtask.to_near_pointer(src), n) for (src, n) in srcs]
+    async def _unlocked_batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
+        ops = sorted(ops, key=lambda op: int(op[0]))
+        ops = merge_adjacent_writes(ops)
+        if len(ops) <= 1:
+            [(dest, data)] = ops
+            await self._unlocked_single_write(dest, data)
+        else:
+            # TODO use an iovec
+            # build the full iovec at the start
+            # write it over with unlocked_single_write
+            # call readv
+            # on partial read, fall back to unlocked_single_write for the rest of that section,
+            # then go back to an incremented iovec
+            for dest, data in ops:
+                await self._unlocked_single_write(dest, data)
+
+    async def write(self, dest: Pointer, data: bytes) -> None:
+        await self.batch_write([(dest, data)])
+
+    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
+        async with self.lock:
+            await self._unlocked_batch_write(ops)
+
+    async def _unlocked_single_read(self, src: Pointer, n: int) -> bytes:
+        buf = bytearray(n)
+        dest = base.to_local_pointer(buf)
+        if self.remote_is_local:
+            base.memcpy(dest, src, n)
+            return bytes(buf)
+        rtask = self.local.underlying.task.base
+        near_dest = rtask.to_near_pointer(dest)
+        near_read_fd = self.local.underlying.handle.near
+        wtask = self.remote.task
+        near_src = wtask.to_near_pointer(src)
+        near_write_fd = self.remote.near
         async def read() -> None:
-            # TODO we should use readv, but only if there's more than two operations after coalescing.
-            remaining = near_dests:
-            while len(remaining) > 0:
-                if len(remaining) > 2:
-                    raise Exception("use readv")
-                else:
-                    # need to iterate through remaining, I guess
-                    # actually this is all a fairly reusable thing.
-                    pass
-            for near_dest, n in near_dests:
-                i = 0
-                while (n - i) > 0:
-                    ret = await near.read(rtask.sysif, near_read_fd, near_dest+i, n-i)
-                    i += ret
+            i = 0
+            while (n - i) > 0:
+                ret = await self.local.read_raw(rtask.sysif, near_read_fd, near_dest+i, n-i)
+                i += ret
         async def write() -> None:
-            for near_src, n in near_srcs:
-                i = 0
-                while (n - i) > 0:
-                    ret = await self.write.write_raw(wtask.sysif, near_write_fd, near_src+i, n-i)
-                    i += ret
+            i = 0
+            while (n - i) > 0:
+                ret = await near.write(wtask.sysif, near_write_fd, near_src+i, n-i)
+                i += ret
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(read)
+            nursery.start_soon(write)
+        return bytes(buf)
+
+    async def _unlocked_batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
+        ops = merge_adjacent_reads(ops)
+        ret: t.List[bytes] = []
+        for src, size in ops:
+            ret.append(await self._unlocked_single_read(src, size))
+        return ret
+
+    async def read(self, src: Pointer, n: int) -> bytes:
+        [data] = await self.batch_read([(src, n)])
+        return data
+
+    async def batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
         async with self.lock:
-            async with trio.open_nursery() as nursery:
-                nursery.start_soon(read)
-                nursery.start_soon(write)
+            return (await self._unlocked_batch_read(ops))
 
-    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
-        dests = [(dest, n) for (dest, src, n) in ops]
-        srcs = [(src, n) for (dest, src, n) in ops]
-        await self.iovec_memcpy(dests, srcs)
-
-# TODO we should just hardcode this to check for local, send, receive...
-# The point of the gateway is simple:
-# It lets us copy between local_address_space pointers and some remote address space.
-# In both directions.
-class ComposedMemoryGateway(MemoryGateway):
-    def __init__(self,
-                 components: t.List[MemoryGateway],
-    ) -> None:
-        self.components = components
-
-    def inherit(self, task: handle.Task) -> ComposedMemoryGateway:
-        return ComposedMemoryGateway([component.inherit(task) for component in self.components])
-
-    async def memcpy(self, dest: Pointer, src: Pointer, n: int) -> None:
-        for component in self.components:
-            try:
-                await component.memcpy(dest, src, n)
-                return
-            except far.AddressSpaceMismatchError as e:
-                pass
-        raise far.AddressSpaceMismatchError("none of my components support this combination of address spaces", dest, src)
-
-    async def batch_memcpy(self, ops: t.List[t.Tuple[Pointer, Pointer, int]]) -> None:
-        # TODO we should try to coalesce adjacent buffers, so one or both sides of the copy can be
-        # implemented with a single read or write instead of readv/writev.
-        for dest, src, n in ops:
-            await self.memcpy(dest, src, n)
 
 class AsyncReadBuffer:
     def __init__(self, fd: AsyncFileDescriptor[ReadableFile]) -> None:
@@ -2511,7 +2510,7 @@ async def read_lines(fd: AsyncFileDescriptor[ReadableFile]) -> t.AsyncIterator[b
                 yield line
                 buf = buf[i+1:]
 
-async def set_singleton_robust_futex(task: far.Task, gateway: MemoryGateway, allocator: memory.PreallocatedAllocator,
+async def set_singleton_robust_futex(task: far.Task, transport: base.MemoryTransport, allocator: memory.PreallocatedAllocator,
                                      futex_value: int,
 ) -> Pointer:
     serializer = memsys.Serializer()
@@ -2525,7 +2524,7 @@ async def set_singleton_robust_futex(task: far.Task, gateway: MemoryGateway, all
     robust_list_head = serializer.serialize_cffi(
         'struct robust_list_head', lambda:
         ((ffi.cast('void*', robust_list_entry.pointer),), futex_offset, ffi.cast('void*', 0)))
-    async with serializer.with_flushed(gateway, allocator):
+    async with serializer.with_flushed(transport, allocator):
         await far.set_robust_list(task, robust_list_head.pointer, robust_list_head.size)
     futex_pointer = robust_list_entry.pointer + futex_offset
     return futex_pointer
@@ -2572,9 +2571,9 @@ async def make_connections(access_task: Task,
             await sock.handle.invalidate()
     else:
         assert connecting_connection is not None
-        await memsys.sendmsg_fds(connecting_task.base, connecting_task.gateway, connecting_task.allocator,
+        await memsys.sendmsg_fds(connecting_task.base, connecting_task.transport, connecting_task.allocator,
                                  connecting_connection[0].far, [sock.handle.far for sock in connecting_socks])
-        near_passed_socks = await memsys.recvmsg_fds(parent_task.base, parent_task.gateway, parent_task.allocator,
+        near_passed_socks = await memsys.recvmsg_fds(parent_task.base, parent_task.transport, parent_task.allocator,
                                                      connecting_connection[1].far, count)
         passed_socks = [parent_task.base.make_fd_handle(sock) for sock in near_passed_socks]
         # don't need these in the connecting task anymore
@@ -2598,7 +2597,7 @@ async def spawn_rsyscall_thread(
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
-                    parent_task.gateway.inherit(new_base_task),
+                    parent_task.transport.inherit(new_base_task),
                     parent_task.allocator.inherit(new_base_task),
                     parent_task.mount, parent_task.fs, parent_task.sigmask.inherit(),
                     parent_task.process_namespace)
@@ -2613,7 +2612,7 @@ async def rsyscall_exec(
     stdtask = rsyscall_thread.stdtask
     [(async_access_describe_sock, passed_describe_sock)] = await stdtask.make_async_connections(1)
     # create this guy and pass him down to the new thread
-    futex_memfd = await memsys.memfd_create(stdtask.task.base, stdtask.task.gateway, stdtask.task.allocator,
+    futex_memfd = await memsys.memfd_create(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
                                                   b"child_robust_futex_list", lib.MFD_CLOEXEC)
     child_futex_memfd = stdtask.task.base.make_fd_handle(futex_memfd)
     parent_futex_memfd = parent_stdtask.task.base.make_fd_handle(futex_memfd)
@@ -2673,11 +2672,11 @@ async def rsyscall_exec(
     futex_value = lib.FUTEX_WAITERS|(int(rsyscall_thread.thread.child_task.process) & lib.FUTEX_TID_MASK)
     # this is distasteful and leaky, we're relying on the fact that the PreallocatedAllocator never frees things
     remote_futex_pointer = await set_singleton_robust_futex(
-        stdtask.task.base, stdtask.task.gateway,
+        stdtask.task.base, stdtask.task.transport,
         memory.PreallocatedAllocator(remote_mapping_pointer, futex_memfd_size), futex_value)
     local_futex_pointer = local_mapping_pointer + (int(remote_futex_pointer) - int(remote_mapping_pointer))
     # now we start the futex monitor
-    futex_task = await launch_futex_monitor(parent_stdtask.task.base, parent_stdtask.task.gateway,
+    futex_task = await launch_futex_monitor(parent_stdtask.task.base, parent_stdtask.task.transport,
                                             parent_stdtask.task.allocator,
                                             parent_stdtask.process, parent_stdtask.child_monitor,
                                             local_futex_pointer, futex_value)
@@ -2809,14 +2808,11 @@ async def ssh_bootstrap(
                                     identifier_process.near, remote_syscall_fd, remote_syscall_fd)
     new_base_task = base.Task(new_syscall, new_fd_table, new_address_space)
     handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
-    new_gateway = ComposedMemoryGateway([
-        SendMemoryGateway(read=handle_remote_data_fd, write=async_local_data_sock, lock=trio.Lock()),
-        ReceiveMemoryGateway(read=async_local_data_sock, write=handle_remote_data_fd, lock=trio.Lock()),
-    ])
+    new_transport = SocketMemoryTransport(async_local_data_sock, handle_remote_data_fd, trio.Lock())
     new_process_namespace = far.ProcessNamespace(identifier_pid)
     new_mount_namespace = base.MountNamespace(identifier_pid)
     new_fs_information = base.FSInformation(identifier_pid)
-    new_task = Task(new_base_task, new_gateway,
+    new_task = Task(new_base_task, new_transport,
                     memory.AllocatorClient.make_allocator(new_base_task),
                     new_mount_namespace, new_fs_information,
                     # we assume ssh zeroes the sigmask before starting us
@@ -2903,7 +2899,7 @@ class RsyscallThread:
         for key_bytes, value in envp.items():
             raw_envp.append(b''.join([key_bytes, b'=', value]))
         task = self.stdtask.task
-        return (await self.thread.execveat(task.base.sysif, task.gateway, task.allocator,
+        return (await self.thread.execveat(task.base.sysif, task.transport, task.allocator,
                                            path, [await fspath(arg) for arg in argv],
                                            raw_envp, flags=0))
 
@@ -3018,7 +3014,7 @@ class SSHDCommand(Command):
 local_stdtask: t.Any = None # type: ignore
 
 async def build_local_stdtask(nursery) -> StandardTask:
-    return (await StandardTask.make_from_bootstrap(gather_local_bootstrap()))
+    return (await StandardTask.make_local())
 
 async def exec_cat(thread: RsyscallThread, cat: Command,
                    infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> ChildTask:

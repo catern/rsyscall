@@ -8094,3 +8094,54 @@ LOL if I actually kill the child, then it seems to work...
 * batching
   I could implement easy batching by just having requests be enqueued,
   and then performing all pending requests at once.
+* batch memcpy
+
+  I could sort and batch one side,
+  then sort the other side and batch within each newbatch,
+  then batch across?
+** notes
+hmm, I need to inject something on the write side to do this, don't I?
+awkward.
+Maybe I need to write incrementally
+Hmm, dang, when I already have writes in the pipe,
+I can't write another iovec.
+I could increment my pointer and look at a later part of the iovec,
+but that's the most I can do.
+I guess I could finish a partial write with a regular read,
+and then do the rest by incrementing the iovec.
+oh but I need local memory to do that
+bah, let's convert the gateway into something which takes bytes and sends them over
+OK so!!!
+A raw socket connection is better than most others!
+So that's what we'll support for reading/writing data to remote places!
+But, we still want to be able to go from bytes to data?
+Well...
+We also want to be able to splice to the remote host!
+For all this! We need to have!
+The ability to go from bytes to a pointer! Blah!
+And a task in which to write to the fd.
+And a task in which to read from the fd.
+What if we just have the datapair directly on the stdtask?
+OK, we can wrap it inside a Gateway helper,
+just for ease of use.
+Blah! Blah!
+
+Aha! Okay, so, I'll have a socketpair,
+which is wrapped in a thingy,
+which certifies that one end is a local end and is in the local address space,
+so you can use runtime bytes with it.
+
+Then how do I handle the abstraction for local bytes?
+I guess I can have "allocate me a readable pointer containing these bytes",
+and "allocate a writable pointer of this size".
+What about bulk serialization though?
+I guess the plan for using asyncness to handle batching could work.
+No, wait, that won't work.
+We do want a separation between allocating the pointer,
+and putting memory in it.
+Ok, so we could have a special case in this local socketpair,
+where it just falls back to a direct memcpy instead of going through the pipe?
+OK, and we can have a read method on the local socketpair,
+which directly allocates a local buffer and copies from the remote into it.
+Seems fine.
+
