@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 import typing as t
+import os
 import rsyscall.near
 
 # These are like segment ids.
@@ -11,6 +12,7 @@ class FDTable:
     # this is just for debugging; pids don't uniquely identify fd tables because
     # processes can change fd table (such as through unshare(CLONE_FILES))
     creator_pid: int
+
     def __str__(self) -> str:
         return f"FDTable({self.creator_pid})"
 
@@ -124,6 +126,71 @@ class FDTableMismatchError(NamespaceMismatchError):
 class AddressSpaceMismatchError(NamespaceMismatchError):
     pass
 
+@dataclass(eq=False)
+class FSInformation:
+    "Filesystem root, current working directory, and umask; controlled by CLONE_FS."
+    creator_pid: int
+    root: rsyscall.near.DirectoryFile
+    cwd: rsyscall.near.DirectoryFile
+    # TODO add fchdir too
+    async def chdir(self, task: Task, path: Pointer) -> None:
+        if task.fs != self:
+            raise NamespaceMismatchError("can only chdir in a task with this FSInformation")
+        self.cwd = rsyscall.near.DirectoryFile()
+        await rsyscall.near.chdir(task.sysif, task.to_near_pointer(path))
+
+    async def fchdir(self, task: Task, fd: FileDescriptor) -> None:
+        if task.fs != self:
+            raise NamespaceMismatchError("can only chdir in a task with this FSInformation")
+        self.cwd = rsyscall.near.DirectoryFile()
+        await rsyscall.near.fchdir(task.sysif, task.to_near_fd(fd))
+
+
+@dataclass
+class Root:
+    pass
+
+@dataclass
+class CWD:
+    pass
+
+@dataclass
+class Path:
+    base: t.Union[Root, CWD, FileDescriptor]
+    # The typical representation of a path as foo/bar/baz\0,
+    # is really just a serialization of a list of components using / as the in-band separator.
+    # We represent paths directly as the list they really are.
+    components: t.List[bytes]
+    def __post_init__(self) -> None:
+        # Each component has no / in it and is non-zero length.
+        for component in self.components:
+            assert len(component) != 0
+            assert b"/" not in component
+
+    def split(self) -> t.Tuple[Path, bytes]:
+        return Path(self.base, self.components[:-1]), self.components[-1]
+
+    def __truediv__(self, path_element: t.Union[str, bytes]) -> Path:
+        element: bytes = os.fsencode(path_element)
+        if b"/" in element:
+            raise Exception("no / allowed in path elements, do it one by one")
+        return Path(self.base, self.components+[element])
+
+    def __bytes__(self) -> bytes:
+        pathdata = b"/".join(self.components)
+        if isinstance(self.base, Root):
+            ret = b"/" + pathdata
+        elif isinstance(self.base, CWD):
+            ret = pathdata
+        elif isinstance(self.base, FileDescriptor):
+            ret = b"/proc/self/fd/" + bytes(int(self.base)) + b"/" + pathdata
+        else:
+            raise Exception("invalid base type")
+        return ret
+
+    def __str__(self) -> str:
+        return bytes(self).decode()
+
 # This is like a segment register, if a segment register was write-only. Then
 # we'd need to maintain the knowledge of what the segment register was set to,
 # outside the segment register itself. That's what we do here.
@@ -132,6 +199,7 @@ class Task:
     sysif: rsyscall.near.SyscallInterface
     fd_table: FDTable
     address_space: AddressSpace
+    fs: FSInformation
 
     def to_near_pointer(self, pointer: Pointer) -> rsyscall.near.Pointer:
         return self.address_space.to_near(pointer)

@@ -167,14 +167,14 @@ async def localize_path(
         transport: MemoryTransport, allocator: memory.AllocatorInterface, path: base.Path
 ) -> t.AsyncGenerator[t.Tuple[t.Optional[base.FileDescriptor], base.Pointer], None]:
     pathdata = b"/".join(path.components)
-    if isinstance(path.base, base.RootPathBase):
+    if isinstance(path.base, far.Root):
         # pathname has to be null terminated
         pathname = b"/" + pathdata + b"\0"
     else:
         pathname = pathdata + b"\0"
     async with localize_data(transport, allocator, pathname) as (pathname_ptr, pathname_len):
-        if isinstance(path.base, base.DirfdPathBase):
-            yield path.base.dirfd, pathname_ptr
+        if isinstance(path.base, near.FileDescriptor):
+            yield path.near, pathname_ptr
         else:
             yield None, pathname_ptr
 

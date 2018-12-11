@@ -1,6 +1,9 @@
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass
+import socket
+import struct
+import os
 import enum
 import abc
 import logging
@@ -28,6 +31,8 @@ class SYS(enum.IntEnum):
     unshare = lib.SYS_unshare
     epoll_ctl = lib.SYS_epoll_ctl
     epoll_wait = lib.SYS_epoll_wait
+    chdir = lib.SYS_chdir
+    fchdir = lib.SYS_fchdir
 
 class UnshareFlag(enum.IntFlag):
     NONE = 0
@@ -79,6 +84,14 @@ class FileDescriptor:
 
     def __int__(self) -> int:
         return self.number
+
+# This is like the actual memory. Not sure what to think of this.
+@dataclass(eq=False)
+class File:
+    pass
+
+class DirectoryFile(File):
+    pass
 
 @dataclass
 class Pointer:
@@ -220,3 +233,10 @@ async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: EpollCtlO
     if event is None:
         event = 0 # type: ignore
     await sysif.syscall(SYS.epoll_ctl, epfd, op, fd, event)
+
+async def chdir(sysif: SyscallInterface, path: Pointer) -> None:
+    await sysif.syscall(SYS.chdir, path)
+
+async def fchdir(sysif: SyscallInterface, fd: FileDescriptor) -> None:
+    await sysif.syscall(SYS.fchdir, fd)
+

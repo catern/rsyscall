@@ -56,6 +56,10 @@ class FileDescriptor:
     near: rsyscall.near.FileDescriptor
     valid: bool = True
 
+    def validate(self) -> None:
+        if not self.valid:
+            raise Exception("handle is no longer valid")
+    
     @property
     def far(self) -> rsyscall.far.FileDescriptor:
         # TODO delete this property, we should go through handle helper methods
@@ -65,8 +69,7 @@ class FileDescriptor:
         # fd at the same time as an unshare is happening; no actual correctness
         # problems result, and the syscall would be fine if the exception wasn't
         # thrown.
-        if not self.valid:
-            raise Exception("handle is no longer valid")
+        self.validate()
         return rsyscall.far.FileDescriptor(self.task.fd_table, self.near)
 
     async def invalidate(self) -> None:
@@ -107,27 +110,23 @@ class FileDescriptor:
     # oh hmm! if the pointer comes from another task, how does that work?
     # so I'll take far Pointers, and Union[handle.FileDescriptor, far.FileDescriptor]
     async def read(self, buf: rsyscall.far.Pointer, count: int) -> int:
-        if not self.valid:
-            raise Exception("handle is no longer valid")
+        self.validate()
         return (await rsyscall.near.read(self.task.sysif, self.near,
                                          self.task.to_near_pointer(buf), count))
 
     async def write(self, buf: rsyscall.far.Pointer, count: int) -> int:
-        if not self.valid:
-            raise Exception("handle is no longer valid")
+        self.validate()
         return (await rsyscall.near.write(self.task.sysif, self.near,
                                           self.task.to_near_pointer(buf), count))
 
     async def ftruncate(self, length: int) -> None:
-        if not self.valid:
-            raise Exception("handle is no longer valid")
+        self.validate()
         await rsyscall.near.ftruncate(self.task.sysif, self.near, length)
 
     async def mmap(self, length: int, prot: int, flags: int,
                    addr: t.Optional[rsyscall.far.Pointer]=None, offset: int=0,
     ) -> rsyscall.far.MemoryMapping:
-        if not self.valid:
-            raise Exception("handle is no longer valid")
+        self.validate()
         ret = await rsyscall.near.mmap(self.task.sysif, length, prot, flags,
                                        self.task.to_near_pointer(addr) if addr else None,
                                        self.near, offset)
@@ -136,14 +135,50 @@ class FileDescriptor:
     # oldfd has to be a valid file descriptor. newfd is not, technically, required to be
     # open, but that's the best practice for avoiding races, so we require it anyway here.
     async def dup3(self, newfd: FileDescriptor, flags: int) -> FileDescriptor:
-        if not self.valid:
-            raise Exception("handle is no longer valid")
+        self.validate()
         newfd_near = self.task.to_near_fd(newfd.far)
         # we take responsibility here for closing newfd (which we're doing through dup3)
         newfd._invalidate_all_existing_handles()
         await rsyscall.near.dup3(self.task.sysif, self.near, newfd_near, flags)
         return self.task.make_fd_handle(newfd_near)
 
+
+@dataclass
+class Root:
+    file: rsyscall.near.DirectoryFile
+    task: Task
+
+    def validate(self) -> None:
+        if self.file is not self.task.fs.root:
+            raise Exception("root directory mismatch", self.file, self.task.fs.root)
+
+@dataclass
+class CWD:
+    file: rsyscall.near.DirectoryFile
+    task: Task
+
+    def validate(self) -> None:
+        if self.file is not self.task.fs.cwd:
+            raise Exception("current working directory mismatch", self.file, self.task.fs.cwd)
+
+@dataclass
+class Path:
+    base: t.Union[Root, CWD, FileDescriptor]
+    components: t.List[bytes]
+
+    @property
+    def far(self) -> rsyscall.far.Path:
+        base = self.base
+        if isinstance(base, Root):
+            base.validate()
+            return rsyscall.far.Path(rsyscall.far.Root(), self.components)
+        elif isinstance(base, CWD):
+            base.validate()
+            return rsyscall.far.Path(rsyscall.far.CWD(), self.components)
+        elif isinstance(base, FileDescriptor):
+            return rsyscall.far.Path(base.far, self.components)
+        else:
+            raise Exception("bad path base type", base, type(base))
 
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
 
@@ -153,12 +188,36 @@ class Task(rsyscall.far.Task):
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
                  fd_table: rsyscall.far.FDTable,
-                 address_space: rsyscall.far.AddressSpace) -> None:
+                 address_space: rsyscall.far.AddressSpace,
+                 fs: rsyscall.far.FSInformation
+    ) -> None:
         self.sysif = sysif
         self.fd_table = fd_table
         self.address_space = address_space
+        self.fs = fs
         self.fd_handles: t.List[FileDescriptor] = []
         fd_table_to_near_to_handles.setdefault(self.fd_table, {})
+
+    def make_path_from_bytes(self, path: bytes) -> Path:
+        if path.startswith(b"/"):
+            return Path(Root(self.fs.root, self), path[1:].split(b"/"))
+        else:
+            return Path(Root(self.fs.cwd, self), path[1:].split(b"/"))
+
+    def make_path_handle(self, path: Path) -> Path:
+        base = path.base
+        if isinstance(base, Root):
+            if base.file is not self.fs.root:
+                raise Exception("root directory mismatch", base.file, self.fs.root)
+            return Path(Root(base.file, self), path.components)
+        elif isinstance(base, CWD):
+            if base.file is not self.fs.cwd:
+                raise Exception("current working directory mismatch", base.file, self.fs.cwd)
+            return Path(CWD(base.file, self), path.components)
+        elif isinstance(base, FileDescriptor):
+            return Path(self.make_fd_handle(base), path.components)
+        else:
+            raise Exception("bad path base type", base, type(base))
 
     def make_fd_handle(self, fd: t.Union[rsyscall.near.FileDescriptor,
                                          rsyscall.far.FileDescriptor,

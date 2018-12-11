@@ -8,11 +8,12 @@ import socket
 import struct
 import enum
 import signal
-from rsyscall.far import AddressSpace, FDTable, Pointer
+from rsyscall.far import AddressSpace, FDTable, Pointer, Path
 from rsyscall.far import Process, ProcessGroup, FileDescriptor
 from rsyscall.handle import Task
 from rsyscall.near import SyscallInterface
 from rsyscall.exceptions import RsyscallException, RsyscallHangup
+import rsyscall.far
 import rsyscall.near
 
 # Here we have base dataclasses which don't carry around references to a task.
@@ -21,78 +22,6 @@ import rsyscall.near
 # These things are all "far pointers" in terms of memory segmentation.
 
 # The ones in io.py carry a reference to a Task, and so are more convenient for users.
-
-@dataclass(eq=False)
-class MountNamespace:
-    creator_pid: int
-
-@dataclass(eq=False)
-class FSInformation:
-    "Filesystem root, current working directory, and umask; controlled by CLONE_FS."
-    creator_pid: int
-
-@dataclass
-class DirfdPathBase:
-    dirfd: FileDescriptor
-
-@dataclass
-class RootPathBase:
-    mount_namespace: MountNamespace
-    fs_information: FSInformation
-
-@dataclass
-class CWDPathBase:
-    mount_namespace: MountNamespace
-    fs_information: FSInformation
-
-@dataclass
-class Path:
-    base: t.Union[DirfdPathBase, RootPathBase, CWDPathBase]
-    # The typical representation of a path as foo/bar/baz\0,
-    # is really just a serialization of a list of components using / as the in-band separator.
-    # We represent paths directly as the list they really are.
-    components: t.List[bytes]
-    def __post_init__(self) -> None:
-        # Each component has no / in it and is non-zero length.
-        for component in self.components:
-            assert len(component) != 0
-            assert b"/" not in component
-
-    def split(self) -> t.Tuple[Path, bytes]:
-        return Path(self.base, self.components[:-1]), self.components[-1]
-
-    def __truediv__(self, path_element: t.Union[str, bytes]) -> Path:
-        element: bytes = os.fsencode(path_element)
-        if b"/" in element:
-            raise Exception("no / allowed in path elements, do it one by one")
-        return Path(self.base, self.components+[element])
-
-    @staticmethod
-    def from_bytes(mount_namespace: MountNamespace, fs_information: FSInformation, path: bytes) -> Path:
-        if path.startswith(b"/"):
-            return Path(RootPathBase(mount_namespace, fs_information), path[1:].split(b"/"))
-        else:
-            return Path(CWDPathBase(mount_namespace, fs_information), path.split(b"/"))
-
-    def unix_address(self) -> UnixAddress:
-        return UnixAddress(bytes(self))
-
-    def __bytes__(self) -> bytes:
-        pathdata = b"/".join(self.components)
-        if isinstance(self.base, RootPathBase):
-            ret = b"/" + pathdata
-        elif isinstance(self.base, CWDPathBase):
-            ret = pathdata
-        elif isinstance(self.base, DirfdPathBase):
-            ret = b"/proc/self/fd/" + bytes(int(self.base.dirfd)) + b"/" + pathdata
-        else:
-            raise Exception("invalid base type")
-        return ret
-
-    def __str__(self) -> str:
-        return bytes(self).decode()
-
-# TODO later on we'll have user namespaces too
 
 class MemoryWriter:
     @abc.abstractmethod
@@ -127,6 +56,7 @@ def cffi_to_local_pointer(cffi_object) -> Pointer:
 def to_local_pointer(data: bytes) -> Pointer:
     return cffi_to_local_pointer(ffi.from_buffer(data))
 
+
 T_addr = t.TypeVar('T_addr', bound='Address')
 class Address:
     addrlen: int
@@ -145,6 +75,10 @@ class UnixAddress(Address):
         if len(path) > 108:
             raise PathTooLongError("path is longer than the maximum unix address size")
         self.path = path
+
+    @staticmethod
+    def from_path(self, path: rsyscall.far.Path) -> UnixAddress:
+        return UnixAddress(bytes(path))
 
     T = t.TypeVar('T', bound='UnixAddress')
     @classmethod
@@ -201,6 +135,7 @@ class InetAddress(Address):
 
     def __str__(self) -> str:
         return f"InetAddress({self.addr_as_string()}:{self.port})"
+
 
 class IdType(enum.IntEnum):
     PID = lib.P_PID # Wait for the child whose process ID matches id.

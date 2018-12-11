@@ -8150,3 +8150,17 @@ Seems fine.
 
   But, when I chdir, I invalidate all previous cwd-relative paths.
   I guess I can just actually invalidate them.
+
+  I could have the cached serialized path pointer inside the handle path object thing.
+
+  Though I guess, hmm. What about when I want something not yet serialized?
+
+  I could have a distinction between serialized and unserialized paths
+
+  OK maybe Root and CWD need to be inside FSInformation.
+
+  Also I think maybe they don't relate to mountnamespace.
+
+  I guess people usually pivotroot into something.
+
+  OK, so the root directory is the same.
