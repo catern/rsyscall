@@ -8164,3 +8164,7 @@ Seems fine.
   I guess people usually pivotroot into something.
 
   OK, so the root directory is the same.
+* urgh
+  dealing with paths is so annoying
+
+  I guess I really will have my Path serialize and cache a pointer.

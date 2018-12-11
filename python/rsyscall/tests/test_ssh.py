@@ -6,6 +6,7 @@ import socket
 import unittest
 from rsyscall.io import Command, SSHCommand, SSHDCommand
 from rsyscall.io import Task, Path, build_local_stdtask, StandardTask
+import rsyscall.io
 import rsyscall.base as base
 import logging
 
@@ -13,15 +14,6 @@ import logging
 # executable_dirs: t.List[base.Path] = []
 # for prefix in local_stdtask.environment[b"PATH"].split(b":"):
 #     executable_dirs.append(base.Path.from_bytes(local_stdtask.task.mount, local_stdtask.task.fs, prefix))
-async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
-    "Find an executable by this name in this list of paths"
-    if b"/" in name:
-        raise Exception("name should be a single path element without any / present")
-    for path in paths:
-        filename = Path(task, path)/name
-        if (await filename.access(read=True, execute=True)):
-            return filename.pure
-    raise Exception("executable not found", name)
 
 # ssh = local_stdtask.filesystem.utilities.ssh
 # sshd = SSHDCommand.make(trio.run(which, local_stdtask.task, executable_dirs, b"sshd"))
@@ -31,27 +23,22 @@ async def which(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
 @contextlib.asynccontextmanager
 async def ssh_to_localhost(stdtask: StandardTask) -> t.AsyncGenerator[SSHCommand, None]:
     async with (await stdtask.mkdtemp()) as tmpdir:
-        path = tmpdir.pure
         await stdtask.task.chdir(tmpdir)
         keygen_thread = await stdtask.fork()
-        executable_dirs: t.List[base.Path] = []
-        for prefix in stdtask.environment[b"PATH"].split(b":"):
-             executable_dirs.append(base.Path.from_bytes(stdtask.task.mount, stdtask.task.fs, prefix))
-        ssh_keygen = Command(await which(stdtask.task, executable_dirs, b"ssh-keygen"),
-                             ["ssh-keygen"], {})
+        ssh_keygen = await rsyscall.io.which(stdtask, b"ssh-keygen")
         keygen_command = ssh_keygen.args(
             ['-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key'])
-        privkey = path/'key'
-        pubkey = path/'key.pub'
+        privkey = tmpdir/'key'
+        pubkey = tmpdir/'key.pub'
         await (await keygen_command.exec(keygen_thread)).wait_for_exit()
         ssh = stdtask.filesystem.utilities.ssh
-        sshd = SSHDCommand.make(await which(stdtask.task, executable_dirs, b"sshd"))
+        sshd = SSHDCommand.make((await rsyscall.io.which(stdtask, b"sshd")).executable_path)
         sshd_command = sshd.args([
             '-i', '-f', '/dev/null',
         ]).sshd_options({
             'LogLevel': 'DEBUG',
-            'HostKey': str(privkey),
-            'AuthorizedKeysFile': str(pubkey),
+            'HostKey': str(privkey.pure),
+            'AuthorizedKeysFile': str(pubkey.pure),
             'StrictModes': 'no',
             'PrintLastLog': 'no',
             'PrintMotd': 'no',
@@ -60,7 +47,7 @@ async def ssh_to_localhost(stdtask: StandardTask) -> t.AsyncGenerator[SSHCommand
             '-F', '/dev/null',
         ]).ssh_options({
             'LogLevel': 'INFO',
-            'IdentityFile': str(privkey),
+            'IdentityFile': str(privkey.pure),
             'BatchMode': 'yes',
             'StrictHostKeyChecking': 'no',
             'UserKnownHostsFile': '/dev/null',

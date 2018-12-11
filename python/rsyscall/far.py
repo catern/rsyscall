@@ -167,16 +167,15 @@ class Path:
             assert len(component) != 0
             assert b"/" not in component
 
-    def split(self) -> t.Tuple[Path, bytes]:
-        return Path(self.base, self.components[:-1]), self.components[-1]
+    def _as_proc_path(self) -> bytes:
+        """The path, using /proc to do dirfd-relative lookups
 
-    def __truediv__(self, path_element: t.Union[str, bytes]) -> Path:
-        element: bytes = os.fsencode(path_element)
-        if b"/" in element:
-            raise Exception("no / allowed in path elements, do it one by one")
-        return Path(self.base, self.components+[element])
+        This is not too portable - there are many situations where /proc might
+        not be mounted. But if we have a dirfd-relative path, this is the only
+        way to build an AF_UNIX sock address from the path or to pass the path
+        to a subprocess.
 
-    def __bytes__(self) -> bytes:
+        """
         pathdata = b"/".join(self.components)
         if isinstance(self.base, Root):
             ret = b"/" + pathdata
@@ -187,6 +186,9 @@ class Path:
         else:
             raise Exception("invalid base type")
         return ret
+
+    def __bytes__(self) -> bytes:
+        return self._as_proc_path()
 
     def __str__(self) -> str:
         return bytes(self).decode()

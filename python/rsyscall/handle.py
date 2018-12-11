@@ -142,6 +142,9 @@ class FileDescriptor:
         await rsyscall.near.dup3(self.task.sysif, self.near, newfd_near, flags)
         return self.task.make_fd_handle(newfd_near)
 
+    async def fcntl(self, cmd: int, arg: t.Optional[int]=None) -> int:
+        self.validate()
+        return (await rsyscall.near.fcntl(self.task.sysif, self.near, cmd, arg))
 
 @dataclass
 class Root:
@@ -180,6 +183,21 @@ class Path:
         else:
             raise Exception("bad path base type", base, type(base))
 
+    def split(self) -> t.Tuple[Path, bytes]:
+        return Path(self.base, self.components[:-1]), self.components[-1]
+
+    def __truediv__(self, path_element: t.Union[str, bytes]) -> Path:
+        element: bytes = os.fsencode(path_element)
+        if b"/" in element:
+            raise Exception("no / allowed in path elements, do it one by one")
+        return Path(self.base, self.components+[element])
+
+    def __bytes__(self) -> bytes:
+        return bytes(self.far)
+
+    def __str__(self) -> str:
+        return str(self.far)
+
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
 
 class Task(rsyscall.far.Task):
@@ -202,7 +220,7 @@ class Task(rsyscall.far.Task):
         if path.startswith(b"/"):
             return Path(Root(self.fs.root, self), path[1:].split(b"/"))
         else:
-            return Path(Root(self.fs.cwd, self), path[1:].split(b"/"))
+            return Path(CWD(self.fs.cwd, self), path.split(b"/"))
 
     def make_path_handle(self, path: Path) -> Path:
         base = path.base
@@ -272,6 +290,9 @@ class Task(rsyscall.far.Task):
         # old fd table would close our fds when they notice there are no more handles.
         for handle in self.fd_handles:
             old_near_to_handles[handle.near].remove(handle)
+
+    async def unshare_fs(self) -> None:
+        await rsyscall.near.unshare(self.sysif, rsyscall.near.UnshareFlag.FS)
 
 @dataclass
 class Pipe:

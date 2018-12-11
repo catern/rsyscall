@@ -188,8 +188,6 @@ class Task:
                  base_: base.Task,
                  transport: base.MemoryTransport,
                  allocator: memory.AllocatorClient,
-                 mount: base.MountNamespace,
-                 fs: base.FSInformation,
                  sigmask: SignalMask,
                  process_namespace: far.ProcessNamespace,
     ) -> None:
@@ -198,8 +196,6 @@ class Task:
         # Being able to allocate memory is like having a stack.
         # we really need to be able to allocate memory to get anything done - namely, to call syscalls.
         self.allocator = allocator
-        self.mount = mount
-        self.fs = fs
         self.sigmask = sigmask
         self.process_namespace = process_namespace
 
@@ -215,6 +211,12 @@ class Task:
     def fd_table(self) -> base.FDTable:
         return self.base.fd_table
 
+    def root(self) -> Path:
+        return Path.from_bytes(self, b"/")
+
+    def cwd(self) -> Path:
+        return Path.from_bytes(self, b".")
+
     async def close(self):
         await self.syscall.close_interface()
 
@@ -225,11 +227,12 @@ class Task:
     async def execveat(self, path: Path,
                        argv: t.List[bytes], envp: t.List[bytes],
                        flags: int) -> None:
-        _validate_path_and_task_match(self, path.pure)
         await memsys.execveat(self.syscall, self.transport, self.allocator, path.pure, argv, envp, flags)
         await self.close()
 
     async def chdir(self, path: 'Path') -> None:
+        # hmmmmmmmmmmmmmmmmmmmmmmmmmmmmMMMMMMMMMMM
+        # it would be nice indeed to have Path manage its own serialization
         await memsys.chdir(self.syscall, self.transport, self.allocator, path.pure)
 
     async def unshare_fs(self) -> None:
@@ -242,14 +245,14 @@ class Task:
     def make_fd(self, fd: near.FileDescriptor, file: T_file) -> FileDescriptor[T_file]:
         return FileDescriptor(self, self.base.make_fd_handle(fd), file)
 
-    async def open(self, path: base.Path, flags: int, mode=0o644) -> handle.FileDescriptor:
+    async def open(self, path: handle.Path, flags: int, mode=0o644) -> handle.FileDescriptor:
         """Open a path
 
         Note that this can block forever if we're opening a FIFO
 
         """
         fd = await memsys.openat(self.syscall, self.transport, self.allocator,
-                                 path, flags, mode)
+                                 path.far, flags, mode)
         return self.base.make_fd_handle(fd)
 
     async def read(self, fd: far.FileDescriptor, count: int=4096) -> bytes:
@@ -347,7 +350,7 @@ class DirectoryFile(SeekableFile):
         return (await fd.task.getdents(fd.handle.far, count))
 
     def as_path(self, fd: FileDescriptor[DirectoryFile]) -> Path:
-        return Path(fd.task, base.Path(base.DirfdPathBase(fd.pure), []))
+        return Path(fd.task, handle.Path(fd.handle, []))
 
 class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     address_type: t.Type[T_addr]
@@ -862,38 +865,23 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     async def aclose(self) -> None:
         pass
 
-def _validate_path_and_task_match(task: Task, path: base.Path) -> None:
-    if isinstance(path.base, base.DirfdPathBase):
-        if path.base.dirfd.fd_table != task.base.fd_table:
-            raise Exception("path", path, "based at a dirfd which isn't in the fd_table of task", task)
-    elif isinstance(path.base, base.RootPathBase):
-        if path.base.mount_namespace != task.mount:
-            raise Exception("path", path, "based at root isn't in the mount namespace of task", task)
-        if path.base.fs_information != task.fs:
-            raise Exception("path", path, "based at root doesn't share fs information with task", task)
-    elif isinstance(path.base, base.CWDPathBase):
-        if path.base.mount_namespace != task.mount:
-            raise Exception("path", path, "based at cwd isn't in the mount namespace of task", task)
-        if path.base.fs_information != task.fs:
-            raise Exception("path", path, "based at cwd doesn't share fs information with task", task)
-
 class Path:
-    "This is a convenient combination of a pure path and a task to make syscalls in."
-    def __init__(self, task: Task, pure: base.Path) -> None:
+    "This is a convenient combination of a Path and a Task to perform serialization."
+    def __init__(self, task: Task, handle: handle.Path) -> None:
         self.task = task
-        self.pure = pure
-        _validate_path_and_task_match(self.task, self.pure)
+        self.handle = handle
+
+    @property
+    def pure(self) -> far.Path:
+        return self.handle.far
 
     def split(self) -> t.Tuple[Path, bytes]:
-        dir, name = self.pure.split()
+        dir, name = self.handle.split()
         return Path(self.task, dir), name
 
     @staticmethod
     def from_bytes(task: Task, path: bytes) -> Path:
-        if path.startswith(b"/"):
-            return Path(task, base.Path(base.RootPathBase(task.mount, task.fs), path[1:].split(b"/")))
-        else:
-            return Path(task, base.Path(base.CWDPathBase(task.mount, task.fs), path.split(b"/")))
+        return Path(task, task.base.make_path_from_bytes(path))
 
     async def mkdir(self, mode=0o777) -> Path:
         await memsys.mkdirat(self.task.syscall, self.task.transport, self.task.allocator,
@@ -983,29 +971,13 @@ class Path:
                                         self.pure, bufsiz))
     
     def _as_proc_path(self) -> bytes:
-        """The path, using /proc to do dirfd-relative lookups
-
-        This is not too portable - there are many situations where /proc might
-        not be mounted. But if we have a dirfd-relative path, this is the only
-        way to build an AF_UNIX sock address from the path or to pass the path
-        to a subprocess.
-
-        """
-        purebase = self.pure.base
-        pathdata = b"/".join(self.pure.components)
-        if isinstance(purebase, base.DirfdPathBase):
-            return b"/".join([b"/proc/self/fd", str(purebase.dirfd.near.number).encode(), pathdata])
-        elif isinstance(purebase, base.RootPathBase):
-            return b"/" + pathdata
-        else:
-            return pathdata
+        return self.handle.far._as_proc_path()
 
     async def as_argument(self) -> bytes:
-        purebase = self.pure.base
-        if isinstance(purebase, base.DirfdPathBase):
+        if isinstance(self.handle.base, handle.FileDescriptor):
             # we disable cloexec to pass the dirfd as an argument.
             # this is somewhat weird to do without ownership, but whatever.
-            await raw_syscall.fcntl(self.task.syscall, purebase.dirfd, fcntl.F_SETFD, 0)
+            await self.handle.base.fcntl(fcntl.F_SETFD, 0)
         return self._as_proc_path()
 
     def unix_address(self) -> UnixAddress:
@@ -1020,11 +992,8 @@ class Path:
         """
         return UnixAddress(self._as_proc_path())
 
-    def __truediv__(self, path_element: t.Union[str, bytes]) -> 'Path':
-        element: bytes = os.fsencode(path_element)
-        if b"/" in element:
-            raise Exception("no / allowed in path elements, do it one by one")
-        return Path(self.task, base.Path(self.pure.base, self.pure.components + [element]))
+    def __truediv__(self, path_element: t.Union[str, bytes]) -> Path:
+        return Path(self.task, self.handle/path_element)
 
     def __str__(self) -> str:
         return f"Path({self.pure})"
@@ -1047,7 +1016,7 @@ async def robust_unix_bind(path: Path, sock: FileDescriptor[UnixSocketFile]) -> 
             addr = path.unix_address()
         except PathTooLongError:
             dir, name = path.split()
-            if not(isinstance(dir.pure.base, base.DirfdPathBase) and len(dir.pure.components) == 0):
+            if not(isinstance(dir.handle.base, handle.FileDescriptor) and len(dir.pure.components) == 0):
                 # shrink the dir path by opening it directly as a dirfd
                 dirfd = await stack.enter_async_context(await dir.open_directory())
                 dir = dirfd.as_path()
@@ -1137,8 +1106,8 @@ def wrap_stdin_out_err(task: Task) -> StandardStreams:
 
 @dataclass
 class UnixUtilities:
-    rm: base.Path
-    sh: base.Path
+    rm: handle.Path
+    sh: handle.Path
     ssh: SSHCommand
 
 async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
@@ -1204,23 +1173,19 @@ local_process_resources = ProcessResources(
 
 @dataclass
 class FilesystemResources:
-    tmpdir: base.Path
+    tmpdir: handle.Path
     utilities: UnixUtilities
     # locale?
     # home directory?
-    rsyscall_server_path: base.Path
-    socket_binder_path: base.Path
-    rsyscall_bootstrap_path: base.Path
+    rsyscall_server_path: handle.Path
+    socket_binder_path: handle.Path
+    rsyscall_bootstrap_path: handle.Path
 
     @staticmethod
-    def make_from_environ(mount_namespace: base.MountNamespace,
-                          fs_information: base.FSInformation,
-                          environ: t.Mapping[bytes, bytes]) -> FilesystemResources:
-        def to_path(pathbytes: bytes) -> base.Path:
-            return base.Path.from_bytes(mount_namespace, fs_information, pathbytes)
-        tmpdir = to_path(environ.get(b"TMPDIR", b"/tmp"))
-        def cffi_to_path(cffi_char_array) -> base.Path:
-            return to_path(ffi.string(cffi_char_array))
+    def make_from_environ(task: handle.Task, environ: t.Mapping[bytes, bytes]) -> FilesystemResources:
+        tmpdir = task.make_path_from_bytes(environ.get(b"TMPDIR", b"/tmp"))
+        def cffi_to_path(cffi_char_array) -> handle.Path:
+            return task.make_path_from_bytes(ffi.string(cffi_char_array))
         utilities = UnixUtilities(
             rm=cffi_to_path(lib.rm_path),
             sh=cffi_to_path(lib.sh_path),
@@ -1238,23 +1203,23 @@ class FilesystemResources:
             rsyscall_bootstrap_path=rsyscall_bootstrap_path,
         )
 
-async def lookup_executable(task: Task, paths: t.List[base.Path], name: bytes) -> base.Path:
+async def lookup_executable(paths: t.List[Path], name: bytes) -> Path:
     "Find an executable by this name in this list of paths"
     if b"/" in name:
         raise Exception("name should be a single path element without any / present")
     for path in paths:
-        filename = Path(task, path)/name
+        filename = path/name
         if (await filename.access(read=True, execute=True)):
-            return filename.pure
+            return filename
     raise Exception("executable not found", name)
 
 async def which(stdtask: StandardTask, name: bytes) -> Command:
     "Find an executable by this name in PATH"
-    executable_dirs: t.List[base.Path] = []
+    executable_dirs: t.List[Path] = []
     for prefix in stdtask.environment[b"PATH"].split(b":"):
-        executable_dirs.append(base.Path.from_bytes(stdtask.task.mount, stdtask.task.fs, prefix))
-    executable_path = await lookup_executable(stdtask.task, executable_dirs, name)
-    return Command(executable_path, [name.decode()], {})
+        executable_dirs.append(Path.from_bytes(stdtask.task, prefix))
+    executable_path = await lookup_executable(executable_dirs, name)
+    return Command(executable_path.handle, [name.decode()], {})
 
 class StandardTask:
     def __init__(self,
@@ -1299,18 +1264,19 @@ class StandardTask:
         # how do I make a socketpair without a socketpair...
         # guess I can just use the near syscall.
         # oh no I also need to register on the epoller, I can't do that.
-        base_task = handle.Task(syscall, base.FDTable(pid), base.local_address_space)
+        base_task = handle.Task(syscall, base.FDTable(pid), base.local_address_space,
+                                far.FSInformation(pid, root=near.DirectoryFile(),
+                                                  cwd=near.DirectoryFile()))
         task = Task(base_task,
                     LocalMemoryTransport(),
                     memory.AllocatorClient.make_allocator(base_task),
-                    base.MountNamespace(pid), base.FSInformation(pid),
                     SignalMask(set()), far.ProcessNamespace(pid))
         environ = {key.encode(): value.encode() for key, value in os.environ.items()}
         stdstreams = wrap_stdin_out_err(task)
 
         # TODO fix this to... pull it from the bootstrap or something...
         process_resources = local_process_resources
-        filesystem_resources = FilesystemResources.make_from_environ(task.mount, task.fs, environ)
+        filesystem_resources = FilesystemResources.make_from_environ(base_task, environ)
         epoller = await task.make_epoll_center()
         child_monitor = await ChildTaskMonitor.make(task, epoller)
         # connection_listening_socket = await task.socket_unix(socket.SOCK_STREAM)
@@ -1410,11 +1376,6 @@ class StandardTask:
             await unshare_files(self.task, self.child_monitor, self.process,
                                 close_in_old_space, copy_to_new_space, going_to_exec)
         await self.task.base.unshare_files(do_unshare)
-
-    async def unshare_fs(self) -> ChangeCWD:
-        # 
-        await self.task.base.unshare_files(do_unshare)
-        pass
 
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
@@ -1774,8 +1735,8 @@ class Thread:
         self.released = False
 
     async def execveat(self, sysif: SyscallInterface, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
-                       path: base.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> ChildTask:
-        await memsys.execveat(sysif, transport, allocator, path, argv, envp, flags)
+                       path: handle.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> ChildTask:
+        await memsys.execveat(sysif, transport, allocator, path.far, argv, envp, flags)
         return self.child_task
 
     async def wait_for_mm_release(self) -> ChildTask:
@@ -2601,20 +2562,20 @@ async def spawn_rsyscall_thread(
         RsyscallConnection(access_sock, access_sock),
         cthread.child_task,
         cthread.futex_task)
-    new_base_task = base.Task(syscall, parent_task.fd_table, parent_task.address_space)
+    new_base_task = base.Task(syscall, parent_task.fd_table, parent_task.address_space, parent_task.base.fs)
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
                     parent_task.transport.inherit(new_base_task),
                     parent_task.allocator.inherit(new_base_task),
-                    parent_task.mount, parent_task.fs, parent_task.sigmask.inherit(),
+                    parent_task.sigmask.inherit(),
                     parent_task.process_namespace)
     return new_task, cthread
 
 async def rsyscall_exec(
         parent_stdtask: StandardTask,
         rsyscall_thread: RsyscallThread,
-        rsyscall_server_path: base.Path,
+        rsyscall_server_path: handle.Path,
     ) -> None:
     "Exec into the standalone rsyscall_server executable"
     stdtask = rsyscall_thread.stdtask
@@ -2739,7 +2700,7 @@ async def ssh_bootstrap(
         parent_task: StandardTask,
         ssh_command: SSHCommand,
         # the local path we'll use for the socket
-        local_socket_path: base.Path,
+        local_socket_path: handle.Path,
         # the directory we're bootstrapping out of
         tmp_path_bytes: bytes,
 ) -> t.Tuple[ChildTask, StandardTask]:
@@ -2814,15 +2775,13 @@ async def ssh_bootstrap(
     # Build the new task!
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                     identifier_process.near, remote_syscall_fd, remote_syscall_fd)
-    new_base_task = base.Task(new_syscall, new_fd_table, new_address_space)
+    new_fs_information = far.FSInformation(identifier_pid, root=near.DirectoryFile(), cwd=near.DirectoryFile())
+    new_base_task = base.Task(new_syscall, new_fd_table, new_address_space, new_fs_information)
     handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
     new_transport = SocketMemoryTransport(async_local_data_sock, handle_remote_data_fd, trio.Lock())
     new_process_namespace = far.ProcessNamespace(identifier_pid)
-    new_mount_namespace = base.MountNamespace(identifier_pid)
-    new_fs_information = base.FSInformation(identifier_pid)
     new_task = Task(new_base_task, new_transport,
                     memory.AllocatorClient.make_allocator(new_base_task),
-                    new_mount_namespace, new_fs_information,
                     # we assume ssh zeroes the sigmask before starting us
                     SignalMask(set()),
                     new_process_namespace)
@@ -2837,7 +2796,7 @@ async def ssh_bootstrap(
         connecting_task=new_task, connecting_connection=connecting_connection,
         task=new_task,
         process_resources=ProcessResources.make_from_symbols(symbols),
-        filesystem_resources=FilesystemResources.make_from_environ(new_mount_namespace, new_fs_information, environ),
+        filesystem_resources=FilesystemResources.make_from_environ(new_base_task, environ),
         epoller=epoller,
         child_monitor=child_monitor,
         local_epoller=epoller,
@@ -2850,7 +2809,7 @@ async def ssh_bootstrap(
 
 async def spawn_ssh(
         task: StandardTask, ssh_command: SSHCommand,
-        local_socket_path: t.Optional[base.Path]=None,
+        local_socket_path: t.Optional[handle.Path]=None,
 ) -> t.Tuple[ChildTask, StandardTask]:
     # we could get rid of the need to touch the local filesystem by directly
     # speaking the openssh multiplexer protocol. or directly speaking the ssh
@@ -2861,7 +2820,7 @@ async def spawn_ssh(
         guessed_hostname = ssh_command.arguments[-1]
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (guessed_hostname+random_suffix+".sock").encode()
-        path: base.Path = task.filesystem.tmpdir/name
+        path: handle.Path = task.filesystem.tmpdir/name
         local_socket_path = path
     socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
     async with run_socket_binder(task, ssh_command) as tmp_path_bytes:
@@ -2876,7 +2835,7 @@ class RsyscallThread:
         self.stdtask = stdtask
         self.thread = thread
 
-    async def execve(self, path: base.Path, argv: t.Sequence[t.Union[str, bytes, Path]],
+    async def execve(self, path: handle.Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[str, t.Union[str, bytes, Path]]={},
                      inherited_signal_blocks: t.List[SignalBlock]=[],
     ) -> ChildTask:
@@ -2936,28 +2895,10 @@ class Pipe:
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
 
-def extract_task(arg):
-    if isinstance(arg, Task):
-        return arg
-    elif isinstance(arg, FileDescriptor):
-        return arg.task
-    elif isinstance(arg, Path):
-        return arg.task
-
-def assert_same_task(task: Task, *args) -> None:
-    for arg in args:
-        if isinstance(arg, Path):
-            _validate_path_and_task_match(task, arg.pure)
-        elif isinstance(arg, FileDescriptor):
-            if arg.task != task:
-                raise Exception("desired task", task, "doesn't match task", arg.task, "in arg", arg)
-        else:
-            raise Exception("can't validate argument", arg)
-
 T_command = t.TypeVar('T_command', bound="Command")
 class Command:
     def __init__(self,
-                 executable_path: base.Path,
+                 executable_path: handle.Path,
                  arguments: t.List[str],
                  env_updates: t.Mapping[str, str]) -> None:
         self.executable_path = executable_path
@@ -3005,7 +2946,7 @@ class SSHCommand(Command):
         return self.args(["-L", f"{local_socket}:{remote_socket}"])
 
     @classmethod
-    def make(cls: t.Type[T_ssh_command], executable_path: base.Path) -> T_ssh_command:
+    def make(cls: t.Type[T_ssh_command], executable_path: handle.Path) -> T_ssh_command:
         return cls(executable_path, ["ssh"], {})
 
 class SSHDCommand(Command):
@@ -3016,7 +2957,7 @@ class SSHDCommand(Command):
         return self.args(option_list)
 
     @classmethod
-    def make(cls, executable_path: base.Path) -> SSHDCommand:
+    def make(cls, executable_path: handle.Path) -> SSHDCommand:
         return cls(executable_path, ["sshd"], {})
 
 local_stdtask: t.Any = None # type: ignore
