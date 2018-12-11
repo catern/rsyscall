@@ -233,6 +233,7 @@ class Task:
     async def chdir(self, path: 'Path') -> None:
         # hmmmmmmmmmmmmmmmmmmmmmmmmmmmmMMMMMMMMMMM
         # it would be nice indeed to have Path manage its own serialization
+        self.base.fs.chdir(self.syscall, self.transport
         await memsys.chdir(self.syscall, self.transport, self.allocator, path.pure)
 
     async def unshare_fs(self) -> None:
