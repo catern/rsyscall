@@ -231,10 +231,10 @@ class Task:
         await self.close()
 
     async def chdir(self, path: 'Path') -> None:
-        # hmmmmmmmmmmmmmmmmmmmmmmmmmmmmMMMMMMMMMMM
-        # it would be nice indeed to have Path manage its own serialization
-        self.base.fs.chdir(self.syscall, self.transport
-        await memsys.chdir(self.syscall, self.transport, self.allocator, path.pure)
+        async with memsys.localize_path(self.transport, self.allocator, path.pure) as (dirfd, pathname):
+            if dirfd is not None:
+                await self.base.fs.fchdir(self.base, dirfd)
+            await self.base.fs.chdir(self.base, pathname)
 
     async def unshare_fs(self) -> None:
         # we want this to return something that we can use to chdir

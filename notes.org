@@ -8168,3 +8168,9 @@ Seems fine.
   dealing with paths is so annoying
 
   I guess I really will have my Path serialize and cache a pointer.
+* setting up Nix
+  I can do it on the localhost, using user and mount namespaces!
+
+  Then automatically move it over to the remote host!
+
+  Cool cool
