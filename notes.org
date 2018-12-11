@@ -8174,3 +8174,11 @@ Seems fine.
   Then automatically move it over to the remote host!
 
   Cool cool
+
+  hmm, I could even run NixOS inside the container I guess
+* namespaces
+  OK, so, I need to support user and mout namespaces.
+
+  Obviously we start with user namespaces.
+
+  Let's write it out.

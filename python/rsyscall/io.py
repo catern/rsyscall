@@ -2975,3 +2975,23 @@ async def exec_cat(thread: RsyscallThread, cat: Command,
     await thread.stdtask.stdout.replace_with(stdout)
     child_task = await cat.exec(thread)
     return child_task
+
+async def do_stuff(thread: RsyscallThread) -> None:
+    await thread.unshare_user()
+    await thread.unshare_mount()
+    await thread.bind_mount(home/".var/nix", "/nix")
+    thread.stdtask.environ['NIX_CONF_DIR'] = '/nix/etc/nix'
+    # now I can run Nix commands. neat!
+    # So... yeah, this works and is good.
+    # Well... doesn't this have the issue of wiping out whatever I might want to use out of /nix?
+    # I guess I have that anyway. Nbd!
+    # Actually, I guess I could have some more specific path knowledge,
+    # with knowledge of actual mount points.
+    # Kind of the same thing as using pointers in memory mappings...
+    stdin = thread.stdtask.task.base.make_fd_handle(infd)
+    stdout = thread.stdtask.task.base.make_fd_handle(outfd)
+    await thread.stdtask.unshare_files()
+    await thread.stdtask.stdin.replace_with(stdin)
+    await thread.stdtask.stdout.replace_with(stdout)
+    child_task = await cat.exec(thread)
+    return child_task

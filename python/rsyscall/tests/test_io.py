@@ -503,6 +503,14 @@ class TestIO(unittest.TestCase):
                 self.assertEqual(await dest_file.read(), data)
         trio.run(self.runner, test)
 
+    def test_shell(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            thread = await stdtask.fork()
+            bash = await rsyscall.io.which(stdtask, b"bash")
+            child_task = await bash.exec(thread)
+            await child_task.wait_for_exit()
+        trio.run(self.runner, test)
+
     # def test_thread_mkdtemp(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
