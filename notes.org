@@ -3618,6 +3618,7 @@ so we don't have to be generic.
 
    well worry no more,
    rsyscall is here.
+** integrated thread library and container deployment system
 * explicitly modeling memory
 how would I do this?
 
@@ -8217,4 +8218,145 @@ Seems fine.
 * mounts
   I guess I could have some more specific path knowledge,
   with knowledge of actual mount points.
-  Kind of the same thing as using pointers in memory mappings...
+  Kind of the same thing as using pointers in memory mappings.
+* recovering children
+  So I like the notion of some server,
+  listening on a Unix socket
+  which I can connect to,
+  to get a new thread with complete sharing with that server.
+
+  That allows me to recover most things.
+  File descriptors, namespaces, etc.
+
+  But!
+  How do I recover children?
+
+  also, it would be nice to be able to monitor the tasks I create when I connect,
+  as children.
+* weird waitid waiting thing
+  Why am I waiting twice?
+
+  or rather, why am I not breaking out of the wait?
+
+  oh, maybe it's because of the cancellation not clearing the waiting thing?
+
+  okay, okay, so...
+  the issue is some kinda issue with locking on MemoryTransport, sigh.
+
+  so...
+  considering concrete details first:
+
+  when I'm in waitid in a task with different address space,
+  I need to call MemoryTransport.read in that task to get the response back.
+
+  but! I might be calling waitid in that task already for the purpose of calling MemoryTransport.read!
+
+  right, that's why read is... broken... well wait what.
+
+  oh, I guess I'm calling MemoryTransport.write, well, whatever.
+
+  That could be solved by locking the sides separately - which I suppose I should probably do.
+
+  But the issue of read in read, mm! tricky!
+
+  So I call read,
+  which needs to waitid to see if the task exits,
+  which needs to... wait a second.
+
+  I waitid in the parent, not in the child!
+
+  Oh, I see, perhaps.
+
+  I'm, um...
+
+  So if I want to make a syscall in the remote hub,
+
+  OK so even though I waitid in the parent,
+  and my original syscall is, perhaps, in the child,
+  and therefore I can use the child to perform the syscall...
+
+  I'm still causing conflicts because the entire pipe is locked.
+
+  So okay, simplifying it:
+
+  I want to read some memory in task B.
+
+  I call read on the pipe from task B.
+
+  That requires me to call waitid in task A, which is task B's parent.
+
+  If I actually call waitid,
+  then I need to read some memory in task B.
+
+  If task A and task B are in the same address space,
+  that means I need to lock that pipe so I can call read on the same pipe.
+
+  How do I know if task B is exited or not?
+
+  If it is exited, then, I guess I need to flush the pipe,
+  by calling read some more,
+  so that others will work.
+
+  Hmm.
+
+  Alternatively I could just only read the pipe in the root task.
+
+  But yeah it's really tricky with flushing the pipe I guess.
+
+  Transferring memory shouldn't require... transferring memory.
+
+  The circular dependency here is the problem, isn't it?
+
+  Well... how else do we detect failure? Hmm.
+
+  Hmm...
+
+  Like, okay, so.
+
+  I'm some task, and I want to make a syscall,
+  but..
+
+  Currently we have to read memory every time we make a syscall.
+
+  Well wait a second, isn't this broken in other cases too??
+
+  After all - if I actually exit...
+
+  Then I'll need to make the waitid call...
+
+  Well, that will
+
+  No, this is...
+
+  Oh, hmm, I could defer reading the memory back over to a later time.
+
+  Like I do with epoll wait.
+
+
+  It's still fairly weird to require copying memory every time I syscall -
+  although I guess I don't actually copy memory every time.
+
+  I make an epoll_wait call every time I syscall in a child,
+  but that's fine.
+
+  Yeah so if I defer reading the memory back over,
+  to a later time,
+  then I don't need to be cancel-guarded.
+
+  In general, calls that I might make in the implementation of SyscallInterface,
+  need to be cancel-safe.
+
+  Otherwise they'll hang forever.
+
+  The only issue here is that, uh, I guess I'm taking the lock under the cancel shield.
+
+  Also... I guess what if I'm calling waitid but...
+  Eh...
+
+  Oh yeah, what if I'm calling waitid,
+  and I die,
+  er...
+
+  No, the waitid has to return...
+
+  I think there's some problem here but not sure what it is.

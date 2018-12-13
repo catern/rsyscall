@@ -76,8 +76,12 @@ async def waitid(sysif: SyscallInterface, transport: MemoryTransport, allocator:
     logger.debug("waitid(%s, %s)", id, options)
     with await allocator.malloc(siginfo_size) as infop:
         await raw_syscall.waitid(sysif, id, infop, options, None)
+        logger.info("returned from waitid")
         with trio.open_cancel_scope(shield=True):
-            return (await read_to_bytes(transport, infop, siginfo_size))
+            logger.info("entering read to bytes")
+            data = await read_to_bytes(transport, infop, siginfo_size)
+            logger.info("done read to bytes")
+            return data
 
 
 #### epoll ####

@@ -663,9 +663,12 @@ class EpollWaiter:
             self.running_wait = running_wait
             try:
                 if self.wait_readable is not None:
+                    logger.info("sleeping before wait")
                     # yield away first
                     await trio.sleep(0)
+                    logger.info("performing a wait")
                     received_events = await self.wait(maxevents=32, timeout=0)
+                    logger.info("got from wait %s", received_events)
                     if len(received_events) == 0:
                         await self.wait_readable()
                         # We are only guaranteed to receive events from the following line because
@@ -1658,15 +1661,19 @@ class ChildTaskMonitor:
 
     async def do_wait(self) -> None:
         if self.running_wait is not None:
+            logger.info("waiting on child task event")
             await self.running_wait.wait()
         else:
+            logger.info("waiting on child task doing it myself")
             running_wait = trio.Event()
             self.running_wait = running_wait
             try:
                 if not self.can_waitid:
                     # we don't care what information we get from the signal, we just want to
                     # sleep until a SIGCHLD happens
+                    logger.info("doing signal queue read")
                     await self.signal_queue.read()
+                    logger.info("done with signal queue read")
                     self.can_waitid = True
                 # loop on waitid to flush all child events
                 task = self.waiting_task
@@ -1680,10 +1687,13 @@ class ChildTaskMonitor:
                     # have to serialize against things which use pids; we can't do a wait
                     # while something else is making a syscall with a pid, because we
                     # might collect the zombie for that pid and cause pid reuse
+                    logger.info("taking waitid lock")
                     async with self.wait_lock:
+                        logger.info("entering waitid")
                         siginfo = await memsys.waitid(
                             task.syscall, task.transport, task.allocator,
                             None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
+                        logger.info("done with waitid")
                 except ChildProcessError:
                     # no more children
                     logger.info("no more children")
@@ -1710,6 +1720,7 @@ class ChildTaskMonitor:
                     # any more events to the same ChildTask.
                     del self.task_map[child_event.pid]
             finally:
+                logger.info("leaving child task doing it myself")
                 self.running_wait = None
                 running_wait.set()
 
@@ -2020,30 +2031,45 @@ class ChildConnection(base.SyscallInterface):
 
     async def _read_syscall_response(self) -> int:
         response: int
-        async with trio.open_nursery() as nursery:
-            async def read_response() -> None:
-                nonlocal response
-                response = await self.rsyscall_connection.read_response()
-                raise_if_error(response)
-                nursery.cancel_scope.cancel()
-            async def server_exit() -> None:
-                # meaning the server exited
-                await self.server_task.wait_for_exit()
-                raise ChildExit()
-            async def futex_exit() -> None:
-                if self.futex_task is not None:
-                    # meaning the server called exec or exited; we don't
-                    # wait to see which one.
-                    await self.futex_task.wait_for_exit()
-                    raise MMRelease()
-            nursery.start_soon(read_response)
-            nursery.start_soon(server_exit)
-            nursery.start_soon(futex_exit)
+        try:
+            async with trio.open_nursery() as nursery:
+                async def read_response() -> None:
+                    nonlocal response
+                    response = await self.rsyscall_connection.read_response()
+                    self.logger.info("read syscall response")
+                    nursery.cancel_scope.cancel()
+                async def server_exit() -> None:
+                    # meaning the server exited
+                    try:
+                        self.logger.info("enter server exit")
+                        await self.server_task.wait_for_exit()
+                    except:
+                        self.logger.info("out of server exit")
+                        raise
+                    raise ChildExit()
+                async def futex_exit() -> None:
+                    if self.futex_task is not None:
+                        # meaning the server called exec or exited; we don't
+                        # wait to see which one.
+                        try:
+                            self.logger.info("enter futex exit")
+                            await self.futex_task.wait_for_exit()
+                        except:
+                            self.logger.info("out of futex exit")
+                            raise
+                        raise MMRelease()
+                nursery.start_soon(read_response)
+                nursery.start_soon(server_exit)
+                nursery.start_soon(futex_exit)
+        finally:
+            self.logger.info("out of syscall response nursery")
+        raise_if_error(response)
         return response
 
     async def _process_response_for(self, response: SyscallResponse) -> None:
         try:
             ret = await self._read_syscall_response()
+            self.logger.info("returned syscall response")
         except Exception as e:
             response.set_exception(e)
         else:
@@ -2412,7 +2438,9 @@ class SocketMemoryTransport(base.MemoryTransport):
         return data
 
     async def batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
+        logger.info("trying to take lock")
         async with self.lock:
+            logger.info("took lock")
             return (await self._unlocked_batch_read(ops))
 
 
@@ -2743,7 +2771,7 @@ async def ssh_bootstrap(
     # If we can somehow set up the forwarding after startup...
     # Urgh, we can't send the escape character since we're sending binary data over stdin.
     # Meh, let's continue.
-    await trio.sleep(.1)
+    await trio.sleep(.5)
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor[UnixSocketFile]:
         sock = await task.socket_unix(socket.SOCK_STREAM)

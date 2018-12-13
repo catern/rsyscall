@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 logging.basicConfig(level=logging.DEBUG)
 
+nix_bin_bytes = b"/nix/store/flyhfw91kycrzmlx5v2172b3si4zc0xx-nix-2.2pre6526_9f99d624/bin"
+
 class TestIO(unittest.TestCase):
     def test_pipe(self):
         async def test() -> None:
@@ -411,7 +413,9 @@ class TestIO(unittest.TestCase):
             async with ssh_to_localhost(stdtask) as ssh_command:
                 local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
                     stdtask, ssh_command)
+                logger.info("about to fork")
                 remote_thread = await remote_stdtask.fork()
+                logger.info("done with fork")
                 async with remote_thread:
                     # there's no test on mount namespace at the moment, so it works to pull this from local
                     logger.info("about to exec")
@@ -509,7 +513,7 @@ class TestIO(unittest.TestCase):
                 local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
                     stdtask, ssh_command)
                 thread = await remote_stdtask.fork()
-                src_nix_bin = stdtask.task.base.make_path_from_bytes(b"/nix/store/cjmjcyc8dfk6h3sykghlyhzprz3ijr3y-nix-2.2pre6526_9f99d624/bin")
+                src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
                 dest_nix_bin = await rsyscall.io.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
                 # let's use nix-copy-closure or nix-store --import/--export or nix copy to copy bash over then run it?
                 # nix-store --import/--export
@@ -522,10 +526,8 @@ class TestIO(unittest.TestCase):
     def test_nix_shell(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
-            src_nix_bin = stdtask.task.base.make_path_from_bytes(b"/nix/store/cjmjcyc8dfk6h3sykghlyhzprz3ijr3y-nix-2.2pre6526_9f99d624/bin")
+            src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
             dest_nix_bin = await rsyscall.io.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
-            # let's use nix-copy-closure or nix-store --import/--export or nix copy to copy bash over then run it?
-            # nix-store --import/--export
             bash = await rsyscall.io.which(stdtask, b"bash")
             dest_bash = await rsyscall.io.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
             child_task = await thread.execve(dest_bash, ["bash", "--norc"])
