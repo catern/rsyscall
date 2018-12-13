@@ -237,12 +237,6 @@ class Task:
         await raw_syscall.exit(self.syscall, status)
         await self.close()
 
-    async def execveat(self, path: Path,
-                       argv: t.List[bytes], envp: t.List[bytes],
-                       flags: int) -> None:
-        await memsys.execveat(self.syscall, self.transport, self.allocator, path.pure, argv, envp, flags)
-        await self.close()
-
     async def chdir(self, path: 'Path') -> None:
         async with memsys.localize_path(self.transport, self.allocator, path.pure) as (dirfd, pathname):
             if dirfd is not None:
@@ -1237,7 +1231,7 @@ async def which(stdtask: StandardTask, name: bytes) -> Command:
     for prefix in stdtask.environment[b"PATH"].split(b":"):
         executable_dirs.append(Path.from_bytes(stdtask.task, prefix))
     executable_path = await lookup_executable(executable_dirs, name)
-    return Command(executable_path.handle, [name.decode()], {})
+    return Command(executable_path.handle, [name], {})
 
 class StandardTask:
     def __init__(self,
@@ -1416,19 +1410,6 @@ class StandardTask:
 
     async def unshare_mount(self) -> None:
         await rsyscall.near.unshare(self.task.base.sysif, rsyscall.near.UnshareFlag.NEWNS)
-
-    async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
-                     env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
-    ) -> None:
-        envp = {**self.environment}
-        for key in env_updates:
-            envp[os.fsencode(key)] = await fspath(env_updates[key])
-        raw_envp: t.List[bytes] = []
-        for key, value in envp.items():
-            raw_envp.append(b''.join([key, b'=', value]))
-        await self.task.execveat(path,
-                                 [await fspath(arg) for arg in argv],
-                                 raw_envp, flags=0)
 
     async def exit(self, status) -> None:
         await self.task.exit(0)
@@ -2857,7 +2838,7 @@ async def spawn_ssh(
     if local_socket_path is None:
         # we guess that the last argument of ssh command is the hostname. it
         # doesn't matter if it isn't, this is just for human-readability.
-        guessed_hostname = ssh_command.arguments[-1]
+        guessed_hostname = ssh_command.arguments[-1].decode()
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (guessed_hostname+random_suffix+".sock").encode()
         path: handle.Path = task.filesystem.tmpdir/name
@@ -2906,6 +2887,7 @@ class RsyscallThread:
         for key_bytes, value in envp.items():
             raw_envp.append(b''.join([key_bytes, b'=', value]))
         task = self.stdtask.task
+        logger.info("execveat(%s, %s, %s)", path, argv, env_updates)
         return (await self.thread.execveat(task.base.sysif, task.transport, task.allocator,
                                            path, [await fspath(arg) for arg in argv],
                                            raw_envp, flags=0))
@@ -2939,16 +2921,16 @@ T_command = t.TypeVar('T_command', bound="Command")
 class Command:
     def __init__(self,
                  executable_path: handle.Path,
-                 arguments: t.List[str],
+                 arguments: t.List[bytes],
                  env_updates: t.Mapping[str, str]) -> None:
         self.executable_path = executable_path
         self.arguments = arguments
         self.env_updates = env_updates
 
-    def args(self: T_command, args: t.List[str]) -> T_command:
+    def args(self: T_command, args: t.Sequence[t.Union[str, bytes]]) -> T_command:
         return type(self)(self.executable_path,
-                             self.arguments + args,
-                             self.env_updates)
+                          self.arguments + [os.fsencode(arg) for arg in args],
+                          self.env_updates)
 
     def env(self: T_command, env_updates: t.Mapping[str, str]) -> T_command:
         return type(self)(self.executable_path,
@@ -2962,7 +2944,7 @@ class Command:
         ret += str(self.executable_path)
         # skip first argument
         for arg in self.arguments[1:]:
-            ret += f" {arg}"
+            ret += " " + arg.decode()
         return ret
 
     # hmm we actually need an rsyscallthread to properly exec
@@ -2987,7 +2969,7 @@ class SSHCommand(Command):
 
     @classmethod
     def make(cls: t.Type[T_ssh_command], executable_path: handle.Path) -> T_ssh_command:
-        return cls(executable_path, ["ssh"], {})
+        return cls(executable_path, [b"ssh"], {})
 
 class SSHDCommand(Command):
     def sshd_options(self, config: t.Mapping[str, str]) -> SSHDCommand:
@@ -2998,7 +2980,7 @@ class SSHDCommand(Command):
 
     @classmethod
     def make(cls, executable_path: handle.Path) -> SSHDCommand:
-        return cls(executable_path, ["sshd"], {})
+        return cls(executable_path, [b"sshd"], {})
 
 local_stdtask: t.Any = None # type: ignore
 
