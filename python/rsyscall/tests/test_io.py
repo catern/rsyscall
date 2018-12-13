@@ -503,11 +503,32 @@ class TestIO(unittest.TestCase):
                 self.assertEqual(await dest_file.read(), data)
         trio.run(self.runner, test)
 
-    def test_shell(self) -> None:
+    def test_ssh_nix_shell(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with ssh_to_localhost(stdtask) as ssh_command:
+                local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
+                    stdtask, ssh_command)
+                thread = await remote_stdtask.fork()
+                src_nix_bin = stdtask.task.base.make_path_from_bytes(b"/nix/store/cjmjcyc8dfk6h3sykghlyhzprz3ijr3y-nix-2.2pre6526_9f99d624/bin")
+                dest_nix_bin = await rsyscall.io.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
+                # let's use nix-copy-closure or nix-store --import/--export or nix copy to copy bash over then run it?
+                # nix-store --import/--export
+                bash = await rsyscall.io.which(stdtask, b"bash")
+                dest_bash = await rsyscall.io.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
+                child_task = await thread.execve(dest_bash, ["bash"])
+                await child_task.wait_for_exit()
+        trio.run(self.runner, test)
+
+    def test_nix_shell(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
+            src_nix_bin = stdtask.task.base.make_path_from_bytes(b"/nix/store/cjmjcyc8dfk6h3sykghlyhzprz3ijr3y-nix-2.2pre6526_9f99d624/bin")
+            dest_nix_bin = await rsyscall.io.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
+            # let's use nix-copy-closure or nix-store --import/--export or nix copy to copy bash over then run it?
+            # nix-store --import/--export
             bash = await rsyscall.io.which(stdtask, b"bash")
-            child_task = await bash.exec(thread)
+            dest_bash = await rsyscall.io.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
+            child_task = await thread.execve(dest_bash, ["bash", "--norc"])
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
 

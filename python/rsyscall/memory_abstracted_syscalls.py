@@ -304,6 +304,9 @@ class Serializer:
         self.operations.append(SerializerOperation(ptr, data))
         return ptr
 
+    def serialize_null_terminated_data(self, data: bytes) -> SerializedPointer:
+        return self.serialize_data(data + b"\0")
+
     def serialize_lambda(self, size: int, func: t.Callable[[], bytes], alignment=1) -> SerializedPointer:
         ptr = SerializedPointer(size)
         self.operations.append(SerializerOperation(ptr, func, alignment))

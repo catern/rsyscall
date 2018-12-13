@@ -8182,3 +8182,39 @@ Seems fine.
   Obviously we start with user namespaces.
 
   Let's write it out.
+
+  users
+
+  ugh
+  should I figure out the whole data model and everything?
+
+  let's not do that quite yet.
+  let's just call getuid and getgid - annoying as it may be.
+* neat
+  all namespace'd up, now, what do we do with, um.
+  How do we deal with bootstrapping Nix into the chroot?
+
+  We can't extract it inside.
+
+  We have to build the chroot from the outside in!!!
+
+  so we need to extract a Nix tarball or something into a dir.
+  hmm.
+
+  what if we just copy the tree instead.
+
+  with... rsync?
+
+  what about the dream of deploying locally...
+
+  OK, let's just use tar to copy a tree.
+
+  And, so, yeah, I'll just check for the dirs,
+  mkdir them if nonexistent,
+  and copy it over with tar.
+
+  I guess I'll use create_connections to do the connecting, so that I'm agnostic to location.
+* mounts
+  I guess I could have some more specific path knowledge,
+  with knowledge of actual mount points.
+  Kind of the same thing as using pointers in memory mappings...

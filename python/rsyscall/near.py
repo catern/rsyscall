@@ -33,6 +33,9 @@ class SYS(enum.IntEnum):
     epoll_wait = lib.SYS_epoll_wait
     chdir = lib.SYS_chdir
     fchdir = lib.SYS_fchdir
+    getuid = lib.SYS_getuid
+    getgid = lib.SYS_getgid
+    mount = lib.SYS_mount
 
 class UnshareFlag(enum.IntFlag):
     NONE = 0
@@ -239,4 +242,15 @@ async def chdir(sysif: SyscallInterface, path: Pointer) -> None:
 
 async def fchdir(sysif: SyscallInterface, fd: FileDescriptor) -> None:
     await sysif.syscall(SYS.fchdir, fd)
+
+async def getuid(sysif: SyscallInterface) -> int:
+    return (await sysif.syscall(SYS.getuid))
+
+async def getgid(sysif: SyscallInterface) -> int:
+    return (await sysif.syscall(SYS.getgid))
+
+async def mount(sysif: SyscallInterface, source: Pointer, target: Pointer,
+                filesystemtype: Pointer, mountflags: int,
+                data: Pointer) -> None:
+    await sysif.syscall(SYS.mount, source, target, filesystemtype, mountflags, data)
 

@@ -220,6 +220,19 @@ class Task:
     async def close(self):
         await self.syscall.close_interface()
 
+    async def mount(self, source: bytes, target: bytes,
+                    filesystemtype: bytes, mountflags: int,
+                    data: bytes) -> None:
+        serializer = memsys.Serializer()
+        source_ptr = serializer.serialize_null_terminated_data(source)
+        target_ptr = serializer.serialize_null_terminated_data(target)
+        filesystemtype_ptr = serializer.serialize_null_terminated_data(filesystemtype)
+        data_ptr = serializer.serialize_null_terminated_data(data)
+        async with serializer.with_flushed(self.transport, self.allocator):
+            await near.mount(self.base.sysif,
+                             source_ptr.pointer.near, target_ptr.pointer.near, filesystemtype_ptr.pointer.near,
+                             mountflags, data_ptr.pointer.near)
+
     async def exit(self, status: int) -> None:
         await raw_syscall.exit(self.syscall, status)
         await self.close()
@@ -418,6 +431,10 @@ class FileDescriptor(t.Generic[T_file_co]):
 
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
+
+    async def invalidate(self) -> None:
+        await self.handle.invalidate()
+        self.open = False
 
     def release(self) -> 'FileDescriptor[T_file_co]':
         """Disassociate the file descriptor from this object
@@ -1377,6 +1394,28 @@ class StandardTask:
             await unshare_files(self.task, self.child_monitor, self.process,
                                 close_in_old_space, copy_to_new_space, going_to_exec)
         await self.task.base.unshare_files(do_unshare)
+
+    async def unshare_user(self) -> None:
+        uid = await near.getuid(self.task.base.sysif)
+        gid = await near.getgid(self.task.base.sysif)
+        await self.task.base.unshare_user()
+        root = self.task.root()
+
+        uid_map = await (root/"proc"/"self"/"uid_map").open(os.O_WRONLY)
+        print(f"AAAAA {uid} {uid} 1\n")
+        await uid_map.write(f"{uid} {uid} 1\n".encode())
+        await uid_map.invalidate()
+
+        setgroups = await (root/"proc"/"self"/"setgroups").open(os.O_WRONLY)
+        await setgroups.write(b"deny")
+        await setgroups.invalidate()
+
+        gid_map = await (root/"proc"/"self"/"gid_map").open(os.O_WRONLY)
+        await gid_map.write(f"{gid} {gid} 1\n".encode())
+        await gid_map.invalidate()
+
+    async def unshare_mount(self) -> None:
+        await rsyscall.near.unshare(self.task.base.sysif, rsyscall.near.UnshareFlag.NEWNS)
 
     async def execve(self, path: Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[t.Union[str, bytes], t.Union[str, bytes, Path]]={},
@@ -2976,22 +3015,113 @@ async def exec_cat(thread: RsyscallThread, cat: Command,
     child_task = await cat.exec(thread)
     return child_task
 
-async def do_stuff(thread: RsyscallThread) -> None:
-    await thread.unshare_user()
-    await thread.unshare_mount()
-    await thread.bind_mount(home/".var/nix", "/nix")
-    thread.stdtask.environ['NIX_CONF_DIR'] = '/nix/etc/nix'
-    # now I can run Nix commands. neat!
-    # So... yeah, this works and is good.
-    # Well... doesn't this have the issue of wiping out whatever I might want to use out of /nix?
-    # I guess I have that anyway. Nbd!
-    # Actually, I guess I could have some more specific path knowledge,
-    # with knowledge of actual mount points.
-    # Kind of the same thing as using pointers in memory mappings...
-    stdin = thread.stdtask.task.base.make_fd_handle(infd)
-    stdout = thread.stdtask.task.base.make_fd_handle(outfd)
-    await thread.stdtask.unshare_files()
-    await thread.stdtask.stdin.replace_with(stdin)
-    await thread.stdtask.stdout.replace_with(stdout)
-    child_task = await cat.exec(thread)
-    return child_task
+async def read_all(fd: FileDescriptor[ReadableFile]) -> bytes:
+    buf = b""
+    while True:
+        data = await fd.read()
+        if len(data) == 0:
+            return buf
+        buf += data
+
+async def bootstrap_nix(
+        src_nix_bin: handle.Path, src_tar: Command, src_task: StandardTask,
+        dest_tar: Command, dest_task: StandardTask,
+) -> t.List[bytes]:
+    "Copies the Nix binaries into dest task's CWD. Returns the list of paths in the closure."
+    query_thread = await src_task.fork()
+    query_pipe = await src_task.task.pipe()
+    query_stdout = query_thread.stdtask.task.base.make_fd_handle(query_pipe.wfd.handle)
+    await query_pipe.wfd.invalidate()
+    await query_thread.stdtask.unshare_files(going_to_exec=True)
+    await query_thread.stdtask.stdout.replace_with(query_stdout)
+    await query_thread.execve(src_nix_bin/"nix-store", ["nix-store", "--query", "--requisites", str(src_nix_bin)])
+    closure = (await read_all(query_pipe.rfd)).split()
+
+    src_tar_thread = await src_task.fork()
+    dest_tar_thread = await dest_task.fork()
+    [(access_side, dest_tar_stdin)] = await dest_tar_thread.stdtask.make_connections(1)
+    src_tar_stdout = src_tar_thread.stdtask.task.base.make_fd_handle(access_side.handle)
+    await access_side.invalidate()
+
+    await dest_tar_thread.stdtask.unshare_files(going_to_exec=True)
+    await dest_tar_thread.stdtask.stdin.replace_with(dest_tar_stdin)
+    child_task = await dest_tar.args(["--extract"]).exec(dest_tar_thread)
+
+    await src_tar_thread.stdtask.unshare_files(going_to_exec=True)
+    await src_tar_thread.stdtask.stdout.replace_with(src_tar_stdout)
+    await src_tar.args([
+        "--create", "--to-stdout", "--hard-dereference",
+        "--owner=0", "--group=0", "--mode=u+rw,uga+r",
+        *closure,
+    ]).exec(src_tar_thread)
+    await child_task.wait_for_exit()
+    return closure
+
+async def bootstrap_nix_database(
+        src_nix_bin: handle.Path, src_task: StandardTask,
+        dest_nix_bin: handle.Path, dest_task: StandardTask,
+        closure: t.List[bytes],
+) -> None:
+    dump_db_thread = await src_task.fork()
+    load_db_thread = await dest_task.fork()
+    [(access_side, load_db_stdin)] = await load_db_thread.stdtask.make_connections(1)
+    dump_db_stdout = dump_db_thread.stdtask.task.base.make_fd_handle(access_side.handle)
+    await access_side.invalidate()
+
+    await load_db_thread.stdtask.unshare_files(going_to_exec=True)
+    await load_db_thread.stdtask.stdin.replace_with(load_db_stdin)
+    child_task = await load_db_thread.execve(dest_nix_bin/"nix-store", ["nix-store", "--load-db"])
+
+    await dump_db_thread.stdtask.unshare_files(going_to_exec=True)
+    await dump_db_thread.stdtask.stdout.replace_with(dump_db_stdout)
+    await dump_db_thread.execve(dest_nix_bin/"nix-store", ["nix-store", "--dump-db", *closure])
+    await child_task.wait_for_exit()
+
+async def create_nix_container(
+        src_nix_bin: handle.Path, src_task: StandardTask,
+        dest_task: StandardTask,
+) -> handle.Path:
+    dest_nix_bin = dest_task.task.base.make_path_from_bytes(bytes(src_nix_bin))
+    # TODO check if dest_nix_bin exists, and skip this stuff if it does
+    # copy the nix binaries over
+    src_tar = await which(src_task, b"tar")
+    dest_tar = await which(dest_task, b"tar")
+    closure = await bootstrap_nix(src_nix_bin, src_tar, src_task, dest_tar, dest_task)
+
+    # mutate dest_task so that it is nicely namespaced for the Nix container
+    await dest_task.unshare_user()
+    await dest_task.unshare_mount()
+    await dest_task.task.mount(b"nix", b"/nix", b"none", lib.MS_BIND|lib.MS_REC, b"")
+    await bootstrap_nix_database(src_nix_bin, src_task, dest_nix_bin, dest_task, closure)
+    return dest_nix_bin
+
+async def nix_deploy(
+        src_nix_bin: handle.Path, src_path: handle.Path, src_task: StandardTask,
+        dest_nix_bin: handle.Path, dest_task: StandardTask,
+) -> handle.Path:
+    dest_path = dest_task.task.base.make_path_from_bytes(bytes(src_path))
+
+    query_thread = await src_task.fork()
+    query_pipe = await src_task.task.pipe()
+    query_stdout = query_thread.stdtask.task.base.make_fd_handle(query_pipe.wfd.handle)
+    await query_pipe.wfd.invalidate()
+    await query_thread.stdtask.unshare_files(going_to_exec=True)
+    await query_thread.stdtask.stdout.replace_with(query_stdout)
+    await query_thread.execve(src_nix_bin/"nix-store", ["nix-store", "--query", "--requisites", str(src_path)])
+    closure = (await read_all(query_pipe.rfd)).split()
+
+    export_thread = await src_task.fork()
+    import_thread = await dest_task.fork()
+    [(access_side, import_stdin)] = await import_thread.stdtask.make_connections(1)
+    export_stdout = export_thread.stdtask.task.base.make_fd_handle(access_side.handle)
+    await access_side.invalidate()
+
+    await import_thread.stdtask.unshare_files(going_to_exec=True)
+    await import_thread.stdtask.stdin.replace_with(import_stdin)
+    child_task = await import_thread.execve(dest_nix_bin/"nix-store", ["nix-store", "--import"])
+
+    await export_thread.stdtask.unshare_files(going_to_exec=True)
+    await export_thread.stdtask.stdout.replace_with(export_stdout)
+    await export_thread.execve(dest_nix_bin/"nix-store", ["nix-store", "--export", *closure])
+    await child_task.wait_for_exit()
+    return dest_path

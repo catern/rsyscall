@@ -218,7 +218,11 @@ class Task(rsyscall.far.Task):
 
     def make_path_from_bytes(self, path: bytes) -> Path:
         if path.startswith(b"/"):
-            return Path(Root(self.fs.root, self), path[1:].split(b"/"))
+            path = path[1:]
+            if len(path) == 0:
+                return Path(Root(self.fs.root, self), [])
+            else:
+                return Path(Root(self.fs.root, self), path.split(b"/"))
         else:
             return Path(CWD(self.fs.cwd, self), path.split(b"/"))
 
@@ -292,7 +296,19 @@ class Task(rsyscall.far.Task):
             old_near_to_handles[handle.near].remove(handle)
 
     async def unshare_fs(self) -> None:
-        await rsyscall.near.unshare(self.sysif, rsyscall.near.UnshareFlag.FS)
+        old_fs = self.fs
+        new_fs = rsyscall.far.FSInformation(self.sysif.identifier_process.id,
+                                            old_fs.root, old_fs.cwd)
+        self.fs = new_fs
+        try:
+            await rsyscall.near.unshare(self.sysif, rsyscall.near.UnshareFlag.FS)
+        except:
+            self.fs = old_fs
+
+    async def unshare_user(self) -> None:
+        # unsharing the user namespace implicitly unshares CLONE_FS
+        await self.unshare_fs()
+        await rsyscall.near.unshare(self.sysif, rsyscall.near.UnshareFlag.NEWUSER)
 
 @dataclass
 class Pipe:
