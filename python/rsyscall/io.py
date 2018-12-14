@@ -2615,7 +2615,14 @@ async def spawn_rsyscall_thread(
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
-                    parent_task.transport.inherit(new_base_task),
+                    # We don't inherit the transport because it leads to a deadlock:
+                    # If when a child task calls transport.read, it performs a syscall in the child task,
+                    # then the parent task will need to call waitid to monitor the child task during the syscall,
+                    # which will in turn need to also call transport.read.
+                    # But the child is already using the transport and holding the lock,
+                    # so the parent will block forever on taking the lock,
+                    # and child's read syscall will never complete.
+                    parent_task.transport,
                     parent_task.allocator.inherit(new_base_task),
                     parent_task.sigmask.inherit(),
                     parent_task.process_namespace)

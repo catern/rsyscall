@@ -8215,24 +8215,6 @@ Seems fine.
   and copy it over with tar.
 
   I guess I'll use create_connections to do the connecting, so that I'm agnostic to location.
-* mounts
-  I guess I could have some more specific path knowledge,
-  with knowledge of actual mount points.
-  Kind of the same thing as using pointers in memory mappings.
-* recovering children
-  So I like the notion of some server,
-  listening on a Unix socket
-  which I can connect to,
-  to get a new thread with complete sharing with that server.
-
-  That allows me to recover most things.
-  File descriptors, namespaces, etc.
-
-  But!
-  How do I recover children?
-
-  also, it would be nice to be able to monitor the tasks I create when I connect,
-  as children.
 * weird waitid waiting thing
   Why am I waiting twice?
 
@@ -8360,3 +8342,69 @@ Seems fine.
   No, the waitid has to return...
 
   I think there's some problem here but not sure what it is.
+** problem
+   so I could just have the waitid support cancellation.
+
+   but that won't solve the problem that I'll still be deadlocked reading the child status.
+
+   instead I need to be able to make a syscall in the parent while doing it in the child,
+   that's the long and short of it.
+
+   so I'll just not inherit the transport. Easy!
+* mounts
+  I guess I could have some more specific path knowledge,
+  with knowledge of actual mount points.
+  Kind of the same thing as using pointers in memory mappings.
+
+  hmm, hmm.
+
+  Hot takes: should we have to explicitly know which memory mapping of virtual memory a pointer is in?
+  Should we have to know what mount a path is in?
+
+  I guess um,
+  if we had the truly object-oriented interface,
+  what would mount points look like?
+
+  We'd open a file in a directory to get a new object back?
+  But it would be a different mount?
+
+  Well, why do we even know what mount is which?
+
+  I guess so we can um...
+
+  Well, we can know whether something becomes valid I guess.
+
+  A path becomes valid.
+
+  Shrug.
+* recovering children
+  So I like the notion of some server,
+  listening on a Unix socket
+  which I can connect to,
+  to get a new thread with complete sharing with that server.
+
+  That allows me to recover most things.
+  File descriptors, namespaces, etc.
+
+  But!
+  How do I recover children?
+
+  also, it would be nice to be able to monitor the tasks I create when I connect,
+  as children.
+* next steps for nix deploy
+  So I've got the Nix bootstrap working.
+  Next step is to run the daemon, and then I guess that's it.
+
+  Let's, um, see if we can create another shell which enters the namespace?
+
+  Can I remount something as readonly?
+
+  Hmm, I can. Or rather, bind mount as readonly.
+
+  So, I guess what I want to do is, hmm.
+
+  I'll enter just the user namespace, then make a new mount namespace.
+
+  I could keep the thread around that is just in the user namespace, but what a hassle.
+
+  I'll use setns and fork into a new mount namespace.
