@@ -36,6 +36,12 @@ class SYS(enum.IntEnum):
     getuid = lib.SYS_getuid
     getgid = lib.SYS_getgid
     mount = lib.SYS_mount
+    waitid = lib.SYS_waitid
+
+class IdType(enum.IntEnum):
+    PID = lib.P_PID # Wait for the child whose process ID matches id.
+    PGID = lib.P_PGID # Wait for any child whose process group ID matches id.
+    ALL = lib.P_ALL # Wait for any child; id is ignored.
 
 class UnshareFlag(enum.IntFlag):
     NONE = 0

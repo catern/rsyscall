@@ -1,6 +1,6 @@
 from rsyscall.exceptions import RsyscallException, RsyscallHangup
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.near import SyscallInterface, UnshareFlag
+from rsyscall.near import SyscallInterface, UnshareFlag, IdType
 from rsyscall.far import Pointer, Process, ProcessGroup, FileDescriptor
 import trio
 import logging
@@ -23,11 +23,6 @@ class SigprocmaskHow(enum.IntEnum):
     BLOCK = lib.SIG_BLOCK
     UNBLOCK = lib.SIG_UNBLOCK
     SETMASK = lib.SIG_SETMASK
-
-class IdType(enum.IntEnum):
-    PID = lib.P_PID # Wait for the child whose process ID matches id.
-    PGID = lib.P_PGID # Wait for any child whose process group ID matches id.
-    ALL = lib.P_ALL # Wait for any child; id is ignored.
 
 class SYS(enum.IntEnum):
     accept4 = lib.SYS_accept4
