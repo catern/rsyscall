@@ -37,6 +37,7 @@ class SYS(enum.IntEnum):
     getgid = lib.SYS_getgid
     mount = lib.SYS_mount
     waitid = lib.SYS_waitid
+    setns = lib.SYS_setns
 
 class IdType(enum.IntEnum):
     PID = lib.P_PID # Wait for the child whose process ID matches id.
@@ -260,3 +261,5 @@ async def mount(sysif: SyscallInterface, source: Pointer, target: Pointer,
                 data: Pointer) -> None:
     await sysif.syscall(SYS.mount, source, target, filesystemtype, mountflags, data)
 
+async def setns(sysif: SyscallInterface, fd: FileDescriptor, nstype: int) -> None:
+    await sysif.syscall(SYS.setns, fd, nstype)

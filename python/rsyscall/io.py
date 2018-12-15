@@ -1411,8 +1411,15 @@ class StandardTask:
         await gid_map.write(f"{gid} {gid} 1\n".encode())
         await gid_map.invalidate()
 
+    async def setns_user(self, fd: handle.FileDescriptor) -> None:
+        await self.task.base.setns_user(fd)
+
     async def unshare_mount(self) -> None:
         await rsyscall.near.unshare(self.task.base.sysif, rsyscall.near.UnshareFlag.NEWNS)
+
+    async def setns_mount(self, fd: handle.FileDescriptor) -> None:
+        fd.check_is_for(self.task.base)
+        await fd.setns(rsyscall.near.UnshareFlag.NEWNS)
 
     async def exit(self, status) -> None:
         await self.task.exit(0)
@@ -3108,7 +3115,7 @@ async def create_nix_container(
     # mutate dest_task so that it is nicely namespaced for the Nix container
     await dest_task.unshare_user()
     await dest_task.unshare_mount()
-    await dest_task.task.mount(b"nix", b"/nix", b"none", lib.MS_BIND|lib.MS_REC, b"")
+    await dest_task.task.mount(b"nix", b"/nix", b"none", lib.MS_BIND, b"")
     await bootstrap_nix_database(src_nix_bin, src_task, dest_nix_bin, dest_task, closure)
     return dest_nix_bin
 

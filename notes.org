@@ -8408,3 +8408,5 @@ Seems fine.
   I could keep the thread around that is just in the user namespace, but what a hassle.
 
   I'll use setns and fork into a new mount namespace.
+
+  Golly gee, it works.

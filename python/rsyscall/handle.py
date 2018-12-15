@@ -59,6 +59,11 @@ class FileDescriptor:
     def validate(self) -> None:
         if not self.valid:
             raise Exception("handle is no longer valid")
+
+    def check_is_for(self, task: Task) -> None:
+        self.validate()
+        if self.task != task:
+            raise Exception("this file descriptor is for task", self.task, "not", task)
     
     @property
     def far(self) -> rsyscall.far.FileDescriptor:
@@ -145,6 +150,10 @@ class FileDescriptor:
     async def fcntl(self, cmd: int, arg: t.Optional[int]=None) -> int:
         self.validate()
         return (await rsyscall.near.fcntl(self.task.sysif, self.near, cmd, arg))
+
+    async def setns(self, nstype: int) -> None:
+        self.validate()
+        await rsyscall.near.setns(self.task.sysif, self.near, nstype)
 
 @dataclass
 class Root:
@@ -309,6 +318,12 @@ class Task(rsyscall.far.Task):
         # unsharing the user namespace implicitly unshares CLONE_FS
         await self.unshare_fs()
         await rsyscall.near.unshare(self.sysif, rsyscall.near.UnshareFlag.NEWUSER)
+
+    async def setns_user(self, fd: FileDescriptor) -> None:
+        fd.check_is_for(self)
+        # can't setns to a user namespace while sharing CLONE_FS
+        await self.unshare_fs()
+        await fd.setns(rsyscall.near.UnshareFlag.NEWUSER)
 
 @dataclass
 class Pipe:

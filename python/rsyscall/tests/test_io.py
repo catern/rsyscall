@@ -531,6 +531,37 @@ class TestIO(unittest.TestCase):
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
+    def test_nix_shell_with_daemon(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            thread = await stdtask.fork()
+            src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
+            dest_nix_bin = await rsyscall.io.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
+            child_task = await thread.execve(dest_nix_bin/"nix-daemon", ["nix-daemon"], {'NIX_REMOTE':''})
+
+            shell_thread = await stdtask.fork()
+            dest_nix_bin = shell_thread.stdtask.task.base.make_path_handle(dest_nix_bin)
+            async with child_task.get_pid() as proc:
+                if proc is None:
+                    raise Exception("nix daemon died?")
+                container_ns_dir = shell_thread.stdtask.task.root()/"proc"/str(proc.near.id)/"ns"
+                usernsfd = await (container_ns_dir/"user").open(os.O_RDONLY)
+            await shell_thread.stdtask.setns_user(usernsfd.handle)
+            await shell_thread.stdtask.unshare_mount()
+            await shell_thread.stdtask.task.mount(b"nix", b"/nix", b"none", lib.MS_BIND|lib.MS_RDONLY, b"")
+            # making a readonly bind mount is weird, you have to mount it first then remount it rdonly
+            await shell_thread.stdtask.task.mount(b"none", b"/nix", b"none",
+                                                  lib.MS_BIND|lib.MS_REMOUNT|lib.MS_RDONLY, b"")
+            bash = await rsyscall.io.which(stdtask, b"bash")
+            dest_bash = await rsyscall.io.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, shell_thread.stdtask)
+            mount = await rsyscall.io.which(stdtask, b"mount")
+            # don't seem to be able to copy coreutils for some reason?
+            # it doesn't have a valid signature?
+            await rsyscall.io.nix_deploy(src_nix_bin, mount.executable_path,
+                                         stdtask, dest_nix_bin, shell_thread.stdtask)
+            child_task = await shell_thread.execve(dest_bash, ["bash", "--norc"])
+            await child_task.wait_for_exit()
+        trio.run(self.runner, test)
+
     # def test_thread_mkdtemp(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
