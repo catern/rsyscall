@@ -8410,3 +8410,27 @@ Seems fine.
   I'll use setns and fork into a new mount namespace.
 
   Golly gee, it works.
+
+  OK, so what's next?
+
+  So, hmm.
+
+  What exactly will we do in the production case?
+
+  Various stuff
+
+  Namely, deploying some config files using Nix,
+  and symlinking them into place.
+
+  (setup-nix.sh and nix.conf)
+
+  And also making the user root directories if they don't exist.
+
+  That's it, though!
+
+  And yeah we'll upgrade by just restarting. No big deal.
+
+  I guess an alternative way to upgrade is,
+  to not require a persistent connection to run the nix-daemon,
+  and auto-gracefully-transition or restart it when the script is run,
+  by recovering state from a persistent state storing daemon.
