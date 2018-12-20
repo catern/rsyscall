@@ -8434,3 +8434,143 @@ Seems fine.
   to not require a persistent connection to run the nix-daemon,
   and auto-gracefully-transition or restart it when the script is run,
   by recovering state from a persistent state storing daemon.
+* next step
+  OK, next step is to make a shell.
+
+  ct, mkthr, etc.
+
+  maybe I could have something like explicitly saying the thread you want to operate within?
+
+  then a global current working thread?
+
+  I guess that should be a contextvar.
+
+  I can have functions which take that stuff as a contextvar.
+
+  I guess I can do things stuff
+** shell shell shell
+   ok so a GUI for controlling a process and making syscalls would be cool.
+
+   but, I think I would want to do it through Emacs.
+
+   so I would want to do this stuff all in elisp.
+
+   so, we won't do a full GUI thing.
+
+   we could still do a shell tho
+** but a shell is useless
+   if I really want a shell I'd just run bash!
+
+   but I can't do cool builtins in bash, I guess.
+
+   but, who needs them? just write Python
+
+
+   also, I'd want to use tmux or Emacs to switch between shells I guess
+
+   hmmm
+
+   having a command line is cool though
+
+   hmm
+
+   maybe the python repl is better
+
+   hmmmmmmmm
+
+   i want to be able to rewrite my normal scripts into this.
+
+   and maybe use this as my normal shell?
+
+   ugh but I don't want to have reimplement all the bash features I like
+
+   maybe I shouldn't write a shell
+
+   hmmmmmmmmmmmmmmmmmmmm MMMMMMMMMMMMM what do I do
+
+   I guess I want something that
+
+   will allow me to go in and manipulate what code is running, hmm.
+
+   a big space that I can reach into and mess around
+
+   what about compatibility? I don't want to have to use just Python.
+
+   hmmmmmm
+
+   if I have this thread server thing,
+   I can just connect to it to do my stuff.
+
+   that would be good and support multiple languages
+
+   just, anyone can connect here and mess with stuff.
+
+   hmmmmmmmm then a shell would be interesting
+
+   can I enumerate my children?
+
+   hmmmm
+   
+   what is a job, anyway?
+
+   although wait, I can still do this persistent shell without writing my own shell, can't I?
+
+   hmmm, no... yes... maybe...
+
+   well, with resources and CWD...
+
+   oh, but not file descriptors...
+
+   and not children...
+
+   maybe CWD, but mostly not...
+
+   urgh, we mostly can't setns when multithreaded
+
+   oh, I guess we can, we just can't setns for a user namespace. hmm.
+
+   we cannot unshare newpid, but we can setns it.
+
+   oh, no, we can't
+
+   or can we? hmm..
+
+   the thread itself can't be in a new place...
+
+   this is curious. what happens if I CLONE_THREAD after setns?
+
+   I guess I can switch into new user namespaces and things by,
+   shifting into a single-threaded mode,
+   doing the unshare,
+   then execing the daemon again.
+
+   I guess I could alternatively just,
+   kill the daemon,
+   do the unshare,
+   and restart the daemon.
+
+   Then no need for exec.
+
+   Just gotta shrink down to singlethreaded, to fit through the hole ('v')
+
+   i can have a "kids" builtin, like "jobs", which shows all children.
+
+   hmm this is all kinda like gdb...
+
+   with multiple inferiors and such things...
+
+   what if I make gdb do this?
+
+   hmmmm
+
+   essentially we're just making a debugging interface here, hmm.
+
+   yeah I guess it's pretty cool and fine to have to re-start the server when we change namespace.
+
+   we want the server to be in that new namespace.
+
+   it's kinda neatly purely functional actually.
+
+   okay so let's do this thread server thing and then we can write a shell
+
+   yes this is good, such a shell would be genuinely useful I think maybe ish
