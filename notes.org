@@ -8574,3 +8574,439 @@ Seems fine.
    okay so let's do this thread server thing and then we can write a shell
 
    yes this is good, such a shell would be genuinely useful I think maybe ish
+
+* what to do next locally
+  I guess I should just start using it for random scripts.
+  Which means I need to clean up the processes that are left behind
+
+  Using the pdeathsig thing.
+
+  hmm so with the shell, let's not support any fancy python function call stuff
+
+  if you want to do python, use the python shell!
+  possibly by sourcing a python file...
+
+  I guess we could also support dropping into a python REPL maybe
+** recovery
+   I guess we'll need some good recovery stuff to show the status of the task.
+
+   We'll look at the children thing in /proc...
+
+   And the fd list....
+
+
+   it would be interesting if there was an "allocate memory" effect,
+   and/or a "generate code for target architecture" effect,
+   and you, hmm.
+
+   so you partially evaluate anything that has no effects,
+   but you can gradually add more effects in to increase the number of things you can partially evaluate.
+
+   so essentially partial evaluation is something that is driven by the type?
+
+   like, hmm...
+
+   we run a program,
+   and when it tries to use an effect that isn't available,
+   we stop it.
+
+   oh but... what if um... the usage of the result of that effect could be partially evaluatated?
+
+   like what if we get a number impurely,
+   then add it to (1+1)?
+
+   oh, that's not possible I guess.
+
+   that would implying sequencing, innit?
+
+   er no, so say we have some expression which uses an effect,
+
+   and we immediately apply another function to that.
+
+   and that other function,
+   could be partially evaluated first.
+* to figure out
+  How do we deal with,
+  a task in a shared fd space crashes or whatever and we need to close the resources it had?
+** analogy
+We have thread T, with object O, which has allocated memory M, in space S.
+
+Say T hard-crashes and doesn't get a chance to free memory M.
+How do we deal with M?
+** hm
+do we just run GC in any thread that's in this space?
+we just pick an arbitrary thread to do the closing in.
+
+what if we have no thread in this space, but we could get some?
+
+say it's on a remote system say and our connection went down,
+so the process is still alive over there and we can reattach when we reconnect,
+but at the moment we have nothing.
+
+hmm mmMMMM
+
+so yeah I guess um
+
+if we um
+
+it's on the tip of my tongue
+
+if we have the files sit around and we can manually reconnect them
+
+there's a resource over there and we don't have it here
+
+
+ok ok ok so
+
+the question is, how do we reuse the resources allocated for one instance of a thread for another?
+
+just practically, how do we handle the state here?
+
+well I guess we can just start out with a straightforward bunch of state at runtime in the process
+
+and later on we can persist the state to disk
+
+anyway we'll connect a thread then mess it up
+
+do all kindsa crazy stuff y'know
+
+** blah
+ok so i guess the next fun step, after remote, is task persistence server 
+
+that does make sense I guess
+
+without that we can't really do this stuff.
+
+because we really want different hosts to be in different fault domains
+
+then also we can manually repair things I guess
+
+just a straightforward notion of, the logic and the state are in separate fault domains,
+
+and we can reconnect to the state if the logic blows up,
+and repair the state to be correct.
+
+hmm..
+
+i guess the notion is just that we can kill off the *connection* while the state and logic both stay alive
+
+which is useful I guess in the scenario of a remote state thing which has logic locally,
+so it's useful to kill off the connection which actually can happen.
+
+I guess we could um...
+
+we could abstract over the connection being interrupted.
+
+but I don't want to do that.
+
+better to realistically represent that a task will die.
+
+and it just so happens that we can make a new task which shares a bunch of state, which is cool.
+
+ok ok let's figure it out and do it.
+
+the issue is still about, how do we, when we make this new task, appropriately represent that the old state is usable?
+
+meh we already have all the correct things. I think we just need to represent that some namespaces are bundled up together,
+into an object,
+which holds a path we can connect to,
+which gives us a new thread,
+and then we can make a new handle for the thread.
+
+so the task can be spontaneously killed, and that's fine.
+if there still references to its objets, even if the task is dead, we'll still keep them alive.
+
+only when the last reference goes away do we go ahead and free the things.
+
+but also i guess when all the tasks go away...
+
+well, we can't use them anyway so we can't free them either.
+
+but, it is still the case that we can make new references in and use those.
+
+so, I guess the handle is kind of for the purpose only of, moving pointers between namespaces, as a task moves between namespaces.
+
+there's a different layer that handles garbage collection I guess.
+
+it's good for the shutdown of connection to be really exposed because we can see it for real if a thread gets signaled
+
+I think this approach is fine.
+
+We will have We will have handles which just represent a resource which is moving through tasks.
+
+And, yeah, we'll use them to create new references.
+
+working out a data model for all this fancy resource pointer namespace stuff is hard...
+
+** yes!
+okay! it's not a matter of state! it's just a matter of making a new task to manage something that was previously in another task!
+
+we can keep all the knowledge around about where things are locally, that's no big deal.
+
+there's no need to think about recovery or any of that stuff.
+
+it's not a matter of state (any more than any of this stuff is a matter of state),
+but rather a matter of migrating from one thread to another for doing some task.
+
+ok ok seems good
+
+so the task is just, move from one task to another.
+
+move existing resources from one task to another.
+
+in particular, developing a model for waiting on the thread group's children when using CLONE_THREAD, is necessary. 
+
+and let's start off by just having a thread, and um...
+
+well, let's start off by just having a thread and clone_threading from it and migrating the wait
+
+mmm i had some words to write here
+
+migrating the childtask I suppose
+
+I guess what I really want is some kinda notion of the shared child waiting thingy.
+
+Oh god but don't I run into that old issue again
+
+If I clone from the same thread group as I'm waiting in?
+well, I *can* avoid it maybe.
+
+** remember what the clone_thread issue is
+ugggh
+
+the fact that clone and waitid really are 100% grossly interfering with each other
+
+is gross!!
+
+so, we could just serialize them relative to each other.
+in this thread server use case
+
+but we don't want to in our previous case, where we have one thing calling clone and we want the other thing to be calling waitid to monitor it.
+
+so! how would we fix this API?
+
+how would we fix the clone and waitid API...
+
+well, I guess instead of calling a uniform waitid, we'd only waitid on specific pids.
+
+but...
+
+
+hmm...
+
+what if I do NOWAIT and then a concrete wait?
+
+er, does that actually even fix it? isn't there still head of line blocking?
+
+like hmm. we could decide to stop waiting but. it wouldn't help.
+
+i guess
+
+** thoughts
+
+okay so what if I just didn't collect zombies mhm.
+
+ummmm...
+
+okay so how does it really work, the child_settid thing? how does it manage to fix this race?
+
+we gotta figure this out.
+** other positive note
+at least I'm happy that there's no tricky persistent state things to figure out:
+the hard problem is just migrating an object from one task to another,
+not resuming from persistent state.
+all persistent state will be local, and just describe the remote objects.
+** hmmm
+
+the child settid race hmm!!!!! hmm!!!!
+
+how to properly solve it!
+** solution:
+obviously I want some kind of "waitid on a list of pids" thing.
+
+a waitfd that I add pids to with waitfd_ctl would be good (like epoll),
+but anything would work.
+
+waitfd would obv be great hmm.
+
+* wait blog
+I need to write a blog post explaining it, before this dumb procfd thing gets merged and we're all screwed.
+
+wanting to be able to signal any pid without races is like wanting to be able to read from any process's file descriptors without races.
+
+it's silly.
+
+pids are only valid when used from processes that are themselves the parents of the pid.
+
+any other visibility of pids is useful only for debugging.
+
+also, wanting to be able to pass process ids around between processes like with file descriptors is a great idea,
+but the semantics are very complex.
+
+waiting on things and killing things through these fds might be easy,
+but getting cleanup through them is tricky.
+if we want a process to die when all the fds for it are closed,
+what happens when a process has a fd for itself?
+do we do some garbage collection to detect cycles?
+
+yes hmm
+
+I am against procfd or other such naive translations of processes into pids.
+
+I think waitfd would be better.
+
+It solves this race, it's good.
+
+It preserves autoreaping, too.
+
+Could I implement this in userspace?
+
+No, definitely not - there's super huge head of line blocking!
+
+Blah, I guess I can call wait for each known child individually.
+
+That's super inefficient, but it can work.
+
+And I can't avoid that, because signals could be coalesced, so I can't use the signal as a hint and just wait on that one.
+
+Every time I have to make O(n) syscalls. That's gross.
+
+Plus, probably most importantly, it doesn't allow avoiding a syscall handler when implemented in userspace.
+
+Hmm, I can implement this in userspace with a clone_thread I guess.
+
+Ugh doesn't that limit me though? I can no longer change user namespace.
+
+I guess I will be able to centralize my calls to wait though, using CLONE_PARENT, so it's not all bad.
+
+Hmm but.
+
+Does this work to avoid sending sigchld?
+
+It doesn't.
+
+That doesn't have to be a problem though I guess
+
+I guess I can require sigchld anyway, whatever.
+
+Well, the issue is, how do we wait on clone children?
+
+Especially on multiple?
+
+There's no way. Blah.
+
+I could use a different signal handler I guess.
+
+I guess I could indeed do this.
+
+I can directly clone myself;
+and then send the pid to the other thread for monitoring I guess.
+
+And then waitpid on all the things hm hm.
+
+And then wait for sigchld I suppose.
+
+Blalh
+
+OK I'll do it.
+** ok so the reason I was doing this was
+to support some notion of the child waiting group thing.
+
+I guess I can't support reparenting.
+
+I guess there's no real workaround for the reparenting case.
+
+So I need to blogpost about all these issues I guess.
+
+Well, first let's go ahead and actually implement it.
+
+A library which does this thing.
+
+Both in threaded and direct call forms.
+
+Though I guess the direct call form doesn't work, hmm why did I think it did?
+
+If we want to add the waitfd to our event loop we can't.
+
+Oh well I guess we can actually, as long as we're actually doing the signalfd thing.
+
+though it won't work later for children that don't get notified by signalfd
+
+also note that for children we don't know about, we'll be notified in advance with sigchlds.
+
+and drop the sigchld. hm.
+
+blah and what if I want to have multiple waitfds? I guess I could have a single thread and have the ability to drive multiple waitfds from it.
+
+hmmmmmmmmmmmmMMMMm
+
+mmm
+
+how do I handle this huh
+
+i could have one task per thingy
+
+the unfortunate thing is that waiting for task exits is not really great
+
+i really don't want to double my number of tasks
+
+and make two tasks every time i want to run one C function
+
+ok ok so if i go full in on sigchld for everything,
+then the only problem is that if something is reparented to me, everything breaks.
+
+okay whatever, if I only do one clone at a time and I don't support reparenting, I'm all good.
+let's just go with that.
+** then we just need to think about the child adoption thing.
+monitoring from another thread from the one that started it, hm hm hm.
+** lock over child cloning
+   I guess having a lock on child cloning would be fine.
+
+   And we can throw an exception when something is reparented.
+
+   Meh. . .
+
+   Yes, this is good.
+
+   OK so, I will also have a notion of what thread group a process is in,
+   so that I can clone from one thread while using another as monitor.
+
+   And I guess parent process too, while I'm at it.
+
+   And, a process, I guess, has some specific parent, and processes in that thread group are allowed to monitor it - right?
+
+   Children are tied to a thread group, innit.
+
+   What are the pid things again?
+
+   thread groups, process groups, processes... there was a fourth one...
+
+   oh, sessions, I guess?
+
+   Ugh okay so let's think about this.
+
+   I guess I'll have a notion of thread group.
+
+   mmmmm really weird and annoying, but whatever.
+
+   I disdain the POSIX abstractions! Linuxisms forever!
+
+   Nice, session is associated with task and not thread group.
+
+   I guess it wouldn't be an issue either way;
+   I'd just store session in the ThreadGroup object.
+
+   threads are so dumb. ugh. exec in a clone_thread task is weird. blah.
+
+   ugh so okay it does seem that session is associated with thread group
+
+   that is fine.
+
+   i guess it keeps updating it even if the group leader dies?
+
+   okay anyway let's do it.
+
+   oh hey, clone_thread tasks are always autoreaped!
+
+   they don't leave a zombie! neat.
+>>>>>>> 13ef697... starting to add process to task

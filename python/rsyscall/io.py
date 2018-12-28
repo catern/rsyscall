@@ -189,7 +189,7 @@ class Task:
                  transport: base.MemoryTransport,
                  allocator: memory.AllocatorClient,
                  sigmask: SignalMask,
-                 process_namespace: far.ProcessNamespace,
+                 pid_namespace: far.PidNamespace,
     ) -> None:
         self.base = base_
         self.transport = transport
@@ -197,7 +197,7 @@ class Task:
         # we really need to be able to allocate memory to get anything done - namely, to call syscalls.
         self.allocator = allocator
         self.sigmask = sigmask
-        self.process_namespace = process_namespace
+        self.pid_namespace = pid_namespace
 
     @property
     def syscall(self) -> base.SyscallInterface:
@@ -1285,7 +1285,7 @@ class StandardTask:
         task = Task(base_task,
                     LocalMemoryTransport(),
                     memory.AllocatorClient.make_allocator(base_task),
-                    SignalMask(set()), far.ProcessNamespace(pid))
+                    SignalMask(set()), far.PidNamespace(pid))
         environ = {key.encode(): value.encode() for key, value in os.environ.items()}
         stdstreams = wrap_stdin_out_err(task)
 
@@ -1661,7 +1661,7 @@ class ChildTaskMonitor:
                                           ptid=None, ctid=ctid, newtls=newtls)
             # TODO this is wrong! we need to pull the process namespace out of the cloning task!
             # but it's not yet present on base.Task, so...
-            process = base.Process(self.waiting_task.process_namespace, near.Process(tid))
+            process = base.Process(self.waiting_task.pid_namespace, near.Process(tid))
             child_task = ChildTask(process, trio.hazmat.UnboundedQueue(), self)
             self.task_map[tid] = child_task
         return child_task
@@ -2216,7 +2216,7 @@ async def call_function(task: Task, stack: BufferedStack, process_resources: Pro
     stack_pointer = await stack.flush(task.transport)
     # we directly spawn a thread for the function and wait on it
     pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
-    process = base.Process(task.process_namespace, near.Process(pid))
+    process = base.Process(task.pid_namespace, near.Process(pid))
     siginfo = await memsys.waitid(task.syscall, task.transport, task.allocator,
                                   process, lib._WALL|lib.WEXITED)
     struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
@@ -2632,7 +2632,7 @@ async def spawn_rsyscall_thread(
                     parent_task.transport,
                     parent_task.allocator.inherit(new_base_task),
                     parent_task.sigmask.inherit(),
-                    parent_task.process_namespace)
+                    parent_task.pid_namespace)
     return new_task, cthread
 
 async def rsyscall_exec(
@@ -2842,12 +2842,12 @@ async def ssh_bootstrap(
     new_base_task = base.Task(new_syscall, new_fd_table, new_address_space, new_fs_information)
     handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
     new_transport = SocketMemoryTransport(async_local_data_sock, handle_remote_data_fd, trio.Lock())
-    new_process_namespace = far.ProcessNamespace(identifier_pid)
+    new_pid_namespace = far.PidNamespace(identifier_pid)
     new_task = Task(new_base_task, new_transport,
                     memory.AllocatorClient.make_allocator(new_base_task),
                     # we assume ssh zeroes the sigmask before starting us
                     SignalMask(set()),
-                    new_process_namespace)
+                    new_pid_namespace)
     left_connecting_connection, right_connecting_connection = await new_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     connecting_connection = (left_connecting_connection.handle, right_connecting_connection.handle)
     epoller = await new_task.make_epoll_center()

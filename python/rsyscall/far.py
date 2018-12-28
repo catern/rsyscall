@@ -97,13 +97,13 @@ class MemoryMapping:
         return str(self)
 
 @dataclass(eq=False)
-class ProcessNamespace:
-    "The namespace for processes and process groups"
+class PidNamespace:
+    "The namespace for tasks, processes, process groups, and sessions"
     creator_pid: int
 
 @dataclass
 class Process:
-    namespace: ProcessNamespace
+    namespace: PidNamespace
     near: rsyscall.near.Process
 
     def __int__(self) -> int:
@@ -111,7 +111,7 @@ class Process:
 
 @dataclass
 class ProcessGroup:
-    namespace: ProcessNamespace
+    namespace: PidNamespace
     near: rsyscall.near.ProcessGroup
 
     def __int__(self) -> int:
@@ -199,6 +199,7 @@ class Path:
 @dataclass
 class Task:
     sysif: rsyscall.near.SyscallInterface
+    # process: Process
     fd_table: FDTable
     address_space: AddressSpace
     fs: FSInformation
