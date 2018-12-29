@@ -393,6 +393,14 @@ class TestIO(unittest.TestCase):
                 await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
+    def test_persistent(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            thread = await stdtask.fork()
+            async with thread as stdtask2:
+                child_task = await thread.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                await child_task.wait_for_exit()
+        trio.run(self.runner, test)
+
     def test_thread_signal_queue(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()

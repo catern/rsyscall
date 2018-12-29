@@ -2658,6 +2658,23 @@ async def spawn_rsyscall_thread(
                     parent_task.pid_namespace)
     return new_task, cthread
 
+class PersistentServer:
+    @staticmethod
+    async def make(stdtask: StandardTask, path: handle.Path) -> PersistentServer:
+        server_thread = await stdtask.fork()
+        # bind the path
+        # start a server in ye old filesystem
+        # hmm what if we pass in the already-listening socket.
+        # that'd be cool innit?
+        # let's do that.
+        pass
+
+    def __init__(self):
+        pass
+
+    async def spawn(self) -> StandardTask:
+        pass
+
 async def rsyscall_exec(
         parent_stdtask: StandardTask,
         rsyscall_thread: RsyscallThread,

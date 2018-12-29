@@ -67,11 +67,15 @@ static struct fdpair receive_fdpair(const int sock) {
     return (struct fdpair) { .in = syscallfds[0], .out = syscallfds[1] };
 }
 
-int main() {
+int main(int argc, char **argv) {
+    if (argc != 2) {
+        errx(1, "Usage: %s <listening_sock_num>", argc ? argv[0] : "rsyscall_server");
+    }
+    errno = 0;
+    const int passsock = strtol(argv[1], NULL, 0);
+    if (errno != 0) err(1, "strtol(%s)", argv[1]);
     // we only support one connection at a time
     // which nicely simplifies things, actually, since we can just wait on the cloned thread.
-    struct sockaddr_un pass_addr = { .sun_family = AF_UNIX, .sun_path = "./pass" };
-    const int passsock = listen_unix_socket(pass_addr);
     for (;;) {
 	// accept connection
 	const int connsock = accept4(passsock, NULL, NULL, SOCK_CLOEXEC);
