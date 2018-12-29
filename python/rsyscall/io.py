@@ -597,6 +597,11 @@ class EpollCenter:
         self.transport = transport
         self.allocator = allocator
 
+    def inherit(self, task: Task) -> EpollCenter:
+        return EpollCenter(self.epoller,
+                           task.base.make_fd_handle(self.epfd),
+                           task.transport, task.allocator)
+
     async def register(self, fd: handle.FileDescriptor, events: EpollEventMask=None) -> EpolledFileDescriptor:
         if events is None:
             events = EpollEventMask.make()
@@ -1250,7 +1255,6 @@ class StandardTask:
                  filesystem_resources: FilesystemResources,
                  epoller: EpollCenter,
                  child_monitor: ChildProcessMonitor,
-                 local_epoller: EpollCenter,
                  environment: t.Dict[bytes, bytes],
                  stdin: FileDescriptor[ReadableFile],
                  stdout: FileDescriptor[WritableFile],
@@ -1266,7 +1270,6 @@ class StandardTask:
         self.filesystem = filesystem_resources
         self.epoller = epoller
         self.child_monitor = child_monitor
-        self.local_epoller = local_epoller
         self.environment = environment
         self.stdin = stdin
         self.stdout = stdout
@@ -1308,7 +1311,7 @@ class StandardTask:
             task, epoller, access_connection,
             task, connecting_connection,
             task, process_resources, filesystem_resources,
-            epoller, child_monitor, epoller,
+            epoller, child_monitor,
             {**environ},
             stdstreams.stdin,
             stdstreams.stdout,
@@ -1353,24 +1356,14 @@ class StandardTask:
         task, thread = await spawn_rsyscall_thread(
             access_sock, remote_sock,
             self.task, thread_maker, self.process.server_func)
-        epoller = EpollCenter(self.epoller.epoller,
-                              task.base.make_fd_handle(self.epoller.epfd),
-                              task.transport, task.allocator)
-        local_epoller = await task.make_epoll_center()
-        signal_block = SignalBlock(task, {signal.SIGCHLD})
-        # sadly we can't use an inherited signalfd, epoll doesn't want to add the same signalfd twice
-        # TODO now we can use an inherited signalfd actually
-        sigfd = await task.signalfd_create({signal.SIGCHLD}, flags=os.O_NONBLOCK)
-        async_sigfd = await AsyncFileDescriptor.make(local_epoller, sigfd, is_nonblock=True)
-        signal_queue = SignalQueue(signal_block, async_sigfd)
-        child_task_monitor = ChildProcessMonitor(ChildProcessMonitorInternal(task, signal_queue), task.base, False)
         stdtask = StandardTask(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task,
             (self.connecting_connection[0], task.base.make_fd_handle(self.connecting_connection[1])),
             task, 
             self.process, self.filesystem,
-            epoller, child_task_monitor, local_epoller,
+            self.epoller.inherit(task),
+            self.child_monitor.inherit_to_child(thread.child_task, task.base),
             {**self.environment},
             stdin=self.stdin.borrow(task.base),
             stdout=self.stdout.borrow(task.base),
@@ -2890,7 +2883,6 @@ async def ssh_bootstrap(
         filesystem_resources=FilesystemResources.make_from_environ(new_base_task, environ),
         epoller=epoller,
         child_monitor=child_monitor,
-        local_epoller=epoller,
         environment=environ,
         stdin=new_task._make_fd(0, ReadableFile(shared=True)),
         stdout=new_task._make_fd(1, WritableFile(shared=True)),

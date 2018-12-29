@@ -38,22 +38,24 @@ static void error(char* msg, size_t msgsize) {
     exit(1);
 }
 
-static struct rsyscall_syscall read_request(const int infd)
+static int read_request(const int infd, struct rsyscall_syscall *request)
 {
-    struct rsyscall_syscall request;
-    char* buf = (char*) &request;
-    size_t remaining = sizeof(request);
+    char* buf = (char*) request;
+    size_t remaining = sizeof(*request);
     while (remaining) {
         long const ret = read(infd, buf, remaining);
-        if (ret < 0) error(read_failed, sizeof(read_failed) - 1);
+        if (ret < 0) {
+	    write(2, read_failed, sizeof(read_failed) - 1);
+	    return ret;
+	}
         if (ret == 0) {
             write(2, read_eof, sizeof(read_eof) - 1);
-            exit(0);
+	    return 0;
         }
         remaining -= ret;
         buf += ret;
     }
-    return request;
+    return 1;
 }
 
 static int64_t perform_syscall(struct rsyscall_syscall request)
@@ -63,16 +65,20 @@ static int64_t perform_syscall(struct rsyscall_syscall request)
                        request.sys);
 }
 
-static void write_response(const int outfd, const int64_t response)
+static int write_response(const int outfd, const int64_t response)
 {
     char* data = (char*) &response;
     size_t remaining = sizeof(response);
     while (remaining) {
         long const ret = write(outfd, data, remaining);
-        if (ret < 0) error(write_failed, sizeof(write_failed) - 1);
+        if (ret < 0) {
+	    write(2, write_failed, sizeof(write_failed) - 1);
+	    return ret;
+	}
         remaining -= ret;
         data += ret;
     }
+    return 1;
 }
 
 long getdents64(int fd, char* buf, unsigned int count) {
@@ -169,10 +175,15 @@ void rsyscall_stop_then_close(int* fds_to_close, int fd_count) {
     }
 }
 
-noreturn void rsyscall_server(const int infd, const int outfd)
+int rsyscall_server(const int infd, const int outfd)
 {
     write(2, hello, sizeof(hello) -1);
+    struct rsyscall_syscall request;
+    int ret;
     for (;;) {
-        write_response(outfd, perform_syscall(read_request(infd)));
+	ret = read_request(infd, &request);
+	if (ret <= 0) return ret;
+	ret = write_response(outfd, perform_syscall(request));
+	if (ret <= 0) return ret;
     }
 }

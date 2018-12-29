@@ -9114,3 +9114,44 @@ int read_any_until_eof_then_close(int *fd, void *buf, size_t count);
     # creating a ChildProcessMonitor in child processes.
 *** solution 2
     Only call clone once at a time, and don't support reparenting.
+* thread server
+  hmm how do I detect a hangup in the thread server?
+
+  I think I guess I'll have the thread server mainloop be monitoring the futexes with dummy threads,
+  and perform the close when the shutdown happens.
+
+  After all it does need to close those fds anyway, huh.
+  to clean up that allocation.
+
+  it's unfortunate that I guess I have to do this with dummy threads
+
+  ok so, doing this in python is a bit of a drag.
+
+  let's just do it in C right away
+
+  and connect to the socket and all that
+
+hmm could we just call directly in this thread?
+we could I suppose...
+but it would be weird/hard to represent that in Python...
+it's better to do threads, meh.
+or, no, eh, if we use threads that has all those limitations.
+I like the idea of being actually single-threaded.
+it's just that... I guess... the syscall interface goes down...
+we should just um...
+we shouldn't know whether this is actually single-threaded or not.
+but yeah let's just go ahead and do it this way.
+of course, I guess then we need to definitely not call exit in this thread,
+or otherwise crash it.
+but that's fine, whatever.
+at least that unifies my fault domain or whatever
+heh it's funny that the major breakthrough i made was to *not* delete everything on crash
+but instead just keep around the state.
+** recovery
+   OK so if we had multiple threads in the same fd space,
+   and one crashed,
+   we wouldn't want to automatically invalidate all the references in the crashed thread.
+
+   So, likewise here, the PersistentServer thingy,
+   we'll close one thread it emits,
+   then recover in the next thread with the old stuff.
