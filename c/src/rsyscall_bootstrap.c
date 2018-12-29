@@ -128,6 +128,7 @@ noreturn static void bootstrap(char** envp)
     const int describe_sock = accept_on(listening_sock);
     const int syscall_sock = accept_on(listening_sock);
     const int data_sock = accept_on(listening_sock);
+    dprintf(bootstrap_describe_sock, "pid=%d\n", getpid());
     dprintf(bootstrap_describe_sock, "listening_sock=%d\n", listening_sock);
     dprintf(bootstrap_describe_sock, "syscall_sock=%d\n", syscall_sock);
     dprintf(bootstrap_describe_sock, "data_sock=%d\n", data_sock);

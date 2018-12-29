@@ -1276,16 +1276,18 @@ class StandardTask:
     async def make_local() -> StandardTask:
         syscall = LocalSyscall()
         pid = os.getpid()
+        pid_namespace = far.PidNamespace(pid)
         # how do I make a socketpair without a socketpair...
         # guess I can just use the near syscall.
         # oh no I also need to register on the epoller, I can't do that.
-        base_task = handle.Task(syscall, base.FDTable(pid), base.local_address_space,
+        process = far.Process(pid_namespace, near.Process(pid))
+        base_task = handle.Task(syscall, process, base.FDTable(pid), base.local_address_space,
                                 far.FSInformation(pid, root=near.DirectoryFile(),
                                                   cwd=near.DirectoryFile()))
         task = Task(base_task,
                     LocalMemoryTransport(),
                     memory.AllocatorClient.make_allocator(base_task),
-                    SignalMask(set()), far.PidNamespace(pid))
+                    SignalMask(set()), pid_namespace)
         environ = {key.encode(): value.encode() for key, value in os.environ.items()}
         stdstreams = wrap_stdin_out_err(task)
 
@@ -2618,7 +2620,8 @@ async def spawn_rsyscall_thread(
         RsyscallConnection(access_sock, access_sock),
         cthread.child_task,
         cthread.futex_task)
-    new_base_task = base.Task(syscall, parent_task.fd_table, parent_task.address_space, parent_task.base.fs)
+    new_base_task = base.Task(syscall, cthread.child_task.process,
+                              parent_task.fd_table, parent_task.address_space, parent_task.base.fs)
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
@@ -2805,11 +2808,8 @@ async def ssh_bootstrap(
         if key != expected_key:
             raise Exception("expected key", expected_key, "got", key)
         return val
-    # we use the pid of the local ssh process as our human-facing namespace identifier, since it is
-    # more likely to be unique, and we already have it available.
-    identifier_process = bootstrap_child_task.process
-    identifier_pid = int(identifier_process)
-    new_fd_table = far.FDTable(identifier_pid)
+    new_pid = int(await read_keyval(b"pid"))
+    new_fd_table = far.FDTable(new_pid)
     async def read_fd(key: bytes) -> far.FileDescriptor:
         return far.FileDescriptor(new_fd_table, near.FileDescriptor(int(await read_keyval(key))))
     listening_fd = await read_fd(b"listening_sock")
@@ -2829,20 +2829,21 @@ async def ssh_bootstrap(
         environ[key] = val
     await async_bootstrap_describe_sock.aclose()
     # Read even more description off of describe
-    new_address_space = far.AddressSpace(identifier_pid)
+    new_address_space = far.AddressSpace(new_pid)
     symbols: t.Dict[bytes, far.Pointer] = {}
     async for line in read_lines(async_describe_sock):
         key, value = line.rstrip().split(b'=', 1)
         symbols[key] = far.Pointer(new_address_space, near.Pointer(int(value, 16)))
     await async_describe_sock.aclose()
     # Build the new task!
+    new_pid_namespace = far.PidNamespace(new_pid)
+    new_process = far.Process(new_pid_namespace, near.Process(new_pid))
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
-                                    identifier_process.near, remote_syscall_fd, remote_syscall_fd)
-    new_fs_information = far.FSInformation(identifier_pid, root=near.DirectoryFile(), cwd=near.DirectoryFile())
-    new_base_task = base.Task(new_syscall, new_fd_table, new_address_space, new_fs_information)
+                                    new_process.near, remote_syscall_fd, remote_syscall_fd)
+    new_fs_information = far.FSInformation(new_pid, root=near.DirectoryFile(), cwd=near.DirectoryFile())
+    new_base_task = base.Task(new_syscall, new_process, new_fd_table, new_address_space, new_fs_information)
     handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
     new_transport = SocketMemoryTransport(async_local_data_sock, handle_remote_data_fd, trio.Lock())
-    new_pid_namespace = far.PidNamespace(identifier_pid)
     new_task = Task(new_base_task, new_transport,
                     memory.AllocatorClient.make_allocator(new_base_task),
                     # we assume ssh zeroes the sigmask before starting us
@@ -2897,6 +2898,56 @@ class RsyscallThread:
     ) -> None:
         self.stdtask = stdtask
         self.thread = thread
+
+    async def fork(self) -> RsyscallThread:
+        # wait wait wait
+        # we assume that...
+        # when someone makes a thread with a parent like this, um...
+        # our stdtask contains our parent's childtaskmonitor?
+        # er... I guess the clone_parent will be automatic.
+        # right, I... guess we don't even need a different call to rsyscallthread.
+        # it's the childtaskmonitor that needs to be called differently. hmm.
+        # everyone else can just go ahead and always inherit their parent's childtaskmonitor,
+        # maybe. I guess we check to see. hm.
+        # no we can always inherit.
+        # the issue is just... deciding when to... do the parent thing...
+        # I guess it can just be a spawn-time thing. I can embed a ChildTask into it??? which..
+        # supports the... parent thing...
+        [(access_sock, remote_sock)] = await self.stdtask.make_async_connections(1)
+        thread_maker = ThreadMaker(self.stdtask.task, self.stdtask.child_monitor, self.stdtask.process)
+        cthread = await thread_maker.make_cthread(
+            (lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SIGHAND|lib.CLONE_SYSVSEM|
+             lib.CLONE_PARENT|signal.SIGCHLD),
+            self.stdtask.process.server_func, remote_sock.near, remote_sock.near)
+        syscall = ChildConnection(
+            RsyscallConnection(access_sock, access_sock),
+            cthread.child_task,
+            cthread.futex_task)
+        parent_task = self.stdtask.task
+        new_base_task = base.Task(syscall, cthread.child_task.process,
+                                  parent_task.fd_table, parent_task.address_space, parent_task.base.fs)
+        remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
+        syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
+        new_task = Task(new_base_task,
+                        # We could inherit the transport here, but meh.
+                        parent_task.transport,
+                        parent_task.allocator.inherit(new_base_task),
+                        parent_task.sigmask.inherit(),
+                        parent_task.pid_namespace)
+        # TODO hmm first we need to lock child creation in ChildTaskMonitor I guess
+        stdtask = StandardTask(
+            self.access_task, self.access_epoller, self.access_connection,
+            self.connecting_task,
+            (self.connecting_connection[0], task.base.make_fd_handle(self.connecting_connection[1])),
+            new_task, 
+            self.process, self.filesystem,
+            self.epoller, self.child_task_monitor, local_epoller,
+            {**self.environment},
+            stdin=self.stdin.borrow(task.base),
+            stdout=self.stdout.borrow(task.base),
+            stderr=self.stderr.borrow(task.base),
+        )
+        return RsyscallThread(stdtask, thread)
 
     async def execve(self, path: handle.Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[str, t.Union[str, bytes, Path]]={},

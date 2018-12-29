@@ -199,7 +199,7 @@ class Path:
 @dataclass
 class Task:
     sysif: rsyscall.near.SyscallInterface
-    # process: Process
+    process: Process
     fd_table: FDTable
     address_space: AddressSpace
     fs: FSInformation

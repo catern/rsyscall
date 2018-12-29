@@ -214,11 +214,13 @@ class Task(rsyscall.far.Task):
     # TODO delete this
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
+                 process: rsyscall.far.Process,
                  fd_table: rsyscall.far.FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  fs: rsyscall.far.FSInformation
     ) -> None:
         self.sysif = sysif
+        self.process = process
         self.fd_table = fd_table
         self.address_space = address_space
         self.fs = fs
