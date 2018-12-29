@@ -9009,4 +9009,108 @@ monitoring from another thread from the one that started it, hm hm hm.
    oh hey, clone_thread tasks are always autoreaped!
 
    they don't leave a zombie! neat.
->>>>>>> 13ef697... starting to add process to task
+** child processes
+   Signaling processes is only allowed if they are your child process!
+
+   If the process is your child, there is no race condition!
+
+   All these attempts to make signaling race-free are seriously misguided.
+
+   It's as if we were trying to make it race-free
+   to read from a file descriptor opened and closed by another thread.
+
+   The only task that can operate on the file descriptor, or the pid,
+   without races,
+   is the task that controls the lifecycle of the fd or pid.
+   If some other task wants to operate on the fd or pid,
+   they have to synchronize with the owner.
+
+   And we have perfectly good mechanisms to control the lifecycle of a file descriptor:
+   =open= and =close=.
+   And likewise, we have perfectly good mechanisms to control the lifecycle of a pid:
+   =fork= and =wait=.
+
+   There are significant fundamental problems with the Linux process interface,
+   but the raciness of signaling processes when you haven't synchronized with the parent of those processes is not a fundamental problem.
+
+   Setting up a good infrastructure to robustly signal processes that are not your direct children is userspace's responsibility.
+   And indeed we already have such infrastructure in the form of process supervisors like systemd.
+
+   We've even improved the flexibility of this infrastructure by adding subreapers,
+   which makes it possible to write robust process supervisors without coordination with init.
+
+   Further improvements to the process interface are possible and necessary,
+   and I would love to have a process interface that makes more use of file descriptors,
+   but signaling processes that aren't your children is not the right place to start;
+   I don't believe such a capability ever needs to be added to Linux at all.
+** improvements
+
+   A further improvement in flexibility might be like adding a way to 
+
+   More interesting would be a robust way to change the parent of a process to a specific target,
+   rather than only being able to reparent a process to init or a subreaper.
+   That would allow more flexibility in userspace.
+   
+
+
+   opened, owned, and closed 
+
+   It's as if we added some system call like:
+#+BEGIN_SRC c
+int process_fd_read(pid_t pid, int fd, void *buf, size_t count);
+#+END_SRC
+
+   And were trying to make it race-free to read from file descriptors in other processes.
+   That's just not possible! Only the owner of the file descriptor
+** write a blog post
+   Careful synchronization between calls to clone and calls to waitid(ALL) is required.
+   
+   An analogy:
+   Imagine there was a system call with this signature:
+#+BEGIN_SRC c
+int read_any_until_eof_then_close(int *fd, void *buf, size_t count);
+#+END_SRC
+
+   When called, it would start waiting on every open file descriptor to be readable.
+   When one fd was readable, it would perform the read into =buf=,
+   returning the number of read bytes,
+   and store the fd number into the =fd= pointer.
+   If the fd has reached EOF (that is, the read returned 0 bytes),
+   the system call will also automatically close the fd.
+
+   This is essentially the same behavior as =waitid(ALL)= for child processes.
+   =waitid(ALL)= works on any child process,
+   and automatically closes (deallocates) the child process pid when a fatal event is returned.
+
+   This system call would be pretty hard to use,
+   but with appropriate abstraction it wouldn't be too bad;
+   it's not too different from the interface that an event loop provides.
+
+   But there is one critical problem with it,
+   an unavoidable race condition when used with multithreading,
+   when multiple file descriptors are being allocated in other threads at the same time as a call to =read_any=.
+
+
+   If I call =open= in another thread,
+   or make any other system call which creates a new readable FD,
+   at the same time as a call to =read_any= is ongoing,
+   then that 
+   but the most immediate problem is 
+*** solution 1
+    Don't waitid and clone at the same time
+
+    # We need to serialize waits and clones, otherwise we could collect the child process zombie
+    # before we even create the ChildProcess object. if we did multiple clones and pid wrapped to
+    # the same pid, we would then have no idea which child events belong to which child.
+    # 
+    # For us, wait_lock is sufficient serialization, since the only thing that can create new
+    # child for this task, is this task itself. But note that if we're using CLONE_PARENT in a
+    # child, or we're cloning in multiple threads, then we can run into this race.
+    # 
+    # This is mitigated in conventional multithreading using ctid/ptid, so we can look up the
+    # pid in memory before clone returns or actually starts the thread. I don't know of any
+    # efficient mitigation for the race when using CLONE_PARENT, so we can't use that flag.
+    # Which is unfortunate, because CLONE_PARENT would be useful, it would allow us to skip
+    # creating a ChildProcessMonitor in child processes.
+*** solution 2
+    Only call clone once at a time, and don't support reparenting.

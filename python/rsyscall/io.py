@@ -1249,7 +1249,7 @@ class StandardTask:
                  process_resources: ProcessResources,
                  filesystem_resources: FilesystemResources,
                  epoller: EpollCenter,
-                 child_monitor: ChildTaskMonitor,
+                 child_monitor: ChildProcessMonitor,
                  local_epoller: EpollCenter,
                  environment: t.Dict[bytes, bytes],
                  stdin: FileDescriptor[ReadableFile],
@@ -1295,7 +1295,7 @@ class StandardTask:
         process_resources = local_process_resources
         filesystem_resources = FilesystemResources.make_from_environ(base_task, environ)
         epoller = await task.make_epoll_center()
-        child_monitor = await ChildTaskMonitor.make(task, epoller)
+        child_monitor = await ChildProcessMonitor.make(task, epoller)
         # connection_listening_socket = await task.socket_unix(socket.SOCK_STREAM)
         # sockpath = Path.from_bytes(task, b"./rsyscall.sock")
         # await robust_unix_bind(sockpath, connection_listening_socket)
@@ -1363,7 +1363,7 @@ class StandardTask:
         sigfd = await task.signalfd_create({signal.SIGCHLD}, flags=os.O_NONBLOCK)
         async_sigfd = await AsyncFileDescriptor.make(local_epoller, sigfd, is_nonblock=True)
         signal_queue = SignalQueue(signal_block, async_sigfd)
-        child_task_monitor = ChildTaskMonitor(task, signal_queue)
+        child_task_monitor = ChildProcessMonitor(ChildProcessMonitorInternal(task, signal_queue), task.base, False)
         stdtask = StandardTask(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task,
@@ -1515,7 +1515,7 @@ class SignalQueue:
         await self.close()
 
 class MultiplexerQueue:
-    "This will be some kinda abstracted queue thing that can be used for epoll and for childtaskmonitor etc"
+    "This will be some kinda abstracted queue thing that can be used for epoll and for ChildProcessMonitor etc"
     # TODO
     # maybe we should, uhh
     # oh, we can't just check if someone is running and if they are, starting waiting on the queue
@@ -1528,9 +1528,9 @@ class MultiplexerQueue:
 class Multiplexer:
     pass
 
-class ChildTask:
+class ChildProcess:
     def __init__(self, process: base.Process, queue: trio.hazmat.UnboundedQueue,
-                 monitor: 'ChildTaskMonitor') -> None:
+                 monitor: ChildProcessMonitorInternal) -> None:
         self.process = process
         self.queue = queue
         self.monitor = monitor
@@ -1619,54 +1619,50 @@ class ChildTask:
             await self.kill()
             await self.wait_for_exit()
 
-class ChildTaskMonitor:
-    @staticmethod
-    async def make(task: Task, epoller: EpollCenter) -> 'ChildTaskMonitor':
-        signal_queue = await SignalQueue.make(task, epoller, {signal.SIGCHLD})
-        return ChildTaskMonitor(task, signal_queue)
-
+class ChildProcessMonitorInternal:
     def __init__(self, waiting_task: Task, signal_queue: SignalQueue) -> None:
         self.waiting_task = waiting_task
         self.signal_queue = signal_queue
-        self.task_map: t.Dict[int, ChildTask] = {}
+        self.task_map: t.Dict[int, ChildProcess] = {}
         self.unknown_queue = trio.hazmat.UnboundedQueue()
         self.wait_lock = trio.Lock()
         if self.signal_queue.sigfd.underlying.file.mask != set([signal.SIGCHLD]):
-            raise Exception("ChildTaskMonitor should get a SignalQueue only for SIGCHLD")
+            raise Exception("ChildProcessMonitor should get a SignalQueue only for SIGCHLD")
         self.running_wait: t.Optional[trio.Event] = None
         self.can_waitid = False
+
+        self.clone_lock = trio.Lock()
+        self.cloning_task: t.Optional[base.Task] = None
+        self.waited_on_while_cloning: t.Optional[ChildProcess] = None
+
+    def add_task(self, process: base.Process) -> ChildProcess:
+        child_task = ChildProcess(process, trio.hazmat.UnboundedQueue(), self)
+        self.task_map[process.near.id] = child_task
+        return child_task
 
     async def clone(self,
                     clone_task: base.Task,
                     flags: int,
-                    child_stack: Pointer, ctid: Pointer, newtls: Pointer) -> ChildTask:
-        if clone_task != self.waiting_task.base:
-            # We take a CLONE_TASK argument to allow for future use of multithreading or
-            # CLONE_PARENT, but currently we just enforce it matches the waiting_task.
-            raise Exception("tried to clone from task", clone_task,
-                            "which doesn't matching waiting_task", self.waiting_task)
-        # We need to serialize waits and clones, otherwise we could collect the child process zombie
-        # before we even create the ChildTask object. if we did multiple clones and pid wrapped to
-        # the same pid, we would then have no idea which child events belong to which child.
-        # 
-        # For us, wait_lock is sufficient serialization, since the only thing that can create new
-        # child for this task, is this task itself. But note that if we're using CLONE_PARENT in a
-        # child, or we're cloning in multiple threads, then we can run into this race.
-        # 
-        # This is mitigated in conventional multithreading using ctid/ptid, so we can look up the
-        # pid in memory before clone returns or actually starts the thread. I don't know of any
-        # efficient mitigation for the race when using CLONE_PARENT, so we can't use that flag.
-        # Which is unfortunate, because CLONE_PARENT would be useful, it would allow us to skip
-        # creating a ChildTaskMonitor in child processes.
-        async with self.wait_lock:
-            tid = await raw_syscall.clone(clone_task.sysif, flags, child_stack,
-                                          ptid=None, ctid=ctid, newtls=newtls)
-            # TODO this is wrong! we need to pull the process namespace out of the cloning task!
-            # but it's not yet present on base.Task, so...
-            process = base.Process(self.waiting_task.pid_namespace, near.Process(tid))
-            child_task = ChildTask(process, trio.hazmat.UnboundedQueue(), self)
-            self.task_map[tid] = child_task
-        return child_task
+                    child_stack: Pointer, ctid: Pointer=None, newtls: Pointer=None) -> ChildProcess:
+        # Careful synchronization between calls to clone and calls to wait is required.
+        # We can only call clone in one task at a time.
+        # See my bloggo posto for more.
+        # TODO write my bloggo posto
+        async with self.clone_lock:
+            self.cloning_task = clone_task
+            try:
+                tid = await raw_syscall.clone(clone_task.sysif, flags|signal.SIGCHLD, child_stack,
+                                              ptid=None, ctid=ctid, newtls=newtls)
+                waited_on_while_cloning = self.waited_on_while_cloning
+            finally:
+                self.waited_on_while_cloning = None
+                self.cloning_task = None
+            if waited_on_while_cloning is not None:
+                return waited_on_while_cloning
+            else:
+                # TODO this is wrong! we need to pull the process namespace out of the cloning task!
+                # but it's not yet present on base.Task, so...
+                return self.add_task(base.Process(self.waiting_task.pid_namespace, near.Process(tid)))
 
     async def do_wait(self) -> None:
         if self.running_wait is not None:
@@ -1686,9 +1682,9 @@ class ChildTaskMonitor:
                     self.can_waitid = True
                 # loop on waitid to flush all child events
                 task = self.waiting_task
-                # TODO if we could just detect when the ChildTask that we are wait()ing for
+                # TODO if we could just detect when the ChildProcess that we are wait()ing for
                 # has gotten an event, we could handle events in this function indefinitely,
-                # and only return once we've sent an event to that ChildTask.
+                # and only return once we've sent an event to that ChildProcess.
                 # maybe by passing in the waiting queue?
                 # could do the same for epoll too.
                 # though we have to wake other people up too...
@@ -1718,16 +1714,24 @@ class ChildTaskMonitor:
                                               pid=int(struct.si_pid), uid=int(struct.si_uid),
                                               status=int(struct.si_status))
                 logger.info("got child event %s", child_event)
-                if child_event.pid in self.task_map:
-                    self.task_map[child_event.pid].queue.put_nowait(child_event)
+                pid = child_event.pid
+                if pid in self.task_map:
+                    child_task = self.task_map[pid]
                 else:
-                    # some unknown child. this will happen if we're a subreaper, as
-                    # things get reparented to us and die
-                    self.unknown_queue.put_nowait(child_event)
+                    if self.cloning_task is not None:
+                        # the child we were cloning died before we handled the return value of clone
+                        child_task = self.add_task(base.Process(self.waiting_task.pid_namespace, near.Process(pid)))
+                        self.waited_on_while_cloning = child_task
+                        # only one clone happens at a time, if we get more unknown tids, they're a bug
+                        self.cloning_task = None
+                    else:
+                        raise Exception("got event for some unknown pid", child_event,
+                                        "maybe we're init or a subreaper? that's not supported!")
+                child_task.queue.put_nowait(child_event)
                 if child_event.died():
                     # this child is dead. if its pid is reused, we don't want to send
-                    # any more events to the same ChildTask.
-                    del self.task_map[child_event.pid]
+                    # any more events to the same ChildProcess.
+                    del self.task_map[pid]
             finally:
                 logger.info("leaving child task doing it myself")
                 self.running_wait = None
@@ -1736,11 +1740,40 @@ class ChildTaskMonitor:
     async def close(self) -> None:
         await self.signal_queue.close()
 
-    async def __aenter__(self) -> 'ChildTaskMonitor':
-        return self
+@dataclass
+class ChildProcessMonitor:
+    internal: ChildProcessMonitorInternal
+    cloning_task: base.Task
+    use_clone_parent: bool
 
-    async def __aexit__(self, *args, **kwargs) -> None:
-        await self.close()
+    @staticmethod
+    async def make(task: Task, epoller: EpollCenter) -> ChildProcessMonitor:
+        signal_queue = await SignalQueue.make(task, epoller, {signal.SIGCHLD})
+        monitor = ChildProcessMonitorInternal(task, signal_queue)
+        return ChildProcessMonitor(monitor, task.base, use_clone_parent=False)
+
+    def inherit_to_child(self, child: ChildProcess, cloning_task: base.Task) -> ChildProcessMonitor:
+        if child.monitor is not self.internal:
+            raise Exception("child", child, "is not from our monitor", self.internal)
+        if child.process is not cloning_task.process:
+            raise Exception("child process", child, "is not the same as cloning task process", cloning_task)
+        # we now know that the cloning task is in a process which is a child process of the waiting task.  so
+        # we know that if use CLONE_PARENT while cloning in the cloning task, the resulting tasks will be
+        # children of the waiting task, so we can use the waiting task to wait on them.
+        return ChildProcessMonitor(self.internal, cloning_task, use_clone_parent=True)
+
+    def inherit_to_thread(self, cloning_task: base.Task) -> ChildProcessMonitor:
+        if self.internal.waiting_task.base.process is not cloning_task.process:
+            raise Exception("waiting task process", self.internal.waiting_task.base.process,
+                            "is not the same as cloning task process", cloning_task.process)
+        # we know that the cloning task is in the same process as the waiting task. so any children the
+        # cloning task starts will also be waitable-on by the waiting task.
+        return ChildProcessMonitor(self.internal, cloning_task, use_clone_parent=False)
+
+    async def clone(self, flags: int, child_stack: Pointer, ctid: Pointer=None, newtls: Pointer=None) -> ChildProcess:
+        if self.use_clone_parent:
+            flags |= lib.CLONE_PARENT
+        return (await self.internal.clone(self.cloning_task, flags, child_stack, ctid, newtls))
 
 class Thread:
     """A thread is a child task currently running in the address space of its parent.
@@ -1766,22 +1799,22 @@ class Thread:
     It would better if we could just get notified of mm_release through SIGCHLD/waitid.
 
     """
-    child_task: ChildTask
-    futex_task: ChildTask
+    child_task: ChildProcess
+    futex_task: ChildProcess
     futex_mapping: handle.MemoryMapping
-    def __init__(self, child_task: ChildTask, futex_task: ChildTask, futex_mapping: handle.MemoryMapping) -> None:
+    def __init__(self, child_task: ChildProcess, futex_task: ChildProcess, futex_mapping: handle.MemoryMapping) -> None:
         self.child_task = child_task
         self.futex_task = futex_task
         self.futex_mapping = futex_mapping
         self.released = False
 
     async def execveat(self, sysif: SyscallInterface, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
-                       path: handle.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> ChildTask:
+                       path: handle.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> ChildProcess:
         await memsys.execveat(sysif, transport, allocator, path.far, argv, envp, flags)
         return self.child_task
 
-    async def wait_for_mm_release(self) -> ChildTask:
-        """Wait for the task to leave the parent's address space, and return the ChildTask.
+    async def wait_for_mm_release(self) -> ChildProcess:
+        """Wait for the task to leave the parent's address space, and return the ChildProcess.
 
         The task can leave the parent's address space either by exiting or execing.
 
@@ -1820,7 +1853,7 @@ class CThread(Thread):
         super().__init__(thread.child_task, thread.futex_task, thread.futex_mapping)
         self.stack_mapping = stack_mapping
 
-    async def wait_for_mm_release(self) -> ChildTask:
+    async def wait_for_mm_release(self) -> ChildProcess:
         result = await super().wait_for_mm_release()
         # we can free the stack mapping now that the thread has left our address space
         await self.stack_mapping.unmap()
@@ -1853,8 +1886,8 @@ class BufferedStack:
         return self.allocation_pointer
 
 async def launch_futex_monitor(task: base.Task, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
-                               process_resources: ProcessResources, monitor: ChildTaskMonitor,
-                               futex_pointer: Pointer, futex_value: int) -> ChildTask:
+                               process_resources: ProcessResources, monitor: ChildProcessMonitor,
+                               futex_pointer: Pointer, futex_value: int) -> ChildProcess:
     serializer = memsys.Serializer()
     # build the trampoline and push it on the stack
     stack_data = process_resources.build_trampoline_stack(process_resources.futex_helper_func, futex_pointer, futex_value)
@@ -1863,10 +1896,7 @@ async def launch_futex_monitor(task: base.Task, transport: base.MemoryTransport,
     logger.info("about to serialize")
     async with serializer.with_flushed(transport, allocator):
         logger.info("did serialize")
-        futex_task = await monitor.clone(
-            task,
-            lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_pointer.pointer,
-            ctid=task.address_space.null(), newtls=task.address_space.null())
+        futex_task = await monitor.clone(lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_pointer.pointer)
         # wait for futex helper to SIGSTOP itself,
         # which indicates the trampoline is done and we can deallocate the stack.
         event = await futex_task.wait_for_stop_or_exit()
@@ -1880,7 +1910,7 @@ async def launch_futex_monitor(task: base.Task, transport: base.MemoryTransport,
 class ThreadMaker:
     def __init__(self,
                  task: Task,
-                 monitor: ChildTaskMonitor,
+                 monitor: ChildProcessMonitor,
                  process_resources: ProcessResources) -> None:
         self.task = task
         self.monitor = monitor
@@ -1905,7 +1935,6 @@ class ThreadMaker:
         # the only part of the memory mapping that's being used now is the futex address, which is a
         # huge waste. oh well, later on we can allocate futex addresses out of a shared mapping.
         child_task = await self.monitor.clone(
-            self.task.base,
             flags | lib.CLONE_CHILD_CLEARTID, child_stack,
             ctid=futex_pointer, newtls=newtls)
         return Thread(child_task, futex_task, handle.MemoryMapping(self.task.base, mapping))
@@ -2013,8 +2042,8 @@ class ChildConnection(base.SyscallInterface):
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
                  rsyscall_connection: RsyscallConnection,
-                 server_task: ChildTask,
-                 futex_task: t.Optional[ChildTask],
+                 server_task: ChildProcess,
+                 futex_task: t.Optional[ChildProcess],
     ) -> None:
         self.rsyscall_connection = rsyscall_connection
         self.server_task = server_task
@@ -2241,7 +2270,7 @@ async def do_cloexec_except(task: Task, process_resources: ProcessResources,
             raise Exception("cloexec function child died!", child_event)
 
 async def unshare_files(
-        task: Task, monitor: ChildTaskMonitor, process_resources: ProcessResources,
+        task: Task, monitor: ChildProcessMonitor, process_resources: ProcessResources,
         close_in_old_space: t.List[near.FileDescriptor],
         copy_to_new_space: t.List[near.FileDescriptor],
         going_to_exec: bool,
@@ -2255,10 +2284,8 @@ async def unshare_files(
                                             alignment=16)
     async with serializer.with_flushed(task.transport, task.allocator):
         closer_task = await monitor.clone(
-            task.base,
             lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SIGHAND|lib.CLONE_SYSVSEM|signal.SIGCHLD,
-            stack_ptr.pointer,
-            ctid=task.address_space.null(), newtls=task.address_space.null())
+            stack_ptr.pointer)
         event = await closer_task.wait_for_stop_or_exit()
         if event.died():
             raise Exception("stop_then_close task died unexpectedly", event)
@@ -2664,7 +2691,7 @@ async def rsyscall_exec(
                 b"rsyscall_server",
                 encode(passed_describe_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
                 *[encode(fd) for fd in copy_to_new_space],
-            ], {}, [stdtask.child_monitor.signal_queue.signal_block])
+            ], {}, [stdtask.child_monitor.internal.signal_queue.signal_block])
         # the futex task we used before is dead now that we've exec'd, have
         # to null it out
         syscall.futex_task = None
@@ -2769,7 +2796,7 @@ async def ssh_bootstrap(
         local_socket_path: handle.Path,
         # the directory we're bootstrapping out of
         tmp_path_bytes: bytes,
-) -> t.Tuple[ChildTask, StandardTask]:
+) -> t.Tuple[ChildProcess, StandardTask]:
     # identify local path
     task = parent_task.task
     local_data_path = Path(task, local_socket_path)
@@ -2852,7 +2879,7 @@ async def ssh_bootstrap(
     left_connecting_connection, right_connecting_connection = await new_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     connecting_connection = (left_connecting_connection.handle, right_connecting_connection.handle)
     epoller = await new_task.make_epoll_center()
-    child_monitor = await ChildTaskMonitor.make(new_task, epoller)
+    child_monitor = await ChildProcessMonitor.make(new_task, epoller)
     new_stdtask = StandardTask(
         access_task=parent_task.task,
         access_epoller=parent_task.epoller,
@@ -2874,7 +2901,7 @@ async def ssh_bootstrap(
 async def spawn_ssh(
         task: StandardTask, ssh_command: SSHCommand,
         local_socket_path: t.Optional[handle.Path]=None,
-) -> t.Tuple[ChildTask, StandardTask]:
+) -> t.Tuple[ChildProcess, StandardTask]:
     # we could get rid of the need to touch the local filesystem by directly
     # speaking the openssh multiplexer protocol. or directly speaking the ssh
     # protocol for that matter.
@@ -2899,60 +2926,10 @@ class RsyscallThread:
         self.stdtask = stdtask
         self.thread = thread
 
-    async def fork(self) -> RsyscallThread:
-        # wait wait wait
-        # we assume that...
-        # when someone makes a thread with a parent like this, um...
-        # our stdtask contains our parent's childtaskmonitor?
-        # er... I guess the clone_parent will be automatic.
-        # right, I... guess we don't even need a different call to rsyscallthread.
-        # it's the childtaskmonitor that needs to be called differently. hmm.
-        # everyone else can just go ahead and always inherit their parent's childtaskmonitor,
-        # maybe. I guess we check to see. hm.
-        # no we can always inherit.
-        # the issue is just... deciding when to... do the parent thing...
-        # I guess it can just be a spawn-time thing. I can embed a ChildTask into it??? which..
-        # supports the... parent thing...
-        [(access_sock, remote_sock)] = await self.stdtask.make_async_connections(1)
-        thread_maker = ThreadMaker(self.stdtask.task, self.stdtask.child_monitor, self.stdtask.process)
-        cthread = await thread_maker.make_cthread(
-            (lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SIGHAND|lib.CLONE_SYSVSEM|
-             lib.CLONE_PARENT|signal.SIGCHLD),
-            self.stdtask.process.server_func, remote_sock.near, remote_sock.near)
-        syscall = ChildConnection(
-            RsyscallConnection(access_sock, access_sock),
-            cthread.child_task,
-            cthread.futex_task)
-        parent_task = self.stdtask.task
-        new_base_task = base.Task(syscall, cthread.child_task.process,
-                                  parent_task.fd_table, parent_task.address_space, parent_task.base.fs)
-        remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
-        syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
-        new_task = Task(new_base_task,
-                        # We could inherit the transport here, but meh.
-                        parent_task.transport,
-                        parent_task.allocator.inherit(new_base_task),
-                        parent_task.sigmask.inherit(),
-                        parent_task.pid_namespace)
-        # TODO hmm first we need to lock child creation in ChildTaskMonitor I guess
-        stdtask = StandardTask(
-            self.access_task, self.access_epoller, self.access_connection,
-            self.connecting_task,
-            (self.connecting_connection[0], task.base.make_fd_handle(self.connecting_connection[1])),
-            new_task, 
-            self.process, self.filesystem,
-            self.epoller, self.child_task_monitor, local_epoller,
-            {**self.environment},
-            stdin=self.stdin.borrow(task.base),
-            stdout=self.stdout.borrow(task.base),
-            stderr=self.stderr.borrow(task.base),
-        )
-        return RsyscallThread(stdtask, thread)
-
     async def execve(self, path: handle.Path, argv: t.Sequence[t.Union[str, bytes, Path]],
                      env_updates: t.Mapping[str, t.Union[str, bytes, Path]]={},
                      inherited_signal_blocks: t.List[SignalBlock]=[],
-    ) -> ChildTask:
+    ) -> ChildProcess:
         """Replace the running executable in this thread with another.
 
         We take inherited_signal_blocks as an argument so that we can default it
@@ -3043,7 +3020,7 @@ class Command:
     # hmm we actually need an rsyscallthread to properly exec
     # would be nice to call this just "Thread".
     # we should namespace the current "Thread" properly, so we can do that...
-    async def exec(self, thread: RsyscallThread) -> ChildTask:
+    async def exec(self, thread: RsyscallThread) -> ChildProcess:
         return (await thread.execve(self.executable_path, self.arguments, self.env_updates))
 
 T_ssh_command = t.TypeVar('T_ssh_command', bound="SSHCommand")
@@ -3081,7 +3058,7 @@ async def build_local_stdtask(nursery) -> StandardTask:
     return (await StandardTask.make_local())
 
 async def exec_cat(thread: RsyscallThread, cat: Command,
-                   infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> ChildTask:
+                   infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> ChildProcess:
     stdin = thread.stdtask.task.base.make_fd_handle(infd)
     stdout = thread.stdtask.task.base.make_fd_handle(outfd)
     await thread.stdtask.unshare_files()
