@@ -303,8 +303,7 @@ class Task:
 
     async def mmap(self, length: int, prot: memory.ProtFlag, flags: memory.MapFlag) -> memory.AnonymousMapping:
         # currently doesn't support specifying an address, nor specifying a file descriptor
-        return (await memory.AnonymousMapping.make(
-            self.syscall, self.base.address_space, length, prot, flags))
+        return (await memory.AnonymousMapping.make(self.base, length, prot, flags))
 
     async def make_epoll_center(self) -> EpollCenter:
         epfd = await self.epoll_create()
@@ -2144,6 +2143,90 @@ class ChildConnection(base.SyscallInterface):
         try:
             ret = await self._read_syscall_response()
             self.logger.info("returned syscall response")
+        except Exception as e:
+            response.set_exception(e)
+        else:
+            response.set_result(ret)
+
+    async def _process_one_response_direct(self) -> None:
+        if len(self.pending_responses) == 0:
+            raise Exception("somehow we are trying to process a syscall response, when there are no pending syscalls.")
+        next = self.pending_responses[0]
+        await self._process_response_for(next)
+        self.pending_responses = self.pending_responses[1:]
+
+    async def _process_one_response(self) -> None:
+        if self.running is not None:
+            await self.running.wait()
+        else:
+            running = trio.Event()
+            self.running = running
+            try:
+                await self._process_one_response_direct()
+            finally:
+                self.running = None
+                running.set()
+
+    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
+        async with self.request_lock:
+            log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+            await self.rsyscall_connection.write_request(
+                number,
+                arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+                arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        response = SyscallResponse(self._process_one_response)
+        self.pending_responses.append(response)
+        return response
+
+    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        response = await self.submit_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
+        try:
+            # we must not be interrupted while reading the response - we need to return
+            # the response so that our parent can deal with the state change we created.
+            with trio.open_cancel_scope(shield=True):
+                result = await response.receive()
+        except Exception as exn:
+            self.logger.debug("%s -> %s", number, exn)
+            raise
+        else:
+            self.logger.debug("%s -> %s", number, result)
+            return result
+
+class PersistentConnection(base.SyscallInterface):
+    """An reconnectable rsyscall connection; the task won't be our child on resume.
+
+    For correctness, we should ensure that we'll get HUP/EOF if the task has
+    exited and therefore will never respond. This is most easily achieved by
+    making sure that the fds keeping the other end of the RsyscallConnection
+    open, are only held by one task, and so will be closed when the task
+    exits. Note, though, that that requires that the task be in an unshared file
+    descriptor space.
+
+    """
+    def __init__(self, rsyscall_connection: RsyscallConnection,
+                 process: near.Process,
+                 activity_fd: far.FileDescriptor,
+                 infd: far.FileDescriptor, outfd: far.FileDescriptor) -> None:
+        self.rsyscall_connection = rsyscall_connection
+        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{process.id}")
+        self.identifier_process = process
+        self.activity_fd = infd.near
+        # these are needed so that we don't accidentally close them when doing a do_cloexec_except
+        # gotta update these each time we reconnect
+        # TODO aaaaa
+        self.infd = infd
+        self.outfd = outfd
+        self.request_lock = trio.Lock()
+        self.pending_responses: t.List[SyscallResponse] = []
+        self.running: trio.Event = None
+
+    async def close_interface(self) -> None:
+        await self.rsyscall_connection.close()
+
+    async def _process_response_for(self, response: SyscallResponse) -> None:
+        try:
+            ret = await self.rsyscall_connection.read_response()
+            raise_if_error(ret)
         except Exception as e:
             response.set_exception(e)
         else:

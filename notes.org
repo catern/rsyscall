@@ -9256,5 +9256,38 @@ but instead just keep around the state.
    i'll need to allocate a new stack, hmm.
 
    bah, let's just forget about clone_stack, and make a new task instead..
+** did it
+   ok so i guess it's persisting now
 
-   
+   but now for the hard part:
+
+   actually shutting down, say, the ssh task, and creating a new one.
+
+   so let's first do persistent over ssh
+
+
+   hmm argh.
+
+   when we make a new connection we need to be waiting on a different activity fd, argh.
+
+   I guess we can pass in an epollfd,
+   and have the thingy,
+   perform the, hmm. stuff.
+
+   we might need to have yet another kind of syscall connection.
+
+   this way we can reconnect it through directly mutating the syscallinterface, anyway.
+
+   anyway we pass in an epollfd,
+   and the persistent server makes sure that always maps to the real fd we want toread,
+   by adding and removing fds.
+
+   I guess this is just because we want to move the EpollWaiter between tasks, hmm.
+
+   maybe if we explicitly inherited it?
+
+   a persistent syscall interface does sound like a good nice thing
+
+   then we have more representation of what is going on;
+   like, syscalls in progress can be resumed and stuff,
+   and we could log and recover responses and things.

@@ -46,25 +46,26 @@ class Allocation:
 
 class AnonymousMapping:
     @classmethod
-    async def make(self, syscall_interface: SyscallInterface, address_space: AddressSpace,
-                   length: int, prot: ProtFlag, flags: MapFlag) -> AnonymousMapping:
-        address = await raw_syscall.mmap(syscall_interface, length, prot, flags|MapFlag.ANONYMOUS)
-        pointer = Pointer(address_space, rsyscall.near.Pointer(address))
-        return AnonymousMapping(syscall_interface, pointer, length)
+    async def make(self, task: far.Task, length: int, prot: ProtFlag, flags: MapFlag) -> AnonymousMapping:
+        mapping = await far.mmap(task, length, prot, flags|MapFlag.ANONYMOUS)
+        return AnonymousMapping(task, mapping)
 
-    def __init__(self,
-                 syscall_interface: SyscallInterface,
-                 pointer: Pointer,
-                 length: int,
-    ) -> None:
-        self.syscall_interface = syscall_interface
-        self.pointer = pointer
-        self.length = length
+    @property
+    def pointer(self) -> far.Pointer:
+        return self.mapping.as_pointer()
+
+    @property
+    def length(self) -> int:
+        return self.mapping.near.length
+
+    def __init__(self, task: far.Task, mapping: far.MemoryMapping) -> None:
+        self.task = task
+        self.mapping = mapping
         self.mapped = True
 
     async def unmap(self) -> None:
         if self.mapped:
-            await raw_syscall.munmap(self.syscall_interface, self.pointer, self.length)
+            await far.munmap(self.task, self.mapping)
             self.mapped = False
 
     async def __aenter__(self) -> AnonymousMapping:
@@ -156,7 +157,7 @@ class Allocator:
                         rest_sizes = sizes[size_index:]
                         # let's do it in bulk:
                         remaining_size = sum(rest_sizes)
-                        mapping = await AnonymousMapping.make(self.task.sysif, self.task.address_space,
+                        mapping = await AnonymousMapping.make(self.task,
                                                               align(remaining_size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
                         arena = Arena(mapping)
                         for size in rest_sizes:
@@ -174,7 +175,7 @@ class Allocator:
                 alloc = arena.malloc(size)
                 if alloc:
                     return alloc
-            mapping = await AnonymousMapping.make(self.task.sysif, self.task.address_space,
+            mapping = await AnonymousMapping.make(self.task,
                                                   align(size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
             arena = Arena(mapping)
             self.arenas.append(arena)

@@ -370,20 +370,35 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as tmpdir:
                 per_stdtask, server = await stdtask.fork_persistent(tmpdir/"persist.sock")
-                thread3 = await stdtask2.fork()
-                print("SBAUGH okay started second task")
+                thread3 = await per_stdtask.fork()
                 async with thread3 as stdtask3:
+                    print("SBAUGH okay started second task")
+                    stdtask3 = thread3.stdtask
                     print("SBAUGH okay with on second task")
-                    await stdtask3.exit(0)
-                    print("SBAUGH okay exited second task")
                     await per_stdtask.unshare_files()
                     print("SBAUGH closing")
                     await per_stdtask.task.base.sysif.close_interface()
                     print("SBAUGH spawning")
                     per_stdtask = await server.spawn(stdtask)
                     print("SBAUGH exiting")
-                    await per_stdtask.exit(0)
-                    print("SBAUGH done")
+                    print("SBAUGH okay with on second task")
+                    await stdtask3.exit(0)
+                    print("SBAUGH okay exited second task")
+        trio.run(self.runner, test)
+
+    def test_ssh_persistent_thread_exit(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with ssh_to_localhost(stdtask) as ssh_command:
+                local_child, remote_stdtask = await rsyscall.io.spawn_ssh(stdtask, ssh_command)
+                logger.info("about to fork")
+                per_stdtask, server = await remote_stdtask.fork_persistent(remote_stdtask.task.cwd()/"persist.sock")
+                await per_stdtask.unshare_files()
+                print("SBAUGH closing")
+                await per_stdtask.task.base.sysif.close_interface()
+                print("SBAUGH spawning")
+                per_stdtask = await server.spawn(stdtask)
+                print("SBAUGH exiting")
+                await per_stdtask.exit(0)
         trio.run(self.runner, test)
 
     def test_thread_nest_exit(self) -> None:
@@ -420,14 +435,6 @@ class TestIO(unittest.TestCase):
         trio.run(self.runner, test)
 
     def test_thread_exec(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread = await stdtask.fork()
-            async with thread as stdtask2:
-                child_task = await thread.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
-                await child_task.wait_for_exit()
-        trio.run(self.runner, test)
-
-    def test_persistent(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
             async with thread as stdtask2:
