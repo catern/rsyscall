@@ -78,14 +78,15 @@ class FileDescriptor:
         return rsyscall.far.FileDescriptor(self.task.fd_table, self.near)
 
     async def invalidate(self) -> None:
-        self.valid = False
-        handles = self._remove_from_tracking()
-        if len(handles) == 0:
-            # we were the last handle for this fd, we should close it
-            logging.debug("invalidating %s, no handles remaining, closing", self)
-            await rsyscall.near.close(self.task.sysif, self.near)
-        else:
-            logging.debug("invalidating %s, handles remaining: %s", self, handles)
+        if self.valid:
+            self.valid = False
+            handles = self._remove_from_tracking()
+            if len(handles) == 0:
+                # we were the last handle for this fd, we should close it
+                logging.debug("invalidating %s, no handles remaining, closing", self)
+                await rsyscall.near.close(self.task.sysif, self.near)
+            else:
+                logging.debug("invalidating %s, handles remaining: %s", self, handles)
 
     def _remove_from_tracking(self) -> t.List[FileDescriptor]:
         self.task.fd_handles.remove(self)

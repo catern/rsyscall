@@ -12,6 +12,10 @@
 #include <fcntl.h>
 #include <dirent.h>
 
+// umm
+#include <sys/socket.h>
+#include <sys/un.h>
+
 struct options {
         int infd;
         int outfd;
@@ -81,15 +85,15 @@ static int write_response(const int outfd, const int64_t response)
     return 1;
 }
 
-long getdents64(int fd, char* buf, unsigned int count) {
+static long getdents64(int fd, char* buf, unsigned int count) {
     return rsyscall_raw_syscall(fd, (long)buf, count, 0, 0, 0, SYS_getdents64);
 }
 
-long getfd(int fd) {
+static long getfd(int fd) {
     return rsyscall_raw_syscall(fd, F_GETFD, 0, 0, 0, 0, SYS_fcntl);
 }
 
-long myopen(char* path, int flags) {
+static long myopen(char* path, int flags) {
     return rsyscall_raw_syscall((long)path, flags, 0, 0, 0, 0, SYS_open);
 }
 
@@ -111,7 +115,7 @@ static int myraise(int sig) {
 
 char getdents64_failed[] = "getdents64(fd, buf, count) failed\n";
 
-int strtoint(const char* p) {
+static int strtoint(const char* p) {
     int ret = 0;
     char c;
     while ((c = *p)) {
@@ -185,5 +189,67 @@ int rsyscall_server(const int infd, const int outfd)
 	if (ret <= 0) return ret;
 	ret = write_response(outfd, perform_syscall(request));
 	if (ret <= 0) return ret;
+    }
+}
+
+struct fdpair {
+    int fds[2];
+};
+
+static struct fdpair receive_fdpair(const int sock) {
+    union {
+        struct cmsghdr hdr;
+        char buf[CMSG_SPACE(sizeof(int) * 2)];
+    } cmsg = {};
+    char waste_data;
+    struct iovec io = {
+        .iov_base = &waste_data,
+        .iov_len = sizeof(waste_data),
+    };
+    struct msghdr msg = {
+        .msg_name = NULL,
+        .msg_namelen = 0,
+        .msg_iov = &io,
+        .msg_iovlen = 1,
+        .msg_control = &cmsg,
+        .msg_controllen = sizeof(cmsg),
+    };
+    if (recvmsg(sock, &msg, MSG_CMSG_CLOEXEC) < 0) {
+        err(1, "recvmsg(sock=%d)", sock);
+    }
+    if (msg.msg_controllen != sizeof(cmsg)) {
+        err(1, "Message has wrong controllen");
+    }
+    // if (cmsg.hdr.cmsg_len != sizeof(cmsg.buf)) {
+    //     err(1, "Control message has wrong length");
+    // }
+    if (cmsg.hdr.cmsg_level != SOL_SOCKET) {
+        err(1, "Control message has wrong level");
+    }
+    if (cmsg.hdr.cmsg_type != SCM_RIGHTS) {
+        err(1, "Control message has wrong type");
+    }
+    struct fdpair pair;
+    memcpy(pair.fds, CMSG_DATA(&cmsg.hdr), sizeof(pair.fds));
+    return pair;
+}
+
+int rsyscall_persistent_server(int infd, int outfd, const int listensock)
+{
+    for (;;) {
+	rsyscall_server(infd, outfd);
+	if (close(infd) < 0) err(1, "close(infd=%d)", infd);
+	if ((infd != outfd) && (close(outfd) < 0)) err(1, "close(outfd=%d)", outfd);
+
+	const int connsock = accept4(listensock, NULL, NULL, SOCK_CLOEXEC);
+	if (connsock < 0) err(1, "accept4(listensock)");
+	struct fdpair pair = receive_fdpair(connsock);
+	// write new fd numbers back
+	// TODO this could be a partial write, whatever
+	if (write(connsock, pair.fds, sizeof(pair.fds)) < 0) err(1, "write(connsock)");
+	// close now-useless connsock
+	if (close(connsock) < 0) err(1, "close(connsock=%d)", connsock);
+	infd = pair.fds[0];
+	outfd = pair.fds[1];
     }
 }

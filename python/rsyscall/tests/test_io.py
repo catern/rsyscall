@@ -352,6 +352,40 @@ class TestIO(unittest.TestCase):
                 await stdtask2.exit(0)
         trio.run(self.runner, test)
 
+    def test_persistent_thread_exit(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with (await stdtask.mkdtemp()) as tmpdir:
+                per_stdtask, server = await stdtask.fork_persistent(tmpdir/"persist.sock")
+                await per_stdtask.unshare_files()
+                print("SBAUGH closing")
+                await per_stdtask.task.base.sysif.close_interface()
+                print("SBAUGH spawning")
+                per_stdtask = await server.spawn(stdtask)
+                print("SBAUGH exiting")
+                await per_stdtask.exit(0)
+                print("SBAUGH done")
+        trio.run(self.runner, test)
+
+    def test_persistent_thread_nest_exit(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with (await stdtask.mkdtemp()) as tmpdir:
+                per_stdtask, server = await stdtask.fork_persistent(tmpdir/"persist.sock")
+                thread3 = await stdtask2.fork()
+                print("SBAUGH okay started second task")
+                async with thread3 as stdtask3:
+                    print("SBAUGH okay with on second task")
+                    await stdtask3.exit(0)
+                    print("SBAUGH okay exited second task")
+                    await per_stdtask.unshare_files()
+                    print("SBAUGH closing")
+                    await per_stdtask.task.base.sysif.close_interface()
+                    print("SBAUGH spawning")
+                    per_stdtask = await server.spawn(stdtask)
+                    print("SBAUGH exiting")
+                    await per_stdtask.exit(0)
+                    print("SBAUGH done")
+        trio.run(self.runner, test)
+
     def test_thread_nest_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()

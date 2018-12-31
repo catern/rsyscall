@@ -47,7 +47,7 @@ static struct fdpair receive_fdpair(const int sock) {
         .msg_control = &cmsg,
         .msg_controllen = sizeof(cmsg),
     };
-    if (recvmsg(sock, &msg, 0) < 0) {
+    if (recvmsg(sock, &msg, MSG_CMSG_CLOEXEC) < 0) {
         err(1, "recvmsg(sock=%d)", sock);
     }
     if (msg.msg_controllen != sizeof(cmsg)) {

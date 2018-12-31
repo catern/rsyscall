@@ -49,6 +49,7 @@ int main(int argc, char** argv)
     fcntl(opt.infd, F_SETFL, fcntl(opt.infd, F_GETFL) & ~O_NONBLOCK);
     fcntl(opt.outfd, F_SETFL, fcntl(opt.outfd, F_GETFL) & ~O_NONBLOCK);
     dprintf(opt.describefd, "rsyscall_server=%p\n", rsyscall_server);
+    dprintf(opt.describefd, "rsyscall_persistent_server=%p\n", rsyscall_persistent_server);
     dprintf(opt.describefd, "rsyscall_futex_helper=%p\n", rsyscall_futex_helper);
     dprintf(opt.describefd, "rsyscall_trampoline=%p\n", rsyscall_trampoline);
     dprintf(opt.describefd, "rsyscall_do_cloexec=%p\n", rsyscall_do_cloexec);

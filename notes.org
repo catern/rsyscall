@@ -9155,3 +9155,106 @@ but instead just keep around the state.
    So, likewise here, the PersistentServer thingy,
    we'll close one thread it emits,
    then recover in the next thread with the old stuff.
+
+   aha! i can just use the rsyscall_exec stuff I already did.
+
+   i'll just a single server executable.
+   it'll start out connected,
+   and I'll have an optional additional main loop after the first disconnect.
+
+   hmm, why isn't this just a thread I start again?
+
+   that'd be better...
+
+   then I really don't have to unshare my stuff...
+
+   ah right, I immediately jumped from "do it in C" to "do it in an executable",
+   which is wrong.
+
+   I can just do it in a function.
+
+   Ugh
+
+   okay and the reason I previous had to do it in C,
+   which was to clean up after myself,
+   is no longer valid.
+
+   so... I can just make a thread with CLONE_THREAD?
+
+   then switch to a persistent one by starting a thread with the persistent server?
+
+   I can just make a fork that works with threads?
+
+   so there is some trickiness here:
+   if i start processes normally,
+   then fork,
+   they will be children of the monitor task,
+   cuz I'm using CLONE_PARENT.
+
+   so i should be explicit and go straight to the persistent task or something
+
+   I guess I can have a clone_thread option
+
+   Oh wait, can I even use clone_thread though?
+
+   I won't know when to, um...
+
+   I won't know when there's a hangup
+
+   Urgh, this manual close thing is weird though
+   
+   What if we get signaled and die? well that could have happened anyway.
+   what if we segfault? well...
+
+   it's true that using a separate thread would allow us to be isolated from that signal.
+
+   but, wait, let's just not have any such thing when clone_threading.
+
+   if we want nice fault isolation, do it with processes!
+   only with processes can we actually see why the thread died after all.
+
+   ok sure so um
+
+   I guess we can't make a task which is sharing the wait scope.
+
+   OK so.
+
+   We can only use clone thread with persistent tasks.
+
+   Right? Why though?
+
+   ugh, if we do then the thread gets confused
+
+   oh, what if we just...
+
+   we start the thread
+
+   we treat it as an exec?
+
+   we force the original task to exit?
+
+   basically a swap over of what is running?
+
+   well, can't we do that in some nicer way?
+
+   sigreturn, maybe?
+
+   hmm, should I maybe have my clone gadget just call sigreturn?
+
+   hmm, sigreturn pulls from the stack.
+
+   we want something that takes an address, mebbe
+
+   hmmmmmm
+
+   so it does make sense for clone to call sigreturn.
+
+   well no not really, I guess there's probably some cookie now to make sure it was added by kernel
+
+   ok so let's just do it with clone
+
+   i'll need to allocate a new stack, hmm.
+
+   bah, let's just forget about clone_stack, and make a new task instead..
+
+   
