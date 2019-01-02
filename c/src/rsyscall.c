@@ -15,6 +15,7 @@
 // umm
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/epoll.h>
 
 struct options {
         int infd;
@@ -234,9 +235,16 @@ static struct fdpair receive_fdpair(const int sock) {
     return pair;
 }
 
-int rsyscall_persistent_server(int infd, int outfd, const int listensock)
+char hello_persist[] = "hello world, I am the persistent syscall server!\n";
+
+int rsyscall_persistent_server(int infd, int outfd, const int listensock, const int epfd)
 {
+    struct epoll_event readable = { .events = EPOLLIN, .data = {}};
+    write(2, hello_persist, sizeof(hello_persist) -1);
     for (;;) {
+	if (epoll_ctl(epfd, EPOLL_CTL_ADD, infd, &readable) < 0) {
+	    err(1, "epoll_ctl(epfd=%d, ADD, infd=%d, EPOLLIN)", epfd, infd);
+	}
 	rsyscall_server(infd, outfd);
 	if (close(infd) < 0) err(1, "close(infd=%d)", infd);
 	if ((infd != outfd) && (close(outfd) < 0)) err(1, "close(outfd=%d)", outfd);

@@ -27,6 +27,7 @@ ffibuilder.set_source(
 #include <sys/syscall.h>   /* For SYS_xxx definitions */
 #include <sys/mman.h>
 #include <sys/epoll.h>
+#include <sys/prctl.h>
 #include <poll.h>
 #include <string.h>
 #include <sched.h>
@@ -216,8 +217,13 @@ struct signalfd_siginfo {
 #define SYS_symlinkat ...
 #define SYS_readlinkat ...
 
+
+// prctl
 #define SYS_prctl ...
+#define PR_SET_PDEATHSIG ...
+
 #define SYS_getpid ...
+#define SYS_setsid ...
 
 // epoll stuff
 #define SYS_epoll_ctl ...
@@ -345,7 +351,7 @@ struct in_addr {
 
 void *memcpy(void *dest, const void *src, size_t n);
 // we need these as function pointers, we aren't calling them from Python
-int (*const rsyscall_persistent_server)(int infd, int outfd, const int listensock);
+int (*const rsyscall_persistent_server)(int infd, int outfd, const int listensock, const int epfd);
 int (*const rsyscall_server)(const int infd, const int outfd);
 void (*const rsyscall_futex_helper)(void *futex_addr);
 void (*const rsyscall_trampoline)(void);

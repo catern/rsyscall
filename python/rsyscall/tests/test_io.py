@@ -355,12 +355,10 @@ class TestIO(unittest.TestCase):
     def test_persistent_thread_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as tmpdir:
-                per_stdtask, server = await stdtask.fork_persistent(tmpdir/"persist.sock")
+                per_stdtask, thread, connection = await stdtask.fork_persistent(tmpdir/"persist.sock")
                 await per_stdtask.unshare_files()
                 print("SBAUGH closing")
-                await per_stdtask.task.base.sysif.close_interface()
-                print("SBAUGH spawning")
-                per_stdtask = await server.spawn(stdtask)
+                await connection.reconnect(stdtask)
                 print("SBAUGH exiting")
                 await per_stdtask.exit(0)
                 print("SBAUGH done")
@@ -369,7 +367,7 @@ class TestIO(unittest.TestCase):
     def test_persistent_thread_nest_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as tmpdir:
-                per_stdtask, server = await stdtask.fork_persistent(tmpdir/"persist.sock")
+                per_stdtask, thread2, connection = await stdtask.fork_persistent(tmpdir/"persist.sock")
                 thread3 = await per_stdtask.fork()
                 async with thread3 as stdtask3:
                     print("SBAUGH okay started second task")
@@ -377,10 +375,7 @@ class TestIO(unittest.TestCase):
                     print("SBAUGH okay with on second task")
                     await per_stdtask.unshare_files()
                     print("SBAUGH closing")
-                    await per_stdtask.task.base.sysif.close_interface()
-                    print("SBAUGH spawning")
-                    per_stdtask = await server.spawn(stdtask)
-                    print("SBAUGH exiting")
+                    await connection.reconnect(stdtask)
                     print("SBAUGH okay with on second task")
                     await stdtask3.exit(0)
                     print("SBAUGH okay exited second task")
@@ -391,14 +386,47 @@ class TestIO(unittest.TestCase):
             async with ssh_to_localhost(stdtask) as ssh_command:
                 local_child, remote_stdtask = await rsyscall.io.spawn_ssh(stdtask, ssh_command)
                 logger.info("about to fork")
-                per_stdtask, server = await remote_stdtask.fork_persistent(remote_stdtask.task.cwd()/"persist.sock")
+                per_stdtask, thread, connection = await remote_stdtask.fork_persistent(
+                    remote_stdtask.task.cwd()/"persist.sock")
                 await per_stdtask.unshare_files()
                 print("SBAUGH closing")
-                await per_stdtask.task.base.sysif.close_interface()
-                print("SBAUGH spawning")
-                per_stdtask = await server.spawn(stdtask)
+                await connection.reconnect(remote_stdtask)
                 print("SBAUGH exiting")
                 await per_stdtask.exit(0)
+        trio.run(self.runner, test)
+
+    def test_ssh_persistent_thread_reconnect(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with ssh_to_localhost(stdtask) as host:
+                local_child, remote_stdtask = await host.ssh(stdtask)
+                # TODO need to have notion of "Host",
+                # which I can pull the namespaces out of. hm.
+                # it's to represent that two ssh connections to the same place,
+                # will have the same,
+                # namespaces and stuff.
+                # probably.
+                # so, okay. SSHHost perhaps?
+                logger.info("about to fork")
+                # need to prevent HUP hmm
+                # I guess I setsid
+                per_stdtask, thread, connection = await remote_stdtask.fork_persistent(
+                    remote_stdtask.task.cwd()/"persist.sock")
+                async with thread:
+                    await far.setsid(per_stdtask.task.base)
+                    # kill off the first ssh session
+                    await local_child.kill()
+                    local_child, remote_stdtask = await host.ssh(stdtask)
+                    # OK, so it is indeed non-deterministic.
+                    # await per_stdtask.unshare_files()
+                    # await connection.rsyscall_connection.close()
+                    # hmm. if the connection is down then...
+                    # probably the data connection is down too...
+                    # AAA ok so the data connection is down. how do we repair it?
+                    # I guess we can just return the Transport as well as the Syscall,
+                    # and have a reconnectable transport thing.
+                    await connection.reconnect(remote_stdtask)
+                    print("SBAUGH exiting")
+                    await per_stdtask.exit(0)
         trio.run(self.runner, test)
 
     def test_thread_nest_exit(self) -> None:

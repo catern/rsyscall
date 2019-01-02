@@ -4,9 +4,10 @@ import contextlib
 import os
 import socket
 import unittest
-from rsyscall.io import Command, SSHCommand, SSHDCommand
+from rsyscall.io import Command, SSHCommand, SSHDCommand, SSHHost
 from rsyscall.io import Task, Path, build_local_stdtask, StandardTask
 import rsyscall.io
+import rsyscall.near as near
 import rsyscall.base as base
 import logging
 
@@ -21,7 +22,7 @@ import logging
 #                      ["ssh-keygen"], {})
 
 @contextlib.asynccontextmanager
-async def ssh_to_localhost(stdtask: StandardTask) -> t.AsyncGenerator[SSHCommand, None]:
+async def ssh_to_localhost(stdtask: StandardTask) -> t.AsyncGenerator[SSHHost, None]:
     async with (await stdtask.mkdtemp()) as tmpdir:
         await stdtask.task.chdir(tmpdir)
         keygen_thread = await stdtask.fork()
@@ -43,7 +44,7 @@ async def ssh_to_localhost(stdtask: StandardTask) -> t.AsyncGenerator[SSHCommand
             'PrintLastLog': 'no',
             'PrintMotd': 'no',
         })
-        yield ssh.args([
+        ssh_command = ssh.args([
             '-F', '/dev/null',
         ]).ssh_options({
             'LogLevel': 'INFO',
@@ -54,6 +55,9 @@ async def ssh_to_localhost(stdtask: StandardTask) -> t.AsyncGenerator[SSHCommand
         }).proxy_command(sshd_command).args([
             "localhost",
         ])
+        # TODO this isn't right, the root and cwd are pulled at
+        # runtime from the task we use to run the ssh command.
+        yield SSHHost(stdtask.task.base.fs.root, stdtask.task.base.fs.cwd, ssh_command)
             
 # class TestSSH(unittest.TestCase):
 #     async def runner(self, test: t.Callable[[], t.Awaitable[None]]) -> None:

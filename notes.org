@@ -9291,3 +9291,40 @@ but instead just keep around the state.
    then we have more representation of what is going on;
    like, syscalls in progress can be resumed and stuff,
    and we could log and recover responses and things.
+** do we start with a ChildConnection or a PersistentConnection?
+   we can't just start with ChildConnection and reassign,
+   because of the epoll fd issue.
+
+   well, actually I guess we could if we made a trivial change to childconnection. hm.
+
+   if we do the CLONE_THREAD thing it will never be our child. hm.
+
+   so we migiht as well get used to it.
+
+   hm.
+
+   let's just resign ourselves to leaking the stack, whatever;
+   I don't think we necessarily have to leak it if we get a memorymapping GC.
+** hmm reconnection
+   If I don't have a syscall out, then everything is good.
+
+   But if I have a syscall out, and I get a hangup, then I don't know what to do.
+
+   I guess I just crash!
+
+   yeah, we should just crash in that scenario
+
+   the purpose of this isn't fault tolerance,
+   it's being able to shut down the process on the deploy host,
+   and restart it.
+
+   and the purpose for that? well, first convenience,
+   but also I guess upgrades.
+** ok next
+   next is to shut down the ssh connection and recreate it and reopen the thing.
+
+   hmm.
+
+   I guess the bootstrap stuff is left around. whatever.
+
+   HM! need to stop creating a futex task for the persistent thread.

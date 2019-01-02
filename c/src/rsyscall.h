@@ -7,7 +7,7 @@ struct rsyscall_syscall {
 };
 
 int rsyscall_server(const int infd, const int outfd);
-int rsyscall_persistent_server(int infd, int outfd, const int listensock);
+int rsyscall_persistent_server(int infd, int outfd, const int listensock, const int epfd);
 void rsyscall_do_cloexec(int* excluded_fds, int fd_count);
 void rsyscall_stop_then_close(int* fds_to_close, int fd_count);
 

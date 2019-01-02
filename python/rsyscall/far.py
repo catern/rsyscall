@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import typing as t
 import os
+import signal
 import rsyscall.near
 
 # These are like segment ids.
@@ -282,3 +283,12 @@ async def epoll_ctl(task: Task, epfd: FileDescriptor, op: rsyscall.near.EpollCtl
                     fd: FileDescriptor, event: t.Optional[Pointer]=None) -> None:
     await rsyscall.near.epoll_ctl(task.sysif, task.to_near_fd(epfd), op, task.to_near_fd(fd),
                                   task.to_near_pointer(event) if event else None)
+
+async def prctl_set_pdeathsig(task: Task, signal: t.Optional[signal.Signals]) -> None:
+    if signal is not None:
+        await rsyscall.near.prctl(task.sysif, rsyscall.near.PrctlOp.SET_PDEATHSIG, signal)
+    else:
+        await rsyscall.near.prctl(task.sysif, rsyscall.near.PrctlOp.SET_PDEATHSIG, 0)
+
+async def setsid(task: Task) -> int:
+    return (await rsyscall.near.setsid(task.sysif))

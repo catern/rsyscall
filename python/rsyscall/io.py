@@ -891,6 +891,9 @@ class Path:
         self.task = task
         self.handle = handle
 
+    def with_task(self, task: Task) -> Path:
+        return Path(task, task.base.make_path_handle(self.handle))
+
     @property
     def pure(self) -> far.Path:
         return self.handle.far
@@ -1161,7 +1164,7 @@ class ProcessResources:
     def make_from_symbols(symbols: t.Mapping[bytes, far.Pointer]) -> ProcessResources:
         return ProcessResources(
             server_func=FunctionPointer(symbols[b"rsyscall_server"]),
-            persistent_server_func=FunctionPointer(symbols[b"rsyscall_server"]),
+            persistent_server_func=FunctionPointer(symbols[b"rsyscall_persistent_server"]),
             do_cloexec_func=FunctionPointer(symbols[b"rsyscall_do_cloexec"]),
             stop_then_close_func=FunctionPointer(symbols[b"rsyscall_stop_then_close"]),
             trampoline_func=FunctionPointer(symbols[b"rsyscall_trampoline"]),
@@ -1360,6 +1363,7 @@ class StandardTask:
             access_sock, remote_sock,
             self.task, thread_maker, self.process.server_func)
         await remote_sock.invalidate()
+        await far.prctl_set_pdeathsig(task.base, signal.SIGTERM)
         stdtask = StandardTask(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task,
@@ -1375,17 +1379,22 @@ class StandardTask:
         )
         return RsyscallThread(stdtask, thread)
 
-    async def fork_persistent(self, path: Path) -> t.Tuple[StandardTask, PersistentServer]:
+    async def fork_persistent(self, path: Path) -> t.Tuple[StandardTask, CThread, PersistentConnection, PersistentTransport]:
         listening_sock = await self.task.socket_unix(socket.SOCK_STREAM)
         await robust_unix_bind(path, listening_sock)
         await listening_sock.listen(1)
         [(access_sock, remote_sock)] = await self.make_async_connections(1)
         thread_maker = ThreadMaker(self.task, self.child_monitor, self.process)
-        task, thread = await spawn_rsyscall_persistent_server(
-            access_sock, remote_sock, listening_sock.handle,
+        epollfd = await self.task.epoll_create()
+        task, thread, persistent_connection, persistent_transport = await spawn_rsyscall_persistent_server(
+            access_sock, remote_sock, epollfd.handle,
+            path, listening_sock.handle,
             self.task, thread_maker, self.process.persistent_server_func)
         await remote_sock.invalidate()
-        ## allocate a bunch of resources in the new persistent server
+        await epollfd.handle.invalidate()
+        await listening_sock.handle.invalidate()
+
+        ## create the new persistent task
         epoller = await task.make_epoll_center()
         signal_block = SignalBlock(task, {signal.SIGCHLD})
         # TODO use an inherited signalfd instead
@@ -1406,11 +1415,7 @@ class StandardTask:
             stdout=self.stdout.borrow(task.base),
             stderr=self.stderr.borrow(task.base),
         )
-        listening_sock_handle = task.base.make_fd_handle(listening_sock.handle)
-        await listening_sock.handle.invalidate()
-        # TODO need to save many handles so we can restore on reconnect
-        persistent_server = PersistentServer(path, listening_sock_handle, stdtask)
-        return stdtask, persistent_server
+        return stdtask, thread, persistent_connection, persistent_transport
 
     async def unshare_files(self, going_to_exec=False) -> None:
         """Unshare the file descriptor table.
@@ -2205,20 +2210,54 @@ class PersistentConnection(base.SyscallInterface):
     """
     def __init__(self, rsyscall_connection: RsyscallConnection,
                  process: near.Process,
-                 activity_fd: far.FileDescriptor,
-                 infd: far.FileDescriptor, outfd: far.FileDescriptor) -> None:
+                 path: Path) -> None:
         self.rsyscall_connection = rsyscall_connection
         self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{process.id}")
         self.identifier_process = process
-        self.activity_fd = infd.near
-        # these are needed so that we don't accidentally close them when doing a do_cloexec_except
-        # gotta update these each time we reconnect
-        # TODO aaaaa
-        self.infd = infd
-        self.outfd = outfd
+        self.path = path
+        # initialized by store_remote_side_handles
+        self.infd: handle.FileDescriptor
+        self.outfd: handle.FileDescriptor
+        self.listening_fd: handle.FileDescriptor
+        self.epoll_fd: handle.FileDescriptor
+        self.activity_fd: near.FileDescriptor
+        self.task: handle.Task
+        # concurrency tracking stuff
         self.request_lock = trio.Lock()
         self.pending_responses: t.List[SyscallResponse] = []
         self.running: trio.Event = None
+
+    def store_remote_side_handles(self,
+                                  infd: handle.FileDescriptor,
+                                  outfd: handle.FileDescriptor,
+                                  listening_fd: handle.FileDescriptor,
+                                  epoll_fd: handle.FileDescriptor,
+                                  task: handle.Task,
+    ) -> None:
+        "We must call this with the remote side's used fds so we don't close them with GC"
+        self.infd = infd
+        self.outfd = outfd
+        self.listening_fd = listening_fd
+        self.epoll_fd = epoll_fd
+        self.activity_fd = self.epoll_fd.near
+        # hmmm I just need this so that I can make GC handles
+        self.task = task
+
+    async def reconnect(self, stdtask: StandardTask) -> None:
+        await self.rsyscall_connection.close()
+        [(access_sock, remote_sock)] = await stdtask.make_async_connections(1)
+        connected_sock = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+        self.path = self.path.with_task(stdtask.task)
+        await robust_unix_connect(self.path, connected_sock)
+        await memsys.sendmsg_fds(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
+                                 connected_sock.handle.far,
+                                 [remote_sock.far, remote_sock.far])
+        await remote_sock.invalidate()
+        fd_bytes = await connected_sock.read()
+        infd, outfd = memsys.intpair.unpack(fd_bytes)
+        self.rsyscall_connection = RsyscallConnection(access_sock, access_sock)
+        self.infd = self.task.make_fd_handle(near.FileDescriptor(infd))
+        self.outfd = self.task.make_fd_handle(near.FileDescriptor(outfd))
 
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
@@ -2784,62 +2823,43 @@ async def spawn_rsyscall_thread(
                     parent_task.pid_namespace)
     return new_task, cthread
 
+class PersistentResources:
+    syscall: PersistentConnection
+    transport: PersistentTransport
+
+    async def reconnect(self) -> None:
+        # perform connection
+        pass
+
 async def spawn_rsyscall_persistent_server(
         access_sock: AsyncFileDescriptor[ReadableWritableFile],
         remote_sock: handle.FileDescriptor,
+        epollfd: handle.FileDescriptor,
+        path: Path,
         listening_sock: handle.FileDescriptor,
         parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
-    ) -> t.Tuple[Task, CThread]:
+    ) -> t.Tuple[Task, CThread, PersistentConnection, PersistentTransport]:
     cthread = await thread_maker.make_cthread(
-        lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SIGHAND|lib.CLONE_SYSVSEM|signal.SIGCHLD,
-        function, remote_sock.near, remote_sock.near, listening_sock.near)
-    syscall = ChildConnection(
-        RsyscallConnection(access_sock, access_sock),
-        cthread.child_task,
-        cthread.futex_task)
+        (lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_IO|
+         lib.CLONE_SIGHAND|lib.CLONE_SYSVSEM|signal.SIGCHLD),
+        function, remote_sock.near, remote_sock.near, listening_sock.near, epollfd.near)
+    syscall = PersistentConnection(RsyscallConnection(access_sock, access_sock),
+                                   cthread.child_task.process.near, path)
     new_base_task = base.Task(syscall, cthread.child_task.process,
                               parent_task.fd_table, parent_task.address_space, parent_task.base.fs)
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
-    syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
+    remote_epoll_handle = new_base_task.make_fd_handle(epollfd)
+    remote_listening_handle = new_base_task.make_fd_handle(listening_sock)
+    syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle,
+                                      remote_listening_handle, remote_epoll_handle,
+                                      new_base_task)
+    tranposrt = PersistentTransport()
     new_task = Task(new_base_task,
-                    # We don't inherit the transport because it leads to a deadlock:
-                    # If when a child task calls transport.read, it performs a syscall in the child task,
-                    # then the parent task will need to call waitid to monitor the child task during the syscall,
-                    # which will in turn need to also call transport.read.
-                    # But the child is already using the transport and holding the lock,
-                    # so the parent will block forever on taking the lock,
-                    # and child's read syscall will never complete.
-                    parent_task.transport,
+                    parent_task.transport.inherit(new_base_task),
                     parent_task.allocator.inherit(new_base_task),
                     parent_task.sigmask.inherit(),
                     parent_task.pid_namespace)
-    return new_task, cthread
-
-@dataclass
-class PersistentServer:
-    path: Path
-    listening_sock_handle: handle.FileDescriptor
-    stdtask: StandardTask
-
-    async def spawn(self, stdtask: StandardTask) -> StandardTask:
-        # only call once the old task is dead.
-        [(access_sock, remote_sock)] = await stdtask.make_async_connections(1)
-        connected_sock = await stdtask.task.socket_unix(socket.SOCK_STREAM)
-        await robust_unix_connect(self.path, connected_sock)
-        await memsys.sendmsg_fds(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
-                                 connected_sock.handle.far,
-                                 [remote_sock.far, remote_sock.far])
-        await remote_sock.invalidate()
-        fd_bytes = await connected_sock.read()
-        infd, outfd = memsys.intpair.unpack(fd_bytes)
-        def to_far_fd(num: int) -> far.FileDescriptor:
-            return far.FileDescriptor(self.stdtask.task.base.fd_table, near.FileDescriptor(num))
-        syscall = RsyscallInterface(
-            RsyscallConnection(access_sock, access_sock),
-            self.stdtask.task.base.process.near,
-            to_far_fd(infd), to_far_fd(outfd))
-        self.stdtask.task.base.sysif = syscall
-        return self.stdtask
+    return new_task, cthread, syscall, transport
 
 async def rsyscall_exec(
         parent_stdtask: StandardTask,
@@ -2967,7 +2987,7 @@ async def run_socket_binder(
 
 async def ssh_bootstrap(
         parent_task: StandardTask,
-        ssh_command: SSHCommand,
+        ssh_host: SSHHost,
         # the local path we'll use for the socket
         local_socket_path: handle.Path,
         # the directory we're bootstrapping out of
@@ -2978,7 +2998,7 @@ async def ssh_bootstrap(
     local_data_path = Path(task, local_socket_path)
     # start bootstrap and forward local socket
     bootstrap_thread = await parent_task.fork()
-    bootstrap_child_task = await ssh_command.local_forward(
+    bootstrap_child_task = await ssh_host.command.local_forward(
         str(local_socket_path), (tmp_path_bytes + b"/data").decode(),
     ).args([f"cd {tmp_path_bytes.decode()}; ./bootstrap rsyscall"]).exec(bootstrap_thread)
     # TODO should unlink the bootstrap after I'm done execing.
@@ -3043,7 +3063,7 @@ async def ssh_bootstrap(
     new_process = far.Process(new_pid_namespace, near.Process(new_pid))
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                     new_process.near, remote_syscall_fd, remote_syscall_fd)
-    new_fs_information = far.FSInformation(new_pid, root=near.DirectoryFile(), cwd=near.DirectoryFile())
+    new_fs_information = far.FSInformation(new_pid, root=ssh_host.root, cwd=ssh_host.root)
     new_base_task = base.Task(new_syscall, new_process, new_fd_table, new_address_space, new_fs_information)
     handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
     new_transport = SocketMemoryTransport(async_local_data_sock, handle_remote_data_fd, trio.Lock())
@@ -3074,24 +3094,33 @@ async def ssh_bootstrap(
     return bootstrap_child_task, new_stdtask
 
 async def spawn_ssh(
-        task: StandardTask, ssh_command: SSHCommand,
+        task: StandardTask, ssh_host: SSHHost,
         local_socket_path: t.Optional[handle.Path]=None,
 ) -> t.Tuple[ChildProcess, StandardTask]:
     # we could get rid of the need to touch the local filesystem by directly
     # speaking the openssh multiplexer protocol. or directly speaking the ssh
     # protocol for that matter.
     if local_socket_path is None:
-        # we guess that the last argument of ssh command is the hostname. it
-        # doesn't matter if it isn't, this is just for human-readability.
-        guessed_hostname = ssh_command.arguments[-1].decode()
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        name = (guessed_hostname+random_suffix+".sock").encode()
+        name = (ssh_host.guess_hostname()+random_suffix+".sock").encode()
         path: handle.Path = task.filesystem.tmpdir/name
         local_socket_path = path
     socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
-    async with run_socket_binder(task, ssh_command) as tmp_path_bytes:
-        return (await ssh_bootstrap(task, ssh_command, local_socket_path, tmp_path_bytes))
+    async with run_socket_binder(task, ssh_host.command) as tmp_path_bytes:
+        return (await ssh_bootstrap(task, ssh_host, local_socket_path, tmp_path_bytes))
 
+@dataclass
+class SSHHost:
+    root: near.DirectoryFile
+    cwd: near.DirectoryFile
+    command: SSHCommand
+    async def ssh(self, task: StandardTask) -> t.Tuple[ChildProcess, StandardTask]:
+        return (await spawn_ssh(task, self))
+
+    def guess_hostname(self) -> str:
+        # we guess that the last argument of ssh command is the hostname. it
+        # doesn't matter if it isn't, this is just for human-readability.
+        return self.command.arguments[-1].decode()
 
 class RsyscallThread:
     def __init__(self,

@@ -38,6 +38,8 @@ class SYS(enum.IntEnum):
     mount = lib.SYS_mount
     waitid = lib.SYS_waitid
     setns = lib.SYS_setns
+    prctl = lib.SYS_prctl
+    setsid = lib.SYS_setsid
 
 class IdType(enum.IntEnum):
     PID = lib.P_PID # Wait for the child whose process ID matches id.
@@ -56,6 +58,9 @@ class UnshareFlag(enum.IntFlag):
     NEWUSER = lib.CLONE_NEWUSER
     NEWUTS = lib.CLONE_NEWUTS
     SYSVSEM = lib.CLONE_SYSVSEM
+
+class PrctlOp(enum.IntEnum):
+    SET_PDEATHSIG = lib.PR_SET_PDEATHSIG
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -263,3 +268,9 @@ async def mount(sysif: SyscallInterface, source: Pointer, target: Pointer,
 
 async def setns(sysif: SyscallInterface, fd: FileDescriptor, nstype: int) -> None:
     await sysif.syscall(SYS.setns, fd, nstype)
+
+async def prctl(sysif: SyscallInterface, option: PrctlOp, arg2: int, arg3: int=0, arg4: int=0, arg5: int=0) -> int:
+    return (await sysif.syscall(SYS.prctl, option, arg2, arg3, arg4, arg5))
+
+async def setsid(sysif: SyscallInterface) -> int:
+    return (await sysif.syscall(SYS.setsid))
