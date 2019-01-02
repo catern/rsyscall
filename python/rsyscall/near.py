@@ -249,6 +249,9 @@ async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: EpollCtlO
         event = 0 # type: ignore
     await sysif.syscall(SYS.epoll_ctl, epfd, op, fd, event)
 
+async def epoll_wait(sysif: SyscallInterface, epfd: FileDescriptor, events: Pointer, maxevents: int, timeout: int) -> int:
+    return (await sysif.syscall(SYS.epoll_wait, epfd, events, maxevents, timeout))
+
 async def chdir(sysif: SyscallInterface, path: Pointer) -> None:
     await sysif.syscall(SYS.chdir, path)
 

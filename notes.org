@@ -9328,3 +9328,7 @@ but instead just keep around the state.
    I guess the bootstrap stuff is left around. whatever.
 
    HM! need to stop creating a futex task for the persistent thread.
+** hmmm
+   hmmmmmmmmmmmmm it would be cool if we could rejoin the address space of something.
+
+   like, essentially, merge two tasks.

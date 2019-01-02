@@ -156,6 +156,12 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.setns(self.task.sysif, self.near, nstype)
 
+    async def epoll_wait(self, events: rsyscall.far.Pointer, maxevents: int, timeout: int) -> int:
+        self.validate()
+        return (await rsyscall.near.epoll_wait(self.task.sysif, self.near,
+                                               self.task.to_near_pointer(events), maxevents,
+                                               timeout))
+
 @dataclass
 class Root:
     file: rsyscall.near.DirectoryFile

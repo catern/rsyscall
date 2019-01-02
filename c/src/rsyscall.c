@@ -193,15 +193,14 @@ int rsyscall_server(const int infd, const int outfd)
     }
 }
 
-struct fdpair {
-    int fds[2];
-};
-
-static struct fdpair receive_fdpair(const int sock) {
+// hmmmmmmmmmmmmmmmmmmmm
+// I guess I'll just receive exactly four fds?
+// BAH OKAY i'll think about this.
+static void receive_fds(const int sock, int *fds, int n) {
     union {
         struct cmsghdr hdr;
-        char buf[CMSG_SPACE(sizeof(int) * 2)];
-    } cmsg = {};
+        char buf[CMSG_SPACE(sizeof(int) * n)];
+    } cmsg;
     char waste_data;
     struct iovec io = {
         .iov_base = &waste_data,
@@ -230,34 +229,34 @@ static struct fdpair receive_fdpair(const int sock) {
     if (cmsg.hdr.cmsg_type != SCM_RIGHTS) {
         err(1, "Control message has wrong type");
     }
-    struct fdpair pair;
-    memcpy(pair.fds, CMSG_DATA(&cmsg.hdr), sizeof(pair.fds));
-    return pair;
+    memcpy(fds, CMSG_DATA(&cmsg.hdr), sizeof(int) * n);
 }
 
 char hello_persist[] = "hello world, I am the persistent syscall server!\n";
 
-int rsyscall_persistent_server(int infd, int outfd, const int listensock, const int epfd)
+int rsyscall_persistent_server(int infd, int outfd, const int listensock)
 {
-    struct epoll_event readable = { .events = EPOLLIN, .data = {}};
     write(2, hello_persist, sizeof(hello_persist) -1);
     for (;;) {
-	if (epoll_ctl(epfd, EPOLL_CTL_ADD, infd, &readable) < 0) {
-	    err(1, "epoll_ctl(epfd=%d, ADD, infd=%d, EPOLLIN)", epfd, infd);
-	}
 	rsyscall_server(infd, outfd);
 	if (close(infd) < 0) err(1, "close(infd=%d)", infd);
 	if ((infd != outfd) && (close(outfd) < 0)) err(1, "close(outfd=%d)", outfd);
 
 	const int connsock = accept4(listensock, NULL, NULL, SOCK_CLOEXEC);
 	if (connsock < 0) err(1, "accept4(listensock)");
-	struct fdpair pair = receive_fdpair(connsock);
+        // read the number of fds we should expect
+        int nfds;
+	if (read(connsock, &nfds, sizeof(nfds)) != 8) err(1, "read(connsock, &nfds)");
+        // receive nfds
+        int fds[nfds];
+	receive_fds(connsock, fds, nfds);
 	// write new fd numbers back
 	// TODO this could be a partial write, whatever
-	if (write(connsock, pair.fds, sizeof(pair.fds)) < 0) err(1, "write(connsock)");
+	if (write(connsock, fds, sizeof(fds)) != sizeof(fds)) err(1, "write(connsock)");
 	// close now-useless connsock
 	if (close(connsock) < 0) err(1, "close(connsock=%d)", connsock);
-	infd = pair.fds[0];
-	outfd = pair.fds[1];
+        // the first two fds we received are our infd and outfd.
+	infd = fds[0];
+	outfd = fds[1];
     }
 }
