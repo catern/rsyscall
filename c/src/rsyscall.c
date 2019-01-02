@@ -239,14 +239,12 @@ int rsyscall_persistent_server(int infd, int outfd, const int listensock)
     write(2, hello_persist, sizeof(hello_persist) -1);
     for (;;) {
 	rsyscall_server(infd, outfd);
-	if (close(infd) < 0) err(1, "close(infd=%d)", infd);
-	if ((infd != outfd) && (close(outfd) < 0)) err(1, "close(outfd=%d)", outfd);
-
 	const int connsock = accept4(listensock, NULL, NULL, SOCK_CLOEXEC);
 	if (connsock < 0) err(1, "accept4(listensock)");
         // read the number of fds we should expect
         int nfds;
-	if (read(connsock, &nfds, sizeof(nfds)) != 8) err(1, "read(connsock, &nfds)");
+	// TODO this could be a partial read
+	if (read(connsock, &nfds, sizeof(nfds)) != sizeof(nfds)) err(1, "read(connsock, &nfds)");
         // receive nfds
         int fds[nfds];
 	receive_fds(connsock, fds, nfds);

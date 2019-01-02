@@ -307,14 +307,11 @@ class Task:
 
     async def make_epoll_center(self) -> EpollCenter:
         epfd = await self.epoll_create()
-        # TODO handle deallocating the epoll fd if later steps fail
         if self.syscall.activity_fd is not None:
             epoll_waiter = EpollWaiter(self, epfd.handle, None)
             epoll_center = EpollCenter(epoll_waiter, epfd.handle, self.transport, self.allocator)
-            other_activity_fd = self._make_fd(self.syscall.activity_fd.number, File())
-            # TODO we need to save this somewhere so it can be collected
-            epolled_other_activity_fd = await epoll_center.register(other_activity_fd.handle,
-                                                                    events=EpollEventMask.make(in_=True))
+            activity_fd = self.base.make_fd_handle(self.syscall.activity_fd)
+            epoll_waiter.update_activity_fd(activity_fd)
         else:
             # TODO this is a pretty low-level detail, not sure where is the right place to do this
             async def wait_readable():
@@ -1398,13 +1395,10 @@ class StandardTask:
         await listening_sock.listen(1)
         [(access_sock, remote_sock)] = await self.make_async_connections(1)
         thread_maker = ThreadMaker(self.task, self.child_monitor, self.process)
-        epollfd = await self.task.epoll_create()
-        task, thread, syscall = await spawn_rsyscall_persistent_server(
-            access_sock, remote_sock, epollfd.handle,
-            path, listening_sock.handle,
+        task, thread, syscall, listening_sock_handle = await spawn_rsyscall_persistent_server(
+            access_sock, remote_sock, listening_sock.handle,
             self.task, thread_maker, self.process.persistent_server_func)
         await remote_sock.invalidate()
-        await epollfd.handle.invalidate()
         await listening_sock.handle.invalidate()
 
         ## create the new persistent task
@@ -1428,6 +1422,8 @@ class StandardTask:
             stdout=self.stdout.borrow(task.base),
             stderr=self.stderr.borrow(task.base),
         )
+        persistent_server = PersistentServer(path, task, epoller.epoller, syscall,
+                                             listening_sock_handle)
         return stdtask, thread, persistent_server
 
     async def unshare_files(self, going_to_exec=False) -> None:
@@ -2840,11 +2836,14 @@ async def spawn_rsyscall_thread(
                     parent_task.pid_namespace)
     return new_task, cthread
 
+@dataclass
 class PersistentServer:
     path: Path
     task: Task
+    epoll_waiter: EpollWaiter
     syscall: RsyscallInterface
-    transport: SocketMemoryTransport
+    listening_sock: handle.FileDescriptor
+    transport: t.Optional[SocketMemoryTransport] = None
 
     async def _connect_and_send(self, stdtask: StandardTask, fds: t.List[far.FileDescriptor]) -> t.List[near.FileDescriptor]:
         connected_sock = await stdtask.task.socket_unix(socket.SOCK_STREAM)
@@ -2863,7 +2862,8 @@ class PersistentServer:
             raise Exception("can't reconnect while there are pending syscalls!")
         # TODO should also have the same check for transport, once we reify transport requests
         await self.syscall.rsyscall_connection.close()
-        await self.transport.local.aclose()
+        if self.transport is not None:
+            await self.transport.local.aclose()
         # TODO hmm how do we handle closing the remote side, hmm...
         # we can invalidate it here, but not close it.
         # we could do the same for infd/outfd actually, I guess?
@@ -2881,11 +2881,15 @@ class PersistentServer:
             stdtask, [syscall_sock.far, syscall_sock.far, data_sock.far])
         # update the syscall and transport with new connections
         # TODO it would be nice to be able to invalidate these immediately, and only then flush the closes afterwards.
-        cleanup_remote_fds = [self.syscall.infd, self.syscall.outfd, self.transport.remote]
+        cleanup_remote_fds = [self.syscall.infd, self.syscall.outfd]
+        if self.transport is not None:
+            cleanup_remote_fds.append(self.transport.remote)
         self.syscall.rsyscall_connection = RsyscallConnection(access_syscall_sock, access_syscall_sock)
         self.syscall.infd = self.task.base.make_fd_handle(infd)
         self.syscall.outfd = self.task.base.make_fd_handle(outfd)
-        transport = SocketMemoryTransport(access_syscall_sock, remote_data_sock, trio.Lock())
+        transport = SocketMemoryTransport(access_syscall_sock,
+                                          self.task.base.make_fd_handle(remote_data_sock),
+                                          trio.Lock())
         self.task.transport = transport
         self.transport = transport
         # close remote fds we are no longer using - can only do this here because we've
@@ -2896,21 +2900,18 @@ class PersistentServer:
 async def spawn_rsyscall_persistent_server(
         access_sock: AsyncFileDescriptor[ReadableWritableFile],
         remote_sock: handle.FileDescriptor,
-        epollfd: handle.FileDescriptor,
-        path: Path,
         listening_sock: handle.FileDescriptor,
         parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
-    ) -> t.Tuple[Task, CThread, RsyscallInterface]:
+    ) -> t.Tuple[Task, CThread, RsyscallInterface, handle.FileDescriptor]:
     cthread = await thread_maker.make_cthread(
         (lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_IO|
          lib.CLONE_SIGHAND|lib.CLONE_SYSVSEM|signal.SIGCHLD),
-        function, remote_sock.near, remote_sock.near, listening_sock.near, epollfd.near)
+        function, remote_sock.near, remote_sock.near, listening_sock.near)
     syscall = RsyscallInterface(RsyscallConnection(access_sock, access_sock),
-                                cthread.child_task.process.near, path)
+                                cthread.child_task.process.near, remote_sock.near)
     new_base_task = base.Task(syscall, cthread.child_task.process,
                               parent_task.fd_table, parent_task.address_space, parent_task.base.fs)
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
-    remote_epoll_handle = new_base_task.make_fd_handle(epollfd)
     remote_listening_handle = new_base_task.make_fd_handle(listening_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
@@ -2918,7 +2919,7 @@ async def spawn_rsyscall_persistent_server(
                     parent_task.allocator.inherit(new_base_task),
                     parent_task.sigmask.inherit(),
                     parent_task.pid_namespace)
-    return new_task, cthread, syscall
+    return new_task, cthread, syscall, remote_listening_handle
 
 async def rsyscall_exec(
         parent_stdtask: StandardTask,
@@ -3121,9 +3122,11 @@ async def ssh_bootstrap(
     new_pid_namespace = far.PidNamespace(new_pid)
     new_process = far.Process(new_pid_namespace, near.Process(new_pid))
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
-                                    new_process.near, remote_syscall_fd, remote_syscall_fd)
+                                    new_process.near, remote_syscall_fd.near)
     new_fs_information = far.FSInformation(new_pid, root=ssh_host.root, cwd=ssh_host.root)
     new_base_task = base.Task(new_syscall, new_process, new_fd_table, new_address_space, new_fs_information)
+    handle_remote_syscall_fd = new_base_task.make_fd_handle(remote_syscall_fd)
+    new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
     new_transport = SocketMemoryTransport(async_local_data_sock, handle_remote_data_fd, trio.Lock())
     new_task = Task(new_base_task, new_transport,
