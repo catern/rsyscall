@@ -9332,3 +9332,45 @@ but instead just keep around the state.
    hmmmmmmmmmmmmm it would be cool if we could rejoin the address space of something.
 
    like, essentially, merge two tasks.
+** hm different cwd on second ssh, reuse state from previous, hm
+   OK so I was thinking about persisting the ssh state to disk,
+   and reuse the previous bootstrap stuff on my next run.
+
+   But that's a bad idea:
+   it means I have to take care to make the bootstrap binary and process backwards compatible,
+   which is very annoying.
+   It just annoyingly ties the versions together - bad!
+
+   Well, it might not be too bad.
+   Anyway, this is something that we would only do if we absolutely have to;
+   and we don't have to right now, so we won't.
+
+   Also interesting might be connecting straight to the persistent process,
+   but I think that makes reconnection too distinct from initial bootstrap connection.
+   
+   OK so.
+
+   I guess I should use XDG_RUNTIME_DIR, actually.
+
+   Hmm should I make the socket directly in /tmp?
+
+   No yeah I should just, um, have a directory.
+
+   In XDG_RUNTIME_DIR with fallback to /run/user/$UID, then /var/run/user/$UID, then /tmp
+
+   xdg runtime dir is cleaned up by aging???
+
+   and LOGOUT?!?!?!?!?
+
+   ok so let's just do tmp
+
+   okay so. yes. we'll just.
+
+   we'll make a mkdtemp that.
+   oh yeah. we can just turn off the collection.
+   or, rather, just don't use async with mkdtemp, instead just mkdtemp and use it.
+
+   oh, urgh, um, clone_fs, how about that?
+   is it reset by exec???
+
+   am I sharing my cwd with my exec'd children???

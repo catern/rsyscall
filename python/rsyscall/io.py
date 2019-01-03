@@ -1495,6 +1495,7 @@ class TemporaryDirectory:
     async def cleanup(self) -> None:
         cleanup_thread = await self.stdtask.fork()
         async with cleanup_thread:
+            # TODO we need to unshare_fs here
             # TODO would be nice if unsharing the fs information gave us a cap to chdir
             await cleanup_thread.stdtask.task.chdir(self.parent)
             child = await cleanup_thread.execve(self.stdtask.filesystem.utilities.rm, ["rm", "-r", self.name])
@@ -2879,6 +2880,8 @@ class PersistentServer:
         [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await stdtask.make_async_connections(2)
         [infd, outfd, remote_data_sock] = await self._connect_and_send(
             stdtask, [syscall_sock.far, syscall_sock.far, data_sock.far])
+        await syscall_sock.invalidate()
+        await data_sock.invalidate()
         # update the syscall and transport with new connections
         # TODO it would be nice to be able to invalidate these immediately, and only then flush the closes afterwards.
         cleanup_remote_fds = [self.syscall.infd, self.syscall.outfd]
@@ -3123,7 +3126,8 @@ async def ssh_bootstrap(
     new_process = far.Process(new_pid_namespace, near.Process(new_pid))
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                     new_process.near, remote_syscall_fd.near)
-    new_fs_information = far.FSInformation(new_pid, root=ssh_host.root, cwd=ssh_host.root)
+    # the cwd is not the one from the ssh_host because we cd'd somewhere else as part of the bootstrap
+    new_fs_information = far.FSInformation(new_pid, root=ssh_host.root, cwd=near.DirectoryFile())
     new_base_task = base.Task(new_syscall, new_process, new_fd_table, new_address_space, new_fs_information)
     handle_remote_syscall_fd = new_base_task.make_fd_handle(remote_syscall_fd)
     new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
