@@ -32,13 +32,13 @@ nix_bin_bytes = b"/nix/store/flyhfw91kycrzmlx5v2172b3si4zc0xx-nix-2.2pre6526_9f9
 
 class TestIO(unittest.TestCase):
     def test_pipe(self):
-        async def test() -> None:
-            async with (await self.task.pipe()) as pipe:
+        async def test(stdtask: StandardTask) -> None:
+            async with (await stdtask.task.pipe()) as pipe:
                 in_data = b"hello"
                 await pipe.wfd.write(in_data)
                 out_data = await pipe.rfd.read(len(in_data))
                 self.assertEqual(in_data, out_data)
-        trio.run(test)
+        trio.run(self.runner, test)
 
     def test_recv_pipe(self) -> None:
         """Sadly, recv doesn't work on pipes
@@ -47,14 +47,14 @@ class TestIO(unittest.TestCase):
         messing with O_NONBLOCk stuff
 
         """
-        async def test() -> None:
-            async with (await self.task.pipe()) as pipe:
+        async def test(stdtask: StandardTask) -> None:
+            async with (await stdtask.task.pipe()) as pipe:
                 in_data = b"hello"
                 await pipe.wfd.write(in_data)
-                out_data = await memsys.recv(self.task.base, self.task.gateway, self.task.allocator,
-                                             pipe.rfd.handle.far, len(in_data), 0)
-                self.assertEqual(in_data, out_data)
-        trio.run(test)
+                with self.assertRaises(OSError):
+                    out_data = await memsys.recv(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
+                                                 pipe.rfd.handle.far, len(in_data), 0)
+        trio.run(self.runner, test)
 
     # def test_cat(self) -> None:
     #     async def test() -> None:
@@ -331,7 +331,7 @@ class TestIO(unittest.TestCase):
             async with thread1 as stdtask2:
                 thread2 = await stdtask2.spawn_exec()
                 async with thread2 as stdtask3:
-                    await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
+                    await self.do_async_things(stdtask3.epoller, stdtask3.task)
         trio.run(self.runner, test)
 
     def test_thread_nest(self) -> None:
@@ -396,7 +396,7 @@ class TestIO(unittest.TestCase):
 
     def test_ssh_persistent_thread_reconnect(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            async with (await stdtask.mkdtemp("persistent")) as path:
+            async with (await stdtask.mkdtemp("rsyscall_state")) as path:
                 async with ssh_to_localhost(stdtask) as host:
                     local_child, remote_stdtask = await host.ssh(stdtask)
                     # TODO need to have notion of "Host",
@@ -407,23 +407,24 @@ class TestIO(unittest.TestCase):
                     # probably.
                     # so, okay. SSHHost perhaps?
                     logger.info("about to fork")
-                    per_stdtask, thread, connection = await remote_stdtask.fork_persistent(path/"persist.sock")
-                    async with thread:
-                        await far.setsid(per_stdtask.task.base)
-                        # kill off the first ssh session
-                        await local_child.kill()
-                        local_child, remote_stdtask = await host.ssh(stdtask)
-                        # OK, so it is indeed non-deterministic.
-                        # await per_stdtask.unshare_files()
-                        # await connection.rsyscall_connection.close()
-                        # hmm. if the connection is down then...
-                        # probably the data connection is down too...
-                        # AAA ok so the data connection is down. how do we repair it?
-                        # I guess we can just return the Transport as well as the Syscall,
-                        # and have a reconnectable transport thing.
-                        await connection.reconnect(remote_stdtask)
-                        print("SBAUGH exiting")
-                        # await per_stdtask.exit(0)
+                    per_stdtask, thread, server = await remote_stdtask.fork_persistent(path/"persist.sock")
+                    logger.info("forked persistent, %s", thread.child_task.process.near)
+                    await server.make_persistent()
+                    await local_child.kill()
+                    local_child, remote_stdtask = await host.ssh(stdtask)
+                    # OK, so it is indeed non-deterministic.
+                    # await per_stdtask.unshare_files()
+                    # await connection.rsyscall_connection.close()
+                    # hmm. if the connection is down then...
+                    # probably the data connection is down too...
+                    # AAA ok so the data connection is down. how do we repair it?
+                    # I guess we can just return the Transport as well as the Syscall,
+                    # and have a reconnectable transport thing.
+                    await server.reconnect(remote_stdtask)
+                    print("SBAUGH exiting")
+                    # don't have to unshare because the only other
+                    # thing in the fd space was the original ssh task.
+                    await per_stdtask.exit(0)
         trio.run(self.runner, test)
 
     def test_thread_nest_exit(self) -> None:
@@ -446,17 +447,17 @@ class TestIO(unittest.TestCase):
                 await stdtask2.unshare_files()
                 thread3 = await stdtask2.fork()
                 async with thread3 as stdtask3:
-                    print("DOING UNSHARE")
+                    epoller = await stdtask3.task.make_epoll_center()
                     await stdtask3.unshare_files()
-                    print("UNSHARE DONE")
-                    await self.do_async_things(stdtask3.local_epoller, stdtask3.task)
+                    await self.do_async_things(epoller, stdtask3.task)
         trio.run(self.runner, test)
 
     def test_thread_async(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
             async with thread as stdtask2:
-                await self.do_async_things(stdtask2.local_epoller, stdtask2.task)
+                epoller = await stdtask2.task.make_epoll_center()
+                await self.do_async_things(epoller, stdtask2.task)
         trio.run(self.runner, test)
 
     def test_thread_exec(self) -> None:
@@ -471,15 +472,14 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
             async with thread as stdtask2:
-                sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, stdtask2.local_epoller, {signal.SIGINT})
+                # have to use an epoller for that specific task
+                epoller = await stdtask2.task.make_epoll_center()
+                sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, epoller, {signal.SIGINT})
                 print("epfd", stdtask.epoller.epfd)
                 await thread.thread.child_task.send_signal(signal.SIGINT)
                 orig_mask = await rsyscall.io.SignalBlock.make(stdtask.task, {signal.SIGINT})
-                data = await sigqueue.sigfd.read_nonblock()
-                print("read", data)
-                data = await sigqueue.sigfd.read_nonblock()
-                print("read", data)
-                data = await sigqueue.sigfd.read()
+                sigdata = await sigqueue.read()
+                self.assertEqual(sigdata.ssi_signo, signal.SIGINT)
         trio.run(self.runner, test)
 
     def test_ssh_basic(self) -> None:
@@ -770,20 +770,20 @@ class TestIO(unittest.TestCase):
             async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
                 task = stdtask.task
                 l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
-                await memsys.sendmsg_fds(task.base, task.gateway, task.allocator,
+                await memsys.sendmsg_fds(task.base, task.transport, task.allocator,
                                          l.handle.far, [l.handle.far])
-                fds = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator,
+                fds = await memsys.recvmsg_fds(task.base, task.transport, task.allocator,
                                                r.handle.far, 1)
                 print(fds)
         trio.run(test)
 
     def test_fork_exec(self) -> None:
-        async def test() -> None:
-            child_thread = await local_stdtask.fork()
-            sh = Command(local_stdtask.filesystem.utilities.sh, ['sh'], {})
+        async def test(stdtask: StandardTask) -> None:
+            child_thread = await stdtask.fork()
+            sh = Command(stdtask.filesystem.utilities.sh, [b'sh'], {})
             child_task = await sh.args(['-c', 'true']).exec(child_thread)
             await child_task.wait_for_exit()
-        trio.run(test)
+        trio.run(self.runner, test)
 
     # def test_pass_fd_thread(self) -> None:
     #     async def test() -> None:

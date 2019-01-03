@@ -9374,3 +9374,55 @@ but instead just keep around the state.
    is it reset by exec???
 
    am I sharing my cwd with my exec'd children???
+** hmm killing the futex thread
+   I guess I should have the futex thread set pdeathsig
+
+   or should the trampoline set it?
+
+   no the trampoline shouldn't set it. or should it. hm. huh. hrm.
+
+   the trampoline setting it would greatly increase my reliability. hmm...
+
+   also it would save me a call on each fork.
+
+   yeah let's do it in the trampoline and unset it in persist.
+
+   we'll have a detach call.
+
+   BAH ARGH
+   when something is stopped, it doesn't get sigterm.
+
+   HM. that's upsetting.
+   should we go to sigkill?
+
+   hmm ugh ugh UGH
+
+   yes let's go to sigkill.
+** unrelated point
+   datastructure servers so thoroughly outperform other things, blah.
+
+   it's kind of the same issue as with rsyscall:
+   i'm providing a model where you can access everything directly from a single place,
+   which is costly but more expensive.
+
+   for performance, we should have a datastructure server,
+   where you just send your request and get back a response,
+   instead of loading the datastructure into local memory and operating on it,
+   which is insane.
+** so upgrades
+   so it would be cooler to, instead of persisting the thing to disk,
+   just pass the persistent connection object and whatever, to the next thing in the chain,
+   that is, to say the next upgraded version of the thing,
+   and then unload the old code.
+
+   basically I guess I want the typechecking, hmm.
+
+   like.
+
+   I keep around the type of the old version's state bundle,
+   and I have an entry point that takes that state bundle.
+
+   (like how I have a main function which takes nothing)
+
+   and it can get more stuff it needs through effects I guess - prompting the user, whatever.
+

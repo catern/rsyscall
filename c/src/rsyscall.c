@@ -236,10 +236,14 @@ char hello_persist[] = "hello world, I am the persistent syscall server!\n";
 
 int rsyscall_persistent_server(int infd, int outfd, const int listensock)
 {
+    signal(SIGPIPE, SIG_IGN);
     write(2, hello_persist, sizeof(hello_persist) -1);
     for (;;) {
 	rsyscall_server(infd, outfd);
+        if (shutdown(infd, SHUT_RDWR) < 0) err(1, "shutdown(infd, SHUT_RDWR)");
+        if (shutdown(outfd, SHUT_RDWR) < 0) err(1, "shutdown(outfd, SHUT_RDWR)");
 	const int connsock = accept4(listensock, NULL, NULL, SOCK_CLOEXEC);
+
 	if (connsock < 0) err(1, "accept4(listensock)");
         // read the number of fds we should expect
         int nfds;

@@ -311,7 +311,7 @@ class Task:
             epoll_waiter = EpollWaiter(self, epfd.handle, None)
             epoll_center = EpollCenter(epoll_waiter, epfd.handle, self.transport, self.allocator)
             activity_fd = self.base.make_fd_handle(self.syscall.activity_fd)
-            epoll_waiter.update_activity_fd(activity_fd)
+            await epoll_waiter.update_activity_fd(activity_fd)
         else:
             # TODO this is a pretty low-level detail, not sure where is the right place to do this
             async def wait_readable():
@@ -730,8 +730,10 @@ class EpollWaiter:
                     received_events = await pending.receive()
                     self.pending_epoll_wait = None
                 for event in received_events:
-                    queue = self.number_to_queue[event.data]
-                    queue.send_nowait(event.events)
+                    # TODO would be nice to just send these to a "devnull" queue instead...
+                    if event.data != self.activity_fd_data:
+                        queue = self.number_to_queue[event.data]
+                        queue.send_nowait(event.events)
             finally:
                 self.running_wait = None
                 running_wait.set()
@@ -1373,7 +1375,6 @@ class StandardTask:
             access_sock, remote_sock,
             self.task, thread_maker, self.process.server_func)
         await remote_sock.invalidate()
-        await far.prctl_set_pdeathsig(task.base, signal.SIGTERM)
         stdtask = StandardTask(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task,
@@ -1551,7 +1552,11 @@ class SignalQueue:
 
     async def read(self) -> t.Any:
         data = await self.sigfd.read()
-        return ffi.cast('struct signalfd_siginfo*', ffi.from_buffer(data))
+        # lol, have to do this because it seems that ffi.cast drops the reference to the backing buffer.
+        dest = ffi.new('struct signalfd_siginfo*')
+        src = ffi.cast('struct signalfd_siginfo*', ffi.from_buffer(data))
+        ffi.memmove(dest, src, ffi.sizeof('struct signalfd_siginfo'))
+        return dest
 
     async def close(self) -> None:
         await self.signal_block.close()
@@ -2839,6 +2844,36 @@ async def spawn_rsyscall_thread(
 
 @dataclass
 class PersistentServer:
+    """The tracking object for a task which can be made to live on after the main process exits.
+
+    The model we currently use for this is:
+    1. Create this can-be-persistent task
+    2. Do a bunch of things in that task, allocating whatever resources
+    3. Call make_persistent to make the task actually persistent
+    4. Crash or disconnect, and call reconnect to reconnect.
+
+    It would be better for the model to be:
+    1. Do a bunch of things in whatever task you like, allocating whatever resources
+    2. Create an immediately persistent task which inherits those resources
+    3. Crash or disconnect, and call reconnect to reconnect.
+
+    However, the major obstacle is child processes. Child processes can't be inherited to a new
+    child task, much less passed around between unrelated tasks like file descriptors can.
+
+    CLONE_THREAD allows creating a new child task which can wait on the child processes of the
+    parent; however, CLONE_THREAD also does a bunch of other stuff which is undesirable. Among other
+    things, CLONE_THREAD tasks:
+    - don't send SIGCHLD when exiting so they can't be waited on without dedicating a thread to block in wait
+    - don't leave a zombie when they die
+    - block several unshare and setns operations
+    - complicate signals and many other system calls
+
+    While CLONE_THREAD could allow the better model for persistent tasks, it comes with a host of
+    other disadvantages and complexities, so we're just biting the bullet and accepting the worse
+    model. Hopefully some new functionality might come along which allows inheriting or moving child
+    processes without these disadvantages.
+
+    """
     path: Path
     task: Task
     epoll_waiter: EpollWaiter
@@ -2857,6 +2892,10 @@ class PersistentServer:
         remote_fds = [near.FileDescriptor(i) for i, in struct.iter_unpack('I', fd_bytes)]
         await connected_sock.aclose()
         return remote_fds
+
+    async def make_persistent(self) -> None:
+        await far.setsid(self.task.base)
+        await far.prctl_set_pdeathsig(self.task.base, None)
 
     async def reconnect(self, stdtask: StandardTask) -> None:
         if self.syscall.pending_responses:
@@ -3015,7 +3054,6 @@ async def run_socket_binder(
 ) -> t.AsyncGenerator[bytes, None]:
     stdout_pipe = await task.task.pipe()
     async_stdout = await AsyncFileDescriptor.make(task.epoller, stdout_pipe.rfd)
-    # TODO I should have this process set PDEATHSIG so that even if we hard crash, it will exit too
     thread = await task.fork()
     bootstrap_executable = await thread.stdtask.task.open(thread.stdtask.filesystem.rsyscall_bootstrap_path, os.O_RDONLY)
     stdout = thread.stdtask.task.base.make_fd_handle(stdout_pipe.wfd.handle)

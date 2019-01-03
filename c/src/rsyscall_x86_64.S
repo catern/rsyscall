@@ -1,4 +1,6 @@
+#define __ASSEMBLY__
 #include <sys/syscall.h>
+#include <asm/signal.h>
 
 .globl rsyscall_raw_syscall
 rsyscall_raw_syscall:
@@ -12,6 +14,11 @@ rsyscall_raw_syscall:
 
 .globl rsyscall_trampoline
 rsyscall_trampoline:
+	// call prctl(PR_SET_PDEATHSIG, SIGTERM) so we die when our parent does
+	movq $1, %rdi
+        movq $SIGKILL, %rsi
+	movq $__NR_prctl, %rax
+	syscall
 	// load argument registers from the stack
 	pop %rdi
         pop %rsi
@@ -41,7 +48,7 @@ rsyscall_futex_helper:
 	syscall
 	// SIGSTOP myself
 	movq %rax, %rdi
-        movq $19, %rsi
+        movq $SIGSTOP, %rsi
 	movq $__NR_tkill, %rax
 	syscall
 	// futex(futex_address, FUTEX_WAIT, futex_value)
