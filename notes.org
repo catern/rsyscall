@@ -9425,4 +9425,22 @@ but instead just keep around the state.
    (like how I have a main function which takes nothing)
 
    and it can get more stuff it needs through effects I guess - prompting the user, whatever.
+** blah upgrades
+   blah blah
+   blah
 
+   let's um.
+** operator intervention   
+   OK so we need to be able to do all the things,
+   manually.
+
+   Every part of this script must be possible to do manually.
+   Right?
+   That's what we can do with the shell after all.
+
+   I *guess* that means I need a REPL. Hmm.
+
+   I want to be integrated with Unix.
+   man pages and usable from the shell and all that. hum.
+
+   hmm.
