@@ -9430,6 +9430,15 @@ but instead just keep around the state.
    blah
 
    let's um.
+** manual intervention
+   typical system administration and operation of a distributed system often involves manual intervention to debug and fix bugs
+   people go in and type shell commands and mutate the state of the system.
+   in my language-based Linux-focused distributed system library,
+   I guess I need to support the same ability, which is tricky to do robustly...
+
+   there are two approaches I guess:
+   I could provide a REPL so that people can interact through my library.
+   Or I could allow people to just mutate things through ordinary shells.
 ** operator intervention   
    OK so we need to be able to do all the things,
    manually.
@@ -9444,3 +9453,16 @@ but instead just keep around the state.
    man pages and usable from the shell and all that. hum.
 
    hmm.
+*** notions
+    I could have programs callable from bash which connect to the persistent server and do things.
+
+
+    I could do fancier things with 
+
+    ummmmmmmmmmmmmmmmmmmmm
+
+    everything has to be manually doable
+
+i could have every syscall be doable from a bash commmand thingy
+
+i could set up a task then run some other task um
