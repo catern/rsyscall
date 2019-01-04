@@ -9466,3 +9466,85 @@ but instead just keep around the state.
 i could have every syscall be doable from a bash commmand thingy
 
 i could set up a task then run some other task um
+*** i could just
+    go ahead and
+
+    use an async REPL
+
+    but blah, I do want operators to be able to intervene with a *shell*.
+
+    hmm.
+    tampering with a running process - is it a good idea?
+
+    what if we support this in the same way as we support upgrades?
+
+    we stop the thing, tamper with it, and restart it?
+
+    that allows for nice straightforward stuff.
+
+    what about the scenario where an exception is thrown?
+
+    maybe we just have conditions?
+*** modeling
+    how do we model operator intervention
+
+    blah
+*** unix modularity things
+    hmm and I don't like the notion of having to,
+    be very careful about throwing an exception because it might cause others to break.
+
+    hhhhhhhhhhhhhhhhhhhhhhhhhhh
+    yeah I need to figure out a way to make all this compatible with traditional unix I think
+
+    not just on the bottom-end, but also on the top-end.
+
+    we are already runnable easily I guess.
+    and the notion would be, just restart it when something goes wrong;
+    and we can debug it by looking at the filesystem and at the logs and fixing things.
+
+    hmm that's all true and I guess it works.
+
+    maybe it's fine.
+
+    but, yeah, a monolithic server that does everything in one process, which needs to stay up,
+    is a bit scary isn't it.
+
+    well... the resources it maintains are persistent, so we can restart without problems...
+
+    the issue of a fault domain can be solved by putting things which need to be up in a separte process...
+
+    then the monolithic process is just an asynchronous supervisor ("remote systemd")
+    which doesn't need to be running all the time.
+
+    but...
+    this doesn't solve the problem of mutating things
+
+    okay, what if we just bring up all the objects and connections and things,
+    but not the main monitoring process that watches for events and handles them?
+
+    then we can mutate those states?
+    then start the stuff?
+
+    this is like the idea of mutating the state while the process is stopped.
+
+    so yeah the notion is that we can mutate the state and then start the actual logic running.
+
+    so, we solve the problem of "big and monolithic" with, making it natural to put things into different fault domains,
+    i.e., into separate processes which are kept up when we the supervisor crash.
+
+    we *can* do anything in the supervisor, but we shouldn't, because it makes operation harder,
+    because it increases the amount of stuff that is only inside the supervisor and can't be easily interacted with.
+
+    I guess the supervisor is a single running task (possibly starting a bunch of subtasks),
+    which doesn't start any processes or anything, but rather just starts monitoring for events and responding to them?
+
+    hmm.
+
+    i guess that's what anything does...
+
+    so the supervisor contains everything that isn't critical to continued operation, is that the idea?
+    and we move things out of the supervisor as we want to improve reliability?
+
+    but the supervisor has a bunch of state with which it monitors the other things;
+    but if we wanted other things to be able to autonomously recover, we can put the state under those other things.
+
