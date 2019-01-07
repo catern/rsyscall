@@ -9547,4 +9547,69 @@ i could set up a task then run some other task um
 
     but the supervisor has a bunch of state with which it monitors the other things;
     but if we wanted other things to be able to autonomously recover, we can put the state under those other things.
+**** unrelated idea
+     manual commands and shell commands should have a typechecker and linter
+**** hmm maybe I just need a UI?
+     like maybe the supervisor should just support a UI,
+     wherein I can, tweak things.
 
+     like... a REPL?
+
+     hmm. that's an interesting idea. then I wouldn't need this write-out-state ability, right? hmm though I still need the upgrade ability.
+
+     actually what if we don't worry about preserving state when upgrading? we just shutdown everything and come back up with all new state.
+
+     that can be fine in my use cases.
+
+     hmm. so then the supervisor just keeps running I guess. but how do I operate on things while it runs?
+
+
+     hmNmnmNMnm
+
+     I guess from one point of view I can just have the supervisor itself *be* the UI for controlling this whole thing. that makes some interesting sense right?
+
+
+     this can be a command line tool
+
+     hmm notion: isn't what we want just a debugger?
+     like we are desiring, to stop everything, and change some variables, and resume.
+     hmmm.
+
+     hmm that's tricky
+
+     what if I just cancel individual python-level tasks and mess with their state and restart them
+**** aha
+     intervention just happens through throwing/setting/whatevering a condition like in common lisp,
+     so that if there is some exception, an operator can intervene at that point
+
+     good!
+     so that solves the operator intervention problem, and also the problem of allowng just one component to fail without bringing down the whole thing.
+
+     now we need to solve the partial upgrade problem.
+
+     an upgrade is kind of like another kind of intervention: something is wrong but the script doesn't realize it,
+     so we need to interrupt it and change things around.
+
+     perhaps then all we need is a functionality to interrupt some component,
+     causing it to artificially fail,
+     giving us the ability to modify it.
+
+     though this is weird
+     if we interrupt it, and then get a REPL - how do we automate upgrades?
+     we want to write a program which interrupts it and drives some upgrade with the REPL
+     I guess injecting code.
+
+     which is weird!
+     it's like little spiders crawling all over the outside of our program, messin' with it
+
+     okay yeah
+
+     hmm well handlers are like things from the above program anyway
+
+     maybe we could find a way to set a handler to something else?
+
+     like maybe a command to say, set this handler to this thing.
+**** okay
+     regardless of what else,
+     we need to make an async repl.
+     so that's my next step.
