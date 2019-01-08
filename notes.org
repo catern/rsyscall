@@ -9613,3 +9613,74 @@ i could set up a task then run some other task um
      regardless of what else,
      we need to make an async repl.
      so that's my next step.
+
+     To support calling "return" from the REPL,
+     we can wrap the code in a function I guess,
+     and then throw a sentinel at the end of the function
+     so we know that we fell through rather than returning early.
+     
+     We could return a sentinel instead.
+     But also in general I guess we want to catch exceptions thrown by the REPL code.
+
+     Because we want to return control to the REPL rather than abort early.
+     Since people might make typos...
+
+     If someone really wants to throw an exception out, I guess we can support some kind of wrapped throw.
+     raise FromREPL(my_exception)
+**** parsing
+     okay so I guess we'll use a hack where we make a CommandCompiler
+
+     which is overloaded
+
+     hmm
+
+     okay so 
+
+     how do we get the from __future__ import things?
+
+     do we need to specially detect it?
+
+     when we wrap everything with async def, from __future__ import is not valid.
+
+     hmmmmmmmmmmmmmmmmmmmmmMMMMMMMMMMMM
+
+     let's just forget about from __future__.
+
+     hmm we're wrapping in a function which is good because we want to support return too
+
+     okay so the local scope thing can be dealt with by,
+     putting yet more magic stuff inside the function:
+     something which set the locals to a passed in dictionary.
+
+     hmm.
+     but this will cause "global foo\nfoo = 3" to not work.
+
+     oh I guess it works by default, hm.
+
+     conceptually, what are we trying to do?
+
+     oh hmm I guess we can do, like...
+
+     exec to create the function,
+     then directly run it.
+
+     ummm
+
+     we could, maybe, instead...
+
+     ok so we have an expression that contains awaits
+
+     all that stuff needs to be wrapped inside an async def, so we can get the awaitable,
+     and then await on the awaitable.
+
+     let's do the locals thing I guess hmm
+
+     ah, I see, exec and eval are equivalent.
+
+     god this ipython code is trash
+
+     okay so let's just save and restore the locals, that's easy enough.
+
+     is there some way we can, like, do this stuff inside a function scope that we genuinely don't leave?
+
+     I guess we can just locals().update maybe

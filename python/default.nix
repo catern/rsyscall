@@ -10,6 +10,7 @@ buildPythonPackage {
 pytest ];
   buildInputs = [ pkgs.openssh ];
   propagatedBuildInputs = [ (import ../c)
-      trio cffi pkgconfig python-prctl pkgs.nginx ];
+      trio cffi pkgconfig python-prctl pkgs.nginx typeguard
+  ];
 }
 
