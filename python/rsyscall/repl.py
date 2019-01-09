@@ -1,29 +1,74 @@
+"""A cool async REPL and astcodeop thing.
+
+This lacks functionality equivalent to codeop.Compile or
+codeop.CommandCompiler, because the AST object returned from
+compile(ONLY_AST) doesn't expose the information to us about what
+__future__ statements the compile process has seen. To properly
+implement those classes, either the return value of compile(ONLY_AST)
+needs to contain that information, or we need to reimplement the
+simple __future__ statement scanner contained in the Python core.
+
+"""
 import typeguard
 import ast
 import typing as t
 import codeop
+import ast
+import __future__
 
-def compile_await(self):
+import trio
+
+def _ast_compile(source, filename, symbol):
+    return compile(source, filename, symbol, ast.PyCF_ONLY_AST|codeop.PyCF_DONT_IMPLY_DEDENT)
+
+def ast_compile_command(source, filename="<input>", symbol="single"):
+    """Like codeop.compile_command, but returns an AST instead.
+
+    """
+    return codeop._maybe_compile(_ast_compile, source, filename, symbol)
+
+def ast_compile_interactive(source: str) -> t.Optional[ast.Interactive]:
+    return codeop._maybe_compile(_ast_compile, source, "<input>", "single")
+
+class _InternalContinueRunning(Exception):
     pass
 
-def maybe_compile(source, filename="<input>", symbol="single") -> t.Any:
-    comp = codeop.CommandCompiler()
-    comp.compiler = None
+_wrapper_name = "__internal_async_wrapper__"
+_wrapper = ast.parse(f"""
+async def {_wrapper_name}(__local_vars__):
+    locals().update(__local_vars__)
+    try:
+        pass
+    finally:
+        __local_vars__.update(locals())
+    raise _InternalContinueRunning
+""", filename="<internal_wrapper>", mode="single")
 
-class ASTCompile:
-    """Instances of this class behave much like the built-in compile
-    function, but if one is used to compile text containing a future
-    statement, it "remembers" and compiles all subsequent program texts
-    with the statement in force."""
-    def __init__(self):
-        self.flags = PyCF_DONT_IMPLY_DEDENT
+def compile_to_async_def(astob: ast.Interactive) -> t.Callable[[t.Dict[str, t.Any]], t.Awaitable]:
+    """Compile this AST, wrapping it in an async function so that it may contain await statements
 
-    def __call__(self, source, filename, symbol):
-        codeob = compile(source, filename, symbol, self.flags, 1)
-        for feature in _features:
-            if codeob.co_flags & feature.compiler_flag:
-                self.flags |= feature.compiler_flag
-        return codeob
+    The returned async function takes a dictionary to use as its
+    locals, which it updates at the end of the function.
+
+    The async function also raises _InternalContinueRunning at the
+    end, so that calling code can tell if the wrapped code returned.
+
+    """
+    # replace the body of the try in the wrapper with the passed-in ast object's body
+    _wrapper.body[0].body[1].body = astob.body
+    local_vars = {}
+    exec(compile(_wrapper, '<input>', 'single'), {
+        '__builtins__': __builtins__,
+        '_InternalContinueRunning': _InternalContinueRunning,
+    }, local_vars)
+    return local_vars[_wrapper_name]
+
+async def read_and_evaluate(source: str, local_vars={}) -> t.Optional[t.Any]:
+    astob = ast_compile_interactive(source)
+    if astob is None:
+        raise Exception("incomplete!")
+    afunc = compile_to_async_def(astob)
+    return (await afunc(local_vars))
 
 class PureREPL:
     def add_input(self, data: bytes) -> t.Optional[bytes]:
