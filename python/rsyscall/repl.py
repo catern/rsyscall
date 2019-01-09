@@ -38,14 +38,19 @@ class IncrementalParser:
     def __init__(self) -> None:
         self.buf: str = ""
 
-    def add(self, data: str) -> t.List[ast.Interactive]:
-        ret = []
+    def add(self, data: str) -> t.List[t.Union[ast.Interactive, Exception]]:
+        ret: t.List[t.Union[ast.Interactive, Exception]] = []
         for line in data.split('\n'):
             self.buf += line + '\n'
-            astob = ast_compile_interactive(self.buf)
-            if astob is not None:
+            try:
+                astob = ast_compile_interactive(self.buf)
+            except Exception as e:
                 self.buf = ""
-                ret.append(astob)
+                ret.append(e)
+            else:
+                if astob is not None:
+                    self.buf = ""
+                    ret.append(astob)
         return ret
 
 def without_co_newlocals(code: types.CodeType) -> types.CodeType:
@@ -160,11 +165,27 @@ class PureREPL:
         self.parser = IncrementalParser()
         self.global_vars: t.Dict[str, t.Any] = {}
 
-    async def add(self, data: str) -> t.List[Result]:
-        ret = []
-        for astob in self.parser.add(data):
-            result = await eval_single(astob, self.global_vars)
-            ret.append(result)
+    async def add(self, data: str) -> t.List[t.Union[Result, Exception]]:
+        """Add some data to the REPL buffer and evaluate the ASTs parsed from it.
+
+        Returns a list containing a Result for each time we were able to parse out and
+        evaluate an AST, and an Exception for each time we had a SyntaxError or other
+        issue.
+
+        """
+        ret: t.List[t.Union[Result, Exception]] = []
+        for ast_or_exn in self.parser.add(data):
+            if isinstance(ast_or_exn, Exception):
+                ret.append(ast_or_exn)
+            elif isinstance(ast_or_exn, ast.Interactive):
+                try:
+                    result = await eval_single(astob, self.global_vars)
+                except Exception as e:
+                    ret.append(e)
+                else:
+                    ret.append(result)
+            else:
+                raise Exception("bad value returned from parser", ast_or_exn)
         return ret
 
 # ok so now we just need to, um.
@@ -194,29 +215,24 @@ class PureREPL:
 # so if I split it by line myself, then this works.
 # but if I just send in raw data...
 # then I get back a stream of...
-# Results, and SyntaxErrors
-# I guess that could be fine.
-# ugh no there are other exceptions I can get too
-# ideally then I'd get a stream of results and syntaxerrors, hm.
-# maybe, I'd call add,
-# then I'd call pump to get results until there's nothing left.
-# hmm.
-# we could character-buffer, but that would cause problems - we'd get incomplete expressions.
-# users expect line-buffering.
-
-# okay what if we internally handled the exception and printed it?
-# blagh urgh ack
-# okay what if we just cleared the buffer on exception and returned that exception up as part of the list?
-
-# wait um, how do we know when to prompt for more?
-# oh if we aren't line-buffering, we don't know how to
-# ummmmmmmmm
-class AsyncREPL:
-    pass
+# Results, and Exceptions
+# ok so we just: read from input,
+# send it to add,
+# and for each result or syntax error we get back,
+# print the result or syntax error, and '\n$'.
 
 async def repl(locals, request_message, wanted_type: t.Type) -> t.Any:
     await print(request_message)
+    repl = PureREPL()
     while True:
+        data = await read()
+        for result_or_exn in await repl.add(data):
+            if isinstance(result_or_exn, Result):
+                # case on the result to decide what to do
+                pass
+            elif isinstance(result_or_exn, Exception):
+                # print this syntax error
+                pass
         try:
             ret = await read_and_evaluate()
         except ContinueRunning:
