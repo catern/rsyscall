@@ -56,20 +56,20 @@ def without_co_newlocals(code: types.CodeType) -> types.CodeType:
 
     """
     return types.CodeType(
-        code.co_argcount, 
+        code.co_argcount,
         code.co_kwonlyargcount,
-        code.co_nlocals, 
-        code.co_stacksize, 
+        code.co_nlocals,
+        code.co_stacksize,
         code.co_flags & ~inspect.CO_NEWLOCALS,
-        code.co_code, 
+        code.co_code,
         code.co_consts,
-        code.co_names, 
-        code.co_varnames, 
-        code.co_filename, 
-        code.co_name, 
-        code.co_firstlineno, 
-        code.co_lnotab, 
-        code.co_freevars, 
+        code.co_names,
+        code.co_varnames,
+        code.co_filename,
+        code.co_name,
+        code.co_firstlineno,
+        code.co_lnotab,
+        code.co_freevars,
         code.co_cellvars
     )
 
@@ -85,7 +85,7 @@ def compile_to_awaitable(astob: ast.Interactive,
     - If the AST calls return, then a value is returned from the awaitable.
     - If the AST raises an exception, then the awaitable raises that exception.
     - If the AST neither returns a value nor raises an exception, then _InternalResult is
-      raised. 
+      raised.
     - If the last statement in the AST is an expression, then on the _InternalResult
       exception, is_expression is set and value contains the value of the expression.
     - If the last statement in the AST is not an expression, then on the _InternalResult
