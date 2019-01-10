@@ -9686,3 +9686,62 @@ i could set up a task then run some other task um
      I guess we can just locals().update maybe
 
      what would be nice is if we could define a function, and then get it returned to us.
+* human handler thing
+  we'll store it in a dynvar.
+
+  it'll have a list of things blocking in it, but only one thread.
+
+  we'll, I guess, make its scope closer when um, we, um,
+  do some kind of component thing.
+
+  we can have a with, which does a barrier off of a component.
+  it both creates a new component scoping thing, nesting the human handler thing,
+  and also catches exceptions and sends them to the human handlers.
+** thing
+  ok so.
+
+  we'll have this thing and we'll connect to this thing with a standalone tool.
+
+  easy, good, simple.
+
+  i'll write a command line tool I guess at first
+
+  then add emacs support.
+
+  actually let's just have emacs invoke the command line tool, I suppose.
+  easier.
+
+  OK so yes.
+
+  human delegater, and tool.
+** hmm
+   But wouldn't it make more sense to just have this stuff be,
+   directly in the terminal that we start the script in?
+
+   But, well, we do need to have multiplexing I guess. And I don't want to handle that myself.
+
+   Well... if we started the script under the multiplexer... hm, that's kinda gross.
+
+   we want the script to do everything, including have the UI.
+
+   hmm.
+
+   well, we probably aren't going to, like, have the script start your browser or anything.
+
+   it provides an HTTP server interface that you connect to.
+
+   and I guess we'll have the same thing for terminals?
+
+   I guess we can provide both the HTTP server and terminal interface, and things connect to that, hmm...
+
+   hmm it really sounds like having a lisp machine interface, AKA emacs, would be nice.
+
+   because then we could just call functions to create buffers and talk to the toplevel aka the user.
+
+   hmm. tricky.
+
+   our entire world would be in one place.
+
+   we'd be able to send a notification directly to the user.
+
+   which is good...

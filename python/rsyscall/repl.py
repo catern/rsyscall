@@ -70,7 +70,7 @@ def without_co_newlocals(code: types.CodeType) -> types.CodeType:
         code.co_consts,
         code.co_names,
         code.co_varnames,
-        code.co_filename,
+        code.co_filename if code.co_filename is not None else "<without_co_newlocals>",
         code.co_name,
         code.co_firstlineno,
         code.co_lnotab,
@@ -232,7 +232,7 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
     async def print(*args):
         await write(" ".join([str(arg) for arg in args]).encode())
     repl = PureREPL()
-    repl.global_vars.update(initial_vars)
+    repl.global_vars.update({'print':print, **initial_vars})
     while True:
         raw_data = await read()
         data = raw_data.decode()

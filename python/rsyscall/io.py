@@ -3488,9 +3488,61 @@ async def nix_deploy(
 
 import rsyscall.repl
 
-async def run_repl(readfd: FileDescriptor[ReadableFile],
-                   writefd: FileDescriptor[WritableFile],
+# hmm we can't make stdin/stdout async. hm. hm.
+# HM hm hm what a drag.
+# having a REPL that is concurrent with the other stuff is tricky. because it's hard to make terminals concurrent.
+# h m m.
+# very frustrating. hm.
+# ok so if we just instead force some kinda client thing, instead of directly working with stdin/stdout/stderr?
+# maybe that's a good idea?
+# hmm, mostly we'll be wanting to operate on the localhost anyway.
+# we do want to support multiple REPLs in multiple places in the task tree though, hm.
+# blah. hm.
+# what's a nice clean way of handling it? the fact that we want to start a REPL,
+# in a simple way?
+# I guess someone can sit on connecting to a Unix socket we have open, and we give them the REPL when they connect?
+# or, no, that's hacky.
+
+# what if, hm.
+# we have the management interface,
+# and it has a simple protocol where when some REPL starts, we send the fds and the info over.
+# that's complicated though, hm.
+# so, we have some fds, which one end of which, um, are probably in the runtime task,
+# but maybe are in a remote task and transported to the runtime, or whatever
+# and um, we want to move them around. hmm.
+# well, so, we could put the other ends of the REPL fds anywhere we want, really.
+# so we should do it in a place where we know users are.
+# so we should have some kind of object which allows us to start a REPL, and surface it to users.
+# hmm. we need to notify the user, and open the UI element, or at least allow them to connect to the REPL somehow.
+# should the REPLs be persistent? if they disconnect between each statement, should we save the globals?
+# nah...
+# okay, so we should surface the REPLs through Emacs, obviously, because that's the best.
+# so I guess I could have some list of current REPLs,
+# and um, I can open them, I guess.
+# what would I do if the program was itself written in Elisp?
+# well, I would... I guess, when there's an issue,
+# I'd open a buffer with the REPL in it?
+# and then maintain a list of issue-buffers?
+# and probably have a key to cycle between them?
+# and if I closed the buffer, the issue wouldn't go away I suppose.
+# well.
+# I guess if I closed the buffer, yeah, it would throw an exception up from that REPL.
+# How do things in Emacs usually notify?
+# so I guess I get circe notifications through them appearing in the modeline,
+# they open a buffer in the background - possibly in the foreground optionally.
+# and then, when I kill the buffer, presumably nothing happens - we just lose the history of that buffer,
+# but it doesn't, like, kick someone.
+# though when there's a process behind it, we get prompted when killing.
+# so I guess we can do the, "kill throws exception, but also prompts before killing"
+# eh, or we can just let the user do it themselves
+# so yeah I just have some thing which notifies me on error.
+# and I keep an active connection open, and when some REPL goes away, I get notified. hmm.
+# seems straightforward.
+# basically - we're having Emacs act as the handler for this effect of, go to REPL, right?
+# so Emacs needs to be able to accept these notifications, and handle things right.
+# but, if there is no active handler, things just hang - also fine.
+async def run_repl(readfd: AsyncFileDescriptor[ReadableFile],
+                   writefd: AsyncFileDescriptor[WritableFile],
                    initial_vars: t.Dict[str, t.Any],
                    wanted_type: t.Type[T]) -> T:
-    return (await rsyscall.repl(readfd.read, writefd.write))
-    pass
+    return (await rsyscall.repl.run_repl(readfd.read, writefd.write, initial_vars, wanted_type))
