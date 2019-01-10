@@ -23,16 +23,16 @@ import trio
 import abc
 
 def _ast_compile(source, filename, symbol):
-    return compile(source, filename, symbol, ast.PyCF_ONLY_AST|codeop.PyCF_DONT_IMPLY_DEDENT)
+    return compile(source, filename, symbol, ast.PyCF_ONLY_AST|codeop.PyCF_DONT_IMPLY_DEDENT) # type: ignore
 
 def ast_compile_command(source, filename="<input>", symbol="single"):
     """Like codeop.compile_command, but returns an AST instead.
 
     """
-    return codeop._maybe_compile(_ast_compile, source, filename, symbol)
+    return codeop._maybe_compile(_ast_compile, source, filename, symbol) # type: ignore
 
 def ast_compile_interactive(source: str) -> t.Optional[ast.Interactive]:
-    return codeop._maybe_compile(_ast_compile, source, "<input>", "single")
+    return ast_compile_command(_ast_compile, "<input>", "single")
 
 class IncrementalParser:
     def __init__(self) -> None:
@@ -105,13 +105,13 @@ async def {wrapper_name}():
     finally:
         locals()
 """, filename="<internal_wrapper>", mode="single")
-    try_block = wrapper.body[0].body[0]
+    try_block = wrapper.body[0].body[0] # type: ignore
     try_block.body = astob.body
     if isinstance(try_block.body[-1], (ast.Expr, ast.Await)):
         # if the last statement in the AST is an expression, then have its value be
         # propagated up by throwing it from the _InternalResult exception.
         wrapper_raise = ast.parse("raise _InternalResult(True, None)", filename="<internal_wrapper>", mode="single").body[0]
-        wrapper_raise.exc.args[1] = try_block.body[-1].value
+        wrapper_raise.exc.args[1] = try_block.body[-1].value # type: ignore
         try_block.body[-1] = wrapper_raise
     else:
         wrapper_raise = ast.parse("raise _InternalResult(False, None)", filename="<internal_wrapper>", mode="single").body[0]
@@ -160,6 +160,10 @@ async def eval_single(astob: ast.Interactive, global_vars: t.Dict[str, t.Any]) -
     else:
         return ReturnResult(val)
 
+class FromREPL(Exception):
+    def __init__(self, exn: Exception) -> None:
+        self.exn = exn
+
 class PureREPL:
     def __init__(self) -> None:
         self.parser = IncrementalParser()
@@ -179,7 +183,7 @@ class PureREPL:
                 ret.append(ast_or_exn)
             elif isinstance(ast_or_exn, ast.Interactive):
                 try:
-                    result = await eval_single(astob, self.global_vars)
+                    result = await eval_single(ast_or_exn, self.global_vars)
                 except Exception as e:
                     ret.append(e)
                 else:
@@ -221,28 +225,40 @@ class PureREPL:
 # and for each result or syntax error we get back,
 # print the result or syntax error, and '\n$'.
 
-async def repl(locals, request_message, wanted_type: t.Type) -> t.Any:
-    await print(request_message)
+T = t.TypeVar('T')
+async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
+                   write: t.Callable[[bytes], t.Awaitable[None]],
+                   initial_vars: t.Dict[str, t.Any], wanted_type: t.Type[T]) -> T:
+    async def print(*args):
+        await write(" ".join([str(arg) for arg in args]).encode())
     repl = PureREPL()
+    repl.global_vars.update(initial_vars)
     while True:
-        data = await read()
+        raw_data = await read()
+        data = raw_data.decode()
         for result_or_exn in await repl.add(data):
             if isinstance(result_or_exn, Result):
-                # case on the result to decide what to do
-                pass
+                result = result_or_exn
+                if isinstance(result, ReturnResult):
+                    try:
+                        typeguard.check_type('return value', result.value, wanted_type)
+                    except TypeError as e:
+                        await print(e)
+                    else:
+                        return result.value
+                elif isinstance(result, ExceptionResult):
+                    if isinstance(result.exception, FromREPL):
+                        raise result.exception.exn
+                    else:
+                        await print(result.exception)
+                elif isinstance(result, ExpressionResult):
+                    await print(result.value)
+                    repl.global_vars['_'] = result.value
+                elif isinstance(result, FallthroughResult):
+                    pass
+                else:
+                    raise Exception("bad Result returned from PureREPL", result)
             elif isinstance(result_or_exn, Exception):
-                # print this syntax error
-                pass
-        try:
-            ret = await read_and_evaluate()
-        except ContinueRunning:
-            pass
-        except FromREPL as e:
-            raise e.inner
-        except:
-            await print_exception()
-        else:
-            typeguard.check_type('return_value', ret, wanted_type)
-            return ret
+                await print(result_or_exn)
 
 repl = PureREPL()

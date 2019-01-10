@@ -3485,3 +3485,12 @@ async def nix_deploy(
     await export_thread.execve(dest_nix_bin/"nix-store", ["nix-store", "--export", *closure])
     await child_task.wait_for_exit()
     return dest_path
+
+import rsyscall.repl
+
+async def run_repl(readfd: FileDescriptor[ReadableFile],
+                   writefd: FileDescriptor[WritableFile],
+                   initial_vars: t.Dict[str, t.Any],
+                   wanted_type: t.Type[T]) -> T:
+    return (await rsyscall.repl(readfd.read, writefd.write))
+    pass
