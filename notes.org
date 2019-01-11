@@ -9745,3 +9745,17 @@ i could set up a task then run some other task um
    we'd be able to send a notification directly to the user.
 
    which is good...
+** good point from kai
+   ok so say the script runs a terminal UI,
+   how do they get to that terminal UI huh?!???!
+
+   the script is running on some production box!!
+   they gotta ssh to that box and attach to some tmux or whatever thing!!
+   boop!
+
+   so really a client is necessary anyway
+
+   my answer is that they run it from their dev box or UI or whatever??
+
+   but what if there are multiple users...
+   who want to be able to mess with this thing
