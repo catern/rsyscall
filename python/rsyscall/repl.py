@@ -165,9 +165,9 @@ class FromREPL(Exception):
         self.exn = exn
 
 class PureREPL:
-    def __init__(self) -> None:
+    def __init__(self, global_vars: t.Dict[str, t.Any]) -> None:
         self.parser = IncrementalParser()
-        self.global_vars: t.Dict[str, t.Any] = {}
+        self.global_vars = global_vars
 
     async def add(self, data: str) -> t.List[t.Union[Result, Exception]]:
         """Add some data to the REPL buffer and evaluate the ASTs parsed from it.
@@ -191,6 +191,41 @@ class PureREPL:
             else:
                 raise Exception("bad value returned from parser", ast_or_exn)
         return ret
+
+    async def run(read: t.Callable[[], t.Awaitable[bytes]],
+                  write: t.Callable[[bytes], t.Awaitable[None]],
+                  wanted_type: t.Type[T]) -> T:
+        async def print(*args):
+            await write(" ".join([str(arg) for arg in args]).encode())
+        repl = PureREPL()
+        repl.global_vars.update({'print':print, **initial_vars})
+        while True:
+            raw_data = await read()
+            data = raw_data.decode()
+            for result_or_exn in await repl.add(data):
+                if isinstance(result_or_exn, Result):
+                    result = result_or_exn
+                    if isinstance(result, ReturnResult):
+                        try:
+                            typeguard.check_type('return value', result.value, wanted_type)
+                        except TypeError as e:
+                            await print(e)
+                        else:
+                            return result.value
+                    elif isinstance(result, ExceptionResult):
+                        if isinstance(result.exception, FromREPL):
+                            raise result.exception.exn
+                        else:
+                            await print(result.exception)
+                    elif isinstance(result, ExpressionResult):
+                        await print(result.value)
+                        repl.global_vars['_'] = result.value
+                    elif isinstance(result, FallthroughResult):
+                        pass
+                    else:
+                        raise Exception("bad Result returned from PureREPL", result)
+                elif isinstance(result_or_exn, Exception):
+                    await print(result_or_exn)
 
 # ok so now we just need to, um.
 # are we gonna support a PS2?
@@ -228,11 +263,11 @@ class PureREPL:
 T = t.TypeVar('T')
 async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
                    write: t.Callable[[bytes], t.Awaitable[None]],
-                   initial_vars: t.Dict[str, t.Any], wanted_type: t.Type[T]) -> T:
+                   global_vars: t.Dict[str, t.Any], wanted_type: t.Type[T]) -> T:
     async def print(*args):
         await write(" ".join([str(arg) for arg in args]).encode())
-    repl = PureREPL()
-    repl.global_vars.update({'print':print, **initial_vars})
+    global_vars['print'] = print
+    repl = PureREPL(global_vars)
     while True:
         raw_data = await read()
         data = raw_data.decode()
@@ -253,7 +288,7 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
                         await print(result.exception)
                 elif isinstance(result, ExpressionResult):
                     await print(result.value)
-                    repl.global_vars['_'] = result.value
+                    global_vars['_'] = result.value
                 elif isinstance(result, FallthroughResult):
                     pass
                 else:

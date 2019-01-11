@@ -3619,6 +3619,9 @@ so we don't have to be generic.
    well worry no more,
    rsyscall is here.
 ** integrated thread library and container deployment system
+** a language which uses other processes for most of its functionality
+   instead of pointlessly writing a webserver in this language,
+   we just start and run nginx.
 * explicitly modeling memory
 how would I do this?
 
@@ -9686,6 +9689,76 @@ i could set up a task then run some other task um
      I guess we can just locals().update maybe
 
      what would be nice is if we could define a function, and then get it returned to us.
+* final tagless style
+  I really like the notion of church-encoding a language AST.
+
+  and then we pass an object with all the things to do (in the haskell case this is a typeclass)
+
+  oho, interesting!
+
+  so we use a new... effect?
+
+  we just take a new kind of thing we can do, and use that.
+
+  we get the behaviors as inputs.
+
+  very interesting!
+
+  so we just add a new input.
+
+  if something doesn't use the other inputs/effects/things,
+  then.
+
+  it doesn't need em.
+
+  oh, aha, so they use the typeclass auto-lookup thing!
+
+  to get the new input!
+
+  it's really quite interesting.
+
+  if I church-encode my data,
+  then only my new data suffers from the expression problem.
+
+  like. the parts of my data which are old. stay around.
+
+  right so I want to think about that I guess.
+** make sure to think about,
+   the fact that church-encoding my data means that,
+   if I add a new variant,
+   my enums are automatically extensible.
+
+   church-encoded enums are automatically extensible.
+
+   why is that? very interesting!
+
+   the other stuff about automatically finding the handlers for specific enumerations,
+   by using the type,
+   is not really important.
+
+   we can explicitly handle them. and anyway, only supporting one pretty printer ever is,
+   ridiculously dumb.
+
+   so yeah!
+   church-encoded enums are automatically extensible! that's weird!
+** but moving on , serialization I guess
+   hmm, whoever told me that control and continuations and effects were not important, was super wrong
+
+   serialization, hm.
+
+   the deserializer returns a church-encoded term.
+
+   but, there's no clean way to add new ways to deserialize things.
+
+   like. new kindsa.
+
+   things.
+
+   so what's really going on in this extensible deserializer?
+
+   ohhhh it's so coooll ahhhh
+
+   gotta pace myself
 * human handler thing
   we'll store it in a dynvar.
 
@@ -9769,3 +9842,190 @@ i could set up a task then run some other task um
    well that's what job control is supposed to fix isn't it!
 
    multiple things reading from the terminal is solved
+** hummm
+   so, the real representation of what's going on is,
+
+   someone passes down some object into the script and,
+   it calls methods on that to get things from humans.
+
+   it's the human-access object.
+
+   but each way of doing human access has its own special API.
+
+   so, really we want to have customization in the script itself.
+
+   but, then we have to modify the script when we want to use a new UI - which is fine.
+
+   we could make an abstraction layer over UIs, but that's obviously silly.
+
+   so, I guess the easiest way, is,
+   just have unique modules for all the different UI notification ways?
+
+   but what about when we have multiple people with multiple UI preferences?
+
+   I guess we want to be able to support all these different UIs simultaneously?
+   We notify them all?
+
+   So, I guess the question is,
+   do we put all the UI detail into the script,
+   or do we have the script have some abstract interface where the UI has the details of,
+   interfacing with that interface?
+*** abstract interface
+    Basically some pipes
+
+    The advantage is that we can make new interfaces without messing with the script.
+*** UI details into the script
+    We have the script, um.
+
+    Well the script I guess gets the UI-specific bare minimum details,
+    and then launches things/sets up things based on those.
+
+    Well, this is clearly more in line with the, "the script runs a webserver for admin tasks" idea.
+
+    Yeah clearly we want this because it allows more programmatic stuff.
+** ok so ui details in the script
+   we'll have it run an emacsclient, which seems fine, if crazy.
+
+   then, right, like we were saying before, what's the fallback UI?
+   if the emacsclient can't be started...
+
+   well wait a second, we very much want to be able to use all the UIs simultaneously.
+
+   so.
+
+   also note that we can put files in a folder to have details
+
+   and just ping the thing with a notification of changes.
+
+   or I guess we would actually send updates.
+
+   ok so if we're able to use all the UIs simultaneously,
+   then when we run the emacsclient, I guess we...
+
+   pass -e to run an expression of course, but.
+   we probably just notify of a terminal I guess,
+   and allow some code to handle it.
+
+   the logic would be essentially,
+   "hey here's a... unix socket?"
+   which I can connect to.
+
+   and...
+
+   no meh let's do a terminal instead i guess?
+
+   this is all tricky. let's do an external command instead.
+
+   so the external command will be invoked by emacs
+
+   and, I guess can be invoked on the terminal too.
+
+   blah so that seems like a fine way to interface, we can't control the whole world
+
+   so I have this thing, which I guess connects to some unix socket or maybe a terminal?
+
+   and you connect to it once, and you can do whatever stuff, and if you succeed the terminal goes away.
+
+   so we get notifications of new things, and also things going away.
+
+
+   so, how about the lock on terminals? isn't that tricky?
+
+   right like, how do we expose, only one UI can be messing with the REPL at a time?
+
+   well maybe we can just remove that restriction?
+
+   what if we have a shared variables thing?
+
+   that would be cool...
+
+   yeah maybe I just should allow multiple at a time.
+
+   okay so that's easy
+
+   and I guess I can print a notification of other people being attached
+
+   and I suppose I can even print the evaluation results and inputs of other people onto all the REPLs.
+
+   yes this seems useful
+
+   though at some point I guess I'm, uh... just having multiple terminals attached to the same tmux session,
+   kinda thing.
+
+   well!
+
+   I guess the nice thing I'm talking some common abstracted thing,
+   so that, um,
+   I don't just have to use terminals or anything.
+
+   though I guess maybe I should have my own local variables? hmm
+
+   yeah okay so what makes more sense is,
+
+   everyone gets their own REPL,
+   the locals() of the surrounding scope are in some variable,
+   but they are their own REPLs with their own variables
+
+   the commands are serialized relative to each other, um, I guess.
+
+   well, what's the scope of this serialization? hmm.
+
+   I guess the scope of that shared locals() dict.
+
+   a single call to "prompt_humans".
+
+   and okay so. within there, commands are serialized.
+
+   and evaluation results are displayed everywhere.
+
+   oh hmm we probably can just make the other REPL variables visible in some other variable,
+
+   like, _other_repls.
+
+   then you can easily access each other and share and all that.
+
+   and yeah, evaluation results are displayed everywhere.
+
+   so we just have a unix socket and you can connect to it,
+   and on reutrn everything is disconnected.
+
+   we could have the unix socket be nested in some directories,
+   based on calling the thingy to do the nesting.
+
+   yeah when you do a nesting thingy, you make a dir.
+
+   we could associate our directories with this.
+
+   mmmm
+
+   I guess we could default to just encoding the nesting in the socket name.
+
+   And if we need more, we could provide the directory to make the socket in,
+   as an argument to the nesting thing.
+
+   okaaay
+
+   so yeah.
+
+   for now we'll encode the nesting in the socket name - or heck, not even have nesting.
+
+   we'll just support the basic thing:
+
+   a socket. which we serve REPLs on. and have some shared stuff.
+
+   ez pz.
+
+
+   hmm we also probably want the ability to Ctrl-C things.
+
+   how do we do that.
+
+   over a socket.
+
+   it's an out-of-band thing, innit.
+
+   well, we could just embed the c-c into the stream.
+
+   i... guess that could work
+
+   ew no, hangups will determine it.

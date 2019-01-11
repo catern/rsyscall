@@ -3543,6 +3543,65 @@ import rsyscall.repl
 # but, if there is no active handler, things just hang - also fine.
 async def run_repl(readfd: AsyncFileDescriptor[ReadableFile],
                    writefd: AsyncFileDescriptor[WritableFile],
-                   initial_vars: t.Dict[str, t.Any],
+                   global_vars: t.Dict[str, t.Any],
                    wanted_type: t.Type[T]) -> T:
-    return (await rsyscall.repl.run_repl(readfd.read, writefd.write, initial_vars, wanted_type))
+    return (await rsyscall.repl.run_repl(readfd.read, writefd.write, global_vars, wanted_type))
+
+async def serve_repls(listenfd: AsyncFileDescriptor[SocketFile],
+                      initial_vars: t.Dict[str, t.Any],
+                      wanted_type: t.Type[T]) -> T:
+    """Serves REPLs on a socket until someone gives us the type we want
+
+    Hmm. Tricky. Do we need multiple threads here? I guess that's the easiest way.
+
+    Yeah... better that than anything else.
+
+    hmm it would be nice to be able to cancel a single repl or something
+
+    interrupt the running task from outside. hm.
+
+    okay let's think about Ctrl-C
+
+    ok so the python repl doesn't know how to interpret C-c.
+
+    it's a terminal level thing. hm.
+
+    so...
+
+    I guess we could just terminate our connection when we want to stop something long-running.
+
+    That would be easiest.
+
+    yes let's just do that
+
+    so...
+
+    for that to work we need to be simultaneously performing the evaluation,
+    and also watching the connection for termination.
+
+    that's not possible to do generically, so we'll need.
+    the ability to. um.
+
+    we gotta have a nursery in which we do both watch for termination and evaluate.
+
+    seems straightforward i guess
+
+    """
+    repl_vars: t.Dict[str, rsyscall.repl.PureREPL] = {}
+    retval = None
+    async with trio.open_nursery() as nursery:
+        async def do_repl(connfd) -> None:
+            try:
+                # so inside here we need another nursery,
+                # so that hangups cause us to return
+                ret = rsyscall.repl.run_repl(connfd)
+            except:
+                # hmmmmm how do we propogate exceptions out?
+                # should we detect FromREPL ourselves?
+                pass
+            else:
+                nonlocal retval
+                retval = ret
+                nursery.cancel_scope.cancel()
+        connfd = await listenfd.accept()
+        nursery.start_soon(do_run, connfd)
