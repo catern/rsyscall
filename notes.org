@@ -9759,3 +9759,13 @@ i could set up a task then run some other task um
 
    but what if there are multiple users...
    who want to be able to mess with this thing
+** hmm
+   so what's the ideal way for a script to yield to the thing above it?
+
+   well obviously by just printing a prompt on the terminal and waiting for input.
+
+   but what if we have multiple things wanting to yield up?
+
+   well that's what job control is supposed to fix isn't it!
+
+   multiple things reading from the terminal is solved
