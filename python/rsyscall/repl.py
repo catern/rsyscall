@@ -283,7 +283,7 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
                         return result.value
                 elif isinstance(result, ExceptionResult):
                     if isinstance(result.exception, FromREPL):
-                        raise result.exception.exn
+                        raise result.exception
                     else:
                         await print(result.exception)
                 elif isinstance(result, ExpressionResult):

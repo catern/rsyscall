@@ -3595,9 +3595,9 @@ async def serve_repls(listenfd: AsyncFileDescriptor[SocketFile],
                 # so inside here we need another nursery,
                 # so that hangups cause us to return
                 ret = rsyscall.repl.run_repl(connfd)
+            except rsyscall.io.FromREPL as e:
+                raise e.exn
             except:
-                # hmmmmm how do we propogate exceptions out?
-                # should we detect FromREPL ourselves?
                 pass
             else:
                 nonlocal retval
