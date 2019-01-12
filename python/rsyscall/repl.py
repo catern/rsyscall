@@ -271,7 +271,13 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
     while True:
         raw_data = await read()
         data = raw_data.decode()
-        for result_or_exn in await repl.add(data):
+        # so maybe we can have a nursery which has a loop constantly calling read?
+        # and it sends us the data?
+        # and if we get an exception, it cancels us?
+        # hmm it might be nice if the REPL just had all the data ready in it.
+        # and we just 
+        results = await repl.add(data)
+        for result_or_exn in results:
             if isinstance(result_or_exn, Result):
                 result = result_or_exn
                 if isinstance(result, ReturnResult):

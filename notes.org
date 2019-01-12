@@ -9759,6 +9759,54 @@ i could set up a task then run some other task um
    ohhhh it's so coooll ahhhh
 
    gotta pace myself
+** this thing about context-dependent evaluation
+   what if every term was wrapped with the input functions
+
+   like I think it's weird to have this,
+   reify the context as data,
+   thing.
+
+   what if we just made every term be taking a new, um, typeclass, I guess
+   in our notion those are just data dictionaries.
+
+   so, like. the fact that they need to disambiguate with the extra typeclass argument is, silly right.
+
+   but, hm. isn't it weird to, like, pass new processing functions at every step?
+
+
+   well one thing which is weird is, how do we nest a term here?
+   like if I have some inner term and I want to wrap an outer thingy around it
+
+   like wrapping neg around this thing, um.
+
+   can you do that in haskell? seems unlikely... will it host the typeclass argument?
+** lol
+   lol is this whole style kinda like a visitor
+
+   like I can pass an object with callbacks around. hmm.
+
+   I guess the type is that,
+   in a visitor pattern kinda thing where the visitor can be reified or whatever.
+
+   if I have some new kinda term.
+
+   then I just pass the new visitor to it? huh?
+
+   like if I have some new kinda variant in this sum which I'm gonna visit,
+   I can just, um, define a new kinda method?
+
+   well so the notion is. um. the visitor returns the next visitor?
+
+   um so. if I have some recursive visitor.
+
+   like, I define what happens inside right.
+
+   so in this pattern, the whole thing, y'know, falls apart.
+   we do the whole evaluation in the parent.. ?
+
+   this is neat.
+
+   it's very tricky
 * human handler thing
   we'll store it in a dynvar.
 
