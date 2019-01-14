@@ -198,38 +198,84 @@ class TestIO(unittest.TestCase):
     #                     await sockfd.bind(addr)
     #     trio.run(test)
 
-    # def test_listen(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             async with (await stdtask.mkdtemp()) as path:
-    #                 async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
-    #                     addr = (path/"sock").unix_address()
-    #                     await sockfd.bind(addr)
-    #                     await sockfd.listen(10)
-    #                     async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as clientfd:
-    #                         await clientfd.connect(addr)
-    #                         connfd, client_addr = await sockfd.accept(0) # type: ignore
-    #                         async with connfd:
-    #                             logger.info("%s, %s", addr, client_addr)
-    #     trio.run(test)
+    def test_listen(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with (await stdtask.mkdtemp()) as path:
+                async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
+                    addr = (path/"sock").unix_address()
+                    await sockfd.bind(addr)
+                    await sockfd.listen(10)
+                    async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as clientfd:
+                        await clientfd.connect(addr)
+                        connfd, client_addr = await sockfd.accept(0) # type: ignore
+                        async with connfd:
+                            logger.info("%s, %s", addr, client_addr)
+        trio.run(self.runner, test)
 
-    # def test_listen_async(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             async with (await stdtask.mkdtemp()) as path:
-    #                 async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
-    #                     addr = (path/"sock").unix_address()
-    #                     await sockfd.bind(addr)
-    #                     await sockfd.listen(10)
-    #                     async with (await AsyncFileDescriptor.make(stdtask.resources.epoller, sockfd)) as async_sockfd:
-    #                         clientfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
-    #                         async_clientfd = await AsyncFileDescriptor.make(stdtask.resources.epoller, clientfd)
-    #                         async with async_clientfd:
-    #                             await async_clientfd.connect(addr)
-    #                             connfd, client_addr = await async_sockfd.accept(0) # type: ignore
-    #                             async with connfd:
-    #                                 logger.info("%s, %s", addr, client_addr)
-    #     trio.run(test)
+    def test_listen_async(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with (await stdtask.mkdtemp()) as path:
+                sockfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+                addr = (path/"sock").unix_address()
+                await sockfd.bind(addr)
+                await sockfd.listen(10)
+                async_sockfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
+                clientfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+                async_clientfd = await AsyncFileDescriptor.make(stdtask.epoller, clientfd)
+                await async_clientfd.connect(addr)
+                connfd, client_addr = await async_sockfd.accept(0) # type: ignore
+                async with connfd:
+                    logger.info("%s, %s", addr, client_addr)
+                await async_sockfd.aclose()
+                await async_clientfd.aclose()
+        trio.run(self.runner, test)
+
+    def test_listen_async_accept(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with (await stdtask.mkdtemp()) as path:
+                sockfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+                addr = (path/"sock").unix_address()
+                await sockfd.bind(addr)
+                await sockfd.listen(10)
+                async_sockfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
+                clientfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+                async_clientfd = await AsyncFileDescriptor.make(stdtask.epoller, clientfd)
+                await async_clientfd.connect(addr)
+                async_connfd, client_addr = await async_sockfd.accept_as_async() # type: ignore
+                logger.info("%s, %s", addr, client_addr)
+                data = b"hello"
+                await async_connfd.write(data)
+                self.assertEqual(data, await async_clientfd.read())
+                await async_connfd.aclose()
+                await async_sockfd.aclose()
+                await async_clientfd.aclose()
+        trio.run(self.runner, test)
+
+    def test_pure_repl(self) -> None:
+        async def test() -> None:
+            repl = rsyscall.repl.PureREPL({})
+            self.assertEqual((await repl.add_line('1\n')).value, 1)
+            self.assertEqual((await repl.add_line('1+1\n')).value, 2)
+            await repl.add_line('foo = 1\n')
+            self.assertEqual((await repl.add_line('foo*4\n')).value, 4)
+        rsyscall.repl.await_pure(test())
+
+    def test_repl(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            async with (await stdtask.mkdtemp()) as path:
+                sockfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+                addr = (path/"sock").unix_address()
+                await sockfd.bind(addr)
+                await sockfd.listen(10)
+                async_sockfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
+                clientfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+                async_clientfd = await AsyncFileDescriptor.make(stdtask.epoller, clientfd)
+                await async_clientfd.connect(addr)
+                await async_clientfd.write(b"foo = 11\n")
+                await async_clientfd.write(b"return foo * 2\n")
+                ret = await rsyscall.io.serve_repls(async_sockfd, {'locals': locals()}, int)
+                self.assertEqual(ret, 22)
+        trio.run(self.runner, test)
 
     # def test_robust_bind_connect(self) -> None:
     #     "robust_unix_bind and robust_unix_connect work correctly on long Unix socket paths"

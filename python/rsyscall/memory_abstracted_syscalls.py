@@ -76,11 +76,8 @@ async def waitid(sysif: SyscallInterface, transport: MemoryTransport, allocator:
     logger.debug("waitid(%s, %s)", id, options)
     with await allocator.malloc(siginfo_size) as infop:
         await raw_syscall.waitid(sysif, id, infop, options, None)
-        logger.info("returned from waitid")
         with trio.open_cancel_scope(shield=True):
-            logger.info("entering read to bytes")
             data = await read_to_bytes(transport, infop, siginfo_size)
-            logger.info("done read to bytes")
             return data
 
 
@@ -352,7 +349,7 @@ class Serializer:
                 if data:
                     real_operations.append((op.ptr.pointer, data))
             if len(real_operations) > 5:
-                logger.info("DOING BIG ONE %s", real_operations[:3])
+                logger.info("performing a large copy, first few sections: %s", real_operations[:3])
             # copy all the bytes in bulk
             await transport.batch_write(real_operations)
             yield

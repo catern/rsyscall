@@ -880,6 +880,19 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 else:
                     raise
 
+    async def accept_as_async(self: 'AsyncFileDescriptor[SocketFile[T_addr]]'
+    ) -> t.Tuple[AsyncFileDescriptor[SocketFile[T_addr]], T_addr]:
+        connfd: FileDescriptor[SocketFile[T_addr]]
+        addr: T_addr
+        connfd, addr = await self.accept(flags=lib.SOCK_CLOEXEC|lib.SOCK_NONBLOCK)
+        try:
+            aconnfd = await AsyncFileDescriptor.make(
+                self.epolled.epoll_center, connfd, is_nonblock=True)
+            return aconnfd, addr
+        except Exception:
+            await connfd.aclose()
+            raise
+
     async def connect(self: 'AsyncFileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
         try:
             await self.underlying.connect(addr)
@@ -1450,7 +1463,6 @@ class StandardTask:
         root = self.task.root()
 
         uid_map = await (root/"proc"/"self"/"uid_map").open(os.O_WRONLY)
-        print(f"AAAAA {uid} {uid} 1\n")
         await uid_map.write(f"{uid} {uid} 1\n".encode())
         await uid_map.invalidate()
 
@@ -2020,7 +2032,6 @@ class RsyscallConnection:
         self.buffer = ReadBuffer()
 
     async def close(self) -> None:
-        print("AAAAAAAAAAAAA")
         await self.tofd.aclose()
         await self.fromfd.aclose()
 
@@ -3315,7 +3326,7 @@ class Command:
                              self.arguments,
                              {**self.env_updates, **env_updates})
 
-    def __str__(self) -> str:
+    def in_shell_form(self) -> str:
         ret = ""
         for key, value in self.env_updates.items():
             ret += f"{key}={value} "
@@ -3323,6 +3334,16 @@ class Command:
         # skip first argument
         for arg in self.arguments[1:]:
             ret += " " + arg.decode()
+        return ret
+
+    def __str__(self) -> str:
+        ret = "Command("
+        for key, value in self.env_updates.items():
+            ret += f"{key}={value} "
+        ret += "exec:" + str(self.executable_path)
+        for arg in self.arguments:
+            ret += " " + arg.decode()
+        ret += ")"
         return ret
 
     # hmm we actually need an rsyscallthread to properly exec
@@ -3340,7 +3361,7 @@ class SSHCommand(Command):
         return self.args(option_list)
 
     def proxy_command(self, command: Command) -> SSHCommand:
-        return self.ssh_options({'ProxyCommand': str(command)})
+        return self.ssh_options({'ProxyCommand': command.in_shell_form()})
 
     def local_forward(self, local_socket: str, remote_socket: str) -> SSHCommand:
         return self.args(["-L", f"{local_socket}:{remote_socket}"])
@@ -3560,48 +3581,38 @@ async def serve_repls(listenfd: AsyncFileDescriptor[SocketFile],
 
     interrupt the running task from outside. hm.
 
-    okay let's think about Ctrl-C
+    yeah let's support that so that we can kill repls, um.
 
-    ok so the python repl doesn't know how to interpret C-c.
-
-    it's a terminal level thing. hm.
-
-    so...
-
-    I guess we could just terminate our connection when we want to stop something long-running.
-
-    That would be easiest.
-
-    yes let's just do that
-
-    so...
-
-    for that to work we need to be simultaneously performing the evaluation,
-    and also watching the connection for termination.
-
-    that's not possible to do generically, so we'll need.
-    the ability to. um.
-
-    we gotta have a nursery in which we do both watch for termination and evaluate.
-
-    seems straightforward i guess
+    maybe not
 
     """
-    repl_vars: t.Dict[str, rsyscall.repl.PureREPL] = {}
+    repl_vars: t.Dict[str, t.Dict[str, t.Any]] = {}
     retval = None
     async with trio.open_nursery() as nursery:
-        async def do_repl(connfd) -> None:
+        async def do_repl(connfd: AsyncFileDescriptor[ReadableWritableFile],
+                          name: str) -> None:
             try:
-                # so inside here we need another nursery,
-                # so that hangups cause us to return
-                ret = rsyscall.repl.run_repl(connfd)
-            except rsyscall.io.FromREPL as e:
+                global_vars: t.Dict[str, t.Any] = {
+                    **initial_vars, '__repls__': repl_vars, '__repl_connfd__': connfd}
+                repl_vars[name] = global_vars
+                ret = await rsyscall.repl.run_repl(connfd.read, connfd.write, global_vars, wanted_type)
+            except rsyscall.repl.FromREPL as e:
                 raise e.exn
-            except:
-                pass
+            except Exception:
+                traceback.print_exc()
             else:
                 nonlocal retval
                 retval = ret
                 nursery.cancel_scope.cancel()
-        connfd = await listenfd.accept()
-        nursery.start_soon(do_run, connfd)
+            finally:
+                await connfd.aclose()
+        num = 0
+        while True:
+            connfd: AsyncFileDescriptor[ReadableWritableFile]
+            connfd, _ = await listenfd.accept_as_async()
+            nursery.start_soon(do_repl, connfd, str(num))
+            num += 1
+    return retval
+
+# okay so let's make a better helper for starting processes and redirecting their stdout/stderr,
+# for use in the repl
