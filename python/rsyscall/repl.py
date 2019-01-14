@@ -92,12 +92,14 @@ def compile_to_awaitable(astob: ast.Interactive,
 
     """
     wrapper_name = "__internal_async_wrapper__"
+    # we rely on the user not messing with __builtins__ in the REPL; that's something you
+    # really aren't supposed to do, so I think that's fine.
     wrapper = ast.parse(f"""
 async def {wrapper_name}():
     try:
         pass
     finally:
-        locals()
+        __builtins__.locals()
 """, filename="<internal_wrapper>", mode="single")
     try_block = wrapper.body[0].body[0] # type: ignore
     try_block.body = astob.body
@@ -198,39 +200,6 @@ def await_pure(awaitable: t.Awaitable[T]) -> T:
     else:
         raise Exception("this awaitable actually is impure! it yields!")
 
-# ok so now we just need to, um.
-# are we gonna support a PS2?
-# no ps2 is dumb
-# we'll support a prompt and that's it
-# okay! so! yeah!
-# we'll just read from input,
-# send it to add,
-# and for each result we get back,
-# print the result and '\n$ '
-# oh hm.
-# what about syntax errors?
-# well, say we add something with a syntax error
-# then I guess we'll get an error!
-# argh, this is a good reason, I SUPPOSE, to have the line buffering done outside. hm.
-# so, it's nice to have line buffering so that syntax errors in later lines don't prevent earlier lines from being run.
-# but we also need to make sure to surface the results for those earlier lines even if later lines have syntax errors
-# but we also need to actually deal with the whole thing
-# urgh hmm
-# the real python repl seems to continue processing after a syntax error. hmm.
-# lol it's dumb, hm
-# compile_command or whatever throws an error immediately on seeing raise return. hmm.
-# so, I guess then, when we get a syntax error we want to flush the buffer,
-# and then keep feeding lines.
-# hmmmmmm
-# so if I split it by line myself, then this works.
-# but if I just send in raw data...
-# then I get back a stream of...
-# Results, and Exceptions
-# ok so we just: read from input,
-# send it to add,
-# and for each result or syntax error we get back,
-# print the result or syntax error, and '\n$'.
-
 import pydoc
 class Output:
   def __init__(self) -> None:
@@ -256,23 +225,13 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
     global_vars['print'] = print_to_user
     global_vars['help'] = help_to_user
     repl = PureREPL(global_vars)
-    buf = LineBuffer()
-    line_queue: trio.Queue[str] = trio.Queue(999)
-    async with trio.open_nursery() as nursery:
-        @nursery.start_soon
-        async def do_reading() -> None:
-            while True:
-                raw_data = await read()
-                # when we get EOF on the connection, we want to cancel the
-                # REPL, even if some task is in progress.
-                if len(raw_data) == 0:
-                    raise Exception("REPL hangup")
-                data = raw_data.decode()
-                for line in buf.add(data):
-                    line_queue.put_nowait(line)
-        while True:
-            await write(b">")
-            line = await line_queue.get()
+    line_buf = LineBuffer()
+    while True:
+        await write(b">")
+        raw_data = await read()
+        if len(raw_data) == 0:
+            raise Exception("REPL hangup")
+        for line in line_buf.add(raw_data.decode()):
             try:
                 result = await repl.add_line(line)
             except Exception as exn:
@@ -286,7 +245,6 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
                 except TypeError as e:
                     await print_exn(e)
                 else:
-                    nursery.cancel_scope.cancel()
                     return result.value
             elif isinstance(result, ExceptionResult):
                 if isinstance(result.exception, FromREPL):
@@ -300,5 +258,3 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
                 pass
             else:
                 raise Exception("bad Result returned from PureREPL", result)
-
-repl = PureREPL({})

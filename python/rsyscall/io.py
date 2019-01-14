@@ -826,6 +826,10 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             if data is not None:
                 return data
 
+    async def wait_for_rdhup(self: 'AsyncFileDescriptor[ReadableFile]') -> None:
+        while not (self.read_hangup or self.hangup):
+            await self._wait_once()
+
     async def read_raw(self, sysif: near.SyscallInterface, fd: near.FileDescriptor, pointer: near.Pointer, count: int) -> int:
         while True:
             while not self.could_read():
@@ -1595,10 +1599,10 @@ class Multiplexer:
     pass
 
 class ChildProcess:
-    def __init__(self, process: base.Process, queue: trio.hazmat.UnboundedQueue,
+    def __init__(self, process: base.Process, child_events_channel: trio.abc.SendChannel,
                  monitor: ChildProcessMonitorInternal) -> None:
         self.process = process
-        self.queue = queue
+        self.child_events_channel = child_events_channel
         self.monitor = monitor
         self.death_event: t.Optional[ChildEvent] = None
 
@@ -1607,24 +1611,22 @@ class ChildProcess:
             raise Exception("child is already dead!")
         while True:
             try:
-                events = self.queue.get_batch_nowait()
-                for event in events:
-                    if event.died():
-                        self.death_event = event
-                return events
+                event = self.child_events_channel.receive_nowait()
+                if event.died():
+                    self.death_event = event
+                return [event]
             except trio.WouldBlock:
                 await self.monitor.do_wait()
 
     def _flush_nowait(self) -> None:
         while True:
             try:
-                events = self.queue.get_batch_nowait()
-                for event in events:
-                    if event.died():
-                        self.death_event = event
+                event = self.child_events_channel.receive_nowait()
+                if event.died():
+                    self.death_event = event
+                return [event]
             except trio.WouldBlock:
                 return
-        
 
     async def wait_for_exit(self) -> ChildEvent:
         if self.death_event:
@@ -1689,8 +1691,7 @@ class ChildProcessMonitorInternal:
     def __init__(self, waiting_task: Task, signal_queue: SignalQueue) -> None:
         self.waiting_task = waiting_task
         self.signal_queue = signal_queue
-        self.task_map: t.Dict[int, ChildProcess] = {}
-        self.unknown_queue = trio.hazmat.UnboundedQueue()
+        self.task_map: t.Dict[int, trio.abc.SendChannel[ChildEvent]] = {}
         self.wait_lock = trio.Lock()
         if self.signal_queue.sigfd.underlying.file.mask != set([signal.SIGCHLD]):
             raise Exception("ChildProcessMonitor should get a SignalQueue only for SIGCHLD")
@@ -1702,8 +1703,9 @@ class ChildProcessMonitorInternal:
         self.waited_on_while_cloning: t.Optional[ChildProcess] = None
 
     def add_task(self, process: base.Process) -> ChildProcess:
-        child_task = ChildProcess(process, trio.hazmat.UnboundedQueue(), self)
-        self.task_map[process.near.id] = child_task
+        send, receive = trio.open_memory_channel(math.inf)
+        child_task = ChildProcess(process, receive, self)
+        self.task_map[process.near.id] = send
         return child_task
 
     async def clone(self,
@@ -1781,9 +1783,7 @@ class ChildProcessMonitorInternal:
                                               status=int(struct.si_status))
                 logger.info("got child event %s", child_event)
                 pid = child_event.pid
-                if pid in self.task_map:
-                    child_task = self.task_map[pid]
-                else:
+                if pid not in self.task_map:
                     if self.cloning_task is not None:
                         # the child we were cloning died before we handled the return value of clone
                         child_task = self.add_task(base.Process(self.waiting_task.pid_namespace, near.Process(pid)))
@@ -1793,7 +1793,7 @@ class ChildProcessMonitorInternal:
                     else:
                         raise Exception("got event for some unknown pid", child_event,
                                         "maybe we're init or a subreaper? that's not supported!")
-                child_task.queue.put_nowait(child_event)
+                self.task_map[pid].send_nowait(child_event)
                 if child_event.died():
                     # this child is dead. if its pid is reused, we don't want to send
                     # any more events to the same ChildProcess.
@@ -3595,11 +3595,19 @@ async def serve_repls(listenfd: AsyncFileDescriptor[SocketFile],
                 global_vars: t.Dict[str, t.Any] = {
                     **initial_vars, '__repls__': repl_vars, '__repl_connfd__': connfd}
                 repl_vars[name] = global_vars
-                ret = await rsyscall.repl.run_repl(connfd.read, connfd.write, global_vars, wanted_type)
+                async with trio.open_nursery() as repl_nursery:
+                    @repl_nursery.start_soon
+                    async def wait_for_rdhup() -> None:
+                        await connfd.wait_for_rdhup()
+                        # when we get RDHUP on the connection, we want to cancel the REPL, even if
+                        # some task is in progress.
+                        raise Exception("REPL connection hangup")
+                    ret = await rsyscall.repl.run_repl(connfd.read, connfd.write, global_vars, wanted_type)
+                    repl_nursery.cancel_scope.cancel()
             except rsyscall.repl.FromREPL as e:
                 raise e.exn
             except Exception:
-                traceback.print_exc()
+                logger.exception("run_repl's internal logic raised an exception, disconnecting that REPL and continuing")
             else:
                 nonlocal retval
                 retval = ret
