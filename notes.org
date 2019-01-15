@@ -10160,3 +10160,12 @@ for use in the repl
    and it delegates to the straight-to-the-console genie.
 
    so let's make this consolegenie.
+** beautiful
+   it works
+
+   I should make sure recursive wishing works okay.
+
+   I think it naively would just go to the genie above, which is perfect!
+
+   But, when you're the topmost genie, you'll deadlock yourself, hm.
+   
