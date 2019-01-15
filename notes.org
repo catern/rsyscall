@@ -9807,6 +9807,21 @@ i could set up a task then run some other task um
    this is neat.
 
    it's very tricky
+** huh
+   so it's very important that we have higher-order polymorphism
+
+   because the repr is a type-level function.
+
+   which means it can turn the type into anything else
+
+   weaker type systems that don't have first-class type-level functions, can't do this.
+
+   because, they, can't allow the REPR to do whatever thing it wants.
+
+   so really what we need here is an ML module,
+   with a type-level function from the object type to some meta-language type
+   (is it really the object type? are these the right words?)
+   and the bunch of callbacks
 * human handler thing
   we'll store it in a dynvar.
 
@@ -10169,3 +10184,38 @@ for use in the repl
 
    But, when you're the topmost genie, you'll deadlock yourself, hm.
    
+   Ho hum herm hom.
+
+   he he hu hu
+
+   now let's teach the thing to support wrapping a console server around it?
+
+   I guess we can lock stdin/out in the stdtask maybe?
+
+   Then we can just replace the base consolegenie? we don't have to forward to it.
+
+   nah let's stick with what we have, we can enhance it later
+** what next
+   so I was doing this to support upgrading and operator intervention.
+
+   upgrading is at least theoretically possible through this mechanism, so I'm happy with this, it's enough.
+
+   what do I do next?
+
+   well, I guess I at least want to support some contextmanager to intercept exceptions,
+   and wish to continue running.
+
+   then I can do some multi-system thing, innit.
+
+   well, I want to start adopting this for integration.
+
+   I kinda need to do something more complex first, though, hmm...
+
+   also I think I want a contextmanager that. oh, well, it can always wish, I guess.
+
+   but when we're running some automated test, we disable wishing.
+
+   anyway, so. i need something non-trivial.
+
+   yeah anyway. so this whole wishing thing, repl thing, is great.
+   but maybe I need a stronger demo.
