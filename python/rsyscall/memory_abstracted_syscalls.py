@@ -348,8 +348,6 @@ class Serializer:
                 data = op.data_to_copy()
                 if data:
                     real_operations.append((op.ptr.pointer, data))
-            if len(real_operations) > 5:
-                logger.info("performing a large copy, first few sections: %s", real_operations[:3])
             # copy all the bytes in bulk
             await transport.batch_write(real_operations)
             yield

@@ -10077,3 +10077,86 @@ i could set up a task then run some other task um
    i... guess that could work
 
    ew no, hangups will determine it.
+** stuff
+okay so let's make a better helper for starting processes and redirecting their stdout/stderr,
+for use in the repl
+** naming
+   what should I call this class which does anything?
+
+   wish handler?
+
+   genie 'v'
+
+   there needs to be some easy representation of a hierarchy
+
+   where like, hm.
+
+   we need to represent that we make our own special genie, I suppose.
+
+   like. what do we really want to do?
+
+   we just want to be able to attach things to a hierarchy, um.
+
+   i guess we want to be able to attach a new genie at some level,
+   and have it, if it fails, go to a higher level.
+** getting the default genies set up
+   hmm
+
+   soooo hmm
+
+   we can't really have a default genie without a sockdir, right?
+
+   hmm
+
+   we do need the local stdtask as well.
+
+   it's tricky.
+
+   what can we do to have a sockdir?
+
+   maybe we can just have a contextmanager set up the stdtask.
+
+   and also the genie.
+
+   but, do we make a sockdir every time we run? isn't that a bit much?
+
+   really, we'd prefer to not touch the filesystem
+
+   and for that matter, what's with this dependency on socat? that's also undesirable!
+
+   well, we could include socat into the binary, I guess. but that's getting to be a little silly.
+
+   I guess we look for socat at startup, so it's not too much of an issue.
+
+   oh, we can also have a Nix dep on socat. that would be good too.
+
+   I guess we can handle Nix deps on things by patching the source at build time. that seems fine.
+
+   well, it's a bit gross. but fine.
+
+   well, we can have some globals, maybe. which are either a path to the thing, or None.
+   and then we format out a file with the globals.
+
+   seems good.
+
+   okay, so no need to write our own socat then.
+
+   still we have the issue of making a sockdir when we run. that's undesirable dependency.
+
+   well, what if we just went to the console instead?
+
+   that's the real default, eh?
+
+   we could have a genie that just goes straight to the console (using some binary to forward some pipes to the console).
+
+   then on top of that we can make a sockdir genie.
+
+   so, we can make that straight to the console genie always, right? then wishing always works.
+
+   ok so that seems fine.
+
+   and we can have a thing that makes the sockdir genie,
+   given a path,
+   and it delegates to the straight-to-the-console genie.
+
+   so let's make this consolegenie.

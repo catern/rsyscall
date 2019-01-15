@@ -716,11 +716,28 @@ class EpollWaiter:
 
                         # Given that we follow that behavior, we are guaranteed here to get some
                         # event, since wait_readable returning has informed us that there is a
-                        # posedge to be read, and all posedges are consume exclusively through
+                        # posedge to be read, and all posedges are consumed exclusively through
                         # epoll.
                         received_events = await self.wait(maxevents=32, timeout=0)
-                        if len(received_events) == 0:
-                            raise Exception("got no events back from epoll_wait even after epfd was indicated as readable")
+                        # We might not receive events even after all that! The reason is as follows:
+                        # epoll can generate multiple posedges for a single fd before we consume the
+                        # negedge for that fd. One place this can definitely happen is when we get a
+                        # partial read from a pipe - we're supposed to know that that's a negedge,
+                        # but we don't. It also can happen in an unavoidable way with signalfd:
+                        # signalfd seems to negedge as soon as we read the last signal, but we can't
+                        # actually tell we read the last signal. er wait. hm. ah! it's a partial
+                        # read... since we're doing a large read on the signalfd...
+                        # it's weird. okay. whatever.
+                        # signalfd sure is weirdly designed.
+
+                        # So, if we're woken up to read from epoll after seeing that it's readable
+                        # due to a second posedge for the same fd, and then we consume the negedge
+                        # for that fd, and then we actually do the epoll_wait, we won't get the
+                        # second posedge - we won't get anything at all.
+
+                        # TODO maybe we can rearrange how we do epoll, now that we know that we
+                        # can't guarantee receiving events on each wait. We might be able to improve
+                        # performance. Or maybe we can just start specially handling streams.
                 else:
                     if self.pending_epoll_wait is None:
                         pending = await self.submit_wait(maxevents=32, timeout=-1)
@@ -1268,13 +1285,14 @@ async def lookup_executable(paths: t.List[Path], name: bytes) -> Path:
             return filename
     raise Exception("executable not found", name)
 
-async def which(stdtask: StandardTask, name: bytes) -> Command:
+async def which(stdtask: StandardTask, name: t.Union[str, bytes]) -> Command:
     "Find an executable by this name in PATH"
+    namebytes = os.fsencode(name)
     executable_dirs: t.List[Path] = []
     for prefix in stdtask.environment[b"PATH"].split(b":"):
         executable_dirs.append(Path.from_bytes(stdtask.task, prefix))
-    executable_path = await lookup_executable(executable_dirs, name)
-    return Command(executable_path.handle, [name], {})
+    executable_path = await lookup_executable(executable_dirs, namebytes)
+    return Command(executable_path.handle, [namebytes], {})
 
 class StandardTask:
     def __init__(self,
@@ -1454,8 +1472,6 @@ class StandardTask:
         """
         async def do_unshare(close_in_old_space: t.List[near.FileDescriptor],
                              copy_to_new_space: t.List[near.FileDescriptor]) -> None:
-            print("closing old", close_in_old_space)
-            print("copying new", copy_to_new_space)
             await unshare_files(self.task, self.child_monitor, self.process,
                                 close_in_old_space, copy_to_new_space, going_to_exec)
         await self.task.base.unshare_files(do_unshare)
@@ -1624,7 +1640,6 @@ class ChildProcess:
                 event = self.child_events_channel.receive_nowait()
                 if event.died():
                     self.death_event = event
-                return [event]
             except trio.WouldBlock:
                 return
 
@@ -3291,8 +3306,7 @@ class RsyscallThread:
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
-@dataclass
-class Pipe:
+class Pipe(t.NamedTuple):
     rfd: FileDescriptor[ReadableFile]
     wfd: FileDescriptor[WritableFile]
 
@@ -3340,7 +3354,7 @@ class Command:
         ret = "Command("
         for key, value in self.env_updates.items():
             ret += f"{key}={value} "
-        ret += "exec:" + str(self.executable_path)
+        ret += f"{str(self.executable_path)},"
         for arg in self.arguments:
             ret += " " + arg.decode()
         ret += ")"
@@ -3381,10 +3395,7 @@ class SSHDCommand(Command):
     def make(cls, executable_path: handle.Path) -> SSHDCommand:
         return cls(executable_path, [b"sshd"], {})
 
-local_stdtask: t.Any = None # type: ignore
-
-async def build_local_stdtask(nursery) -> StandardTask:
-    return (await StandardTask.make_local())
+local_stdtask: t.Any = trio.run(StandardTask.make_local) # type: ignore
 
 async def exec_cat(thread: RsyscallThread, cat: Command,
                    infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> ChildProcess:
@@ -3562,15 +3573,152 @@ import rsyscall.repl
 # basically - we're having Emacs act as the handler for this effect of, go to REPL, right?
 # so Emacs needs to be able to accept these notifications, and handle things right.
 # but, if there is no active handler, things just hang - also fine.
-async def run_repl(readfd: AsyncFileDescriptor[ReadableFile],
-                   writefd: AsyncFileDescriptor[WritableFile],
+###############################################################################################
+
+# TODO we should make an object for this,
+# which we can store in a dynvar.
+# and we could maybe even have a special function that drops to the REPL...
+# which has new_locals turned off. that would be cool...
+# and we'll do a socat on the local terminal thing. 
+# I guess we can make that local, hm.
+# we'll build it directly? and have it in a global var?
+
+class WishGranter:
+    @abc.abstractmethod
+    async def wish(self, wisher_frame, wanted_type: t.Type[T], message: str) -> T: ...
+
+class ConsoleGenie(WishGranter):
+    @classmethod
+    async def make(self, stdtask: StandardTask):
+        cat = await which(stdtask, "cat")
+        return ConsoleGenie(stdtask, cat)
+
+    def __init__(self, stdtask: StandardTask, cat: Command) -> None:
+        self.stdtask = stdtask
+        self.cat = cat
+        self.lock = trio.Lock()
+
+    async def wish(self, wisher_frame, wanted_type: t.Type[T], message: str) -> T:
+        async with self.lock:
+            message = "".join(traceback.format_stack(wisher_frame)) + "\n" + message
+            catfd, myfd = await self.stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+
+            term_stdin, repl_stdout = await self.stdtask.task.pipe()
+            repl_stdin, term_stdout = await self.stdtask.task.pipe()
+
+            cat_stdin_thread = await self.stdtask.fork()
+            cat_stdin = cat_stdin_thread.stdtask.task.base.make_fd_handle(term_stdin.handle)
+            await term_stdin.handle.invalidate()
+            await cat_stdin_thread.stdtask.unshare_files(going_to_exec=True)
+            await cat_stdin_thread.stdtask.stdin.replace_with(cat_stdin)
+            cat_stdin_child = await self.cat.exec(cat_stdin_thread)
+
+            cat_stdout_thread = await self.stdtask.fork()
+            cat_stdout = cat_stdout_thread.stdtask.task.base.make_fd_handle(term_stdout.handle)
+            await term_stdout.handle.invalidate()
+            await cat_stdout_thread.stdtask.unshare_files(going_to_exec=True)
+            await cat_stdout_thread.stdtask.stdout.replace_with(cat_stdout)
+            cat_stdout_child = await self.cat.exec(cat_stdout_thread)
+
+            async_stdin = await AsyncFileDescriptor.make(self.stdtask.epoller, repl_stdin)
+            async_stdout = await AsyncFileDescriptor.make(self.stdtask.epoller, repl_stdout)
+            ret = await run_repl(async_stdin, async_stdout, {
+                '__repl_stdin__': async_stdin,
+                '__repl_stdout__': async_stdout,
+                'wisher_frame': wisher_frame,
+                'wisher_locals': wisher_frame.f_locals,
+                'wisher_globals': wisher_frame.f_globals,
+            }, wanted_type, message)
+            await cat_stdin_child.kill()
+            await cat_stdout_child.kill()
+            await async_stdin.aclose()
+            await async_stdout.aclose()
+            return ret
+
+class ConsoleServerGenie(WishGranter):
+    @classmethod
+    async def make(self, stdtask: StandardTask, sockdir: Path):
+        socat = await which(stdtask, "socat")
+        return ConsoleServerGenie(stdtask, sockdir, socat)
+
+    def __init__(self, stdtask: StandardTask, sockdir: Path, socat: Command) -> None:
+        self.stdtask = stdtask
+        self.sockdir = sockdir
+        self.socat = socat
+        self.name_counts: t.Dict[str, int] = {}
+
+    def _uniquify_name(self, name: str) -> str:
+        "We never reuse a name."
+        if name not in self.name_counts:
+            self.name_counts[name] = 1
+            return name
+        else:
+            self.name_counts[name] += 1
+            return name + f".{self.name_counts[name]}"
+
+    async def wish(self, wisher_frame, wanted_type: t.Type[T], message: str) -> T:
+        message = "".join(traceback.format_stack(wisher_frame)) + "\n" + message
+        sock_name = self._uniquify_name(f'{wisher_frame.f_code.co_name}-{wisher_frame.f_lineno}')
+        sock_path = self.sockdir/sock_name
+        cmd = self.socat.args(["-", f"UNIX-CONNECT:{str(sock_path.pure)}"])
+        sockfd = await self.stdtask.task.socket_unix(socket.SOCK_STREAM)
+        await robust_unix_bind(sock_path, sockfd)
+        await sockfd.listen(10)
+        async_sockfd = await AsyncFileDescriptor.make(self.stdtask.epoller, sockfd)
+        async with trio.open_nursery() as nursery:
+            @nursery.start_soon
+            async def do_socat():
+                while True:
+                    thread = await self.stdtask.fork()
+                    try:
+                        child = await cmd.exec(thread)
+                    except:
+                        await thread.close()
+                        raise
+                    async with child:
+                        await child.wait_for_exit()
+            ret = await serve_repls(async_sockfd, {
+                'wisher_frame': wisher_frame,
+                'wisher_locals': wisher_frame.f_locals,
+                'wisher_globals': wisher_frame.f_globals,
+            }, wanted_type, message)
+            nursery.cancel_scope.cancel()
+        await sock_path.unlink()
+        return ret
+
+from contextvars import ContextVar
+my_wish_granter: ContextVar[WishGranter] = ContextVar('wish_granter')
+my_wish_granter.set(trio.run(ConsoleGenie.make, local_stdtask))
+
+import inspect
+
+async def wish(wanted_type: t.Type[T], message: str=None) -> T:
+    wish_granter = my_wish_granter.get()
+    wisher_frame = inspect.stack()[1].frame
+    if message is None:
+        message = f"Spirit, I command you to give me a value of type {wanted_type}!"
+    ret = await wish_granter.wish(wisher_frame, wanted_type, message)
+    return ret
+
+async def run_repl(infd: AsyncFileDescriptor[ReadableFile],
+                   outfd: AsyncFileDescriptor[WritableFile],
                    global_vars: t.Dict[str, t.Any],
-                   wanted_type: t.Type[T]) -> T:
-    return (await rsyscall.repl.run_repl(readfd.read, writefd.write, global_vars, wanted_type))
+                   wanted_type: t.Type[T], message: str) -> T:
+    async with trio.open_nursery() as repl_nursery:
+        @repl_nursery.start_soon
+        async def wait_for_rdhup() -> None:
+            await infd.wait_for_rdhup()
+            # when we get RDHUP on the connection, we want to cancel the REPL, even if
+            # some task is in progress.
+            raise Exception("REPL connection hangup")
+        await outfd.write((message+"\n").encode())
+        ret = await rsyscall.repl.run_repl(infd.read, outfd.write, global_vars, wanted_type)
+        repl_nursery.cancel_scope.cancel()
+    return ret
 
 async def serve_repls(listenfd: AsyncFileDescriptor[SocketFile],
                       initial_vars: t.Dict[str, t.Any],
-                      wanted_type: t.Type[T]) -> T:
+                      wanted_type: t.Type[T], message: str) -> T:
     """Serves REPLs on a socket until someone gives us the type we want
 
     Hmm. Tricky. Do we need multiple threads here? I guess that's the easiest way.
@@ -3590,22 +3738,11 @@ async def serve_repls(listenfd: AsyncFileDescriptor[SocketFile],
     retval = None
     async with trio.open_nursery() as nursery:
         async def do_repl(connfd: AsyncFileDescriptor[ReadableWritableFile],
-                          name: str) -> None:
+                          global_vars: t.Dict[str, t.Any]) -> None:
             try:
-                global_vars: t.Dict[str, t.Any] = {
-                    **initial_vars, '__repls__': repl_vars, '__repl_connfd__': connfd}
-                repl_vars[name] = global_vars
-                async with trio.open_nursery() as repl_nursery:
-                    @repl_nursery.start_soon
-                    async def wait_for_rdhup() -> None:
-                        await connfd.wait_for_rdhup()
-                        # when we get RDHUP on the connection, we want to cancel the REPL, even if
-                        # some task is in progress.
-                        raise Exception("REPL connection hangup")
-                    ret = await rsyscall.repl.run_repl(connfd.read, connfd.write, global_vars, wanted_type)
-                    repl_nursery.cancel_scope.cancel()
+                ret = await run_repl(connfd, connfd, global_vars, wanted_type, message)
             except rsyscall.repl.FromREPL as e:
-                raise e.exn
+                raise e.exn from e
             except Exception:
                 logger.exception("run_repl's internal logic raised an exception, disconnecting that REPL and continuing")
             else:
@@ -3618,9 +3755,8 @@ async def serve_repls(listenfd: AsyncFileDescriptor[SocketFile],
         while True:
             connfd: AsyncFileDescriptor[ReadableWritableFile]
             connfd, _ = await listenfd.accept_as_async()
-            nursery.start_soon(do_repl, connfd, str(num))
+            global_vars = {**initial_vars, '__repls__': repl_vars, '__repl_stdin__': connfd,  '__repl_stdout__': connfd}
+            repl_vars[str(num)] = global_vars
+            nursery.start_soon(do_repl, connfd, global_vars)
             num += 1
     return retval
-
-# okay so let's make a better helper for starting processes and redirecting their stdout/stderr,
-# for use in the repl

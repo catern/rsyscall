@@ -2,18 +2,13 @@ import rsyscall.io as rsc
 import socket
 import trio
 import typing as t
+import logging
 
 async def main() -> None:
-    async with trio.open_nursery() as nursery:
-        stdtask = await rsc.build_local_stdtask(nursery)
-        async with (await stdtask.mkdtemp()) as path:
-            sockfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
-            sock_path = path/"sock"
-            addr = sock_path.unix_address()
-            await sockfd.bind(addr)
-            await sockfd.listen(10)
-            async_sockfd = await rsc.AsyncFileDescriptor.make(stdtask.epoller, sockfd)
-            print(f"socat - UNIX-CONNECT:{str(sock_path.pure)}")
-            await rsc.serve_repls(async_sockfd, {'parent_locals': locals()}, None)
+    number = await rsc.wish(int)
+    flavor = await rsc.wish(str, "Sorry for being so rude, spirit. Could you tell me your favorite flavor of pie?")
+    pies = [f"A tasty {flavor} pie."]*number
+    await rsc.wish(None, f"Here you go spirit! {number} delicious {flavor} pies! Return when you're done eating them! 'v'")
+    print("Bye spirit! See you later!")
 
 trio.run(main)

@@ -182,7 +182,7 @@ void rsyscall_stop_then_close(int* fds_to_close, int fd_count) {
 
 int rsyscall_server(const int infd, const int outfd)
 {
-    write(2, hello, sizeof(hello) -1);
+    // write(2, hello, sizeof(hello) -1);
     struct rsyscall_syscall request;
     int ret;
     for (;;) {
@@ -237,7 +237,7 @@ char hello_persist[] = "hello world, I am the persistent syscall server!\n";
 int rsyscall_persistent_server(int infd, int outfd, const int listensock)
 {
     signal(SIGPIPE, SIG_IGN);
-    write(2, hello_persist, sizeof(hello_persist) -1);
+    // write(2, hello_persist, sizeof(hello_persist) -1);
     for (;;) {
 	rsyscall_server(infd, outfd);
         if (shutdown(infd, SHUT_RDWR) < 0) err(1, "shutdown(infd, SHUT_RDWR)");

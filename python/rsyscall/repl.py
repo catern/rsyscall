@@ -213,6 +213,9 @@ def help_to_str(request) -> str:
     pydoc.Helper(None, out).help(request)
     return "".join(out.results)
 
+# TODO I should also be able to pass in a predicate function which I call on the return value.
+# That way I can represent constraints on the returned value at a value level.
+# (I still do the wanted_type so that mypy type checking is correct)
 async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
                    write: t.Callable[[bytes], t.Awaitable[None]],
                    global_vars: t.Dict[str, t.Any], wanted_type: t.Type[T]) -> T:
