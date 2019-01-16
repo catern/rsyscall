@@ -10219,3 +10219,10 @@ for use in the repl
 
    yeah anyway. so this whole wishing thing, repl thing, is great.
    but maybe I need a stronger demo.
+** okay
+   the next step is the nix runner.
+
+   how do I send an email? I guess I shell out to mail maybe?
+
+   and we have a function which runs nix daemons
+
