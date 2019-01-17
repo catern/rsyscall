@@ -5,7 +5,7 @@ import typing as t
 import argparse
 
 async def deploy_nix_daemon(remote_stdtask) -> rsc.Command:
-    pass
+    data = rsc.bootstrap_nix(None, None, rsc.local_stdtask, None, remote_stdtask)
 
 async def run_nix(host) -> None:
     "Deploys Nix from the local_stdtask to this remote_stdtask and runs nix-daemon there"
@@ -38,16 +38,6 @@ email_address = 'me@example.com'
 hosts = [
 ]
 
-# Hmm we should also have a thing... I guess in the library...
-# Where we find program dependencies with a file which Nix formats out.
-# I guess we have some function which finds all the deps, and outputs a thing,
-# and we can run that at build time.
-# then we'll have a nice robust thing.
-# and if it's not already run at build time, we run at import time
-# and if it's already run, we don't 
-# Right, I guess we just, um. Yes.
-# We're able to run it at build time and it will output a JSON file.
-# And at runtime it tries to load that JSON file, and instead runs directly if it can't
 async def main() -> None:
     async with rsc.summon_email_genie(email_address):
         async with trio.open_nursery() as nursery:
