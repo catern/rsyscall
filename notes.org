@@ -10225,4 +10225,46 @@ for use in the repl
    how do I send an email? I guess I shell out to mail maybe?
 
    and we have a function which runs nix daemons
+** wish on exit
+   what would we do/what are we doing in more programmatic terms?
+   like, there's an exception, and we recover and restart?
+   tail recursion is really what we want here...
+   we want to have wish be able to just never return, just take over the new functionality.
+   but, we can't do that, so instead, the wish can reassign f and args and kwargs,
+   instead of doing a tail call
+   so this seems fine.
 
+   right, there's just a driver loop,
+   and we can return up (by reassigning),
+   a function (and some arguments) to call in the driver loop.
+** fail fast
+   should we pull this out as well, and fail fast if we can't do the deployment?
+   Yes, I think so.
+   In fact, we should also run the executable.
+   Only after the executable is actually run, should we enter the long-lived stage.
+
+   Although, hmm. What exactly is the right thing to do here? Hm....
+   Dropping to a wish-repl is useful on any failure...
+   Well, some failures should bring down the system...
+   Should any failures bring down the system? Should we just keep sshing to the other hosts,
+   even if one host or even most hosts can't be reached?
+   Maybe not. Maybe we should just keep going.
+   If we decide to bring down everything, we can do that after the wish.
+   Yeah that makes sense...
+   but, don't we want any exception then to cause a wish? wouldn't we prefer the exceptions to immediately drop to the REPL in place,
+   if no exception handler is registered for them?
+   for example if we failed on forking the second time, we'd want to keep the deployed nix daemon around.
+   or if we failed on wait_for_exit... no, in that case we would want to reconnect the stdtask or something.
+
+   right, so we'll never fail fast. we'll just run and wish on failure.
+** avoid with statements
+   The thing is, we don't want to use with statements,
+   because those are hard to use in a REPL I suppose.
+   well, we can always attach an asyncexitstack to the REPL, I guess.
+   then we just use enter_context
+
+   it would be nice to attach an asyncexitstack to every REPL run.
+
+   though that would prevent us from making and returning things.
+
+   we should just strive to support garbage collection of everything - with is a hack.
