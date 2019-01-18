@@ -200,7 +200,7 @@ def await_pure(awaitable: t.Awaitable[T]) -> T:
     else:
         raise Exception("this awaitable actually is impure! it yields!")
 
-import pydoc
+import pydoc # type: ignore
 class Output:
   def __init__(self) -> None:
     self.results: t.List[str] = []

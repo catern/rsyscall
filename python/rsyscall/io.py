@@ -3242,10 +3242,13 @@ async def spawn_ssh(
 @dataclass
 class SSHHost:
     root: near.DirectoryFile
-    cwd: near.DirectoryFile
     command: SSHCommand
     async def ssh(self, task: StandardTask) -> t.Tuple[ChildProcess, StandardTask]:
         return (await spawn_ssh(task, self))
+
+    @staticmethod
+    def make(command: SSHCommand) -> SSHHost:
+        return SSHHost(near.DirectoryFile(), command)
 
     def guess_hostname(self) -> str:
         # we guess that the last argument of ssh command is the hostname. it
@@ -3416,7 +3419,7 @@ async def read_all(fd: FileDescriptor[ReadableFile]) -> bytes:
         buf += data
 
 async def bootstrap_nix(
-        src_nix_bin: handle.Path, src_tar: Command, src_task: StandardTask,
+        src_nix_store: Command, src_tar: Command, src_task: StandardTask,
         dest_tar: Command, dest_task: StandardTask,
 ) -> t.List[bytes]:
     "Copies the Nix binaries into dest task's CWD. Returns the list of paths in the closure."
@@ -3426,7 +3429,7 @@ async def bootstrap_nix(
     await query_pipe.wfd.invalidate()
     await query_thread.stdtask.unshare_files(going_to_exec=True)
     await query_thread.stdtask.stdout.replace_with(query_stdout)
-    await query_thread.execve(src_nix_bin/"nix-store", ["nix-store", "--query", "--requisites", str(src_nix_bin)])
+    await src_nix_store.args(["--query", "--requisites", str(src_nix_store)]).exec(query_thread)
     closure = (await read_all(query_pipe.rfd)).split()
 
     src_tar_thread = await src_task.fork()
@@ -3450,8 +3453,8 @@ async def bootstrap_nix(
     return closure
 
 async def bootstrap_nix_database(
-        src_nix_bin: handle.Path, src_task: StandardTask,
-        dest_nix_bin: handle.Path, dest_task: StandardTask,
+        src_nix_store: Command, src_task: StandardTask,
+        dest_nix_store: Command, dest_task: StandardTask,
         closure: t.List[bytes],
 ) -> None:
     dump_db_thread = await src_task.fork()
@@ -3462,11 +3465,11 @@ async def bootstrap_nix_database(
 
     await load_db_thread.stdtask.unshare_files(going_to_exec=True)
     await load_db_thread.stdtask.stdin.replace_with(load_db_stdin)
-    child_task = await load_db_thread.execve(dest_nix_bin/"nix-store", ["nix-store", "--load-db"])
+    child_task = await dest_nix_store.args(["--load-db"]).exec(load_db_thread)
 
     await dump_db_thread.stdtask.unshare_files(going_to_exec=True)
     await dump_db_thread.stdtask.stdout.replace_with(dump_db_stdout)
-    await dump_db_thread.execve(dest_nix_bin/"nix-store", ["nix-store", "--dump-db", *closure])
+    await src_nix_store.args(["--dump-db", *closure]).exec(dump_db_thread)
     await child_task.wait_for_exit()
 
 async def create_nix_container(
@@ -3474,17 +3477,19 @@ async def create_nix_container(
         dest_task: StandardTask,
 ) -> handle.Path:
     dest_nix_bin = dest_task.task.base.make_path_from_bytes(bytes(src_nix_bin))
+    src_nix_store = Command(src_nix_bin/'nix-store', [b'nix-store'], {})
+    dest_nix_store = Command(dest_nix_bin/'nix-store', [b'nix-store'], {})
     # TODO check if dest_nix_bin exists, and skip this stuff if it does
     # copy the nix binaries over
     src_tar = await which(src_task, b"tar")
     dest_tar = await which(dest_task, b"tar")
-    closure = await bootstrap_nix(src_nix_bin, src_tar, src_task, dest_tar, dest_task)
+    closure = await bootstrap_nix(src_nix_store, src_tar, src_task, dest_tar, dest_task)
 
     # mutate dest_task so that it is nicely namespaced for the Nix container
     await dest_task.unshare_user()
     await dest_task.unshare_mount()
     await dest_task.task.mount(b"nix", b"/nix", b"none", lib.MS_BIND, b"")
-    await bootstrap_nix_database(src_nix_bin, src_task, dest_nix_bin, dest_task, closure)
+    await bootstrap_nix_database(src_nix_store, src_task, dest_nix_store, dest_task, closure)
     return dest_nix_bin
 
 async def nix_deploy(

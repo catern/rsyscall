@@ -9822,6 +9822,16 @@ i could set up a task then run some other task um
    with a type-level function from the object type to some meta-language type
    (is it really the object type? are these the right words?)
    and the bunch of callbacks
+** so
+   we're kind of just taking a bunch of functions,
+
+   then doing some thing,
+
+   then the return type is some other thing.
+
+   well, each function has a signature that is, um, repr T kinda thing.
+
+   the types of the functions also undergo this type-level function thing.
 * human handler thing
   we'll store it in a dynvar.
 
@@ -10285,3 +10295,35 @@ for use in the repl
 
    No no, each library/module/program builds on its own, and has a separate one.
    Which is in its own package. All fine.
+** ctrl-c
+   So I could do this by, the user disconnects,
+   and then reconnects,
+   and they get the locals of their old connection.
+
+   It's a bit tricky, hmm.
+
+   that's a bit gross relative to bash though. hm.
+
+   plus I don't really want to be intercepting each bit and checking for Ctrl-c
+
+   hm hm
+
+   how does emacs do it? I guess it's its own terminal. hm.
+
+   hm.
+
+   b l a h
+
+   so okay I'd need to take over the terminal or what?
+
+   I guess if the Ctrl-C was on my terminal I'd need to intercept SIGINT.
+
+   So, hm.
+
+   So if I receive SIGINT on my terminal, I know things went wrong.
+
+   But what about the case where we've got multiple REPLs running?
+
+   We can't just do the, send SIGINT thing.
+
+   Meh, let's forget about it.

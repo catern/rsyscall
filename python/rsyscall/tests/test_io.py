@@ -2,7 +2,7 @@ import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.io import wrap_stdin_out_err
 from rsyscall.io import AsyncFileDescriptor
-from rsyscall.io import local_stdtask, build_local_stdtask, StandardTask
+from rsyscall.io import local_stdtask, StandardTask
 from rsyscall.io import Command
 from rsyscall.epoll import EpollEvent, EpollEventMask
 from rsyscall.tests.test_ssh import ssh_to_localhost
@@ -368,8 +368,7 @@ class TestIO(unittest.TestCase):
 
     async def runner(self, test: t.Callable[[StandardTask], t.Awaitable[None]]) -> None:
         async with trio.open_nursery() as nursery:
-            stdtask = await build_local_stdtask(nursery)
-            await test(stdtask)
+            await test(local_stdtask)
 
     def test_spawn_nest(self) -> None:
         async def test(stdtask: StandardTask) -> None:
