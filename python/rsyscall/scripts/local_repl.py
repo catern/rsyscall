@@ -1,11 +1,15 @@
 import rsyscall.io as rsc
+from rsyscall.io import wish, Wish
 import socket
 import trio
 import typing as t
 import logging
 
 async def main() -> None:
-    games = await rsc.wish(t.List[str], "tell me ur faverut games")
+    try:
+        raise Exception("um")
+    except Exception as exn:
+        games = await wish(Wish(t.List[str], "tell me ur faverut games"), from_exn=exn)
     for game in games:
         print(game, "is fun")
     # number = await rsc.wish(int)

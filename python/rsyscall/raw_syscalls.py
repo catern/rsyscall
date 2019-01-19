@@ -8,7 +8,6 @@ import signal
 import typing as t
 import enum
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 class NsType(enum.IntFlag):
     NEWCGROUP = lib.CLONE_NEWCGROUP

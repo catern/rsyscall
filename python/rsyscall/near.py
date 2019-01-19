@@ -9,7 +9,6 @@ import abc
 import logging
 import typing as t
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 class SYS(enum.IntEnum):
     read = lib.SYS_read

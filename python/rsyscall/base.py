@@ -86,7 +86,7 @@ class UnixAddress(Address):
         header = ffi.sizeof('sa_family_t')
         buf = ffi.from_buffer(data)
         if len(data) < header:
-            raise Exception("data too smalllll")
+            raise Exception("data too smalllll", data)
         struct = ffi.cast('struct sockaddr_un*', buf)
         if struct.sun_family != lib.AF_UNIX:
             raise Exception("sun_family must be", lib.AF_UNIX, "is instead", header.sun_family)

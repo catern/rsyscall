@@ -83,10 +83,10 @@ class FileDescriptor:
             handles = self._remove_from_tracking()
             if len(handles) == 0:
                 # we were the last handle for this fd, we should close it
-                logging.debug("invalidating %s, no handles remaining, closing", self)
+                logger.debug("invalidating %s, no handles remaining, closing", self)
                 await rsyscall.near.close(self.task.sysif, self.near)
             else:
-                logging.debug("invalidating %s, handles remaining: %s", self, handles)
+                logger.debug("invalidating %s, handles remaining: %s", self, handles)
 
     def _remove_from_tracking(self) -> t.List[FileDescriptor]:
         self.task.fd_handles.remove(self)
@@ -102,13 +102,18 @@ class FileDescriptor:
     def __del__(self) -> None:
         if self.valid:
             if len(self._remove_from_tracking()) == 0:
-                logging.debug("leaked fd: %s", self)
+                logger.debug("leaked fd: %s", self)
 
     def __str__(self) -> str:
         return f"FD({self.task}, {self.near.number})"
 
     def __repr__(self) -> str:
         return f"FD({self.task}, {self.near.number}, valid={self.valid})"
+
+    def as_proc_path(self) -> Path:
+        pid = self.task.process.near.id
+        num = self.near.number
+        return self.task.make_path_from_bytes(f"/proc/{pid}/fd/{num}".encode())
 
     # should I just take handle.Pointers instead of near or far stuff? hmm.
     # should I really require ownership in this way?
@@ -271,7 +276,7 @@ class Task(rsyscall.far.Task):
         else:
             raise Exception("bad fd type", fd, type(fd))
         handle = FileDescriptor(self, near)
-        logging.debug("made handle: %s", self)
+        logger.debug("made handle: %s", self)
         self.fd_handles.append(handle)
         fd_table_to_near_to_handles[self.fd_table].setdefault(near, []).append(handle)
         return handle

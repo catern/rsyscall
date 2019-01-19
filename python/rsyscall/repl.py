@@ -152,6 +152,11 @@ async def eval_single(astob: ast.Interactive, global_vars: t.Dict[str, t.Any]) -
         else:
             return FallthroughResult()
     except BaseException as e:
+        # there may be an exception being handled right now as we do this eval; when we print this
+        # exception, we don't want to print that ongoing exception context, since it's irrelevant.
+        e.__suppress_context__ = True # type: ignore
+        # We want to skip the innermost frame of the traceback, which shows "await awaitable".
+        e.__traceback__ = e.__traceback__.tb_next # type: ignore
         return ExceptionResult(e)
     else:
         return ReturnResult(val)
@@ -224,13 +229,14 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
     async def help_to_user(request):
         await write(help_to_str(request).encode())
     async def print_exn(e: BaseException):
+        # TODO hmm we don't want to print out any exception traceback that already existed before us
         await write("".join(traceback.format_exception(None, e, e.__traceback__)).encode())
     global_vars['print'] = print_to_user
     global_vars['help'] = help_to_user
     repl = PureREPL(global_vars)
     line_buf = LineBuffer()
+    await write(b">")
     while True:
-        await write(b">")
         raw_data = await read()
         if len(raw_data) == 0:
             raise Exception("REPL hangup")
@@ -241,8 +247,8 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
                 await print_exn(exn)
                 continue
             if result is None:
-                pass
-            elif isinstance(result, ReturnResult):
+                continue
+            if isinstance(result, ReturnResult):
                 try:
                     typeguard.check_type('return value', result.value, wanted_type)
                 except TypeError as e:
@@ -261,3 +267,4 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
                 pass
             else:
                 raise Exception("bad Result returned from PureREPL", result)
+            await write(b">")

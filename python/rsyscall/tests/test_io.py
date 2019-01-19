@@ -26,7 +26,7 @@ import logging
 import signal
 logger = logging.getLogger(__name__)
 
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 
 nix_bin_bytes = b"/nix/store/flyhfw91kycrzmlx5v2172b3si4zc0xx-nix-2.2pre6526_9f99d624/bin"
 
@@ -907,8 +907,8 @@ class TestIO(unittest.TestCase):
         trio.run(test)
         
 
-if __name__ == '__main__':
-    import unittest
-    unittest.main()
+# if __name__ == '__main__':
+#     import unittest
+#     unittest.main()
 
 

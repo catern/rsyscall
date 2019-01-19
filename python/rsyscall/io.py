@@ -1,5 +1,6 @@
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
+import types
 import traceback
 
 from rsyscall.epoll import EpollEvent, EpollEventMask
@@ -43,6 +44,8 @@ import fcntl
 import errno
 import enum
 import contextlib
+from contextvars import ContextVar
+import inspect
 logger = logging.getLogger(__name__)
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
@@ -3246,10 +3249,6 @@ class SSHHost:
     async def ssh(self, task: StandardTask) -> t.Tuple[ChildProcess, StandardTask]:
         return (await spawn_ssh(task, self))
 
-    @staticmethod
-    def make(command: SSHCommand) -> SSHHost:
-        return SSHHost(near.DirectoryFile(), command)
-
     def guess_hostname(self) -> str:
         # we guess that the last argument of ssh command is the hostname. it
         # doesn't matter if it isn't, this is just for human-readability.
@@ -3429,7 +3428,8 @@ async def bootstrap_nix(
     await query_pipe.wfd.invalidate()
     await query_thread.stdtask.unshare_files(going_to_exec=True)
     await query_thread.stdtask.stdout.replace_with(query_stdout)
-    await src_nix_store.args(["--query", "--requisites", str(src_nix_store)]).exec(query_thread)
+    await src_nix_store.args(["--query", "--requisites",
+                              str(src_nix_store.executable_path)]).exec(query_thread)
     closure = (await read_all(query_pipe.rfd)).split()
 
     src_tar_thread = await src_task.fork()
@@ -3580,17 +3580,17 @@ import rsyscall.repl
 # but, if there is no active handler, things just hang - also fine.
 ###############################################################################################
 
-# TODO we should make an object for this,
-# which we can store in a dynvar.
-# and we could maybe even have a special function that drops to the REPL...
-# which has new_locals turned off. that would be cool...
-# and we'll do a socat on the local terminal thing. 
-# I guess we can make that local, hm.
-# we'll build it directly? and have it in a global var?
+# TODO should we inherit from BaseException or Exception?
+class Wish(BaseException, t.Generic[T]):
+    return_type: t.Type[T]
+
+    def __init__(self, return_type: t.Type[T], *args) -> None:
+        self.return_type = return_type
+        super().__init__(*args)
 
 class WishGranter:
     @abc.abstractmethod
-    async def wish(self, wisher_frame, wanted_type: t.Type[T], message: str) -> T: ...
+    async def wish(self, wish: Wish[T]) -> T: ...
 
 class ConsoleGenie(WishGranter):
     @classmethod
@@ -3603,9 +3603,9 @@ class ConsoleGenie(WishGranter):
         self.cat = cat
         self.lock = trio.Lock()
 
-    async def wish(self, wisher_frame, wanted_type: t.Type[T], message: str) -> T:
+    async def wish(self, wish: Wish[T]) -> T:
         async with self.lock:
-            message = "".join(traceback.format_stack(wisher_frame)) + "\n" + message
+            message = "".join(traceback.format_exception(None, wish, wish.__traceback__))
             catfd, myfd = await self.stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
 
             term_stdin, repl_stdout = await self.stdtask.task.pipe()
@@ -3627,13 +3627,15 @@ class ConsoleGenie(WishGranter):
 
             async_stdin = await AsyncFileDescriptor.make(self.stdtask.epoller, repl_stdin)
             async_stdout = await AsyncFileDescriptor.make(self.stdtask.epoller, repl_stdout)
+            wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
             ret = await run_repl(async_stdin, async_stdout, {
                 '__repl_stdin__': async_stdin,
                 '__repl_stdout__': async_stdout,
+                'wish': wish,
                 'wisher_frame': wisher_frame,
                 'wisher_locals': wisher_frame.f_locals,
                 'wisher_globals': wisher_frame.f_globals,
-            }, wanted_type, message)
+            }, wish.return_type, message)
             await cat_stdin_child.kill()
             await cat_stdout_child.kill()
             await async_stdin.aclose()
@@ -3661,8 +3663,9 @@ class ConsoleServerGenie(WishGranter):
             self.name_counts[name] += 1
             return name + f".{self.name_counts[name]}"
 
-    async def wish(self, wisher_frame, wanted_type: t.Type[T], message: str) -> T:
-        message = "".join(traceback.format_stack(wisher_frame)) + "\n" + message
+    async def wish(self, wish: Wish[T]) -> T:
+        message = "".join(traceback.format_exception(None, wish, wish.__traceback__))
+        wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
         sock_name = self._uniquify_name(f'{wisher_frame.f_code.co_name}-{wisher_frame.f_lineno}')
         sock_path = self.sockdir/sock_name
         cmd = self.socat.args(["-", f"UNIX-CONNECT:{str(sock_path.pure)}"])
@@ -3686,23 +3689,33 @@ class ConsoleServerGenie(WishGranter):
                 'wisher_frame': wisher_frame,
                 'wisher_locals': wisher_frame.f_locals,
                 'wisher_globals': wisher_frame.f_globals,
-            }, wanted_type, message)
+            }, wish.return_type, message)
             nursery.cancel_scope.cancel()
         await sock_path.unlink()
         return ret
 
-from contextvars import ContextVar
 my_wish_granter: ContextVar[WishGranter] = ContextVar('wish_granter')
 my_wish_granter.set(trio.run(ConsoleGenie.make, local_stdtask))
 
-import inspect
+def frames_to_traceback(frames: t.List[types.FrameType]) -> t.Optional[types.TracebackType]:
+    tb = None
+    for frame in frames:
+        tb = types.TracebackType(tb, frame, frame.f_lasti, frame.f_lineno)
+    return tb
 
-async def wish(wanted_type: t.Type[T], message: str=None) -> T:
+# TODO should switch bool to typing_extensions.Literal[False]
+# we allow passing None for from_exn to suppress the context
+async def wish(wish: Wish[T], from_exn: t.Union[BaseException, None, bool]=False) -> T:
+    raising_exception = sys.exc_info()[1]
+    if not isinstance(from_exn, bool):
+        wish.__cause__ = from_exn
+    elif raising_exception:
+        wish.__context__ = raising_exception
+
+    wish.__traceback__ = frames_to_traceback([record.frame for record in inspect.stack()[1:]])
+
     wish_granter = my_wish_granter.get()
-    wisher_frame = inspect.stack()[1].frame
-    if message is None:
-        message = f"Spirit, I command you to give me a value of type {wanted_type}!"
-    ret = await wish_granter.wish(wisher_frame, wanted_type, message)
+    ret = await wish_granter.wish(wish)
     return ret
 
 async def run_repl(infd: AsyncFileDescriptor[ReadableFile],

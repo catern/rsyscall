@@ -1,3 +1,4 @@
+from __future__ import annotations
 import typing as t
 import trio
 import contextlib
@@ -7,6 +8,7 @@ import unittest
 from rsyscall.io import Command, SSHCommand, SSHDCommand, SSHHost
 from rsyscall.io import Task, Path, StandardTask
 import rsyscall.io
+import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.base as base
 import logging
@@ -21,48 +23,58 @@ import logging
 # ssh_keygen = Command(trio.run(which, local_stdtask.task, executable_dirs, b"ssh-keygen"),
 #                      ["ssh-keygen"], {})
 
-async def make_localhost_ssh(stdtask: StandardTask, tmpdir: Path) -> SSHHost:
-    # we need a tmpdir just for storing the key, which has to be on-disk, sadly.
-    # TODO maybe we can use /proc to avoid it being on-disk
-    ssh_keygen = await rsyscall.io.which(stdtask, b"ssh-keygen")
-    keygen_thread = await stdtask.fork()
-    await keygen_thread.stdtask.task.chdir(tmpdir)
-    keygen_command = ssh_keygen.args(
-        ['-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key'])
-    privkey = tmpdir/'key'
-    pubkey = tmpdir/'key.pub'
-    await (await keygen_command.exec(keygen_thread)).wait_for_exit()
-    ssh = stdtask.filesystem.utilities.ssh
-    sshd = SSHDCommand.make((await rsyscall.io.which(stdtask, b"sshd")).executable_path)
-    sshd_command = sshd.args([
-        '-i', '-f', '/dev/null',
-    ]).sshd_options({
-        'LogLevel': 'DEBUG',
-        'HostKey': str(privkey.pure),
-        'AuthorizedKeysFile': str(pubkey.pure),
-        'StrictModes': 'no',
-        'PrintLastLog': 'no',
-        'PrintMotd': 'no',
-    })
-    ssh_command = ssh.args([
-        '-F', '/dev/null',
-    ]).ssh_options({
-        'LogLevel': 'INFO',
-        'IdentityFile': str(privkey.pure),
-        'BatchMode': 'yes',
-        'StrictHostKeyChecking': 'no',
-        'UserKnownHostsFile': '/dev/null',
-    }).proxy_command(sshd_command).args([
-        "localhost",
-    ])
-    # TODO this isn't right, the root and cwd are pulled at
-    # runtime from the task we use to run the ssh command.
-    return SSHHost(stdtask.task.base.fs.root, ssh_command)
+class LocalSSHHost(SSHHost):
+    @staticmethod
+    async def make(stdtask: StandardTask) -> LocalSSHHost:
+        ssh_keygen = await rsyscall.io.which(stdtask, b"ssh-keygen")
+        keygen_command = ssh_keygen.args(['-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key'])
+        keygen_thread = await stdtask.fork()
+        async with (await stdtask.mkdtemp()) as tmpdir:
+            await keygen_thread.stdtask.task.chdir(tmpdir)
+            await (await keygen_command.exec(keygen_thread)).wait_for_exit()
+            privkey_file = await (tmpdir/'key').open(os.O_RDONLY)
+            pubkey_file = await (tmpdir/'key.pub').open(os.O_RDONLY)
+        privkey = privkey_file.handle.as_proc_path()
+        pubkey = pubkey_file.handle.as_proc_path()
+        ssh = stdtask.filesystem.utilities.ssh
+        sshd = SSHDCommand.make((await rsyscall.io.which(stdtask, b"sshd")).executable_path)
+        sshd_command = sshd.args([
+            '-i', '-e', '-f', '/dev/null',
+        ]).sshd_options({
+            'LogLevel': 'INFO',
+            'HostKey': str(privkey.far),
+            'AuthorizedKeysFile': str(pubkey.far),
+            'StrictModes': 'no',
+            'PrintLastLog': 'no',
+            'PrintMotd': 'no',
+        })
+        ssh_command = ssh.args([
+            '-F', '/dev/null',
+        ]).ssh_options({
+            'LogLevel': 'INFO',
+            'IdentityFile': str(privkey.far),
+            'BatchMode': 'yes',
+            'StrictHostKeyChecking': 'no',
+            'UserKnownHostsFile': '/dev/null',
+        }).proxy_command(sshd_command).args([
+            "localhost",
+        ])
+        # TODO this isn't right, the root and cwd are pulled at
+        # runtime from the task we use to run the ssh command.
+        return LocalSSHHost(stdtask.task.base.fs.root, ssh_command, privkey_file, pubkey_file)
+
+    def __init__(self, root: near.DirectoryFile, command: SSHCommand,
+                 privkey: rsc.FileDescriptor[rsc.ReadableFile],
+                 pubkey: rsc.FileDescriptor[rsc.ReadableFile],
+    ) -> None:
+        super().__init__(root, command)
+        self.privkey = privkey
+        self.pubkey = pubkey
+
 
 @contextlib.asynccontextmanager
 async def ssh_to_localhost(stdtask: StandardTask) -> t.AsyncGenerator[SSHHost, None]:
-    async with (await stdtask.mkdtemp()) as tmpdir:
-        yield (await make_localhost_ssh(stdtask, tmpdir))
+    yield (await LocalSSHHost.make(stdtask))
             
 # class TestSSH(unittest.TestCase):
 #     async def runner(self, test: t.Callable[[], t.Awaitable[None]]) -> None:
