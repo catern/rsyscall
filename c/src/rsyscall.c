@@ -146,6 +146,7 @@ static int find_in_array(int wanted, int* array, int count) {
 // For each open fd, we do a linear scan of the excluded array.
 void rsyscall_do_cloexec(int* excluded_fds, int fd_count) {
     /* this depends on /proc, dang, but whatever */
+    /* this doesn't set O_CLOEXEC because we shouldn't be calling this function in parallel */
     int dirfd = myopen("/proc/self/fd", O_DIRECTORY|O_RDONLY);
     char buf[1024];
     for (;;) {

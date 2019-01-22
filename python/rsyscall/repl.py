@@ -42,7 +42,7 @@ class LineBuffer:
 
     def add(self, data: str) -> t.List[str]:
         self.buf += data
-        *lines, self.buf = data.split('\n')
+        *lines, self.buf = self.buf.split('\n')
         return [line + '\n' for line in lines]
 
 def without_co_newlocals(code: types.CodeType) -> types.CodeType:
@@ -152,9 +152,6 @@ async def eval_single(astob: ast.Interactive, global_vars: t.Dict[str, t.Any]) -
         else:
             return FallthroughResult()
     except BaseException as e:
-        # there may be an exception being handled right now as we do this eval; when we print this
-        # exception, we don't want to print that ongoing exception context, since it's irrelevant.
-        e.__suppress_context__ = True # type: ignore
         # We want to skip the innermost frame of the traceback, which shows "await awaitable".
         e.__traceback__ = e.__traceback__.tb_next # type: ignore
         return ExceptionResult(e)
@@ -185,7 +182,9 @@ class PureREPL:
         """
         self.buf += data
         try:
-            astob = ast_compile_interactive(self.buf)
+            # remove the last newline
+            print("buf is", self.buf.encode())
+            astob = ast_compile_interactive(self.buf[:-1])
         except Exception:
             self.buf = ""
             raise
@@ -229,7 +228,10 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
     async def help_to_user(request):
         await write(help_to_str(request).encode())
     async def print_exn(e: BaseException):
-        # TODO hmm we don't want to print out any exception traceback that already existed before us
+        # this call to run_repl may take place at a time where an exception is being handled; when
+        # we print this internal exception, we don't want to print that outside exception context,
+        # since it's irrelevant.
+        e.__suppress_context__ = True # type: ignore
         await write("".join(traceback.format_exception(None, e, e.__traceback__)).encode())
     global_vars['print'] = print_to_user
     global_vars['help'] = help_to_user
@@ -238,6 +240,7 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
     await write(b">")
     while True:
         raw_data = await read()
+        print("raw_data", raw_data)
         if len(raw_data) == 0:
             raise Exception("REPL hangup")
         for line in line_buf.add(raw_data.decode()):

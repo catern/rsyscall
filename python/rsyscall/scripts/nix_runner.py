@@ -36,9 +36,21 @@ async def enter_container(stdtask: StandardTask) -> StandardTask:
 
 async def run_nix(host: rsc.SSHHost) -> None:
     "Deploys Nix from the local_stdtask to this remote_stdtask and runs nix-daemon there"
-    ssh_child, remote_stdtask = await host.ssh(rsc.local_stdtask)
-    container_stdtask = await enter_container(remote_stdtask)
-    nix_daemon = await deploy_nix_daemon(remote_stdtask, container_stdtask)
+    try:
+        ssh_child, remote_stdtask = await host.ssh(rsc.local_stdtask)
+        container_stdtask = await enter_container(remote_stdtask)
+        nix_daemon = await deploy_nix_daemon(remote_stdtask, container_stdtask)
+    except:
+        # TODO hmm we seem to be hitting an issue with,
+        # we're running both ssh and cat on the same terminal,
+        # and they read each other's inputs
+        # we've set up ssh so the remote side inherits stdin and stdout and stderr from our terminal
+        # but we want to lock stdin I guess
+        # ugh ugh ugh ugh ugh ugh
+        # well we can't really share stdin
+        # i guess i can just not pass it over ssh hmm
+        # i guess i should have some clean handling for stdin
+        nix_daemon = await wish(Wish(rsc.Command, "Failed to deploy nix-daemon, do it and return it"))
     while True:
         failures = 0
         try:

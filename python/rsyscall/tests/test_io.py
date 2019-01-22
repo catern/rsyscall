@@ -590,6 +590,20 @@ class TestIO(unittest.TestCase):
                         self.assertEqual(await remote_file.read(), data)
         trio.run(self.runner, test)
 
+    def test_ssh_bug(self) -> None:
+        async def test(local_stdtask: StandardTask) -> None:
+            async with ssh_to_localhost(local_stdtask) as ssh_command:
+                # stdtask = local_stdtask
+                local_child, stdtask = await rsyscall.io.spawn_ssh(local_stdtask, ssh_command)
+                thread = await stdtask.fork()
+                await thread.stdtask.unshare_files(going_to_exec=True)
+                await rsyscall.io.do_cloexec_except(
+                    thread.stdtask.task, thread.stdtask.process,
+                    [fd.near for fd in thread.stdtask.task.base.fd_handles])
+                print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+                await thread.stdtask.task.sigmask.setmask(thread.stdtask.task, set())
+        trio.run(self.runner, test)
+
     def test_ssh_shell(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with ssh_to_localhost(stdtask) as ssh_command:

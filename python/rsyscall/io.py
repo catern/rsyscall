@@ -633,6 +633,7 @@ class PendingEpollWait:
             count = await self.syscall_response.receive()
             bufsize = self.allocation.end - self.allocation.start
             localbuf = await self.memory_transport.read(self.allocation.pointer, bufsize)
+            print("len localbuf", len(localbuf), bufsize)
             ret: t.List[EpollEvent] = []
             cur = 0
             for _ in range(count):
@@ -760,6 +761,7 @@ class EpollWaiter:
 
     async def submit_wait(self, maxevents: int, timeout: int) -> PendingEpollWait:
         allocation = await self.waiting_task.allocator.malloc(maxevents * EpollEvent.bytesize())
+        print("max", maxevents, EpollEvent.bytesize())
         try:
             syscall_response = await self.epfd.task.sysif.submit_syscall(
                 near.SYS.epoll_wait, self.epfd.near, allocation.pointer, maxevents, timeout)
@@ -2483,6 +2485,7 @@ async def unshare_files(
 ) -> None:
     serializer = memsys.Serializer()
     fds_ptr = serializer.serialize_data(array.array('i', [int(fd) for fd in close_in_old_space]).tobytes())
+    print("close_in_old", close_in_old_space)
     stack_ptr = serializer.serialize_lambda(trampoline_stack_size,
         lambda: process_resources.build_trampoline_stack(process_resources.stop_then_close_func,
                                                          fds_ptr.pointer, len(close_in_old_space)),
@@ -2502,6 +2505,7 @@ async def unshare_files(
         await closer_task.wait_for_exit()
     # perform a cloexec
     if not going_to_exec:
+        print(copy_to_new_space)
         await do_cloexec_except(task, process_resources, copy_to_new_space)
 
 def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[t.Tuple[Pointer, bytes]]:
@@ -2567,6 +2571,19 @@ class LocalMemoryTransport(base.MemoryTransport):
             ret.append(bytes(buf))
         return ret
 
+
+@dataclass
+class ReadOp:
+    src: Pointer
+    n: int
+    done: t.Optional[bytes] = None
+
+    @property
+    def data(self) -> bytes:
+        if self.done is None:
+            raise Exception("not done yet")
+        return self.done
+
 @dataclass
 class SocketMemoryTransport(base.MemoryTransport):
     """This class wraps a pair of connected file descriptors, one of which is in the local address space.
@@ -2584,6 +2601,28 @@ class SocketMemoryTransport(base.MemoryTransport):
     local: AsyncFileDescriptor[ReadableWritableFile]
     remote: handle.FileDescriptor
     lock: trio.Lock
+
+    @staticmethod
+    def merge_adjacent_reads(read_ops: t.List[ReadOp]) -> t.List[t.Tuple[ReadOp, t.List[ReadOp]]]:
+        "Note that this is only effective inasmuch as the list is sorted."
+        if len(read_ops) == 0:
+            return []
+        read_ops = sorted(read_ops, key=lambda op: int(op.src))
+        last_op = read_ops[0]
+        last_orig_ops = [last_op]
+        outputs: t.List[t.Tuple[ReadOp, t.List[ReadOp]]] = []
+        for op in read_ops[1:]:
+            if int(last_op.src + last_op.n) == int(op.src):
+                last_op.n += op.n
+                last_orig_ops.append(op)
+            elif int(last_op.src + last_op.n) == int(op.src):
+                raise Exception("pointers passed to memcpy are overlapping!")
+            else:
+                outputs.append((last_op, last_orig_ops))
+                last_op = op
+                last_orig_ops = [op]
+        outputs.append((last_op, last_orig_ops))
+        return outputs
 
     @property
     def remote_is_local(self) -> bool:
@@ -2658,33 +2697,57 @@ class SocketMemoryTransport(base.MemoryTransport):
             while (n - i) > 0:
                 ret = await self.local.read_raw(rtask.sysif, near_read_fd, near_dest+i, n-i)
                 i += ret
+                print("read", ret, "i=", i, "n=", n, "left=", n-i, self.lock)
+            print("done read", ret)
         async def write() -> None:
             i = 0
             while (n - i) > 0:
                 ret = await near.write(wtask.sysif, near_write_fd, near_src+i, n-i)
                 i += ret
+                print("write", ret, "i=", i, "n=", n, "left=", n-i, self.lock)
+            print("done write", ret)
+        # AAAAAAAAAAAAAAAAAAAAAAAa oh noOOOOO
+        # I'm getting cancelled and things are messing up :( :( :( :( :(
         async with trio.open_nursery() as nursery:
             nursery.start_soon(read)
             nursery.start_soon(write)
+        print("done with all", n)
         return bytes(buf)
 
-    async def _unlocked_batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
-        ops = merge_adjacent_reads(ops)
-        ret: t.List[bytes] = []
-        for src, size in ops:
-            ret.append(await self._unlocked_single_read(src, size))
-        return ret
+    async def _unlocked_batch_read(self, ops: t.List[ReadOp]) -> None:
+        for op in ops:
+            op.done = await self._unlocked_single_read(op.src, op.n)
+
+    async def do_batch_read(self, ops: t.List[ReadOp]) -> None:
+        merged_ops = self.merge_adjacent_reads(ops)
+        logger.info("trying to take lock")
+        if not self.remote_is_local:
+            print("taking lock", self.lock, "for", ops[0].n)
+        await self.lock.acquire()
+        try:
+            if not self.remote_is_local:
+                print("took lock", self.lock, "for", ops[0].n)
+            await self._unlocked_batch_read([op for op, _ in merged_ops])
+        except BaseException as e:
+            print("got", e)
+            raise
+        finally:
+            if not self.remote_is_local:
+                print("releasing lock", self.lock, "for", ops[0].n)
+            self.lock.release()
+        for op, orig_ops in merged_ops:
+            data = op.data
+            for orig_op in orig_ops:
+                orig_op.done, data = data[:orig_op.n], data[orig_op.n:]
 
     async def read(self, src: Pointer, n: int) -> bytes:
         [data] = await self.batch_read([(src, n)])
         return data
 
     async def batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
-        logger.info("trying to take lock")
-        async with self.lock:
-            logger.info("took lock")
-            return (await self._unlocked_batch_read(ops))
-
+        read_ops = [ReadOp(src, n) for src, n in ops]
+        await self.do_batch_read(read_ops)
+        return [op.data for op in read_ops]
 
 class AsyncReadBuffer:
     def __init__(self, fd: AsyncFileDescriptor[ReadableFile]) -> None:
@@ -3130,7 +3193,7 @@ async def ssh_bootstrap(
     bootstrap_thread = await parent_task.fork()
     bootstrap_child_task = await ssh_host.command.local_forward(
         str(local_socket_path), (tmp_path_bytes + b"/data").decode(),
-    ).args([f"cd {tmp_path_bytes.decode()}; ./bootstrap rsyscall"]).exec(bootstrap_thread)
+    ).args(["-n", f"cd {tmp_path_bytes.decode()}; ./bootstrap rsyscall"]).exec(bootstrap_thread)
     # TODO should unlink the bootstrap after I'm done execing.
     # it would be better if sh supported fexecve, then I could unlink it before I exec...
     # TODO TODO this is dumb! waiting for the ssh forwarding to be established!
@@ -3606,41 +3669,38 @@ class ConsoleGenie(WishGranter):
     async def wish(self, wish: Wish[T]) -> T:
         async with self.lock:
             message = "".join(traceback.format_exception(None, wish, wish.__traceback__))
+            wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
             catfd, myfd = await self.stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
 
             term_stdin, repl_stdout = await self.stdtask.task.pipe()
             repl_stdin, term_stdout = await self.stdtask.task.pipe()
-
-            cat_stdin_thread = await self.stdtask.fork()
-            cat_stdin = cat_stdin_thread.stdtask.task.base.make_fd_handle(term_stdin.handle)
-            await term_stdin.handle.invalidate()
-            await cat_stdin_thread.stdtask.unshare_files(going_to_exec=True)
-            await cat_stdin_thread.stdtask.stdin.replace_with(cat_stdin)
-            cat_stdin_child = await self.cat.exec(cat_stdin_thread)
-
-            cat_stdout_thread = await self.stdtask.fork()
-            cat_stdout = cat_stdout_thread.stdtask.task.base.make_fd_handle(term_stdout.handle)
-            await term_stdout.handle.invalidate()
-            await cat_stdout_thread.stdtask.unshare_files(going_to_exec=True)
-            await cat_stdout_thread.stdtask.stdout.replace_with(cat_stdout)
-            cat_stdout_child = await self.cat.exec(cat_stdout_thread)
-
             async_stdin = await AsyncFileDescriptor.make(self.stdtask.epoller, repl_stdin)
             async_stdout = await AsyncFileDescriptor.make(self.stdtask.epoller, repl_stdout)
-            wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
-            ret = await run_repl(async_stdin, async_stdout, {
-                '__repl_stdin__': async_stdin,
-                '__repl_stdout__': async_stdout,
-                'wish': wish,
-                'wisher_frame': wisher_frame,
-                'wisher_locals': wisher_frame.f_locals,
-                'wisher_globals': wisher_frame.f_globals,
-            }, wish.return_type, message)
-            await cat_stdin_child.kill()
-            await cat_stdout_child.kill()
-            await async_stdin.aclose()
-            await async_stdout.aclose()
-            return ret
+            try:
+                cat_stdin_thread = await self.stdtask.fork()
+                cat_stdin = cat_stdin_thread.stdtask.task.base.make_fd_handle(term_stdin.handle)
+                await term_stdin.handle.invalidate()
+                await cat_stdin_thread.stdtask.unshare_files(going_to_exec=True)
+                await cat_stdin_thread.stdtask.stdin.replace_with(cat_stdin)
+                async with await self.cat.exec(cat_stdin_thread):
+                    cat_stdout_thread = await self.stdtask.fork()
+                    cat_stdout = cat_stdout_thread.stdtask.task.base.make_fd_handle(term_stdout.handle)
+                    await term_stdout.handle.invalidate()
+                    await cat_stdout_thread.stdtask.unshare_files(going_to_exec=True)
+                    await cat_stdout_thread.stdtask.stdout.replace_with(cat_stdout)
+                    async with await self.cat.exec(cat_stdout_thread):
+                        ret = await run_repl(async_stdin, async_stdout, {
+                            '__repl_stdin__': async_stdin,
+                            '__repl_stdout__': async_stdout,
+                            'wish': wish,
+                            'wisher_frame': wisher_frame,
+                            'wisher_locals': wisher_frame.f_locals,
+                            'wisher_globals': wisher_frame.f_globals,
+                        }, wish.return_type, message)
+                        return ret
+            finally:
+                await async_stdin.aclose()
+                await async_stdout.aclose()
 
 class ConsoleServerGenie(WishGranter):
     @classmethod

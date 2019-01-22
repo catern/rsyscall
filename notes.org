@@ -10327,3 +10327,38 @@ for use in the repl
    We can't just do the, send SIGINT thing.
 
    Meh, let's forget about it.
+* hmm
+  so we seem to be having some memory-reading issues, we're reading out random memory.
+
+  I believe we are at least reading the right addresses,
+  but maybe due to races, things are not set right.
+
+  like we're reading out of order somehow
+* generic solution
+  OK so let's make an object base class thing,
+  which can be inherited from,
+  which provides the feature of,
+  running an async self.run method and,
+  delivering other method calls as messages to that.
+
+  So that self.run can batch things together and all that.
+
+  And also, so that when the method call that is currently running self.run gets cancelled,
+  that doesn't stop self.run, but instead self.run just stops running,
+  and is run again by some other method call when one comes around.
+
+  Incoming method calls can be represented by objects,
+  with a method on them to return from them.
+
+  When a cancellation happens, the method call object will have a flag set,
+  but no other change will happen.
+
+  Normal awaits can happen normally:
+  They'll just be propagated up through.
+  (with special handling to avoid cancels)
+
+  It's only returns that need to be special,
+  We'll do a return on the object,
+  which will set a flag then yield up.
+  That flag will be checked before processing yields,
+  and if it's set then we intercept the yield as the return value.
