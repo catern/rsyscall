@@ -38,7 +38,7 @@ import struct
 import array
 import trio
 import signal
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import fcntl
 import errno
@@ -633,7 +633,6 @@ class PendingEpollWait:
             count = await self.syscall_response.receive()
             bufsize = self.allocation.end - self.allocation.start
             localbuf = await self.memory_transport.read(self.allocation.pointer, bufsize)
-            print("len localbuf", len(localbuf), bufsize)
             ret: t.List[EpollEvent] = []
             cur = 0
             for _ in range(count):
@@ -654,7 +653,7 @@ class EpollWaiter:
         self.activity_fd_data = 0
         self.next_number = 1
         self.number_to_queue: t.Dict[int, trio.abc.SendChannel] = {}
-        self.running_wait: t.Optional[trio.Event] = None
+        self.running_wait = OneAtATime()
         self.pending_epoll_wait: t.Optional[PendingEpollWait] = None
 
     # need to also support removing, I guess!
@@ -675,12 +674,8 @@ class EpollWaiter:
                                    EpollEvent(data=self.activity_fd_data, events=EpollEventMask.make(in_=True)))
 
     async def do_wait(self) -> None:
-        if self.running_wait is not None:
-            await self.running_wait.wait()
-        else:
-            running_wait = trio.Event()
-            self.running_wait = running_wait
-            try:
+        async with self.running_wait.needs_run() as needs_run:
+            if needs_run:
                 if self.wait_readable is not None:
                     logger.info("sleeping before wait")
                     # yield away first
@@ -755,13 +750,9 @@ class EpollWaiter:
                     if event.data != self.activity_fd_data:
                         queue = self.number_to_queue[event.data]
                         queue.send_nowait(event.events)
-            finally:
-                self.running_wait = None
-                running_wait.set()
 
     async def submit_wait(self, maxevents: int, timeout: int) -> PendingEpollWait:
         allocation = await self.waiting_task.allocator.malloc(maxevents * EpollEvent.bytesize())
-        print("max", maxevents, EpollEvent.bytesize())
         try:
             syscall_response = await self.epfd.task.sysif.submit_syscall(
                 near.SYS.epoll_wait, self.epfd.near, allocation.pointer, maxevents, timeout)
@@ -798,7 +789,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     def __init__(self, epolled: EpolledFileDescriptor, underlying: FileDescriptor[T_file_co]) -> None:
         self.epolled = epolled
         self.underlying = underlying
-        self.running_wait: t.Optional[trio.Event] = None
+        self.running_wait = OneAtATime()
         self.is_readable = False
         self.is_writable = False
         self.read_hangup = False
@@ -807,12 +798,8 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
         self.hangup = False
 
     async def _wait_once(self):
-        if self.running_wait is not None:
-            await self.running_wait.wait()
-        else:
-            running_wait = trio.Event()
-            self.running_wait = running_wait
-            try:
+        async with self.running_wait.needs_run() as needs_run:
+            if needs_run:
                 events = await self.epolled.wait()
                 for event in events:
                     if event.in_:   self.is_readable = True
@@ -821,9 +808,6 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                     if event.pri:   self.priority = True
                     if event.err:   self.error = True
                     if event.hup:   self.hangup = True
-            finally:
-                self.running_wait = None
-                running_wait.set()
 
     def could_read(self) -> bool:
         return self.is_readable or self.read_hangup or self.hangup or self.error
@@ -1715,7 +1699,7 @@ class ChildProcessMonitorInternal:
         self.wait_lock = trio.Lock()
         if self.signal_queue.sigfd.underlying.file.mask != set([signal.SIGCHLD]):
             raise Exception("ChildProcessMonitor should get a SignalQueue only for SIGCHLD")
-        self.running_wait: t.Optional[trio.Event] = None
+        self.running_wait = OneAtATime()
         self.can_waitid = False
 
         self.clone_lock = trio.Lock()
@@ -1753,14 +1737,8 @@ class ChildProcessMonitorInternal:
                 return self.add_task(base.Process(self.waiting_task.pid_namespace, near.Process(tid)))
 
     async def do_wait(self) -> None:
-        if self.running_wait is not None:
-            logger.info("waiting on child task event")
-            await self.running_wait.wait()
-        else:
-            logger.info("waiting on child task doing it myself")
-            running_wait = trio.Event()
-            self.running_wait = running_wait
-            try:
+        async with self.running_wait.needs_run() as needs_run:
+            if needs_run:
                 if not self.can_waitid:
                     # we don't care what information we get from the signal, we just want to
                     # sleep until a SIGCHLD happens
@@ -1818,10 +1796,6 @@ class ChildProcessMonitorInternal:
                     # this child is dead. if its pid is reused, we don't want to send
                     # any more events to the same ChildProcess.
                     del self.task_map[pid]
-            finally:
-                logger.info("leaving child task doing it myself")
-                self.running_wait = None
-                running_wait.set()
 
     async def close(self) -> None:
         await self.signal_queue.close()
@@ -2485,7 +2459,6 @@ async def unshare_files(
 ) -> None:
     serializer = memsys.Serializer()
     fds_ptr = serializer.serialize_data(array.array('i', [int(fd) for fd in close_in_old_space]).tobytes())
-    print("close_in_old", close_in_old_space)
     stack_ptr = serializer.serialize_lambda(trampoline_stack_size,
         lambda: process_resources.build_trampoline_stack(process_resources.stop_then_close_func,
                                                          fds_ptr.pointer, len(close_in_old_space)),
@@ -2505,7 +2478,6 @@ async def unshare_files(
         await closer_task.wait_for_exit()
     # perform a cloexec
     if not going_to_exec:
-        print(copy_to_new_space)
         await do_cloexec_except(task, process_resources, copy_to_new_space)
 
 def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[t.Tuple[Pointer, bytes]]:
@@ -2571,6 +2543,23 @@ class LocalMemoryTransport(base.MemoryTransport):
             ret.append(bytes(buf))
         return ret
 
+@dataclass
+class OneAtATime:
+    running: t.Optional[trio.Event] = None
+
+    @contextlib.asynccontextmanager
+    async def needs_run(self) -> t.AsyncGenerator[bool, None]:
+        if self.running is not None:
+            yield False
+            await self.running.wait()
+        else:
+            running = trio.Event()
+            self.running = running
+            try:
+                yield True
+            finally:
+                self.running = None
+                running.set()
 
 @dataclass
 class ReadOp:
@@ -2581,6 +2570,18 @@ class ReadOp:
     @property
     def data(self) -> bytes:
         if self.done is None:
+            raise Exception("not done yet")
+        return self.done
+
+@dataclass
+class WriteOp:
+    src: Pointer
+    n: int
+    done: bool = False
+
+    @property
+    def data(self) -> None:
+        if not self.done:
             raise Exception("not done yet")
         return self.done
 
@@ -2601,6 +2602,10 @@ class SocketMemoryTransport(base.MemoryTransport):
     local: AsyncFileDescriptor[ReadableWritableFile]
     remote: handle.FileDescriptor
     lock: trio.Lock
+    pending_writes: t.List[WriteOp] = field(default_factory=list)
+    running_write: OneAtATime = field(default_factory=OneAtATime)
+    pending_reads: t.List[ReadOp] = field(default_factory=list)
+    running_read: OneAtATime = field(default_factory=OneAtATime)
 
     @staticmethod
     def merge_adjacent_reads(read_ops: t.List[ReadOp]) -> t.List[t.Tuple[ReadOp, t.List[ReadOp]]]:
@@ -2697,56 +2702,46 @@ class SocketMemoryTransport(base.MemoryTransport):
             while (n - i) > 0:
                 ret = await self.local.read_raw(rtask.sysif, near_read_fd, near_dest+i, n-i)
                 i += ret
-                print("read", ret, "i=", i, "n=", n, "left=", n-i, self.lock)
-            print("done read", ret)
         async def write() -> None:
             i = 0
             while (n - i) > 0:
                 ret = await near.write(wtask.sysif, near_write_fd, near_src+i, n-i)
                 i += ret
-                print("write", ret, "i=", i, "n=", n, "left=", n-i, self.lock)
-            print("done write", ret)
-        # AAAAAAAAAAAAAAAAAAAAAAAa oh noOOOOO
-        # I'm getting cancelled and things are messing up :( :( :( :( :(
         async with trio.open_nursery() as nursery:
             nursery.start_soon(read)
             nursery.start_soon(write)
-        print("done with all", n)
         return bytes(buf)
 
     async def _unlocked_batch_read(self, ops: t.List[ReadOp]) -> None:
         for op in ops:
             op.done = await self._unlocked_single_read(op.src, op.n)
 
-    async def do_batch_read(self, ops: t.List[ReadOp]) -> None:
-        merged_ops = self.merge_adjacent_reads(ops)
-        logger.info("trying to take lock")
-        if not self.remote_is_local:
-            print("taking lock", self.lock, "for", ops[0].n)
-        await self.lock.acquire()
-        try:
-            if not self.remote_is_local:
-                print("took lock", self.lock, "for", ops[0].n)
-            await self._unlocked_batch_read([op for op, _ in merged_ops])
-        except BaseException as e:
-            print("got", e)
-            raise
-        finally:
-            if not self.remote_is_local:
-                print("releasing lock", self.lock, "for", ops[0].n)
-            self.lock.release()
-        for op, orig_ops in merged_ops:
-            data = op.data
-            for orig_op in orig_ops:
-                orig_op.done, data = data[:orig_op.n], data[orig_op.n:]
+    def _start_single_read(self, dest: Pointer, n: int) -> ReadOp:
+        op = ReadOp(dest, n)
+        self.pending_reads.append(op)
+        return op
+
+    async def do_reads(self) -> None:
+        async with self.running_read.needs_run() as needs_run:
+            if needs_run:
+                ops = self.pending_reads
+                self.pending_reads = []
+                merged_ops = self.merge_adjacent_reads(ops)
+                # TODO we should not use a cancel scope shield, we should use the SyscallResponse API
+                with trio.open_cancel_scope(shield=True):
+                    await self._unlocked_batch_read([op for op, _ in merged_ops])
+                for op, orig_ops in merged_ops:
+                    data = op.data
+                    for orig_op in orig_ops:
+                        orig_op.done, data = data[:orig_op.n], data[orig_op.n:]
 
     async def read(self, src: Pointer, n: int) -> bytes:
         [data] = await self.batch_read([(src, n)])
         return data
 
     async def batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
-        read_ops = [ReadOp(src, n) for src, n in ops]
-        await self.do_batch_read(read_ops)
+        read_ops = [self._start_single_read(src, n) for src, n in ops]
+        await self.do_reads()
         return [op.data for op in read_ops]
 
 class AsyncReadBuffer:

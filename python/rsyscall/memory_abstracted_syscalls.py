@@ -132,7 +132,6 @@ async def rt_sigprocmask(sysif: SyscallInterface, transport: MemoryTransport, al
             await raw_syscall.rt_sigprocmask(sysif, (how, newset_ptr), oldset_ptr, sigset.size)
             with trio.open_cancel_scope(shield=True):
                 oldset_data = await read_to_bytes(transport, oldset_ptr, sigset.size)
-                print("oldset_data", oldset_data)
             return bytes_to_sigset(oldset_data)
 
 
@@ -447,12 +446,9 @@ async def read_sockbuf(
         transport: MemoryTransport, buf_ptr: base.Pointer, buflen: int, buflen_ptr: base.Pointer
 ) -> bytes:
     # TODO we should optimize this to just do a single batch memcpy
-    print("about to read buflen_data")
     buflen_data = await read_to_bytes(transport, buflen_ptr, socklen.size)
-    print("buflen_data", buflen_data)
     buflen_result, = socklen.unpack(buflen_data)
     buf = await read_to_bytes(transport, buf_ptr, buflen_result)
-    print("buf", buf)
     return buf
 
 async def getsockname(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
