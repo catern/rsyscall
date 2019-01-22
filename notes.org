@@ -10380,3 +10380,355 @@ for use in the repl
   Which means I'll be blocking others.
 
   Hmm, very tricky...
+
+  We want the functions I call into to continue running. Whatever that means. Hm.
+** thoughts
+  So what exactly is going on here?
+
+  We're some thread calling into some object,
+  and we trust that the other thread that has the lock and is inside the critical section is going to make forward progress.
+
+  But, it might be permanently descheduled!
+  So, what do we do?
+
+  Hmmmmm
+
+  This is kind of an issue of priority inheritance I suppose.
+
+  So how do we deal with this in other circumstance?
+
+  Well, when we get cancelled, um.
+
+  I see, we can, um.
+
+  Wait, okay, so.
+
+  When we make a real call,
+
+  we do the yield up ourselves.
+
+  And if we get cancelled,
+
+  we save it and do it elsewhere. Right...?
+
+  We just do it... again??
+
+  Can we really sustain that?
+
+  So okay, someone beneath us is making some call with some effect,
+  and we're seeing the effect in our handler loop.
+  If it throws an exception or returns a value,
+  we re-inject that into the generator.
+
+  I guess we could then catch cancelled,
+  and suspend ourselves, by throwing that up to the user. Hmm.
+
+  Right, so we get the cancelled,
+  and we skip over our call stack,
+  sending it straight back to the user.
+
+  Which makes sense.
+
+  So that's all good, if we're a server,
+  and we don't want to die when a caller is cancelled.
+
+  But what if we're a user,
+  and we're calling a server,
+  and we don't want our call to the server to be interrupted,
+  just because we were cancelled?
+
+  In other words.
+
+  Hmm.
+
+  So okay, with the approach of,
+  we get a cancelled from it,
+  and propagate it up, skipping us.
+
+  How else are we going to learn that we got cancelled?
+
+  Essentially, the idea is,
+  some exceptions only terminate a specific request,
+  and not all of them.
+
+  But, the problem is.
+  when user A sends a request to server B,
+  which sends a request to server C,
+  then user A gets cancelled,
+  then server C sees that cancellation,
+  it cancels server B's request to C.
+
+  But we want that request to stay around.
+
+  That request is not *really* cancelled.
+
+  So maybe we want to make the request under a cancel guard,
+  and have another thing waiting to receive the cancellation exception.
+
+  But, wait, wait.
+
+  While the request is not really cancelled,
+  we really might need to schedule it onto another thread.
+
+  Hmm.
+
+  That is to say...
+
+  When this exception is injected,
+  it's an indication that we should stop running.
+
+  Um, hm.
+
+  More specifically, we will indeed, stop running.
+  If we propagate the return value up.
+
+  So, okay.
+
+  If I return something up,
+  then, obviously I can't also be in the middle of a call to something else.
+  With a nursery or whatever.
+
+  So the call to something else has to terminate.
+  And be resumed, I suppose.
+
+  So, okay, I can have this completion thing.
+
+  Basically have the methods return a future or whatever.
+
+  Which I can await on to get my thing.
+
+  Yeah I mean, that's easiest, innit.
+
+  Plus there's nice symmetry - the user awaits fut.get(), the server awaits fut.return().
+
+  And then if the .get() is cancelled,
+  we can always later go and call .get() again.
+
+  Most will use a wrapper which auto-cancels the fut on cancellation up. I guess. Hm.
+
+  Blah, okay, so the issue really is just,
+  what if the guy whose responsible for running, isn't running?
+
+  Can we solve that without fancy resuming stuff?
+
+  Well so
+
+  I guess
+  Um
+
+  instead of even having the cancelled propagate down to us,
+  we screen it off at the method level.
+
+  We get the cancelled exception,
+  we stop running the thread,
+  and we 
+
+  We cancel that specific request,
+  and stop running the thread
+
+  ugh trio you are shit, it's too complicated for all this.
+
+  Suppose we screened off the cancelled at the method level.
+  We suspend the thread underneath us - it never runs again.
+
+  If it has a lock, what do we do?
+
+  Looks like we would indeed want to do some priority inheritance. Blah.
+
+  Blah this is all so complicated.
+
+  Bah okay
+
+  Thread A calls object B which calls object C.
+
+  Thread A gets cancelled, and stops calling into object B.
+
+  Object B's state stays around, so it is still the designated caller for object C.
+  It still holds the lock.
+
+  How do we deal with this?
+
+  I don't, in fact, want to unwind the stack,
+  because I want to keep all the state around.
+
+  So I don't want to execute a bunch of handlers to release locks or whatever.
+
+  Instead. Hmm.
+
+  Object B holds the lock for object C.
+  It should really give them up.
+
+  Blah this is tricky.
+** summary
+  OK, so.
+
+  I have a system where objects have a coroutine inside them,
+  which receives (blocking) method calls from the outside world as requests,
+  and processes them,
+  and sends responses back,
+  possibly processing method calls in batches, possibly responding to method calls out of order, etc.
+
+  This is implemented as a library, without requiring a global scheduler in the runtime.
+  So, the coroutine inside an object only runs when there's at least one active method call from some thread;
+  the coroutine runs directly on the thread that's making the method call.
+
+  Now, suppose I have thread A, calling into object B, which in turn is calling into object C.
+
+  Suppose I kill off thread A.
+
+  How... how do I handle that...?
+  Well if I just flat-out kill it, then y'know, nothing works.
+
+  Maybe I want to steal things from the kill-safe abstractions paper, hm.
+  What did they do?
+
+  Oh, wait.
+  Maybe they don't handle the issue of,
+  I have thread A calling B calling C,
+  and X calling C also.
+  And A suspends, so B doesn't run.
+  Hmm.
+
+  Like, I need to somehow notify at the B-C interface to reparent to X.
+
+  I guess the notification would be that B is not running or something. Hmm. But that's ugly.
+
+  Like, I want to be fully generic, right?
+
+  If, um.
+
+  So say we're in B, and we're calling C.
+
+  Doesn't C learn when the thread dies?
+  Like, it can see cancellations?
+
+  Maybe it should just see that,
+  and reparent to something else.
+
+  That works, *if* we're willing to interrupt the method call.
+  Because interrupting the method call is the straightforward way to signal that,
+  this method call isn't going to run you any more.
+
+  how else can I inform it, hmm.
+
+  oh also note, like, what if the thread above us gets stuck in a lock somewhere else or something, right?
+  can that happen?
+
+  well no we're directly running on that thread, right?
+
+  therefore that can't happen
+
+  well I guess the thread could be holding a lock, um.
+
+  well we're blocked until this operation is done, so...
+** again, summary
+  I have a system where objects have a coroutine inside them,
+  which receives (blocking) method calls from the outside world as requests,
+  and processes them,
+  and sends responses back,
+  possibly processing method calls in batches, possibly responding to method calls out of order, etc.
+
+  This is implemented as a library, without requiring a global scheduler in the runtime.
+  So, the coroutine inside an object only runs when there's at least one active method call from some thread;
+  the coroutine runs directly on the thread that's making the method call.
+
+  Now, suppose I have thread A, calling into object B, which in turn is calling into object C.
+
+  And suppose I kill off thread A.
+
+  How?
+  POSIX cancellation semantics...?
+
+  I guess I can inject an exception into it,
+  which will unwind up the whole thing.
+
+  Or I suppose I can just stop running it ever again.
+  Yeah sure let's suppose I just stop running it.
+  How do I clean up?
+*** just execute atomically
+    this doesn't work because we do actually need to be able to cancel
+*** primitive
+    ok so what if I just have the obvious system of invoking stacks and all that
+
+    stack A invokes stack B which invokes stack C.
+
+    if stack C yields up to stack K,
+    and stack K decides not to re-invoke stack C.
+    then what do?
+
+    I guess what we'd need to do is,
+    stack C would also yield up, like, what?
+    all the things necessary to unwind?
+
+    well, okay, so one approach is for K to re-invoke stack C with an exception.
+
+    then stack C can invoke stack B with the same exception,
+    which can invoke stack A with that exception,
+    all good.
+
+    except, this annoyingly requires us to re-invoke a stack to do unwinding.
+
+    hm.
+
+    also I guess problematically we have to retry everywhere in those stacks.
+
+    we'd rather not retry, right?
+
+    so stack B shouldn't even change just because stack C is running elsewhere. hmm.
+
+    well. hmm.
+
+    this is kinda priority inheritance isn't it?
+
+    we just never run A/B/C again, sure.
+
+    except someone else is waiting for C, so we need to run it. um.
+
+    wait wait okay so.
+
+    stack B shouldn't change just because we need to run stack C on top of a different thread/stack.
+
+    well, so, we're in K, and we run something else X.
+    and X wants to call into C.
+    or maybe even X is already on some lock in C.
+
+    well, let's go with the "X wants to call into C" approach.
+    X wants to call into C,
+    so um,
+    it goes and, um, tells K to continue running C until it gets to a point where it's handled whatever,
+    and can return.
+
+    I guess when C yields up to B,
+    it has to go through K,
+    so that K can redirect the thing away.
+
+    well okay so the notion is, right, that,
+
+    we've got some A0, which starts A1, A2, etc.
+
+    And it multiplexes between them.
+
+    And it eventually decides to kill A1
+
+    But A1 is inside B and C.
+
+    And we want to free up resources.
+
+    Ugh, and the standard solution is throwing an exception up.
+
+    But we don't want to destroy B and C's state.
+
+    I guess if we want to give B and C the chance to actually interrupt their processing, then we do. argh.
+
+    Hmm. Isn't cancelled just, like, eintr?
+
+    Maybe we just want some kinda notion of cancellation um...
+
+    This is all nuts and hard.
+    Let's just do it with stack ripping.
+
+    goooooooooooooooooooooood damn it
+
+    blah
+    ok!
+    stack ripping it is.
