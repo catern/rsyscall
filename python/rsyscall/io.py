@@ -2480,42 +2480,6 @@ async def unshare_files(
     if not going_to_exec:
         await do_cloexec_except(task, process_resources, copy_to_new_space)
 
-def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[t.Tuple[Pointer, bytes]]:
-    "Note that this is only effective inasmuch as the list is sorted."
-    if len(write_ops) == 0:
-        return []
-    write_ops = sorted(write_ops, key=lambda op: int(op[0]))
-    outputs: t.List[t.Tuple[Pointer, bytes]] = []
-    last_pointer, last_data = write_ops[0]
-    for pointer, data in write_ops[1:]:
-        if int(last_pointer + len(last_data)) == int(pointer):
-            last_data += data
-        elif int(last_pointer + len(last_data)) > int(pointer):
-            raise Exception("pointers passed to memcpy are overlapping!")
-        else:
-            outputs.append((last_pointer, last_data))
-            last_pointer, last_data = pointer, data
-    outputs.append((last_pointer, last_data))
-    return outputs
-
-def merge_adjacent_reads(read_ops: t.List[t.Tuple[Pointer, int]]) -> t.List[t.Tuple[Pointer, int]]:
-    "Note that this is only effective inasmuch as the list is sorted."
-    if len(read_ops) == 0:
-        return []
-    read_ops = sorted(read_ops, key=lambda op: int(op[0]))
-    outputs: t.List[t.Tuple[Pointer, int]] = []
-    last_pointer, last_size = read_ops[0]
-    for pointer, size in read_ops[1:]:
-        if int(last_pointer + last_size) == int(pointer):
-            last_size += size
-        elif int(last_pointer + last_size) > int(pointer):
-            raise Exception("pointers passed to memcpy are overlapping!")
-        else:
-            outputs.append((last_pointer, last_size))
-            last_pointer, last_size = pointer, size
-    outputs.append((last_pointer, last_size))
-    return outputs
-
 class LocalMemoryTransport(base.MemoryTransport):
     "This is a memory transport that only works on local pointers."
     def inherit(self, task: handle.Task) -> LocalMemoryTransport:
@@ -2575,15 +2539,31 @@ class ReadOp:
 
 @dataclass
 class WriteOp:
-    src: Pointer
-    n: int
+    dest: Pointer
+    data: bytes
     done: bool = False
 
-    @property
-    def data(self) -> None:
+    def assert_done(self) -> None:
         if not self.done:
             raise Exception("not done yet")
-        return self.done
+
+def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[t.Tuple[Pointer, bytes]]:
+    "Note that this is only effective inasmuch as the list is sorted."
+    if len(write_ops) == 0:
+        return []
+    write_ops = sorted(write_ops, key=lambda op: int(op[0]))
+    outputs: t.List[t.Tuple[Pointer, bytes]] = []
+    last_pointer, last_data = write_ops[0]
+    for pointer, data in write_ops[1:]:
+        if int(last_pointer + len(last_data)) == int(pointer):
+            last_data += data
+        elif int(last_pointer + len(last_data)) > int(pointer):
+            raise Exception("pointers passed to memcpy are overlapping!")
+        else:
+            outputs.append((last_pointer, last_data))
+            last_pointer, last_data = pointer, data
+    outputs.append((last_pointer, last_data))
+    return outputs
 
 @dataclass
 class SocketMemoryTransport(base.MemoryTransport):
@@ -2678,12 +2658,30 @@ class SocketMemoryTransport(base.MemoryTransport):
             for dest, data in ops:
                 await self._unlocked_single_write(dest, data)
 
+    def _start_single_write(self, dest: Pointer, data: bytes) -> WriteOp:
+        write = WriteOp(dest, data)
+        self.pending_writes.append(write)
+        return write
+
+    async def _do_writes(self) -> None:
+        async with self.running_write.needs_run() as needs_run:
+            if needs_run:
+                writes = self.pending_writes
+                self.pending_writes = []
+                # TODO we should not use a cancel scope shield, we should use the SyscallResponse API
+                with trio.open_cancel_scope(shield=True):
+                    await self._unlocked_batch_write([(write.dest, write.data) for write in writes])
+                for write in writes:
+                    write.done = True
+
     async def write(self, dest: Pointer, data: bytes) -> None:
         await self.batch_write([(dest, data)])
 
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
-        async with self.lock:
-            await self._unlocked_batch_write(ops)
+        write_ops = [self._start_single_write(dest, data) for (dest, data) in ops]
+        await self._do_writes()
+        for op in write_ops:
+            op.assert_done()
 
     async def _unlocked_single_read(self, src: Pointer, n: int) -> bytes:
         buf = bytearray(n)
@@ -2721,7 +2719,7 @@ class SocketMemoryTransport(base.MemoryTransport):
         self.pending_reads.append(op)
         return op
 
-    async def do_reads(self) -> None:
+    async def _do_reads(self) -> None:
         async with self.running_read.needs_run() as needs_run:
             if needs_run:
                 ops = self.pending_reads
@@ -2741,7 +2739,7 @@ class SocketMemoryTransport(base.MemoryTransport):
 
     async def batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
         read_ops = [self._start_single_read(src, n) for src, n in ops]
-        await self.do_reads()
+        await self._do_reads()
         return [op.data for op in read_ops]
 
 class AsyncReadBuffer:
