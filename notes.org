@@ -10362,3 +10362,21 @@ for use in the repl
   which will set a flag then yield up.
   That flag will be checked before processing yields,
   and if it's set then we intercept the yield as the return value.
+
+  So then now we need to think about the other side:
+  what if I'm some other task which doesn't want to be cancelled,
+  and I call into this uncancelling object?
+  I want my method call to persist even if I'm cancelled above...
+
+  Oh!
+  Doesn't it just work, though?
+  When I get cancelled, I get suspended,
+  and the cancel doesn't propagate down into the objects I'm calling into.
+
+  Well... there's the issue that,
+  done naively,
+  I'll get suspended - which will suspend the method I'm calling into.
+
+  Which means I'll be blocking others.
+
+  Hmm, very tricky...
