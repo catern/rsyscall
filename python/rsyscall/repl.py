@@ -91,7 +91,7 @@ def compile_to_awaitable(astob: ast.Interactive,
       exception, is_expression is False and value contains None.
 
     """
-    wrapper_name = "__internal_async_wrapper__"
+    wrapper_name = "__toplevel__"
     # we rely on the user not messing with __builtins__ in the REPL; that's something you
     # really aren't supposed to do, so I think that's fine.
     wrapper = ast.parse(f"""
@@ -183,7 +183,6 @@ class PureREPL:
         self.buf += data
         try:
             # remove the last newline
-            print("buf is", self.buf.encode())
             astob = ast_compile_interactive(self.buf[:-1])
         except Exception:
             self.buf = ""
@@ -240,7 +239,6 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
     await write(b">")
     while True:
         raw_data = await read()
-        print("raw_data", raw_data)
         if len(raw_data) == 0:
             raise Exception("REPL hangup")
         for line in line_buf.add(raw_data.decode()):

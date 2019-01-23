@@ -192,7 +192,18 @@ class Path:
         return self._as_proc_path()
 
     def __str__(self) -> str:
-        return bytes(self).decode()
+        return os.fsdecode(bytes(self))
+
+    def __repr__(self) -> str:
+        pathdata = os.fsdecode(b"/".join(self.components))
+        if isinstance(self.base, Root):
+            return f"Path(/{pathdata})"
+        elif isinstance(self.base, CWD):
+            return f"Path(./{pathdata})"
+        elif isinstance(self.base, FileDescriptor):
+            return f"Path({self.base}, {pathdata})"
+        else:
+            raise Exception("invalid base type")
 
 # This is like a segment register, if a segment register was write-only. Then
 # we'd need to maintain the knowledge of what the segment register was set to,

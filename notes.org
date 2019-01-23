@@ -10732,3 +10732,38 @@ for use in the repl
     blah
     ok!
     stack ripping it is.
+* readlink -f
+  so why do we need this again?
+  why can't we just open the file?
+
+  well...
+
+  nix-store sticks the thing on the remote filesystem,
+  as a tarball.
+
+  then we extract that
+
+  and that creates some stuff on the remote filesystem.
+
+  so ok so we can probably pass down a file to nix-store --export or --requisites.
+
+  then basically that dumps a list of filesystem paths we need on the remote system to use that file
+
+  then, I suppose if we're really committed, we can just copy the file across???
+
+  we just copy the file to the remote host, to anywhere,
+  and then use it. blah.
+
+  but it also needs to be in the right place, so...
+
+  so it doesn't even work
+
+  hmmmmmmmmmmmmmmmmmmmmmmmmmm
+** obvious means using proc
+   open the path with O_PATH,
+   and readlink(/proc/self/fd/n)
+
+   or readlinkat(n, "")?
+   don't think that will work, but maybe...
+
+   the readlinkat(n, "") doesn't seem to work

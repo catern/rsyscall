@@ -3831,3 +3831,22 @@ async def serve_repls(listenfd: AsyncFileDescriptor[SocketFile],
             nursery.start_soon(do_repl, connfd, global_vars)
             num += 1
     return retval
+
+async def canonicalize(task: Task, path: handle.Path) -> handle.Path:
+    f = await Path(task, path).open_path()
+    data = await Path(task, f.handle.as_proc_path()).readlink()
+    return task.base.make_path_from_bytes(data)
+
+class NixPath(handle.Path):
+    "A path in the Nix store, which can therefore be deployed to a remote host with Nix."
+    @classmethod
+    async def make(cls, task: Task, path: handle.Path) -> NixPath:
+        path = await canonicalize(task, path)
+        return cls(path.base, path.components)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.base, handle.Root):
+            raise Exception("path not rooted at root")
+        nix, store = self.components[:2]
+        if nix != b"nix" or store != b"store":
+            raise Exception("path doesn't start with /nix/store")

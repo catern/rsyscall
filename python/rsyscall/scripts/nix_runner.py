@@ -15,6 +15,14 @@ async def deploy_nix_daemon(remote_stdtask: rsc.StandardTask,
     # oh maybe we can just directly look at the root of the container? hmm.
     # maybe we can have the container open /nix, then use that in the remote_stdtask.
     closure = await rsc.bootstrap_nix(local.nix_store, local.tar, rsc.local_stdtask, remote_tar, remote_stdtask)
+    # TODO hmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+    # we need to I guess figure out the right path from... doing the dump?
+    # because, the path that we get locally, could have symlinks.
+    # right, I think it's best to readlink first.
+    # because, really we need to know that this path is in /nix/store;
+    # we probably want some wrapper type to certify that.
+    # so, how to efficiently do readlink -f?
+    # what if I open the file and then do a readlink?
     remote_nix_store = rsc.Command(
         remote_stdtask.task.base.make_path_from_bytes(bytes(local.nix_store.executable_path)), [b'nix-store'], {})
     # run the database bootstrap inside the container
@@ -51,8 +59,8 @@ async def run_nix(host: rsc.SSHHost) -> None:
         # i guess i can just not pass it over ssh hmm
         # i guess i should have some clean handling for stdin
         nix_daemon = await wish(Wish(rsc.Command, "Failed to deploy nix-daemon, do it and return it"))
+    failures = 0
     while True:
-        failures = 0
         try:
             # if there are more than 5 failures in 30 seconds, then there's an issue, we can't continue
             if failures > 3:
@@ -66,6 +74,7 @@ async def run_nix(host: rsc.SSHHost) -> None:
             # basically, do the wait yourself then interrupt it.
             # How could we support that? How could we support Ctrl-C?
             child = await rsc.wish(Wish(rsc.ChildProcess, "I wish I had a working nix-daemon ChildProcess."))
+        print("hello world!", failures)
         await child.wait_for_exit()
         failures += 1
 

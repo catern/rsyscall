@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # logging.basicConfig(level=logging.DEBUG)
 
-nix_bin_bytes = b"/nix/store/flyhfw91kycrzmlx5v2172b3si4zc0xx-nix-2.2pre6526_9f99d624/bin"
+nix_bin_bytes = b"/nix/store/wpbag7vnmr4pr9p8a3003s68907w9bxq-nix-2.2pre6600_85488a93/bin"
 
 class TestIO(unittest.TestCase):
     def test_pipe(self):
@@ -665,6 +665,7 @@ class TestIO(unittest.TestCase):
 
     def test_nix_shell_with_daemon(self) -> None:
         async def test(stdtask: StandardTask) -> None:
+            del stdtask.environment[b'NIX_REMOTE']
             thread = await stdtask.fork()
             src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
             dest_nix_bin = await rsyscall.io.create_nix_container(src_nix_bin, stdtask, thread.stdtask)

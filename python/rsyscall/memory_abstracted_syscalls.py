@@ -367,8 +367,11 @@ async def execveat(sysif: SyscallInterface, transport: MemoryTransport, allocato
         serializer = Serializer()
         argv_ser_ptr = serialize_null_terminated_array(serializer, argv)
         envp_ser_ptr = serialize_null_terminated_array(serializer, envp)
-        async with serializer.with_flushed(transport, allocator):
-            await raw_syscall.execveat(sysif, dirfd, pathname, argv_ser_ptr.pointer, envp_ser_ptr.pointer, flags)
+        try:
+            async with serializer.with_flushed(transport, allocator):
+                await raw_syscall.execveat(sysif, dirfd, pathname, argv_ser_ptr.pointer, envp_ser_ptr.pointer, flags)
+        except FileNotFoundError as e:
+            raise FileNotFoundError(e.errno, e.strerror, path)
 
 async def sendmsg_fds(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                       fd: far.FileDescriptor, send_fds: t.List[far.FileDescriptor]) -> None:
