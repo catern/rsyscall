@@ -8,6 +8,8 @@ import argparse
 
 async def deploy_nix_daemon(remote_stdtask: rsc.StandardTask,
                             container_stdtask: rsc.StandardTask) -> rsc.Command:
+    nix_bin = deploy_nix_bin(local.nix_store)
+
     # TODO check if remote_nix_store exists, and skip this stuff if it does
     # copy the nix binaries over outside the container
     remote_tar = await rsc.which(remote_stdtask, b"tar")
@@ -43,10 +45,20 @@ async def enter_container(stdtask: StandardTask) -> StandardTask:
     return container_stdtask
 
 async def run_nix(host: rsc.SSHHost) -> None:
+    ssh_child, remote_stdtask = await host.ssh(rsc.local_stdtask)
+    container_stdtask = await enter_container(remote_stdtask)
+    await run_nix_daemon(remote_stdtask, container_stdtask)
+
+async def run_nix_in_local_container(host: rsc.SSHHost) -> None:
+    # so let's skip the ssh I guess
+    # we'll make a directory, hmm...
+    ssh_child, remote_stdtask = await host.ssh(rsc.local_stdtask)
+    container_stdtask = await enter_container(remote_stdtask)
+    await run_nix_daemon(remote_stdtask, container_stdtask)
+
+async def run_nix_daemon(remote_stdtask: rsc.StandardTask, container_stdtask: rsc.StandardTask) -> None:
     "Deploys Nix from the local_stdtask to this remote_stdtask and runs nix-daemon there"
     try:
-        ssh_child, remote_stdtask = await host.ssh(rsc.local_stdtask)
-        container_stdtask = await enter_container(remote_stdtask)
         nix_daemon = await deploy_nix_daemon(remote_stdtask, container_stdtask)
     except:
         # TODO hmm we seem to be hitting an issue with,
@@ -86,9 +98,6 @@ async def isolate_exit(f, *args, **kwargs) -> None:
         try:
             await f(*args, **kwargs)
         except:
-            # hmm we want to print the exception.
-            # basically, we want to see the whole stack trace:
-            # above and below the wish.
             await rsc.wish(Wish(type(None), "Oh no something has gone terribly wrong!"))
         else:
             await rsc.wish(Wish(type(None), "The function terminated, we don't want that."))

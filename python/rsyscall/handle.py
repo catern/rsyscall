@@ -211,7 +211,7 @@ class Path:
         element: bytes = os.fsencode(path_element)
         if b"/" in element:
             raise Exception("no / allowed in path elements, do it one by one")
-        return Path(self.base, self.components+[element])
+        return type(self)(self.base, self.components+[element])
 
     def __bytes__(self) -> bytes:
         return bytes(self.far)

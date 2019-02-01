@@ -3548,6 +3548,19 @@ async def create_nix_container(
     await bootstrap_nix_database(src_nix_store, src_task, dest_nix_store, dest_task, closure)
     return dest_nix_bin
 
+async def deploy_nix_bin(
+        src_nix_bin: NixPath, src_tar: Command, src_task: StandardTask,
+        deploy_tar: Command, deploy_task: StandardTask,
+        dest_task: StandardTask,
+) -> handle.Path:
+    dest_nix_bin = NixPath(dest_task.task, handle.Path(dest_task.task.base.fs.root, src_nix_bin.components))
+    src_nix_store = Command(src_nix_bin/'nix-store', [b'nix-store'], {})
+    dest_nix_store = Command(dest_nix_bin/'nix-store', [b'nix-store'], {})
+    # TODO check if dest_nix_bin exists, and skip this stuff if it does
+    closure = await bootstrap_nix(src_nix_store, src_tar, src_task, deploy_tar, deploy_task)
+    await bootstrap_nix_database(src_nix_store, src_task, dest_nix_store, dest_task, closure)
+    return dest_nix_bin
+
 async def nix_deploy(
         src_nix_bin: handle.Path, src_path: handle.Path, src_task: StandardTask,
         dest_nix_bin: handle.Path, dest_task: StandardTask,
