@@ -185,6 +185,7 @@ class CWD:
         if self.file is not self.task.fs.cwd:
             raise Exception("current working directory mismatch", self.file, self.task.fs.cwd)
 
+T_path = t.TypeVar('T_path', bound="Path")
 @dataclass
 class Path:
     base: t.Union[Root, CWD, FileDescriptor]
@@ -213,6 +214,17 @@ class Path:
             raise Exception("no / allowed in path elements, do it one by one")
         return type(self)(self.base, self.components+[element])
 
+    @t.overload
+    def __getitem__(self, i: int) -> bytes: ...
+    @t.overload
+    def __getitem__(self: T_path, s: slice) -> T_path: ...
+
+    def __getitem__(self: T_path, s: t.Union[int, slice]) -> t.Union[bytes, T_path]:
+        if isinstance(s, slice):
+            return type(self)(self.base, self.components[s])
+        else:
+            return self.components[s]
+
     def __bytes__(self) -> bytes:
         return bytes(self.far)
 
@@ -239,26 +251,34 @@ class Task(rsyscall.far.Task):
         self.fd_handles: t.List[FileDescriptor] = []
         fd_table_to_near_to_handles.setdefault(self.fd_table, {})
 
+    @property
+    def root(self) -> Root:
+        return Root(self.fs.root, self)
+
+    @property
+    def cwd(self) -> CWD:
+        return CWD(self.fs.cwd, self)
+
     def make_path_from_bytes(self, path: bytes) -> Path:
         if path.startswith(b"/"):
             path = path[1:]
             if len(path) == 0:
-                return Path(Root(self.fs.root, self), [])
+                return Path(self.root, [])
             else:
-                return Path(Root(self.fs.root, self), path.split(b"/"))
+                return Path(self.root, path.split(b"/"))
         else:
-            return Path(CWD(self.fs.cwd, self), path.split(b"/"))
+            return Path(self.cwd, path.split(b"/"))
 
     def make_path_handle(self, path: Path) -> Path:
         base = path.base
         if isinstance(base, Root):
             if base.file is not self.fs.root:
                 raise Exception("root directory mismatch", base.file, self.fs.root)
-            return Path(Root(base.file, self), path.components)
+            return Path(self.root, path.components)
         elif isinstance(base, CWD):
             if base.file is not self.fs.cwd:
                 raise Exception("current working directory mismatch", base.file, self.fs.cwd)
-            return Path(CWD(base.file, self), path.components)
+            return Path(self.cwd, path.components)
         elif isinstance(base, FileDescriptor):
             return Path(self.make_fd_handle(base), path.components)
         else:

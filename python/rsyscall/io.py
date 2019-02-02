@@ -3553,10 +3553,13 @@ async def deploy_nix_bin(
         deploy_tar: Command, deploy_task: StandardTask,
         dest_task: StandardTask,
 ) -> handle.Path:
-    dest_nix_bin = NixPath(dest_task.task, handle.Path(dest_task.task.base.fs.root, src_nix_bin.components))
+    dest_nix_bin = NixPath(dest_task.task.base.root, src_nix_bin.components)
     src_nix_store = Command(src_nix_bin/'nix-store', [b'nix-store'], {})
     dest_nix_store = Command(dest_nix_bin/'nix-store', [b'nix-store'], {})
     # TODO check if dest_nix_bin exists, and skip this stuff if it does
+    # TODO indicate the destination of tar output somehow better than this
+    # oh maybe we can just directly look at the root of the container? hmm.
+    # maybe we can have the container open /nix, then use that in the remote_stdtask.
     closure = await bootstrap_nix(src_nix_store, src_tar, src_task, deploy_tar, deploy_task)
     await bootstrap_nix_database(src_nix_store, src_task, dest_nix_store, dest_task, closure)
     return dest_nix_bin

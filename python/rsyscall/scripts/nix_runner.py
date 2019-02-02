@@ -8,32 +8,16 @@ import argparse
 
 async def deploy_nix_daemon(remote_stdtask: rsc.StandardTask,
                             container_stdtask: rsc.StandardTask) -> rsc.Command:
-    nix_bin = deploy_nix_bin(local.nix_store)
-
+    "Deploy the Nix daemon from localhost"
     # TODO check if remote_nix_store exists, and skip this stuff if it does
-    # copy the nix binaries over outside the container
     remote_tar = await rsc.which(remote_stdtask, b"tar")
-    # TODO indicate the destination of tar output somehow better than this
-    # oh maybe we can just directly look at the root of the container? hmm.
-    # maybe we can have the container open /nix, then use that in the remote_stdtask.
-    closure = await rsc.bootstrap_nix(local.nix_store, local.tar, rsc.local_stdtask, remote_tar, remote_stdtask)
-    # TODO hmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
-    # we need to I guess figure out the right path from... doing the dump?
-    # because, the path that we get locally, could have symlinks.
-    # right, I think it's best to readlink first.
-    # because, really we need to know that this path is in /nix/store;
-    # we probably want some wrapper type to certify that.
-    # so, how to efficiently do readlink -f?
-    # what if I open the file and then do a readlink?
-    remote_nix_store = rsc.Command(
-        remote_stdtask.task.base.make_path_from_bytes(bytes(local.nix_store.executable_path)), [b'nix-store'], {})
-    # run the database bootstrap inside the container
-    await rsc.bootstrap_nix_database(local.nix_store, rsc.local_stdtask, remote_nix_store, container_stdtask, closure)
-    remote_nix_daemon = rsc.Command(
-        remote_stdtask.task.base.make_path_from_bytes(bytes(local.nix_daemon.executable_path)), [b'nix-daemon'], {})
-    return remote_nix_daemon
+    # copy the nix binaries over outside the container
+    nix_bin = await rsc.deploy_nix_bin(local.nix_bin_dir, local.tar, rsc.local_stdtask,
+                                       remote_tar, remote_stdtask,
+                                       container_stdtask)
+    return rsc.Command(nix_bin/"nix-daemon", [b'nix-daemon'], {})
 
-async def enter_container(stdtask: StandardTask) -> StandardTask:
+async def make_container(stdtask: StandardTask) -> StandardTask:
     # TODO do we need to keep track of this thread?
     thread = await stdtask.fork()
     container_stdtask = thread.stdtask
@@ -46,15 +30,13 @@ async def enter_container(stdtask: StandardTask) -> StandardTask:
 
 async def run_nix(host: rsc.SSHHost) -> None:
     ssh_child, remote_stdtask = await host.ssh(rsc.local_stdtask)
-    container_stdtask = await enter_container(remote_stdtask)
+    container_stdtask = await make_container(remote_stdtask)
     await run_nix_daemon(remote_stdtask, container_stdtask)
 
 async def run_nix_in_local_container(host: rsc.SSHHost) -> None:
-    # so let's skip the ssh I guess
-    # we'll make a directory, hmm...
-    ssh_child, remote_stdtask = await host.ssh(rsc.local_stdtask)
-    container_stdtask = await enter_container(remote_stdtask)
-    await run_nix_daemon(remote_stdtask, container_stdtask)
+    # TODO need to make a directory, hmm...
+    container_stdtask = await make_container(rsc.local_stdtask)
+    await run_nix_daemon(rsc.local_stdtask, container_stdtask)
 
 async def run_nix_daemon(remote_stdtask: rsc.StandardTask, container_stdtask: rsc.StandardTask) -> None:
     "Deploys Nix from the local_stdtask to this remote_stdtask and runs nix-daemon there"

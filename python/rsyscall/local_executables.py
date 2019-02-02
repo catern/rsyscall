@@ -24,3 +24,4 @@ cat = make_command('cat')
 ssh = SSHCommand.make(make_command('ssh').executable_path)
 nix_daemon = make_command('nix-daemon')
 nix_store = make_command('nix-store')
+nix_bin_dir: NixPath = nix_store.executable_path[:-1] # type: ignore
