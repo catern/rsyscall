@@ -1,5 +1,5 @@
 import rsyscall.io as rsc
-from rsyscall.io import StandardTask, wish, Wish
+from rsyscall.io import StandardTask, wish, Wish, Path
 import rsyscall.local_executables as local
 import socket
 import trio
@@ -17,14 +17,17 @@ async def deploy_nix_daemon(remote_stdtask: rsc.StandardTask,
                                        container_stdtask)
     return rsc.Command(nix_bin/"nix-daemon", [b'nix-daemon'], {})
 
-async def make_container(stdtask: StandardTask) -> StandardTask:
+async def make_container(root: Path, stdtask: StandardTask) -> StandardTask:
     # TODO do we need to keep track of this thread?
     thread = await stdtask.fork()
     container_stdtask = thread.stdtask
+    await container_stdtask.task.unshare_fs()
+    await container_stdtask.task.chdir(root)
     # make the container in cwd
     await (container_stdtask.task.cwd()/"nix").mkdir()
     await container_stdtask.unshare_user()
     await container_stdtask.unshare_mount()
+    # TODO chroot too I guess
     await container_stdtask.task.mount(b"nix", b"/nix", b"none", rsc.lib.MS_BIND, b"")
     return container_stdtask
 
@@ -33,10 +36,11 @@ async def run_nix(host: rsc.SSHHost) -> None:
     container_stdtask = await make_container(remote_stdtask)
     await run_nix_daemon(remote_stdtask, container_stdtask)
 
-async def run_nix_in_local_container(host: rsc.SSHHost) -> None:
+async def run_nix_in_local_container() -> None:
     # TODO need to make a directory, hmm...
-    container_stdtask = await make_container(rsc.local_stdtask)
-    await run_nix_daemon(rsc.local_stdtask, container_stdtask)
+    async with (await rsc.local_stdtask.mkdtemp()) as tmpdir:
+        container_stdtask = await make_container(tmpdir, rsc.local_stdtask)
+        await run_nix_daemon(rsc.local_stdtask, container_stdtask)
 
 async def run_nix_daemon(remote_stdtask: rsc.StandardTask, container_stdtask: rsc.StandardTask) -> None:
     "Deploys Nix from the local_stdtask to this remote_stdtask and runs nix-daemon there"
@@ -94,8 +98,10 @@ hosts = [
 async def main() -> None:
     # async with rsc.summon_email_genie(email_address):
     async with trio.open_nursery() as nursery:
-        for host in hosts:
-            nursery.start_soon(isolate_exit, run_nix, host)
+        # for host in hosts:
+        #     nursery.start_soon(isolate_exit, run_nix, host)
+        for _ in range(3):
+            nursery.start_soon(isolate_exit, run_nix_in_local_container)
 
 if __name__ == '__main__':
     trio.run(main)
