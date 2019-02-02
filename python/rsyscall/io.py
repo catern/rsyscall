@@ -246,9 +246,12 @@ class Task:
                 await self.base.fs.fchdir(self.base, dirfd)
             await self.base.fs.chdir(self.base, pathname)
 
+    async def fchdir(self, fd: FileDescriptor) -> None:
+        await self.base.fs.fchdir(self.base, fd.handle.far)
+
     async def unshare_fs(self) -> None:
-        # we want this to return something that we can use to chdir
-        raise NotImplementedError
+        # TODO we want this to return something that we can use to chdir
+        await self.base.unshare_fs()
 
     def _make_fd(self, num: int, file: T_file) -> FileDescriptor[T_file]:
         return self.make_fd(near.FileDescriptor(num), file)
@@ -3475,7 +3478,7 @@ async def read_all(fd: FileDescriptor[ReadableFile]) -> bytes:
 
 async def bootstrap_nix(
         src_nix_store: Command, src_tar: Command, src_task: StandardTask,
-        dest_tar: Command, dest_task: StandardTask,
+        dest_tar: Command, dest_task: StandardTask, dest_dir: FileDescriptor[DirectoryFile],
 ) -> t.List[bytes]:
     "Copies the Nix binaries into dest task's CWD. Returns the list of paths in the closure."
     query_thread = await src_task.fork()
@@ -3494,6 +3497,8 @@ async def bootstrap_nix(
     src_tar_stdout = src_tar_thread.stdtask.task.base.make_fd_handle(access_side.handle)
     await access_side.invalidate()
 
+    await dest_tar_thread.stdtask.task.unshare_fs()
+    await dest_tar_thread.stdtask.task.fchdir(dest_dir)
     await dest_tar_thread.stdtask.unshare_files(going_to_exec=True)
     await dest_tar_thread.stdtask.stdin.replace_with(dest_tar_stdin)
     child_task = await dest_tar.args(["--extract"]).exec(dest_tar_thread)
@@ -3557,10 +3562,8 @@ async def deploy_nix_bin(
     src_nix_store = Command(src_nix_bin/'nix-store', [b'nix-store'], {})
     dest_nix_store = Command(dest_nix_bin/'nix-store', [b'nix-store'], {})
     # TODO check if dest_nix_bin exists, and skip this stuff if it does
-    # TODO indicate the destination of tar output somehow better than this
-    # oh maybe we can just directly look at the root of the container? hmm.
-    # maybe we can have the container open /nix, then use that in the remote_stdtask.
-    closure = await bootstrap_nix(src_nix_store, src_tar, src_task, deploy_tar, deploy_task)
+    rootdir = await dest_task.task.root().open_directory()
+    closure = await bootstrap_nix(src_nix_store, src_tar, src_task, deploy_tar, deploy_task, rootdir)
     await bootstrap_nix_database(src_nix_store, src_task, dest_nix_store, dest_task, closure)
     return dest_nix_bin
 

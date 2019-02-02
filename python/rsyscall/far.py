@@ -133,7 +133,7 @@ class FSInformation:
     creator_pid: int
     root: rsyscall.near.DirectoryFile
     cwd: rsyscall.near.DirectoryFile
-    # TODO add fchdir too
+    # TODO add chroot too
     async def chdir(self, task: Task, path: Pointer) -> None:
         if task.fs != self:
             raise NamespaceMismatchError("can only chdir in a task with this FSInformation")
