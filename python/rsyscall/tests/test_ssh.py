@@ -3,6 +3,8 @@ import typing as t
 import trio
 import contextlib
 import os
+import random
+import string
 import socket
 import unittest
 from rsyscall.io import Command, SSHCommand, SSHDCommand, SSHHost
@@ -11,6 +13,7 @@ import rsyscall.io
 import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.base as base
+import rsyscall.handle as handle
 import logging
 
 # local_stdtask = trio.run(build_local_stdtask, None)
@@ -59,15 +62,23 @@ class LocalSSHHost(SSHHost):
         }).proxy_command(sshd_command).args([
             "localhost",
         ])
-        # TODO this isn't right, the root and cwd are pulled at
-        # runtime from the task we use to run the ssh command.
-        return LocalSSHHost(stdtask.task.base.fs.root, ssh_command, privkey_file, pubkey_file)
+        return LocalSSHHost(ssh_command, privkey_file, pubkey_file)
 
-    def __init__(self, root: near.DirectoryFile, command: SSHCommand,
+    async def ssh(self, task: StandardTask) -> t.Tuple[rsc.ChildProcess, StandardTask]:
+        # we could get rid of the need to touch the local filesystem by directly
+        # speaking the openssh multiplexer protocol. or directly speaking the ssh
+        # protocol for that matter.
+        random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        name = ("local_ssh."+random_suffix+".sock").encode()
+        local_socket_path: handle.Path = task.filesystem.tmpdir/name
+        async with rsc.run_socket_binder(task, self.command) as tmp_path_bytes:
+            return (await rsc.ssh_bootstrap(task, self.command, task.task.base.fs.root, local_socket_path, tmp_path_bytes))
+
+    def __init__(self, command: SSHCommand,
                  privkey: rsc.FileDescriptor[rsc.ReadableFile],
                  pubkey: rsc.FileDescriptor[rsc.ReadableFile],
     ) -> None:
-        super().__init__(root, command)
+        self.command = command
         self.privkey = privkey
         self.pubkey = pubkey
 

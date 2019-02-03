@@ -3181,7 +3181,10 @@ async def run_socket_binder(
 
 async def ssh_bootstrap(
         parent_task: StandardTask,
-        ssh_host: SSHHost,
+        # the actual ssh command to run
+        ssh_command: SSHCommand,
+        # the root directory we'll have on the remote side
+        ssh_root: near.DirectoryFile,
         # the local path we'll use for the socket
         local_socket_path: handle.Path,
         # the directory we're bootstrapping out of
@@ -3192,7 +3195,7 @@ async def ssh_bootstrap(
     local_data_path = Path(task, local_socket_path)
     # start bootstrap and forward local socket
     bootstrap_thread = await parent_task.fork()
-    bootstrap_child_task = await ssh_host.command.local_forward(
+    bootstrap_child_task = await ssh_command.local_forward(
         str(local_socket_path), (tmp_path_bytes + b"/data").decode(),
     ).args(["-n", f"cd {tmp_path_bytes.decode()}; ./bootstrap rsyscall"]).exec(bootstrap_thread)
     # TODO should unlink the bootstrap after I'm done execing.
@@ -3258,7 +3261,7 @@ async def ssh_bootstrap(
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                     new_process.near, remote_syscall_fd.near)
     # the cwd is not the one from the ssh_host because we cd'd somewhere else as part of the bootstrap
-    new_fs_information = far.FSInformation(new_pid, root=ssh_host.root, cwd=near.DirectoryFile())
+    new_fs_information = far.FSInformation(new_pid, root=ssh_root, cwd=near.DirectoryFile())
     new_base_task = base.Task(new_syscall, new_process, new_fd_table, new_address_space, new_fs_information)
     handle_remote_syscall_fd = new_base_task.make_fd_handle(remote_syscall_fd)
     new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
@@ -3291,27 +3294,30 @@ async def ssh_bootstrap(
     return bootstrap_child_task, new_stdtask
 
 async def spawn_ssh(
-        task: StandardTask, ssh_host: SSHHost,
-        local_socket_path: t.Optional[handle.Path]=None,
+        task: StandardTask,
+        ssh_command: SSHCommand,
+        ssh_root: near.DirectoryFile,
+        local_socket_path: handle.Path,
 ) -> t.Tuple[ChildProcess, StandardTask]:
-    # we could get rid of the need to touch the local filesystem by directly
-    # speaking the openssh multiplexer protocol. or directly speaking the ssh
-    # protocol for that matter.
-    if local_socket_path is None:
-        random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        name = (ssh_host.guess_hostname()+random_suffix+".sock").encode()
-        path: handle.Path = task.filesystem.tmpdir/name
-        local_socket_path = path
-    socket_binder_path = b"/" + b"/".join(task.filesystem.socket_binder_path.components)
-    async with run_socket_binder(task, ssh_host.command) as tmp_path_bytes:
-        return (await ssh_bootstrap(task, ssh_host, local_socket_path, tmp_path_bytes))
+    async with run_socket_binder(task, ssh_command) as tmp_path_bytes:
+        return (await ssh_bootstrap(task, ssh_command, ssh_root, local_socket_path, tmp_path_bytes))
+
+class SSHHost:
+    @abc.abstractmethod
+    async def ssh(self, task: StandardTask) -> t.Tuple[ChildProcess, StandardTask]: ...
 
 @dataclass
-class SSHHost:
+class ArbitrarySSHHost(SSHHost):
     root: near.DirectoryFile
     command: SSHCommand
     async def ssh(self, task: StandardTask) -> t.Tuple[ChildProcess, StandardTask]:
-        return (await spawn_ssh(task, self))
+        # we could get rid of the need to touch the local filesystem by directly
+        # speaking the openssh multiplexer protocol. or directly speaking the ssh
+        # protocol for that matter.
+        random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        name = (self.guess_hostname()+random_suffix+".sock").encode()
+        local_socket_path: handle.Path = task.filesystem.tmpdir/name
+        return (await spawn_ssh(task, self.command, self.root, local_socket_path))
 
     def guess_hostname(self) -> str:
         # we guess that the last argument of ssh command is the hostname. it
@@ -3396,6 +3402,7 @@ class Command:
         self.arguments = arguments
         self.env_updates = env_updates
 
+    # TODO hmm this should just be direct arguments instead of a sequence
     def args(self: T_command, args: t.Sequence[t.Union[str, bytes]]) -> T_command:
         return type(self)(self.executable_path,
                           self.arguments + [os.fsencode(arg) for arg in args],
@@ -3445,6 +3452,9 @@ class SSHCommand(Command):
 
     def local_forward(self, local_socket: str, remote_socket: str) -> SSHCommand:
         return self.args(["-L", f"{local_socket}:{remote_socket}"])
+
+    def as_host(self) -> ArbitrarySSHHost:
+        return ArbitrarySSHHost(near.DirectoryFile(), self)
 
     @classmethod
     def make(cls: t.Type[T_ssh_command], executable_path: handle.Path) -> T_ssh_command:

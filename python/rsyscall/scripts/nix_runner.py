@@ -33,11 +33,10 @@ async def make_container(root: Path, stdtask: StandardTask) -> StandardTask:
 
 async def run_nix(host: rsc.SSHHost) -> None:
     ssh_child, remote_stdtask = await host.ssh(rsc.local_stdtask)
-    container_stdtask = await make_container(remote_stdtask)
+    container_stdtask = await make_container(remote_stdtask.task.cwd(), remote_stdtask)
     await run_nix_daemon(remote_stdtask, container_stdtask)
 
 async def run_nix_in_local_container() -> None:
-    # TODO need to make a directory, hmm...
     async with (await rsc.local_stdtask.mkdtemp()) as tmpdir:
         container_stdtask = await make_container(tmpdir, rsc.local_stdtask)
         await run_nix_daemon(rsc.local_stdtask, container_stdtask)
@@ -92,16 +91,17 @@ async def isolate_exit(f, *args, **kwargs) -> None:
 from rsyscall.tests.test_ssh import LocalSSHHost
 email_address = 'me@example.com'
 hosts = [
-    trio.run(LocalSSHHost.make, rsc.local_stdtask)
+    # trio.run(LocalSSHHost.make, rsc.local_stdtask)
+    local.ssh.args(['localhost']).as_host()
 ]
 
 async def main() -> None:
     # async with rsc.summon_email_genie(email_address):
     async with trio.open_nursery() as nursery:
-        # for host in hosts:
-        #     nursery.start_soon(isolate_exit, run_nix, host)
-        for _ in range(1):
-            nursery.start_soon(isolate_exit, run_nix_in_local_container)
+        for host in hosts:
+            nursery.start_soon(isolate_exit, run_nix, host)
+        # for _ in range(1):
+        #     nursery.start_soon(isolate_exit, run_nix_in_local_container)
 
 if __name__ == '__main__':
     trio.run(main)

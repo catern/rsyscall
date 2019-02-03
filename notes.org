@@ -10769,3 +10769,71 @@ for use in the repl
    the readlinkat(n, "") doesn't seem to work
 * doing stuff
   we want to start supporting multiple run_nix calls
+
+  we did it, cool
+
+  now I wanna know what other miscellaneous small things have to be done to deploy Nix
+
+
+  OK, I need to support sudo it looks like.
+
+  As expected, I suppose!
+
+  Annoyingly I'll have to type in my password.
+
+  But I probably can share some stuff with the ssh bootstrap maybe?
+* sudo bootstrap
+
+  So it can be similar but probably simpler.
+
+  We just need to run...
+
+  OK so -C/closefrom_override is not supported by default on Debian so let's not bother with it.
+
+  We'll *probably* need, um....
+
+  Oh wait, does sudo 
+
+  sudo passes stdin/stdout/stderr verbatim!
+
+  So we could just pass a socket and then do socket-fd-passing.
+
+  Let's do that. Then we can avoid touching the filesystem.
+** simple scenario
+   Just start a new bootstrap process under sudo,
+   pass it a socketpair as stdin and inherit stdout/stderr,
+   and send the additional channels over SCM_RIGHTS
+** interesting thought
+   what if we could sidestep all this separate process stuff,
+   and just use the root-powers to force-setuid one of our existing threads?
+
+   that would be convenient:
+   we could share fd table and address space.
+
+   is there anything we could use for this?
+
+   ptrace perhaps?
+
+   so if we start as root we can setuid to whatever, of course.
+
+   and if we exec, of course we can gain root through the setuid bit.
+
+   but I guess I want to elevate privileges some other way.
+** ways to elevate privileges of other threads
+   it looks like setcap used to have this ability
+
+   oh that's right I need to be unprivileged anyway. hmmmmmmMMM
+
+   that means the user I'm sudoing to, doesn't have authority to modify my own threads anyway. hmm.
+
+   so I want to have a task of user A, be able to setuid to user B, by cooperating with a task of user B.
+   hm.
+
+   oh I could also use sudo to just make a setuid binary.
+   that could be nice, hm.
+   but that's very sketchy.
+
+   hmm, with two unprivileged users cooperating,
+   is there a way for a task of user A to setuid to user B without the task having to exec and lose its state?
+** sudo
+   ok let's just do the bootstrap thing
