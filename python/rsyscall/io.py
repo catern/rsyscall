@@ -1524,7 +1524,7 @@ class TemporaryDirectory:
             # TODO would be nice if unsharing the fs information gave us a cap to chdir
             await cleanup_thread.stdtask.task.chdir(self.parent)
             child = await cleanup_thread.execve(self.stdtask.filesystem.utilities.rm, ["rm", "-r", self.name])
-            (await child.wait_for_exit()).check()
+            await child.check()
 
     async def __aenter__(self) -> 'Path':
         return self.path
@@ -1642,6 +1642,11 @@ class ChildProcess:
             for event in (await self.wait()):
                 if event.died():
                     return event
+
+    async def check(self) -> ChildEvent:
+        death = await self.wait_for_exit()
+        death.check()
+        return death
 
     async def wait_for_stop_or_exit(self) -> ChildEvent:
         while True:
@@ -3526,12 +3531,12 @@ async def bootstrap_nix_database(
 
     await load_db_thread.stdtask.unshare_files(going_to_exec=True)
     await load_db_thread.stdtask.stdin.replace_with(load_db_stdin)
-    child_task = await dest_nix_store.args(["--load-db"]).exec(load_db_thread)
+    child_task = await dest_nix_store.args(["--load-db"]).env({'NIX_REMOTE': ''}).exec(load_db_thread)
 
     await dump_db_thread.stdtask.unshare_files(going_to_exec=True)
     await dump_db_thread.stdtask.stdout.replace_with(dump_db_stdout)
     await src_nix_store.args(["--dump-db", *closure]).exec(dump_db_thread)
-    await child_task.wait_for_exit()
+    await child_task.check()
 
 async def create_nix_container(
         src_nix_bin: handle.Path, src_task: StandardTask,
@@ -3595,7 +3600,7 @@ async def nix_deploy(
     await export_thread.stdtask.unshare_files(going_to_exec=True)
     await export_thread.stdtask.stdout.replace_with(export_stdout)
     await export_thread.execve(dest_nix_bin/"nix-store", ["nix-store", "--export", *closure])
-    await child_task.wait_for_exit()
+    await child_task.check()
     return dest_path
 
 import rsyscall.repl

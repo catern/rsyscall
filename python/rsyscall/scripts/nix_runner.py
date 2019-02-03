@@ -100,7 +100,7 @@ async def main() -> None:
     async with trio.open_nursery() as nursery:
         # for host in hosts:
         #     nursery.start_soon(isolate_exit, run_nix, host)
-        for _ in range(3):
+        for _ in range(1):
             nursery.start_soon(isolate_exit, run_nix_in_local_container)
 
 if __name__ == '__main__':
