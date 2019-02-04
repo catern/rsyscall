@@ -10835,5 +10835,20 @@ for use in the repl
 
    hmm, with two unprivileged users cooperating,
    is there a way for a task of user A to setuid to user B without the task having to exec and lose its state?
+
+   how would I design it if I had the choice?
+
+   well, I guess it would be something like setns, right?
+
+   although setns doesn't grant caps, which is why it's unpriv'd...
+
+   setns is kinda dumb really
+** userns stuff
+   Hmm.
+
+   If you enter a userns, root can put other users in the uid_map,
+   and then you can setuid to those users.
+
+   You have to stay inside the userns, but that's not a super huge issue.
 ** sudo
    ok let's just do the bootstrap thing
