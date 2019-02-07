@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/epoll.h>
+#include <stdio.h>
 
 struct options {
         int infd;
@@ -194,9 +195,6 @@ int rsyscall_server(const int infd, const int outfd)
     }
 }
 
-// hmmmmmmmmmmmmmmmmmmmm
-// I guess I'll just receive exactly four fds?
-// BAH OKAY i'll think about this.
 static void receive_fds(const int sock, int *fds, int n) {
     union {
         struct cmsghdr hdr;
@@ -234,6 +232,16 @@ static void receive_fds(const int sock, int *fds, int n) {
 }
 
 char hello_persist[] = "hello world, I am the persistent syscall server!\n";
+
+void rsyscall_describe(int describefd)
+{
+    dprintf(describefd, "rsyscall_server=%p\n", rsyscall_server);
+    dprintf(describefd, "rsyscall_persistent_server=%p\n", rsyscall_persistent_server);
+    dprintf(describefd, "rsyscall_futex_helper=%p\n", rsyscall_futex_helper);
+    dprintf(describefd, "rsyscall_trampoline=%p\n", rsyscall_trampoline);
+    dprintf(describefd, "rsyscall_do_cloexec=%p\n", rsyscall_do_cloexec);
+    dprintf(describefd, "rsyscall_stop_then_close=%p\n", rsyscall_stop_then_close);
+}
 
 int rsyscall_persistent_server(int infd, int outfd, const int listensock)
 {

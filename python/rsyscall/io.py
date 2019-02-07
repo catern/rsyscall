@@ -443,9 +443,6 @@ class FileDescriptor(t.Generic[T_file_co]):
             raise Exception("file descriptor already closed")
 
     def borrow(self, task: base.Task) -> 'FileDescriptor[T_file_co]':
-        """Disassociate the file descriptor from this object
-
-        """
         if self.open:
             return self.__class__(self.task, task.make_fd_handle(self.handle), self.file)
         else:
@@ -3137,6 +3134,62 @@ async def rsyscall_exec(
     # TODO how do we unmap the remote mapping?
     rsyscall_thread.thread = Thread(rsyscall_thread.thread.child_task, futex_task,
                                     handle.MemoryMapping(parent_stdtask.task.base, local_mapping))
+
+async def rsyscall_stdin_bootstrap(
+        parent_stdtask: StandardTask,
+        bootstrap_command: Command,
+    ) -> RsyscallThread:
+    """Fork and run an arbitrary Command which will start rsyscall_stdin_bootstrap"""
+    # just want to make a socketpair which will be called from the parent task
+    rsyscall_thread = await parent_stdtask.fork()
+    stdtask = rsyscall_thread.stdtask
+    parent_sock, child_sock_parent = await parent_stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    child_sock = child_sock_parent.borrow(stdtask.task.base)
+    await child_sock_parent.invalidate()
+    [(async_access_describe_sock, passed_describe_sock)] = await stdtask.make_async_connections(1)
+    # create this guy and pass him down to the new thread
+    # hmmmmmmm rsyscall_thread hmmmmm
+    # we can do the unshare/exec in such a way that a thread which already is running some things,
+    # will keep those things around afterwards.
+    # but, the memory isn't gonna be preserved. hmm.
+    # let's not support passing in a thread.
+    # or. maybe we should support it. the pointers will just be invalidated.
+    # so that'll be fine.
+    # And, I guess we'll be able to inherit the already-created file descriptors which will be nice.
+    futex_memfd = await memsys.memfd_create(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
+                                            b"child_robust_futex_list", lib.MFD_CLOEXEC)
+    child_futex_memfd = stdtask.task.base.make_fd_handle(futex_memfd)
+    parent_futex_memfd = parent_stdtask.task.base.make_fd_handle(futex_memfd)
+    syscall: ChildConnection = stdtask.task.base.sysif # type: ignore
+    def encode(fd: near.FileDescriptor) -> bytes:
+        return str(int(fd)).encode()
+    # all the file descriptors will change number, I guess.
+    # but, thankfully, we can handle that!
+    async def do_unshare(close_in_old_space: t.List[near.FileDescriptor],
+                         copy_to_new_space: t.List[near.FileDescriptor]) -> None:
+        # unset cloexec on all the fds we want to copy to the new space
+        for copying_fd in copy_to_new_space:
+            await near.fcntl(syscall, copying_fd, fcntl.F_SETFD, 0)
+        child_task = await rsyscall_thread.execve(
+            rsyscall_server_path, [
+                b"rsyscall_server",
+                encode(passed_describe_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
+                *[encode(fd) for fd in copy_to_new_space],
+            ], {}, [stdtask.child_monitor.internal.signal_queue.signal_block])
+        # the futex task we used before is dead now that we've exec'd, have
+        # to null it out
+        syscall.futex_task = None
+        # TODO maybe remove dependence on parent task for closing?
+        for fd in close_in_old_space:
+            await near.close(parent_stdtask.task.base.sysif, fd)
+        stdtask.task.base.address_space = base.AddressSpace(rsyscall_thread.thread.child_task.process.near.id)
+        # we mutate the allocator instead of replacing to so that anything that
+        # has stored the allocator continues to work
+        stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)
+        print("allocators")
+        print("base", stdtask.task.base)
+        print("allocator task", stdtask.task.allocator.task)
+    await stdtask.task.base.unshare_files(do_unshare)
 
 # Need to identify the host, I guess
 # I shouldn't abstract this too much - I should just use ssh.

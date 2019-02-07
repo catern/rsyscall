@@ -10850,5 +10850,44 @@ for use in the repl
    and then you can setuid to those users.
 
    You have to stay inside the userns, but that's not a super huge issue.
+
+   hmm so if I had some other user create the userns, and write to the uid_map.
+
+   the same user has to both create and write to uid_map because of the restriction that,
+   "The writing process must have the same effective user ID as the process that created the user namespace."
+
+   how could I then enter that userns and get privs and stuff?
+
+   hmm
+
+   what about even getting two user processes in the same user namespace?
+
+   it's tricky, oh so tricky.
+
+   i probably can't do it
+
+   blah
 ** sudo
    ok let's just do the bootstrap thing
+
+   bootstrap process, socketpair as stdin, send channels over SCM_RIGHTS
+
+   I guess, hmm.
+
+   we can't pass fds down but we can pass arguments
+
+   so we can say, here's how many fds to read off.
+
+   and it reads off that many, then writes back the fd numbers,
+   then.
+
+   i guess we can write um...
+
+   oh, it could just start using stdin as the syscall connection.
+
+   wait no, bad idea, we want to tell it which one to use,
+   because we want to have a direct connection.
+
+   so yeah I guess what we'll do is,
+   we'll,
+   write back the fd numbers to use as infd and outfd.
