@@ -3135,6 +3135,55 @@ async def rsyscall_exec(
     rsyscall_thread.thread = Thread(rsyscall_thread.thread.child_task, futex_task,
                                     handle.MemoryMapping(parent_stdtask.task.base, local_mapping))
 
+async def make_execable(
+        rsc_child: RsyscallChild,
+        child_memfd: FileDescriptor,
+        stdtask: StandardTask,
+        task_memfd: FileDescriptor,
+) -> RsyscallThread:
+    # map the memfd in child and task
+    # set robust futex in child
+    # launch futex monitor from task
+    # return thread
+    # TODO hmm, note that we can use CHILD_CLEARTID if we're in the same address space...
+    # hmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+    # we want to detect when it leaves our address space, basically
+    # so we need this code so that we can run arbitrary code in it
+    # so that if it leaves our address space (for example by execing) we can free the resources.
+    # I know all this...
+    # In particular we want to be able to know when it leaves its address space,
+    # even if it's the only thing there.
+    # That way, um...
+    # well, for instance, that way we know whether an exec actually succeeded!
+    # C'mon! It's pretty straightforward!
+    # the fact that any thread can monitor for another thread's exec is cool...
+    # using child_cleartid for posix_spawn would be cool...
+    # I guess you could do it with vfork though...
+    # just posix_spawn with CLONE_VFORK|CLONE_CHILD_CLEARTID,
+    # and if the exec is successful then the tid is cleared,
+    # otherwise there was a failure before exec.
+    # but you'd want to be able to do this even with full fork!
+    # because, because!
+    # well, hm. if it's got... child_cleartid...
+    # blllllaaaaaaaaaaaaaaaaaaahhhhhhhhhhhh
+    # starting a thread is annoying and expensive
+    # ok. probably it will be at least two years until I am able to fix this.
+    # but, argh! what if I think of a better solution?
+    # the issue is all just the fact that I need to make a futex monitoring thread.
+    # the fact that I'm using futexes is minor
+    # the cleartid thing is fine, other than that it doesn't work when not sharing memory,
+    # which I can deal with by using the robust list.
+    # mmmmmmmmmmmmmmmmmmmmm
+    # blah
+    # so exec will hang 4ever mmm
+    # how do we tell the difference between dying from a signal or something, and really execing tho
+    # dunno, guess we can't.
+    # blah okay so I guess I should probably not bake in the futex thread
+    # I should support a notion of something that is my child,
+    # but not futex-thready.
+    # that's possible with ssh, and exec,
+    pass
+
 async def rsyscall_stdin_bootstrap(
         parent_stdtask: StandardTask,
         bootstrap_command: Command,
@@ -3156,6 +3205,30 @@ async def rsyscall_stdin_bootstrap(
     # or. maybe we should support it. the pointers will just be invalidated.
     # so that'll be fine.
     # And, I guess we'll be able to inherit the already-created file descriptors which will be nice.
+    # okay so we can take in an RsyscallThread,
+    # and mutate it - don't return a stdtask at all.
+    # well, I guess we can return the stdtask.
+    # and we don't take the parent task:
+    # the resulting task can't exec.
+    # we'll have another method which takes a parent task and a stdtask and sets it up.
+    # hmm. yeah I guess that makes sense...
+    # although I guess the rsyscallthread is still our child...
+    # we should support a state where a server is our child,
+    # but isn't execable.
+    # I guess from this we'd return the Stdtask and the ChildProcess.
+    # I suppose the whole thing with having the futex passed down,
+    # can be worked out after the fact.
+    # The issue is that we need to establish some shared memory between the parent and child,
+    # but that's achievable.
+    # hmmmmm
+    # and basically fork will return something like, um...
+    # ideally our children would always be able to exec immediately. hm.
+    # I guess, hmm.
+    # we could have something that takes an RsyscallChild,
+    # and the parent,
+    # and...
+    # oh wait it doesn't even have to be the parent actually:
+    # we can create a futex task anywhere.
     futex_memfd = await memsys.memfd_create(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
                                             b"child_robust_futex_list", lib.MFD_CLOEXEC)
     child_futex_memfd = stdtask.task.base.make_fd_handle(futex_memfd)
