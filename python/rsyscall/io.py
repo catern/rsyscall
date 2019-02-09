@@ -3181,7 +3181,9 @@ async def make_execable(
     # blah okay so I guess I should probably not bake in the futex thread
     # I should support a notion of something that is my child,
     # but not futex-thready.
-    # that's possible with ssh, and exec,
+    # that's possible with ssh, and exec.
+    # should I claim it's my child, when it's not actually my direct child, though?
+    # for ssh we need to put the forwarding in another process anyway, blah.
     pass
 
 async def rsyscall_stdin_bootstrap(
@@ -3305,6 +3307,21 @@ async def run_socket_binder(
         yield tmp_path_bytes
         (await child.wait_for_exit()).check()
 
+async def ssh_forward(parent_task: StandardTask, ssh_command: SSHCommand,
+                      local_path: str, remote_path: str) -> ChildProcess:
+    stdout_pipe = await task.task.pipe()
+    async_stdout = await AsyncFileDescriptor.make(parent_task.task.epoller, stdout_pipe.rfd)
+    thread = await parent_task.fork()
+    child_task = await ssh_command.local_forward(
+        str(local_socket_path), (tmp_path_bytes + b"/data").decode(),
+    ).args(["-n", "echo forwarded; sleep inf"]).exec(forward_thread)
+    lines_aiter = read_lines(async_stdout)
+    forwarded = await lines_aiter.__anext__()
+    if done != b"forwarded":
+        raise Exception("ssh forwarding violated protocol, got instead of done:", done)
+    await async_stdout.aclose()
+    return child_task
+
 async def ssh_bootstrap(
         parent_task: StandardTask,
         # the actual ssh command to run
@@ -3319,6 +3336,13 @@ async def ssh_bootstrap(
     # identify local path
     task = parent_task.task
     local_data_path = Path(task, local_socket_path)
+    # start port forwarding
+    forward_child = await ssh_forward(
+        parent_task, ssh_command, str(local_socket_path), (tmp_path_bytes + b"/data").decode())
+    # bah! let's just use controlmaster! that'll be efficient...
+    # I guess we could maaaaaaaaaybe have, um...
+    # well, we don't want someone killing the systemwide shared connection daemon stuff to kill us...
+    # hmmm...
     # start bootstrap and forward local socket
     bootstrap_thread = await parent_task.fork()
     bootstrap_child_task = await ssh_command.local_forward(
