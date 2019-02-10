@@ -52,6 +52,5 @@ int main(int argc, char** argv)
     // TODO could partial write
     int ret = write(opt.describefd, &table, sizeof(table));
     if (ret != sizeof(table)) err(1, "write(describefd, table, sizeof(table))");
-    close(opt.describefd);
     rsyscall_server(opt.infd, opt.outfd);
 }

@@ -11043,3 +11043,7 @@ async def make_execable(
   and that transport is only driven by one task in that address space
 
   fixed!
+* now
+  let's switch to using the datafd instead of describe.
+
+  ok done

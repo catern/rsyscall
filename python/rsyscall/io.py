@@ -3090,6 +3090,42 @@ async def spawn_rsyscall_persistent_server(
                     parent_task.pid_namespace)
     return new_task, cthread, syscall, remote_listening_handle
 
+async def make_robust_futex_task(
+        parent_stdtask: StandardTask,
+        parent_memfd: handle.FileDescriptor,
+        child_stdtask: StandardTask,
+        child_memfd: handle.FileDescriptor,
+) -> t.Tuple[ChildProcess, handle.MemoryMapping, handle.MemoryMapping]:
+    # resize memfd appropriately
+    futex_memfd_size = 4096
+    await parent_memfd.ftruncate(futex_memfd_size)
+    # set up local mapping
+    local_mapping = await parent_memfd.mmap(
+        futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED)
+    await parent_memfd.invalidate()
+    local_mapping_pointer = local_mapping.as_pointer()
+    # set up remote mapping
+    remote_mapping = await child_memfd.mmap(
+        futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED)
+    await child_memfd.invalidate()
+    remote_mapping_pointer = remote_mapping.as_pointer()
+
+    # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
+    futex_value = lib.FUTEX_WAITERS|(int(child_stdtask.task.base.process) & lib.FUTEX_TID_MASK)
+    # this is distasteful and leaky, we're relying on the fact that the PreallocatedAllocator never frees things
+    remote_futex_pointer = await set_singleton_robust_futex(
+        child_stdtask.task.base, child_stdtask.task.transport,
+        memory.PreallocatedAllocator(remote_mapping_pointer, futex_memfd_size), futex_value)
+    local_futex_pointer = local_mapping_pointer + (int(remote_futex_pointer) - int(remote_mapping_pointer))
+    # now we start the futex monitor
+    futex_task = await launch_futex_monitor(parent_stdtask.task.base, parent_stdtask.task.transport,
+                                            parent_stdtask.task.allocator,
+                                            parent_stdtask.process, parent_stdtask.child_monitor,
+                                            local_futex_pointer, futex_value)
+    local_mapping_handle = handle.MemoryMapping(parent_stdtask.task.base, local_mapping)
+    remote_mapping_handle = handle.MemoryMapping(child_stdtask.task.base, remote_mapping)
+    return futex_task, local_mapping_handle, remote_mapping_handle
+
 async def rsyscall_exec(
         parent_stdtask: StandardTask,
         rsyscall_thread: RsyscallThread,
@@ -3097,9 +3133,7 @@ async def rsyscall_exec(
     ) -> None:
     "Exec into the standalone rsyscall_server executable"
     stdtask = rsyscall_thread.stdtask
-    [(async_access_describe_sock, passed_describe_sock),
-     (access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(2)
-    child_data_sock = stdtask.task.base.make_fd_handle(passed_data_sock)
+    [(access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(1)
     # create this guy and pass him down to the new thread
     futex_memfd = await memsys.memfd_create(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
                                                   b"child_robust_futex_list", lib.MFD_CLOEXEC)
@@ -3116,9 +3150,13 @@ async def rsyscall_exec(
         child_task = await rsyscall_thread.execve(
             rsyscall_server_path, [
                 b"rsyscall_server",
-                encode(passed_describe_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
+                encode(passed_data_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
                 *[encode(fd) for fd in copy_to_new_space],
             ], {}, [stdtask.child_monitor.internal.signal_queue.signal_block])
+        #### read symbols from describe fd
+        describe_buf = AsyncReadBuffer(access_data_sock)
+        symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')
+        stdtask.process = ProcessResources.make_from_symbols(stdtask.task.base.address_space, symbol_struct)
         # the futex task we used before is dead now that we've exec'd, have
         # to null it out
         syscall.futex_task = None
@@ -3129,46 +3167,15 @@ async def rsyscall_exec(
         # we mutate the allocator instead of replacing to so that anything that
         # has stored the allocator continues to work
         stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)
-        stdtask.task.transport = SocketMemoryTransport(access_data_sock, child_data_sock, trio.Lock())
+        stdtask.task.transport = SocketMemoryTransport(access_data_sock, passed_data_sock, trio.Lock())
     await stdtask.task.base.unshare_files(do_unshare)
 
-    #### read symbols from describe fd
-    describe_buf = AsyncReadBuffer(async_access_describe_sock)
-    symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')
-    stdtask.process = ProcessResources.make_from_symbols(stdtask.task.base.address_space, symbol_struct)
-    await async_access_describe_sock.aclose()
-
     #### make new futex task
-    # resize memfd appropriately
-    futex_memfd_size = 4096
-    await parent_futex_memfd.ftruncate(futex_memfd_size)
-    # set up local mapping
-    local_mapping = await parent_futex_memfd.mmap(
-        futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED)
-    await parent_futex_memfd.invalidate()
-    local_mapping_pointer = local_mapping.as_pointer()
-    # set up remote mapping
-    remote_mapping = await child_futex_memfd.mmap(
-        futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED)
-    await child_futex_memfd.invalidate()
-    remote_mapping_pointer = remote_mapping.as_pointer()
-
-    # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
-    futex_value = lib.FUTEX_WAITERS|(int(rsyscall_thread.thread.child_task.process) & lib.FUTEX_TID_MASK)
-    # this is distasteful and leaky, we're relying on the fact that the PreallocatedAllocator never frees things
-    remote_futex_pointer = await set_singleton_robust_futex(
-        stdtask.task.base, stdtask.task.transport,
-        memory.PreallocatedAllocator(remote_mapping_pointer, futex_memfd_size), futex_value)
-    local_futex_pointer = local_mapping_pointer + (int(remote_futex_pointer) - int(remote_mapping_pointer))
-    # now we start the futex monitor
-    futex_task = await launch_futex_monitor(parent_stdtask.task.base, parent_stdtask.task.transport,
-                                            parent_stdtask.task.allocator,
-                                            parent_stdtask.process, parent_stdtask.child_monitor,
-                                            local_futex_pointer, futex_value)
+    futex_task, local_mapping, remote_mapping = await make_robust_futex_task(parent_stdtask, parent_futex_memfd,
+                                                                             stdtask, child_futex_memfd)
     syscall.futex_task = futex_task
     # TODO how do we unmap the remote mapping?
-    rsyscall_thread.thread = Thread(rsyscall_thread.thread.child_task, futex_task,
-                                    handle.MemoryMapping(parent_stdtask.task.base, local_mapping))
+    rsyscall_thread.thread = Thread(rsyscall_thread.thread.child_task, futex_task, local_mapping)
 
 # Need to identify the host, I guess
 # I shouldn't abstract this too much - I should just use ssh.
@@ -3259,11 +3266,10 @@ async def ssh_bootstrap(
         sock = await task.socket_unix(socket.SOCK_STREAM)
         await robust_unix_connect(local_data_path, sock)
         return (await AsyncFileDescriptor.make(parent_task.epoller, sock))
-    async_bootstrap_describe_sock = await make_async_connection()
     async_local_syscall_sock = await make_async_connection()
     async_local_data_sock = await make_async_connection()
-    # Read description off of bootstrap_describe
-    describe_buf = AsyncReadBuffer(async_bootstrap_describe_sock)
+    # Read description off of the data sock
+    describe_buf = AsyncReadBuffer(async_local_data_sock)
     describe_struct = await describe_buf.read_cffi('struct rsyscall_bootstrap')
     new_pid = describe_struct.pid
     new_fd_table = far.FDTable(new_pid)
@@ -3282,7 +3288,6 @@ async def ssh_bootstrap(
         # if someone passes us a malformed environment element without =, we'll just break, whatever
         key, val = elem.split(b"=", 1)
         environ[key] = val
-    await async_bootstrap_describe_sock.aclose()
     # Build the new task!
     new_address_space = far.AddressSpace(new_pid)
     new_pid_namespace = far.PidNamespace(new_pid)

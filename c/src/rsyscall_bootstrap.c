@@ -123,7 +123,6 @@ noreturn static void bootstrap(char** envp)
     int listening_sock;
     memcpy(&listening_sock, CMSG_DATA(&cmsg.hdr), sizeof(listening_sock));
     // accept connections
-    const int bootstrap_describe_sock = accept_on(listening_sock);
     const int syscall_sock = accept_on(listening_sock);
     const int data_sock = accept_on(listening_sock);
     size_t envp_count = 0;
@@ -136,28 +135,25 @@ noreturn static void bootstrap(char** envp)
         .data_sock = data_sock,
         .envp_count = envp_count,
     };
-    int ret = write(bootstrap_describe_sock, &describe, sizeof(describe));
+    int ret = write(data_sock, &describe, sizeof(describe));
     if (ret != sizeof(describe)) {
-        err(1, "write(bootstrap_describe_sock, &describe, sizeof(describe))");
+        err(1, "write(data_sock, &describe, sizeof(describe))");
     }
     for (; *envp != NULL; envp++) {
         char* cur = *envp;
         size_t size = strlen(cur);
-        ret = write(bootstrap_describe_sock, &size, sizeof(size));
+        ret = write(data_sock, &size, sizeof(size));
 	if (ret != sizeof(size)) {
-	    err(1, "write(bootstrap_describe_sock, &size, sizeof(size))");
+	    err(1, "write(data_sock, &size, sizeof(size))");
 	}
         while (size > 0) {
-            ret = write(bootstrap_describe_sock, cur, size);
+            ret = write(data_sock, cur, size);
             if (ret < 0) {
-                err(1, "write(bootstrap_describe_sock=%d, cur, size=%lu)", bootstrap_describe_sock, size);
+                err(1, "write(data_sock=%d, cur, size=%lu)", data_sock, size);
             }
             size -= ret;
             cur += ret;
         }
-    }
-    if (close(bootstrap_describe_sock) < 0) {
-        err(1, "close(bootstrap_describe_sock=%d)", bootstrap_describe_sock);
     }
     ret = rsyscall_server(syscall_sock, syscall_sock);
     err(1, "rsyscall_server(syscall_sock, syscall_sock)");
