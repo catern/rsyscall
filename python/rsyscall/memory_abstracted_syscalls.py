@@ -409,8 +409,8 @@ async def recvmsg_fds(task: far.Task, transport: MemoryTransport, allocator: mem
         fds_buf = cmsgbuf.pointer + ffi.sizeof('struct cmsghdr')
         # TODO I should really actually look at how many fds I got rather than assume I got all of them
         local_fds_bytes = await transport.read(fds_buf, buf_len)
-        received_fds = fd_struct.unpack_from(local_fds_bytes)
-        return [near.FileDescriptor(fd) for fd in received_fds]
+        received_fds = [near.FileDescriptor(fd) for fd, in fd_struct.iter_unpack(local_fds_bytes)]
+        return received_fds
 
 
 #### socket syscalls that write data ####

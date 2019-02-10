@@ -315,7 +315,7 @@ class Task:
         epfd = await self.epoll_create()
         if self.syscall.activity_fd is not None:
             epoll_waiter = EpollWaiter(self, epfd.handle, None)
-            epoll_center = EpollCenter(epoll_waiter, epfd.handle, self.transport, self.allocator)
+            epoll_center = EpollCenter(epoll_waiter, epfd.handle, self)
             activity_fd = self.base.make_fd_handle(self.syscall.activity_fd)
             await epoll_waiter.update_activity_fd(activity_fd)
         else:
@@ -324,7 +324,7 @@ class Task:
                 logger.debug("wait_readable(%s)", epfd.handle.near.number)
                 await trio.hazmat.wait_readable(epfd.handle.near.number)
             epoll_waiter = EpollWaiter(self, epfd.handle, wait_readable)
-            epoll_center = EpollCenter(epoll_waiter, epfd.handle, self.transport, self.allocator)
+            epoll_center = EpollCenter(epoll_waiter, epfd.handle, self)
         return epoll_center
         
 
@@ -591,16 +591,15 @@ class EpolledFileDescriptor:
 class EpollCenter:
     "Terribly named class that allows registering fds on epoll, and waiting on them"
     def __init__(self, epoller: EpollWaiter, epfd: handle.FileDescriptor,
-                 transport: base.MemoryTransport, allocator: memory.AllocatorInterface) -> None:
+                 task: Task) -> None:
         self.epoller = epoller
         self.epfd = epfd
-        self.transport = transport
-        self.allocator = allocator
+        self.task = task
 
     def inherit(self, task: Task) -> EpollCenter:
         return EpollCenter(self.epoller,
                            task.base.make_fd_handle(self.epfd),
-                           task.transport, task.allocator)
+                           task)
 
     async def register(self, fd: handle.FileDescriptor, events: EpollEventMask=None) -> EpolledFileDescriptor:
         if events is None:
@@ -611,10 +610,10 @@ class EpollCenter:
         return EpolledFileDescriptor(self, fd, receive, number)
 
     async def add(self, fd: far.FileDescriptor, event: EpollEvent) -> None:
-        await memsys.epoll_ctl_add(self.epfd.task, self.transport, self.allocator, self.epfd.far, fd, event)
+        await memsys.epoll_ctl_add(self.epfd.task, self.task.transport, self.task.allocator, self.epfd.far, fd, event)
 
     async def modify(self, fd: far.FileDescriptor, event: EpollEvent) -> None:
-        await memsys.epoll_ctl_mod(self.epfd.task, self.transport, self.allocator, self.epfd.far, fd, event)
+        await memsys.epoll_ctl_mod(self.epfd.task, self.task.transport, self.task.allocator, self.epfd.far, fd, event)
 
     async def delete(self, fd: far.FileDescriptor) -> None:
         await memsys.epoll_ctl_del(self.epfd.task, self.epfd.far, fd)
@@ -2937,7 +2936,8 @@ async def make_connections(access_task: Task,
         # don't need these in the connecting task anymore
         for sock in connecting_socks:
             await sock.aclose()
-    return list(zip(access_socks, passed_socks))
+    ret = list(zip(access_socks, passed_socks))
+    return ret
 
 async def spawn_rsyscall_thread(
         access_sock: AsyncFileDescriptor[ReadableWritableFile],
@@ -3097,7 +3097,9 @@ async def rsyscall_exec(
     ) -> None:
     "Exec into the standalone rsyscall_server executable"
     stdtask = rsyscall_thread.stdtask
-    [(async_access_describe_sock, passed_describe_sock)] = await stdtask.make_async_connections(1)
+    [(async_access_describe_sock, passed_describe_sock),
+     (access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(2)
+    child_data_sock = stdtask.task.base.make_fd_handle(passed_data_sock)
     # create this guy and pass him down to the new thread
     futex_memfd = await memsys.memfd_create(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
                                                   b"child_robust_futex_list", lib.MFD_CLOEXEC)
@@ -3127,9 +3129,7 @@ async def rsyscall_exec(
         # we mutate the allocator instead of replacing to so that anything that
         # has stored the allocator continues to work
         stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)
-        print("allocators")
-        print("base", stdtask.task.base)
-        print("allocator task", stdtask.task.allocator.task)
+        stdtask.task.transport = SocketMemoryTransport(access_data_sock, child_data_sock, trio.Lock())
     await stdtask.task.base.unshare_files(do_unshare)
 
     #### read symbols from describe fd
