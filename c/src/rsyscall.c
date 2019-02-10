@@ -233,14 +233,21 @@ static void receive_fds(const int sock, int *fds, int n) {
 
 char hello_persist[] = "hello world, I am the persistent syscall server!\n";
 
+struct rsyscall_symbol_table rsyscall_symbol_table()
+{
+    struct rsyscall_symbol_table table = {
+        .rsyscall_server = rsyscall_server,
+        .rsyscall_persistent_server = rsyscall_persistent_server,
+        .rsyscall_do_cloexec = rsyscall_do_cloexec,
+        .rsyscall_stop_then_close = rsyscall_stop_then_close,
+        .rsyscall_futex_helper = rsyscall_futex_helper,
+        .rsyscall_trampoline = rsyscall_trampoline,
+    };
+    return table;
+}
+
 void rsyscall_describe(int describefd)
 {
-    dprintf(describefd, "rsyscall_server=%p\n", rsyscall_server);
-    dprintf(describefd, "rsyscall_persistent_server=%p\n", rsyscall_persistent_server);
-    dprintf(describefd, "rsyscall_futex_helper=%p\n", rsyscall_futex_helper);
-    dprintf(describefd, "rsyscall_trampoline=%p\n", rsyscall_trampoline);
-    dprintf(describefd, "rsyscall_do_cloexec=%p\n", rsyscall_do_cloexec);
-    dprintf(describefd, "rsyscall_stop_then_close=%p\n", rsyscall_stop_then_close);
 }
 
 int rsyscall_persistent_server(int infd, int outfd, const int listensock)

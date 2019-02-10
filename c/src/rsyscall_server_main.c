@@ -48,7 +48,10 @@ int main(int argc, char** argv)
     const struct options opt = parse_options(argc, argv);
     fcntl(opt.infd, F_SETFL, fcntl(opt.infd, F_GETFL) & ~O_NONBLOCK);
     fcntl(opt.outfd, F_SETFL, fcntl(opt.outfd, F_GETFL) & ~O_NONBLOCK);
-    rsyscall_describe(opt.describefd);
+    struct rsyscall_symbol_table table = rsycall_symbol_table();
+    // TODO could partial write
+    int ret = write(opt.describefd, table, sizeof(table));
+    if (ret != sizeof(table)) err(1, "write(describefd, table, sizeof(table))");
     close(opt.describefd);
     rsyscall_server(opt.infd, opt.outfd);
 }

@@ -78,8 +78,7 @@ static int connect_unix_socket(struct sockaddr_un addr) {
 }
 
 static int accept_on(const int listening_sock) {
-    // no cloexec because we want to pass these down
-    const int connsock = accept4(listening_sock, NULL, NULL, 0);
+    const int connsock = accept4(listening_sock, NULL, NULL, SOCK_CLOEXEC);
     if (connsock < 0) err(1, "accept4(listening_sock=%d)", listening_sock);
     return connsock;
 }
@@ -125,57 +124,37 @@ noreturn static void bootstrap(char** envp)
     memcpy(&listening_sock, CMSG_DATA(&cmsg.hdr), sizeof(listening_sock));
     // accept connections
     const int bootstrap_describe_sock = accept_on(listening_sock);
-    const int describe_sock = accept_on(listening_sock);
     const int syscall_sock = accept_on(listening_sock);
     const int data_sock = accept_on(listening_sock);
-    dprintf(bootstrap_describe_sock, "pid=%d\n", getpid());
-    dprintf(bootstrap_describe_sock, "listening_sock=%d\n", listening_sock);
-    dprintf(bootstrap_describe_sock, "syscall_sock=%d\n", syscall_sock);
-    dprintf(bootstrap_describe_sock, "data_sock=%d\n", data_sock);
-    dprintf(bootstrap_describe_sock, "environ\n");
+    struct rsyscall_bootstrap describe = {
+        .symbols = rsyscall_symbol_table(),
+        .pid = getpid(),
+        .listening_sock = listening_sock,
+        .syscall_sock = syscall_sock,
+        .data_sock = data_sock,
+        .envp_count = strlen(envp),
+    };
+    int ret = write(bootstrap_describe_sock, &describe, sizeof(describe));
+    if (ret != sizeof(describe)) {
+        err(1, "write(bootstrap_describe_sock, &describe, sizeof(describe))");
+    }
     for (; *envp != NULL; envp++) {
-        // gotta use netstrings here because environment variables can contain newlines
-        char* cur = *envp;
         size_t size = strlen(cur);
-        dprintf(bootstrap_describe_sock, "%lu:", size);
+        write(bootstrap_describe_sock, &size, sizeof(size));
+        char* cur = *envp;
         while (size > 0) {
-            int ret = write(bootstrap_describe_sock, cur, size);
+            ret = write(bootstrap_describe_sock, cur, size);
             if (ret < 0) {
                 err(1, "write(bootstrap_describe_sock=%d, cur, size=%lu)", bootstrap_describe_sock, size);
             }
             size -= ret;
             cur += ret;
         }
-        if (write(bootstrap_describe_sock, ",", 1) != 1) {
-            err(1, "write(bootstrap_describe_sock=%d, \",\", 1)", bootstrap_describe_sock);
-        }
     }
     if (close(bootstrap_describe_sock) < 0) {
         err(1, "close(bootstrap_describe_sock=%d)", bootstrap_describe_sock);
     }
-    char describe_sock_str[16];
-    if (snprintf(describe_sock_str, sizeof(describe_sock_str), "%d", describe_sock) < 0) {
-        err(1, "snprintf(describe_sock_str, describe_sock=%d)", describe_sock);
-    }
-    char syscall_sock_str[16];
-    if (snprintf(syscall_sock_str, sizeof(syscall_sock_str), "%d", syscall_sock) < 0) {
-        err(1, "snprintf(syscall_sock_str, syscall_sock=%d)", syscall_sock);
-    }
-    char data_sock_str[16];
-    if (snprintf(data_sock_str, sizeof(data_sock_str), "%d", data_sock) < 0) {
-        err(1, "snprintf(data_sock_str, data_sock=%d)", data_sock);
-    }
-    // TODO we should just call the rsyscall_server function directly here
-    char* new_argv[] = {
-        "rsyscall-server",
-        // the actual arguments
-        describe_sock_str, syscall_sock_str, syscall_sock_str,
-        // passedfd arguments
-        describe_sock_str, syscall_sock_str, data_sock_str,
-        0,
-    };
-    execve(RSYSCALL_SERVER_PATH, new_argv, envp);
-    err(1, "exec(" RSYSCALL_SERVER_PATH ", new_argv=%p, envp=%p)", new_argv, envp);
+    rsyscall_server(syscall_sock, syscall_sock);
 }
 
 int main(int argc, char** argv, char** envp)

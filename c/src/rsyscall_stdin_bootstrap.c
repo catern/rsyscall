@@ -46,28 +46,38 @@ static void receive_fds(const int sock, int *fds, int n) {
     memcpy(fds, CMSG_DATA(&cmsg.hdr), sizeof(int) * n);
 }
 
-void bootstrap(int connsock)
-{
-    // read the number of fds we should expect
-    int nfds;
-    // TODO this could be a partial read
-    if (read(connsock, &nfds, sizeof(nfds)) != sizeof(nfds)) err(1, "read(connsock, &nfds)");
-    if (nfds < 3) err(1, "expect to read at least three fds");
-    // receive nfds
-    int fds[nfds];
-    receive_fds(connsock, fds, nfds);
-    // write new fd numbers back
-    // TODO this could be a partial write, whatever
-    if (write(connsock, fds, sizeof(fds)) != sizeof(fds)) err(1, "write(connsock)");
-
-    // the first three fds are special
-    rsyscall_describe(fds[0]);
-    close(fds[0]);
-    rsyscall_server(fds[1], fds[2]);
-}
-
-int main(int argc, char** argv)
+int main(int argc, char** argv, char** envp)
 {
     if (argc != 1) errx(1, "usage: %s", argv[0]);
-    bootstrap(0);
+    const int connsock = 0;
+    const int nfds = 3;
+    int fds[nfds];
+    receive_fds(connsock, fds, nfds);
+    const int syscall_fd = fds[0];
+    const int data_fd = fds[1];
+    const int futex_memfd = fds[2];
+    dprintf(data_fd, "pid=%d\n", getpid());
+    dprintf(data_fd, "syscall_fd=%d\n", syscall_fd);
+    dprintf(data_fd, "data_fd=%d\n", data_fd);
+    dprintf(data_fd, "futex_memfd=%d\n", futex_memfd);
+    dprintf(data_fd, "environ=%d\n", strlen(envp));
+    for (; *envp != NULL; envp++) {
+        // gotta use netstrings here because environment variables can contain newlines
+        char* cur = *envp;
+        size_t size = strlen(cur);
+        dprintf(data_fd, "%lu:", size);
+        while (size > 0) {
+            int ret = write(data_fd, cur, size);
+            if (ret < 0) {
+                err(1, "write(data_fd=%d, cur, size=%lu)", data_fd, size);
+            }
+            size -= ret;
+            cur += ret;
+        }
+        if (write(data_fd, ",", 1) != 1) {
+            err(1, "write(data_fd=%d, \",\", 1)", data_fd);
+        }
+    }
+    rsyscall_describe(data_fd);
+    rsyscall_server(syscall_fd, syscall_fd);
 }

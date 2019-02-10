@@ -10891,3 +10891,145 @@ for use in the repl
    so yeah I guess what we'll do is,
    we'll,
    write back the fd numbers to use as infd and outfd.
+* stuff
+  okay so we mostly can just do things in the SyscallInterface, and GC them away
+
+  but what about differentiating things we can and can't exec in?
+
+  well, how would we exec in a ssh scenario?
+
+  Like, how would we make our own ssh which works nice with rsyscall and supports execing?
+
+  So I guess one way is the standard thread server approach.
+
+  How would we then be able to exec in one of those threads?
+
+  So if it was local, we could move the futex around and start a thread monitoring it.
+
+  But what if execing was a child event, as I think it should maybe be?
+
+  Well we wouldn't be the parent of these threads in the thread server...
+
+  So...
+
+  I guess we could serialize out the child events in an fd.
+
+  We could write out the futex event too I suppose.
+
+  That would be much like a childfd/procfd thing.
+
+  Kinda related to the persistent server...
+  Oh but for the persistent server, I just gave up and actually reconnected to the same thread.
+  Which is better anyway.
+  Then I don't need CLONE_THREAD.
+
+  So anyway, the thread server...
+  What is its... PURPOSE....
+
+  Starting a process can only be done if you already have a process running.
+  I guess the thread server is what I'd run under a user account when I want to support others accessing it.
+
+  Basically, um...
+  Well, we can achieve "let someone enter this namespace or this user" using setns kind of stuff, and really that's better.
+
+  But if we really want the last word in creating a thread in some existing environment,
+  we want the thread server.
+
+  The thread server is fine ideally anyway - ideally you can move all your resources over to the thread created by the server.
+
+  So yeah, it's this thing that sits there, and...
+  
+  Ideally for local things we just pass a childfd around,
+  then for remote things we have something which serializes the childfd to the remote side.
+
+  So the question is, do we have this server which serializes the child events to the remote side?
+  Or do we just have an actual task that we can control, but which we aren't the parent of?
+
+  So, on one side, it makes sense to serialize fds to send over the network, that's fine.
+
+  On the other hand, having a task which we control but aren't the parent of, is something we have in every program:
+  The root of the task tree, the Python process.
+
+  On the other other hand, if the root exits, or execs, our code terminates.
+  In other words, we can assume that we can track root exiting or execing even though we can't,
+  because we'll never run in a scenario where root has exited or exec'd.
+
+  So the root is special in that regard.
+** reminder of what I'm doing
+   I'm trying to make it possible to exec in an ssh server,
+   so we don't need to have different classes of things which can and can't exec.
+
+   Which... is fine...
+
+   Although wait a second, how will I get the ChildProcess without this stuff?
+
+   I guess the ChildProcess could be on the SyscallInterface..?
+** blah!
+   let's not change anything, it works fine as is!
+* why can't we use the syscall channel as the data channel?
+  Because of the possibility of partial reads and writes.
+
+  Partial reads can be dealt with: we just use recvmsg(MSG_WAITALL) and everything's good.
+
+  But there's no corresponding flag for sendmsg to deal with partial writes.
+  And I don't see a way to work around it - we'll get the syscall response in the middle of what we think is a bunch of data.
+
+  The partial reads or writes are kind of neat anyway, it means theoretically we could add more data mid-transfer, if we get a partial read or write.
+* stuff
+
+async def make_execable(
+        child_process: ChildProcess,
+        child_stdtask: StandardTask,
+        child_memfd: FileDescriptor,
+        monitor_stdtask: StandardTask,
+        monitor_memfd: FileDescriptor,
+) -> RsyscallThread:
+    # map the memfd in child and monitor
+    # set robust futex in child
+    # launch futex monitor from task
+    # return thread
+    # TODO hmm, note that we can use CHILD_CLEARTID if we're in the same address space...
+    # hmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+    # we want to detect when it leaves our address space, basically
+    # so we need this code so that we can run arbitrary code in it
+    # so that if it leaves our address space (for example by execing) we can free the resources.
+    # I know all this...
+    # In particular we want to be able to know when it leaves its address space,
+    # even if it's the only thing there.
+    # That way, um...
+    # well, for instance, that way we know whether an exec actually succeeded!
+    # C'mon! It's pretty straightforward!
+    # the fact that any thread can monitor for another thread's exec is cool...
+    # using child_cleartid for posix_spawn would be cool...
+    # I guess you could do it with vfork though...
+    # just posix_spawn with CLONE_VFORK|CLONE_CHILD_CLEARTID,
+    # and if the exec is successful then the tid is cleared,
+    # otherwise there was a failure before exec.
+    # but you'd want to be able to do this even with full fork!
+    # because, because!
+    # well, hm. if it's got... child_cleartid...
+    # blllllaaaaaaaaaaaaaaaaaaahhhhhhhhhhhh
+    # starting a thread is annoying and expensive
+    # ok. probably it will be at least two years until I am able to fix this.
+    # but, argh! what if I think of a better solution?
+    # the issue is all just the fact that I need to make a futex monitoring thread.
+    # the fact that I'm using futexes is minor
+    # the cleartid thing is fine, other than that it doesn't work when not sharing memory,
+    # which I can deal with by using the robust list.
+    # mmmmmmmmmmmmmmmmmmmmm
+    # blah
+    # so exec will hang 4ever mmm
+    # how do we tell the difference between dying from a signal or something, and really execing tho
+    # dunno, guess we can't.
+    # blah okay so I guess I should probably not bake in the futex thread
+    # I should support a notion of something that is my child,
+    # but not futex-thready.
+    # that's possible with ssh, and exec.
+    # should I claim it's my child, when it's not actually my direct child, though?
+    # for ssh we need to put the forwarding in another process anyway, blah.
+    # actually we don't even need to support the child thing, um, hmm.
+    # if it's my child and there are no other resources, I can just stick it into the SyscallInterface
+    # let's just defer this problem:
+    # we know we want this make_execable thing, so let's do that.
+    # a thread is actually just a child task that we can watch for exec on... I guess...
+    pass

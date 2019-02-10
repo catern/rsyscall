@@ -372,6 +372,30 @@ struct rsyscall_syscall {
     int64_t sys;
     int64_t args[6];
 };
+struct rsyscall_symbol_table {
+    void* rsyscall_server;
+    void* rsyscall_persistent_server;
+    void* rsyscall_do_cloexec;
+    void* rsyscall_stop_then_close;
+    void* rsyscall_futex_helper;
+    void* rsyscall_trampoline;
+};
+struct rsyscall_bootstrap {
+    struct rsyscall_symbol_table symbols;
+    pid_t pid;
+    int listening_sock;
+    int syscall_sock;
+    int data_sock;
+    int envp_count;
+};
+struct rsyscall_stdin_bootstrap {
+    struct rsyscall_symbol_table symbols;
+    pid_t pid;
+    int syscall_fd;
+    int data_fd;
+    int futex_memfd;
+    int envp_count;
+};
 
 #define SYS_sendmsg ...
 #define SYS_recvmsg ...
