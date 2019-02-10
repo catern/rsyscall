@@ -1,3 +1,4 @@
+#include <sys/types.h>
 #include <stdint.h>
 #include <stdnoreturn.h>
 
@@ -48,7 +49,7 @@ struct rsyscall_bootstrap {
     int listening_sock;
     int syscall_sock;
     int data_sock;
-    int envp_count;
+    size_t envp_count;
 };
 struct rsyscall_stdin_bootstrap {
     struct rsyscall_symbol_table symbols;
@@ -56,5 +57,5 @@ struct rsyscall_stdin_bootstrap {
     int syscall_fd;
     int data_fd;
     int futex_memfd;
-    int envp_count;
+    size_t envp_count;
 };

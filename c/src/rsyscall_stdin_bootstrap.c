@@ -48,6 +48,8 @@ static void receive_fds(const int sock, int *fds, int n) {
 
 int main(int argc, char** argv, char** envp)
 {
+    size_t envp_count = 0;
+    for (; envp[envp_count] != NULL; envp_count++);
     if (argc != 1) errx(1, "usage: %s", argv[0]);
     const int connsock = 0;
     const int nfds = 3;
@@ -60,7 +62,7 @@ int main(int argc, char** argv, char** envp)
     dprintf(data_fd, "syscall_fd=%d\n", syscall_fd);
     dprintf(data_fd, "data_fd=%d\n", data_fd);
     dprintf(data_fd, "futex_memfd=%d\n", futex_memfd);
-    dprintf(data_fd, "environ=%d\n", strlen(envp));
+    dprintf(data_fd, "environ=%lu\n", envp_count);
     for (; *envp != NULL; envp++) {
         // gotta use netstrings here because environment variables can contain newlines
         char* cur = *envp;

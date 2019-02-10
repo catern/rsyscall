@@ -18,8 +18,8 @@ rsyscall_stdin_bootstrap_LDADD = librsyscall.la
 rsyscall_server_SOURCES = src/rsyscall_server_main.c
 rsyscall_server_LDADD = librsyscall.la
 
-rsyscall_bootstrap_CPPFLAGS = -DRSYSCALL_SERVER_PATH=\"$(pkglibexecdir)/rsyscall-server\"
 rsyscall_bootstrap_SOURCES = src/rsyscall_bootstrap.c
+rsyscall_bootstrap_LDADD = librsyscall.la
 
 bin_PROGRAMS = cat remote_cat
 cat_SOURCES = src/cat.c

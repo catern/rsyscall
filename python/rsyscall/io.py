@@ -1197,8 +1197,9 @@ class ProcessResources:
 
     @staticmethod
     def make_from_symbols(address_space: far.AddressSpace, symbols: t.Any) -> ProcessResources:
-        def to_pointer(num: int) -> FunctionPointer:
-            return FunctionPointer(far.Pointer(address_space, near.Pointer(num)))
+        def to_pointer(cffi_ptr) -> FunctionPointer:
+            return FunctionPointer(
+                far.Pointer(address_space, near.Pointer(int(ffi.cast('ssize_t', cffi_ptr)))))
         return ProcessResources(
             server_func=to_pointer(symbols.rsyscall_server),
             persistent_server_func=to_pointer(symbols.rsyscall_persistent_server),
@@ -3210,18 +3211,22 @@ async def run_socket_binder(
         yield tmp_path_bytes
         (await child.wait_for_exit()).check()
 
-async def ssh_forward(parent_task: StandardTask, ssh_command: SSHCommand,
+async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
                       local_path: str, remote_path: str) -> ChildProcess:
-    stdout_pipe = await task.task.pipe()
-    async_stdout = await AsyncFileDescriptor.make(parent_task.task.epoller, stdout_pipe.rfd)
-    thread = await parent_task.fork()
+    stdout_pipe = await stdtask.task.pipe()
+    async_stdout = await AsyncFileDescriptor.make(stdtask.epoller, stdout_pipe.rfd)
+    thread = await stdtask.fork()
+    stdout = thread.stdtask.task.base.make_fd_handle(stdout_pipe.wfd.handle)
+    await stdout_pipe.wfd.invalidate()
+    await thread.stdtask.unshare_files()
+    await thread.stdtask.stdout.replace_with(stdout)
     child_task = await ssh_command.local_forward(
-        str(local_socket_path), (tmp_path_bytes + b"/data").decode(),
-    ).args(["-n", "echo forwarded; sleep inf"]).exec(forward_thread)
+        local_path, remote_path,
+    ).args(["-n", "echo forwarded; sleep inf"]).exec(thread)
     lines_aiter = read_lines(async_stdout)
     forwarded = await lines_aiter.__anext__()
-    if done != b"forwarded":
-        raise Exception("ssh forwarding violated protocol, got instead of done:", done)
+    if forwarded != b"forwarded":
+        raise Exception("ssh forwarding violated protocol, got instead of forwarded:", forwarded)
     await async_stdout.aclose()
     return child_task
 
@@ -3239,25 +3244,16 @@ async def ssh_bootstrap(
     # identify local path
     task = parent_task.task
     local_data_path = Path(task, local_socket_path)
-    # start port forwarding; we'll just leak this process, nbd
+    # start port forwarding; we'll just leak this process, no big deal
     forward_child = await ssh_forward(
         parent_task, ssh_command, str(local_socket_path), (tmp_path_bytes + b"/data").decode())
     # start bootstrap
     bootstrap_thread = await parent_task.fork()
-    bootstrap_child_task = await ssh_command.local_forward(
-        str(local_socket_path), (tmp_path_bytes + b"/data").decode(),
-    ).args(["-n", f"cd {tmp_path_bytes.decode()}; ./bootstrap rsyscall"]).exec(bootstrap_thread)
+    bootstrap_child_task = await ssh_command.args([
+        "-n", f"cd {tmp_path_bytes.decode()}; ./bootstrap rsyscall"
+    ]).exec(bootstrap_thread)
     # TODO should unlink the bootstrap after I'm done execing.
     # it would be better if sh supported fexecve, then I could unlink it before I exec...
-    # TODO TODO this is dumb! waiting for the ssh forwarding to be established!
-    # Oh, I guess we could... um...
-    # We could have a third ssh command, just for the forwarding, which just echos something when done.
-    # I feel that I'm forced into doing that, yeah.
-    # Either that or we can do it with the other bootstrap. The socket bootstrap.
-    # If we can somehow set up the forwarding after startup...
-    # Urgh, we can't send the escape character since we're sending binary data over stdin.
-    # Meh, let's continue.
-    await trio.sleep(.5)
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor[UnixSocketFile]:
         sock = await task.socket_unix(socket.SOCK_STREAM)
@@ -3278,8 +3274,8 @@ async def ssh_bootstrap(
     remote_data_fd = to_fd(describe_struct.data_sock)
     print("HELLO reading environ now", remote_syscall_fd, remote_data_fd)
     environ: t.Dict[bytes, bytes] = {}
-    for _ in range(describe_struct.environ_count):
-        elem_size = await describe_buf.read_cffi('int')
+    for _ in range(describe_struct.envp_count):
+        elem_size = await describe_buf.read_cffi('size_t')
         elem = await describe_buf.read_length(elem_size)
         if elem is None:
             raise Exception("got EOF while expecting to read environment element of length", elem_size)
@@ -3598,7 +3594,7 @@ async def create_nix_container(
     # copy the nix binaries over
     src_tar = await which(src_task, b"tar")
     dest_tar = await which(dest_task, b"tar")
-    closure = await bootstrap_nix(src_nix_store, src_tar, src_task, dest_tar, dest_task)
+    closure = await bootstrap_nix(src_nix_store, src_tar, src_task, dest_tar, dest_task) # type: ignore
 
     # mutate dest_task so that it is nicely namespaced for the Nix container
     await dest_task.unshare_user()

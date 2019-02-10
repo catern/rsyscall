@@ -1,4 +1,3 @@
-#include "config.h"
 #define _GNU_SOURCE
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -10,6 +9,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include "rsyscall.h"
 
 static int listen_unix_socket(const struct sockaddr_un addr) {
     int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -126,22 +126,27 @@ noreturn static void bootstrap(char** envp)
     const int bootstrap_describe_sock = accept_on(listening_sock);
     const int syscall_sock = accept_on(listening_sock);
     const int data_sock = accept_on(listening_sock);
+    size_t envp_count = 0;
+    for (; envp[envp_count] != NULL; envp_count++);
     struct rsyscall_bootstrap describe = {
         .symbols = rsyscall_symbol_table(),
         .pid = getpid(),
         .listening_sock = listening_sock,
         .syscall_sock = syscall_sock,
         .data_sock = data_sock,
-        .envp_count = strlen(envp),
+        .envp_count = envp_count,
     };
     int ret = write(bootstrap_describe_sock, &describe, sizeof(describe));
     if (ret != sizeof(describe)) {
         err(1, "write(bootstrap_describe_sock, &describe, sizeof(describe))");
     }
     for (; *envp != NULL; envp++) {
-        size_t size = strlen(cur);
-        write(bootstrap_describe_sock, &size, sizeof(size));
         char* cur = *envp;
+        size_t size = strlen(cur);
+        ret = write(bootstrap_describe_sock, &size, sizeof(size));
+	if (ret != sizeof(size)) {
+	    err(1, "write(bootstrap_describe_sock, &size, sizeof(size))");
+	}
         while (size > 0) {
             ret = write(bootstrap_describe_sock, cur, size);
             if (ret < 0) {
@@ -154,7 +159,8 @@ noreturn static void bootstrap(char** envp)
     if (close(bootstrap_describe_sock) < 0) {
         err(1, "close(bootstrap_describe_sock=%d)", bootstrap_describe_sock);
     }
-    rsyscall_server(syscall_sock, syscall_sock);
+    ret = rsyscall_server(syscall_sock, syscall_sock);
+    err(1, "rsyscall_server(syscall_sock, syscall_sock)");
 }
 
 int main(int argc, char** argv, char** envp)

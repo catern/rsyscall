@@ -370,6 +370,20 @@ class TestIO(unittest.TestCase):
         async with trio.open_nursery() as nursery:
             await test(local_stdtask)
 
+    def test_spawn_exit(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            thread = await stdtask.spawn_exec()
+            async with thread as stdtask2:
+                await stdtask2.exit(0)
+        trio.run(self.runner, test)
+
+    def test_spawn_basic(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            thread = await stdtask.spawn_exec()
+            async with thread as stdtask2:
+                await self.do_async_things(stdtask2.epoller, stdtask2.task)
+        trio.run(self.runner, test)
+
     def test_spawn_nest(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread1 = await stdtask.spawn_exec()
@@ -544,9 +558,8 @@ class TestIO(unittest.TestCase):
 
     def test_ssh_transmit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            async with ssh_to_localhost(stdtask) as ssh_command:
-                local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
-                    stdtask, ssh_command)
+            async with ssh_to_localhost(stdtask) as host:
+                local_child, remote_stdtask = await host.ssh(stdtask)
                 async with (await stdtask.mkdtemp()) as local_tmpdir:
                     async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
                         [(local_sock, remote_sock)] = await remote_stdtask.make_connections(1)
@@ -558,9 +571,8 @@ class TestIO(unittest.TestCase):
 
     def test_ssh_copy(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            async with ssh_to_localhost(stdtask) as ssh_command:
-                local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
-                    stdtask, ssh_command)
+            async with ssh_to_localhost(stdtask) as host:
+                local_child, remote_stdtask = await host.ssh(stdtask)
                 async with (await stdtask.mkdtemp()) as local_tmpdir:
                     async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
                         remote_file = await (remote_tmpdir/"dest").open(os.O_RDWR|os.O_CREAT)

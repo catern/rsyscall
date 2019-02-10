@@ -11033,3 +11033,11 @@ async def make_execable(
     # we know we want this make_execable thing, so let's do that.
     # a thread is actually just a child task that we can watch for exec on... I guess...
     pass
+* hmm troubles
+  so we aren't inheriting the transport, which makes exec not work.
+  because the transport isn't present in the unshared address space.
+
+  let's figure this out.
+
+  okay so yeah for each address space we need a transport,
+  and that transport is only driven by one task in that address space
