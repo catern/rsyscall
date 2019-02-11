@@ -4,6 +4,7 @@ from rsyscall.io import wrap_stdin_out_err
 from rsyscall.io import AsyncFileDescriptor
 from rsyscall.io import local_stdtask, StandardTask
 from rsyscall.io import Command
+import rsyscall.io as rsc
 from rsyscall.epoll import EpollEvent, EpollEventMask
 from rsyscall.tests.test_ssh import ssh_to_localhost
 import shutil
@@ -409,6 +410,40 @@ class TestIO(unittest.TestCase):
             thread = await stdtask.fork()
             async with thread as stdtask2:
                 await stdtask2.exit(0)
+        trio.run(self.runner, test)
+
+    def test_stdinboot_exit(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            command = rsc.Command(stdtask.filesystem.rsyscall_stdin_bootstrap_path, ['rsyscall-stdin-bootstrap'], {})
+            child, new_stdtask = await rsc.rsyscall_stdin_bootstrap(stdtask, command)
+            await new_stdtask.exit(0)
+        trio.run(self.runner, test)
+
+    def test_stdinboot_async(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            command = rsc.Command(stdtask.filesystem.rsyscall_stdin_bootstrap_path, ['rsyscall-stdin-bootstrap'], {})
+            child, new_stdtask = await rsc.rsyscall_stdin_bootstrap(stdtask, command)
+            await self.do_async_things(new_stdtask.epoller, new_stdtask.task)
+        trio.run(self.runner, test)
+
+    def test_stdinboot_nest(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            command = rsc.Command(stdtask.filesystem.rsyscall_stdin_bootstrap_path, ['rsyscall-stdin-bootstrap'], {})
+            child, new_stdtask = await rsc.rsyscall_stdin_bootstrap(stdtask, command)
+            async with child:
+                child2, new_stdtask2 = await rsc.rsyscall_stdin_bootstrap(new_stdtask, command)
+                async with child2:
+                    await self.do_async_things(new_stdtask2.epoller, new_stdtask2.task)
+        trio.run(self.runner, test)
+
+    def test_stdinboot_fork_exec(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            command = rsc.Command(stdtask.filesystem.rsyscall_stdin_bootstrap_path, ['rsyscall-stdin-bootstrap'], {})
+            child, new_stdtask = await rsc.rsyscall_stdin_bootstrap(stdtask, command)
+            async with child:
+                child2, new_stdtask2 = await rsc.rsyscall_stdin_bootstrap(new_stdtask, command)
+                async with child2:
+                    await self.do_async_things(new_stdtask2.epoller, new_stdtask2.task)
         trio.run(self.runner, test)
 
     def test_persistent_thread_exit(self) -> None:

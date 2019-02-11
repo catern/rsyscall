@@ -57,5 +57,6 @@ struct rsyscall_stdin_bootstrap {
     int syscall_fd;
     int data_fd;
     int futex_memfd;
+    int connecting_fd;
     size_t envp_count;
 };

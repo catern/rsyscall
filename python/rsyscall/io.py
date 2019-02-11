@@ -1243,6 +1243,7 @@ class FilesystemResources:
     rsyscall_server_path: handle.Path
     socket_binder_path: handle.Path
     rsyscall_bootstrap_path: handle.Path
+    rsyscall_stdin_bootstrap_path: handle.Path
 
     @staticmethod
     def make_from_environ(task: handle.Task, environ: t.Mapping[bytes, bytes]) -> FilesystemResources:
@@ -1258,12 +1259,14 @@ class FilesystemResources:
         rsyscall_server_path = rsyscall_pkglibexecdir/"rsyscall-server"
         socket_binder_path = rsyscall_pkglibexecdir/"socket-binder"
         rsyscall_bootstrap_path = rsyscall_pkglibexecdir/"rsyscall-bootstrap"
+        rsyscall_stdin_bootstrap_path = rsyscall_pkglibexecdir/"rsyscall-stdin-bootstrap"
         return FilesystemResources(
             tmpdir=tmpdir,
             utilities=utilities,
             rsyscall_server_path=rsyscall_server_path,
             socket_binder_path=socket_binder_path,
             rsyscall_bootstrap_path=rsyscall_bootstrap_path,
+            rsyscall_stdin_bootstrap_path=rsyscall_stdin_bootstrap_path,
         )
 
 async def lookup_executable(paths: t.List[Path], name: bytes) -> Path:
@@ -1363,7 +1366,7 @@ class StandardTask:
         )
         # We don't need this ourselves, but we keep it around so others can inherit it.
         [(access_sock, remote_sock)] = await stdtask.make_async_connections(1)
-        task.transport = SocketMemoryTransport(access_sock, remote_sock, trio.Lock())
+        task.transport = SocketMemoryTransport(access_sock, remote_sock)
         return stdtask
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
@@ -2588,7 +2591,6 @@ class SocketMemoryTransport(base.MemoryTransport):
     """
     local: AsyncFileDescriptor[ReadableWritableFile]
     remote: handle.FileDescriptor
-    lock: trio.Lock
     pending_writes: t.List[WriteOp] = field(default_factory=list)
     running_write: OneAtATime = field(default_factory=OneAtATime)
     pending_reads: t.List[ReadOp] = field(default_factory=list)
@@ -2621,7 +2623,7 @@ class SocketMemoryTransport(base.MemoryTransport):
         return self.remote.task.address_space == base.local_address_space
 
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
-        return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote), self.lock)
+        return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote))
 
     async def _unlocked_single_write(self, dest: Pointer, data: bytes) -> None:
         src = base.to_local_pointer(data)
@@ -2785,6 +2787,22 @@ class AsyncReadBuffer:
         src = ffi.cast(nameptr, ffi.from_buffer(data))
         ffi.memmove(dest, src, size)
         return dest[0]
+
+    async def read_length_prefixed_string(self) -> bytes:
+        elem_size = await self.read_cffi('size_t')
+        elem = await self.read_length(elem_size)
+        if elem is None:
+            raise Exception("got EOF while expecting to read environment element of length", elem_size)
+        return elem
+
+    async def read_envp(self, length: int) -> t.Dict[bytes, bytes]:
+        environ: t.Dict[bytes, bytes] = {}
+        for _ in range(length):
+            elem = await self.read_length_prefixed_string()
+            # if someone passes us a malformed environment element without =, we'll just break, whatever
+            key, val = elem.split(b"=", 1)
+            environ[key] = val
+        return environ
 
     async def read_until_delimiter(self, delim: bytes) -> t.Optional[bytes]:
         while True:
@@ -3056,9 +3074,7 @@ class PersistentServer:
         self.syscall.rsyscall_connection = RsyscallConnection(access_syscall_sock, access_syscall_sock)
         self.syscall.infd = self.task.base.make_fd_handle(infd)
         self.syscall.outfd = self.task.base.make_fd_handle(outfd)
-        transport = SocketMemoryTransport(access_syscall_sock,
-                                          self.task.base.make_fd_handle(remote_data_sock),
-                                          trio.Lock())
+        transport = SocketMemoryTransport(access_syscall_sock, self.task.base.make_fd_handle(remote_data_sock))
         self.task.transport = transport
         self.transport = transport
         # close remote fds we are no longer using - can only do this here because we've
@@ -3167,7 +3183,7 @@ async def rsyscall_exec(
         # we mutate the allocator instead of replacing to so that anything that
         # has stored the allocator continues to work
         stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)
-        stdtask.task.transport = SocketMemoryTransport(access_data_sock, passed_data_sock, trio.Lock())
+        stdtask.task.transport = SocketMemoryTransport(access_data_sock, passed_data_sock)
     await stdtask.task.base.unshare_files(do_unshare)
 
     #### make new futex task
@@ -3278,16 +3294,7 @@ async def ssh_bootstrap(
     listening_fd = to_fd(describe_struct.listening_sock)
     remote_syscall_fd = to_fd(describe_struct.syscall_sock)
     remote_data_fd = to_fd(describe_struct.data_sock)
-    print("HELLO reading environ now", remote_syscall_fd, remote_data_fd)
-    environ: t.Dict[bytes, bytes] = {}
-    for _ in range(describe_struct.envp_count):
-        elem_size = await describe_buf.read_cffi('size_t')
-        elem = await describe_buf.read_length(elem_size)
-        if elem is None:
-            raise Exception("got EOF while expecting to read environment element of length", elem_size)
-        # if someone passes us a malformed environment element without =, we'll just break, whatever
-        key, val = elem.split(b"=", 1)
-        environ[key] = val
+    environ = await describe_buf.read_envp(describe_struct.envp_count)
     # Build the new task!
     new_address_space = far.AddressSpace(new_pid)
     new_pid_namespace = far.PidNamespace(new_pid)
@@ -3300,7 +3307,7 @@ async def ssh_bootstrap(
     handle_remote_syscall_fd = new_base_task.make_fd_handle(remote_syscall_fd)
     new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
-    new_transport = SocketMemoryTransport(async_local_data_sock, handle_remote_data_fd, trio.Lock())
+    new_transport = SocketMemoryTransport(async_local_data_sock, handle_remote_data_fd)
     new_task = Task(new_base_task, new_transport,
                     memory.AllocatorClient.make_allocator(new_base_task),
                     # we assume ssh zeroes the sigmask before starting us
@@ -3928,8 +3935,9 @@ class NixPath(handle.Path):
 async def rsyscall_stdin_bootstrap(
         stdtask: StandardTask,
         bootstrap_command: Command,
-) -> RsyscallThread:
+) -> t.Tuple[ChildProcess, StandardTask]:
     """Fork and run an arbitrary Command which will start rsyscall_stdin_bootstrap"""
+    #### fork and exec into the bootstrap command
     thread = await stdtask.fork()
     # create the socketpair that will be used as stdin
     parent_sock, child_sock_parent = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
@@ -3937,47 +3945,69 @@ async def rsyscall_stdin_bootstrap(
     await child_sock_parent.invalidate()
     # set up stdin with socketpair
     await thread.stdtask.unshare_files(going_to_exec=True)
-    await thread.stdtask.stdin.replace_with(child_sock)
+    await thread.stdtask.stdin.replace_with(child_sock.handle)
     # exec
     child_task = await bootstrap_command.exec(thread)
-    ## set up all the fds we'll want to pass over so we can do it in one batch
+    #### set up all the fds we'll want to pass over
     # the basic connections
-    [(async_syscall_sock, passed_syscall_sock),
-     (async_data_sock, passed_data_sock)] = await stdtask.make_async_connections(2)
+    [(access_syscall_sock, passed_syscall_sock),
+     (access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(2)
     # memfd for setting up the futex
     futex_memfd = await memsys.memfd_create(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
                                             b"child_robust_futex_list", lib.MFD_CLOEXEC)
-    # send the initial fds to the new process
-    passing_fds = [passed_syscall_sock, passed_data_sock, futex_memfd]
-    await memsys.sendmsg_fds(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
-                             parent_sock.handle.far, passing_fds)
+    # send the fds to the new process
+    await memsys.sendmsg_fds(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator, parent_sock.handle.far,
+                             [passed_syscall_sock.far, passed_data_sock.far,
+                              futex_memfd, stdtask.connecting_connection[1].far])
+    # close our reference to fds that only the new process needs
     await passed_syscall_sock.invalidate()
     await passed_data_sock.invalidate()
-    #### IDEA: let's just use the data sock as the describe sock instead.
-    # close the fds 
-    ## read describe to get all the information we need from the new process
-    # pid
-    # fd numbers
-    # environ
-    # symbols
-    describe_buf = AsyncReadBuffer(async_data_sock)
-    pid = await describe_buf.read_known_int(b"pid")
-    new_fd_table = far.FDTable(new_pid)
-    async def read_fd(key: bytes) -> far.FileDescriptor:
-        return far.FileDescriptor(new_fd_table, await bootstrap_describe_buf.read_known_fd(key))
-    # maybe I should just write out a struct for all this
-    remote_syscall_fd = await read_fd(b"syscall_fd")
-    remote_data_fd = await read_fd(b"data_fd")
-    remote_futex_memfd = await read_fd(b"futex_memfd")
-
-    near_symbols = await read_describe(describe_buf)
-    new_address_space = far.AddressSpace(pid)
-    symbols = {name: far.Pointer(new_address_space, ptr) for name, ptr in near_symbols.items()}
-
-
-        # update fds with new numbers
-        # eh no let's not bother with this, let's just follow rsyscall_exec
-        # oh. but rsyscall_exec does this too.
-        # HMM
-        # in this case though it really is a different process. so, we're creating something new.
-    await stdtask.task.base.unshare_files(do_unshare)
+    # close the socketpair
+    await parent_sock.invalidate()
+    #### read describe to get all the information we need from the new process
+    describe_buf = AsyncReadBuffer(access_data_sock)
+    describe_struct = await describe_buf.read_cffi('struct rsyscall_stdin_bootstrap')
+    environ = await describe_buf.read_envp(describe_struct.envp_count)
+    #### build the new task
+    pid = describe_struct.pid
+    fd_table = far.FDTable(pid)
+    address_space = far.AddressSpace(pid)
+    # we assume root is shared, but cwd changes
+    fs_information = far.FSInformation(pid, root=stdtask.task.base.fs.root, cwd=near.DirectoryFile())
+    # we assume pid namespace is shared
+    pid_namespace = stdtask.task.pid_namespace
+    process = far.Process(pid_namespace, near.Process(pid))
+    remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
+    syscall = RsyscallInterface(RsyscallConnection(access_syscall_sock, access_syscall_sock), process.near, remote_syscall_fd)
+    base_task = base.Task(syscall, process, fd_table, address_space, fs_information)
+    handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
+    syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
+    task = Task(base_task,
+                SocketMemoryTransport(access_data_sock,
+                                      base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd))),
+                memory.AllocatorClient.make_allocator(base_task),
+                SignalMask(set()),
+                pid_namespace)
+    # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
+    epoller = await task.make_epoll_center()
+    child_monitor = await ChildProcessMonitor.make(task, epoller)
+    new_stdtask = StandardTask(
+        access_task=stdtask.access_task,
+        access_epoller=stdtask.access_epoller,
+        access_connection=stdtask.access_connection,
+        connecting_task=stdtask.connecting_task,
+        connecting_connection=(stdtask.connecting_connection[0],
+                               base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd))),
+        task=task,
+        process_resources=ProcessResources.make_from_symbols(address_space, describe_struct.symbols),
+        filesystem_resources=FilesystemResources.make_from_environ(base_task, environ),
+        epoller=epoller,
+        child_monitor=child_monitor,
+        environment=environ,
+        stdin=task._make_fd(0, ReadableFile(shared=True)),
+        stdout=task._make_fd(1, WritableFile(shared=True)),
+        stderr=task._make_fd(2, WritableFile(shared=True)),
+    )
+    #### TODO set up futex I guess
+    remote_futex_memfd = near.FileDescriptor(describe_struct.futex_memfd)
+    return child_task, new_stdtask

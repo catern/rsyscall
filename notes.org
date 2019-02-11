@@ -11047,3 +11047,41 @@ async def make_execable(
   let's switch to using the datafd instead of describe.
 
   ok done
+* connecting
+  soooo
+
+  I guess ummm
+
+  well...
+
+  Ah we'll just pass down the connecting connection, then close the socketpair.
+* testing sudo
+  hmm not sure how we can test sudo, hmm.
+
+  what if we sudo to our own user?
+
+  hmm no it looks like sudo really want to be owned by 0 and have setuid bit set
+
+  oh, we could do that with user namespaces maybe!
+
+  next problem: how does the user actually input the password?
+
+  hmmmmmmmmmmmmm
+
+  I'd like for the password to never be in my memory...
+
+  The obvious way is to prompt for it.
+
+  And, maybe, store it?
+
+  oh god damn it, sudo will read the password from stdin...........
+
+  which is what I'm using for passing fds. ugh anyway, let's focus on the password thing
+
+  ok... so...
+
+  I guess what I could do is, go ahead and do it myself.
+
+  Prompt for the password and enter it in.
+
+  Blah.
