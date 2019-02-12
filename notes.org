@@ -11326,3 +11326,11 @@ that was awesome.
 and this is a big large component
 
 It deserves the same effort as I put into TS crapware.
+* new thought
+  okay! it's obvious what I should do!
+
+  I should integration test some open source software!
+
+  A mailserver would be easy, send some mails, all that stuff! Awesome!
+
+  For more easier stuff, we can do, a, webapp! Some random open source webapp!
