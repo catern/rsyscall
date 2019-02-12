@@ -11055,6 +11055,8 @@ async def make_execable(
   well...
 
   Ah we'll just pass down the connecting connection, then close the socketpair.
+* bytes vs string
+  I should use str more because bytes displays awkwardly on the command line.
 * testing sudo
   hmm not sure how we can test sudo, hmm.
 
@@ -11085,3 +11087,242 @@ async def make_execable(
   Prompt for the password and enter it in.
 
   Blah.
+
+  OK so if we just support some kinda authentication thing.
+
+  Where, y'know, the password for the sudo is in our python process,
+  and streamed over to sudo.
+
+  And we prompt for it.
+
+  Or, rather, we just let the user handle it I guess.
+
+  We optionally provide the password.
+
+  Uggghhh I'm scared of that
+
+  Then I can have security problems.
+
+  OK sooooooooooooooo
+
+  So I could do something factotum style...
+
+  How do people robustly handle sudo in deployment scripts?!
+
+  I guess I could query a password manager, hm..
+
+  I guess I could have an fd containing the password.
+
+  Then, um, that fd can be provided however I want.
+
+  I guess we can do it interactively... read the prompt...
+
+  right, how do we... detect that a password is needed...
+
+  I guess we monitor stderr...
+  and if we see a password prompt we write the password to stdin.
+  but then that requires that I know the password...
+
+  and pass the bootstrap socketpair on stdout.
+
+  alternatively I could use askpass I guess.
+
+  I guess that's how I could get a callback.
+
+  seems good.
+
+  I suppose that notion of, "exec this program to callback into me!" is fine. . .
+
+  It could be cool.
+  We could have one per instance.
+
+  It could access a socket, I guess.
+
+  What exactly is its protocol?
+
+  There's a message, and then we write the password to stdout.
+  Blah.
+  
+  not particularly structured...
+
+  doing it with stdin would be nice but we don't know when the password is not needed, blah
+
+  I guess I could just always write the provided password, and then close stdin when done.
+* give up??
+hmmmmmmmmmmmmmmm all this distributed execution stuff is troublingly hard
+maybe I should have a demonstration case that isn't remote
+I already got ssh working, so I know it can be done
+and I don't really care about sudo
+
+so then I should find a use case to test on
+
+My real use case is running TS software for integration.
+
+But I don't think I'm quite ready for that.
+
+So instead I want to run something big and complex on my local system,
+which is open source...
+
+Hmm...
+
+Even running all the services in a system, like systemd, is too simple.
+
+Well. Actually that's a bit too strong to say.
+
+Maybe I should go ahead and do the, run all my stuff, thing.
+
+well for the most part I work inside TS, so...
+
+hmmmmmmmmmmmmmmmmmmmmmmmm
+
+well I can run emacs, um....
+
+the tricky thing is that there's no big complicated system to demonstrate a supervisor system
+
+hey s6, is there any relatively complicated system that demonstrates the full functionality of the s6 suite?
+or at least a lot of functionality; 
+like, setting up stateful directories and configuration,
+supervising several applications with s6,
+launching things with s6-tcpserver-socketbinder, etc
+
+
+hmmmmmmmmmmmmm I guess I could run as an init system, hmmmmmmmmmmm
+
+I could run a container and stuff.
+
+
+maybe I need to just look at some ancient hairy Unix service
+
+like NFS or Kerberos or LVM
+
+I should do one that I actually care about though, hmm.
+
+a mailserver?
+
+hmmmmmmmmmmmmmmMMMMMmm
+
+I could do a pretty rich mailserver, with DNS authoritative being delegated to me...
+
+...except SMTP SRV records aren't actually used
+
+okay, how about public-inbox then?
+
+I could host NNTP, hmm.
+
+OK, I care about public-inbox for Nix and stuff.
+I'll set it up for nix-devel.
+
+Oh, also Discourse I guess...
+
+I guess I can have Discourse 
+
+I need to set up my mailserver again so I can properly participate.
+
+okay... okay!!!
+
+set all dis up!!!
+
+we'll have, hmm.
+basically, hmm.
+
+We'll run the mail server,
+and it'll deliver to dovecot I guess,
+and also invoke procmail to,
+fill up the public-inbox.
+
+The public-inbox will be public,
+and the IMAP will be private.
+
+yes this is a perfect thing to set up with rsyscall
+
+okay, so how do I handle the privileged ports?
+
+I'd prefer to do it with the SRV records, so let's just patch all my software to do that.
+
+We can't do that for SMTP, though. So what will we do there?
+
+Well, we want to request the SMTP port from some system-wide thing.
+
+I can do that with authbind, but that requires setuid - gross.
+
+Instead perhaps I'll write a small service which accepts fds and calls bind on them.
+It would be very cute I guess.
+
+It would just accept:
+1. An fd.
+2. A length.
+3. That many bytes of address.
+
+And then call bind with that.
+
+Oh but I guess we want to validate the bind.
+Curious, hmm.
+
+I guess we just want to bind to 0,
+and some port.
+
+I suppose we only support this for AF_INET and AF_INET6.
+
+Well, how's authbind work?
+
+Oh, clever, it uses permissions. Hm!
+
+How could we represent a cap?
+
+okay so we thought about this a lot, innit.
+
+connect and bind and things.
+
+connect to a place,
+
+should be the same as bindat
+
+we should have an fd for a thing we can connect to;
+just as we have an fd we can accept on.
+
+hmm.
+
+we call connect on an fd and get a new fd out.
+
+I guess that fd represents a host and port.
+Or a service or something.
+
+Where do we get that fd from?
+
+Because that's isomorphic to where we get the fd that we call accept on from.
+
+Hmm.
+
+We *could* just have a socketpair and pass fds along it for each new connection.
+
+But that's a bit silly, better to just pass the listening fd.
+
+Alternatively we could just have some identified service and, y'know, you just send the name.
+
+Well, hm, I do like this notion of,
+just use filesystem permissions.
+
+We can just have a unix socket,
+which when you connect to it,
+just sends you the listening socket and hangs up.
+
+That's fun.
+
+Meh! Let's do it!
+
+Wait, couldn't I just use flower directly??
+
+hm m mm
+
+postfix really wants root eh
+
+hmmmmm
+mail is annoying though, hmm...
+
+no! mail is rad!
+remember how awesome it was to just use that mailing list just now?
+that was awesome.
+
+and this is a big large component
+
+It deserves the same effort as I put into TS crapware.
