@@ -222,11 +222,11 @@ def help_to_str(request) -> str:
 async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
                    write: t.Callable[[bytes], t.Awaitable[None]],
                    global_vars: t.Dict[str, t.Any], wanted_type: t.Type[T]) -> T:
-    async def print_to_user(*args):
+    async def print_to_user(*args) -> None:
         await write((" ".join([str(arg) for arg in args]) + "\n").encode())
-    async def help_to_user(request):
+    async def help_to_user(request) -> None:
         await write(help_to_str(request).encode())
-    async def print_exn(e: BaseException):
+    async def print_exn(e: BaseException) -> None:
         # this call to run_repl may take place at a time where an exception is being handled; when
         # we print this internal exception, we don't want to print that outside exception context,
         # since it's irrelevant.
