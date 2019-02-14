@@ -11334,3 +11334,17 @@ It deserves the same effort as I put into TS crapware.
   A mailserver would be easy, send some mails, all that stuff! Awesome!
 
   For more easier stuff, we can do, a, webapp! Some random open source webapp!
+
+  hmm, what's a good random open source webapp?
+
+  Nix people suggested Hydra. That would be cool.
+
+  Maybe even useful...
+
+  I could start running it internally, or something...
+
+  Also suggested: Gitlab, matrix-synapse.
+
+  Don't really care about either of those.
+
+  Let's do Hydra.
