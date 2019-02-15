@@ -92,7 +92,7 @@ from rsyscall.tests.test_ssh import LocalSSHHost
 email_address = 'me@example.com'
 hosts = [
     # trio.run(LocalSSHHost.make, rsc.local_stdtask)
-    local.ssh.args(['localhost']).as_host()
+    local.ssh.args('localhost').as_host()
 ]
 
 async def main() -> None:

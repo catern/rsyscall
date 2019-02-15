@@ -20,6 +20,10 @@ import contextlib
 import enum
 logger = logging.getLogger(__name__)
 
+# TODO I think we should have these take a MemoryAbstractedTask or something,
+# above the base Task,
+# instead of separate arguments.
+
 @contextlib.asynccontextmanager
 async def localize_data(
         transport: MemoryWriter, allocator: memory.AllocatorInterface, data: bytes

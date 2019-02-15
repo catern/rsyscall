@@ -1052,8 +1052,8 @@ class Path:
     def __truediv__(self, path_element: t.Union[str, bytes]) -> Path:
         return Path(self.task, self.handle/path_element)
 
-    def __str__(self) -> str:
-        return f"Path({self.pure})"
+    def __fspath__(self) -> str:
+        return self.handle.__fspath__()
 
 async def robust_unix_bind(path: Path, sock: FileDescriptor[UnixSocketFile]) -> None:
     """Perform a Unix socket bind, hacking around the 108 byte limit on socket addresses.
@@ -1418,6 +1418,15 @@ class StandardTask:
             stderr=self.stderr.borrow(task.base),
         )
         return RsyscallThread(stdtask, thread)
+
+    async def run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
+        thread = await self.fork()
+        child = await command.exec(thread)
+        task_status.started(child)
+        exit_event = await child.wait_for_exit()
+        if check:
+            exit_event.check()
+        return exit_event
 
     async def fork_persistent(self, path: Path) -> t.Tuple[StandardTask, CThread, PersistentServer]:
         listening_sock = await self.task.socket_unix(socket.SOCK_STREAM)
@@ -3213,7 +3222,7 @@ async def run_socket_binder(
     await thread.stdtask.stdout.replace_with(stdout)
     await thread.stdtask.stdin.replace_with(bootstrap_executable)
     async with thread:
-        child = await ssh_command.args([ssh_bootstrap_script_contents]).exec(thread)
+        child = await ssh_command.args(ssh_bootstrap_script_contents).exec(thread)
         # from... local?
         # I guess this throws into sharper relief the distinction between core and module.
         # The ssh bootstrapping stuff should come from a different class,
@@ -3245,7 +3254,7 @@ async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
     await thread.stdtask.stdout.replace_with(stdout)
     child_task = await ssh_command.local_forward(
         local_path, remote_path,
-    ).args(["-n", "echo forwarded; sleep inf"]).exec(thread)
+    ).args("-n", "echo forwarded; sleep inf").exec(thread)
     lines_aiter = read_lines(async_stdout)
     forwarded = await lines_aiter.__anext__()
     if forwarded != b"forwarded":
@@ -3272,9 +3281,9 @@ async def ssh_bootstrap(
         parent_task, ssh_command, str(local_socket_path), (tmp_path_bytes + b"/data").decode())
     # start bootstrap
     bootstrap_thread = await parent_task.fork()
-    bootstrap_child_task = await ssh_command.args([
+    bootstrap_child_task = await ssh_command.args(
         "-n", f"cd {tmp_path_bytes.decode()}; ./bootstrap rsyscall"
-    ]).exec(bootstrap_thread)
+    ).exec(bootstrap_thread)
     # TODO should unlink the bootstrap after I'm done execing.
     # it would be better if sh supported fexecve, then I could unlink it before I exec...
     # Connect to local socket 4 times
@@ -3443,16 +3452,15 @@ class Command:
         self.arguments = arguments
         self.env_updates = env_updates
 
-    # TODO hmm this should just be direct arguments instead of a sequence
-    def args(self: T_command, args: t.Sequence[t.Union[str, bytes]]) -> T_command:
+    def args(self: T_command, *args: t.Union[str, bytes]) -> T_command:
         return type(self)(self.executable_path,
                           self.arguments + [os.fsencode(arg) for arg in args],
                           self.env_updates)
 
-    def env(self: T_command, env_updates: t.Mapping[str, str]) -> T_command:
+    def env(self: T_command, env_updates: t.Mapping[str, str]={}, **updates: str) -> T_command:
         return type(self)(self.executable_path,
                              self.arguments,
-                             {**self.env_updates, **env_updates})
+                             {**self.env_updates, **env_updates, **updates})
 
     def in_shell_form(self) -> str:
         ret = ""
@@ -3486,13 +3494,13 @@ class SSHCommand(Command):
         option_list: t.List[str] = []
         for key, value in config.items():
             option_list += ["-o", f"{key}={value}"]
-        return self.args(option_list)
+        return self.args(*option_list)
 
     def proxy_command(self, command: Command) -> SSHCommand:
         return self.ssh_options({'ProxyCommand': command.in_shell_form()})
 
     def local_forward(self, local_socket: str, remote_socket: str) -> SSHCommand:
-        return self.args(["-L", f"{local_socket}:{remote_socket}"])
+        return self.args("-L", f"{local_socket}:{remote_socket}")
 
     def as_host(self) -> ArbitrarySSHHost:
         return ArbitrarySSHHost(near.DirectoryFile(), self)
@@ -3506,13 +3514,13 @@ class SSHDCommand(Command):
         option_list: t.List[str] = []
         for key, value in config.items():
             option_list += ["-o", f"{key}={value}"]
-        return self.args(option_list)
+        return self.args(*option_list)
 
     @classmethod
     def make(cls, executable_path: handle.Path) -> SSHDCommand:
         return cls(executable_path, [b"sshd"], {})
 
-local_stdtask: t.Any = trio.run(StandardTask.make_local) # type: ignore
+local_stdtask: StandardTask = trio.run(StandardTask.make_local) # type: ignore
 
 async def exec_cat(thread: RsyscallThread, cat: Command,
                    infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> ChildProcess:
@@ -3549,8 +3557,8 @@ async def bootstrap_nix(
     await query_pipe.wfd.invalidate()
     await query_thread.stdtask.unshare_files(going_to_exec=True)
     await query_thread.stdtask.stdout.replace_with(query_stdout)
-    await src_nix_store.args(["--query", "--requisites",
-                              str(src_nix_store.executable_path)]).exec(query_thread)
+    await src_nix_store.args("--query", "--requisites",
+                             str(src_nix_store.executable_path)).exec(query_thread)
     closure = (await read_all(query_pipe.rfd)).split()
 
     src_tar_thread = await src_task.fork()
@@ -3563,15 +3571,15 @@ async def bootstrap_nix(
     await dest_tar_thread.stdtask.task.fchdir(dest_dir)
     await dest_tar_thread.stdtask.unshare_files(going_to_exec=True)
     await dest_tar_thread.stdtask.stdin.replace_with(dest_tar_stdin)
-    child_task = await dest_tar.args(["--extract"]).exec(dest_tar_thread)
+    child_task = await dest_tar.args("--extract").exec(dest_tar_thread)
 
     await src_tar_thread.stdtask.unshare_files(going_to_exec=True)
     await src_tar_thread.stdtask.stdout.replace_with(src_tar_stdout)
-    await src_tar.args([
+    await src_tar.args(
         "--create", "--to-stdout", "--hard-dereference",
         "--owner=0", "--group=0", "--mode=u+rw,uga+r",
         *closure,
-    ]).exec(src_tar_thread)
+    ).exec(src_tar_thread)
     await child_task.wait_for_exit()
     return closure
 
@@ -3588,11 +3596,11 @@ async def bootstrap_nix_database(
 
     await load_db_thread.stdtask.unshare_files(going_to_exec=True)
     await load_db_thread.stdtask.stdin.replace_with(load_db_stdin)
-    child_task = await dest_nix_store.args(["--load-db"]).env({'NIX_REMOTE': ''}).exec(load_db_thread)
+    child_task = await dest_nix_store.args("--load-db").env({'NIX_REMOTE': ''}).exec(load_db_thread)
 
     await dump_db_thread.stdtask.unshare_files(going_to_exec=True)
     await dump_db_thread.stdtask.stdout.replace_with(dump_db_stdout)
-    await src_nix_store.args(["--dump-db", *closure]).exec(dump_db_thread)
+    await src_nix_store.args("--dump-db", *closure).exec(dump_db_thread)
     await child_task.check()
 
 async def create_nix_container(
@@ -3802,7 +3810,7 @@ class ConsoleServerGenie(WishGranter):
         wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
         sock_name = self._uniquify_name(f'{wisher_frame.f_code.co_name}-{wisher_frame.f_lineno}')
         sock_path = self.sockdir/sock_name
-        cmd = self.socat.args(["-", f"UNIX-CONNECT:{str(sock_path.pure)}"])
+        cmd = self.socat.args("-", f"UNIX-CONNECT:{str(sock_path.pure)}")
         sockfd = await self.stdtask.task.socket_unix(socket.SOCK_STREAM)
         await robust_unix_bind(sock_path, sockfd)
         await sockfd.listen(10)

@@ -30,7 +30,7 @@ class LocalSSHHost(SSHHost):
     @staticmethod
     async def make(stdtask: StandardTask) -> LocalSSHHost:
         ssh_keygen = await rsyscall.io.which(stdtask, b"ssh-keygen")
-        keygen_command = ssh_keygen.args(['-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key'])
+        keygen_command = ssh_keygen.args('-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key')
         keygen_thread = await stdtask.fork()
         async with (await stdtask.mkdtemp()) as tmpdir:
             await keygen_thread.stdtask.task.chdir(tmpdir)
@@ -41,9 +41,9 @@ class LocalSSHHost(SSHHost):
         pubkey = pubkey_file.handle.as_proc_path()
         ssh = stdtask.filesystem.utilities.ssh
         sshd = SSHDCommand.make((await rsyscall.io.which(stdtask, b"sshd")).executable_path)
-        sshd_command = sshd.args([
+        sshd_command = sshd.args(
             '-i', '-e', '-f', '/dev/null',
-        ]).sshd_options({
+        ).sshd_options({
             'LogLevel': 'INFO',
             'HostKey': str(privkey.far),
             'AuthorizedKeysFile': str(pubkey.far),
@@ -51,17 +51,17 @@ class LocalSSHHost(SSHHost):
             'PrintLastLog': 'no',
             'PrintMotd': 'no',
         })
-        ssh_command = ssh.args([
+        ssh_command = ssh.args(
             '-F', '/dev/null',
-        ]).ssh_options({
+        ).ssh_options({
             'LogLevel': 'INFO',
             'IdentityFile': str(privkey.far),
             'BatchMode': 'yes',
             'StrictHostKeyChecking': 'no',
             'UserKnownHostsFile': '/dev/null',
-        }).proxy_command(sshd_command).args([
+        }).proxy_command(sshd_command).args(
             "localhost",
-        ])
+        )
         return LocalSSHHost(ssh_command, privkey_file, pubkey_file)
 
     async def ssh(self, task: StandardTask) -> t.Tuple[rsc.ChildProcess, StandardTask]:

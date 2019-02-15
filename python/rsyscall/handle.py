@@ -225,11 +225,8 @@ class Path:
         else:
             return self.components[s]
 
-    def __bytes__(self) -> bytes:
-        return bytes(self.far)
-
-    def __str__(self) -> str:
-        return str(self.far)
+    def __fspath__(self) -> str:
+        return self.far.__fspath__()
 
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
 

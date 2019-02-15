@@ -3618,10 +3618,16 @@ so we don't have to be generic.
 
    well worry no more,
    rsyscall is here.
+
+   (hmm s6 people hate the words "socket activation" so maybe skip that)
 ** integrated thread library and container deployment system
 ** a language which uses other processes for most of its functionality
    instead of pointlessly writing a webserver in this language,
    we just start and run nginx.
+** direct style deployment
+   Instead of "declaratively" building up a program/model of our deployment/distributed system,
+   which we then submit to a runtime to be deployed,
+   instead we just directly deploy each component as we describe it.
 * explicitly modeling memory
 how would I do this?
 

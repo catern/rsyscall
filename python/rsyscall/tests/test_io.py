@@ -888,7 +888,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             child_thread = await stdtask.fork()
             sh = Command(stdtask.filesystem.utilities.sh, [b'sh'], {})
-            child_task = await sh.args(['-c', 'true']).exec(child_thread)
+            child_task = await sh.args('-c', 'true').exec(child_thread)
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
