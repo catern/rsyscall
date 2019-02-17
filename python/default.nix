@@ -19,6 +19,7 @@ pytest ];
   buildInputs = [ pkgs.openssh nix ];
   propagatedBuildInputs = [ (import ../c)
       trio cffi pkgconfig python-prctl pkgs.nginx typeguard
+      requests
   ];
 }
 

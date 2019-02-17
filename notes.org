@@ -11354,3 +11354,25 @@ It deserves the same effort as I put into TS crapware.
   Don't really care about either of those.
 
   Let's do Hydra.
+* how to configure
+  so obviously we should have this like, a single user is running it,
+  and they have some source control for the configuration,
+  and all that.
+
+  we can do the same kind of sync tool as COIN has, I suppose...
+  we organize things in a hierarchy then sync them...
+
+  updating things via the rest API
+
+  configuration via plain text is better
+
+  if we want a configuration web interface API it should be separate, I guess
+
+  we just, restart it, when we want to change config. no biggie.
+
+  i guess we can support, reloading, y'know
+
+  okay no we'll use the actual interfaces it provides:
+  mutability
+
+  and we'll have a JobConfig object that we can submit to make a Job I guess

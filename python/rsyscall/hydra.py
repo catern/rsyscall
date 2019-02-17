@@ -1,3 +1,5 @@
+import os
+import requests
 import trio
 import rsyscall.io as rsc
 from rsyscall.io import StandardTask, Path
@@ -6,6 +8,42 @@ from rsyscall.io import StandardTask, Path
 # I guess just do all these commands, hmm.
 # A thing to run shell commands would be useful I s'pose.
 # I guess somefin wot takes a Command and executes it.
+def login(session, base: str, username: str, password: str) -> None:
+    response = session.post(base + '/login', json={'username': username, 'password': password})
+    print(response.text)
+    response.raise_for_status()
+
+def new_project(session, base: str, identifier: str) -> None:
+    response = session.put(base + f'/project/{identifier}', json={
+        'identifier': identifier, 'displayname': 'Trivial', 'enabled': '1', 'visible': '1',
+    })
+    print(response.text)
+    response.raise_for_status()
+
+def new_jobset(session, base: str, project: str, identifier: str, path: Path) -> None:
+    parent, name = path.split()
+    response = session.put(base + f'/jobset/{project}/{identifier}', json={
+        "identifier": identifier,
+        "description": "Trivial",
+        "checkinterval": "60",
+        "enabled": "1",
+        "visible": "1",
+        "keepnr": "1",
+        "nixexprinput": "trivial",
+        "nixexprpath": os.fsdecode(name),
+        "inputs": {
+            "trivial": {
+                "value": os.fsdecode(parent),
+                "type": "path",
+            },
+            "string": {
+                "value": "hello world",
+                "type": "string",
+            },
+        },
+    })
+    print(response.text)
+    response.raise_for_status()
 
 async def run_hydra(stdtask: StandardTask, path: Path) -> None:
     # postgres
@@ -51,4 +89,26 @@ async def main() -> None:
     await path.mkdir()
     await run_hydra(rsc.local_stdtask, path)
 
-trio.run(main)
+import rsyscall
+trivial_path = Path.from_bytes(
+    rsc.local_stdtask.task,
+    rsyscall.__spec__.loader.get_resource_reader(rsyscall.__spec__.name).resource_path('trivial.nix'))
+
+def do_api_stuff() -> None:
+    session = requests.Session()
+    base = 'http://localhost:3000'
+    session.headers.update({'Referer': base})
+    session.headers.update({'Accept': 'application/json'})
+
+    session.hooks = {
+        # 'response': lambda r, *args, **kwargs: r.raise_for_status()
+    }
+    login(session, base, 'sbaugh', 'foobar')
+    project_identifier = 'trivial'
+    new_project(session, base, project_identifier)
+    new_jobset(session, base, project_identifier, 'trivial', trivial_path)
+
+
+if __name__ == "__main__":
+    #trio.run(main)
+    do_api_stuff()

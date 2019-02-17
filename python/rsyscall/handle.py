@@ -256,7 +256,8 @@ class Task(rsyscall.far.Task):
     def cwd(self) -> CWD:
         return CWD(self.fs.cwd, self)
 
-    def make_path_from_bytes(self, path: bytes) -> Path:
+    def make_path_from_bytes(self, path: t.Union[str, bytes]) -> Path:
+        path = os.fsencode(path)
         if path.startswith(b"/"):
             path = path[1:]
             if len(path) == 0:
