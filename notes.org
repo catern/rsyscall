@@ -11376,3 +11376,80 @@ It deserves the same effort as I put into TS crapware.
   mutability
 
   and we'll have a JobConfig object that we can submit to make a Job I guess
+* hm, callback executable thing
+  So a generic tool that execs and then calls back to us,
+  and gives us control over it,
+  seems like it would be useful.
+
+  This would be a pretty cool tool in general for testing actually.
+  You could easily mock an executable.
+
+  So okay, how do we do this robustly?
+
+  OK we'll just have a binary,
+  which takes an env var containing a socket path,
+  and conencts to that socket and passes control over it.
+
+  Then we can pass down that env var if that is okay,
+  and if not we can wrap the binary with a script to set the env var.
+
+  We should probably also do this instead of the sudo stdin thing.
+  The stdin thing is too spooky.
+
+  The ssh bootstrap is similar too, hmm.
+  It relies on being in the right directory though.
+
+  Well, it's backwards actually.
+
+  It accepts instead of connecting.
+  I did that for efficiency reasons, and also so that the listening fd could be inherited,
+  but maybe it would be better to connect...
+
+  If we can uniformly connect, that's really cool and powerful.
+  We might only need one binary for sudo, ssh, and generic callbacking!
+
+  OK so suppose ssh did connect. Still we'd have the issue of needing to specify the socket to connect to.
+  But I guess that's easy:
+  We can do that in the shell wrapper run by ssh.
+
+  (oh well with ssh the ideal end goal is to not use a listening socket in the filesystem at all,
+  so that would be a lot better yes...)
+** name
+  what to call it?
+
+  rsyscall_remote_
+
+  slave really is the best term!
+
+  follower isn't right
+
+  secondary, replica, both are domain-specific and wrong.
+
+  client? yeah let's just call it client?
+
+  well it's a client that is just a stub for us.
+
+  how about stub then?
+  rsyscall_stub?
+
+  incarnation?
+
+  we run it, and it connects back, and it is filled with the light of rsyscall
+
+  it's like a, shell? in the sense of, it's hollow?
+
+  conduit?
+
+  agent?
+
+  minion?
+
+  stub, I think.
+** stuff
+  hmm
+
+  this is a good example of a time when the exec monitoring not being tied to being the child,
+  is really good.
+
+  since it'll let us monitor this guy for execing. . .
+
