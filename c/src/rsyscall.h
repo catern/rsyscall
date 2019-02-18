@@ -60,3 +60,13 @@ struct rsyscall_stdin_bootstrap {
     int connecting_fd;
     size_t envp_count;
 };
+struct rsyscall_unix_stub {
+    struct rsyscall_symbol_table symbols;
+    pid_t pid;
+    int syscall_fd;
+    int data_fd;
+    int futex_memfd;
+    int connecting_fd;
+    size_t argc;
+    size_t envp_count;
+};

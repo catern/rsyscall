@@ -91,8 +91,8 @@ async def isolate_exit(f, *args, **kwargs) -> None:
 from rsyscall.tests.test_ssh import LocalSSHHost
 email_address = 'me@example.com'
 hosts = [
-    # trio.run(LocalSSHHost.make, rsc.local_stdtask)
-    local.ssh.args('localhost').as_host()
+    trio.run(LocalSSHHost.make, rsc.local_stdtask)
+    # local.ssh.args('localhost').as_host()
 ]
 
 async def main() -> None:

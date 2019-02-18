@@ -448,6 +448,12 @@ class FileDescriptor(t.Generic[T_file_co]):
         else:
             raise Exception("file descriptor already closed")
 
+    def move(self, task: base.Task) -> 'FileDescriptor[T_file_co]':
+        if self.open:
+            return self.__class__(self.task, self.handle.move(task), self.file)
+        else:
+            raise Exception("file descriptor already closed")
+
     async def dup2(self, target: 'FileDescriptor') -> 'FileDescriptor[T_file_co]':
         """Make a copy of this file descriptor at target.number
 
@@ -542,7 +548,7 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def getsockopt(self: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
         return (await self.file.getsockopt(self, level, optname, optlen))
 
-    async def accept(self: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
+    async def accept(self: FileDescriptor[SocketFile[T_addr]], flags: int) -> t.Tuple[FileDescriptor[SocketFile[T_addr]], T_addr]:
         return (await self.file.accept(self, flags))
 
 class EpollFile(File):
@@ -1167,7 +1173,7 @@ class UnixUtilities:
     sh: handle.Path
     ssh: SSHCommand
 
-async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
+async def spit(path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
     """Open a file, creating and truncating it, and write the passed text to it
 
     Probably shouldn't use this on FIFOs or anything.
@@ -1176,7 +1182,7 @@ async def spit(path: Path, text: t.Union[str, bytes]) -> Path:
 
     """
     data = os.fsencode(text)
-    async with (await path.creat()) as fd:
+    async with (await path.creat(mode=mode)) as fd:
         while len(data) > 0:
             ret = await fd.write(data)
             data = data[ret:]
@@ -1244,6 +1250,7 @@ class FilesystemResources:
     socket_binder_path: handle.Path
     rsyscall_bootstrap_path: handle.Path
     rsyscall_stdin_bootstrap_path: handle.Path
+    rsyscall_unix_stub_path: handle.Path
 
     @staticmethod
     def make_from_environ(task: handle.Task, environ: t.Mapping[bytes, bytes]) -> FilesystemResources:
@@ -1267,6 +1274,7 @@ class FilesystemResources:
             socket_binder_path=socket_binder_path,
             rsyscall_bootstrap_path=rsyscall_bootstrap_path,
             rsyscall_stdin_bootstrap_path=rsyscall_stdin_bootstrap_path,
+            rsyscall_unix_stub_path=rsyscall_pkglibexecdir/"rsyscall-unix-stub",
         )
 
 async def lookup_executable(paths: t.List[Path], name: bytes) -> Path:
@@ -2804,11 +2812,18 @@ class AsyncReadBuffer:
             raise Exception("got EOF while expecting to read environment element of length", elem_size)
         return elem
 
-    async def read_envp(self, length: int) -> t.Dict[bytes, bytes]:
-        environ: t.Dict[bytes, bytes] = {}
+    async def read_length_prefixed_array(self, length: int) -> t.List[bytes]:
+        ret: t.List[bytes] = []
         for _ in range(length):
-            elem = await self.read_length_prefixed_string()
-            # if someone passes us a malformed environment element without =, we'll just break, whatever
+            ret.append(await self.read_length_prefixed_string())
+        return ret
+
+    async def read_envp(self, length: int) -> t.Dict[bytes, bytes]:
+        raw = await self.read_length_prefixed_array(length)
+        environ: t.Dict[bytes, bytes] = {}
+        for elem in raw:
+            # if someone passes us a malformed environment element without =,
+            # we'll just break, whatever
             key, val = elem.split(b"=", 1)
             environ[key] = val
         return environ
@@ -3244,7 +3259,7 @@ async def run_socket_binder(
         (await child.wait_for_exit()).check()
 
 async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
-                      local_path: str, remote_path: str) -> ChildProcess:
+                      local_path: Path, remote_path: str) -> ChildProcess:
     stdout_pipe = await stdtask.task.pipe()
     async_stdout = await AsyncFileDescriptor.make(stdtask.epoller, stdout_pipe.rfd)
     thread = await stdtask.fork()
@@ -3278,7 +3293,7 @@ async def ssh_bootstrap(
     local_data_path = Path(task, local_socket_path)
     # start port forwarding; we'll just leak this process, no big deal
     forward_child = await ssh_forward(
-        parent_task, ssh_command, str(local_socket_path), (tmp_path_bytes + b"/data").decode())
+        parent_task, ssh_command, local_socket_path, (tmp_path_bytes + b"/data").decode())
     # start bootstrap
     bootstrap_thread = await parent_task.fork()
     bootstrap_child_task = await ssh_command.args(
@@ -3459,17 +3474,17 @@ class Command:
 
     def env(self: T_command, env_updates: t.Mapping[str, str]={}, **updates: str) -> T_command:
         return type(self)(self.executable_path,
-                             self.arguments,
-                             {**self.env_updates, **env_updates, **updates})
+                          self.arguments,
+                          {**self.env_updates, **env_updates, **updates})
 
     def in_shell_form(self) -> str:
         ret = ""
         for key, value in self.env_updates.items():
-            ret += f"{key}={value} "
-        ret += str(self.executable_path)
+            ret += os.fsdecode(key) + "=" + os.fsdecode(value)
+        ret += os.fsdecode(self.executable_path)
         # skip first argument
         for arg in self.arguments[1:]:
-            ret += " " + arg.decode()
+            ret += " " + os.fsdecode(arg)
         return ret
 
     def __str__(self) -> str:
@@ -3493,14 +3508,14 @@ class SSHCommand(Command):
     def ssh_options(self, config: t.Mapping[str, str]) -> SSHCommand:
         option_list: t.List[str] = []
         for key, value in config.items():
-            option_list += ["-o", f"{key}={value}"]
+            option_list += ["-o", os.fsdecode(key) + "=" + os.fsdecode(value)]
         return self.args(*option_list)
 
     def proxy_command(self, command: Command) -> SSHCommand:
         return self.ssh_options({'ProxyCommand': command.in_shell_form()})
 
     def local_forward(self, local_socket: str, remote_socket: str) -> SSHCommand:
-        return self.args("-L", f"{local_socket}:{remote_socket}")
+        return self.args("-L", os.fsdecode(local_socket) + ":" + os.fsdecode(remote_socket))
 
     def as_host(self) -> ArbitrarySSHHost:
         return ArbitrarySSHHost(near.DirectoryFile(), self)
@@ -3513,7 +3528,7 @@ class SSHDCommand(Command):
     def sshd_options(self, config: t.Mapping[str, str]) -> SSHDCommand:
         option_list: t.List[str] = []
         for key, value in config.items():
-            option_list += ["-o", f"{key}={value}"]
+            option_list += ["-o", os.fsdecode(key) + "=" + os.fsdecode(value)]
         return self.args(*option_list)
 
     @classmethod
@@ -3558,14 +3573,13 @@ async def bootstrap_nix(
     await query_thread.stdtask.unshare_files(going_to_exec=True)
     await query_thread.stdtask.stdout.replace_with(query_stdout)
     await src_nix_store.args("--query", "--requisites",
-                             str(src_nix_store.executable_path)).exec(query_thread)
+                             src_nix_store.executable_path).exec(query_thread)
     closure = (await read_all(query_pipe.rfd)).split()
 
     src_tar_thread = await src_task.fork()
     dest_tar_thread = await dest_task.fork()
     [(access_side, dest_tar_stdin)] = await dest_tar_thread.stdtask.make_connections(1)
-    src_tar_stdout = src_tar_thread.stdtask.task.base.make_fd_handle(access_side.handle)
-    await access_side.invalidate()
+    src_tar_stdout = access_side.handle.move(src_tar_thread.stdtask.task.base)
 
     await dest_tar_thread.stdtask.task.unshare_fs()
     await dest_tar_thread.stdtask.task.fchdir(dest_dir)
@@ -3591,8 +3605,7 @@ async def bootstrap_nix_database(
     dump_db_thread = await src_task.fork()
     load_db_thread = await dest_task.fork()
     [(access_side, load_db_stdin)] = await load_db_thread.stdtask.make_connections(1)
-    dump_db_stdout = dump_db_thread.stdtask.task.base.make_fd_handle(access_side.handle)
-    await access_side.invalidate()
+    dump_db_stdout = access_side.handle.move(dump_db_thread.stdtask.task.base)
 
     await load_db_thread.stdtask.unshare_files(going_to_exec=True)
     await load_db_thread.stdtask.stdin.replace_with(load_db_stdin)
@@ -3607,7 +3620,7 @@ async def create_nix_container(
         src_nix_bin: handle.Path, src_task: StandardTask,
         dest_task: StandardTask,
 ) -> handle.Path:
-    dest_nix_bin = dest_task.task.base.make_path_from_bytes(bytes(src_nix_bin))
+    dest_nix_bin = dest_task.task.base.make_path_handle(src_nix_bin)
     src_nix_store = Command(src_nix_bin/'nix-store', [b'nix-store'], {})
     dest_nix_store = Command(dest_nix_bin/'nix-store', [b'nix-store'], {})
     # TODO check if dest_nix_bin exists, and skip this stuff if it does
@@ -3641,22 +3654,20 @@ async def nix_deploy(
         src_nix_bin: handle.Path, src_path: handle.Path, src_task: StandardTask,
         dest_nix_bin: handle.Path, dest_task: StandardTask,
 ) -> handle.Path:
-    dest_path = dest_task.task.base.make_path_from_bytes(bytes(src_path))
+    dest_path = dest_task.task.base.make_path_handle(src_path)
 
     query_thread = await src_task.fork()
     query_pipe = await src_task.task.pipe()
-    query_stdout = query_thread.stdtask.task.base.make_fd_handle(query_pipe.wfd.handle)
-    await query_pipe.wfd.invalidate()
+    query_stdout = query_pipe.wfd.handle.move(query_thread.stdtask.task.base)
     await query_thread.stdtask.unshare_files(going_to_exec=True)
     await query_thread.stdtask.stdout.replace_with(query_stdout)
-    await query_thread.execve(src_nix_bin/"nix-store", ["nix-store", "--query", "--requisites", str(src_path)])
+    await query_thread.execve(src_nix_bin/"nix-store", ["nix-store", "--query", "--requisites", src_path])
     closure = (await read_all(query_pipe.rfd)).split()
 
     export_thread = await src_task.fork()
     import_thread = await dest_task.fork()
     [(access_side, import_stdin)] = await import_thread.stdtask.make_connections(1)
-    export_stdout = export_thread.stdtask.task.base.make_fd_handle(access_side.handle)
-    await access_side.invalidate()
+    export_stdout = access_side.handle.move(export_thread.stdtask.task.base)
 
     await import_thread.stdtask.unshare_files(going_to_exec=True)
     await import_thread.stdtask.stdin.replace_with(import_stdin)
@@ -3810,7 +3821,7 @@ class ConsoleServerGenie(WishGranter):
         wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
         sock_name = self._uniquify_name(f'{wisher_frame.f_code.co_name}-{wisher_frame.f_lineno}')
         sock_path = self.sockdir/sock_name
-        cmd = self.socat.args("-", f"UNIX-CONNECT:{str(sock_path.pure)}")
+        cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path.pure))
         sockfd = await self.stdtask.task.socket_unix(socket.SOCK_STREAM)
         await robust_unix_bind(sock_path, sockfd)
         await sockfd.listen(10)
@@ -3940,6 +3951,104 @@ class NixPath(handle.Path):
         if nix != b"nix" or store != b"store":
             raise Exception("path doesn't start with /nix/store")
 
+@dataclass
+class StubServer:
+    listening_sock: AsyncFileDescriptor[UnixSocketFile]
+    stdtask: StandardTask
+
+    @classmethod
+    async def make(cls, stdtask: StandardTask, path: Path) -> StubServer:
+        sockfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+        await sockfd.bind(path.unix_address())
+        await sockfd.listen(10)
+        return StubServer(sockfd, stdtask)
+
+    async def accept(self, stdtask: StandardTask=None) -> t.Tuple[t.List[str], StandardTask]:
+        if stdtask is None:
+            stdtask = self.stdtask
+        conn: FileDescriptor[UnixSocketFile]
+        addr: t.Any
+        conn, addr = await self.listening_sock.accept(os.O_CLOEXEC) # type: ignore
+        return (await setup_stub(stdtask, conn))
+
+async def make_stub(stdtask: StandardTask, dir: Path, name: str) -> StubServer:
+    sock_path = dir/f'{name}.sock'
+    server = await StubServer.make(stdtask, sock_path)
+    wrapper = """#!/bin/sh
+RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec -a "$0" {bin} "$@"
+""".format(sock=os.fsdecode(sock_path), bin=os.fsdecode(stdtask.filesystem.rsyscall_unix_stub_path))
+    await spit(dir/name, wrapper, mode=0o755)
+    return server
+
+async def setup_stub(
+        stdtask: StandardTask,
+        bootstrap_sock: FileDescriptor[UnixSocketFile],
+) -> t.Tuple[t.List[str], StandardTask]:
+    [(access_syscall_sock, passed_syscall_sock),
+     (access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(2)
+    # memfd for setting up the futex
+    futex_memfd = await memsys.memfd_create(
+        stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
+        b"child_robust_futex_list", lib.MFD_CLOEXEC)
+    # send the fds to the new process
+    await memsys.sendmsg_fds(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator, bootstrap_sock.handle.far,
+                             [passed_syscall_sock.far, passed_data_sock.far,
+                              futex_memfd, stdtask.connecting_connection[1].far])
+    # close our reference to fds that only the new process needs
+    await passed_syscall_sock.invalidate()
+    await passed_data_sock.invalidate()
+    # close the socketpair
+    await bootstrap_sock.invalidate()
+    #### read describe to get all the information we need from the new process
+    describe_buf = AsyncReadBuffer(access_data_sock)
+    describe_struct = await describe_buf.read_cffi('struct rsyscall_unix_stub')
+    argv_raw = await describe_buf.read_length_prefixed_array(describe_struct.argc)
+    argv = [os.fsdecode(arg) for arg in argv_raw]
+    environ = await describe_buf.read_envp(describe_struct.envp_count)
+    #### build the new task
+    pid = describe_struct.pid
+    fd_table = far.FDTable(pid)
+    address_space = far.AddressSpace(pid)
+    # we assume root is shared, but cwd changes
+    fs_information = far.FSInformation(pid, root=stdtask.task.base.fs.root, cwd=near.DirectoryFile())
+    # we assume pid namespace is shared
+    pid_namespace = stdtask.task.pid_namespace
+    process = far.Process(pid_namespace, near.Process(pid))
+    remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
+    syscall = RsyscallInterface(RsyscallConnection(access_syscall_sock, access_syscall_sock), process.near, remote_syscall_fd)
+    base_task = base.Task(syscall, process, fd_table, address_space, fs_information)
+    handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
+    syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
+    task = Task(base_task,
+                SocketMemoryTransport(access_data_sock,
+                                      base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd))),
+                memory.AllocatorClient.make_allocator(base_task),
+                SignalMask(set()),
+                pid_namespace)
+    # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
+    epoller = await task.make_epoll_center()
+    child_monitor = await ChildProcessMonitor.make(task, epoller)
+    new_stdtask = StandardTask(
+        access_task=stdtask.access_task,
+        access_epoller=stdtask.access_epoller,
+        access_connection=stdtask.access_connection,
+        connecting_task=stdtask.connecting_task,
+        connecting_connection=(stdtask.connecting_connection[0],
+                               base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd))),
+        task=task,
+        process_resources=ProcessResources.make_from_symbols(address_space, describe_struct.symbols),
+        filesystem_resources=FilesystemResources.make_from_environ(base_task, environ),
+        epoller=epoller,
+        child_monitor=child_monitor,
+        environment=environ,
+        stdin=task._make_fd(0, ReadableFile(shared=True)),
+        stdout=task._make_fd(1, WritableFile(shared=True)),
+        stderr=task._make_fd(2, WritableFile(shared=True)),
+    )
+    #### TODO set up futex I guess
+    remote_futex_memfd = near.FileDescriptor(describe_struct.futex_memfd)
+    return argv, new_stdtask
+
 async def rsyscall_stdin_bootstrap(
         stdtask: StandardTask,
         bootstrap_command: Command,
@@ -3949,8 +4058,7 @@ async def rsyscall_stdin_bootstrap(
     thread = await stdtask.fork()
     # create the socketpair that will be used as stdin
     parent_sock, child_sock_parent = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
-    child_sock = child_sock_parent.borrow(thread.stdtask.task.base)
-    await child_sock_parent.invalidate()
+    child_sock = child_sock_parent.move(thread.stdtask.task.base)
     # set up stdin with socketpair
     await thread.stdtask.unshare_files(going_to_exec=True)
     await thread.stdtask.stdin.replace_with(child_sock.handle)

@@ -88,6 +88,19 @@ class FileDescriptor:
             else:
                 logger.debug("invalidating %s, handles remaining: %s", self, handles)
 
+    def borrow(self, task: Task) -> FileDescriptor:
+        return task.make_fd_handle(self)
+
+    def move(self, task: Task) -> FileDescriptor:
+        new = self.borrow(task)
+        self.valid = False
+        handles = self._remove_from_tracking()
+        if len(handles) == 0:
+            raise Exception("We just made handle B from handle A, "
+                            "so we know there are at least two handles; "
+                            "but after removing handle A, there are no handles left. Huh?")
+        return new
+
     def _remove_from_tracking(self) -> t.List[FileDescriptor]:
         self.task.fd_handles.remove(self)
         handles = fd_table_to_near_to_handles[self.task.fd_table][self.near]

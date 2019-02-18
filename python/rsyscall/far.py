@@ -188,8 +188,8 @@ class Path:
             raise Exception("invalid base type")
         return ret
 
-    def __fspath__(self) -> bytes:
-        return self._as_proc_path()
+    def __fspath__(self) -> str:
+        return os.fsdecode(self._as_proc_path())
 
     def __repr__(self) -> str:
         pathdata = os.fsdecode(b"/".join(self.components))

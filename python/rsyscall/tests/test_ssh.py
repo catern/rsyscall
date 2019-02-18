@@ -45,8 +45,8 @@ class LocalSSHHost(SSHHost):
             '-i', '-e', '-f', '/dev/null',
         ).sshd_options({
             'LogLevel': 'INFO',
-            'HostKey': str(privkey.far),
-            'AuthorizedKeysFile': str(pubkey.far),
+            'HostKey': privkey,
+            'AuthorizedKeysFile': pubkey,
             'StrictModes': 'no',
             'PrintLastLog': 'no',
             'PrintMotd': 'no',
@@ -55,7 +55,7 @@ class LocalSSHHost(SSHHost):
             '-F', '/dev/null',
         ).ssh_options({
             'LogLevel': 'INFO',
-            'IdentityFile': str(privkey.far),
+            'IdentityFile': privkey,
             'BatchMode': 'yes',
             'StrictHostKeyChecking': 'no',
             'UserKnownHostsFile': '/dev/null',

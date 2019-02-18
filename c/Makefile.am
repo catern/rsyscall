@@ -10,7 +10,7 @@ librsyscall_la_SOURCES = src/rsyscall.c src/rsyscall_x86_64.S
 include_HEADERS = src/rsyscall.h
 
 # Programs
-pkglibexec_PROGRAMS = rsyscall-server rsyscall-bootstrap rsyscall-stdin-bootstrap
+pkglibexec_PROGRAMS = rsyscall-server rsyscall-bootstrap rsyscall-stdin-bootstrap rsyscall-unix-stub
 
 rsyscall_stdin_bootstrap_SOURCES = src/rsyscall_stdin_bootstrap.c
 rsyscall_stdin_bootstrap_LDADD = librsyscall.la
@@ -20,6 +20,9 @@ rsyscall_server_LDADD = librsyscall.la
 
 rsyscall_bootstrap_SOURCES = src/rsyscall_bootstrap.c
 rsyscall_bootstrap_LDADD = librsyscall.la
+
+rsyscall_unix_stub_SOURCES = src/rsyscall_unix_stub.c
+rsyscall_unix_stub_LDADD = librsyscall.la
 
 bin_PROGRAMS = cat remote_cat
 cat_SOURCES = src/cat.c

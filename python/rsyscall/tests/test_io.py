@@ -2,7 +2,7 @@ import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.io import wrap_stdin_out_err
 from rsyscall.io import AsyncFileDescriptor
-from rsyscall.io import local_stdtask, StandardTask
+from rsyscall.io import local_stdtask, StandardTask, Path
 from rsyscall.io import Command
 import rsyscall.io as rsc
 from rsyscall.epoll import EpollEvent, EpollEventMask
@@ -371,6 +371,15 @@ class TestIO(unittest.TestCase):
         async with trio.open_nursery() as nursery:
             await test(local_stdtask)
 
+    async def runner_with_tempdir(
+            self,
+            test: t.Callable[[StandardTask, Path], t.Awaitable[None]]
+    ) -> None:
+        stdtask = local_stdtask
+        async with trio.open_nursery() as nursery:
+            async with (await stdtask.mkdtemp()) as tmppath:
+                await test(stdtask, tmppath)
+
     def test_spawn_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.spawn_exec()
@@ -411,6 +420,98 @@ class TestIO(unittest.TestCase):
             async with thread as stdtask2:
                 await stdtask2.exit(0)
         trio.run(self.runner, test)
+
+    def test_unixstub_exit(self) -> None:
+        async def test(stdtask: StandardTask, tmppath: Path) -> None:
+            command = rsc.Command(stdtask.filesystem.rsyscall_unix_stub_path,
+                                  ['rsyscall-unix-stub'], {})
+            path = tmppath/"sock"
+            server = await rsc.StubServer.make(stdtask, path)
+            thread = await stdtask.fork()
+            child_proc = await command.env(RSYSCALL_UNIX_STUB_SOCK_PATH=path).exec(thread)
+            argv, new_stdtask = await server.accept()
+            await new_stdtask.exit(0)
+        trio.run(self.runner_with_tempdir, test)
+
+    def test_unixstub_async(self) -> None:
+        async def test(stdtask: StandardTask, tmppath: Path) -> None:
+            command = rsc.Command(stdtask.filesystem.rsyscall_unix_stub_path,
+                                  ['rsyscall-unix-stub'], {})
+            path = tmppath/"sock"
+            server = await rsc.StubServer.make(stdtask, path)
+            thread = await stdtask.fork()
+            child_proc = await command.env(RSYSCALL_UNIX_STUB_SOCK_PATH=path).exec(thread)
+            argv, new_stdtask = await server.accept()
+            await self.do_async_things(new_stdtask.epoller, new_stdtask.task)
+        trio.run(self.runner_with_tempdir, test)
+
+    def test_unixstub_pipe(self) -> None:
+        async def test(stdtask: StandardTask, tmppath: Path) -> None:
+            command = rsc.Command(stdtask.filesystem.rsyscall_unix_stub_path,
+                                  ['rsyscall-unix-stub'], {})
+            path = tmppath/"sock"
+            server = await rsc.StubServer.make(stdtask, path)
+
+            thread = await stdtask.fork()
+            child_stdin, parent_write = await stdtask.task.pipe()
+            stdin = child_stdin.move(thread.stdtask.task.base)
+            await thread.stdtask.unshare_files(going_to_exec=True)
+            await thread.stdtask.stdin.replace_with(stdin.handle)
+
+            child_proc = await command.env(RSYSCALL_UNIX_STUB_SOCK_PATH=path).exec(thread)
+            argv, new_stdtask = await server.accept()
+            data_in = b'hello'
+            await parent_write.write(data_in)
+            data_out = await new_stdtask.stdin.read()
+            self.assertEqual(data_in, data_out)
+        trio.run(self.runner_with_tempdir, test)
+
+    def test_stub_exit(self) -> None:
+        async def test(stdtask: StandardTask, tmppath: Path) -> None:
+            name = "dummy"
+            server = await rsc.make_stub(stdtask, tmppath, name)
+            command = rsc.Command((tmppath/name).handle, [name], {})
+            thread = await stdtask.fork()
+            child_proc = await command.exec(thread)
+            argv, new_stdtask = await server.accept()
+            await new_stdtask.exit(0)
+        trio.run(self.runner_with_tempdir, test)
+
+    def test_stub_hello(self) -> None:
+        async def test(stdtask: StandardTask, tmppath: Path) -> None:
+            name = "dummy"
+            server = await rsc.make_stub(stdtask, tmppath, name)
+            command = rsc.Command((tmppath/name).handle, [name], {})
+            thread = await stdtask.fork()
+            child_proc = await command.exec(thread)
+            argv, new_stdtask = await server.accept()
+            await new_stdtask.exit(0)
+        trio.run(self.runner_with_tempdir, test)
+
+    def test_mock_program(self) -> None:
+        async def test(stdtask: StandardTask, tmppath: Path) -> None:
+            server = await rsc.make_stub(stdtask, tmppath, "dummy")
+            # make directory
+            # bind stubserver in dir
+            # write wrapper script with embedded path
+            command = rsc.Command(stdtask.filesystem.rsyscall_unix_stub_path,
+                                  ['rsyscall-unix-stub'], {})
+            path = tmppath/"sock"
+            server = await rsc.StubServer.make(stdtask, path)
+
+            thread = await stdtask.fork()
+            child_stdin, parent_write = await stdtask.task.pipe()
+            stdin = child_stdin.move(thread.stdtask.task.base)
+            await thread.stdtask.unshare_files(going_to_exec=True)
+            await thread.stdtask.stdin.replace_with(stdin.handle)
+
+            child_proc = await command.env(RSYSCALL_UNIX_STUB_SOCK_PATH=path).exec(thread)
+            argv, new_stdtask = await server.accept()
+            data_in = b'hello'
+            await parent_write.write(data_in)
+            data_out = await new_stdtask.stdin.read()
+            self.assertEqual(data_in, data_out)
+        trio.run(self.runner_with_tempdir, test)
 
     def test_stdinboot_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:

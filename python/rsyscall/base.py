@@ -78,7 +78,7 @@ class UnixAddress(Address):
 
     @staticmethod
     def from_path(self, path: rsyscall.far.Path) -> UnixAddress:
-        return UnixAddress(bytes(path))
+        return UnixAddress(os.fsencode(path))
 
     T = t.TypeVar('T', bound='UnixAddress')
     @classmethod
