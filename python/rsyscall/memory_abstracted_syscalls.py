@@ -206,7 +206,10 @@ async def mkdirat(sysif: SyscallInterface, transport: MemoryTransport, allocator
                   path: base.Path, mode: int) -> None:
     logger.debug("mkdirat(%s, %s)", path, mode)
     async with localize_path(transport, allocator, path) as (dirfd, pathname):
-        await raw_syscall.mkdirat(sysif, dirfd, pathname, mode)
+        try:
+            await raw_syscall.mkdirat(sysif, dirfd, pathname, mode)
+        except FileExistsError as e:
+            raise FileNotFoundError(e.errno, e.strerror, path)
 
 async def unlinkat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                    path: base.Path, flags: int) -> None:

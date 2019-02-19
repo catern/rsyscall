@@ -3975,7 +3975,7 @@ async def make_stub(stdtask: StandardTask, dir: Path, name: str) -> StubServer:
     sock_path = dir/f'{name}.sock'
     server = await StubServer.make(stdtask, sock_path)
     wrapper = """#!/bin/sh
-RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec -a "$0" {bin} "$@"
+RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
 """.format(sock=os.fsdecode(sock_path), bin=os.fsdecode(stdtask.filesystem.rsyscall_unix_stub_path))
     await spit(dir/name, wrapper, mode=0o755)
     return server

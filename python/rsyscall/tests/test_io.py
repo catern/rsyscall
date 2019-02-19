@@ -481,36 +481,15 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask, tmppath: Path) -> None:
             name = "dummy"
             server = await rsc.make_stub(stdtask, tmppath, name)
-            command = rsc.Command((tmppath/name).handle, [name], {})
+            data_in = "hello"
+            command = rsc.Command(stdtask.filesystem.utilities.sh,
+                                  ["sh", "-c", f"printf {data_in} | {name}"],
+                                  {'PATH': os.fsdecode(os.fsencode(tmppath) + b':' + stdtask.environment[b'PATH']) })
             thread = await stdtask.fork()
             child_proc = await command.exec(thread)
             argv, new_stdtask = await server.accept()
-            await new_stdtask.exit(0)
-        trio.run(self.runner_with_tempdir, test)
-
-    def test_mock_program(self) -> None:
-        async def test(stdtask: StandardTask, tmppath: Path) -> None:
-            server = await rsc.make_stub(stdtask, tmppath, "dummy")
-            # make directory
-            # bind stubserver in dir
-            # write wrapper script with embedded path
-            command = rsc.Command(stdtask.filesystem.rsyscall_unix_stub_path,
-                                  ['rsyscall-unix-stub'], {})
-            path = tmppath/"sock"
-            server = await rsc.StubServer.make(stdtask, path)
-
-            thread = await stdtask.fork()
-            child_stdin, parent_write = await stdtask.task.pipe()
-            stdin = child_stdin.move(thread.stdtask.task.base)
-            await thread.stdtask.unshare_files(going_to_exec=True)
-            await thread.stdtask.stdin.replace_with(stdin.handle)
-
-            child_proc = await command.env(RSYSCALL_UNIX_STUB_SOCK_PATH=path).exec(thread)
-            argv, new_stdtask = await server.accept()
-            data_in = b'hello'
-            await parent_write.write(data_in)
             data_out = await new_stdtask.stdin.read()
-            self.assertEqual(data_in, data_out)
+            self.assertEqual(data_in, data_out.decode())
         trio.run(self.runner_with_tempdir, test)
 
     def test_stdinboot_exit(self) -> None:

@@ -11453,3 +11453,8 @@ It deserves the same effort as I put into TS crapware.
 
   since it'll let us monitor this guy for execing. . .
 
+  ffs
+
+  /bin/sh doesn't support -a
+
+  fine, fine. we'll just pass the full args.

@@ -108,7 +108,10 @@ def do_api_stuff() -> None:
     new_project(session, base, project_identifier)
     new_jobset(session, base, project_identifier, 'trivial', trivial_path)
 
+# for builds:
+# - we need to be a trusted user
+# - we need a signing key and autosigning
 
 if __name__ == "__main__":
-    #trio.run(main)
+    # trio.run(main)
     do_api_stuff()
