@@ -180,6 +180,15 @@ class FileDescriptor:
                                                self.task.to_near_pointer(events), maxevents,
                                                timeout))
 
+    async def inotify_add_watch(self, pathname: rsyscall.far.Pointer, mask: int) -> rsyscall.near.WatchDescriptor:
+        self.validate()
+        return (await rsyscall.near.inotify_add_watch(
+            self.task.sysif, self.near, self.task.to_near_pointer(pathname), mask))
+
+    async def inotify_remove_watch(self, wd: rsyscall.near.WatchDescriptor) -> None:
+        self.validate()
+        await rsyscall.near.inotify_remove_watch(self.task.sysif, self.near, wd)
+
 @dataclass
 class Root:
     file: rsyscall.near.DirectoryFile

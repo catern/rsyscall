@@ -11458,3 +11458,57 @@ It deserves the same effort as I put into TS crapware.
   /bin/sh doesn't support -a
 
   fine, fine. we'll just pass the full args.
+* inotify near/far
+  So okay, we would have far.WD(File, near.WD),
+  and far.FD(FDTable, near.FD)
+
+  Then for handles, we do:
+  File -> FD
+  FDTable -> Task
+
+  But the far code, basically, we have to provide those references ourselves.
+
+  Well um theoretically we could um
+
+  Well if we want to reference some FD table, we want to be attached to that, not the task, innit...
+
+  Also the question is, what does a WD actually reference? A "watch", sure, but..
+  I guess that's an inode?
+* memory or handle on top
+  hmmm so for handle.FD methods to be usable,
+  we need an additional thing to handle pointers.
+
+  right? cuz.
+
+  if the memsys uses the handle syscalls,
+  then it needs more stuff to support memory allocation and GC.
+
+  hmm.
+
+  but if handle uses memsys,
+  then handle stuff needs to, um, have memory abstraction stuff below it.
+
+  but that's not good because we want memory stuff to be using handle.
+
+  hmm.
+  handle can provide mmap-level memory allocation helper things.
+
+  and more realistic/efficient allocators can be built on top.
+
+  also remember, pointers should be inside a memory mapping! that's cool!
+  and paths inside mounts!
+  so explicit y'know
+
+  suppose we did have that kind of thing in the handle API, that would be fine.
+
+  and then on top of it we'd do memory allocation, fine.
+
+  right right the memsys thing would get passed um
+
+  a task? and an fd?
+
+  I guess the fact that handle contains a task is only a convenience.
+
+  tis not something to rely upon, I suppose!
+  maybe.
+  whatever.

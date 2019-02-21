@@ -492,3 +492,11 @@ async def accept(sysif: SyscallInterface, transport: MemoryTransport, allocator:
         with trio.open_cancel_scope(shield=True):
             addr = await read_sockbuf(transport, addr_ptr, addrlen, addrlen_ptr)
         return fd, addr
+
+async def inotify_add_watch(transport: MemoryTransport, allocator: memory.AllocatorInterface,
+                            fd: handle.FileDescriptor, path: Path, mask: int) -> near.WatchDescriptor:
+    async with localize_path(transport, allocator, path) as (dirfd, pathname):
+        if dirfd is not None:
+            raise NotImplementedError("inotify_add_watch with dirfd not supported cuz lazy")
+        return (await fd.inotify_add_watch(pathname, mask))
+

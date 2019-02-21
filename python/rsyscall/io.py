@@ -4127,3 +4127,4 @@ async def rsyscall_stdin_bootstrap(
     #### TODO set up futex I guess
     remote_futex_memfd = near.FileDescriptor(describe_struct.futex_memfd)
     return child_task, new_stdtask
+

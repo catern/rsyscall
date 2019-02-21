@@ -300,3 +300,13 @@ async def prctl_set_pdeathsig(task: Task, signal: t.Optional[signal.Signals]) ->
 
 async def setsid(task: Task) -> int:
     return (await rsyscall.near.setsid(task.sysif))
+
+async def inotify_init(task: Task, flags: int) -> FileDescriptor:
+    ret = await rsyscall.near.inotify_init(task.sysif, flags)
+    return FileDescriptor(task.fd_table, ret)
+
+async def inotify_add_watch(task: Task, fd: FileDescriptor, pathname: Pointer, mask: int) -> rsyscall.near.WatchDescriptor:
+    return (await rsyscall.near.inotify_add_watch(task.sysif, task.to_near_fd(fd), task.to_near_pointer(ptr), mask))
+
+async def inotify_rm_watch(task: Task, fd: FileDescriptor, wd: WatchDescriptor) -> None:
+    await rsyscall.near.inotify_rm_watch(task.sysif, task.to_near_fd(fd), wd)

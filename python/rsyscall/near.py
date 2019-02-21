@@ -39,6 +39,9 @@ class SYS(enum.IntEnum):
     setns = lib.SYS_setns
     prctl = lib.SYS_prctl
     setsid = lib.SYS_setsid
+    inotify_init1 = lib.SYS_inotify_init1
+    inotify_add_watch = lib.SYS_inotify_add_watch
+    inotify_rm_watch = lib.SYS_inotify_rm_watch
 
 class IdType(enum.IntEnum):
     PID = lib.P_PID # Wait for the child whose process ID matches id.
@@ -92,6 +95,19 @@ class FileDescriptor:
 
     def __str__(self) -> str:
         return f"FD({self.number})"
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __int__(self) -> int:
+        return self.number
+
+@dataclass(frozen=True)
+class WatchDescriptor:
+    number: int
+
+    def __str__(self) -> str:
+        return f"WD({self.number})"
 
     def __repr__(self) -> str:
         return str(self)
@@ -276,3 +292,12 @@ async def prctl(sysif: SyscallInterface, option: PrctlOp, arg2: int, arg3: int=0
 
 async def setsid(sysif: SyscallInterface) -> int:
     return (await sysif.syscall(SYS.setsid))
+
+async def inotify_init(sysif: SyscallInterface, flags: int) -> FileDescriptor:
+    return FileDescriptor(await sysif.syscall(SYS.inotify_init1, flags))
+
+async def inotify_add_watch(sysif: SyscallInterface, fd: FileDescriptor, pathname: Pointer, mask: int) -> WatchDescriptor:
+    return WatchDescriptor(await sysif.syscall(SYS.inotify_add_watch, fd, pathname, mask))
+
+async def inotify_rm_watch(sysif: SyscallInterface, fd: FileDescriptor, wd: WatchDescriptor) -> None:
+    await sysif.syscall(SYS.inotify_rm_watch, fd, wd)
