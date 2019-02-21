@@ -1,3 +1,4 @@
+from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 import trio
 import os
@@ -11,6 +12,7 @@ import rsyscall.far as far
 import rsyscall.near as near
 import rsyscall.epoll as epoll
 import rsyscall.memory as memory
+import rsyscall.handle as handle
 import array
 import typing as t
 import logging
@@ -494,8 +496,8 @@ async def accept(sysif: SyscallInterface, transport: MemoryTransport, allocator:
         return fd, addr
 
 async def inotify_add_watch(transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                            fd: handle.FileDescriptor, path: Path, mask: int) -> near.WatchDescriptor:
-    async with localize_path(transport, allocator, path) as (dirfd, pathname):
+                            fd: handle.FileDescriptor, path: handle.Path, mask: int) -> near.WatchDescriptor:
+    async with localize_path(transport, allocator, path.far) as (dirfd, pathname):
         if dirfd is not None:
             raise NotImplementedError("inotify_add_watch with dirfd not supported cuz lazy")
         return (await fd.inotify_add_watch(pathname, mask))

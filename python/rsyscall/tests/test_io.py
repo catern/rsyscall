@@ -5,6 +5,7 @@ from rsyscall.io import AsyncFileDescriptor
 from rsyscall.io import local_stdtask, StandardTask, Path
 from rsyscall.io import Command
 import rsyscall.io as rsc
+import rsyscall.inotify as inotify
 from rsyscall.epoll import EpollEvent, EpollEventMask
 from rsyscall.tests.test_ssh import ssh_to_localhost
 import shutil
@@ -490,6 +491,14 @@ class TestIO(unittest.TestCase):
             argv, new_stdtask = await server.accept()
             data_out = await new_stdtask.stdin.read()
             self.assertEqual(data_in, data_out.decode())
+        trio.run(self.runner_with_tempdir, test)
+
+    def test_inotify_create(self) -> None:
+        async def test(stdtask: StandardTask, path: Path) -> None:
+            inty = await inotify.Inotify.make(stdtask)
+            watch = await inty.add(path.handle, inotify.Mask.CREATE)
+            fd = await (path/"foo").creat()
+            print(await watch.wait())
         trio.run(self.runner_with_tempdir, test)
 
     def test_stdinboot_exit(self) -> None:

@@ -295,6 +295,10 @@ class Task:
         epfd = await raw_syscall.epoll_create(self.syscall, flags)
         return self._make_fd(epfd, EpollFile())
 
+    async def inotify_init(self, flags=lib.IN_CLOEXEC) -> FileDescriptor[InotifyFile]:
+        epfd = await near.inotify_init(self.syscall, flags)
+        return self.make_fd(epfd, InotifyFile())
+
     async def socket_unix(self, type: socket.SocketKind, protocol: int=0) -> FileDescriptor[UnixSocketFile]:
         sockfd = await raw_syscall.socket(self.syscall, lib.AF_UNIX, type, protocol)
         return self._make_fd(sockfd, UnixSocketFile())
@@ -400,6 +404,9 @@ class UnixSocketFile(SocketFile[UnixAddress]):
 
 class InetSocketFile(SocketFile[InetAddress]):
     address_type = InetAddress
+
+class InotifyFile(ReadableFile):
+    pass
 
 class FileDescriptor(t.Generic[T_file_co]):
     "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."
@@ -925,7 +932,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     async def aclose(self) -> None:
         await self.epolled.aclose()
 
-class Path:
+class Path(far.PathLike):
     "This is a convenient combination of a Path and a Task to perform serialization."
     def __init__(self, task: Task, handle: handle.Path) -> None:
         self.task = task
@@ -3259,7 +3266,7 @@ async def run_socket_binder(
         (await child.wait_for_exit()).check()
 
 async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
-                      local_path: Path, remote_path: str) -> ChildProcess:
+                      local_path: handle.Path, remote_path: str) -> ChildProcess:
     stdout_pipe = await stdtask.task.pipe()
     async_stdout = await AsyncFileDescriptor.make(stdtask.epoller, stdout_pipe.rfd)
     thread = await stdtask.fork()
@@ -3387,7 +3394,7 @@ class ArbitrarySSHHost(SSHHost):
     def guess_hostname(self) -> str:
         # we guess that the last argument of ssh command is the hostname. it
         # doesn't matter if it isn't, this is just for human-readability.
-        return self.command.arguments[-1].decode()
+        return os.fsdecode(self.command.arguments[-1])
 
 class RsyscallThread:
     def __init__(self,
@@ -3397,8 +3404,8 @@ class RsyscallThread:
         self.stdtask = stdtask
         self.thread = thread
 
-    async def execve(self, path: handle.Path, argv: t.Sequence[t.Union[str, bytes, Path]],
-                     env_updates: t.Mapping[str, t.Union[str, bytes, Path]]={},
+    async def execve(self, path: handle.Path, argv: t.Sequence[t.Union[str, bytes, os.PathLike]],
+                     env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]={},
                      inherited_signal_blocks: t.List[SignalBlock]=[],
     ) -> ChildProcess:
         """Replace the running executable in this thread with another.
@@ -3423,14 +3430,14 @@ class RsyscallThread:
         await self.stdtask.task.sigmask.setmask(self.stdtask.task, sigmask)
         envp: t.Dict[bytes, bytes] = {**self.stdtask.environment}
         for key in env_updates:
-            envp[os.fsencode(key)] = await fspath(env_updates[key])
+            envp[os.fsencode(key)] = os.fsencode(env_updates[key])
         raw_envp: t.List[bytes] = []
         for key_bytes, value in envp.items():
             raw_envp.append(b''.join([key_bytes, b'=', value]))
         task = self.stdtask.task
         logger.info("execveat(%s, %s, %s)", path, argv, env_updates)
         return (await self.thread.execveat(task.base.sysif, task.transport, task.allocator,
-                                           path, [await fspath(arg) for arg in argv],
+                                           path, [os.fsencode(arg) for arg in argv],
                                            raw_envp, flags=0))
 
     async def close(self) -> None:
@@ -3461,18 +3468,19 @@ T_command = t.TypeVar('T_command', bound="Command")
 class Command:
     def __init__(self,
                  executable_path: handle.Path,
-                 arguments: t.List[bytes],
-                 env_updates: t.Mapping[str, str]) -> None:
+                 arguments: t.List[t.Union[str, bytes, os.PathLike]],
+                 env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]) -> None:
         self.executable_path = executable_path
         self.arguments = arguments
         self.env_updates = env_updates
 
-    def args(self: T_command, *args: t.Union[str, bytes]) -> T_command:
+    def args(self: T_command, *args: t.Union[str, bytes, os.PathLike]) -> T_command:
         return type(self)(self.executable_path,
-                          self.arguments + [os.fsencode(arg) for arg in args],
+                          [*self.arguments, *args],
                           self.env_updates)
 
-    def env(self: T_command, env_updates: t.Mapping[str, str]={}, **updates: str) -> T_command:
+    def env(self: T_command, env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]={},
+            **updates: t.Union[str, bytes, os.PathLike]) -> T_command:
         return type(self)(self.executable_path,
                           self.arguments,
                           {**self.env_updates, **env_updates, **updates})
@@ -3493,7 +3501,7 @@ class Command:
             ret += f"{key}={value} "
         ret += f"{str(self.executable_path)},"
         for arg in self.arguments:
-            ret += " " + arg.decode()
+            ret += " " + os.fsdecode(arg)
         ret += ")"
         return ret
 
@@ -3514,7 +3522,7 @@ class SSHCommand(Command):
     def proxy_command(self, command: Command) -> SSHCommand:
         return self.ssh_options({'ProxyCommand': command.in_shell_form()})
 
-    def local_forward(self, local_socket: str, remote_socket: str) -> SSHCommand:
+    def local_forward(self, local_socket: handle.Path, remote_socket: str) -> SSHCommand:
         return self.args("-L", os.fsdecode(local_socket) + ":" + os.fsdecode(remote_socket))
 
     def as_host(self) -> ArbitrarySSHHost:
@@ -3661,7 +3669,7 @@ async def nix_deploy(
     query_stdout = query_pipe.wfd.handle.move(query_thread.stdtask.task.base)
     await query_thread.stdtask.unshare_files(going_to_exec=True)
     await query_thread.stdtask.stdout.replace_with(query_stdout)
-    await query_thread.execve(src_nix_bin/"nix-store", ["nix-store", "--query", "--requisites", src_path])
+    await Command(src_nix_bin/"nix-store", [b"nix-store"], {}).args("--query", "--requisites", src_path).exec(query_thread)
     closure = (await read_all(query_pipe.rfd)).split()
 
     export_thread = await src_task.fork()
@@ -3961,7 +3969,8 @@ class StubServer:
         sockfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
         await sockfd.bind(path.unix_address())
         await sockfd.listen(10)
-        return StubServer(sockfd, stdtask)
+        asyncfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
+        return StubServer(asyncfd, stdtask)
 
     async def accept(self, stdtask: StandardTask=None) -> t.Tuple[t.List[str], StandardTask]:
         if stdtask is None:

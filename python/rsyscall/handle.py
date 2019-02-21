@@ -185,9 +185,9 @@ class FileDescriptor:
         return (await rsyscall.near.inotify_add_watch(
             self.task.sysif, self.near, self.task.to_near_pointer(pathname), mask))
 
-    async def inotify_remove_watch(self, wd: rsyscall.near.WatchDescriptor) -> None:
+    async def inotify_rm_watch(self, wd: rsyscall.near.WatchDescriptor) -> None:
         self.validate()
-        await rsyscall.near.inotify_remove_watch(self.task.sysif, self.near, wd)
+        await rsyscall.near.inotify_rm_watch(self.task.sysif, self.near, wd)
 
 @dataclass
 class Root:
@@ -209,7 +209,7 @@ class CWD:
 
 T_path = t.TypeVar('T_path', bound="Path")
 @dataclass
-class Path:
+class Path(rsyscall.far.PathLike):
     base: t.Union[Root, CWD, FileDescriptor]
     components: t.List[bytes]
 
