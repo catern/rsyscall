@@ -1,3 +1,5 @@
+import h11
+import socket
 import time
 import os
 import requests
@@ -79,17 +81,15 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
     }
     await rsc.spit(pgdata/"postgresql.auto.conf", "\n".join([f"{key} = {value}" for key, value in settings.items()]))
     inty = await inotify.Inotify.make(stdtask)
-    watch = await inty.add(pgsock.handle, inotify.Mask.CREATE)
+    watch = await inty.add(pgdata.handle, inotify.Mask.CLOSE_WRITE)
     async with trio.open_nursery() as nursery:
         await nursery.start(stdtask.run, postgres.args('-D', pgdata))
-        port = 5432
-        sockname = f".s.PGSQL.{port}"
-        await watch.wait_until_event(inotify.Mask.CREATE, sockname)
-        await trio.sleep(1)
-        print("continue")
-        # OK so the way we actually need to wait for postgres startup is by monitoring its pid file
-        # pg_ctl just busy-loops on the pid file, but we can inotify on it.
-        # we'll just wait for it to be written to, I guess - that's basically good enough.
+        # pg_ctl uses the pid file to determine when postgres is up, so we do the same.
+        # we don't actually look at the contents - just wait for postgres to be done writing
+        # TODO actually do this right
+        await trio.sleep(.5)
+        await watch.wait_until_event(inotify.Mask.CLOSE_WRITE, "postmaster.pid")
+
         await stdtask.run(createuser.args("--host", pgsock, "--no-password", "hydra"))
         await stdtask.run(createdb.args("--host", pgsock, "--owner", "hydra", "hydra"))
 
@@ -104,10 +104,40 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
             "--password", "foobar",
             "--role", "admin",
         ).env(HYDRA_DBI=dbi, HYDRA_DATA=data))
-        # now to spawn things in the background
-        await nursery.start(stdtask.run, hydra_server.env(HYDRA_DBI=dbi, HYDRA_DATA=data))
+
+        # start server
+        server_thread = await stdtask.fork()
+        sock = await server_thread.stdtask.task.socket_unix(socket.SOCK_STREAM, cloexec=False)
+        addr = (path/"sock").unix_address()
+        await sock.bind(addr)
+        await sock.listen(10)
+        server_child = await server_thread.exec(hydra_server.env(
+            HYDRA_DBI=dbi, HYDRA_DATA=data, SERVER_STARTER_PORT=f"3000={sock.handle.near.number};"))
+        nursery.start_soon(server_child.check)
+        # start evaluator, queue runner
         await nursery.start(stdtask.run, hydra_evaluator.env(HYDRA_DBI=dbi, HYDRA_DATA=data))
         await nursery.start(stdtask.run, hydra_queue_runner.env(HYDRA_DBI=dbi, HYDRA_DATA=data))
+        # connect and send http requests
+        await trio.sleep(3)
+        print("doing stuff")
+        sock = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+        # TODO hmm annoying, because our address is a unix address,
+        # not an inet address,
+        # starman is confused.
+        await sock.connect(addr)
+        conn = h11.Connection(our_role=h11.CLIENT)
+        headers = [
+            ("Host", "localhost"),
+            ("Referer", "http://localhost:3000"),
+            ("Accept", "application/json"),
+        ]
+        await sock.write(conn.send(h11.Request(method="GET", target="/", headers=headers)))
+        await sock.write(conn.send(h11.EndOfMessage()))
+        data = await sock.read()
+        conn.receive_data(data)
+        print(conn.next_event())
+        # TODO use h11
+        # hmm it would be nice to avoid maintaining a connection I guess.
 
 async def main() -> None:
     stdtask = rsc.local_stdtask

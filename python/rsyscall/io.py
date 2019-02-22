@@ -299,12 +299,14 @@ class Task:
         epfd = await near.inotify_init(self.syscall, flags)
         return self.make_fd(epfd, InotifyFile())
 
-    async def socket_unix(self, type: socket.SocketKind, protocol: int=0) -> FileDescriptor[UnixSocketFile]:
+    async def socket_unix(self, type: socket.SocketKind, protocol: int=0, cloexec=True) -> FileDescriptor[UnixSocketFile]:
+        if cloexec:
+            type |= lib.SOCK_CLOEXEC
         sockfd = await raw_syscall.socket(self.syscall, lib.AF_UNIX, type, protocol)
         return self._make_fd(sockfd, UnixSocketFile())
 
     async def socket_inet(self, type: socket.SocketKind, protocol: int=0) -> FileDescriptor[InetSocketFile]:
-        sockfd = await raw_syscall.socket(self.syscall, lib.AF_INET, type, protocol)
+        sockfd = await raw_syscall.socket(self.syscall, lib.AF_INET, type|lib.SOCK_CLOEXEC, protocol)
         return self._make_fd(sockfd, InetSocketFile())
 
     async def signalfd_create(self, mask: t.Set[signal.Signals], flags: int=0) -> FileDescriptor[SignalFile]:
@@ -3403,6 +3405,9 @@ class RsyscallThread:
     ) -> None:
         self.stdtask = stdtask
         self.thread = thread
+
+    async def exec(self, command: Command) -> ChildProcess:
+        return (await command.exec(self))
 
     async def execve(self, path: handle.Path, argv: t.Sequence[t.Union[str, bytes, os.PathLike]],
                      env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]={},
