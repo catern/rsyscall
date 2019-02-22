@@ -3,6 +3,7 @@ import os
 import requests
 import trio
 import rsyscall.io as rsc
+import rsyscall.inotify as inotify
 from rsyscall.io import StandardTask, Path
 
 # launch postgres
@@ -77,15 +78,18 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
         "full_page_writes": "off",
     }
     await rsc.spit(pgdata/"postgresql.auto.conf", "\n".join([f"{key} = {value}" for key, value in settings.items()]))
+    inty = await inotify.Inotify.make(stdtask)
+    watch = await inty.add(pgsock.handle, inotify.Mask.CREATE)
     async with trio.open_nursery() as nursery:
         await nursery.start(stdtask.run, postgres.args('-D', pgdata))
-        # need to wait for postgres to be up, hm m m m m m m mm
-        # could implement socket activation...
-        # it sounds like a headache, hmmmm
-        # ugh, I guess I gotta do inotify
-        # what a headache.
-        # okay it's fine I guess
+        port = 5432
+        sockname = f".s.PGSQL.{port}"
+        await watch.wait_until_event(inotify.Mask.CREATE, sockname)
         await trio.sleep(1)
+        print("continue")
+        # OK so the way we actually need to wait for postgres startup is by monitoring its pid file
+        # pg_ctl just busy-loops on the pid file, but we can inotify on it.
+        # we'll just wait for it to be written to, I guess - that's basically good enough.
         await stdtask.run(createuser.args("--host", pgsock, "--no-password", "hydra"))
         await stdtask.run(createdb.args("--host", pgsock, "--owner", "hydra", "hydra"))
 

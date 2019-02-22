@@ -38,6 +38,13 @@ class Watch:
             except trio.WouldBlock:
                 await self.inotify.do_wait()
 
+    async def wait_until_event(self, mask: Mask, name: t.Optional[str]) -> None:
+        while True:
+            event = await self.wait()
+            print(event)
+            if (event.mask & mask) and event.name == name:
+                break
+
     async def remove(self) -> None:
         self.inotify.remove(self.wd)
         # we'll mark this Watch as removed once we get the IN_IGNORED event;
@@ -81,7 +88,7 @@ class Inotify:
                 if struct.len > 0:
                     name_bytes = await self.buffer.read_length(struct.len)
                     if name_bytes is not None:
-                        name: t.Optional[str] = os.fsdecode(name_bytes)
+                        name: t.Optional[str] = os.fsdecode(name_bytes.split(b'\0', 1)[0])
                     else:
                         raise Exception('got EOF from inotify fd? what?')
                 else:
