@@ -108,23 +108,20 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
         # start server
         server_thread = await stdtask.fork()
         sock = await server_thread.stdtask.task.socket_unix(socket.SOCK_STREAM, cloexec=False)
-        addr = (path/"sock").unix_address()
-        await sock.bind(addr)
+        sockpath = path/"hydra_server.sock"
+        await sock.bind(sockpath.unix_address())
         await sock.listen(10)
+        ssport = os.fsdecode(sockpath)+"="+str(sock.handle.near.number)
         server_child = await server_thread.exec(hydra_server.env(
-            HYDRA_DBI=dbi, HYDRA_DATA=data, SERVER_STARTER_PORT=f"3000={sock.handle.near.number};"))
+            HYDRA_DBI=dbi, HYDRA_DATA=data, SERVER_STARTER_PORT=ssport))
         nursery.start_soon(server_child.check)
         # start evaluator, queue runner
         await nursery.start(stdtask.run, hydra_evaluator.env(HYDRA_DBI=dbi, HYDRA_DATA=data))
         await nursery.start(stdtask.run, hydra_queue_runner.env(HYDRA_DBI=dbi, HYDRA_DATA=data))
         # connect and send http requests
-        await trio.sleep(3)
         print("doing stuff")
         sock = await stdtask.task.socket_unix(socket.SOCK_STREAM)
-        # TODO hmm annoying, because our address is a unix address,
-        # not an inet address,
-        # starman is confused.
-        await sock.connect(addr)
+        await sock.connect(sockpath.unix_address())
         conn = h11.Connection(our_role=h11.CLIENT)
         headers = [
             ("Host", "localhost"),
@@ -135,6 +132,7 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
         await sock.write(conn.send(h11.EndOfMessage()))
         data = await sock.read()
         conn.receive_data(data)
+        print(conn.next_event())
         print(conn.next_event())
         # TODO use h11
         # hmm it would be nice to avoid maintaining a connection I guess.
