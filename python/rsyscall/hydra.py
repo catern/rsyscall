@@ -217,6 +217,7 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
         ])
         await client.post("/login", json.dumps({'username': "sbaugh", 'password': "foobar"}).encode())
         print(await client.get("/"))
+        # TODO need to save the cookie for logging in
         await client.put('/project/trivial', json.dumps({
             'identifier': 'trivial', 'displayname': 'Trivial', 'enabled': '1', 'visible': '1',
         }).encode())
