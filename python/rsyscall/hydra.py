@@ -1,3 +1,4 @@
+import json
 import h11
 import socket
 import time
@@ -6,7 +7,9 @@ import requests
 import trio
 import rsyscall.io as rsc
 import rsyscall.inotify as inotify
+import typing as t
 from rsyscall.io import StandardTask, Path
+from rsyscall.io import FileDescriptor, ReadableWritableFile
 
 # launch postgres
 # I guess just do all these commands, hmm.
@@ -50,6 +53,90 @@ def new_jobset(session, base: str, project: str, identifier: str, path: Path) ->
     })
     print(response.text)
     response.raise_for_status()
+
+class HTTPClient:
+    """Should an HTTP client object be called HTTPServer or HTTPClient?
+
+    It represents a server locally - so perhaps it should be server.
+
+    But most people call it client - so perhaps it should be client.
+
+    I'll conform with the masses...
+
+    """
+    def __init__(self, read: t.Callable[[], bytes],
+                 write: t.Callable[[bytes], int],
+                 headers: t.List[t.Tuple[str, str]]) -> None:
+        self.read = read
+        self.write = write
+        self.headers = headers
+        self.connection = h11.Connection(our_role=h11.CLIENT)
+
+    async def post(self, target: str, body: bytes) -> bytes:
+        data = self.connection.send(h11.Request(
+            method="POST", target=target, headers=[*self.headers, ("Content-Length", str(len(body)))]))
+        data += self.connection.send(h11.Data(data=body))
+        data += self.connection.send(h11.EndOfMessage())
+        await self.write(data)
+        data = await self.read()
+        self.connection.receive_data(data)
+        response = self.connection.next_event()
+        data = self.connection.next_event()
+        eom = self.connection.next_event()
+        if response.status_code != 200:
+            raise Exception("error posting", data.data)
+        self.connection.start_next_cycle()
+        return data.data
+
+    async def put(self, target: str, body: bytes) -> bytes:
+        data = self.connection.send(h11.Request(
+            method="PUT", target=target, headers=[*self.headers, ("Content-Length", str(len(body)))]))
+        data += self.connection.send(h11.Data(data=body))
+        data += self.connection.send(h11.EndOfMessage())
+        await self.write(data)
+        data = await self.read()
+        self.connection.receive_data(data)
+        response = self.connection.next_event()
+        data = self.connection.next_event()
+        eom = self.connection.next_event()
+        if response.status_code != 200:
+            raise Exception("error posting", data.data)
+        self.connection.start_next_cycle()
+        return data.data
+
+    async def get(self, target: str) -> bytes:
+        data = self.connection.send(h11.Request(method="POST", target=target, headers=self.headers))
+        data += self.connection.send(h11.EndOfMessage())
+        await self.write(data)
+        data = await self.read()
+        self.connection.receive_data(data)
+        response = self.connection.next_event()
+        data = self.connection.next_event()
+        eom = self.connection.next_event()
+        if response.status_code != 200:
+            raise Exception("error getting", data.data)
+        self.connection.start_next_cycle()
+        return data.data
+
+async def login(sock: FileDescriptor[ReadableWritableFile], username: str, password: str) -> None:
+    headers = [
+        ("Host", "localhost"),
+        ("Referer", "http://localhost:3000/"),
+        ("Origin", "http://localhost:3000"),
+        ("Accept", "application/json"),
+    ]
+    conn = h11.Connection(our_role=h11.CLIENT)
+    data = b""
+    data = conn.send(h11.Request(method="POST", target="/login", headers=headers))
+    data += conn.send(h11.Data(data=json.dumps({'username': username, 'password': password}).encode()))
+    data += conn.send(h11.EndOfMessage())
+    await sock.write(data)
+    data = await sock.read()
+    conn.receive_data(data)
+    response = conn.next_event()
+    data = conn.next_event()
+    if response.status_code != 200:
+        raise Exception("error logging in", data.data)
 
 async def run_hydra(stdtask: StandardTask, path: Path) -> None:
     # postgres
@@ -122,20 +209,21 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
         print("doing stuff")
         sock = await stdtask.task.socket_unix(socket.SOCK_STREAM)
         await sock.connect(sockpath.unix_address())
-        conn = h11.Connection(our_role=h11.CLIENT)
-        headers = [
+        client = HTTPClient(sock.read, sock.write, [
             ("Host", "localhost"),
-            ("Referer", "http://localhost:3000"),
+            # ("Referer", "http://localhost:3000/"),
+            ("Referer", "http://localhost/"),
             ("Accept", "application/json"),
-        ]
-        await sock.write(conn.send(h11.Request(method="GET", target="/", headers=headers)))
-        await sock.write(conn.send(h11.EndOfMessage()))
-        data = await sock.read()
-        conn.receive_data(data)
-        print(conn.next_event())
-        print(conn.next_event())
-        # TODO use h11
-        # hmm it would be nice to avoid maintaining a connection I guess.
+        ])
+        await client.post("/login", json.dumps({'username': "sbaugh", 'password': "foobar"}).encode())
+        print(await client.get("/"))
+        await client.put('/project/trivial', json.dumps({
+            'identifier': 'trivial', 'displayname': 'Trivial', 'enabled': '1', 'visible': '1',
+        }).encode())
+        # await client.put('/jobset/trivial/trivial', json.dumps({
+        #     'identifier': 'trivial', 'displayname': 'Trivial', 'enabled': '1', 'visible': '1',
+        # }).encode())
+
 
 async def main() -> None:
     stdtask = rsc.local_stdtask
