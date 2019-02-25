@@ -99,6 +99,12 @@ int main(int argc, char** argv, char** envp)
     const int connecting_fd = fds[3];
     size_t envp_count = 0;
     for (; envp[envp_count] != NULL; envp_count++);
+    kernel_sigset_t sigmask = {};
+    int ret;
+    ret = rt_sigprocmask(-1, NULL, &sigmask, sizeof(sigmask));
+    if (ret < 0) {
+        err(1, "rt_sigprocmask(-1, NULL, &sigmask, sizeof(sigmask))");
+    }
     struct rsyscall_unix_stub describe = {
         .symbols = rsyscall_symbol_table(),
         .pid = getpid(),
@@ -108,8 +114,9 @@ int main(int argc, char** argv, char** envp)
         .connecting_fd = connecting_fd,
         .argc = argc,
         .envp_count = envp_count,
+	.sigmask = sigmask,
     };
-    int ret = write(data_fd, &describe, sizeof(describe));
+    ret = write(data_fd, &describe, sizeof(describe));
     if (ret != sizeof(describe)) {
         err(1, "write(data_fd, &describe, sizeof(describe))");
     }

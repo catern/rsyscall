@@ -54,6 +54,12 @@ def new_jobset(session, base: str, project: str, identifier: str, path: Path) ->
     print(response.text)
     response.raise_for_status()
 
+def lookup_alist(alist: t.List[t.Tuple[bytes, bytes]], find_key: bytes) -> t.Optional[bytes]:
+    for key, value in alist:
+        if key == find_key:
+            return value
+    return None
+
 class HTTPClient:
     """Should an HTTP client object be called HTTPServer or HTTPClient?
 
@@ -64,79 +70,83 @@ class HTTPClient:
     I'll conform with the masses...
 
     """
-    def __init__(self, read: t.Callable[[], bytes],
-                 write: t.Callable[[bytes], int],
+    def __init__(self, read: t.Callable[[], t.Awaitable[bytes]],
+                 write: t.Callable[[bytes], t.Awaitable[int]],
                  headers: t.List[t.Tuple[str, str]]) -> None:
         self.read = read
         self.write = write
         self.headers = headers
         self.connection = h11.Connection(our_role=h11.CLIENT)
+        self.cookies: t.Optional[bytes] = None
+
+    async def next_event(self) -> t.Any:
+        while True:
+            event = self.connection.next_event()
+            if event is h11.NEED_DATA:
+                data = await self.read()
+                self.connection.receive_data(data)
+                continue
+            return event
+
+    def get_headers(self) -> t.List[t.Tuple[str, str]]:
+        if self.cookies is None:
+            return self.headers
+        else:
+            return [*self.headers, ("Cookie", self.cookies)]
 
     async def post(self, target: str, body: bytes) -> bytes:
+        # send request
         data = self.connection.send(h11.Request(
-            method="POST", target=target, headers=[*self.headers, ("Content-Length", str(len(body)))]))
+            method="POST", target=target,
+            headers=[*self.get_headers(), ("Content-Length", str(len(body)))]))
         data += self.connection.send(h11.Data(data=body))
         data += self.connection.send(h11.EndOfMessage())
         await self.write(data)
-        data = await self.read()
-        self.connection.receive_data(data)
-        response = self.connection.next_event()
-        data = self.connection.next_event()
-        eom = self.connection.next_event()
-        if response.status_code != 200:
+        # get response
+        response = await self.next_event()
+        data     = await self.next_event()
+        eom      = await self.next_event()
+        print(response); print(data); print(eom)
+        set_cookie = lookup_alist(response.headers, b"set-cookie")
+        if set_cookie is not None:
+            self.cookies = set_cookie
+        if response.status_code >= 300:
             raise Exception("error posting", data.data)
         self.connection.start_next_cycle()
         return data.data
 
     async def put(self, target: str, body: bytes) -> bytes:
-        data = self.connection.send(h11.Request(
-            method="PUT", target=target, headers=[*self.headers, ("Content-Length", str(len(body)))]))
+        request = h11.Request(
+            method="PUT", target=target,
+            headers=[*self.get_headers(), ("Content-Length", str(len(body)))])
+        print("PUT request", request)
+        data = self.connection.send(request)
         data += self.connection.send(h11.Data(data=body))
         data += self.connection.send(h11.EndOfMessage())
         await self.write(data)
-        data = await self.read()
-        self.connection.receive_data(data)
-        response = self.connection.next_event()
-        data = self.connection.next_event()
-        eom = self.connection.next_event()
-        if response.status_code != 200:
+        response = await self.next_event()
+        data     = await self.next_event()
+        eom      = await self.next_event()
+        print(response, data, eom)
+        if response.status_code >= 300:
             raise Exception("error posting", data.data)
         self.connection.start_next_cycle()
         return data.data
 
     async def get(self, target: str) -> bytes:
-        data = self.connection.send(h11.Request(method="POST", target=target, headers=self.headers))
+        request = h11.Request(method="GET", target=target, headers=self.get_headers())
+        print("request", request)
+        data = self.connection.send(request)
         data += self.connection.send(h11.EndOfMessage())
         await self.write(data)
-        data = await self.read()
-        self.connection.receive_data(data)
-        response = self.connection.next_event()
-        data = self.connection.next_event()
-        eom = self.connection.next_event()
-        if response.status_code != 200:
+        response = await self.next_event()
+        data = await self.next_event()
+        eom = await self.next_event()
+        print(response, data, eom)
+        if response.status_code >= 300:
             raise Exception("error getting", data.data)
         self.connection.start_next_cycle()
         return data.data
-
-async def login(sock: FileDescriptor[ReadableWritableFile], username: str, password: str) -> None:
-    headers = [
-        ("Host", "localhost"),
-        ("Referer", "http://localhost:3000/"),
-        ("Origin", "http://localhost:3000"),
-        ("Accept", "application/json"),
-    ]
-    conn = h11.Connection(our_role=h11.CLIENT)
-    data = b""
-    data = conn.send(h11.Request(method="POST", target="/login", headers=headers))
-    data += conn.send(h11.Data(data=json.dumps({'username': username, 'password': password}).encode()))
-    data += conn.send(h11.EndOfMessage())
-    await sock.write(data)
-    data = await sock.read()
-    conn.receive_data(data)
-    response = conn.next_event()
-    data = conn.next_event()
-    if response.status_code != 200:
-        raise Exception("error logging in", data.data)
 
 async def run_hydra(stdtask: StandardTask, path: Path) -> None:
     # postgres
@@ -192,6 +202,18 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
             "--role", "admin",
         ).env(HYDRA_DBI=dbi, HYDRA_DATA=data))
 
+        # create config files
+        hydra_settings = {"email_notification": "1"}
+        hydra_config = await rsc.spit(path/"hydra.conf", "\n".join([f"{key} = {value}" for key, value in hydra_settings.items()]))
+        stubbin = await (path/"stubbin").mkdir()
+        sendmail_stub = await rsc.make_stub(stdtask, stubbin, "sendmail")
+        hydra_env: t.Mapping[str, t.Union[str, bytes, os.PathLike]] = {
+            'HYDRA_DBI': dbi,
+            'HYDRA_DATA': data,
+            'HYDRA_CONFIG': hydra_config,
+            'HYDRA_MAIL_TEST': "1",
+            'PATH': os.fsencode(stubbin) + b':' + stdtask.environment[b'PATH']
+        }
         # start server
         server_thread = await stdtask.fork()
         sock = await server_thread.stdtask.task.socket_unix(socket.SOCK_STREAM, cloexec=False)
@@ -200,11 +222,11 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
         await sock.listen(10)
         ssport = os.fsdecode(sockpath)+"="+str(sock.handle.near.number)
         server_child = await server_thread.exec(hydra_server.env(
-            HYDRA_DBI=dbi, HYDRA_DATA=data, SERVER_STARTER_PORT=ssport))
+            **hydra_env, SERVER_STARTER_PORT=ssport))
         nursery.start_soon(server_child.check)
         # start evaluator, queue runner
-        await nursery.start(stdtask.run, hydra_evaluator.env(HYDRA_DBI=dbi, HYDRA_DATA=data))
-        await nursery.start(stdtask.run, hydra_queue_runner.env(HYDRA_DBI=dbi, HYDRA_DATA=data))
+        await nursery.start(stdtask.run, hydra_evaluator.env(**hydra_env))
+        await nursery.start(stdtask.run, hydra_queue_runner.env(**hydra_env))
         # connect and send http requests
         print("doing stuff")
         sock = await stdtask.task.socket_unix(socket.SOCK_STREAM)
@@ -217,13 +239,39 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
         ])
         await client.post("/login", json.dumps({'username': "sbaugh", 'password': "foobar"}).encode())
         print(await client.get("/"))
-        # TODO need to save the cookie for logging in
         await client.put('/project/trivial', json.dumps({
             'identifier': 'trivial', 'displayname': 'Trivial', 'enabled': '1', 'visible': '1',
         }).encode())
-        # await client.put('/jobset/trivial/trivial', json.dumps({
-        #     'identifier': 'trivial', 'displayname': 'Trivial', 'enabled': '1', 'visible': '1',
-        # }).encode())
+        parent, name = trivial_path.split()
+        await client.put('/jobset/trivial/trivial', json.dumps({
+            "identifier": "trivial",
+            "description": "Trivial",
+            "checkinterval": "60",
+            "enabled": "1",
+            "visible": "1",
+            "keepnr": "1",
+            "nixexprinput": "trivial",
+            "nixexprpath": os.fsdecode(name),
+            "enableemail": "1",
+            "emailoverride": "sbaugh@localhost",
+            "inputs": {
+                "trivial": {
+                    "value": os.fsdecode(parent),
+                    "type": "path",
+                },
+                "string": {
+                    "value": "hello world " + str(time.time()),
+                    "type": "string",
+                },
+            },
+        }).encode())
+        args, sendmail_task = await sendmail_stub.accept()
+        print("sendmail args", args)
+
+# email env vars:
+# HYDRA_MAIL_TEST=1
+# HYDRA_CONFIG="file with email_notification = 1"
+# 
 
 
 async def main() -> None:

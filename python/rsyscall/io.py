@@ -4040,6 +4040,7 @@ async def setup_stub(
                 SignalMask(set()),
                 pid_namespace)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
+    # I guess I need to write out the set too in describe
     epoller = await task.make_epoll_center()
     child_monitor = await ChildProcessMonitor.make(task, epoller)
     new_stdtask = StandardTask(
