@@ -267,12 +267,7 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
         }).encode())
         args, sendmail_task = await sendmail_stub.accept()
         print("sendmail args", args)
-
-# email env vars:
-# HYDRA_MAIL_TEST=1
-# HYDRA_CONFIG="file with email_notification = 1"
-# 
-
+        sendmail_task.stdin
 
 async def main() -> None:
     stdtask = rsc.local_stdtask

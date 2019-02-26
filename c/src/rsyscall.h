@@ -69,5 +69,5 @@ struct rsyscall_unix_stub {
     int connecting_fd;
     size_t argc;
     size_t envp_count;
-    kernel_sigset_t sigmask;
+    uint64_t sigmask;
 };

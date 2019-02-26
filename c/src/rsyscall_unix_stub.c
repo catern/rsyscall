@@ -9,6 +9,7 @@
 #include <sys/un.h>
 #include <fcntl.h>
 #include <string.h>
+#include <signal.h>
 #include "rsyscall.h"
 
 static void receive_fds(const int sock, int *fds, int n) {
@@ -99,11 +100,11 @@ int main(int argc, char** argv, char** envp)
     const int connecting_fd = fds[3];
     size_t envp_count = 0;
     for (; envp[envp_count] != NULL; envp_count++);
-    kernel_sigset_t sigmask = {};
+    sigset_t sigmask;
     int ret;
-    ret = rt_sigprocmask(-1, NULL, &sigmask, sizeof(sigmask));
+    ret = sigprocmask(-1, NULL, &sigmask);
     if (ret < 0) {
-        err(1, "rt_sigprocmask(-1, NULL, &sigmask, sizeof(sigmask))");
+        err(1, "sigprocmask(-1, NULL, &sigmask)");
     }
     struct rsyscall_unix_stub describe = {
         .symbols = rsyscall_symbol_table(),

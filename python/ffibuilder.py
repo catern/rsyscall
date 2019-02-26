@@ -165,9 +165,6 @@ typedef struct siginfo {
 #define SFD_NONBLOCK ...
 #define SFD_CLOEXEC ...
 
-typedef struct kernel_sigmask {
-   int64_t sigs;
-} kernel_sigmask_t;
 #define SYS_rt_sigprocmask ...
 
 #define SIG_BLOCK ...
@@ -452,7 +449,7 @@ struct rsyscall_unix_stub {
     int connecting_fd;
     size_t argc;
     size_t envp_count;
-    kernel_sigmask_t sigmask;
+    uint64_t sigmask;
 };
 
 #define SYS_sendmsg ...
