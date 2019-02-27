@@ -1,4 +1,5 @@
 import json
+import email
 import h11
 import socket
 import time
@@ -211,7 +212,6 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
             'HYDRA_DBI': dbi,
             'HYDRA_DATA': data,
             'HYDRA_CONFIG': hydra_config,
-            'HYDRA_MAIL_TEST': "1",
             'PATH': os.fsencode(stubbin) + b':' + stdtask.environment[b'PATH']
         }
         # start server
@@ -267,7 +267,13 @@ async def run_hydra(stdtask: StandardTask, path: Path) -> None:
         }).encode())
         args, sendmail_task = await sendmail_stub.accept()
         print("sendmail args", args)
-        sendmail_task.stdin
+        data = await rsc.read_until_eof(sendmail_task.stdin)
+        message = email.message_from_bytes(data)
+        print(message)
+        print(message['X-Hydra-Project'], 'trivial')
+        print(message['X-Hydra-Jobset'], 'trivial')
+        print(message['X-Hydra-Job'], 'trivial')
+        print(message['Subject'].startswith("Success"))
 
 async def main() -> None:
     stdtask = rsc.local_stdtask
@@ -280,20 +286,6 @@ trivial_path = Path.from_bytes(
     rsc.local_stdtask.task,
     rsyscall.__spec__.loader.get_resource_reader(rsyscall.__spec__.name).resource_path('trivial.nix'))
 
-def do_api_stuff() -> None:
-    session = requests.Session()
-    base = 'http://localhost:3000'
-    session.headers.update({'Referer': base})
-    session.headers.update({'Accept': 'application/json'})
-
-    session.hooks = {
-        # 'response': lambda r, *args, **kwargs: r.raise_for_status()
-    }
-    login(session, base, 'sbaugh', 'foobar')
-    project_identifier = 'trivial'
-    new_project(session, base, project_identifier)
-    new_jobset(session, base, project_identifier, 'trivial', trivial_path)
-
 # for builds:
 # - we need to be a trusted user
 # - we need a signing key and autosigning
@@ -305,6 +297,20 @@ def do_api_stuff() -> None:
 # yeah if we don't pass a HYDRA_DBI it uses sqlite.
 # or we can just do it ourselves...
 
+import unittest
+
+class TestHydra(unittest.TestCase):
+    # b l a h
+    # so I guess we'll um
+    # conceptually:
+    # we build a bunch of stuff,
+    # and then we do validations on it
+    # and that gives me another object
+    # so the thing is, we aren't accumulating/building any things when we do the validations.
+    thing: Foo
+
+    def test_hydra(self) -> None:
+        pass
+
 if __name__ == "__main__":
     trio.run(main)
-    # do_api_stuff()

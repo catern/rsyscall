@@ -3983,11 +3983,15 @@ class StubServer:
         conn: FileDescriptor[UnixSocketFile]
         addr: t.Any
         conn, addr = await self.listening_sock.accept(os.O_CLOEXEC) # type: ignore
-        return (await setup_stub(stdtask, conn))
+        argv, new_stdtask = await setup_stub(stdtask, conn)
+        # have to drop first argument, which is the unix_stub executable; see make_stub
+        return argv[1:], new_stdtask
 
 async def make_stub(stdtask: StandardTask, dir: Path, name: str) -> StubServer:
     sock_path = dir/f'{name}.sock'
     server = await StubServer.make(stdtask, sock_path)
+    # there's no POSIX sh way to set $0, so we'll pass $0 as $1, $1 as $2, etc.
+    # $0 will be the stub executable, so we'll need to drop $0 in StubServer.
     wrapper = """#!/bin/sh
 RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
 """.format(sock=os.fsdecode(sock_path), bin=os.fsdecode(stdtask.filesystem.rsyscall_unix_stub_path))
@@ -4037,7 +4041,7 @@ async def setup_stub(
                 SocketMemoryTransport(access_data_sock,
                                       base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd))),
                 memory.AllocatorClient.make_allocator(base_task),
-                SignalMask(set()),
+                SignalMask({signal.Signals(bit) for bit in memsys.bits(describe_struct.sigmask)}),
                 pid_namespace)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     # I guess I need to write out the set too in describe
@@ -4143,3 +4147,10 @@ async def rsyscall_stdin_bootstrap(
     remote_futex_memfd = near.FileDescriptor(describe_struct.futex_memfd)
     return child_task, new_stdtask
 
+async def read_until_eof(fd: FileDescriptor[ReadableFile]) -> bytes:
+    data = b""
+    ret = await fd.read()
+    while len(ret) != 0:
+        data += ret
+        ret = await fd.read()
+    return data

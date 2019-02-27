@@ -115,7 +115,7 @@ int main(int argc, char** argv, char** envp)
         .connecting_fd = connecting_fd,
         .argc = argc,
         .envp_count = envp_count,
-	.sigmask = sigmask,
+	.sigmask = *((uint64_t*) &sigmask),
     };
     ret = write(data_fd, &describe, sizeof(describe));
     if (ret != sizeof(describe)) {
