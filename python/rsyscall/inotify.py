@@ -100,6 +100,9 @@ class Inotify:
     async def remove(self, wd: WatchDescriptor) -> None:
         await self.asyncfd.underlying.handle.inotify_rm_watch(wd)
 
+    async def aclose(self) -> None:
+        await self.asyncfd.aclose()
+
 class Mask(enum.IntFlag):
     # possible events, specified in inotify_add_watch and returned in struct inotify_event
     ACCESS = lib.IN_ACCESS
