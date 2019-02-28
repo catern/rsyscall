@@ -341,32 +341,64 @@ trivial_path = Path.from_bytes(
 # or we can just do it ourselves...
 
 import unittest
+import functools
+from trio._core._run import Nursery
 
-class TestHydra(unittest.TestCase):
-    # b l a h
-    # so I guess we'll um
-    # conceptually:
-    # we build a bunch of stuff,
-    # and then we do validations on it
-    # and that gives me another object
-    # so the thing is, we aren't accumulating/building any things when we do the validations.
-    ####
-    # ok so the ideal API is something where we setUp then tearDown
-    # but that doesn't work too well with trio, hmm.
-    # in fact, contextmanagers really don't work well with this! hmm
-    # so I can override run to make a nursery. but what if I want to do async things? hmm
-    # ugh
-    # okay let's just cut this thing short
-    # we'll call a helper method at the start of the test?
-    hydra: Hydra
+class TrioTestCase(unittest.TestCase):
+    nursery: Nursery
 
-    def runner(self, test: t.Callable[[Hydra], t.Awaitable[None]]) -> None:
+    async def asyncSetUp(self) -> None:
         pass
 
-    def test_hydra(self) -> None:
-        @self.runner
-        async def test(self, hydra: Hydra) -> None:
-            pass
+    async def asyncTearDown(self) -> None:
+        pass
+
+    def __init__(self, methodName='runTest') -> None:
+        test = getattr(self, methodName)
+        @functools.wraps(test)
+        async def test_with_setup() -> None:
+            async with trio.open_nursery() as nursery:
+                self.nursery = nursery
+                await self.asyncSetUp()
+                await test()
+                await self.asyncTearDown()
+                nursery.cancel_scope.cancel()
+        @functools.wraps(test_with_setup)
+        def sync_test_with_setup() -> None:
+            trio.run(test_with_setup)
+        setattr(self, methodName, sync_test_with_setup)
+        super().__init__(methodName)
+
+class TestHydra(TrioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.stdtask = rsc.local_stdtask
+        self.path = Path.from_bytes(self.stdtask.task, self.stdtask.environment[b'HOME'])/"hydra"
+        await self.path.mkdir()
+
+        self.postgres = await start_postgres(self.nursery, self.stdtask, await (self.path/"postgres").mkdir())
+        await self.postgres.createuser("hydra")
+        await self.postgres.createdb("hydra", owner="hydra")
+
+        stubbin = await (self.path/"stubbin").mkdir()
+        self.sendmail_stub = await rsc.make_stub(self.stdtask, stubbin, "sendmail")
+        self.stdtask.environment[b'PATH'] = os.fsencode(stubbin) + b':' + self.stdtask.environment[b'PATH']
+        # start server
+        self.hydra = await start_hydra(self.nursery, self.stdtask, await (self.path/"hydra").mkdir(), 
+                                       "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;")
+        self.client = await HydraClient.connect(self.stdtask, self.hydra)
+        
+    async def test_hydra(self) -> None:
+        await self.client.make_project()
+        await self.client.make_jobset()
+
+        args, sendmail_task = await self.sendmail_stub.accept()
+        print("sendmail args", args)
+        data = await rsc.read_until_eof(sendmail_task.stdin)
+        message = email.message_from_bytes(data)
+        self.assertEqual('trivial', message['X-Hydra-Project'])
+        self.assertEqual('trivial', message['X-Hydra-Jobset'])
+        self.assertEqual('trivial', message['X-Hydra-Job'])
+        self.assertIn("Success", message['Subject'])
 
 if __name__ == "__main__":
-    trio.run(main)
+    unittest.main()
