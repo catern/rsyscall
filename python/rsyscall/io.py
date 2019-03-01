@@ -246,7 +246,7 @@ class Task:
                 await self.base.fs.fchdir(self.base, dirfd)
             await self.base.fs.chdir(self.base, pathname)
 
-    async def fchdir(self, fd: FileDescriptor) -> None:
+    async def fchdir(self, fd: handle.FileDescriptor) -> None:
         await self.base.fs.fchdir(self.base, fd.handle.far)
 
     async def unshare_fs(self) -> None:
@@ -271,6 +271,9 @@ class Task:
 
     async def read(self, fd: far.FileDescriptor, count: int=4096) -> bytes:
         return (await memsys.read(self.base, self.transport, self.allocator, fd, count))
+
+    async def pread(self, fd: handle.FileDescriptor, count: int, offset: int) -> bytes:
+        return (await memsys.pread(self.base, self.transport, self.allocator, fd.far, count, offset))
 
     # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
     # and they'll take an handle.FileDescriptor.

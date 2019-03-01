@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 class SYS(enum.IntEnum):
     read = lib.SYS_read
     write = lib.SYS_write
+    pread64 = lib.SYS_pread64
     recvfrom = lib.SYS_recvfrom
     close = lib.SYS_close
     fcntl = lib.SYS_fcntl
@@ -185,6 +186,9 @@ async def read(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count:
 
 async def write(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int) -> int:
     return (await sysif.syscall(SYS.write, fd, buf, count))
+
+async def pread(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int, offset: int) -> int:
+    return (await sysif.syscall(SYS.pread64, fd, buf, count, offset))
 
 async def recv(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int, flags: int) -> int:
     return (await sysif.syscall(SYS.recvfrom, fd, buf, count, flags))

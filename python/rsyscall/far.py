@@ -237,6 +237,9 @@ async def write(task: Task, fd: FileDescriptor, buf: Pointer, count: int) -> int
     assert task.address_space == buf.address_space
     return (await rsyscall.near.write(task.sysif, fd.near, buf.near, count))
 
+async def pread(task: Task, fd: FileDescriptor, buf: Pointer, count: int, offset: int) -> int:
+    return (await rsyscall.near.pread(task.sysif, task.to_near_fd(fd), task.to_near_pointer(buf), count, offset))
+
 async def recv(task: Task, fd: FileDescriptor, buf: Pointer, count: int, flags: int) -> int:
     return (await rsyscall.near.recv(task.sysif, task.to_near_fd(fd), task.to_near_pointer(buf), count, flags))
 

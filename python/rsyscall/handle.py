@@ -147,6 +147,11 @@ class FileDescriptor:
         return (await rsyscall.near.write(self.task.sysif, self.near,
                                           self.task.to_near_pointer(buf), count))
 
+    async def pread(self, buf: rsyscall.far.Pointer, count: int, offset: int) -> int:
+        self.validate()
+        return (await rsyscall.near.pread(self.task.sysif, self.near,
+                                          self.task.to_near_pointer(buf), count, offset))
+
     async def ftruncate(self, length: int) -> None:
         self.validate()
         await rsyscall.near.ftruncate(self.task.sysif, self.near, length)

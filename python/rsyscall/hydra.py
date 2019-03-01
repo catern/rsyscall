@@ -166,6 +166,14 @@ class Postgres:
     async def createdb(self, name: str, owner: str) -> None:
         await self.stdtask.run(self.createdb_cmd.args("--host", self.sockdir, "--owner", owner, name))
 
+async def read_completely(task: rsc.Task, fd: int) -> bytes:
+    data = b''
+    while True:
+        new_data = await task.pread(fd, 4096, offset=len(data))
+        if len(new_data) == 0:
+            return data
+        data += new_data
+
 async def start_postgres(nursery, stdtask: StandardTask, path: Path) -> Postgres:
     initdb = await rsc.which(stdtask, "initdb")
     postgres = await rsc.which(stdtask, "postgres")
@@ -190,10 +198,21 @@ async def start_postgres(nursery, stdtask: StandardTask, path: Path) -> Postgres
 
     await nursery.start(stdtask.run, postgres.args('-D', data))
     # pg_ctl uses the pid file to determine when postgres is up, so we do the same.
-    # we don't actually look at the contents - just wait for postgres to be done writing
-    # TODO actually do this right
-    await trio.sleep(.5)
-    await watch.wait_until_event(inotify.Mask.CLOSE_WRITE, "postmaster.pid")
+    pid_file_name = "postmaster.pid"
+    pid_file = None
+    while True:
+        await watch.wait_until_event(inotify.Mask.CLOSE_WRITE, pid_file_name)
+        if pid_file is None:
+            pid_file = await (data/pid_file_name).open(os.O_RDWR)
+        data = await read_completely(stdtask.task, pid_file.handle)
+        try:
+            # the postmaster status is on line 7
+            # would be nice to get that from LOCK_FILE_LINE_PM_STATUS in pidfile.h
+            pm_status = data.split(b'\n')[7]
+        except IndexError:
+            pm_status = b""
+        if b"ready" in pm_status:
+            break
     await inty.aclose()
     return Postgres(sockdir, stdtask, createuser, createdb)
 

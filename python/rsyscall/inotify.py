@@ -25,25 +25,30 @@ class Watch:
     wd: WatchDescriptor
     removed: bool = False
 
-    async def wait(self) -> Event:
+    async def wait(self) -> t.List[Event]:
         if self.removed:
             raise Exception("watch was already removed")
+        events: t.List[Event] = []
         while True:
             try:
                 event = self.channel.receive_nowait()
                 if event.mask & Mask.IGNORED:
                     # the name is a bit confusing - getting IGNORED means this watch was removed
                     self.removed = True
-                return event
+                events.append(event)
             except trio.WouldBlock:
-                await self.inotify.do_wait()
+                if len(events) == 0:
+                    await self.inotify.do_wait()
+                else:
+                    return events
 
     async def wait_until_event(self, mask: Mask, name: t.Optional[str]) -> None:
         while True:
-            event = await self.wait()
-            print(event)
-            if (event.mask & mask) and event.name == name:
-                break
+            events = await self.wait()
+            print(events)
+            for event in events:
+                if (event.mask & mask) and event.name == name:
+                    return
 
     async def remove(self) -> None:
         self.inotify.remove(self.wd)
