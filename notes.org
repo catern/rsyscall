@@ -3628,6 +3628,15 @@ so we don't have to be generic.
    Instead of "declaratively" building up a program/model of our deployment/distributed system,
    which we then submit to a runtime to be deployed,
    instead we just directly deploy each component as we describe it.
+** everything should be a library
+   like Jenkins
+
+   or Kubernetes
+
+   why does a Jenkins pipeline run inside Jenkins? is gross!
+
+   have standalone program use Jenkins features as library! easy!
+   support many languages! not single groovy sandboxing insanity!
 * explicitly modeling memory
 how would I do this?
 
