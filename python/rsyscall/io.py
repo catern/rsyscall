@@ -514,6 +514,11 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def write(self: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
         return (await self.file.write(self, buf))
 
+    async def write_all(self: 'FileDescriptor[WritableFile]', buf: bytes) -> None:
+        while len(buf) > 0:
+            ret = await self.write(buf)
+            buf = buf[ret:]
+
     async def add(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor', event: Pointer) -> None:
         await self.file.add(self, fd, event)
 
@@ -3981,7 +3986,7 @@ class StubServer:
         if stdtask is None:
             stdtask = self.stdtask
         conn: FileDescriptor[UnixSocketFile]
-        addr: t.Any
+        addr: UnixAddress
         conn, addr = await self.listening_sock.accept(os.O_CLOEXEC) # type: ignore
         argv, new_stdtask = await setup_stub(stdtask, conn)
         # have to drop first argument, which is the unix_stub executable; see make_stub

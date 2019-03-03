@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 import copy
+import fcntl
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory as memory
 import gc
@@ -127,6 +128,9 @@ class FileDescriptor:
         pid = self.task.process.near.id
         num = self.near.number
         return self.task.make_path_from_bytes(f"/proc/{pid}/fd/{num}".encode())
+
+    async def disable_cloexec(self) -> None:
+        await rsyscall.near.fcntl(self.task.sysif, self.near, fcntl.F_SETFD, 0)
 
     # should I just take handle.Pointers instead of near or far stuff? hmm.
     # should I really require ownership in this way?

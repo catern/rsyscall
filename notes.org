@@ -11521,3 +11521,43 @@ It deserves the same effort as I put into TS crapware.
   tis not something to rely upon, I suppose!
   maybe.
   whatever.
+* nginx
+    # so how will we manage nice flexible nginx?
+    # if we want to add new ways to forward to an existing server,
+    # we can upgrade the configuration.
+    # if we want to add new listening sockets,
+    # then we use an entirely different server.
+    # simple as!
+    # we could achieve adding new listening sockets with one server by,
+    # making the new config,
+    # HUPing the old nginx,
+    # and passing its listening sockets to the new one.
+    # that requires we keep the listening sockets around though, hmm
+    # that makes sense I think
+    # ok so we can start nginx with no servers I guess
+    # oh wait if we have no servers we can just do nothing :) not start it
+    # then, so, when someone calls a method to add a server,
+    # we um.
+    # we start the new one with all our sockets,
+    # and HUP (or QUIT?) the old one
+    # well, HUP at first, then QUIT I guess? hmm.
+    # we'd like to surface what's really going on to the user...
+    # the ideal thing would be, I guess, some server which we don't need to restart,
+    # which we can send new socket connections flexibly over IPC?
+    # well - that would be very monolithic
+    # it's fine to use different processes for each!
+    ## okay
+    # okay so the API is just,
+    # you can create an Nginx process with some number of listening sockets addresses servers, etc
+    # and if you want to add more servers, you have to create a new one with the sockets you,
+    # presumably, saved.
+    # and tell the old server to should down gracefully with the method.
+    # new forwardings, though, can happen by mutating an existing server -
+    # you can update the config and tell it to reload, no problem
+    ## hm
+    # hmm so there doesn't seem to be a clear mapping between a listen directive and a listening socket
+    # so maybe we'll need to have some NginxConfig object which we can stick listening sockets in,
+    # and get back out something we can use for a listen directive,
+    # to ensure that the sharing works
+    # yeah so we'll have a nice API that takes a listening socket and makes it some object,
+    # then you use that in other calls

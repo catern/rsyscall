@@ -1,3 +1,4 @@
+from __future__ import annotations
 import json
 import email
 import h11
@@ -8,9 +9,10 @@ import requests
 import trio
 import rsyscall.io as rsc
 import rsyscall.inotify as inotify
+import rsyscall.handle as handle
 import typing as t
-from rsyscall.io import StandardTask, Path, Command
-from rsyscall.io import FileDescriptor, ReadableWritableFile
+from rsyscall.io import StandardTask, RsyscallThread, Path, Command
+from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
 from dataclasses import dataclass
 
 # launch postgres
@@ -94,7 +96,7 @@ class HTTPClient:
         if self.cookies is None:
             return self.headers
         else:
-            return [*self.headers, ("Cookie", self.cookies)]
+            return [*self.headers, ("Cookie", self.cookies.encode())]
 
     async def post(self, target: str, body: bytes) -> bytes:
         # send request
@@ -195,6 +197,59 @@ async def start_postgres(nursery, stdtask: StandardTask, path: Path) -> Postgres
     await inty.aclose()
     return Postgres(sockdir, stdtask, createuser, createdb)
 
+class NginxChild:
+    # can support methods for reloading configuration, etc
+    def __init__(self, child: ChildProcess) -> None:
+        self.child = child
+
+async def exec_nginx(thread: RsyscallThread, nginx: Command,
+                     path: Path, config: handle.FileDescriptor,
+                     listen_fds: t.List[handle.FileDescriptor]) -> ChildProcess:
+    nginx_fds = [thread.stdtask.task.base.make_fd_handle(fd) for fd in listen_fds]
+    if nginx_fds:
+        nginx_var = ";".join(fd.near.number for fd in nginx_fds) + ';'
+    else:
+        nginx_var = ""
+    config_fd = thread.stdtask.task.base.make_fd_handle(config)
+    await thread.stdtask.unshare_files(going_to_exec=True)
+    for fd in [*nginx_fds, config_fd]:
+        await fd.disable_cloexec()
+    await (path/"logs").mkdir()
+    child = await thread.exec(
+        nginx.env(NGINX=nginx_var).args("-p", path, "-c", config_fd.as_proc_path()))
+    return child
+
+async def start_nginx(nursery, stdtask: StandardTask, path: Path, config: handle.FileDescriptor,
+                      listen_fds: t.List[handle.FileDescriptor]) -> NginxChild:
+    nginx = await rsc.which(stdtask, "nginx")
+    thread = await stdtask.fork()
+    child = await exec_nginx(thread, nginx, path, config, listen_fds)
+    nursery.start_soon(child.check)
+    return NginxChild(child)
+
+async def start_simple_nginx(nursery, stdtask: StandardTask, path: Path, sockpath: Path) -> NginxChild:
+    nginx = await rsc.which(stdtask, "nginx")
+    thread = await stdtask.fork()
+    config = b"""
+error_log stderr error;
+daemon off;
+events {}
+http {
+  access_log /proc/self/fd/1 combined;
+  server {
+    listen localhost:3001;
+    location / {
+        proxy_pass http://unix:%s;
+    }
+  }
+}
+""" % os.fsencode(sockpath)
+    config_fd = await (path.with_task(thread.stdtask.task)/"nginx.conf").open(os.O_RDWR|os.O_CREAT)
+    await config_fd.write_all(config)
+    child = await exec_nginx(thread, nginx, path, config_fd.handle, [])
+    nursery.start_soon(child.check)
+    return NginxChild(child)
+
 @dataclass
 class Hydra:
     sockpath: Path
@@ -226,6 +281,8 @@ async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str) -> H
         'HYDRA_CONFIG': config_path,
     }
     # start server
+    # TODO hydra is still listening on localhost, hmm
+    # HMMM it's confused about where it's hosted at, or something, so the links are broken
     server_thread = await stdtask.fork()
     sock = await server_thread.stdtask.task.socket_unix(socket.SOCK_STREAM, cloexec=False)
     sockpath = path/"hydra_server.sock"
@@ -240,6 +297,49 @@ async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str) -> H
     await nursery.start(stdtask.run, hydra_queue_runner.env(**hydra_env))
     return Hydra(sockpath)
 
+class Jobset:
+    def __init__(self, project: Project, identifier: str) -> None:
+        self.project = project
+        self.identifier = identifier
+
+class Project:
+    def __init__(self, client: HydraClient, identifier: str) -> None:
+        self.client = client
+        self.identifier = identifier
+
+    async def make_jobset(self, identifier: str, description: str=None) -> Jobset:
+        parent, name = trivial_path.split()
+        if description is None:
+            description = identifier
+        await self.client.http.put(f'/jobset/{self.identifier}/{identifier}', json.dumps({
+            "identifier": identifier,
+            "description": description,
+            "checkinterval": "60",
+            "enabled": "1",
+            "visible": "1",
+            "keepnr": "1",
+            "nixexprinput": "trivial",
+            "nixexprpath": os.fsdecode(name),
+            "enableemail": "1",
+            "emailoverride": "sbaugh@localhost",
+            # so hmm we really want to be able to literally write a jobset here
+            # but it really wants a path?
+            # let's look at the source...
+
+            # OK! guess: if we have input/path be the actual name of an input, we'll be good
+            # hmm but. hm. it won't pass to the evaluator in that case. hm.
+            "inputs": {
+                "trivial": {
+                    "value": os.fsdecode(parent),
+                    "type": "path",
+                },
+                "string": {
+                    "value": "hello world " + str(time.time()),
+                    "type": "string",
+                },
+            },
+        }).encode())
+        return Jobset(self, identifier)
 
 class HydraClient:
     @staticmethod
@@ -255,119 +355,29 @@ class HydraClient:
         await client.post("/login", json.dumps({'username': "sbaugh", 'password': "foobar"}).encode())
         return HydraClient(client)
 
-    def __init__(self, http_client: HTTPClient) -> None:
-        self.http_client = http_client
+    def __init__(self, http: HTTPClient) -> None:
+        self.http = http
 
-    async def make_project(self) -> None:
-        await self.http_client.put('/project/trivial', json.dumps({
-            'identifier': 'trivial', 'displayname': 'Trivial', 'enabled': '1', 'visible': '1',
+    async def make_project(self, identifier: str, displayname: str=None) -> Project:
+        if displayname is None:
+            displayname = identifier
+        await self.http.put(f'/project/{identifier}', json.dumps({
+            'identifier': identifier, 'displayname': displayname, 'enabled': '1', 'visible': '1',
         }).encode())
-
-    async def make_jobset(self) -> None:
-        parent, name = trivial_path.split()
-        await self.http_client.put('/jobset/trivial/trivial', json.dumps({
-            "identifier": "trivial",
-            "description": "Trivial",
-            "checkinterval": "60",
-            "enabled": "1",
-            "visible": "1",
-            "keepnr": "1",
-            "nixexprinput": "trivial",
-            "nixexprpath": os.fsdecode(name),
-            "enableemail": "1",
-            "emailoverride": "sbaugh@localhost",
-            "inputs": {
-                "trivial": {
-                    "value": os.fsdecode(parent),
-                    "type": "path",
-                },
-                "string": {
-                    "value": "hello world " + str(time.time()),
-                    "type": "string",
-                },
-            },
-        }).encode())
+        return Project(self, identifier)
         
-
-async def run_hydra(stdtask: StandardTask, path: Path) -> None:
-    async with trio.open_nursery() as nursery:
-        postgres = await start_postgres(nursery, stdtask, await (path/"postgres").mkdir())
-
-        await postgres.createuser("hydra")
-        await postgres.createdb("hydra", owner="hydra")
-
-        stubbin = await (path/"stubbin").mkdir()
-        sendmail_stub = await rsc.make_stub(stdtask, stubbin, "sendmail")
-        stdtask.environment[b'PATH'] = os.fsencode(stubbin) + b':' + stdtask.environment[b'PATH']
-        # start server
-        hydra = await start_hydra(nursery, stdtask, await (path/"hydra").mkdir(), 
-                                  "dbi:Pg:dbname=hydra;host=" + os.fsdecode(postgres.sockdir) + ";user=hydra;")
-        # connect and send http requests
-        print("doing stuff")
-        client = await HydraClient.connect(stdtask, hydra)
-        await client.make_project()
-        await client.make_jobset()
-
-        args, sendmail_task = await sendmail_stub.accept()
-        print("sendmail args", args)
-        data = await rsc.read_until_eof(sendmail_task.stdin)
-        message = email.message_from_bytes(data)
-        print(message)
-        print(message['X-Hydra-Project'], 'trivial')
-        print(message['X-Hydra-Jobset'], 'trivial')
-        print(message['X-Hydra-Job'], 'trivial')
-        print(message['Subject'].startswith("Success"))
-
-async def main() -> None:
-    stdtask = rsc.local_stdtask
-    path = Path.from_bytes(stdtask.task, stdtask.environment[b'HOME'])/"hydra"
-    await path.mkdir()
-    await run_hydra(rsc.local_stdtask, path)
-
 import rsyscall
 trivial_path = Path.from_bytes(
     rsc.local_stdtask.task,
     rsyscall.__spec__.loader.get_resource_reader(rsyscall.__spec__.name).resource_path('trivial.nix'))
+
+from rsyscall.trio_test_case import TrioTestCase
 
 # for builds:
 # - we need to be a trusted user
 # - we need a signing key and autosigning
 
 # ah we can just use a different prefix for the nix store! that would be totally fine!
-
-# okay so let's try and use sqlite to speed up startup?
-# maybe initdb can be configured to not sync? maybe we can do postgres in-memory?
-# yeah if we don't pass a HYDRA_DBI it uses sqlite.
-# or we can just do it ourselves...
-
-import unittest
-import functools
-from trio._core._run import Nursery
-
-class TrioTestCase(unittest.TestCase):
-    nursery: Nursery
-
-    async def asyncSetUp(self) -> None:
-        pass
-
-    async def asyncTearDown(self) -> None:
-        pass
-
-    def __init__(self, methodName='runTest') -> None:
-        test = getattr(self, methodName)
-        @functools.wraps(test)
-        async def test_with_setup() -> None:
-            async with trio.open_nursery() as nursery:
-                self.nursery = nursery
-                await self.asyncSetUp()
-                await test()
-                await self.asyncTearDown()
-                nursery.cancel_scope.cancel()
-        @functools.wraps(test_with_setup)
-        def sync_test_with_setup() -> None:
-            trio.run(test_with_setup)
-        setattr(self, methodName, sync_test_with_setup)
-        super().__init__(methodName)
 
 class TestHydra(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -387,18 +397,26 @@ class TestHydra(TrioTestCase):
                                        "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;")
         self.client = await HydraClient.connect(self.stdtask, self.hydra)
         
-    async def test_hydra(self) -> None:
-        await self.client.make_project()
-        await self.client.make_jobset()
+    async def test_web(self) -> None:
+        await start_simple_nginx(self.nursery, self.stdtask, await (self.path/"nginx").mkdir(),
+                                 self.hydra.sockpath)
+        await trio.sleep(999)
+        
+    # async def test_hydra(self) -> None:
+    #     project = await self.client.make_project('neato', "A neat project")
+    #     jobset = await project.make_jobset('trivial', "Some trivial jobset")
 
-        args, sendmail_task = await self.sendmail_stub.accept()
-        print("sendmail args", args)
-        data = await rsc.read_until_eof(sendmail_task.stdin)
-        message = email.message_from_bytes(data)
-        self.assertEqual('trivial', message['X-Hydra-Project'])
-        self.assertEqual('trivial', message['X-Hydra-Jobset'])
-        self.assertEqual('trivial', message['X-Hydra-Job'])
-        self.assertIn("Success", message['Subject'])
+    #     args, sendmail_task = await self.sendmail_stub.accept()
+    #     print("sendmail args", args)
+    #     data = await rsc.read_until_eof(sendmail_task.stdin)
+    #     message = email.message_from_bytes(data)
+    #     self.assertEqual(project.identifier, message['X-Hydra-Project'])
+    #     self.assertEqual(jobset.identifier,  message['X-Hydra-Jobset'])
+    #     self.assertEqual('trivial', message['X-Hydra-Job'])
+    #     self.assertIn("Success", message['Subject'])
+    #     # lol hmm to connect to it I'm gonna need to run nginx
+    #     # since at the moment I'm using a unix socket
 
 if __name__ == "__main__":
+    import unittest
     unittest.main()
