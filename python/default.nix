@@ -27,6 +27,7 @@ pytest ];
   propagatedBuildInputs = [ (import ../c)
       trio cffi pkgconfig python-prctl pkgs.nginx typeguard
       requests h11 pkgs.pkgconfig hydra
+      pkgs.postgresql_11
   ];
 }
 

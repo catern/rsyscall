@@ -96,7 +96,7 @@ class HTTPClient:
         if self.cookies is None:
             return self.headers
         else:
-            return [*self.headers, ("Cookie", self.cookies.encode())]
+            return [*self.headers, ("Cookie", self.cookies.decode())]
 
     async def post(self, target: str, body: bytes) -> bytes:
         # send request
@@ -252,11 +252,14 @@ async def start_simple_nginx(nursery, stdtask: StandardTask, path: Path, sockpat
     config = b"""
 error_log stderr error;
 daemon off;
+# nginx is dumb and can't manage to kill workers if the parent gets SIGKILL'd
+# so therefore we'll use master_process off so it runs single-process
+master_process off;
 events {}
 http {
   access_log /proc/self/fd/1 combined;
   server {
-    listen localhost:3001;
+    listen localhost:3000;
     location / {
         proxy_pass http://unix:%s;
     }
@@ -300,8 +303,6 @@ async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str) -> H
         'HYDRA_CONFIG': config_path,
     }
     # start server
-    # TODO hydra is still listening on localhost, hmm
-    # HMMM it's confused about where it's hosted at, or something, so the links are broken
     server_thread = await stdtask.fork()
     sock = await server_thread.stdtask.task.socket_unix(socket.SOCK_STREAM, cloexec=False)
     sockpath = path/"hydra_server.sock"
@@ -416,25 +417,27 @@ class TestHydra(TrioTestCase):
                                        "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;")
         self.client = await HydraClient.connect(self.stdtask, self.hydra)
         
-    async def test_web(self) -> None:
+    # async def test_web(self) -> None:
+    #     # TODO we should test that things work fine when we go through the proxy
+    #     await start_simple_nginx(self.nursery, self.stdtask, await (self.path/"nginx").mkdir(),
+    #                              self.hydra.sockpath)
+        
+    async def test_hydra(self) -> None:
+        project = await self.client.make_project('neato', "A neat project")
+        jobset = await project.make_jobset('trivial', "Some trivial jobset")
+
+        args, sendmail_task = await self.sendmail_stub.accept()
+        print("sendmail args", args)
+        data = await rsc.read_until_eof(sendmail_task.stdin)
+        message = email.message_from_bytes(data)
+        self.assertEqual(project.identifier, message['X-Hydra-Project'])
+        self.assertEqual(jobset.identifier,  message['X-Hydra-Jobset'])
+        self.assertEqual('trivial', message['X-Hydra-Job'])
+        self.assertIn("Success", message['Subject'])
+        # start nginx to watch it
         await start_simple_nginx(self.nursery, self.stdtask, await (self.path/"nginx").mkdir(),
                                  self.hydra.sockpath)
         await trio.sleep(999)
-        
-    # async def test_hydra(self) -> None:
-    #     project = await self.client.make_project('neato', "A neat project")
-    #     jobset = await project.make_jobset('trivial', "Some trivial jobset")
-
-    #     args, sendmail_task = await self.sendmail_stub.accept()
-    #     print("sendmail args", args)
-    #     data = await rsc.read_until_eof(sendmail_task.stdin)
-    #     message = email.message_from_bytes(data)
-    #     self.assertEqual(project.identifier, message['X-Hydra-Project'])
-    #     self.assertEqual(jobset.identifier,  message['X-Hydra-Jobset'])
-    #     self.assertEqual('trivial', message['X-Hydra-Job'])
-    #     self.assertIn("Success", message['Subject'])
-    #     # lol hmm to connect to it I'm gonna need to run nginx
-    #     # since at the moment I'm using a unix socket
 
 if __name__ == "__main__":
     import unittest

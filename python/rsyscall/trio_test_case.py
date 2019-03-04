@@ -13,13 +13,13 @@ class TrioTestCase(unittest.TestCase):
         pass
 
     def __init__(self, methodName='runTest') -> None:
-        test = getattr(self, methodName)
+        test = getattr(type(self), methodName)
         @functools.wraps(test)
         async def test_with_setup() -> None:
             async with trio.open_nursery() as nursery:
                 self.nursery = nursery
                 await self.asyncSetUp()
-                await test()
+                await test(self)
                 await self.asyncTearDown()
                 nursery.cancel_scope.cancel()
         @functools.wraps(test_with_setup)
