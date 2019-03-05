@@ -11,8 +11,8 @@ let
   hydra = pkgs.hydra.overrideAttrs (_: { src = pkgs.fetchFromGitHub {
       owner = "catern";
       repo = "hydra";
-      rev = "0e80bb56ee5ff06a2961c5a452de2c60c7358b21";
-      sha256 = "18ai29650p3i5gcrnp38mbszb5121b92bzz8qncfx78d2m4db0jr";
+      rev = "542e9555dbbde4f03e112dfc5eb3a58da61dff24";
+      sha256 = "0clxyrc0fc7ki2lra4jg30xrpqjryc7406yg9g8gqp61ldgqk2h4";
   };});
 in
 with pkgs.python37Packages;

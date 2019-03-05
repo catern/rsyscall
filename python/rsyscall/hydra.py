@@ -418,6 +418,9 @@ class TestHydra(TrioTestCase):
                                        "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;")
         self.client = await HydraClient.connect(self.stdtask, self.hydra)
         
+    # hmmmmmmmMMMMmmm I want a jobset literal input hmm
+    # I think iffffff I justttt change the thing to take the literal input when empty path
+    # then that's good
     # async def test_web(self) -> None:
     #     # TODO we should test that things work fine when we go through the proxy
     #     await start_simple_nginx(self.nursery, self.stdtask, await (self.path/"nginx").mkdir(),
