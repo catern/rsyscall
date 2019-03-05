@@ -11561,3 +11561,58 @@ It deserves the same effort as I put into TS crapware.
     # to ensure that the sharing works
     # yeah so we'll have a nice API that takes a listening socket and makes it some object,
     # then you use that in other calls
+* fixing hydra
+  OK hmmmm
+
+  the google login
+
+  not exactly sure how this works, hmm.
+
+  waaait a second
+
+  wait a second, hydra isn't vulnerable to a CSRF at all!
+
+  it does this via JSON!
+
+  right? hmm.
+
+  How interesting...
+
+  OK so maybe we can check the existence X-Requested-With header? or, hm.
+  doing that would require specifying that in the rest API
+  it would be better to check content-type json?
+
+  hmmmmmmmm content-type json is dubious protection
+
+  ugh what about signing out
+
+  ugh this flash stuff allows bypassing all these protections
+
+  a token really is the best
+
+  ughghhhhhg
+
+  Origin doesn't seem to be reliable apparently
+
+  and this Same-Site cookies thing is too recent
+
+  but a token doesn't work for login
+
+  ahhhhhhhhhhhhhhhh
+
+  OK, Content-Type seems like the best thing
+
+  Because a token doesn't really work for login: you need a second step
+
+  right?
+
+  yeah.
+
+  because, if you do it before login,
+  they can just query,
+  and get the token,
+  and then include it.
+
+  you need a double-submit.
+
+  ok ok so let's do the JSON check

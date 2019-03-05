@@ -371,6 +371,7 @@ class HydraClient:
             # ("Referer", "http://localhost:3000/"),
             ("Referer", "http://localhost/"),
             ("Accept", "application/json"),
+            ("Content-Type", "application/json"),
         ])
         await client.post("/login", json.dumps({'username': "sbaugh", 'password': "foobar"}).encode())
         return HydraClient(client)
