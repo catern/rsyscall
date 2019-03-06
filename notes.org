@@ -11616,3 +11616,41 @@ It deserves the same effort as I put into TS crapware.
   you need a double-submit.
 
   ok ok so let's do the JSON check
+
+  ok finally done
+* getting path literal
+  Hmm so it looks like only things which define a storePath are on -I things.
+
+  HmMm
+
+  So I guess NIX_PATH/-I only contains literals
+
+  So we'd need to, um, we'd need to evaluate something ahead of time.
+
+  Hm.
+
+  I guess a more general approach would be,
+  instead of taking a NIX_PATH thing in hydra-eval-jobs,
+  instead just,
+  take an expression and evaluate it.
+
+  And the expression would be in the jobset configuration.
+
+  Ughhhhh
+
+  And it would usually just be import <foo/bar>
+
+  But we could do more.
+
+  OK so we want to be able to do a build without depending on any network things.
+
+  well. then what's the point? it's pure.
+
+  well we can evaluate it with arbitrary params.
+
+  basically, yeah, the entire description is literally included in the inputs. Hm.
+
+  Well, alternatively I could have a dummy path input thing plugin.
+  Which just looks at an argument, and... evals... that?
+
+  OK let's just use paths, ffs

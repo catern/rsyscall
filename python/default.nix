@@ -7,13 +7,13 @@ let
       sha256 = "0lli1gwwcqbhhm1s6816l33m38irqz1fzjrxb1gjp873d2lddg10";
   };});
   # hydra = pkgs.hydra;
-  # hydra = pkgs.hydra.overrideAttrs (_: { src = /home/sbaugh/.local/src/hydra; });
-  hydra = pkgs.hydra.overrideAttrs (_: { src = pkgs.fetchFromGitHub {
-      owner = "catern";
-      repo = "hydra";
-      rev = "542e9555dbbde4f03e112dfc5eb3a58da61dff24";
-      sha256 = "0clxyrc0fc7ki2lra4jg30xrpqjryc7406yg9g8gqp61ldgqk2h4";
-  };});
+  hydra = pkgs.hydra.overrideAttrs (_: { src = /home/sbaugh/.local/src/hydra; });
+  # hydra = pkgs.hydra.overrideAttrs (_: { src = pkgs.fetchFromGitHub {
+  #     owner = "catern";
+  #     repo = "hydra";
+  #     rev = "542e9555dbbde4f03e112dfc5eb3a58da61dff24";
+  #     sha256 = "0clxyrc0fc7ki2lra4jg30xrpqjryc7406yg9g8gqp61ldgqk2h4";
+  # };});
 in
 with pkgs.python37Packages;
 

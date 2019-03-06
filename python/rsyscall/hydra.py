@@ -31,6 +31,48 @@ def new_project(session, base: str, identifier: str) -> None:
     print(response.text)
     response.raise_for_status()
 
+class JobsetInput:
+    @abc.abstractmethod
+    def type(self) -> str: ...
+    @abc.abstractmethod
+    def value(self) -> str: ...
+    def dict(self) -> t.Dict[str, str]:
+        return {"type": self.type(), "value": self.value()}
+
+class JobsetIncludeInput:
+    """"
+
+    The subset of jobset inputs which get put on the Nix include path,
+    and therefore are valid candidates for finding the jobset input
+    expression.
+
+    """    
+    pass
+
+@dataclass
+class PathInput(JobsetInput):
+    path: Path
+    def type(self) -> str:
+        return "path"
+    def value(self) -> str:
+        return os.fsdecode(self.path)
+
+@dataclass
+class PathInput(JobsetIncludeInput):
+    path: Path
+    def type(self) -> str:
+        return "path"
+    def value(self) -> str:
+        return os.fsdecode(self.path)
+
+@dataclass
+class StringInput(JobsetInput):
+    string: str
+    def type(self) -> str:
+        return "string"
+    def value(self) -> str:
+        return self.string
+
 def new_jobset(session, base: str, project: str, identifier: str, path: Path) -> None:
     parent, name = path.split()
     response = session.put(base + f'/jobset/{project}/{identifier}', json={
@@ -327,10 +369,21 @@ class Project:
         self.client = client
         self.identifier = identifier
 
-    async def make_jobset(self, identifier: str, description: str=None) -> Jobset:
+    async def make_jobset(
+            self, identifier: str, description: str=None,
+            nixexprinput: JobsetInput, nixexprpath: str,
+            inputs: t.Dict[str, JobsetInput],
+    ) -> Jobset:
         parent, name = trivial_path.split()
         if description is None:
             description = identifier
+        for name, input for inputs.items():
+            if input is nixexprinput:
+                nixexprinput_name = name
+                break
+        else:
+            raise Exception("must pass nixexprinput", nixexprinput, "as a value in dict of inputs", inputs)
+                
         await self.client.http.put(f'/jobset/{self.identifier}/{identifier}', json.dumps({
             "identifier": identifier,
             "description": description,
@@ -338,8 +391,8 @@ class Project:
             "enabled": "1",
             "visible": "1",
             "keepnr": "1",
-            "nixexprinput": "trivial",
-            "nixexprpath": os.fsdecode(name),
+            "nixexprinput": "expr",
+            "nixexprpath": "",
             "enableemail": "1",
             "emailoverride": "sbaugh@localhost",
             # so hmm we really want to be able to literally write a jobset here
@@ -349,9 +402,22 @@ class Project:
             # OK! guess: if we have input/path be the actual name of an input, we'll be good
             # hmm but. hm. it won't pass to the evaluator in that case. hm.
             "inputs": {
-                "trivial": {
-                    "value": os.fsdecode(parent),
-                    "type": "path",
+                "trivexpr": {
+                    "value": '{expr}: builtins.toFile "expr" expr',
+                    "type": "nix",
+                },
+                "expr": {
+                    "value": """
+{ string }:
+{ trivial = builtins.derivation {
+    name = "trivial";
+    system = "x86_64-linux";
+    builder = "/bin/sh";
+    args = ["-c" "echo ${string} > $out; exit 0"];
+  };
+}
+""",
+                    "type": "string",
                 },
                 "string": {
                     "value": "hello world " + str(time.time()),
@@ -427,6 +493,9 @@ class TestHydra(TrioTestCase):
     #                              self.hydra.sockpath)
         
     async def test_hydra(self) -> None:
+        # start nginx to watch it
+        await start_simple_nginx(self.nursery, self.stdtask, await (self.path/"nginx").mkdir(),
+                                 self.hydra.sockpath)
         project = await self.client.make_project('neato', "A neat project")
         jobset = await project.make_jobset('trivial', "Some trivial jobset")
 
@@ -438,9 +507,6 @@ class TestHydra(TrioTestCase):
         self.assertEqual(jobset.identifier,  message['X-Hydra-Jobset'])
         self.assertEqual('trivial', message['X-Hydra-Job'])
         self.assertIn("Success", message['Subject'])
-        # start nginx to watch it
-        await start_simple_nginx(self.nursery, self.stdtask, await (self.path/"nginx").mkdir(),
-                                 self.hydra.sockpath)
         await trio.sleep(999)
 
 if __name__ == "__main__":
