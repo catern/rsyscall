@@ -11654,3 +11654,32 @@ It deserves the same effort as I put into TS crapware.
   Which just looks at an argument, and... evals... that?
 
   OK let's just use paths, ffs
+* cleaning up leaking processes
+  OK so let's do it with pid namespaces, that's clearly best
+
+  Even if we appear as root or something, it's fine.
+
+  I think
+
+  OK so the major issue is the child reparenting.
+
+  The API will just be, fork into a new user namespace.
+
+  The main issue is the inherent raciness of child spawning and monitoring.
+
+  So how can we get things to work, when we can have children be reparented to us at any moment?
+
+  Haha what if we use CLONE_PARENT as pid 1.
+
+  That would be hilarious and great.
+
+  I guess we'd need a separate child process monitor to clean up zombies...
+
+  hey can't we just track all events while we're cloning,
+  and then the last one we get is the one for our child?
+
+  wait a second we don't even get events while cloning, tho
+
+  wait wait, how are we even cloning in a child process
+
+  oh, we don't lock clone and wait against each other, right

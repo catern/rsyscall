@@ -1510,6 +1510,7 @@ class StandardTask:
         await self.task.base.unshare_user()
         root = self.task.root()
 
+        # oh we can't map through because we'll be root. hm. and have arbitrary setuid.
         uid_map = await (root/"proc"/"self"/"uid_map").open(os.O_WRONLY)
         await uid_map.write(f"{uid} {uid} 1\n".encode())
         await uid_map.invalidate()
