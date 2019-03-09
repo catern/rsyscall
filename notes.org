@@ -11683,3 +11683,9 @@ It deserves the same effort as I put into TS crapware.
   wait wait, how are we even cloning in a child process
 
   oh, we don't lock clone and wait against each other, right
+
+  so we track every wait event,
+  and then store them.
+  (and purge them when nothing is cloning)
+
+  then we don't need any locking at all? maybe?
