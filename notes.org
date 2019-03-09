@@ -11689,3 +11689,33 @@ It deserves the same effort as I put into TS crapware.
   (and purge them when nothing is cloning)
 
   then we don't need any locking at all? maybe?
+** other race actually even with ctid
+  I think even with ctid we have races.
+
+  Cuz, when do you check the ctid pointer? If it's after wait, then the event you got could be,
+  from some other process,
+  and then you get a pid wrap,
+  and check the ctid pointer.
+
+  But I guess this is related to reparenting, hmm.
+** oh
+   oh no my approach doesn't work
+
+   even if we store every event,
+   that doesn't help.
+
+   because, when we clone,
+   if we're waiting simultaneously,
+   we can get bad events.
+
+   well okay so if we lock waiting against cloning,
+   so that we never wait and clone simultaneously,
+   but can do both as much as we like if we're doing just one.
+
+   then everything is fine?
+
+   but blah I want to support reparaneting
+
+   I hope I can clone_parent
+
+   But yeah we'll just have fork take additional flags for user and pid namespace unsharing.
