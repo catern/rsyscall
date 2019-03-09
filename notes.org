@@ -3458,6 +3458,16 @@ hmm, actually it just occurred to me that this question is essentially the same 
    I guess if we accidentally pass the correct length then it's fine.
 
    Still probably should require the right size bits.
+** CLONE_PARENT doesn't need to be disallowed for container inits
+   It's already possible to make siblings of a container init,
+   and any other process can call CLONE_PARENT whenever it wants.
+
+   So, let's not bother disallowing it.
+   Since it's useful for me, since I can have my parent monitor my children centrally, instead of me...
+   And it allows for more correctness possibly:
+   since I can maybe avoid process child waiting raciness by just having,
+   when I waitid,
+   everything is from orphans.
 * possible kernel bugs
 ** MMAP_GROWSDOWN doesn't seem to work
    It doesn't grow.
@@ -3543,7 +3553,14 @@ hmm, actually it just occurred to me that this question is essentially the same 
 > you just have to have a proper ownership model, so that fds registered on epoll can't be closed without going through epoll
 <derRichard> yeah
 <derRichard> and if you know that, you better report a bug
+** CLONE_SIGHAND + CLONE_NEWPID don't work right together (see pidns.c)
+   signal(SIGCHLD, SIG_IGN) seems to be set in the parent when I kill the pid namespace init (my child).
 
+   So I don't get the SIGCHLD signal.
+
+   More than that, even if I have the SIGCHLD signal blocked in the parent, it doesn't get set as pending to me.
+
+   Strange, strange.
 * design decisions
 ** TODO should we grab the Task out of other objects, or pass it explicitly?
    Consider RsyscallTask.make as an example.
@@ -11719,3 +11736,25 @@ It deserves the same effort as I put into TS crapware.
    I hope I can clone_parent
 
    But yeah we'll just have fork take additional flags for user and pid namespace unsharing.
+
+
+   ugh okay so we can't use clone_parent as init in the pidns.
+* bug?
+  some kind of weird issue where sigign is set
+
+  That is to say, signal(SIGCHLD, SIG_IGN) seems to be set
+  when I kill the pid namespace child.
+
+  Hmm.
+
+  Guess I gotta write a C program to reproduce.
+
+  hmmm could it be related to sighand?
+
+  ok i can just disable sighand and bug goes away, so ignoring it.
+* ok how do I use it now
+  Oh I probably can actually use nginx without the intermediary.
+
+  Cuz nginx will reap its own stuff.
+
+  So yeah let's exec it

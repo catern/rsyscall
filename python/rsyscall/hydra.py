@@ -1,4 +1,5 @@
 from __future__ import annotations
+import abc
 import json
 import email
 import h11
@@ -15,22 +16,6 @@ from rsyscall.io import StandardTask, RsyscallThread, Path, Command
 from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
 from dataclasses import dataclass
 
-# launch postgres
-# I guess just do all these commands, hmm.
-# A thing to run shell commands would be useful I s'pose.
-# I guess somefin wot takes a Command and executes it.
-def login(session, base: str, username: str, password: str) -> None:
-    response = session.post(base + '/login', json={'username': username, 'password': password})
-    print(response.text)
-    response.raise_for_status()
-
-def new_project(session, base: str, identifier: str) -> None:
-    response = session.put(base + f'/project/{identifier}', json={
-        'identifier': identifier, 'displayname': 'Trivial', 'enabled': '1', 'visible': '1',
-    })
-    print(response.text)
-    response.raise_for_status()
-
 class JobsetInput:
     @abc.abstractmethod
     def type(self) -> str: ...
@@ -39,7 +24,7 @@ class JobsetInput:
     def dict(self) -> t.Dict[str, str]:
         return {"type": self.type(), "value": self.value()}
 
-class JobsetIncludeInput:
+class JobsetIncludeInput(JobsetInput):
     """"
 
     The subset of jobset inputs which get put on the Nix include path,
@@ -48,14 +33,6 @@ class JobsetIncludeInput:
 
     """    
     pass
-
-@dataclass
-class PathInput(JobsetInput):
-    path: Path
-    def type(self) -> str:
-        return "path"
-    def value(self) -> str:
-        return os.fsdecode(self.path)
 
 @dataclass
 class PathInput(JobsetIncludeInput):
@@ -72,33 +49,6 @@ class StringInput(JobsetInput):
         return "string"
     def value(self) -> str:
         return self.string
-
-def new_jobset(session, base: str, project: str, identifier: str, path: Path) -> None:
-    parent, name = path.split()
-    response = session.put(base + f'/jobset/{project}/{identifier}', json={
-        "identifier": identifier,
-        "description": "Trivial",
-        "checkinterval": "60",
-        "enabled": "1",
-        "visible": "1",
-        "keepnr": "1",
-        "nixexprinput": "trivial",
-        "nixexprpath": os.fsdecode(name),
-        "enableemail": "1",
-        "emailoverride": "sbaugh@localhost",
-        "inputs": {
-            "trivial": {
-                "value": os.fsdecode(parent),
-                "type": "path",
-            },
-            "string": {
-                "value": "hello world " + str(time.time()),
-                "type": "string",
-            },
-        },
-    })
-    print(response.text)
-    response.raise_for_status()
 
 def lookup_alist(alist: t.List[t.Tuple[bytes, bytes]], find_key: bytes) -> t.Optional[bytes]:
     for key, value in alist:
@@ -208,7 +158,7 @@ class Postgres:
     async def createdb(self, name: str, owner: str) -> None:
         await self.stdtask.run(self.createdb_cmd.args("--host", self.sockdir, "--owner", owner, name))
 
-async def read_completely(task: rsc.Task, fd: int) -> bytes:
+async def read_completely(task: rsc.Task, fd: handle.FileDescriptor) -> bytes:
     data = b''
     while True:
         new_data = await task.pread(fd, 4096, offset=len(data))
@@ -246,11 +196,11 @@ async def start_postgres(nursery, stdtask: StandardTask, path: Path) -> Postgres
         await watch.wait_until_event(inotify.Mask.CLOSE_WRITE, pid_file_name)
         if pid_file is None:
             pid_file = await (data/pid_file_name).open(os.O_RDWR)
-        data = await read_completely(stdtask.task, pid_file.handle)
+        pid_file_data = await read_completely(stdtask.task, pid_file.handle)
         try:
             # the postmaster status is on line 7
             # would be nice to get that from LOCK_FILE_LINE_PM_STATUS in pidfile.h
-            pm_status = data.split(b'\n')[7]
+            pm_status = pid_file_data.split(b'\n')[7]
         except IndexError:
             pm_status = b""
         if b"ready" in pm_status:
@@ -268,7 +218,7 @@ async def exec_nginx(thread: RsyscallThread, nginx: Command,
                      listen_fds: t.List[handle.FileDescriptor]) -> ChildProcess:
     nginx_fds = [thread.stdtask.task.base.make_fd_handle(fd) for fd in listen_fds]
     if nginx_fds:
-        nginx_var = ";".join(fd.near.number for fd in nginx_fds) + ';'
+        nginx_var = ";".join(str(fd.near.number) for fd in nginx_fds) + ';'
     else:
         nginx_var = ""
     config_fd = thread.stdtask.task.base.make_fd_handle(config)
@@ -283,20 +233,17 @@ async def exec_nginx(thread: RsyscallThread, nginx: Command,
 async def start_nginx(nursery, stdtask: StandardTask, path: Path, config: handle.FileDescriptor,
                       listen_fds: t.List[handle.FileDescriptor]) -> NginxChild:
     nginx = await rsc.which(stdtask, "nginx")
-    thread = await stdtask.fork()
+    thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
     child = await exec_nginx(thread, nginx, path, config, listen_fds)
     nursery.start_soon(child.check)
     return NginxChild(child)
 
 async def start_simple_nginx(nursery, stdtask: StandardTask, path: Path, sockpath: Path) -> NginxChild:
     nginx = await rsc.which(stdtask, "nginx")
-    thread = await stdtask.fork()
+    thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
     config = b"""
 error_log stderr error;
 daemon off;
-# nginx is dumb and can't manage to kill workers if the parent gets SIGKILL'd
-# so therefore we'll use master_process off so it runs single-process
-master_process off;
 events {}
 http {
   access_log /proc/self/fd/1 combined;
@@ -370,20 +317,25 @@ class Project:
         self.identifier = identifier
 
     async def make_jobset(
-            self, identifier: str, description: str=None,
-            nixexprinput: JobsetInput, nixexprpath: str,
+            self, identifier: str,
+            nixexprinput: JobsetIncludeInput, nixexprpath: str,
             inputs: t.Dict[str, JobsetInput],
+            description: str=None,
     ) -> Jobset:
-        parent, name = trivial_path.split()
         if description is None:
             description = identifier
-        for name, input for inputs.items():
+        for name, input in inputs.items():
             if input is nixexprinput:
                 nixexprinput_name = name
                 break
         else:
-            raise Exception("must pass nixexprinput", nixexprinput, "as a value in dict of inputs", inputs)
-                
+            nixexprinput_name = "nixexprinput"
+            if nixexprinput_name in inputs:
+                raise Exception(f"tried to default to name '{nixexprinput_name}' for the Nix expr input, "
+                                "but you already used that name in your input dictionary. "
+                                "Either explicitly include the Nix expr input in your input dictionary under any name, "
+                                f"or don't use the name '{nixexprinput_name}'.")
+            inputs = {**inputs, nixexprinput_name: nixexprinput}
         await self.client.http.put(f'/jobset/{self.identifier}/{identifier}', json.dumps({
             "identifier": identifier,
             "description": description,
@@ -391,39 +343,11 @@ class Project:
             "enabled": "1",
             "visible": "1",
             "keepnr": "1",
-            "nixexprinput": "expr",
-            "nixexprpath": "",
+            "nixexprinput": nixexprinput_name,
+            "nixexprpath": nixexprpath,
             "enableemail": "1",
             "emailoverride": "sbaugh@localhost",
-            # so hmm we really want to be able to literally write a jobset here
-            # but it really wants a path?
-            # let's look at the source...
-
-            # OK! guess: if we have input/path be the actual name of an input, we'll be good
-            # hmm but. hm. it won't pass to the evaluator in that case. hm.
-            "inputs": {
-                "trivexpr": {
-                    "value": '{expr}: builtins.toFile "expr" expr',
-                    "type": "nix",
-                },
-                "expr": {
-                    "value": """
-{ string }:
-{ trivial = builtins.derivation {
-    name = "trivial";
-    system = "x86_64-linux";
-    builder = "/bin/sh";
-    args = ["-c" "echo ${string} > $out; exit 0"];
-  };
-}
-""",
-                    "type": "string",
-                },
-                "string": {
-                    "value": "hello world " + str(time.time()),
-                    "type": "string",
-                },
-            },
+            "inputs": {name:input.dict() for name, input in inputs.items()},
         }).encode())
         return Jobset(self, identifier)
 
@@ -480,7 +404,9 @@ class TestHydra(TrioTestCase):
         self.sendmail_stub = await rsc.make_stub(self.stdtask, stubbin, "sendmail")
         self.stdtask.environment[b'PATH'] = os.fsencode(stubbin) + b':' + self.stdtask.environment[b'PATH']
         # start server
-        self.hydra = await start_hydra(self.nursery, self.stdtask, await (self.path/"hydra").mkdir(), 
+        # I suppose this pidns thread is just going to be GC'd away... gotta make sure that works fine.
+        pidns_thread = await self.stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
+        self.hydra = await start_hydra(self.nursery, pidns_thread.stdtask, await (self.path/"hydra").mkdir(), 
                                        "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;")
         self.client = await HydraClient.connect(self.stdtask, self.hydra)
         
@@ -497,7 +423,10 @@ class TestHydra(TrioTestCase):
         await start_simple_nginx(self.nursery, self.stdtask, await (self.path/"nginx").mkdir(),
                                  self.hydra.sockpath)
         project = await self.client.make_project('neato', "A neat project")
-        jobset = await project.make_jobset('trivial', "Some trivial jobset")
+        parent, name = trivial_path.split()
+        jobset = await project.make_jobset('trivial', PathInput(parent), os.fsdecode(name), {
+            "string": StringInput("Hello World"),
+        }, description="Some trivial jobset")
 
         args, sendmail_task = await self.sendmail_stub.accept()
         print("sendmail args", args)
@@ -507,7 +436,6 @@ class TestHydra(TrioTestCase):
         self.assertEqual(jobset.identifier,  message['X-Hydra-Jobset'])
         self.assertEqual('trivial', message['X-Hydra-Job'])
         self.assertIn("Success", message['Subject'])
-        await trio.sleep(999)
 
 if __name__ == "__main__":
     import unittest

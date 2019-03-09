@@ -381,6 +381,15 @@ class TestIO(unittest.TestCase):
             async with (await stdtask.mkdtemp()) as tmppath:
                 await test(stdtask, tmppath)
 
+    def test_pidns_nest(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
+            async with thread as stdtask2:
+                thread2 = await stdtask2.spawn_exec()
+                async with thread2 as stdtask3:
+                    await self.do_async_things(stdtask3.epoller, stdtask3.task)
+        trio.run(self.runner, test)
+
     def test_spawn_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.spawn_exec()
@@ -408,9 +417,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread1 = await stdtask.fork()
             async with thread1 as stdtask2:
-                print("ABOUT TO FORK")
                 thread2 = await stdtask2.fork()
-                print("DONE FORk")
                 async with thread2 as stdtask3:
                     await self.do_async_things(stdtask3.epoller, stdtask3.task)
         trio.run(self.runner, test)

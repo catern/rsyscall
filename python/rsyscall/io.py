@@ -247,7 +247,7 @@ class Task:
             await self.base.fs.chdir(self.base, pathname)
 
     async def fchdir(self, fd: handle.FileDescriptor) -> None:
-        await self.base.fs.fchdir(self.base, fd.handle.far)
+        await self.base.fs.fchdir(self.base, fd.far)
 
     async def unshare_fs(self) -> None:
         # TODO we want this to return something that we can use to chdir
@@ -1313,6 +1313,21 @@ async def which(stdtask: StandardTask, name: t.Union[str, bytes]) -> Command:
     executable_path = await lookup_executable(executable_dirs, namebytes)
     return Command(executable_path.handle, [namebytes], {})
 
+async def write_user_mappings(task: Task, uid: int, gid: int) -> None:
+    root = task.root()
+
+    uid_map = await (root/"proc"/"self"/"uid_map").open(os.O_WRONLY)
+    await uid_map.write(f"{uid} {uid} 1\n".encode())
+    await uid_map.invalidate()
+
+    setgroups = await (root/"proc"/"self"/"setgroups").open(os.O_WRONLY)
+    await setgroups.write(b"deny")
+    await setgroups.invalidate()
+
+    gid_map = await (root/"proc"/"self"/"gid_map").open(os.O_WRONLY)
+    await gid_map.write(f"{gid} {gid} 1\n".encode())
+    await gid_map.invalidate()
+
 class StandardTask:
     def __init__(self,
                  access_task: Task,
@@ -1422,21 +1437,40 @@ class StandardTask:
             self.connecting_task, self.connecting_connection,
             self.task, count))
 
-    async def fork(self) -> RsyscallThread:
+    async def fork(self, newuser=False, newpid=False, fs=True, sighand=True) -> RsyscallThread:
         [(access_sock, remote_sock)] = await self.make_async_connections(1)
         thread_maker = ThreadMaker(self.task, self.child_monitor, self.process)
         task, thread = await spawn_rsyscall_thread(
             access_sock, remote_sock,
-            self.task, thread_maker, self.process.server_func)
+            self.task, thread_maker, self.process.server_func,
+            newuser=newuser, newpid=newpid, fs=fs, sighand=sighand,
+        )
         await remote_sock.invalidate()
+        if newuser:
+            # hack, we should really track the [ug]id ahead of this so we don't have to get it
+            # we have to get the [ug]id from the parent because it will fail in the child
+            uid = await near.getuid(self.task.base.sysif)
+            gid = await near.getgid(self.task.base.sysif)
+            await write_user_mappings(task, uid, gid)
+        if newpid or self.child_monitor.is_reaper:
+            # if the new process is pid 1, then CLONE_PARENT isn't allowed so we can't use inherit_to_child.
+            # if we are a reaper, than we don't want our child CLONE_PARENTing to us, so we can't use inherit_to_child.
+            # in both cases we just fall back to making a new ChildProcessMonitor for the child.
+            epoller = await task.make_epoll_center()
+            # this signal is already blocked, we inherited the block, um... I guess...
+            # TODO handle this more formally
+            signal_block = SignalBlock(task, {signal.SIGCHLD})
+            child_monitor = await ChildProcessMonitor.make(task, epoller, signal_block=signal_block, is_reaper=newpid)
+        else:
+            epoller = self.epoller.inherit(task)
+            child_monitor = self.child_monitor.inherit_to_child(thread.child_task, task.base)
         stdtask = StandardTask(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task,
             (self.connecting_connection[0], task.base.make_fd_handle(self.connecting_connection[1])),
             task, 
             self.process, self.filesystem,
-            self.epoller.inherit(task),
-            self.child_monitor.inherit_to_child(thread.child_task, task.base),
+            epoller, child_monitor,
             {**self.environment},
             stdin=self.stdin.borrow(task.base),
             stdout=self.stdout.borrow(task.base),
@@ -1469,10 +1503,7 @@ class StandardTask:
         epoller = await task.make_epoll_center()
         signal_block = SignalBlock(task, {signal.SIGCHLD})
         # TODO use an inherited signalfd instead
-        sigfd = await task.signalfd_create({signal.SIGCHLD}, flags=os.O_NONBLOCK)
-        async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd, is_nonblock=True)
-        signal_queue = SignalQueue(signal_block, async_sigfd)
-        child_monitor = ChildProcessMonitor(ChildProcessMonitorInternal(task, signal_queue), task.base, False)
+        child_monitor = await ChildProcessMonitor.make(task, epoller, signal_block=signal_block)
         stdtask = StandardTask(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task,
@@ -1508,20 +1539,7 @@ class StandardTask:
         uid = await near.getuid(self.task.base.sysif)
         gid = await near.getgid(self.task.base.sysif)
         await self.task.base.unshare_user()
-        root = self.task.root()
-
-        # oh we can't map through because we'll be root. hm. and have arbitrary setuid.
-        uid_map = await (root/"proc"/"self"/"uid_map").open(os.O_WRONLY)
-        await uid_map.write(f"{uid} {uid} 1\n".encode())
-        await uid_map.invalidate()
-
-        setgroups = await (root/"proc"/"self"/"setgroups").open(os.O_WRONLY)
-        await setgroups.write(b"deny")
-        await setgroups.invalidate()
-
-        gid_map = await (root/"proc"/"self"/"gid_map").open(os.O_WRONLY)
-        await gid_map.write(f"{gid} {gid} 1\n".encode())
-        await gid_map.invalidate()
+        await write_user_mappings(self.task, uid, gid)
 
     async def setns_user(self, fd: handle.FileDescriptor) -> None:
         await self.task.base.setns_user(fd)
@@ -1605,8 +1623,15 @@ class SignalQueue:
         self.sigfd = sigfd
 
     @classmethod
-    async def make(cls, task: Task, epoller: EpollCenter, mask: t.Set[signal.Signals]) -> 'SignalQueue':
-        signal_block = await SignalBlock.make(task, mask)
+    async def make(cls, task: Task, epoller: EpollCenter, mask: t.Set[signal.Signals],
+                   *, signal_block: SignalBlock=None,
+    ) -> SignalQueue:
+        if signal_block is None:
+            signal_block = await SignalBlock.make(task, mask)
+        else:
+            if signal_block.mask != mask:
+                raise Exception("passed-in SignalBlock", signal_block, "has mask", signal_block.mask,
+                                "which does not match the mask for the SignalQueue we're making", mask)
         sigfd = await task.signalfd_create(mask)
         async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd)
         return cls(signal_block, async_sigfd)
@@ -1737,9 +1762,10 @@ class ChildProcess:
             await self.wait_for_exit()
 
 class ChildProcessMonitorInternal:
-    def __init__(self, waiting_task: Task, signal_queue: SignalQueue) -> None:
+    def __init__(self, waiting_task: Task, signal_queue: SignalQueue, is_reaper: bool) -> None:
         self.waiting_task = waiting_task
         self.signal_queue = signal_queue
+        self.is_reaper = is_reaper
         self.task_map: t.Dict[int, trio.abc.SendChannel[ChildEvent]] = {}
         self.wait_lock = trio.Lock()
         if self.signal_queue.sigfd.underlying.file.mask != set([signal.SIGCHLD]):
@@ -1765,7 +1791,12 @@ class ChildProcessMonitorInternal:
         # We can only call clone in one task at a time.
         # See my bloggo posto for more.
         # TODO write my bloggo posto
-        async with self.clone_lock:
+        if self.is_reaper:
+            # if we're a reaper, we can't simultaneously wait and clone.
+            lock = self.wait_lock
+        else:
+            lock = self.clone_lock
+        async with lock:
             self.cloning_task = clone_task
             try:
                 tid = await raw_syscall.clone(clone_task.sysif, flags|signal.SIGCHLD, child_stack,
@@ -1834,8 +1865,13 @@ class ChildProcessMonitorInternal:
                         # only one clone happens at a time, if we get more unknown tids, they're a bug
                         self.cloning_task = None
                     else:
-                        raise Exception("got event for some unknown pid", child_event,
-                                        "maybe we're init or a subreaper? that's not supported!")
+                        if not self.is_reaper:
+                            raise Exception("got event for some unknown pid", child_event,
+                                            "but we weren't configured as a reaper")
+                        else:
+                            # just ignore events for children that were reparented to us
+                            logger.info("got orphaned child event!")
+                            print("got orphaned child event!")
                 self.task_map[pid].send_nowait(child_event)
                 if child_event.died():
                     # this child is dead. if its pid is reused, we don't want to send
@@ -1850,14 +1886,22 @@ class ChildProcessMonitor:
     internal: ChildProcessMonitorInternal
     cloning_task: base.Task
     use_clone_parent: bool
+    is_reaper: bool
 
     @staticmethod
-    async def make(task: Task, epoller: EpollCenter) -> ChildProcessMonitor:
-        signal_queue = await SignalQueue.make(task, epoller, {signal.SIGCHLD})
-        monitor = ChildProcessMonitorInternal(task, signal_queue)
-        return ChildProcessMonitor(monitor, task.base, use_clone_parent=False)
+    async def make(task: Task, epoller: EpollCenter,
+                   *, signal_block: SignalBlock=None,
+                   is_reaper: bool=False,
+    ) -> ChildProcessMonitor:
+        signal_queue = await SignalQueue.make(task, epoller, {signal.SIGCHLD}, signal_block=signal_block)
+        monitor = ChildProcessMonitorInternal(task, signal_queue, is_reaper=is_reaper)
+        return ChildProcessMonitor(monitor, task.base, use_clone_parent=False, is_reaper=is_reaper)
 
     def inherit_to_child(self, child: ChildProcess, cloning_task: base.Task) -> ChildProcessMonitor:
+        if self.is_reaper:
+            # TODO we should actually look at something on the Task, I suppose, to determine if we're a reaper
+            raise Exception("we're a ChildProcessMonitor for a reaper task, "
+                            "we can't be inherited because we can't use CLONE_PARENT")
         if child.monitor is not self.internal:
             raise Exception("child", child, "is not from our monitor", self.internal)
         if child.process is not cloning_task.process:
@@ -1865,7 +1909,7 @@ class ChildProcessMonitor:
         # we now know that the cloning task is in a process which is a child process of the waiting task.  so
         # we know that if use CLONE_PARENT while cloning in the cloning task, the resulting tasks will be
         # children of the waiting task, so we can use the waiting task to wait on them.
-        return ChildProcessMonitor(self.internal, cloning_task, use_clone_parent=True)
+        return ChildProcessMonitor(self.internal, cloning_task, use_clone_parent=True, is_reaper=self.is_reaper)
 
     def inherit_to_thread(self, cloning_task: base.Task) -> ChildProcessMonitor:
         if self.internal.waiting_task.base.process is not cloning_task.process:
@@ -1873,7 +1917,7 @@ class ChildProcessMonitor:
                             "is not the same as cloning task process", cloning_task.process)
         # we know that the cloning task is in the same process as the waiting task. so any children the
         # cloning task starts will also be waitable-on by the waiting task.
-        return ChildProcessMonitor(self.internal, cloning_task, use_clone_parent=False)
+        return ChildProcessMonitor(self.internal, cloning_task, use_clone_parent=False, is_reaper=self.is_reaper)
 
     async def clone(self, flags: int, child_stack: Pointer, ctid: Pointer=None, newtls: Pointer=None) -> ChildProcess:
         if self.use_clone_parent:
@@ -3003,10 +3047,19 @@ async def spawn_rsyscall_thread(
         access_sock: AsyncFileDescriptor[ReadableWritableFile],
         remote_sock: handle.FileDescriptor,
         parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
+        newuser: bool, newpid: bool, fs: bool, sighand: bool,
     ) -> t.Tuple[Task, CThread]:
-    cthread = await thread_maker.make_cthread(
-        lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SIGHAND|lib.CLONE_SYSVSEM|signal.SIGCHLD,
-        function, remote_sock.near, remote_sock.near)
+    flags = lib.CLONE_VM|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SYSVSEM|signal.SIGCHLD
+    # TODO correctly track the namespaces we're in for all these things
+    if newuser:
+        flags |= lib.CLONE_NEWUSER
+    if newpid:
+        flags |= lib.CLONE_NEWPID
+    if fs:
+        flags |= lib.CLONE_FS
+    if sighand:
+        flags |= lib.CLONE_SIGHAND
+    cthread = await thread_maker.make_cthread(flags, function, remote_sock.near, remote_sock.near)
     syscall = ChildConnection(
         RsyscallConnection(access_sock, access_sock),
         cthread.child_task,
@@ -3604,7 +3657,7 @@ async def bootstrap_nix(
     src_tar_stdout = access_side.handle.move(src_tar_thread.stdtask.task.base)
 
     await dest_tar_thread.stdtask.task.unshare_fs()
-    await dest_tar_thread.stdtask.task.fchdir(dest_dir)
+    await dest_tar_thread.stdtask.task.fchdir(dest_dir.handle)
     await dest_tar_thread.stdtask.unshare_files(going_to_exec=True)
     await dest_tar_thread.stdtask.stdin.replace_with(dest_tar_stdin)
     child_task = await dest_tar.args("--extract").exec(dest_tar_thread)
