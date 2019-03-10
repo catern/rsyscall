@@ -12,6 +12,7 @@ import rsyscall.io as rsc
 import rsyscall.inotify as inotify
 import rsyscall.handle as handle
 import typing as t
+from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import StandardTask, RsyscallThread, Path, Command
 from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
 from dataclasses import dataclass
@@ -321,6 +322,7 @@ class Project:
             nixexprinput: JobsetIncludeInput, nixexprpath: str,
             inputs: t.Dict[str, JobsetInput],
             description: str=None,
+            emailoverride: str="",
     ) -> Jobset:
         if description is None:
             description = identifier
@@ -345,8 +347,8 @@ class Project:
             "keepnr": "1",
             "nixexprinput": nixexprinput_name,
             "nixexprpath": nixexprpath,
-            "enableemail": "1",
-            "emailoverride": "sbaugh@localhost",
+            "enableemail": "1" if emailoverride else "0",
+            "emailoverride": emailoverride,
             "inputs": {name:input.dict() for name, input in inputs.items()},
         }).encode())
         return Jobset(self, identifier)
@@ -358,8 +360,6 @@ class HydraClient:
         await sock.connect(hydra.sockpath.unix_address())
         client = HTTPClient(sock.read, sock.write, [
             ("Host", "localhost"),
-            # ("Referer", "http://localhost:3000/"),
-            ("Referer", "http://localhost/"),
             ("Accept", "application/json"),
             ("Content-Type", "application/json"),
         ])
@@ -376,19 +376,14 @@ class HydraClient:
             'identifier': identifier, 'displayname': displayname, 'enabled': '1', 'visible': '1',
         }).encode())
         return Project(self, identifier)
-        
-import rsyscall
-trivial_path = Path.from_bytes(
-    rsc.local_stdtask.task,
-    rsyscall.__spec__.loader.get_resource_reader(rsyscall.__spec__.name).resource_path('trivial.nix'))
 
-from rsyscall.trio_test_case import TrioTestCase
-
+# TODO
 # for builds:
 # - we need to be a trusted user
 # - we need a signing key and autosigning
 
 # ah we can just use a different prefix for the nix store! that would be totally fine!
+# gotta set that up
 
 class TestHydra(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -423,19 +418,31 @@ class TestHydra(TrioTestCase):
         await start_simple_nginx(self.nursery, self.stdtask, await (self.path/"nginx").mkdir(),
                                  self.hydra.sockpath)
         project = await self.client.make_project('neato', "A neat project")
-        parent, name = trivial_path.split()
-        jobset = await project.make_jobset('trivial', PathInput(parent), os.fsdecode(name), {
+        job_name = "jobbymcjobface"
+        jobset_dir = await (self.path/"jobset").mkdir()
+        jobset_path = "trivial.nix"
+        await rsc.spit(jobset_dir/jobset_path, """{ string }:
+{ """ + job_name + """ = builtins.derivation {
+    name = "trivial";
+    system = "x86_64-linux";
+    builder = "/bin/sh";
+    args = ["-c" "echo ${string} > $out; exit 0"];
+  };
+}""")
+        email_address = "foo@bar"
+        jobset = await project.make_jobset('trivial', PathInput(jobset_dir), jobset_path, {
             "string": StringInput("Hello World"),
-        }, description="Some trivial jobset")
+        }, description="Some trivial jobset", emailoverride=email_address)
 
         args, sendmail_task = await self.sendmail_stub.accept()
         print("sendmail args", args)
         data = await rsc.read_until_eof(sendmail_task.stdin)
         message = email.message_from_bytes(data)
+        self.assertEqual(email_address,  message['To'])
+        self.assertIn("Success", message['Subject'])
         self.assertEqual(project.identifier, message['X-Hydra-Project'])
         self.assertEqual(jobset.identifier,  message['X-Hydra-Jobset'])
-        self.assertEqual('trivial', message['X-Hydra-Job'])
-        self.assertIn("Success", message['Subject'])
+        self.assertEqual(job_name, message['X-Hydra-Job'])
 
 if __name__ == "__main__":
     import unittest
