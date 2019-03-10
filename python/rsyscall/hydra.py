@@ -266,7 +266,22 @@ http {
 class Hydra:
     sockpath: Path
 
-async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str) -> Hydra:
+class Store:
+    @abc.abstractmethod
+    def uri(self) -> str: ...
+
+@dataclass
+class LocalStore(Store):
+    path: Path
+    def uri(self) -> str:
+        return os.fsdecode(self.path)
+
+@dataclass
+class RemoteStore(Store):
+    def uri(self) -> str:
+        return "daemon"
+
+async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str, store: Store) -> Hydra:
     # maybe have a version of this function which uses cached path locations?
     # or better yet, compiled in locations?
     hydra_init = await rsc.which(stdtask, "hydra-init")
@@ -291,6 +306,7 @@ async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str) -> H
         'HYDRA_DBI': dbi,
         'HYDRA_DATA': path,
         'HYDRA_CONFIG': config_path,
+        'NIX_REMOTE': store.uri(),
     }
     # start server
     server_thread = await stdtask.fork()
@@ -384,6 +400,8 @@ class HydraClient:
 
 # ah we can just use a different prefix for the nix store! that would be totally fine!
 # gotta set that up
+# so we''ll have a path
+# then set NIX_REMOTE to point at it
 
 class TestHydra(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -401,8 +419,12 @@ class TestHydra(TrioTestCase):
         # start server
         # I suppose this pidns thread is just going to be GC'd away... gotta make sure that works fine.
         pidns_thread = await self.stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
-        self.hydra = await start_hydra(self.nursery, pidns_thread.stdtask, await (self.path/"hydra").mkdir(), 
-                                       "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;")
+        self.hydra = await start_hydra(
+            self.nursery, pidns_thread.stdtask, await (self.path/"hydra").mkdir(),
+            "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;",
+            # RemoteStore(),
+            LocalStore(self.path),
+        )
         self.client = await HydraClient.connect(self.stdtask, self.hydra)
         
     # hmmmmmmmMMMMmmm I want a jobset literal input hmm
