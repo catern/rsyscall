@@ -270,18 +270,48 @@ class Store:
     @abc.abstractmethod
     def uri(self) -> str: ...
 
-@dataclass
+def build_url(root: str, **params: t.Optional[Path]) -> str:
+    result = root
+    first = True
+    for key, value in params.items():
+        if value is None:
+            continue
+        elif isinstance(value, Path):
+            string = os.fsdecode(value)
+        else:
+            string = value
+        if first:
+            result += f"?{key}={string}"
+            first = False
+        else:
+            result += f"&{key}={string}"
+    return result
+
 class LocalStore(Store):
-    path: Path
-    def uri(self) -> str:
-        return os.fsdecode(self.path)
+    # Hydra requires the state dir to exist in the local filesystem so it can make gc roots
+    @abc.abstractmethod
+    def state_dir(self) -> Path: ...
 
 @dataclass
-class RemoteStore(Store):
+class DirectStore(LocalStore):
+    store: t.Optional[Path] = None
+    state: t.Optional[Path] = None
+
+    def state_dir(self) -> Path:
+        if self.state is None:
+            raise Exception("hmm")
+        else:
+            return self.state
+
+    def uri(self) -> str:
+        return build_url("local", store=self.store, state=self.state)
+
+@dataclass
+class DaemonStore(Store):
     def uri(self) -> str:
         return "daemon"
 
-async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str, store: Store) -> Hydra:
+async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str, store: LocalStore) -> Hydra:
     # maybe have a version of this function which uses cached path locations?
     # or better yet, compiled in locations?
     hydra_init = await rsc.which(stdtask, "hydra-init")
@@ -307,6 +337,8 @@ async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str, stor
         'HYDRA_DATA': path,
         'HYDRA_CONFIG': config_path,
         'NIX_REMOTE': store.uri(),
+        'NIX_STATE_DIR': store.state_dir(),
+        'NIX_LOG_DIR': store.state_dir()/'log',
     }
     # start server
     server_thread = await stdtask.fork()
@@ -419,11 +451,13 @@ class TestHydra(TrioTestCase):
         # start server
         # I suppose this pidns thread is just going to be GC'd away... gotta make sure that works fine.
         pidns_thread = await self.stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
+        store = DirectStore(store=self.path/"nix"/"store", state=self.path/"nix"/"state")
+        print("uri", store.uri())
         self.hydra = await start_hydra(
             self.nursery, pidns_thread.stdtask, await (self.path/"hydra").mkdir(),
             "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;",
             # RemoteStore(),
-            LocalStore(self.path),
+            store,
         )
         self.client = await HydraClient.connect(self.stdtask, self.hydra)
         

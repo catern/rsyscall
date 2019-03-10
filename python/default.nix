@@ -3,11 +3,11 @@ let
   nix = pkgs.nixUnstable.overrideAttrs (_: { src = pkgs.fetchFromGitHub {
       owner = "catern";
       repo = "nix";
-      rev = "ea5510e0499fbd1e264349e86d35ec0078fe73f5";
-      sha256 = "0lli1gwwcqbhhm1s6816l33m38irqz1fzjrxb1gjp873d2lddg10";
+      rev = "b287df11b5f0dd41821349def360139b79f3bc65";
+      sha256 = "0q8bnvz80dbg83z1m0mmg9rp3rv8y873vh4q1l04wkyqmzzimnnf";
   };});
   # hydra = pkgs.hydra;
-  hydra = pkgs.hydra.overrideAttrs (_: { src = /home/sbaugh/.local/src/hydra; });
+  hydra = (pkgs.hydra.override { nix = nix; }).overrideAttrs (_: { src = /home/sbaugh/.local/src/hydra; });
   # hydra = pkgs.hydra.overrideAttrs (_: { src = pkgs.fetchFromGitHub {
   #     owner = "catern";
   #     repo = "hydra";
