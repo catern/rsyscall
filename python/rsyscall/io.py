@@ -3566,7 +3566,7 @@ class Command:
         ret = "Command("
         for key, value in self.env_updates.items():
             ret += f"{key}={value} "
-        ret += f"{str(self.executable_path)},"
+        ret += f"{os.fsdecode(self.executable_path)},"
         for arg in self.arguments:
             ret += " " + os.fsdecode(arg)
         ret += ")"

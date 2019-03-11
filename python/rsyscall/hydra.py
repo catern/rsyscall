@@ -74,7 +74,27 @@ class HTTPClient:
         self.write = write
         self.headers = headers
         self.connection = h11.Connection(our_role=h11.CLIENT)
-        self.cookies: t.Optional[bytes] = None
+        self.cookie: t.Optional[bytes] = None
+
+    @staticmethod
+    async def connect_unix(stdtask: StandardTask, sockpath: Path) -> HTTPClient:
+        sock = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+        await rsc.robust_unix_connect(sockpath, sock)
+        return HTTPClient(sock.read, sock.write, [
+            ("Host", "localhost"),
+            ("Accept", "application/json"),
+            ("Content-Type", "application/json"),
+        ])
+
+    @staticmethod
+    async def connect_inet(stdtask: StandardTask, addr: rsc.InetAddress) -> HTTPClient:
+        sock = await stdtask.task.socket_inet(socket.SOCK_STREAM)
+        await sock.connect(addr)
+        return HTTPClient(sock.read, sock.write, [
+            ("Host", "localhost"),
+            ("Accept", "application/json"),
+            ("Content-Type", "application/json"),
+        ])
 
     async def next_event(self) -> t.Any:
         while True:
@@ -86,10 +106,10 @@ class HTTPClient:
             return event
 
     def get_headers(self) -> t.List[t.Tuple[str, str]]:
-        if self.cookies is None:
+        if self.cookie is None:
             return self.headers
         else:
-            return [*self.headers, ("Cookie", self.cookies.decode())]
+            return [*self.headers, ("Cookie", self.cookie.decode())]
 
     async def post(self, target: str, body: bytes) -> bytes:
         # send request
@@ -106,7 +126,7 @@ class HTTPClient:
         print(response); print(data); print(eom)
         set_cookie = lookup_alist(response.headers, b"set-cookie")
         if set_cookie is not None:
-            self.cookies = set_cookie
+            self.cookie = set_cookie
         if response.status_code >= 300:
             raise Exception("error posting", data.data)
         self.connection.start_next_cycle()
@@ -231,13 +251,34 @@ async def exec_nginx(thread: RsyscallThread, nginx: Command,
         nginx.env(NGINX=nginx_var).args("-p", path, "-c", config_fd.as_proc_path()))
     return child
 
-async def start_nginx(nursery, stdtask: StandardTask, path: Path, config: handle.FileDescriptor,
-                      listen_fds: t.List[handle.FileDescriptor]) -> NginxChild:
+async def start_fresh_nginx(
+        nursery, stdtask: StandardTask, path: Path, sockpath: Path
+) -> t.Tuple[rsc.InetAddress, NginxChild]:
     nginx = await rsc.which(stdtask, "nginx")
     thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
-    child = await exec_nginx(thread, nginx, path, config, listen_fds)
+    sock = await thread.stdtask.task.socket_inet(socket.SOCK_STREAM)
+    await sock.bind(rsc.InetAddress(0, 0x7F_00_00_01))
+    addr = await sock.getsockname()
+    config = b"""
+error_log stderr error;
+daemon off;
+events {}
+http {
+  access_log /proc/self/fd/1 combined;
+  server {
+    listen localhost:%d;
+    location / {
+        proxy_pass http://unix:%s;
+    }
+  }
+}
+""" % (addr.port, os.fsencode(sockpath))
+    await sock.listen(10)
+    config_fd = await (path.with_task(thread.stdtask.task)/"nginx.conf").open(os.O_RDWR|os.O_CREAT)
+    await config_fd.write_all(config)
+    child = await exec_nginx(thread, nginx, path, config_fd.handle, [sock.handle])
     nursery.start_soon(child.check)
-    return NginxChild(child)
+    return addr, NginxChild(child)
 
 async def start_simple_nginx(nursery, stdtask: StandardTask, path: Path, sockpath: Path) -> NginxChild:
     nginx = await rsc.which(stdtask, "nginx")
@@ -256,9 +297,12 @@ http {
   }
 }
 """ % os.fsencode(sockpath)
+    sock = await thread.stdtask.task.socket_inet(socket.SOCK_STREAM)
+    await sock.bind(rsc.InetAddress(3000, 0x7F_00_00_01))
+    await sock.listen(10)
     config_fd = await (path.with_task(thread.stdtask.task)/"nginx.conf").open(os.O_RDWR|os.O_CREAT)
     await config_fd.write_all(config)
-    child = await exec_nginx(thread, nginx, path, config_fd.handle, [])
+    child = await exec_nginx(thread, nginx, path, config_fd.handle, [sock.handle])
     nursery.start_soon(child.check)
     return NginxChild(child)
 
@@ -289,6 +333,7 @@ def build_url(root: str, **params: t.Optional[Path]) -> str:
 
 class LocalStore(Store):
     # Hydra requires the state dir to exist in the local filesystem so it can make gc roots
+    # TODO let's robustify our handling of all this
     @abc.abstractmethod
     def state_dir(self) -> Path: ...
 
@@ -403,16 +448,9 @@ class Project:
 
 class HydraClient:
     @staticmethod
-    async def connect(stdtask: StandardTask, hydra: Hydra) -> 'HydraClient':
-        sock = await stdtask.task.socket_unix(socket.SOCK_STREAM)
-        await sock.connect(hydra.sockpath.unix_address())
-        client = HTTPClient(sock.read, sock.write, [
-            ("Host", "localhost"),
-            ("Accept", "application/json"),
-            ("Content-Type", "application/json"),
-        ])
-        await client.post("/login", json.dumps({'username': "sbaugh", 'password': "foobar"}).encode())
-        return HydraClient(client)
+    async def login(http: HTTPClient) -> 'HydraClient':
+        await http.post("/login", json.dumps({'username': "sbaugh", 'password': "foobar"}).encode())
+        return HydraClient(http)
 
     def __init__(self, http: HTTPClient) -> None:
         self.http = http
@@ -425,19 +463,10 @@ class HydraClient:
         }).encode())
         return Project(self, identifier)
 
-# TODO
-# for builds:
-# - we need to be a trusted user
-# - we need a signing key and autosigning
-
-# ah we can just use a different prefix for the nix store! that would be totally fine!
-# gotta set that up
-# so we''ll have a path
-# then set NIX_REMOTE to point at it
-
 class TestHydra(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.stdtask = rsc.local_stdtask
+        # TODO use a tmpdir I suppose
         self.path = Path.from_bytes(self.stdtask.task, self.stdtask.environment[b'HOME'])/"hydra"
         await self.path.mkdir()
 
@@ -449,31 +478,16 @@ class TestHydra(TrioTestCase):
         self.sendmail_stub = await rsc.make_stub(self.stdtask, stubbin, "sendmail")
         self.stdtask.environment[b'PATH'] = os.fsencode(stubbin) + b':' + self.stdtask.environment[b'PATH']
         # start server
-        # I suppose this pidns thread is just going to be GC'd away... gotta make sure that works fine.
+        # TODO I suppose this pidns thread is just going to be GC'd away... gotta make sure that works fine.
         pidns_thread = await self.stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
-        store = DirectStore(store=self.path/"nix"/"store", state=self.path/"nix"/"state")
-        print("uri", store.uri())
         self.hydra = await start_hydra(
             self.nursery, pidns_thread.stdtask, await (self.path/"hydra").mkdir(),
             "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;",
-            # RemoteStore(),
-            store,
+            DirectStore(store=self.path/"nix"/"store", state=self.path/"nix"/"state"),
         )
-        self.client = await HydraClient.connect(self.stdtask, self.hydra)
         
-    # hmmmmmmmMMMMmmm I want a jobset literal input hmm
-    # I think iffffff I justttt change the thing to take the literal input when empty path
-    # then that's good
-    # async def test_web(self) -> None:
-    #     # TODO we should test that things work fine when we go through the proxy
-    #     await start_simple_nginx(self.nursery, self.stdtask, await (self.path/"nginx").mkdir(),
-    #                              self.hydra.sockpath)
-        
-    async def test_hydra(self) -> None:
-        # start nginx to watch it
-        await start_simple_nginx(self.nursery, self.stdtask, await (self.path/"nginx").mkdir(),
-                                 self.hydra.sockpath)
-        project = await self.client.make_project('neato', "A neat project")
+    async def create_and_validate_job(self, client: HydraClient) -> None:
+        project = await client.make_project('neato', "A neat project")
         job_name = "jobbymcjobface"
         jobset_dir = await (self.path/"jobset").mkdir()
         jobset_path = "trivial.nix"
@@ -499,6 +513,16 @@ class TestHydra(TrioTestCase):
         self.assertEqual(project.identifier, message['X-Hydra-Project'])
         self.assertEqual(jobset.identifier,  message['X-Hydra-Jobset'])
         self.assertEqual(job_name, message['X-Hydra-Job'])
+
+    async def test_hydra(self) -> None:
+        client = await HydraClient.login(await HTTPClient.connect_unix(self.stdtask, self.hydra.sockpath))
+        await self.create_and_validate_job(client)
+
+    async def test_proxy(self) -> None:
+        addr, _ = await start_fresh_nginx(self.nursery, self.stdtask, await (self.path/"nginx").mkdir(),
+                                          self.hydra.sockpath)
+        client = await HydraClient.login(await HTTPClient.connect_inet(self.stdtask, addr))
+        await self.create_and_validate_job(client)
 
 if __name__ == "__main__":
     import unittest
