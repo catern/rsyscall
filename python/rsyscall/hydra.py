@@ -334,6 +334,16 @@ def build_url(root: str, **params: t.Optional[Path]) -> str:
 class LocalStore(Store):
     # Hydra requires the state dir to exist in the local filesystem so it can make gc roots
     # TODO let's robustify our handling of all this
+    # hmmmmmm
+    # so Hydra seems hardcoded to store logs in a subdirectory of hydraData.
+    # actually, how does it even use this logDir?
+    # okay, so... it streams the logs over to the central hydra host.
+    # why not directly upload them?
+    # why not just have the store on that host upload them... hmm....
+    # so I see, we upload the dependencies to the host, do the build, then
+    # pull the build results back I guess
+    # ok so it's just that it wants to create gc roots
+    # h m m
     @abc.abstractmethod
     def state_dir(self) -> Path: ...
 
@@ -383,7 +393,6 @@ async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str, stor
         'HYDRA_CONFIG': config_path,
         'NIX_REMOTE': store.uri(),
         'NIX_STATE_DIR': store.state_dir(),
-        'NIX_LOG_DIR': store.state_dir()/'log',
     }
     # start server
     server_thread = await stdtask.fork()

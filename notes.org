@@ -11765,3 +11765,107 @@ It deserves the same effort as I put into TS crapware.
   opens the /proc/pid/uid_map entry for its child,
   by *pid*.
   Hmm.
+* ok
+  ok ok ok
+
+  so all this is fixed and good
+
+  we have a nice integration test for hydra, with just a few missing things.
+
+  I guess I should figure out a solution to this tmpdir issue.
+
+  I like what I have at TS quite a lot.
+
+  but that's kinda boring so nevermind it.
+
+  like, i want some external thing to decide whether the test should take place in a persistent directory.
+
+  and also handle cleaning it up.
+
+  mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+
+  i guess tmpdir is a useful thing that we can set.
+
+  but then how do we persist?
+
+  also tmpdir gets set badly by nix-shell
+
+  ok so that's fixed now.
+
+  so we can use tmpdir. hmm.
+
+  and then how do we decide whether to persist?
+
+  well, i guess we can have an environment flag which says whether or not to persist.
+
+  and we don't persist by default.
+
+  should we set a sub-tmpdir in the test?
+
+  hmm, that is a bit tempting.
+
+  hmm, we can't do sequentially incrementing build files cuz that's tricky.
+
+  We can do the symlink to latest though.
+
+  Is there a trick we can do to keep them ordered?
+
+  What if we put a timestamp into the filenames?
+
+  In addition to a randomizing bit, of course.
+
+  OK so that sounds fun and good.
+
+  So what kind of timestamp do we want?
+
+  Seconds since epoch?
+
+  Hour, minute, and second?
+
+  Do we want millis or less? No, I don't think we need milli resolution.
+
+  If we do seconds since epoch, then we'll have year.
+
+  hmm I want to put a helper timestamp on these test run directories, which doesn't need to be precise
+
+  it's just so that there's a number which increments on the test run,
+  so you can see approximately which order the directories were created in.
+
+  hmm wait a second, I get that from ctime
+
+  well so that gives me the order
+
+  but if I have two directory paths, I don't know what order I ran them in
+
+  but do I really need that?
+
+  OK, let's just stamp it with seconds since start of day.
+
+  That costs nothing and gives us some useful stuff.
+
+  OK, so the name will be something like:
+
+  run.68920.1z4KTC
+
+  I'm fine with that.
+
+  We can maybe even shorten the random bits.
+
+  Ah looks even better now.
+
+  So we'll mod the current time by the number of seconds in the day.
+
+  Let's not bother with the syscall, it's just a helper, and it's a bit pointless.
+
+  Actually.
+
+  Let's do it, just do it on local_stdtask always.
+
+  No maybe I shouldn't do it in the first place.
+
+  Ugh but so useful.
+
+  No let's not do it. We'll just have current.
+
+  And I can look at ctime if I really want to.
+
