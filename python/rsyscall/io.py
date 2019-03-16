@@ -1033,10 +1033,10 @@ class Path(far.PathLike):
                             oldpath.pure, self.pure, flags)
         return self
 
-    async def symlink(self, target: bytes) -> 'Path':
+    async def symlink(self, target: t.Union[str, bytes]) -> 'Path':
         "Create a symlink at Path 'self' pointing to the passed-in target"
         await memsys.symlinkat(self.task.syscall, self.task.transport, self.task.allocator,
-                               self.pure, target)
+                               self.pure, os.fsencode(target))
         return self
 
 
@@ -1081,7 +1081,7 @@ class Path(far.PathLike):
 def random_string(k=8) -> str:
     return ''.join(random.choices(string.ascii_letters + string.digits, k=k))
 
-async def update_symlink(parent: Path, name: bytes, target: bytes) -> None:
+async def update_symlink(parent: Path, name: str, target: str) -> None:
     tmpname = name + ".updating." + random_string()
     tmppath = (parent/tmpname)
     await tmppath.symlink(target)
@@ -1488,7 +1488,7 @@ class StandardTask:
         return RsyscallThread(stdtask, thread)
 
     async def run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
-        thread = await self.fork()
+        thread = await self.fork(fs=False)
         child = await command.exec(thread)
         task_status.started(child)
         exit_event = await child.wait_for_exit()
@@ -1582,12 +1582,13 @@ class TemporaryDirectory:
         self.path = parent/name
 
     async def cleanup(self) -> None:
-        cleanup_thread = await self.stdtask.fork()
+        # TODO would be nice if not sharing the fs information gave us a cap to chdir
+        cleanup_thread = await self.stdtask.fork(fs=False)
         async with cleanup_thread:
-            # TODO we need to unshare_fs here
-            # TODO would be nice if unsharing the fs information gave us a cap to chdir
             await cleanup_thread.stdtask.task.chdir(self.parent)
-            child = await cleanup_thread.execve(self.stdtask.filesystem.utilities.rm, ["rm", "-r", self.name])
+            name = os.fsdecode(self.name)
+            child = await cleanup_thread.execve(self.stdtask.filesystem.utilities.sh, [
+                "sh", "-c", f"chmod -R +w -- {name} && rm -rf -- {name}"])
             await child.check()
 
     async def __aenter__(self) -> 'Path':
@@ -3073,8 +3074,13 @@ async def spawn_rsyscall_thread(
         RsyscallConnection(access_sock, access_sock),
         cthread.child_task,
         cthread.futex_task)
+    if fs:
+        fs_information = parent_task.base.fs
+    else:
+        fs_information = far.FSInformation(
+            cthread.child_task.process.near.id, root=parent_task.base.fs.root, cwd=parent_task.base.fs.cwd)
     new_base_task = base.Task(syscall, cthread.child_task.process,
-                              parent_task.fd_table, parent_task.address_space, parent_task.base.fs)
+                              parent_task.fd_table, parent_task.address_space, fs_information)
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,

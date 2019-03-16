@@ -258,7 +258,7 @@ async def start_fresh_nginx(
     thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
     sock = await thread.stdtask.task.socket_inet(socket.SOCK_STREAM)
     await sock.bind(rsc.InetAddress(0, 0x7F_00_00_01))
-    addr = await sock.getsockname()
+    addr: rsc.InetAddress = await sock.getsockname()
     config = b"""
 error_log stderr error;
 daemon off;
@@ -476,9 +476,8 @@ class TestHydra(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.stdtask = rsc.local_stdtask
         self.tmpdir = await self.stdtask.mkdtemp("test_hydra")
-        await update_symlink(self.tmpdir.parent, "test_hydra.current", self.tmpdir.name)
+        await rsc.update_symlink(self.tmpdir.parent, "test_hydra.current", os.fsdecode(self.tmpdir.name))
         self.path = self.tmpdir.path
-        await self.path.mkdir()
 
         self.postgres = await start_postgres(self.nursery, self.stdtask, await (self.path/"postgres").mkdir())
         await self.postgres.createuser("hydra")
@@ -497,8 +496,8 @@ class TestHydra(TrioTestCase):
         )
 
     async def asyncTearDown(self) -> None:
-        await self.cleanup()
-        
+        await self.tmpdir.cleanup()
+
     async def create_and_validate_job(self, client: HydraClient) -> None:
         project = await client.make_project('neato', "A neat project")
         job_name = "jobbymcjobface"

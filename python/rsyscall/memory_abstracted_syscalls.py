@@ -219,7 +219,7 @@ async def mkdirat(sysif: SyscallInterface, transport: MemoryTransport, allocator
         try:
             await raw_syscall.mkdirat(sysif, dirfd, pathname, mode)
         except FileExistsError as e:
-            raise FileNotFoundError(e.errno, e.strerror, path)
+            raise FileExistsError(e.errno, e.strerror, path) from None
 
 async def unlinkat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                    path: base.Path, flags: int) -> None:

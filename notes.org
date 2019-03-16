@@ -11880,3 +11880,25 @@ No, no, delete them, c'mon.
 And we'll have an env var to say don't delete.
 
 Or something. It's not a big deal.
+* hmm removing unwritable directories
+  how to remove directories containing -w files?
+
+  very tricky
+
+b l a r g h
+
+I wish there was some place that I could ask for nice, Linux-specific C programming tips
+
+should I just use sh -c chmod rm?
+
+This is a reason not to clean up after myself.
+
+No let's just do it.
+
+And uh, I guess we need a DSL thingy maybe?
+
+b l a h
+
+let's just write it down!
+
+ok easily fixed with a shell snippet
