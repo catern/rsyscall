@@ -1078,6 +1078,15 @@ class Path(far.PathLike):
     def __fspath__(self) -> str:
         return self.handle.__fspath__()
 
+def random_string(k=8) -> str:
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=k))
+
+async def update_symlink(parent: Path, name: bytes, target: bytes) -> None:
+    tmpname = name + ".updating." + random_string()
+    tmppath = (parent/tmpname)
+    await tmppath.symlink(target)
+    await (parent/name).rename(tmppath)
+
 async def robust_unix_bind(path: Path, sock: FileDescriptor[UnixSocketFile]) -> None:
     """Perform a Unix socket bind, hacking around the 108 byte limit on socket addresses.
 

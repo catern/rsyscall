@@ -475,8 +475,9 @@ class HydraClient:
 class TestHydra(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.stdtask = rsc.local_stdtask
-        # TODO use a tmpdir I suppose
-        self.path = Path.from_bytes(self.stdtask.task, self.stdtask.environment[b'HOME'])/"hydra"
+        self.tmpdir = await self.stdtask.mkdtemp("test_hydra")
+        await update_symlink(self.tmpdir.parent, "test_hydra.current", self.tmpdir.name)
+        self.path = self.tmpdir.path
         await self.path.mkdir()
 
         self.postgres = await start_postgres(self.nursery, self.stdtask, await (self.path/"postgres").mkdir())
@@ -494,6 +495,9 @@ class TestHydra(TrioTestCase):
             "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;",
             DirectStore(store=self.path/"nix"/"store", state=self.path/"nix"/"state"),
         )
+
+    async def asyncTearDown(self) -> None:
+        await self.cleanup()
         
     async def create_and_validate_job(self, client: HydraClient) -> None:
         project = await client.make_project('neato', "A neat project")
