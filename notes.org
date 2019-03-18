@@ -12017,3 +12017,16 @@ The rest of the issues you list are moot in Python.
   SMTP is tricky...
 
   I could do the SMTP thing.
+* SMTP proxy trick thing
+  OK fine I'll just do this.
+
+  And maybe run postfix? Or exim? Hmm.
+
+  And I'll have the single SMTP socket,
+  which forwards to 
+* opensmtpd!!!
+opensmtpd supports it!! hooray!!!
+
+no setuid required!!
+
+ok so we'll figure out all the stuff and patch it and it will be all good.
