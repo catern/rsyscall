@@ -11902,3 +11902,118 @@ b l a h
 let's just write it down!
 
 ok easily fixed with a shell snippet
+* mail
+  okay so an individual user can run dovecot.
+
+  that sounds more secure and nice.
+  
+  so we'll do that.
+
+  and. hmm.
+
+  maybe we should run dovecot for the system as well?
+
+  oh hmm we could run dovecot with local IMAP for downloading the mail to users?
+
+  hmm that allows infinite queue length, not good
+
+  I guess my philosophy would be for the user to run some server that accepts mail,
+  and puts it into the home directory.
+
+  hmm! we could run Dovecot for each user,
+  and connect to them with LMAP?
+
+  Hmm so really we want one thing which receives email from the internet,
+  and delivers it internally.
+
+  And one thing which receive local email,
+  and delivers it to the internet.
+
+  Oh but local email can need to go internal. I see.
+
+  But we want to rule out also the possibility of receive email from the internet,
+  and sending it to the internet...
+
+  Oh, but, actually that's fine I guess:
+  That's what we use to send email from another client.
+
+  Hmmmm
+
+  I guess what would be nice is domain-based SRV-recordy thing
+
+  Oh right SMTP works with MX records, so port 25 really is needed.
+
+  Mail is delivered to a domain after all.
+
+  So OK, thing on the server has got the certificate for receiving mail.
+
+  It receives the mail, then sends it over to individual users. Over... LMTP?
+
+  OK yeah this is simple and easy.
+
+  We'll deliver mail to users over LMTP.
+  Each user runs an LMTP server (Dovecot I guess).
+
+  And we can run mailman too, presenting an LMTP server.
+
+  Or deliver mail to public-inbox.
+  Which is nicer than traditional mailing lists anyway.
+
+  How is mail submitted?
+  Hmm.
+
+  I could force all submission to go through SMTP. Sounds weird.
+* conversation
+that's a very defensible and modern position,
+in a world where most systems are single-user,
+and have to go to another system to actually submit mail.
+but the thing is that I'm trying to set up a multi-user system
+
+
+interesting point about Kerb, yeah
+
+no, there's definitely a third alternative there: using Unix permissions to control access to the submission socket. you can optimize this alternative further to only have a single submission socket that everyone can access, if you can do a SCM_CREDENTIALS handshake in your protocol
+* mail transfer agent
+
+why???
+* hum
+Come on. The problems you list are:
+
+- control characters in filenames (doesn't affect Python)
+- leading dashes in filenames (doesn't affect Python; you don't walk filesystem trees using "find" in Python, you use , and the lack of a standard character encoding scheme (instead of using UTF-8). These three problems impact programs written in any language on Unix/Linux/POSIX system. There are other problems, of course. Spaces in filenames can cause problems; it’s probably hopeless to ban them outright, but resolving some of the other issues will simplify handling spaces in filenames. For example, when using a Bourne shell, you can use an IFS trick (using IFS=`printf '\n\t'`) to eliminate some problems with spaces. Similarly, special metacharacters in filenames cause some problems; I suspect few if any metacharacters could be forbidden on all POSIX systems, but it’d be great if administrators could locally configure systems so that they could prevent or escape such filenames when they want to. I then discuss some other tricks that can help.
+
+The only problem which you list which could cause a bug in a script written in Python, is the issue with confusion between flags and filenames starting with "-". 
+
+But a normal Python script will not be spawning external programs. A normal Python script doesn't spawn "find" to walk a filesystem tree, as in your example; it uses os.walk.
+
+The rest of the issues you list are moot in Python.
+* hmmm
+  So if I have to make a proxy anyway...
+
+  What I could do is...
+
+  When someone invokes my sendmail command,
+  I connect to the server,
+  and send the args and stdin stuff,
+  and mmm
+
+
+  passing arbitrary args ain't gonna work cuz 
+
+  then they could override some privileged arg
+* alternative projects
+  I could actually run one of these big fancy distributed system runner things.
+  Like Kubernetes. Or OpenStack. Or libvirt.
+  Or Nginx.
+
+  They're all too complicated tho
+
+  But I am thinkin, would be nice to have something that requires multiple systems.
+
+  I could still do public-inbox.
+
+  Or I could actually do this sendmail proxy, sigh.
+
+  SMTP is tricky...
+
+  I could do the SMTP thing.
