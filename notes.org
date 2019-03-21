@@ -3654,6 +3654,25 @@ so we don't have to be generic.
 
    have standalone program use Jenkins features as library! easy!
    support many languages! not single groovy sandboxing insanity!
+** native API for starting remote processes
+   there are many different APIs for starting remote processes
+
+   specialized to various things
+   like kubernetes
+   or like some API to spawn a game process like Google's thing
+
+   but now we can use the native API instead of something layered on top
+
+   this API is already there, now you can use it!
+** minimizing mobile code
+   All these systems give you some means to give them code,
+   which they then run on your behalf, out of your control.
+
+   the spirit of rsyscall is to minimize that as much as possible.
+   you have a single program that controls everything.
+
+   instead of uploading some program to some deployment system to run on your behalf in the appropriate environment,
+   you just directly run your code.
 * explicitly modeling memory
 how would I do this?
 
@@ -12030,3 +12049,41 @@ opensmtpd supports it!! hooray!!!
 no setuid required!!
 
 ok so we'll figure out all the stuff and patch it and it will be all good.
+
+yay mmm 'v'
+
+ok so it requires to run as root
+
+whatever, not a big deal.
+
+I'd like to run opensmtpd as an unprivileged user; would you accept patches to add functionality for making this possible?
+* hmm
+  building code is declaratively specifying a program
+  and then sending it through a pure function to get some artifacts out
+
+  which we then run in the appropriate place
+
+  the ultimate in disintermediation would be... what?
+  the code you run at build time directly operating on the hosts it will deploy on?
+* mail
+  ok so how am I gonna do mail
+
+  i can bypass the root requirement with user namespaces.
+
+  i can bypass the system-wide config with mount namespaces.
+
+  opensmtpd requires the user accounts.
+
+  which is tricky.
+
+  hmm.
+
+  okay, so maybe it's fine to set up a bunch of container stuff.
+
+  that proves viability of container world.
+
+  ok so i'll start up opensmtpd
+
+  that's the goal
+
+  I'll add the ability to specify the user to use for the queue and things in the configuration.

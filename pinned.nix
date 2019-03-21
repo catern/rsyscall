@@ -1,4 +1,4 @@
 import (builtins.fetchTarball {
-  url = https://github.com/catern/nixpkgs/archive/5b3ba5366083ddc7693c81a3cd3077aff5f6b149.tar.gz;
-  sha256 = "1s8wajl9904i2pbs04yh5znzzfsdld152m6yf20r8z5jvvvcpkg3";
+  url = https://github.com/catern/nixpkgs/archive/a534e712212db0fb21ba0531573878a0a83342e5.tar.gz;
+  sha256 = "09cq6dnikjdf18riccby8kc26wl01633w9cq868m3b3ggq9gwgv1";
 }) {}
