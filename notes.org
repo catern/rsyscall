@@ -12087,3 +12087,25 @@ I'd like to run opensmtpd as an unprivileged user; would you accept patches to a
   that's the goal
 
   I'll add the ability to specify the user to use for the queue and things in the configuration.
+** setgroups
+   okay, lol, so.
+
+   we can't setgroups in the user namespace.
+
+   I wonder if I can convince them to not setgroups?
+   after all it can increase privileges.
+
+   lol.
+
+
+   hmmmmm so it gets my uid outside the namespace, 1002.
+   then tries to setuid things to it. hmm.
+
+   can we map everything to that uid?
+
+   no.
+
+   ok so...
+* dovecot
+
+s6-ipcserver ~/mail/lmtp sh -c 'tee ~/mail/stdin | lmtp -c dovecot.conf | tee ~/mail/stdout' &
