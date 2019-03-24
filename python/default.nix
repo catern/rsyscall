@@ -30,6 +30,8 @@ pytest ];
       requests h11 pkgs.pkgconfig hydra
       pkgs.postgresql_11
       pkgs.opensmtpd
+      pkgs.dovecot
+      pkgs.s6
   ];
 }
 

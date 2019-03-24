@@ -12109,3 +12109,56 @@ I'd like to run opensmtpd as an unprivileged user; would you accept patches to a
 * dovecot
 
 s6-ipcserver ~/mail/lmtp sh -c 'tee ~/mail/stdin | lmtp -c dovecot.conf | tee ~/mail/stdout' &
+
+
+hmmmmm
+
+ok so dovecot is confusing
+
+let's go ahead and script all this?
+
+let's just use s6-ipcserver + dovecot with no protocols
+
+ok so for opensmtpd, I should patch it to listen on two sockets, I guess:
+one for mail submission, and one for administration.
+
+then it doesn't need to cred-check on the admin one or the submission one:
+it just only allows submission on one, and admin on the other.
+
+
+oh, if you had separate sockets then...
+
+you could make separate binaries: one for mail submission, which doesn't allow any other things, and one for admin.
+
+well you could do that anyway I guess.
+just, y'know, it's a bit bad to have all this functionality in a setgid binary
+
+
+ok so it's ready-ish now to be automated
+
+so we'll, start a user namespace, where we map ourselves to root, and run opensmtpd in there
+
+we'll start dovecot.
+
+we'll start the s6-ipc thing. or well, we'll just do it in python for now maybe.
+
+so what kind of API?
+
+can we dynamically add forwardings?
+
+possibly, but I don't want to mess with config reloading, so let's assume no.
+
+so we'll use a builder api, where adding an LMTP action gives us back a socket that we need to accept on.
+
+with context?
+
+hmm, but how do we get the socket to the actual user?
+
+passing down at startup is a hassle
+
+and practically difficult
+
+could we do it dynamically? they connect to me and then I start routing mail to them over a socket I give them?
+
+that's cool, but also currently we just have a static set of users.
+hm.
