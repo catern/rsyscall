@@ -14,6 +14,7 @@ let
   #     rev = "542e9555dbbde4f03e112dfc5eb3a58da61dff24";
   #     sha256 = "0clxyrc0fc7ki2lra4jg30xrpqjryc7406yg9g8gqp61ldgqk2h4";
   # };});
+  opensmtpd = pkgs.opensmtpd.overrideAttrs (_: { src = /home/sbaugh/.local/src/OpenSMTPD; });
 in
 with pkgs.python37Packages;
 
@@ -29,7 +30,7 @@ pytest ];
       trio cffi pkgconfig python-prctl pkgs.nginx typeguard
       requests h11 pkgs.pkgconfig hydra
       pkgs.postgresql_11
-      pkgs.opensmtpd
+      opensmtpd
       pkgs.dovecot
       pkgs.s6
   ];

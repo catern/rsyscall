@@ -32,6 +32,7 @@ class Watch:
         while True:
             try:
                 event = self.channel.receive_nowait()
+                print("inotify event", event)
                 if event.mask & Mask.IGNORED:
                     # the name is a bit confusing - getting IGNORED means this watch was removed
                     self.removed = True
@@ -42,13 +43,13 @@ class Watch:
                 else:
                     return events
 
-    async def wait_until_event(self, mask: Mask, name: t.Optional[str]) -> None:
+    async def wait_until_event(self, mask: Mask, name: t.Optional[str]=None) -> Event:
         while True:
             events = await self.wait()
             print(events)
             for event in events:
-                if (event.mask & mask) and event.name == name:
-                    return
+                if event.mask & mask and (event.name == name if name else True):
+                    return event
 
     async def remove(self) -> None:
         self.inotify.remove(self.wd)

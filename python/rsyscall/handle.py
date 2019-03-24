@@ -78,7 +78,12 @@ class FileDescriptor:
         self.validate()
         return rsyscall.far.FileDescriptor(self.task.fd_table, self.near)
 
-    async def invalidate(self) -> None:
+    async def invalidate(self) -> bool:
+        """Invalidate this reference to this file descriptor
+
+        Returns true if we remove the last reference, and close the FD.
+
+        """
         if self.valid:
             self.valid = False
             handles = self._remove_from_tracking()
@@ -86,13 +91,33 @@ class FileDescriptor:
                 # we were the last handle for this fd, we should close it
                 logger.debug("invalidating %s, no handles remaining, closing", self)
                 await rsyscall.near.close(self.task.sysif, self.near)
+                return True
             else:
                 logger.debug("invalidating %s, handles remaining: %s", self, handles)
+                return False
+        return False
+
+    async def close(self) -> None:
+        if not self.is_only_handle():
+            raise Exception("can't close this fd, there are handles besides this one to it")
+        if not self.valid:
+            raise Exception("can't close an invalid FD handle")
+        closed = await self.invalidate()
+        if not closed:
+            raise Exception("for some reason, the fd wasn't closed; "
+                            "maybe some race condition where there are still handles left around?")
 
     def borrow(self, task: Task) -> FileDescriptor:
         return task.make_fd_handle(self)
 
     def move(self, task: Task) -> FileDescriptor:
+        """This is an optimized version of borrowing then invalidating
+
+        We know that invalidate won't be removing the last handle and
+        need to close the fd, so we don't need to do the invalidate as
+        async. We assert to make sure this is true.
+
+        """
         new = self.borrow(task)
         self.valid = False
         handles = self._remove_from_tracking()
@@ -102,9 +127,16 @@ class FileDescriptor:
                             "but after removing handle A, there are no handles left. Huh?")
         return new
 
+    def _get_global_handles(self) -> t.List[FileDescriptor]:
+        return fd_table_to_near_to_handles[self.task.fd_table][self.near]
+
+    def is_only_handle(self) -> bool:
+        self.validate()
+        return len(self._get_global_handles()) == 1
+
     def _remove_from_tracking(self) -> t.List[FileDescriptor]:
         self.task.fd_handles.remove(self)
-        handles = fd_table_to_near_to_handles[self.task.fd_table][self.near]
+        handles = self._get_global_handles()
         handles.remove(self)
         return handles
 
@@ -130,6 +162,9 @@ class FileDescriptor:
         return self.task.make_path_from_bytes(f"/proc/{pid}/fd/{num}".encode())
 
     async def disable_cloexec(self) -> None:
+        self.validate()
+        if not self.is_only_handle():
+            raise Exception("shouldn't set unset cloexec when there are multiple handles to this fd")
         await rsyscall.near.fcntl(self.task.sysif, self.near, fcntl.F_SETFD, 0)
 
     # should I just take handle.Pointers instead of near or far stuff? hmm.
@@ -169,6 +204,8 @@ class FileDescriptor:
     # open, but that's the best practice for avoiding races, so we require it anyway here.
     async def dup3(self, newfd: FileDescriptor, flags: int) -> FileDescriptor:
         self.validate()
+        if not newfd.is_only_handle():
+            raise Exception("can't dup over newfd, there are more handles to it than just ours")
         newfd_near = self.task.to_near_fd(newfd.far)
         # we take responsibility here for closing newfd (which we're doing through dup3)
         newfd._invalidate_all_existing_handles()

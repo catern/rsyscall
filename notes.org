@@ -12162,3 +12162,27 @@ could we do it dynamically? they connect to me and then I start routing mail to 
 
 that's cool, but also currently we just have a static set of users.
 hm.
+
+ok so even allocating new users, we want to modify the SMTP router.
+
+So yeah, let's just go ahead and do the dynamic thing.
+
+OK!
+So we aren't going to run opensmtpd with privileges.
+
+So we need to have a way to pass down a socket to it.
+
+OK so I did that. Meh!
+* inheriting
+ok so it's tricky, hmm.
+
+what I can do is, um,
+
+move the fds to the first place,
+then have pony assume that fds it inherits are those, in order of appearance in the config file.
+
+so i need to, after the fork, rearrange the fds to the start. hm.
+* dovecot
+ok got smtpd running
+
+we'll run both dovecot and s6

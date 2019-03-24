@@ -335,7 +335,13 @@ class Task:
             epoll_waiter = EpollWaiter(self, epfd.handle, wait_readable)
             epoll_center = EpollCenter(epoll_waiter, epfd.handle, self)
         return epoll_center
-        
+
+    async def getuid(self) -> int:
+        return (await near.getuid(self.base.sysif))
+
+    async def getgid(self) -> int:
+        return (await near.getgid(self.base.sysif))
+
 
 class ReadableFile(File):
     async def read(self, fd: 'FileDescriptor[ReadableFile]', count: int=4096) -> bytes:
@@ -442,6 +448,10 @@ class FileDescriptor(t.Generic[T_file_co]):
 
     async def invalidate(self) -> None:
         await self.handle.invalidate()
+        self.open = False
+
+    async def close(self):
+        await self.handle.close()
         self.open = False
 
     def release(self) -> 'FileDescriptor[T_file_co]':
@@ -1322,11 +1332,16 @@ async def which(stdtask: StandardTask, name: t.Union[str, bytes]) -> Command:
     executable_path = await lookup_executable(executable_dirs, namebytes)
     return Command(executable_path.handle, [namebytes], {})
 
-async def write_user_mappings(task: Task, uid: int, gid: int) -> None:
+async def write_user_mappings(task: Task, uid: int, gid: int,
+                              in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
+    if in_namespace_uid is None:
+        in_namespace_uid = uid
+    if in_namespace_gid is None:
+        in_namespace_gid = gid
     root = task.root()
 
     uid_map = await (root/"proc"/"self"/"uid_map").open(os.O_WRONLY)
-    await uid_map.write(f"{uid} {uid} 1\n".encode())
+    await uid_map.write(f"{in_namespace_uid} {uid} 1\n".encode())
     await uid_map.invalidate()
 
     setgroups = await (root/"proc"/"self"/"setgroups").open(os.O_WRONLY)
@@ -1334,7 +1349,7 @@ async def write_user_mappings(task: Task, uid: int, gid: int) -> None:
     await setgroups.invalidate()
 
     gid_map = await (root/"proc"/"self"/"gid_map").open(os.O_WRONLY)
-    await gid_map.write(f"{gid} {gid} 1\n".encode())
+    await gid_map.write(f"{in_namespace_gid} {gid} 1\n".encode())
     await gid_map.invalidate()
 
 class StandardTask:
@@ -1544,11 +1559,13 @@ class StandardTask:
                                 close_in_old_space, copy_to_new_space, going_to_exec)
         await self.task.base.unshare_files(do_unshare)
 
-    async def unshare_user(self) -> None:
-        uid = await near.getuid(self.task.base.sysif)
-        gid = await near.getgid(self.task.base.sysif)
+    async def unshare_user(self,
+                           in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
+        uid = await self.task.getuid()
+        gid = await self.task.getgid()
         await self.task.base.unshare_user()
-        await write_user_mappings(self.task, uid, gid)
+        await write_user_mappings(self.task, uid, gid,
+                                  in_namespace_uid=in_namespace_uid, in_namespace_gid=in_namespace_gid)
 
     async def setns_user(self, fd: handle.FileDescriptor) -> None:
         await self.task.base.setns_user(fd)
@@ -4225,6 +4242,7 @@ async def rsyscall_stdin_bootstrap(
     return child_task, new_stdtask
 
 async def read_until_eof(fd: FileDescriptor[ReadableFile]) -> bytes:
+    # hmm this is identical to read_all, should delete one of them
     data = b""
     ret = await fd.read()
     while len(ret) != 0:
