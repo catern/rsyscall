@@ -12186,3 +12186,42 @@ so i need to, after the fork, rearrange the fds to the start. hm.
 ok got smtpd running
 
 we'll run both dovecot and s6
+* dns
+okay so everything is running now
+
+now to further enhance my testing I think I need to make some kind of DNS service
+
+what would be nice is:
+
+<anything>.1.2.3.4.8053.rec.rslv.to
+
+gets recursively resolved to a DNS server at 1.2.3.4:8053
+
+1.2.3.4.ns.rslv.to
+
+just has an NS record for 1.2.3.4.a.rslv.to
+
+and
+
+1.2.3.4.a.rslv.to
+
+has an A record for it.
+** alternatively, RFC2136
+use RFC2136
+
+say, I generate a random key locally, then hash it, and I can then update whatever.<thathash>.somedomain
+** mail
+
+(hmm is there some way we can receive SMTP on nonstandard ports?)
+
+(what if we say, hey this guy is our MX, and, it's set up to look at SRV records? then we can have nonstandard port mail...)
+
+well, a prerequisite for that is flexible DNS. so let's do that first.
+
+oh, is this an open relay?
+no, it would check that the MX for the destination domain is itself,
+and then just forward to the SRV record.
+
+so it's not an open relay. plus it requires the SRV record! so it's definitely not an open relay.
+
+well. we can spam those sites though. hm.

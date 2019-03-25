@@ -117,7 +117,10 @@ async def start_smtpd(nursery, stdtask: StandardTask, path: Path,
     config += 'action "local" lmtp "' + os.fsdecode(lmtp_socket_path) + '"\n'
     # all mail is delivered to this single socket
     # TODO actually dispatch correctly: we need one socket per username we accept
-    config += 'match from any for local action "local"\n'
+    config += 'match from any auth for local action "local"\n'
+
+    config += 'action "relay" relay\n'
+    config += 'match from local auth for any action "relay"\n'
 
     # smtpd has a lot of asserts that it is running as root, even
     # though we could arrange things so that it doesn't actually need
@@ -133,7 +136,7 @@ async def start_smtpd(nursery, stdtask: StandardTask, path: Path,
 
     await smtp_listener.disable_cloexec()
 
-    child = await thread.exec(smtpd.args("-d", "-f", await rsc.spit(path/"smtpd.config", config)))
+    child = await thread.exec(smtpd.args("-v", "-d", "-f", await rsc.spit(path/"smtpd.config", config)))
     nursery.start_soon(child.check)
 
     return Smtpd(
@@ -153,11 +156,11 @@ class TestMail(TrioTestCase):
         await smtp_sock.listen(10)
         self.smtpd = await start_smtpd(self.nursery, self.stdtask, await (self.path/"smtpd").mkdir(), smtp_sock.handle)
         self.maildir = await Maildir.make(self.path/"mail")
-        self.dovecot = await start_dovecot(self.nursery, self.stdtask, await (self.path/"dovecot").mkdir(),
-                                           self.smtpd.lmtp_listener, self.maildir)
+        # self.dovecot = await start_dovecot(self.nursery, self.stdtask, await (self.path/"dovecot").mkdir(),
+        #                                    self.smtpd.lmtp_listener, self.maildir)
         smtpctl = await rsc.which(self.stdtask, "smtpctl")
         self.sendmail = Command(smtpctl.executable_path, [b'sendmail'], {'SMTPD_SOCKET': self.smtpd.socket_path})
-        self.inty = await inotify.Inotify.make(self.stdtask)
+        # self.inty = await inotify.Inotify.make(self.stdtask)
 
 
     async def asyncTearDown(self) -> None:
@@ -191,6 +194,18 @@ class TestMail(TrioTestCase):
         self.assertEqual(to,  message['To'])
         self.assertEqual(subject, message['Subject'])
         self.assertEqual(msg, message.get_payload())
+
+    # So I need to set up proper DNS stuff.
+    # Which... I can do by running my own DNS server :)
+    # aha, okay, so I could have a DNS server which,
+    # automatically forwards the requests to the NS server in the record
+    async def test_mail_tester(self) -> None:
+        from_ = 'sbaugh@catern.com'
+        to = 'test-2ux4p@mail-tester.com'
+        subject = 'Subjective'
+        msg = 'Hello me!\n'
+        await self.send_email(from_, to, subject, msg)
+        await trio.sleep(9999)
 
 if __name__ == "__main__":
     import unittest
