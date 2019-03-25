@@ -12225,3 +12225,53 @@ and then just forward to the SRV record.
 so it's not an open relay. plus it requires the SRV record! so it's definitely not an open relay.
 
 well. we can spam those sites though. hm.
+** IP address
+Well, it would be even simpler if I could just a private IP allocated to me.
+(maybe IPv6?)
+
+Then I could use NS records, MX records, everything.
+
+A userspace proxy would be fine I suppose:
+I can make everything listen on Unix sockets :)
+
+Though, I guess delivery will be difficult.
+Well, I have real connection out.
+It's just the connection in that's tricky.
+So delivery is fine.
+
+Or, can I actually use network namespaces to get an IP?
+
+I could ask geofft maybe?
+
+HmMMMmmMMMMMM
+
+So I can set up a tunnel in a network namespace...
+
+But I can't have both that tunnel and the normal networking stuff at the same time.
+
+That's fine and cool!
+Luckily I have all this socket-passing magic!
+
+slirp?
+tap?
+** hmm
+OK so what am I really trying to do though?
+
+I guess, what might be nice...
+
+is to spawn two opensmtpds, and have them send mail to each other?
+
+that's better than using the real internet
+
+but we want to use the real internet because, ultimately,
+we want to be listening for mail on the internet.
+
+so, meh, if I use the open internet I think that's fine
+
+that's just a bit of a compromise to accelerate things
+* next phase: getting an IP
+whew! okay! let's do it!
+
+vpns or something inside the network namespace
+
+the next stage of my adventure!
