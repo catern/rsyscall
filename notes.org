@@ -12275,3 +12275,30 @@ whew! okay! let's do it!
 vpns or something inside the network namespace
 
 the next stage of my adventure!
+
+hmm okay so the hard part is going to be setting up the tunnel in such a way that it works,
+even through the multiple network namespaces
+
+oh! miredo! that is such a cool program!
+you just install it and bam, you get an public ipv6
+
+I guess that's essentially what we want. can we do it?
+
+miredo even seems to be userspace, hmm, cool
+
+hmm, we could also allow ipv4 stuff if we exist behind NAT
+
+but, oh, wait, we want an address where we can bind to 25.
+that won't work if we're behind a NAT or something.
+
+ok so I guess the need for tunneling is obvious:
+bridging/sending arbitrary packets is something that shouldn't be allowed for arbitrary users
+
+root controls who can send packets.
+and we don't want to allow arbitrary users to send arbitrary packets.
+um. do we?
+
+well I guess sending arbitrary packets breaks the BSD socket API;
+a user can intercept/mitm/fake TCP packets for another user.
+
+so yeah we clearly need to be using tunneling, not bridging.

@@ -64,6 +64,7 @@ passdb {
     config += "state_dir = " + os.fsdecode(await (path/"state").mkdir()) + "\n"
     # unfortunately, dovecot requires names for these configuration parameters, and
     # doesn't accept ids. would be a nice patch to upstream...
+    # TODO get these with id -n{u,g} I guess?
     username = "sbaugh"
     groupname = "sbaugh"
     config += f"default_login_user = {username}\n"
@@ -84,8 +85,7 @@ passdb {
     await lmtp_thread.stdtask.unshare_files(going_to_exec=True)
     await lmtp_thread.stdtask.stdin.replace_with(lmtp_listener)
     lmtp_child = await lmtp_thread.exec(s6_ipcserverd.args(
-        "/nix/store/22qbva65x9gbk1aqyv0c2c8rwxsf1da6-dovecot-2.3.4.1/libexec/dovecot/lmtp", '-c', config_path))
-        # doveadm.executable_path, '-c', config_path, 'exec', 'lmtp'))
+        doveadm.executable_path, '-c', config_path, 'exec', 'lmtp'))
     nursery.start_soon(lmtp_child.check)
     return Dovecot()
 
@@ -93,7 +93,7 @@ passdb {
 class Smtpd:
     lmtp_socket_path: Path
     lmtp_listener: handle.FileDescriptor
-    socket_path: Path
+    config_file: Path
 
 async def start_smtpd(nursery, stdtask: StandardTask, path: Path,
                       smtp_listener: handle.FileDescriptor) -> Smtpd:
@@ -102,10 +102,9 @@ async def start_smtpd(nursery, stdtask: StandardTask, path: Path,
     smtp_listener = smtp_listener.move(thread.stdtask.task.base)
 
     config = ""
-    smtpd_socket_path = path/"smtpd.sock"
-    config += 'smtp socket "' + os.fsdecode(smtpd_socket_path) + '"\n'
+    config += 'listen on socket path "' + os.fsdecode(path/"smtpd.sock") + '"\n'
     config += "table aliases file:" + os.fsdecode(await rsc.spit(path/"aliases", "")) + "\n"
-    config += 'queue directory "' + os.fsdecode(await (path/"spool").mkdir()) + '"\n'
+    config += 'queue path "' + os.fsdecode(await (path/"spool").mkdir(mode=0o711)) + '"\n'
     config += 'path chroot "' + os.fsdecode(await (path/"empty").mkdir()) + '"\n'
     config += "listen on localhost inherit " + str(smtp_listener.near.number) + '\n'
 
@@ -114,7 +113,7 @@ async def start_smtpd(nursery, stdtask: StandardTask, path: Path,
     lmtp_socket_path = path/"lmtp.sock"
     await lmtp_socket.bind(lmtp_socket_path.unix_address())
     await lmtp_socket.listen(10)
-    config += 'action "local" lmtp "' + os.fsdecode(lmtp_socket_path) + '"\n'
+    config += 'action "local" lmtp "' + os.fsdecode(lmtp_socket_path) + '" user root\n'
     # all mail is delivered to this single socket
     # TODO actually dispatch correctly: we need one socket per username we accept
     config += 'match from any auth for local action "local"\n'
@@ -136,13 +135,14 @@ async def start_smtpd(nursery, stdtask: StandardTask, path: Path,
 
     await smtp_listener.disable_cloexec()
 
-    child = await thread.exec(smtpd.args("-v", "-d", "-f", await rsc.spit(path/"smtpd.config", config)))
+    config_path = await rsc.spit(path/"smtpd.config", config)
+    child = await thread.exec(smtpd.args("-v", "-d", "-f", config_path))
     nursery.start_soon(child.check)
 
     return Smtpd(
         lmtp_socket_path=lmtp_socket_path,
         lmtp_listener=lmtp_socket.handle,
-        socket_path=smtpd_socket_path,
+        config_file=config_path,
     )
 
 class TestMail(TrioTestCase):
@@ -156,11 +156,11 @@ class TestMail(TrioTestCase):
         await smtp_sock.listen(10)
         self.smtpd = await start_smtpd(self.nursery, self.stdtask, await (self.path/"smtpd").mkdir(), smtp_sock.handle)
         self.maildir = await Maildir.make(self.path/"mail")
-        # self.dovecot = await start_dovecot(self.nursery, self.stdtask, await (self.path/"dovecot").mkdir(),
-        #                                    self.smtpd.lmtp_listener, self.maildir)
+        self.dovecot = await start_dovecot(self.nursery, self.stdtask, await (self.path/"dovecot").mkdir(),
+                                           self.smtpd.lmtp_listener, self.maildir)
         smtpctl = await rsc.which(self.stdtask, "smtpctl")
-        self.sendmail = Command(smtpctl.executable_path, [b'sendmail'], {'SMTPD_SOCKET': self.smtpd.socket_path})
-        # self.inty = await inotify.Inotify.make(self.stdtask)
+        self.sendmail = Command(smtpctl.executable_path, [b'sendmail'], {'SMTPD_CONFIG_FILE': self.smtpd.config_file})
+        self.inty = await inotify.Inotify.make(self.stdtask)
 
 
     async def asyncTearDown(self) -> None:
