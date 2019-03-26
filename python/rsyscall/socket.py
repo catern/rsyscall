@@ -1,0 +1,23 @@
+import socket
+from rsyscall._raw import lib # type: ignore
+import enum
+
+class SOCK(enum.IntEnum):
+    DGRAM = socket.SOCK_DGRAM
+
+class SOL(enum.IntEnum):
+    """Stands for Sock Opt Level
+
+    This is what should be passed as the "level" argument to
+    getsockopt/setsockopt.
+
+    """
+    SOCKET = lib.SOL_SOCKET
+    IP = lib.SOL_IP
+
+class IP(enum.IntEnum):
+    RECVERR = lib.IP_RECVERR
+    PKTINFO = lib.IP_PKTINFO
+    MULTICAST_TTL = lib.IP_MULTICAST_TTL
+    MTU_DISCOVER = lib.IP_MTU_DISCOVER
+    PMTUDISC_DONT = lib.IP_PMTUDISC_DONT

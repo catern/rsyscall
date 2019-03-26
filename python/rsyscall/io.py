@@ -269,6 +269,12 @@ class Task:
                                  path.far, flags, mode)
         return self.base.make_fd_handle(fd)
 
+    async def memfd_create(self, name: t.Union[bytes, str]) -> FileDescriptor[MemoryFile]:
+        fd = await memsys.memfd_create(
+            self.base, self.transport, self.allocator,
+            os.fsencode(name), lib.MFD_CLOEXEC)
+        return FileDescriptor(self, self.base.make_fd_handle(fd), MemoryFile())
+
     async def read(self, fd: far.FileDescriptor, count: int=4096) -> bytes:
         return (await memsys.read(self.base, self.transport, self.allocator, fd, count))
 
@@ -366,6 +372,8 @@ class SignalFile(ReadableFile):
         await memsys.signalfd(fd.task.syscall, fd.task.transport, fd.task.allocator, mask, 0, fd=fd.pure)
         self.mask = mask
 
+class MemoryFile(ReadableWritableFile, SeekableFile):
+    pass
 class DirectoryFile(SeekableFile):
     def __init__(self, raw_path: base.Path) -> None:
         # this is a fallback if we need to serialize this dirfd out
@@ -400,8 +408,14 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     async def getsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
         return (await memsys.getsockopt(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, level, optname, optlen))
 
-    async def setsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optval: bytes) -> None:
-        return (await memsys.setsockopt(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, level, optname, optval))
+    async def setsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int,
+                         optval: t.Union[bytes, int]) -> None:
+        if isinstance(optval, bytes):
+            optbytes = optval
+        else:
+            optbytes = struct.pack('i', optval)
+        return (await memsys.setsockopt(fd.task.syscall, fd.task.transport, fd.task.allocator,
+                                        fd.pure, level, optname, optbytes))
 
     async def accept(self, fd: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
         fdnum, data = await memsys.accept(fd.task.syscall, fd.task.transport, fd.task.allocator,
@@ -571,6 +585,10 @@ class FileDescriptor(t.Generic[T_file_co]):
 
     async def getpeername(self: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
         return (await self.file.getpeername(self))
+
+    async def setsockopt(self: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int,
+                         optval: t.Union[bytes, int]) -> None:
+        await self.file.setsockopt(self, level, optname, optval)
 
     async def getsockopt(self: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
         return (await self.file.getsockopt(self, level, optname, optlen))
@@ -1566,6 +1584,9 @@ class StandardTask:
         await self.task.base.unshare_user()
         await write_user_mappings(self.task, uid, gid,
                                   in_namespace_uid=in_namespace_uid, in_namespace_gid=in_namespace_gid)
+
+    async def unshare_net(self) -> None:
+        await self.task.base.unshare_net()
 
     async def setns_user(self, fd: handle.FileDescriptor) -> None:
         await self.task.base.setns_user(fd)

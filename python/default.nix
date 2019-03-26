@@ -15,6 +15,11 @@ let
   #     sha256 = "0clxyrc0fc7ki2lra4jg30xrpqjryc7406yg9g8gqp61ldgqk2h4";
   # };});
   opensmtpd = pkgs.opensmtpd.overrideAttrs (_: { src = /home/sbaugh/.local/src/OpenSMTPD; });
+  miredo = pkgs.miredo.overrideAttrs (oldAttrs: {
+    src = builtins.fetchGit /home/sbaugh/.local/src/miredo;
+    preConfigure = "cp ${pkgs.gettext}/share/gettext/gettext.h include/gettext.h";
+    buildInputs = oldAttrs.buildInputs ++ [ pkgs.autoreconfHook ];
+  });
 in
 with pkgs.python37Packages;
 
@@ -33,6 +38,7 @@ pytest ];
       opensmtpd
       pkgs.dovecot
       pkgs.s6
+      miredo
   ];
 }
 

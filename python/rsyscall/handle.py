@@ -419,6 +419,9 @@ class Task(rsyscall.far.Task):
         await self.unshare_fs()
         await rsyscall.near.unshare(self.sysif, rsyscall.near.UnshareFlag.NEWUSER)
 
+    async def unshare_net(self) -> None:
+        await rsyscall.near.unshare(self.sysif, rsyscall.near.UnshareFlag.NEWNET)
+
     async def setns_user(self, fd: FileDescriptor) -> None:
         fd.check_is_for(self)
         # can't setns to a user namespace while sharing CLONE_FS

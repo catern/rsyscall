@@ -169,12 +169,11 @@ class TestMail(TrioTestCase):
     async def send_email(self, from_: str, to: str, subject: str, msg: str) -> None:
         thread = await self.stdtask.fork()
         await thread.stdtask.unshare_files(going_to_exec=True)
-        r, w = await thread.stdtask.task.pipe()
+        fd = await thread.stdtask.task.memfd_create('message')
         msg = f'From: {from_}\nSubject: {subject}\nTo: {to}\n\n' + msg
-        # make sure to avoid large messages :)
-        await w.write_all(msg.encode())
-        await w.close()
-        await thread.stdtask.stdin.replace_with(r.handle)
+        await fd.write_all(msg.encode())
+        await fd.lseek(0, os.SEEK_SET)
+        await thread.stdtask.stdin.replace_with(fd.handle)
         child = await thread.exec(self.sendmail.args('-t'))
         await child.check()
 
