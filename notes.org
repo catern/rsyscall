@@ -12321,6 +12321,14 @@ so yeah we clearly need to be using tunneling, not bridging.
    also we can do the DNS all on one box, with two smtp servers, thing.
    that's important for actually testing.
 *** that means setns
-    okay so why does setns
+    okay so why can't I just setns to a user namespace I have privs over?
+
+    well, I could fake out the environment of a setuid executable then.
+
+    it's all because of caps, blah
+
+    In fact why can't I just arbitrarily unshare without privileges?
+
+    Caps, mostly, I guess...
 * migrate pid namespace to task
   cool I did it

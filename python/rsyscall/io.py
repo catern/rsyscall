@@ -3570,6 +3570,14 @@ class RsyscallThread:
                                            path, [os.fsencode(arg) for arg in argv],
                                            raw_envp, flags=0))
 
+    async def run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
+        child = await command.exec(self)
+        task_status.started(child)
+        exit_event = await child.wait_for_exit()
+        if check:
+            exit_event.check()
+        return exit_event
+
     async def close(self) -> None:
         await self.thread.close()
         await self.stdtask.task.close()

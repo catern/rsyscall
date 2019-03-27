@@ -14,6 +14,7 @@ from dataclasses import dataclass
 @dataclass
 class Miredo:
     netnsfd: handle.FileDescriptor
+    usernsfd: handle.FileDescriptor
 
 async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
     miredo = await rsc.which(stdtask, "miredo")
@@ -48,12 +49,14 @@ async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
     # we want this to move this to be owned by stdtask. hm.
     netnsfd = await thread.stdtask.task.open(stdtask.task.root().handle/"proc"/"self"/"ns"/"net", os.O_RDONLY)
     netnsfd = netnsfd.move(stdtask.task.base)
+    usernsfd = await thread.stdtask.task.open(stdtask.task.root().handle/"proc"/"self"/"ns"/"user", os.O_RDONLY)
+    usernsfd = usernsfd.move(stdtask.task.base)
     await thread.stdtask.unshare_files(going_to_exec=True)
     await sock.handle.disable_cloexec()
     await config_fd.handle.disable_cloexec()
     child = await thread.exec(miredo.args('-f', '-c', config_fd.handle.as_proc_path(), '-u', 'root'))
     nursery.start_soon(child.check)
-    return Miredo(netnsfd)
+    return Miredo(netnsfd, usernsfd)
 
 class TestMiredo(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -63,7 +66,7 @@ class TestMiredo(TrioTestCase):
     async def test_miredo(self) -> None:
         ping6 = await rsc.which(self.stdtask, "ping6")
         # TODO properly wait for miredo to be up...
-        await trio.sleep(1)
+        await trio.sleep(.1)
         # ah we have to run this in the netns thread...
         # hmm...
         # so we need setns
@@ -72,8 +75,16 @@ class TestMiredo(TrioTestCase):
         # or something? do we just need root?
         # if we enter another userns, can we still setns to this one?
         # 
+        # hmm to setns we need to have the correct user namespace I guess?
+        # why doesn't just unshare_user work?
+        # I guess I have to be root in the user namespace that owns the namespace?
+        # otherwise I could setns to any namespace. hm.
+        # ugh this is really annoying though
+        # we could use a thread instead?
+        # hmm let's see
+        await thread.stdtask.task.base.setns_user(self.miredo.usernsfd)
         await thread.stdtask.task.base.setns_net(self.miredo.netnsfd)
-        await self.stdtask.run(ping6.args('-c', '1', 'google.com'))
+        await thread.run(ping6.args('-c', '1', 'google.com'))
 
 if __name__ == "__main__":
     import unittest

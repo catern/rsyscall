@@ -387,6 +387,25 @@ class TestIO(unittest.TestCase):
                     await self.do_async_things(stdtask3.epoller, stdtask3.task)
         trio.run(self.runner, test)
 
+    def test_setns_ownership(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            thread1 = await stdtask.fork()
+            await thread1.stdtask.unshare_user()
+            await thread1.stdtask.unshare_net()
+            procself = stdtask.task.root().handle/"proc"/"self"
+            netnsfd = await thread1.stdtask.task.open(procself/"ns"/"net", os.O_RDONLY)
+            netnsfd = netnsfd.move(stdtask.task.base)
+            usernsfd = await thread1.stdtask.task.open(procself/"ns"/"user", os.O_RDONLY)
+            usernsfd = usernsfd.move(stdtask.task.base)
+
+            thread2 = await stdtask.fork()
+            await thread2.stdtask.unshare_user()
+            with self.assertRaises(PermissionError):
+                # we can't setns to a namespace that we don't own, I guess...
+                await thread2.stdtask.task.base.setns_net(netnsfd)
+                # that's really lame...
+        trio.run(self.runner, test)
+
     def test_spawn_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.spawn_exec()
