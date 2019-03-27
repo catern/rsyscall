@@ -12302,3 +12302,21 @@ well I guess sending arbitrary packets breaks the BSD socket API;
 a user can intercept/mitm/fake TCP packets for another user.
 
 so yeah we clearly need to be using tunneling, not bridging.
+* okay cool basic miredo is working
+  there are several directions now
+** setns/get proper usage working
+   so that we can bind a socket in the netns and pull it out
+** clean up total hacks and sandbox properly
+   ok i'll just do this :)
+
+   hmm okay i don't care about cleaning up hacks,
+   but I do care about refactoring it to be properly sandboxed.c
+** dns forwarding thing
+** actually test things
+   hmm, we can't test this in a self-contained way
+
+   should I also set up miredo server so that we can actually test this?
+
+   yeah, yeah I should.
+   also we can do the DNS all on one box, with two smtp servers, thing.
+   that's important for actually testing.

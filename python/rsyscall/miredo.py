@@ -56,7 +56,13 @@ class TestMiredo(TrioTestCase):
         miredo = await start_miredo(self.nursery, self.stdtask)
 
     async def test_miredo(self) -> None:
-        await trio.sleep(999)
+        ping6 = await rsc.which(self.stdtask, "ping6")
+        # TODO properly wait for miredo to be up...
+        await trio.sleep(1)
+        # ah we have to run this in the netns thread...
+        # hmm...
+        # so we need setns
+        await self.stdtask.run(ping6.args('-c', '1', 'google.com'))
 
 if __name__ == "__main__":
     import unittest
