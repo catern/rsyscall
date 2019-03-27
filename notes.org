@@ -12320,3 +12320,7 @@ so yeah we clearly need to be using tunneling, not bridging.
    yeah, yeah I should.
    also we can do the DNS all on one box, with two smtp servers, thing.
    that's important for actually testing.
+*** that means setns
+    okay so why does setns
+* migrate pid namespace to task
+  cool I did it

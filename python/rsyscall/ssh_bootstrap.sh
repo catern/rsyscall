@@ -8,7 +8,5 @@ dir="$(mktemp --directory --tmpdir="$tmp")"
 cat >"$dir/bootstrap"
 chmod +x "$dir/bootstrap"
 cd "$dir" || exit 1
-echo "HELLO IM ECHOING" >&2
-ls -l /proc/self/fd >&2
 echo "$dir"
 exec "$dir/bootstrap" socket

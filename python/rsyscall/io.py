@@ -192,7 +192,6 @@ class Task:
                  transport: base.MemoryTransport,
                  allocator: memory.AllocatorClient,
                  sigmask: SignalMask,
-                 pid_namespace: far.PidNamespace,
     ) -> None:
         self.base = base_
         self.transport = transport
@@ -200,7 +199,6 @@ class Task:
         # we really need to be able to allocate memory to get anything done - namely, to call syscalls.
         self.allocator = allocator
         self.sigmask = sigmask
-        self.pid_namespace = pid_namespace
 
     @property
     def syscall(self) -> base.SyscallInterface:
@@ -478,7 +476,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         else:
             raise Exception("file descriptor already closed")
 
-    def borrow(self, task: base.Task) -> 'FileDescriptor[T_file_co]':
+    def for_task(self, task: base.Task) -> 'FileDescriptor[T_file_co]':
         if self.open:
             return self.__class__(self.task, task.make_fd_handle(self.handle), self.file)
         else:
@@ -1415,11 +1413,14 @@ class StandardTask:
         process = far.Process(pid_namespace, near.Process(pid))
         base_task = handle.Task(syscall, process, base.FDTable(pid), base.local_address_space,
                                 far.FSInformation(pid, root=near.DirectoryFile(),
-                                                  cwd=near.DirectoryFile()))
+                                                  cwd=near.DirectoryFile()),
+                                pid_namespace,
+                                far.NetNamespace(pid),
+        )
         task = Task(base_task,
                     LocalMemoryTransport(),
                     memory.AllocatorClient.make_allocator(base_task),
-                    SignalMask(set()), pid_namespace)
+                    SignalMask(set()))
         environ = {key.encode(): value.encode() for key, value in os.environ.items()}
         stdstreams = wrap_stdin_out_err(task)
 
@@ -1514,9 +1515,9 @@ class StandardTask:
             self.process, self.filesystem,
             epoller, child_monitor,
             {**self.environment},
-            stdin=self.stdin.borrow(task.base),
-            stdout=self.stdout.borrow(task.base),
-            stderr=self.stderr.borrow(task.base),
+            stdin=self.stdin.for_task(task.base),
+            stdout=self.stdout.for_task(task.base),
+            stderr=self.stderr.for_task(task.base),
         )
         return RsyscallThread(stdtask, thread)
 
@@ -1555,9 +1556,9 @@ class StandardTask:
             epoller,
             child_monitor,
             {**self.environment},
-            stdin=self.stdin.borrow(task.base),
-            stdout=self.stdout.borrow(task.base),
-            stderr=self.stderr.borrow(task.base),
+            stdin=self.stdin.for_task(task.base),
+            stdout=self.stdout.for_task(task.base),
+            stderr=self.stderr.for_task(task.base),
         )
         persistent_server = PersistentServer(path, task, epoller.epoller, syscall,
                                              listening_sock_handle)
@@ -1856,9 +1857,7 @@ class ChildProcessMonitorInternal:
             if waited_on_while_cloning is not None:
                 return waited_on_while_cloning
             else:
-                # TODO this is wrong! we need to pull the process namespace out of the cloning task!
-                # but it's not yet present on base.Task, so...
-                return self.add_task(base.Process(self.waiting_task.pid_namespace, near.Process(tid)))
+                return self.add_task(base.Process(clone_task.pidns, near.Process(tid)))
 
     async def do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
@@ -1907,8 +1906,8 @@ class ChildProcessMonitorInternal:
                 pid = child_event.pid
                 if pid not in self.task_map:
                     if self.cloning_task is not None:
-                        # the child we were cloning died before we handled the return value of clone
-                        child_task = self.add_task(base.Process(self.waiting_task.pid_namespace, near.Process(pid)))
+                        # this is the child we were just cloning. it died before clone returned.
+                        child_task = self.add_task(base.Process(self.cloning_task.pidns, near.Process(pid)))
                         self.waited_on_while_cloning = child_task
                         # only one clone happens at a time, if we get more unknown tids, they're a bug
                         self.cloning_task = None
@@ -2566,7 +2565,7 @@ async def call_function(task: Task, stack: BufferedStack, process_resources: Pro
     stack_pointer = await stack.flush(task.transport)
     # we directly spawn a thread for the function and wait on it
     pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
-    process = base.Process(task.pid_namespace, near.Process(pid))
+    process = base.Process(task.base.pidns, near.Process(pid))
     siginfo = await memsys.waitid(task.syscall, task.transport, task.allocator,
                                   process, lib._WALL|lib.WEXITED)
     struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
@@ -3015,7 +3014,6 @@ async def read_lines(fd: AsyncFileDescriptor[ReadableFile]) -> t.AsyncIterator[b
                 break
             else:
                 line = buf[:i]
-                print("read line", line)
                 yield line
                 buf = buf[i+1:]
 
@@ -3117,8 +3115,13 @@ async def spawn_rsyscall_thread(
     else:
         fs_information = far.FSInformation(
             cthread.child_task.process.near.id, root=parent_task.base.fs.root, cwd=parent_task.base.fs.cwd)
+    if newpid:
+        pidns = far.PidNamespace(cthread.child_task.process.near.id)
+    else:
+        pidns = parent_task.base.pidns
+    netns = parent_task.base.netns
     new_base_task = base.Task(syscall, cthread.child_task.process,
-                              parent_task.fd_table, parent_task.address_space, fs_information)
+                              parent_task.fd_table, parent_task.address_space, fs_information, pidns, netns)
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
@@ -3132,7 +3135,7 @@ async def spawn_rsyscall_thread(
                     parent_task.transport,
                     parent_task.allocator.inherit(new_base_task),
                     parent_task.sigmask.inherit(),
-                    parent_task.pid_namespace)
+    )
     return new_task, cthread
 
 @dataclass
@@ -3243,7 +3246,9 @@ async def spawn_rsyscall_persistent_server(
     syscall = RsyscallInterface(RsyscallConnection(access_sock, access_sock),
                                 cthread.child_task.process.near, remote_sock.near)
     new_base_task = base.Task(syscall, cthread.child_task.process,
-                              parent_task.fd_table, parent_task.address_space, parent_task.base.fs)
+                              parent_task.fd_table, parent_task.address_space, parent_task.base.fs,
+                              parent_task.base.pidns,
+                              parent_task.base.netns)
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     remote_listening_handle = new_base_task.make_fd_handle(listening_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
@@ -3251,7 +3256,7 @@ async def spawn_rsyscall_persistent_server(
                     parent_task.transport.inherit(new_base_task),
                     parent_task.allocator.inherit(new_base_task),
                     parent_task.sigmask.inherit(),
-                    parent_task.pid_namespace)
+    )
     return new_task, cthread, syscall, remote_listening_handle
 
 async def make_robust_futex_task(
@@ -3445,13 +3450,18 @@ async def ssh_bootstrap(
     environ = await describe_buf.read_envp(describe_struct.envp_count)
     # Build the new task!
     new_address_space = far.AddressSpace(new_pid)
+    # TODO the pid namespace will probably be common for all connections...
     new_pid_namespace = far.PidNamespace(new_pid)
     new_process = far.Process(new_pid_namespace, near.Process(new_pid))
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                     new_process.near, remote_syscall_fd.near)
     # the cwd is not the one from the ssh_host because we cd'd somewhere else as part of the bootstrap
     new_fs_information = far.FSInformation(new_pid, root=ssh_root, cwd=near.DirectoryFile())
-    new_base_task = base.Task(new_syscall, new_process, new_fd_table, new_address_space, new_fs_information)
+    # TODO we should get this from the SSHHost, this is usually going
+    # to be common for all connections and we should express that
+    net = far.NetNamespace(new_pid)
+    new_base_task = base.Task(new_syscall, new_process, new_fd_table, new_address_space, new_fs_information,
+                              new_pid_namespace, net)
     handle_remote_syscall_fd = new_base_task.make_fd_handle(remote_syscall_fd)
     new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
@@ -3460,7 +3470,7 @@ async def ssh_bootstrap(
                     memory.AllocatorClient.make_allocator(new_base_task),
                     # we assume ssh zeroes the sigmask before starting us
                     SignalMask(set()),
-                    new_pid_namespace)
+    )
     left_connecting_connection, right_connecting_connection = await new_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     connecting_connection = (left_connecting_connection.handle, right_connecting_connection.handle)
     epoller = await new_task.make_epoll_center()
@@ -4145,11 +4155,16 @@ async def setup_stub(
     # we assume root is shared, but cwd changes
     fs_information = far.FSInformation(pid, root=stdtask.task.base.fs.root, cwd=near.DirectoryFile())
     # we assume pid namespace is shared
-    pid_namespace = stdtask.task.pid_namespace
-    process = far.Process(pid_namespace, near.Process(pid))
+    pidns = stdtask.task.base.pidns
+    process = far.Process(pidns, near.Process(pid))
+    # we assume net namespace is shared - that's dubious...
+    # we should make it possible to control the namespace sharing more, hmm.
+    # TODO maybe the describe should contain the net namespace number? and we can store our own as well?
+    # then we can automatically do it right
+    netns = stdtask.task.base.netns
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
     syscall = RsyscallInterface(RsyscallConnection(access_syscall_sock, access_syscall_sock), process.near, remote_syscall_fd)
-    base_task = base.Task(syscall, process, fd_table, address_space, fs_information)
+    base_task = base.Task(syscall, process, fd_table, address_space, fs_information, pidns, netns)
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     task = Task(base_task,
@@ -4157,7 +4172,7 @@ async def setup_stub(
                                       base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd))),
                 memory.AllocatorClient.make_allocator(base_task),
                 SignalMask({signal.Signals(bit) for bit in memsys.bits(describe_struct.sigmask)}),
-                pid_namespace)
+    )
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     # I guess I need to write out the set too in describe
     epoller = await task.make_epoll_center()
@@ -4225,11 +4240,18 @@ async def rsyscall_stdin_bootstrap(
     # we assume root is shared, but cwd changes
     fs_information = far.FSInformation(pid, root=stdtask.task.base.fs.root, cwd=near.DirectoryFile())
     # we assume pid namespace is shared
-    pid_namespace = stdtask.task.pid_namespace
-    process = far.Process(pid_namespace, near.Process(pid))
+    pidns = stdtask.task.base.pidns
+    # we assume net namespace is shared
+    # TODO include namespace inode numbers numbers in describe
+    # note: if we start dealing with namespace numbers then we need to
+    # have a Kernel namespace which tells us which kernel we get those
+    # numbers from.
+    # oh hey we can conveniently dump the inode numbers with getdents!
+    netns = stdtask.task.base.netns
+    process = far.Process(pidns, near.Process(pid))
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
     syscall = RsyscallInterface(RsyscallConnection(access_syscall_sock, access_syscall_sock), process.near, remote_syscall_fd)
-    base_task = base.Task(syscall, process, fd_table, address_space, fs_information)
+    base_task = base.Task(syscall, process, fd_table, address_space, fs_information, pidns, netns)
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     task = Task(base_task,
@@ -4237,7 +4259,7 @@ async def rsyscall_stdin_bootstrap(
                                       base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd))),
                 memory.AllocatorClient.make_allocator(base_task),
                 SignalMask(set()),
-                pid_namespace)
+    )
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     epoller = await task.make_epoll_center()
     child_monitor = await ChildProcessMonitor.make(task, epoller)

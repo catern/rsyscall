@@ -11,6 +11,7 @@ import trio
 import os
 import typing as t
 import logging
+import contextlib
 logger = logging.getLogger(__name__)
 
 # This is like a far pointer plus a segment register.
@@ -107,8 +108,19 @@ class FileDescriptor:
             raise Exception("for some reason, the fd wasn't closed; "
                             "maybe some race condition where there are still handles left around?")
 
-    def borrow(self, task: Task) -> FileDescriptor:
+    def for_task(self, task: Task) -> FileDescriptor:
         return task.make_fd_handle(self)
+
+    @contextlib.asynccontextmanager
+    async def borrow(self, task: Task) -> t.AsyncGenerator[FileDescriptor, None]:
+        if self.task == task:
+            yield self
+        else:
+            borrowed = self.for_task(task)
+            try:
+                yield borrowed
+            finally:
+                await borrowed.invalidate()
 
     def move(self, task: Task) -> FileDescriptor:
         """This is an optimized version of borrowing then invalidating
@@ -118,7 +130,7 @@ class FileDescriptor:
         async. We assert to make sure this is true.
 
         """
-        new = self.borrow(task)
+        new = self.for_task(task)
         self.valid = False
         handles = self._remove_from_tracking()
         if len(handles) == 0:
@@ -306,13 +318,17 @@ class Task(rsyscall.far.Task):
                  process: rsyscall.far.Process,
                  fd_table: rsyscall.far.FDTable,
                  address_space: rsyscall.far.AddressSpace,
-                 fs: rsyscall.far.FSInformation
+                 fs: rsyscall.far.FSInformation,
+                 pidns: rsyscall.far.PidNamespace,
+                 netns: rsyscall.far.NetNamespace,
     ) -> None:
         self.sysif = sysif
         self.process = process
         self.fd_table = fd_table
         self.address_space = address_space
         self.fs = fs
+        self.pidns = pidns
+        self.netns = netns
         self.fd_handles: t.List[FileDescriptor] = []
         fd_table_to_near_to_handles.setdefault(self.fd_table, {})
 
@@ -427,6 +443,10 @@ class Task(rsyscall.far.Task):
         # can't setns to a user namespace while sharing CLONE_FS
         await self.unshare_fs()
         await fd.setns(rsyscall.near.UnshareFlag.NEWUSER)
+
+    async def setns_net(self, fd: FileDescriptor) -> None:
+        async with fd.borrow(self) as fd:
+            await fd.setns(rsyscall.near.UnshareFlag.NEWNET)
 
 @dataclass
 class Pipe:

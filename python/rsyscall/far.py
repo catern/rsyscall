@@ -146,6 +146,13 @@ class FSInformation:
         self.cwd = rsyscall.near.DirectoryFile()
         await rsyscall.near.fchdir(task.sysif, task.to_near_fd(fd))
 
+@dataclass(eq=False)
+class NetNamespace:
+    """The namespace for networking resource: devices, routing tables, etc.
+
+    Also controls the abstract namespace for Unix domain sockets.
+    """
+    creator_pid: int
 
 @dataclass
 class Root:
@@ -216,6 +223,11 @@ class Task:
     fd_table: FDTable
     address_space: AddressSpace
     fs: FSInformation
+    # at the moment, our own pidns and our child pidns are never different.
+    # but they could be different, if we do an unshare(NEWPID).
+    # TODO make separate child_pidns and use properly
+    pidns: PidNamespace
+    netns: NetNamespace
 
     def to_near_pointer(self, pointer: Pointer) -> rsyscall.near.Pointer:
         return self.address_space.to_near(pointer)
