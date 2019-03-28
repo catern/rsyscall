@@ -13,13 +13,19 @@ from dataclasses import dataclass
 
 @dataclass
 class Miredo:
-    netnsfd: handle.FileDescriptor
-    usernsfd: handle.FileDescriptor
+    # we could use setns instead of keeping a thread around inside the namespace.
+    # that would certainly be more lightweight.
+    # but, the hassle with setns is that it seems you must setns to
+    # the owning userns before you can setns to the netns.
+    # you can't just do an unshare(USER) to get caps then setns to wherever.
+    # I don't get why this is the case, and I'm not sure it can't be worked around.
+    # So, I'll just use a thread, which I do understand.
+    # Hopefully we can get a more lightweight setns-based approach later?
+    ns_thread: RsyscallThread
 
 async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
     miredo = await rsc.which(stdtask, "miredo")
-    thread = await stdtask.fork()
-    sock = await thread.stdtask.task.socket_inet(socket.SOCK.DGRAM)
+    sock = await stdtask.task.socket_inet(socket.SOCK.DGRAM)
     await sock.bind(rsc.InetAddress(0, 0))
     # set a bunch of sockopts
     await sock.setsockopt(socket.SOL.IP, socket.IP.RECVERR, 1)
@@ -27,6 +33,14 @@ async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
     await sock.setsockopt(socket.SOL.IP, socket.IP.MULTICAST_TTL, 1)
     # hello fragments my old friend
     await sock.setsockopt(socket.SOL.IP, socket.IP.MTU_DISCOVER, socket.IP.PMTUDISC_DONT)
+    ns_thread = await stdtask.fork()
+    # TODO properly inherit the caps we need instead of being root
+    await ns_thread.stdtask.unshare_user(0, 0)
+    await ns_thread.stdtask.unshare_net()
+    # we'll keep the ns thread around so we don't have to mess with setns;
+    # we'll fork off another thread to actually exec miredo.
+    thread = await ns_thread.stdtask.fork(newpid=True)
+    sock = sock.move(thread.stdtask.task.base)
     # hmm
     config = ""
     config += "InterfaceName teredo\n"
@@ -36,9 +50,6 @@ async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
     config_fd = await thread.stdtask.task.memfd_create('miredo.conf')
     await config_fd.write_all(config.encode())
     await config_fd.lseek(0, os.SEEK_SET)
-    # TODO properly inherit the caps we need instead of being root
-    await thread.stdtask.unshare_user(0, 0)
-    await thread.stdtask.unshare_net()
     # TODO miredo doesn't properly clean up its child process, sigh
     # TODO hmm we probably want to... have our own thread be the parent of this net ns...
     # maybe? or we could just setns into it...
@@ -47,16 +58,12 @@ async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
     # then unshare net after opening the socket
     # open hmm
     # we want this to move this to be owned by stdtask. hm.
-    netnsfd = await thread.stdtask.task.open(stdtask.task.root().handle/"proc"/"self"/"ns"/"net", os.O_RDONLY)
-    netnsfd = netnsfd.move(stdtask.task.base)
-    usernsfd = await thread.stdtask.task.open(stdtask.task.root().handle/"proc"/"self"/"ns"/"user", os.O_RDONLY)
-    usernsfd = usernsfd.move(stdtask.task.base)
     await thread.stdtask.unshare_files(going_to_exec=True)
     await sock.handle.disable_cloexec()
     await config_fd.handle.disable_cloexec()
     child = await thread.exec(miredo.args('-f', '-c', config_fd.handle.as_proc_path(), '-u', 'root'))
     nursery.start_soon(child.check)
-    return Miredo(netnsfd, usernsfd)
+    return Miredo(ns_thread)
 
 class TestMiredo(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -67,23 +74,9 @@ class TestMiredo(TrioTestCase):
         ping6 = await rsc.which(self.stdtask, "ping6")
         # TODO properly wait for miredo to be up...
         await trio.sleep(.1)
-        # ah we have to run this in the netns thread...
-        # hmm...
-        # so we need setns
-        thread = await self.stdtask.fork()
-        # hmm. so to setns, we need to have the correct user namespace as well.
-        # or something? do we just need root?
-        # if we enter another userns, can we still setns to this one?
-        # 
-        # hmm to setns we need to have the correct user namespace I guess?
-        # why doesn't just unshare_user work?
-        # I guess I have to be root in the user namespace that owns the namespace?
-        # otherwise I could setns to any namespace. hm.
-        # ugh this is really annoying though
-        # we could use a thread instead?
-        # hmm let's see
-        await thread.stdtask.task.base.setns_user(self.miredo.usernsfd)
-        await thread.stdtask.task.base.setns_net(self.miredo.netnsfd)
+        # ping needs root, so let's fork it off from the
+        # miredo-ns-thread, which has root in the namespace
+        thread = await self.miredo.ns_thread.stdtask.fork()
         await thread.run(ping6.args('-c', '1', 'google.com'))
 
 if __name__ == "__main__":
