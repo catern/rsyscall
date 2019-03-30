@@ -12358,3 +12358,12 @@ so yeah we clearly need to be using tunneling, not bridging.
   i think it's relatively safe...
 * gdb
   ok so we need a good gdb set up
+
+  I guess I can just spawn a shell, that seems fine
+
+  oh nah we don't actually need this yet
+* rtnetlink
+  we'll use this to detect when the miredo route is created
+
+  seems fine to do it this external way.
+  it's generically useful
