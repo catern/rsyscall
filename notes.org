@@ -12302,6 +12302,18 @@ well I guess sending arbitrary packets breaks the BSD socket API;
 a user can intercept/mitm/fake TCP packets for another user.
 
 so yeah we clearly need to be using tunneling, not bridging.
+** miredo
+   okay looking at the miredo API, it should be relatively straightforward
+
+   we can bind the socket outside the netns,
+   then pass it down to miredo inside the netns.
+
+   ez pz, lemon sqzy
+
+   and we don't need to worry about reverse DNS maybe
+   apparently it's not that important in IPv6 land
+
+   okay and I guess we can have separate receipt IPs and sending IPs.
 * okay cool basic miredo is working
   there are several directions now
 ** setns/get proper usage working
@@ -12332,3 +12344,17 @@ so yeah we clearly need to be using tunneling, not bridging.
     Caps, mostly, I guess...
 * migrate pid namespace to task
   cool I did it
+* thoughts
+  rename rsyscallthread to thread
+  have stdtask maybe inherit directly?
+
+  maybe remove far FDs
+
+  garbage collect automatically when calling invalidate/close/borrow:
+  send a bunch of closes not just one.
+  it should be the same speed since close messages are small and we can pipeline them all together.
+
+  pipelining, we could start doing that maybe.
+  i think it's relatively safe...
+* gdb
+  ok so we need a good gdb set up
