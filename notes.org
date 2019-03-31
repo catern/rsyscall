@@ -12413,3 +12413,13 @@ so yeah we clearly need to be using tunneling, not bridging.
   it's generically useful
 * allocatedpointer
 ok this is the next thing to finish
+
+memory! the kernel has a memory-oriented API:
+I have to put data into main memory for it to read it,
+and it puts data in main memory for me to read it.
+
+It can't go direct - we should expose
+
+should I have a sizedpointer?
+
+ifreq will just store a tag and be assignable with everything

@@ -22,6 +22,7 @@ import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.far as far
 import rsyscall.near as near
+from rsyscall.struct import Struct, T_struct
 
 from rsyscall.stat import Dirent, DType
 import rsyscall.stat
@@ -186,12 +187,36 @@ class File:
 T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
+@dataclass
 class AllocatedPointer:
     ptr: handle.Pointer
     task: Task
 
-    async def write(self, data: bytes) -> None:
-        pass
+    async def write(self, data: t.Union[bytes, ffi.CData]) -> None:
+        if isinstance(data, ffi.CData):
+            data = bytes(ffi.buffer(data))
+        await self.task.transport.write(self.ptr.far, data)
+
+    async def read(self, n: int) -> bytes:
+        return (await self.task.transport.read(self.ptr.far, n))
+    
+@dataclass
+class TypedPointer(t.Generic[T_struct]):
+    data_cls: t.Type[T_struct]
+    ptr: AllocatedPointer
+
+    async def write(self, data: T_struct) -> None:
+        size = self.data_cls.sizeof()
+        data_bytes = data.to_bytes()
+        if len(data_bytes) != size:
+            raise Exception("data has wrong size", len(data_bytes),
+                            "for this typed pointer of size", size)
+        await self.ptr.write(data_bytes)
+
+    async def read(self) -> T_struct:
+        size = self.data_cls.sizeof()
+        data = await self.ptr.read(size)
+        return self.data_cls.from_bytes(data)
 
 class Task:
     def __init__(self,
@@ -228,16 +253,19 @@ class Task:
     async def close(self):
         await self.syscall.close_interface()
 
-    async def to_pointer(self, data: t.Union[bytes, ffi.CData]) -> handle.Pointer:
-        if isinstance(data, ffi.CData):
-            data = bytes(ffi.buffer(data))
-        data_len = len(data)
-        allocation = await self.allocator.malloc(data_len)
+    async def malloc_type(self, cls: t.Type[T_struct]) -> TypedPointer[T_struct]:
+        allocation = await self.allocator.malloc(cls.sizeof())
+        handle_ptr = handle.Pointer(self.base, allocation.pointer.near, allocation.free)
+        alloc_ptr = AllocatedPointer(handle_ptr, self)
+        return TypedPointer(cls, alloc_ptr)
+
+    async def to_pointer(self, data: T_struct) -> TypedPointer[T_struct]:
+        ptr = await self.malloc_type(type(data))
         try:
-            await self.transport.write(allocation.pointer, data)
+            await ptr.write(data)
         except:
-            allocation.free()
-        return handle.Pointer(self.base, allocation.pointer.near, allocation.free)
+            ptr.ptr.ptr.free()
+        return ptr
 
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: int,

@@ -58,6 +58,12 @@ class TestIO(unittest.TestCase):
                                                  pipe.rfd.handle.far, len(in_data), 0)
         trio.run(self.runner, test)
 
+    def test_to_pointer(self):
+        async def test(stdtask: StandardTask) -> None:
+            ptr = await stdtask.task.to_pointer(EpollEvent(42, EpollEventMask.make()))
+            print(await ptr.read())
+        trio.run(self.runner, test)
+
     # def test_cat(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:

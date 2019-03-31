@@ -1,5 +1,6 @@
 from __future__ import annotations
 from rsyscall._raw import lib, ffi # type: ignore
+from rsyscall.struct import Struct
 import os
 import select
 import typing as t
@@ -63,18 +64,22 @@ class EpollEventMask:
         return str(self)
 
 @dataclass
-class EpollEvent:
+class EpollEvent(Struct):
     data: int
     events: EpollEventMask
 
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct epoll_event const*', (self.events.raw, (self.data,)))))
 
-    @staticmethod
-    def from_bytes(data: bytes) -> EpollEvent:
+    @classmethod
+    def from_bytes(cls: t.Type[EpollEvent], data: bytes) -> EpollEvent:
         struct = ffi.cast('struct epoll_event*', ffi.from_buffer(data))
-        return EpollEvent(struct.data.u64, EpollEventMask(struct.events))
+        return cls(struct.data.u64, EpollEventMask(struct.events))
 
-    @staticmethod
-    def bytesize() -> int:
+    @classmethod
+    def bytesize(cls) -> int:
+        return cls.sizeof()
+
+    @classmethod
+    def sizeof(cls) -> int:
         return ffi.sizeof('struct epoll_event')

@@ -258,10 +258,21 @@ class Pointer:
     near: rsyscall.near.Pointer
     to_free: t.Callable[[], None]
     valid: bool = True
+    
+    @property
+    def far(self) -> rsyscall.far.Pointer:
+        # TODO delete this property
+        self.validate()
+        return rsyscall.far.Pointer(self.task.address_space, self.near)
 
     def validate(self) -> None:
         if not self.valid:
             raise Exception("handle is no longer valid")
+
+    def free(self) -> None:
+        if self.valid:
+            self.valid = False
+            self.to_free()
 
     def __del__(self) -> None:
         if self.valid:
