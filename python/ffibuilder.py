@@ -23,7 +23,7 @@ ffibuilder.set_source(
 #include <sys/socket.h>
 #include <sys/mount.h>
 #include <sys/un.h>
-#include <netinet/ip.h> /* superset of previous */
+#include <netinet/ip.h>
 #include <sys/syscall.h>   /* For SYS_xxx definitions */
 #include <sys/mman.h>
 #include <sys/epoll.h>
@@ -41,6 +41,9 @@ ffibuilder.set_source(
 #include <sys/ptrace.h>
 #include <sys/inotify.h>
 #include <dirent.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <linux/if_tun.h>
 
 struct linux_dirent64 {
     ino64_t        d_ino;    /* 64-bit inode number */
@@ -205,6 +208,7 @@ struct signalfd_siginfo {
 #define SYS_dup3 ...
 #define SYS_pipe2 ...
 #define SYS_ftruncate ...
+#define SYS_ioctl ...
 
 #define SYS_chdir ...
 #define SYS_fchdir ...
@@ -358,10 +362,45 @@ struct sockaddr_in {
     ...;
 };
 
+struct sockaddr {
+    sa_family_t    sa_family;
+    ...;
+};
+
 /* Internet address. */
 struct in_addr {
     uint32_t       s_addr;     /* address in network byte order */
 };
+
+#define IFNAMSIZ ...
+
+struct ifmap {
+    ...;
+};
+
+// low level networking
+struct ifreq {
+    char ifr_name[...]; /* Interface name */
+    union {
+        struct sockaddr ifr_addr;
+        struct sockaddr ifr_dstaddr;
+        struct sockaddr ifr_broadaddr;
+        struct sockaddr ifr_netmask;
+        struct sockaddr ifr_hwaddr;
+        short           ifr_flags;
+        int             ifr_ifindex;
+        int             ifr_metric;
+        int             ifr_mtu;
+        struct ifmap    ifr_map;
+        char            ifr_slave[...];
+        char            ifr_newname[...];
+        char           *ifr_data;
+    };
+};
+
+#define TUNSETIFF ...
+#define IFF_TUN ...
+#define SIOCGIFINDEX ...
 
 // sockopt stuff
 #define SYS_getsockopt ...

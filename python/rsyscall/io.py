@@ -186,6 +186,13 @@ class File:
 T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
+class AllocatedPointer:
+    ptr: handle.Pointer
+    task: Task
+
+    async def write(self, data: bytes) -> None:
+        pass
+
 class Task:
     def __init__(self,
                  base_: base.Task,
@@ -220,6 +227,17 @@ class Task:
 
     async def close(self):
         await self.syscall.close_interface()
+
+    async def to_pointer(self, data: t.Union[bytes, ffi.CData]) -> handle.Pointer:
+        if isinstance(data, ffi.CData):
+            data = bytes(ffi.buffer(data))
+        data_len = len(data)
+        allocation = await self.allocator.malloc(data_len)
+        try:
+            await self.transport.write(allocation.pointer, data)
+        except:
+            allocation.free()
+        return handle.Pointer(self.base, allocation.pointer.near, allocation.free)
 
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: int,

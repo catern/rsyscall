@@ -71,6 +71,58 @@ async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
     nursery.start_soon(child.check)
     return Miredo(ns_thread)
 
+async def start_new_miredo(nursery, stdtask: StandardTask) -> Miredo:
+    # TODO need to locate pkglibexec, hmm.
+    miredo_run_client = None
+    miredo_privproc = None
+    sock = await stdtask.task.socket_inet(socket.SOCK.DGRAM)
+    await sock.bind(rsc.InetAddress(0, 0))
+    # set a bunch of sockopts
+    await sock.setsockopt(socket.SOL.IP, socket.IP.RECVERR, 1)
+    await sock.setsockopt(socket.SOL.IP, socket.IP.PKTINFO, 1)
+    await sock.setsockopt(socket.SOL.IP, socket.IP.MULTICAST_TTL, 1)
+    # hello fragments my old friend
+    await sock.setsockopt(socket.SOL.IP, socket.IP.MTU_DISCOVER, socket.IP.PMTUDISC_DONT)
+    ns_thread = await stdtask.fork()
+    # TODO properly inherit the caps we need instead of being root
+    await ns_thread.stdtask.unshare_user(0, 0)
+    await ns_thread.stdtask.unshare_net()
+
+    # we'll keep the ns thread around so we don't have to mess with setns;
+    # we'll fork off more threads to actually exec miredo.
+    privproc_thread = await ns_thread.stdtask.fork()
+    # TODO need to create socketpair to communicate...
+    # TODO inherit the caps, don't be root
+    privproc_side, client_side = await privproc_thread.stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+
+    # TODO need to create the tun device
+    # TODO lock down the client thread, it's talking on the network and isn't audited...
+    # should clear out the mount namespace, and can we prevent it from sending signals somehow without a pid namespace?
+    tun_fd = await (client_thread.stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
+    # ok so...
+    # i guess we do tunsetiff, then siocgifindex on immediately the same pointer
+    # so, we build the structure, copy it over, then do two ioctls with it
+    
+    ifindex = None
+
+    client_thread = await ns_thread.stdtask.fork()
+    client_side = client_side.move(client_thread.stdtask.task.base)
+
+    await privproc_thread.stdtask.unshare_files(going_to_exec=True)
+    await privproc_thread.stdtask.stdin.replace_with(privproc_side.handle)
+    await privproc_thread.stdtask.stdout.replace_with(privproc_side.handle)
+    privproc_child = await privproc_thread.exec(miredo_privproc.args(str(ifindex)))
+    nursery.start_soon(privproc_child.check)
+
+    await client_thread.stdtask.unshare_files(going_to_exec=True)
+    await sock.handle.disable_cloexec()
+    server_name = "teredo.remlab.net"
+    client_child = await client_thread.exec(miredo_run_client.args(
+        str(int(sock.handle.near)), str(int(tun_fd.handle.near)), str(int(client_side.handle.near)),
+        server_name, server_name))
+    nursery.start_soon(client_child.check)
+    return Miredo(ns_thread)
+
 class TestMiredo(TrioTestCase):
     async def asyncSetUp(self) -> None:
         # TODO lmao stracing this stuff causes a bug,

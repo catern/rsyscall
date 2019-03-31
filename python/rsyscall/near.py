@@ -43,6 +43,7 @@ class SYS(enum.IntEnum):
     inotify_init1 = lib.SYS_inotify_init1
     inotify_add_watch = lib.SYS_inotify_add_watch
     inotify_rm_watch = lib.SYS_inotify_rm_watch
+    ioctl = lib.SYS_ioctl
 
 class IdType(enum.IntEnum):
     PID = lib.P_PID # Wait for the child whose process ID matches id.
@@ -305,3 +306,9 @@ async def inotify_add_watch(sysif: SyscallInterface, fd: FileDescriptor, pathnam
 
 async def inotify_rm_watch(sysif: SyscallInterface, fd: FileDescriptor, wd: WatchDescriptor) -> None:
     await sysif.syscall(SYS.inotify_rm_watch, fd, wd)
+
+async def ioctl(sysif: SyscallInterface, fd: FileDescriptor, request: int,
+                arg: t.Optional[t.Union[int, Pointer]]=None) -> int:
+    if arg is None:
+        arg = 0
+    return (await sysif.syscall(SYS.ioctl, fd, request, arg))

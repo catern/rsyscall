@@ -12356,6 +12356,50 @@ so yeah we clearly need to be using tunneling, not bridging.
 
   pipelining, we could start doing that maybe.
   i think it's relatively safe...
+
+  hmm okay so for ioctls, and things in general,
+  I think...
+
+  I think I should have io.Task inherit from handle.Task
+
+  And stdtask, maybe just compose.
+
+  And then for ioctls,
+  we'll.
+
+
+  So the annoying thing is that handle FDs contain a task.
+
+  But we want them to contain the right task.
+
+  We could I guess have them be a generic...
+
+  I mean we can also regard the task they contain as,
+  not actually important, just a convenience.
+
+  ok, so this all seems fine.
+
+  we'll have the handle fd, and the memory fd containing it and the memory task.
+
+  and we'll have the handle task (which has syscalls using pointers)
+  and the memory task (which has memory-abstracted syscalls)
+
+  and the memory task will be what we pass to memsys
+
+  ugh but then how do we reduce this nesting
+
+  I guess we can just proxy things methods which aren't memory-using anyway.
+  Yeah that seems best.
+  I'll just proxy it, whatever. That's more code but a better world.
+
+  Now what about StandardTask, though??
+  Well I could keep proxying...
+
+  That would be a hassle though.
+
+  I could inherit?
+
+  I could have thread inherit from Stdtask?
 * gdb
   ok so we need a good gdb set up
 
@@ -12367,3 +12411,5 @@ so yeah we clearly need to be using tunneling, not bridging.
 
   seems fine to do it this external way.
   it's generically useful
+* allocatedpointer
+ok this is the next thing to finish

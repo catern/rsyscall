@@ -406,6 +406,22 @@ class TestIO(unittest.TestCase):
                 # that's really lame...
         trio.run(self.runner, test)
 
+    def test_make_tun(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            await stdtask.unshare_user()
+            await stdtask.unshare_net()
+            tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
+            ifreq = ffi.new('struct ifreq*')
+            ifreq.ifr_name = b"tun0"
+            ifreq.ifr_flags = lib.IFF_TUN
+            ptr = await stdtask.task.to_pointer(ifreq)
+            # ok now I need to read back from this pointer.
+            await tun_fd.handle.ioctl(lib.TUNSETIFF, ptr)
+            await tun_fd.handle.ioctl(lib.SIOCGIFINDEX, ptr)
+            # make a pointer to this byte buffer
+            # and pass it around
+        trio.run(self.runner, test)
+
     def test_spawn_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.spawn_exec()

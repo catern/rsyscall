@@ -228,6 +228,11 @@ class FileDescriptor:
         self.validate()
         return (await rsyscall.near.fcntl(self.task.sysif, self.near, cmd, arg))
 
+    async def ioctl(self, request: int, arg: Pointer) -> int:
+        self.validate()
+        arg.validate()
+        return (await rsyscall.near.ioctl(self.task.sysif, self.near, request, arg.near))
+
     async def setns(self, nstype: int) -> None:
         self.validate()
         await rsyscall.near.setns(self.task.sysif, self.near, nstype)
@@ -246,6 +251,30 @@ class FileDescriptor:
     async def inotify_rm_watch(self, wd: rsyscall.near.WatchDescriptor) -> None:
         self.validate()
         await rsyscall.near.inotify_rm_watch(self.task.sysif, self.near, wd)
+
+@dataclass(eq=False)
+class Pointer:
+    task: Task
+    near: rsyscall.near.Pointer
+    to_free: t.Callable[[], None]
+    valid: bool = True
+
+    def validate(self) -> None:
+        if not self.valid:
+            raise Exception("handle is no longer valid")
+
+    def __del__(self) -> None:
+        if self.valid:
+            self.valid = False
+            self.to_free()
+
+    def __enter__(self) -> Pointer:
+        return self
+
+    def __exit__(self) -> None:
+        if self.valid:
+            self.valid = False
+            self.to_free()
 
 @dataclass
 class Root:
