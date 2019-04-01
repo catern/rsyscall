@@ -187,23 +187,25 @@ class File:
 T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
-@dataclass
-class AllocatedPointer:
-    ptr: handle.Pointer
+class AllocatedPointer(handle.Pointer):
     task: Task
+    def __init__(self, task: Task, ptr: near.Pointer, to_free):
+        super().__init__(task.base, ptr, to_free)
+        self.task = task
 
-    async def write(self, data: t.Union[bytes, ffi.CData]) -> None:
+    async def write_bytes(self, data: t.Union[bytes, ffi.CData]) -> None:
         if isinstance(data, ffi.CData):
             data = bytes(ffi.buffer(data))
-        await self.task.transport.write(self.ptr.far, data)
+        await self.task.transport.write(self.far, data)
 
-    async def read(self, n: int) -> bytes:
-        return (await self.task.transport.read(self.ptr.far, n))
+    async def read_bytes(self, n: int) -> bytes:
+        return (await self.task.transport.read(self.far, n))
     
 @dataclass
-class TypedPointer(t.Generic[T_struct]):
-    data_cls: t.Type[T_struct]
-    ptr: AllocatedPointer
+class TypedPointer(t.Generic[T_struct], AllocatedPointer):
+    def __init__(self, data_cls: t.Type[T_struct], task: Task, ptr: near.Pointer, to_free) -> None:
+        super().__init__(task, ptr, to_free)
+        self.data_cls = data_cls
 
     async def write(self, data: T_struct) -> None:
         size = self.data_cls.sizeof()
@@ -211,11 +213,11 @@ class TypedPointer(t.Generic[T_struct]):
         if len(data_bytes) != size:
             raise Exception("data has wrong size", len(data_bytes),
                             "for this typed pointer of size", size)
-        await self.ptr.write(data_bytes)
+        await self.write_bytes(data_bytes)
 
     async def read(self) -> T_struct:
         size = self.data_cls.sizeof()
-        data = await self.ptr.read(size)
+        data = await self.read_bytes(size)
         return self.data_cls.from_bytes(data)
 
 class Task:
@@ -255,9 +257,7 @@ class Task:
 
     async def malloc_type(self, cls: t.Type[T_struct]) -> TypedPointer[T_struct]:
         allocation = await self.allocator.malloc(cls.sizeof())
-        handle_ptr = handle.Pointer(self.base, allocation.pointer.near, allocation.free)
-        alloc_ptr = AllocatedPointer(handle_ptr, self)
-        return TypedPointer(cls, alloc_ptr)
+        return TypedPointer(cls, self, allocation.pointer.near, allocation.free)
 
     async def to_pointer(self, data: T_struct) -> TypedPointer[T_struct]:
         ptr = await self.malloc_type(type(data))

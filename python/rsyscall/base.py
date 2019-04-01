@@ -1,4 +1,5 @@
 from __future__ import annotations
+from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass
 import os
 import typing as t
@@ -44,7 +45,6 @@ local_address_space = AddressSpace(os.getpid())
 class InvalidAddressSpaceError(Exception):
     pass
 
-from rsyscall._raw import ffi, lib # type: ignore
 def memcpy(dest: Pointer, src: Pointer, n: int) -> None:
     neardest = local_address_space.to_near(dest)
     nearsrc = local_address_space.to_near(src)
@@ -128,6 +128,10 @@ class InetAddress(Address):
     def to_bytes(self) -> bytes:
         addr = ffi.new('struct sockaddr_in*', (lib.AF_INET, socket.htons(self.port), (socket.htonl(self.addr),)))
         return ffi.buffer(addr)
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> InetAddress:
+        return cls.parse(data)
 
     def addr_as_string(self) -> str:
         "Returns the addr portion of this address in 127.0.0.1 form"

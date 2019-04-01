@@ -8,6 +8,7 @@ import rsyscall.io as rsc
 import rsyscall.inotify as inotify
 from rsyscall.epoll import EpollEvent, EpollEventMask
 from rsyscall.tests.test_ssh import ssh_to_localhost
+from rsyscall.network import Ifreq
 import shutil
 import rsyscall.base as base
 import rsyscall.near as near
@@ -60,8 +61,18 @@ class TestIO(unittest.TestCase):
 
     def test_to_pointer(self):
         async def test(stdtask: StandardTask) -> None:
-            ptr = await stdtask.task.to_pointer(EpollEvent(42, EpollEventMask.make()))
-            print(await ptr.read())
+            event = EpollEvent(42, EpollEventMask.make())
+            ptr = await stdtask.task.to_pointer(event)
+            read_event = await ptr.read()
+            self.assertEqual(event.data, read_event.data)
+            
+            ifreq = Ifreq()
+            ifreq.name = b"1234"
+            ifreq.ifindex = 13
+            ptr = await stdtask.task.to_pointer(ifreq)
+            read_ifreq = await ptr.read()
+            self.assertEqual(read_ifreq.ifindex, ifreq.ifindex)
+            self.assertEqual(read_ifreq.name, ifreq.name)
         trio.run(self.runner, test)
 
     # def test_cat(self) -> None:
@@ -417,12 +428,14 @@ class TestIO(unittest.TestCase):
             await stdtask.unshare_user()
             await stdtask.unshare_net()
             tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
-            ifreq = ffi.new('struct ifreq*')
-            ifreq.ifr_name = b"tun0"
-            ifreq.ifr_flags = lib.IFF_TUN
+            ifreq = Ifreq()
+            ifreq.name = b"tun0"
+            ifreq.flags = lib.IFF_TUN
             ptr = await stdtask.task.to_pointer(ifreq)
             # ok now I need to read back from this pointer.
             await tun_fd.handle.ioctl(lib.TUNSETIFF, ptr)
+            print(await ptr.read())
+            # argh I guess I need an arbitrary socket
             await tun_fd.handle.ioctl(lib.SIOCGIFINDEX, ptr)
             # make a pointer to this byte buffer
             # and pass it around
