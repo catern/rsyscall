@@ -9,6 +9,7 @@ stored_paths = {
     "rm_path": shutil.which("rm"),
     "sh_path": shutil.which("sh"),
     "ssh_path": shutil.which("ssh"),
+    "miredo_path": sys.environ['miredo'],
 }
 
 ffibuilder = FFI()

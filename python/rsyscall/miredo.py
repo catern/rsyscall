@@ -1,4 +1,5 @@
 from __future__ import annotations
+from rsyscall._raw.lib import miredo_path as miredo_path_bytes
 import os
 import abc
 import trio
@@ -11,6 +12,10 @@ from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import StandardTask, RsyscallThread, Path, Command
 from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
 from dataclasses import dataclass
+
+miredo_path = rsc.local_stdtask.make_path_from_bytes(miredo_path_bytes)
+miredo_run_client = Command(miredo_path/"libexec"/"miredo_run_client", "miredo_run_client", {})
+miredo_privproc = Command(miredo_path/"libexec"/"miredo_privproc", "miredo_privproc", {})
 
 @dataclass
 class Miredo:
@@ -73,14 +78,6 @@ async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
     return Miredo(ns_thread)
 
 async def start_new_miredo(nursery, stdtask: StandardTask) -> Miredo:
-    # TODO need to locate pkglibexec, hmm.
-    # looking up the path doesn't work...
-    # since it's not necessarily at which(miredo)/../libexec
-    # ok I can do a build-time thing I guess
-    # ugh miredo has no pkg-config
-    # ok so I can just, um. look at the path at build time?
-    miredo_run_client = None
-    miredo_privproc = None
     inet_sock = await stdtask.task.socket_inet(socket.SOCK.DGRAM)
     await inet_sock.bind(rsc.InetAddress(0, 0))
     # set a bunch of sockopts
