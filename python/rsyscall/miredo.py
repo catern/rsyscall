@@ -6,6 +6,7 @@ import rsyscall.io as rsc
 import rsyscall.inotify as inotify
 import rsyscall.handle as handle
 import rsyscall.socket as socket
+import rsyscall.network as net
 from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import StandardTask, RsyscallThread, Path, Command
 from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
@@ -73,54 +74,67 @@ async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
 
 async def start_new_miredo(nursery, stdtask: StandardTask) -> Miredo:
     # TODO need to locate pkglibexec, hmm.
+    # looking up the path doesn't work...
+    # since it's not necessarily at which(miredo)/../libexec
+    # ok I can do a build-time thing I guess
+    # ugh miredo has no pkg-config
+    # ok so I can just, um. look at the path at build time?
     miredo_run_client = None
     miredo_privproc = None
-    sock = await stdtask.task.socket_inet(socket.SOCK.DGRAM)
-    await sock.bind(rsc.InetAddress(0, 0))
+    inet_sock = await stdtask.task.socket_inet(socket.SOCK.DGRAM)
+    await inet_sock.bind(rsc.InetAddress(0, 0))
     # set a bunch of sockopts
-    await sock.setsockopt(socket.SOL.IP, socket.IP.RECVERR, 1)
-    await sock.setsockopt(socket.SOL.IP, socket.IP.PKTINFO, 1)
-    await sock.setsockopt(socket.SOL.IP, socket.IP.MULTICAST_TTL, 1)
+    await inet_sock.setsockopt(socket.SOL.IP, socket.IP.RECVERR, 1)
+    await inet_sock.setsockopt(socket.SOL.IP, socket.IP.PKTINFO, 1)
+    await inet_sock.setsockopt(socket.SOL.IP, socket.IP.MULTICAST_TTL, 1)
     # hello fragments my old friend
-    await sock.setsockopt(socket.SOL.IP, socket.IP.MTU_DISCOVER, socket.IP.PMTUDISC_DONT)
+    await inet_sock.setsockopt(socket.SOL.IP, socket.IP.MTU_DISCOVER, socket.IP.PMTUDISC_DONT)
     ns_thread = await stdtask.fork()
     # TODO properly inherit the caps we need instead of being root
     await ns_thread.stdtask.unshare_user(0, 0)
     await ns_thread.stdtask.unshare_net()
 
-    # we'll keep the ns thread around so we don't have to mess with setns;
-    # we'll fork off more threads to actually exec miredo.
+    # create the TUN interface
+    tun_fd = await (ns_thread.stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
+    ptr = await stdtask.task.to_pointer(net.Ifreq(b'teredo', flags=net.IFF_TUN))
+    await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
+    # create reqsock for ifreq operations in this network namespace
+    reqsock = await ns_thread.stdtask.task.socket_inet(socket.SOCK_STREAM)
+    await ns_ifreq_sock.handle.ioctl(net.SIOCGIFINDEX, ptr)
+    tun_index = (await ptr.read()).ifindex
+    ptr.free()
+    # create socketpair for communication between privileged process and teredo client
+    privproc_side, client_side = await ns_thread.stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+
+    # TODO inherit the caps for manipulation of networking, don't be root
     privproc_thread = await ns_thread.stdtask.fork()
-    # TODO need to create socketpair to communicate...
-    # TODO inherit the caps, don't be root
-    privproc_side, client_side = await privproc_thread.stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
-
-    # TODO need to create the tun device
-    # TODO lock down the client thread, it's talking on the network and isn't audited...
-    # should clear out the mount namespace, and can we prevent it from sending signals somehow without a pid namespace?
-    tun_fd = await (client_thread.stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
-    # ok so...
-    # i guess we do tunsetiff, then siocgifindex on immediately the same pointer
-    # so, we build the structure, copy it over, then do two ioctls with it
-    
-    ifindex = None
-
-    client_thread = await ns_thread.stdtask.fork()
-    client_side = client_side.move(client_thread.stdtask.task.base)
-
+    privproc_side = privproc_side.move(privproc_thread.stdtask.task.base)
     await privproc_thread.stdtask.unshare_files(going_to_exec=True)
     await privproc_thread.stdtask.stdin.replace_with(privproc_side.handle)
     await privproc_thread.stdtask.stdout.replace_with(privproc_side.handle)
-    privproc_child = await privproc_thread.exec(miredo_privproc.args(str(ifindex)))
+    privproc_child = await privproc_thread.exec(miredo_privproc.args(str(tun_index)))
     nursery.start_soon(privproc_child.check)
 
+    # TODO lock down the client thread, it's talking on the network and isn't audited...
+    # should clear out the mount namespace
+    client_thread = await ns_thread.stdtask.fork()
+    inet_sock = inet_sock.move(client_thread.stdtask.task.base)
+    tun_fd = tun_fd.move(client_thread.stdtask.task.base)
+    reqsock = reqsock.move(client_thread.stdtask.task.base)
+    client_side = client_side.move(client_thread.stdtask.task.base)
     await client_thread.stdtask.unshare_files(going_to_exec=True)
-    await sock.handle.disable_cloexec()
+    await inet_sock.handle.disable_cloexec()
+    await tun_fd.handle.disable_cloexec()
+    await reqsock.handle.disable_cloexec()
+    await client_side.handle.disable_cloexec()
     server_name = "teredo.remlab.net"
     client_child = await client_thread.exec(miredo_run_client.args(
-        str(int(sock.handle.near)), str(int(tun_fd.handle.near)), str(int(client_side.handle.near)),
+        str(int(inet_sock.handle.near)), str(int(tun_fd.handle.near)),
+        str(int(reqsock.handle.near)), str(int(client_side.handle.near)),
         server_name, server_name))
     nursery.start_soon(client_child.check)
+
+    # we keep the ns thread around so we don't have to mess with setns
     return Miredo(ns_thread)
 
 class TestMiredo(TrioTestCase):

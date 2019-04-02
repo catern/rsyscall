@@ -8,7 +8,7 @@ import rsyscall.io as rsc
 import rsyscall.inotify as inotify
 from rsyscall.epoll import EpollEvent, EpollEventMask
 from rsyscall.tests.test_ssh import ssh_to_localhost
-from rsyscall.network import Ifreq
+import rsyscall.network as net
 import shutil
 import rsyscall.base as base
 import rsyscall.near as near
@@ -409,10 +409,10 @@ class TestIO(unittest.TestCase):
             thread1 = await stdtask.fork()
             await thread1.stdtask.unshare_user()
             await thread1.stdtask.unshare_net()
-            procself = stdtask.task.root().handle/"proc"/"self"
-            netnsfd = await thread1.stdtask.task.open(procself/"ns"/"net", os.O_RDONLY)
+            procself = stdtask.task.root().handle/"proc"/"self"/"ns"
+            netnsfd = await thread1.stdtask.task.open(selfns/"net", os.O_RDONLY)
             netnsfd = netnsfd.move(stdtask.task.base)
-            usernsfd = await thread1.stdtask.task.open(procself/"ns"/"user", os.O_RDONLY)
+            usernsfd = await thread1.stdtask.task.open(selfns/"user", os.O_RDONLY)
             usernsfd = usernsfd.move(stdtask.task.base)
 
             thread2 = await stdtask.fork()
@@ -428,17 +428,12 @@ class TestIO(unittest.TestCase):
             await stdtask.unshare_user()
             await stdtask.unshare_net()
             tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
-            ifreq = Ifreq()
-            ifreq.name = b"tun0"
-            ifreq.flags = lib.IFF_TUN
-            ptr = await stdtask.task.to_pointer(ifreq)
-            # ok now I need to read back from this pointer.
-            await tun_fd.handle.ioctl(lib.TUNSETIFF, ptr)
-            print(await ptr.read())
-            # argh I guess I need an arbitrary socket
-            await tun_fd.handle.ioctl(lib.SIOCGIFINDEX, ptr)
-            # make a pointer to this byte buffer
-            # and pass it around
+            ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
+            await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
+            sock = await stdtask.task.socket_inet(socket.SOCK_STREAM)
+            await sock.handle.ioctl(net.SIOCGIFINDEX, ptr)
+            # this is the second interface in an empty netns
+            self.assertEqual((await ptr.read()).ifindex, 2)
         trio.run(self.runner, test)
 
     def test_spawn_exit(self) -> None:

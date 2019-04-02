@@ -3,6 +3,10 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.base import InetAddress
 from rsyscall.struct import Struct
 
+IFF_TUN: int = lib.IFF_TUN
+TUNSETIFF: int = lib.TUNSETIFF
+SIOCGIFINDEX: int = lib.SIOCGIFINDEX
+
 class BytesField:
     def __init__(self, name: str) -> None:
         self.name = name
@@ -42,10 +46,14 @@ class Ifreq(Struct):
     ifindex = IntField("ifr_ifindex")
     flags = IntField("ifr_flags")
     
-    def __init__(self, cffi=None) -> None:
+    def __init__(self, name: bytes=None, *, flags: int=None, cffi=None) -> None:
         if cffi is None:
             cffi = ffi.new('struct ifreq*')
         self.cffi = cffi
+        if name is not None:
+            self.name = name
+        if flags is not None:
+            self.flags = flags
 
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(self.cffi))
@@ -57,7 +65,7 @@ class Ifreq(Struct):
                             "doesn't match actual length of struct ifreq", cls.sizeof())
         cffi = ffi.new('struct ifreq*')
         lib.memcpy(cffi, ffi.from_buffer(data), cls.sizeof())
-        return Ifreq(cffi)
+        return Ifreq(cffi=cffi)
 
     @classmethod
     def sizeof(cls) -> int:
