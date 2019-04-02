@@ -44,6 +44,8 @@ class SYS(enum.IntEnum):
     inotify_add_watch = lib.SYS_inotify_add_watch
     inotify_rm_watch = lib.SYS_inotify_rm_watch
     ioctl = lib.SYS_ioctl
+    socket = lib.SYS_socket
+    bind = lib.SYS_bind
 
 class IdType(enum.IntEnum):
     PID = lib.P_PID # Wait for the child whose process ID matches id.
@@ -312,3 +314,9 @@ async def ioctl(sysif: SyscallInterface, fd: FileDescriptor, request: int,
     if arg is None:
         arg = 0
     return (await sysif.syscall(SYS.ioctl, fd, request, arg))
+
+async def socket(sysif: SyscallInterface, domain: int, type: int, protocol: int) -> FileDescriptor:
+    return FileDescriptor(await sysif.syscall(SYS.socket, domain, type, protocol))
+
+async def bind(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: int) -> None:
+    await sysif.syscall(SYS.bind, sockfd, addr, addrlen)

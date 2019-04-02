@@ -2,8 +2,13 @@ import socket
 from rsyscall._raw import lib # type: ignore
 import enum
 
+class AF(enum.IntEnum):
+    UNIX = socket.AF_UNIX
+    NETLINK = socket.AF_NETLINK
+
 class SOCK(enum.IntEnum):
     DGRAM = socket.SOCK_DGRAM
+    STREAM = socket.SOCK_STREAM
 
 class SOL(enum.IntEnum):
     """Stands for Sock Opt Level

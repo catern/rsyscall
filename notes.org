@@ -12423,3 +12423,20 @@ It can't go direct - we should expose
 should I have a sizedpointer?
 
 ifreq will just store a tag and be assignable with everything
+* pyroute2
+OK, I can handle binding and addresses on my own.
+
+And use IPBatch for message serialization and deserialization - with this handle thing?
+
+hmm so it's rmtgrp_link etc
+
+I guess I'll nicely encode this stuff as an enum.
+
+using pyroute2
+
+seems good and nice
+
+
+hmm.
+the address can't be interpreted on its own. dang.
+you need to know the netlink protocol

@@ -436,6 +436,34 @@ class TestIO(unittest.TestCase):
             self.assertEqual((await ptr.read()).ifindex, 2)
         trio.run(self.runner, test)
 
+    def test_rtnetlink(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            await stdtask.unshare_user()
+            await stdtask.unshare_net()
+
+            netsock = await stdtask.task.base.socket(socket.AF_NETLINK, socket.SOCK_DGRAM, lib.NETLINK_ROUTE)
+            from rsyscall.netlink.address import NetlinkAddress
+            from rsyscall.netlink.route import RTMGRP
+            addr = NetlinkAddress(0, RTMGRP.LINK)
+            ptr = await stdtask.task.to_pointer(addr)
+            # hmm this is not quite right hmm
+            # maybe we should get the size from the pointer?
+            await netsock.bind(ptr, addr.sizeof())
+
+            tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
+            ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
+            await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
+            sock = await stdtask.task.socket_inet(socket.SOCK_STREAM)
+            await sock.handle.ioctl(net.SIOCGIFINDEX, ptr)
+            # this is the second interface in an empty netns
+            self.assertEqual((await ptr.read()).ifindex, 2)
+
+            data = await stdtask.task.read(netsock.far)
+            from pyroute2 import IPBatch
+            batch = IPBatch()
+            evs = batch.marshal.parse(data)
+        trio.run(self.runner, test)
+
     def test_spawn_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.spawn_exec()

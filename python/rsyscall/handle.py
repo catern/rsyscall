@@ -1,4 +1,5 @@
 from __future__ import annotations
+from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass, field
 import copy
 import fcntl
@@ -252,6 +253,11 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.inotify_rm_watch(self.task.sysif, self.near, wd)
 
+    async def bind(self, addr: Pointer, addrlen: int) -> None:
+        self.validate()
+        async with addr.borrow(self.task) as addr:
+            await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addrlen)
+
 @dataclass(eq=False)
 class Pointer:
     task: Task
@@ -265,6 +271,11 @@ class Pointer:
         self.validate()
         return rsyscall.far.Pointer(self.task.address_space, self.near)
 
+    @contextlib.asynccontextmanager
+    async def borrow(self, task: Task) -> t.AsyncGenerator[Pointer, None]:
+        # actual tracking of pointer references is not yet implemented
+        yield self
+
     def validate(self) -> None:
         if not self.valid:
             raise Exception("handle is no longer valid")
@@ -272,12 +283,12 @@ class Pointer:
     def free(self) -> None:
         if self.valid:
             self.valid = False
-            self.to_free()
+            self.to_free() # type: ignore
 
     def __del__(self) -> None:
         if self.valid:
             self.valid = False
-            self.to_free()
+            self.to_free() # type: ignore
 
     def __enter__(self) -> Pointer:
         return self
@@ -285,7 +296,7 @@ class Pointer:
     def __exit__(self) -> None:
         if self.valid:
             self.valid = False
-            self.to_free()
+            self.to_free() # type: ignore
 
 @dataclass
 class Root:
@@ -487,6 +498,12 @@ class Task(rsyscall.far.Task):
     async def setns_net(self, fd: FileDescriptor) -> None:
         async with fd.borrow(self) as fd:
             await fd.setns(rsyscall.near.UnshareFlag.NEWNET)
+
+    async def socket(self, family: int, type: socket.SocketKind, protocol: int=0, cloexec=True) -> FileDescriptor:
+        if cloexec:
+            type |= lib.SOCK_CLOEXEC
+        sockfd = await rsyscall.near.socket(self.sysif, family, type, protocol)
+        return self.make_fd_handle(sockfd)
 
 @dataclass
 class Pipe:

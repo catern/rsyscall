@@ -1,5 +1,8 @@
 from __future__ import annotations
-from rsyscall._raw.lib import miredo_path as miredo_path_bytes
+import time
+from rsyscall._raw.lib import miredo_path as miredo_path_cffi # type: ignore
+from rsyscall._raw import lib # type: ignore
+from rsyscall._raw import ffi # type: ignore
 import os
 import abc
 import trio
@@ -12,10 +15,12 @@ from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import StandardTask, RsyscallThread, Path, Command
 from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
 from dataclasses import dataclass
+from rsyscall.netlink.address import NetlinkAddress
+from rsyscall.netlink.route import RTMGRP
 
-miredo_path = rsc.local_stdtask.make_path_from_bytes(miredo_path_bytes)
-miredo_run_client = Command(miredo_path/"libexec"/"miredo_run_client", "miredo_run_client", {})
-miredo_privproc = Command(miredo_path/"libexec"/"miredo_privproc", "miredo_privproc", {})
+miredo_path = rsc.local_stdtask.task.base.make_path_from_bytes(ffi.string(miredo_path_cffi))
+miredo_run_client = Command(miredo_path/"libexec"/"miredo"/"miredo-run-client", ["miredo-run-client"], {})
+miredo_privproc = Command(miredo_path/"libexec"/"miredo"/"miredo-privproc", ["miredo-privproc"], {})
 
 @dataclass
 class Miredo:
@@ -29,6 +34,7 @@ class Miredo:
     # Hopefully we can get a more lightweight setns-based approach later?
     ns_thread: RsyscallThread
 
+# TODO we should try running this with rtnetlink
 async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
     miredo = await rsc.which(stdtask, "miredo")
     sock = await stdtask.task.socket_inet(socket.SOCK.DGRAM)
@@ -96,18 +102,18 @@ async def start_new_miredo(nursery, stdtask: StandardTask) -> Miredo:
     ptr = await stdtask.task.to_pointer(net.Ifreq(b'teredo', flags=net.IFF_TUN))
     await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
     # create reqsock for ifreq operations in this network namespace
-    reqsock = await ns_thread.stdtask.task.socket_inet(socket.SOCK_STREAM)
-    await ns_ifreq_sock.handle.ioctl(net.SIOCGIFINDEX, ptr)
+    reqsock = await ns_thread.stdtask.task.socket_inet(socket.SOCK.STREAM)
+    await reqsock.handle.ioctl(net.SIOCGIFINDEX, ptr)
     tun_index = (await ptr.read()).ifindex
     ptr.free()
     # create socketpair for communication between privileged process and teredo client
-    privproc_side, client_side = await ns_thread.stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    privproc_side, client_side = await ns_thread.stdtask.task.socketpair(socket.AF.UNIX, socket.SOCK.STREAM, 0)
 
     # TODO inherit the caps for manipulation of networking, don't be root
     privproc_thread = await ns_thread.stdtask.fork()
     privproc_side = privproc_side.move(privproc_thread.stdtask.task.base)
     await privproc_thread.stdtask.unshare_files(going_to_exec=True)
-    await privproc_thread.stdtask.stdin.replace_with(privproc_side.handle)
+    await privproc_thread.stdtask.stdin.copy_from(privproc_side.handle)
     await privproc_thread.stdtask.stdout.replace_with(privproc_side.handle)
     privproc_child = await privproc_thread.exec(miredo_privproc.args(str(tun_index)))
     nursery.start_soon(privproc_child.check)
@@ -140,27 +146,37 @@ class TestMiredo(TrioTestCase):
         # waiting a long time between runs causes a bug,
         # what is even going on
         self.stdtask = rsc.local_stdtask
-        self.miredo = await start_miredo(self.nursery, self.stdtask)
+        print("a", time.time())
+        self.miredo = await start_new_miredo(self.nursery, self.stdtask)
+        print("b", time.time())
+        self.netsock = await self.miredo.ns_thread.stdtask.task.base.socket(socket.AF.NETLINK, socket.SOCK.DGRAM, lib.NETLINK_ROUTE)
+        print("b-1", time.time())
+        # TODO clean up this API so we can get the size from the pointer
+        print("b0", time.time())
+        addr = NetlinkAddress(0, RTMGRP.IPV6_ROUTE)
+        ptr = await self.miredo.ns_thread.stdtask.task.to_pointer(addr)
+        await self.netsock.bind(ptr, addr.sizeof())
+        print("b0.5", time.time())
+
 
     async def test_miredo(self) -> None:
+        # WOO!! ok so my hacky miredo running is working!
+        # now for rtnetlink.
+        # to detect upness
+        print("b1", time.time())
         ping6 = await rsc.which(self.stdtask, "ping6")
-        # TODO properly wait for miredo to be up...
-        # Maybe there's a way to wait for a specific interface to be up?
-        # We could just wait for that?
-        # Right, I can just run "ip monitor".
-        # I *could* use netlink directly, but that seems like a hassle.
-        # can I filter it?
-        # o kaaay, so I think I can use netlink directly.
-        # the manpage is extremely incomplete
-        # I think it might be worth using pyroute2 rather than reimplementing the parsing stuff.
-        # hopefully they are a little flexible about how they build messages
-        await trio.sleep(.1)
+        print("b1.5", time.time())
+        # TODO lol actually parse this, don't just read and throw it away
+        await self.miredo.ns_thread.stdtask.task.read(self.netsock.far)
+        print("b2", time.time())
         # ping needs root, so let's fork it off from the
         # miredo-ns-thread, which has root in the namespace
         thread = await self.miredo.ns_thread.stdtask.fork()
+        print("c", time.time())
         # bash = await rsc.which(self.stdtask, "bash")
         # await (await thread.exec(bash)).check()
         await (await thread.exec(ping6.args('-c', '1', 'google.com'))).check()
+        print("d", time.time())
 
 if __name__ == "__main__":
     import unittest

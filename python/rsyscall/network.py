@@ -2,6 +2,7 @@ from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.base import InetAddress
 from rsyscall.struct import Struct
+import typing as t
 
 IFF_TUN: int = lib.IFF_TUN
 TUNSETIFF: int = lib.TUNSETIFF
@@ -58,14 +59,15 @@ class Ifreq(Struct):
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(self.cffi))
 
+    T = t.TypeVar('T', bound='Ifreq')
     @classmethod
-    def from_bytes(cls, data: bytes) -> Ifreq:
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
         if len(data) != cls.sizeof():
             raise Exception("data length", len(data),
                             "doesn't match actual length of struct ifreq", cls.sizeof())
         cffi = ffi.new('struct ifreq*')
         lib.memcpy(cffi, ffi.from_buffer(data), cls.sizeof())
-        return Ifreq(cffi=cffi)
+        return cls(cffi=cffi)
 
     @classmethod
     def sizeof(cls) -> int:

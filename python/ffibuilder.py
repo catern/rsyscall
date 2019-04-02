@@ -1,4 +1,5 @@
 from cffi import FFI
+import os
 import pkgconfig
 import pathlib
 import shutil
@@ -9,42 +10,46 @@ stored_paths = {
     "rm_path": shutil.which("rm"),
     "sh_path": shutil.which("sh"),
     "ssh_path": shutil.which("ssh"),
-    "miredo_path": sys.environ['miredo'],
+    "miredo_path": os.environ['miredo'],
 }
+import sys
+print("miredo", stored_paths['miredo_path'])
 
 ffibuilder = FFI()
 # include the rsyscall header
 rsyscall = {key: list(value) for key, value in pkgconfig.parse('rsyscall').items()}
 ffibuilder.set_source(
     "rsyscall._raw", """
-#include <rsyscall.h>
+#include <asm/types.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <linux/if_tun.h>
+#include <linux/netlink.h>
+#include <net/if.h>
 #include <netinet/ip.h>
-#include <unistd.h>
-#include <syscall.h>
-#include <sys/socket.h>
-#include <sys/mount.h>
-#include <sys/un.h>
 #include <netinet/ip.h>
-#include <sys/syscall.h>   /* For SYS_xxx definitions */
-#include <sys/mman.h>
-#include <sys/epoll.h>
-#include <sys/prctl.h>
 #include <poll.h>
-#include <string.h>
+#include <rsyscall.h>
 #include <sched.h>
 #include <setjmp.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/wait.h>
+#include <string.h>
+#include <sys/epoll.h>
+#include <sys/inotify.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/mount.h>
+#include <sys/prctl.h>
+#include <sys/ptrace.h>
 #include <sys/signal.h>
 #include <sys/signalfd.h>
-#include <sys/ptrace.h>
-#include <sys/inotify.h>
-#include <dirent.h>
-#include <sys/ioctl.h>
-#include <net/if.h>
-#include <linux/if_tun.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <syscall.h>
+#include <unistd.h>
 
 struct linux_dirent64 {
     ino64_t        d_ino;    /* 64-bit inode number */
@@ -402,6 +407,18 @@ struct ifreq {
 #define TUNSETIFF ...
 #define IFF_TUN ...
 #define SIOCGIFINDEX ...
+
+// netlink
+
+#define AF_NETLINK ...
+#define NETLINK_ROUTE ...
+struct sockaddr_nl {
+    sa_family_t     nl_family;  /* AF_NETLINK */
+    unsigned short  nl_pad;     /* Zero */
+    pid_t           nl_pid;     /* Port ID */
+    uint32_t        nl_groups;  /* Multicast groups mask */
+};
+
 
 // sockopt stuff
 #define SYS_getsockopt ...

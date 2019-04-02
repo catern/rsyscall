@@ -14,6 +14,7 @@ from rsyscall.far import Process, ProcessGroup, FileDescriptor
 from rsyscall.handle import Task
 from rsyscall.near import SyscallInterface
 from rsyscall.exceptions import RsyscallException, RsyscallHangup
+from rsyscall.struct import Struct
 import rsyscall.far
 import rsyscall.near
 
@@ -58,13 +59,20 @@ def to_local_pointer(data: bytes) -> Pointer:
 
 
 T_addr = t.TypeVar('T_addr', bound='Address')
-class Address:
+class Address(Struct):
     addrlen: int
     @classmethod
     @abc.abstractmethod
-    def parse(cls: t.Type[T_addr], data: bytes) -> T_addr: ...
+    def from_bytes(cls: t.Type[T_addr], data: bytes) -> T_addr: ...
     @abc.abstractmethod
     def to_bytes(self) -> bytes: ...
+    @classmethod
+    @abc.abstractmethod
+    def sizeof(cls) -> int: ...
+
+    @classmethod
+    def parse(cls: t.Type[T_addr], data: bytes) -> T_addr:
+        return cls.from_bytes(data)
 
 class PathTooLongError(ValueError):
     pass
@@ -82,7 +90,7 @@ class UnixAddress(Address):
 
     T = t.TypeVar('T', bound='UnixAddress')
     @classmethod
-    def parse(cls: t.Type[T], data: bytes) -> T:
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
         header = ffi.sizeof('sa_family_t')
         buf = ffi.from_buffer(data)
         if len(data) < header:
@@ -107,6 +115,10 @@ class UnixAddress(Address):
         real_length = ffi.sizeof('sa_family_t') + len(self.path) + 1
         return bytes(ffi.buffer(addr))[:real_length]
 
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('struct sockaddr_un')
+
     def __str__(self) -> str:
         return f"UnixAddress({self.path})"
 
@@ -119,7 +131,7 @@ class InetAddress(Address):
 
     T = t.TypeVar('T', bound='InetAddress')
     @classmethod
-    def parse(cls: t.Type[T], data: bytes) -> T:
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct sockaddr_in*', ffi.from_buffer(data))
         if struct.sin_family != lib.AF_INET:
             raise Exception("sin_family must be", lib.AF_INET, "is instead", struct.sin_family)
@@ -130,8 +142,8 @@ class InetAddress(Address):
         return ffi.buffer(addr)
 
     @classmethod
-    def from_bytes(cls, data: bytes) -> InetAddress:
-        return cls.parse(data)
+    def sizeof(cls) -> int:
+        return ffi.sizeof('struct sockaddr_in')
 
     def addr_as_string(self) -> str:
         "Returns the addr portion of this address in 127.0.0.1 form"

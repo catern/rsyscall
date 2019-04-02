@@ -71,8 +71,9 @@ class EpollEvent(Struct):
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct epoll_event const*', (self.events.raw, (self.data,)))))
 
+    T = t.TypeVar('T', bound='EpollEvent')
     @classmethod
-    def from_bytes(cls: t.Type[EpollEvent], data: bytes) -> EpollEvent:
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct epoll_event*', ffi.from_buffer(data))
         return cls(struct.data.u64, EpollEventMask(struct.events))
 

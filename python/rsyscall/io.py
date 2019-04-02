@@ -188,20 +188,19 @@ T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
 class AllocatedPointer(handle.Pointer):
-    task: Task
+    mem_task: Task
     def __init__(self, task: Task, ptr: near.Pointer, to_free):
         super().__init__(task.base, ptr, to_free)
-        self.task = task
+        self.mem_task = task
 
     async def write_bytes(self, data: t.Union[bytes, ffi.CData]) -> None:
         if isinstance(data, ffi.CData):
             data = bytes(ffi.buffer(data))
-        await self.task.transport.write(self.far, data)
+        await self.mem_task.transport.write(self.far, data)
 
     async def read_bytes(self, n: int) -> bytes:
-        return (await self.task.transport.read(self.far, n))
+        return (await self.mem_task.transport.read(self.far, n))
     
-@dataclass
 class TypedPointer(t.Generic[T_struct], AllocatedPointer):
     def __init__(self, data_cls: t.Type[T_struct], task: Task, ptr: near.Pointer, to_free) -> None:
         super().__init__(task, ptr, to_free)
@@ -210,8 +209,8 @@ class TypedPointer(t.Generic[T_struct], AllocatedPointer):
     async def write(self, data: T_struct) -> None:
         size = self.data_cls.sizeof()
         data_bytes = data.to_bytes()
-        if len(data_bytes) != size:
-            raise Exception("data has wrong size", len(data_bytes),
+        if len(data_bytes) > size:
+            raise Exception("data is too long", len(data_bytes),
                             "for this typed pointer of size", size)
         await self.write_bytes(data_bytes)
 
@@ -264,7 +263,8 @@ class Task:
         try:
             await ptr.write(data)
         except:
-            ptr.ptr.ptr.free()
+            ptr.free()
+            raise
         return ptr
 
     async def mount(self, source: bytes, target: bytes,
@@ -353,14 +353,12 @@ class Task:
         return self.make_fd(epfd, InotifyFile())
 
     async def socket_unix(self, type: socket.SocketKind, protocol: int=0, cloexec=True) -> FileDescriptor[UnixSocketFile]:
-        if cloexec:
-            type |= lib.SOCK_CLOEXEC
-        sockfd = await raw_syscall.socket(self.syscall, lib.AF_UNIX, type, protocol)
-        return self._make_fd(sockfd, UnixSocketFile())
+        sockfd = await self.base.socket(lib.AF_UNIX, type, protocol, cloexec=cloexec)
+        return FileDescriptor(self, sockfd, UnixSocketFile())
 
     async def socket_inet(self, type: socket.SocketKind, protocol: int=0) -> FileDescriptor[InetSocketFile]:
-        sockfd = await raw_syscall.socket(self.syscall, lib.AF_INET, type|lib.SOCK_CLOEXEC, protocol)
-        return self._make_fd(sockfd, InetSocketFile())
+        sockfd = await self.base.socket(lib.AF_INET, type, protocol)
+        return FileDescriptor(self, sockfd, InetSocketFile())
 
     async def signalfd_create(self, mask: t.Set[signal.Signals], flags: int=0) -> FileDescriptor[SignalFile]:
         sigfd = await memsys.signalfd(self.syscall, self.transport, self.allocator, mask, os.O_CLOEXEC|flags)
@@ -464,7 +462,7 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     async def accept(self, fd: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
         fdnum, data = await memsys.accept(fd.task.syscall, fd.task.transport, fd.task.allocator,
                                           fd.pure, self.address_type.addrlen, flags)
-        addr = self.address_type.parse(data)
+        addr = self.address_type.from_bytes(data)
         fd = fd.task.make_fd(near.FileDescriptor(fdnum), type(self)())
         return fd, addr
 
@@ -554,13 +552,16 @@ class FileDescriptor(t.Generic[T_file_co]):
         await self.aclose()
         return ret
 
-    async def replace_with(self, source: handle.FileDescriptor, flags=0) -> None:
+    async def copy_from(self, source: handle.FileDescriptor, flags=0) -> None:
         if self.handle.task.fd_table != source.task.fd_table:
             raise Exception("two fds are not in the same file descriptor tables",
                             self.handle.task.fd_table, source.task.fd_table)
         if self.handle.near == source.near:
             return
         await source.dup3(self.handle, flags)
+
+    async def replace_with(self, source: handle.FileDescriptor, flags=0) -> None:
+        await self.copy_from(source)
         await source.invalidate()
 
     async def as_argument(self) -> int:
