@@ -13,6 +13,7 @@ import rsyscall.near as near
 import rsyscall.epoll as epoll
 import rsyscall.memory as memory
 import rsyscall.handle as handle
+from rsyscall.struct import bits
 import array
 import typing as t
 import logging
@@ -126,13 +127,6 @@ async def signalfd(sysif: SyscallInterface, transport: MemoryTransport, allocato
     logger.debug("signalfd(%s, %s, %s)", mask, flags, fd)
     async with localize_data(transport, allocator, sigset_to_bytes(mask)) as (mask_ptr, mask_len):
         return (await raw_syscall.signalfd4(sysif, mask_ptr, mask_len, flags, fd=fd))
-
-def bits(n: int):
-    "Yields the bit indices that are set in this integer"
-    while n:
-        b = n & (~n+1)
-        yield b.bit_length()
-        n ^= b
 
 def bytes_to_sigset(data: bytes) -> t.Set[signal.Signals]:
     set_integer, = sigset.unpack(data)

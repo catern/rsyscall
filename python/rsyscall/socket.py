@@ -5,10 +5,15 @@ import enum
 class AF(enum.IntEnum):
     UNIX = socket.AF_UNIX
     NETLINK = socket.AF_NETLINK
+    INET6 = socket.AF_INET6
 
 class SOCK(enum.IntEnum):
     DGRAM = socket.SOCK_DGRAM
     STREAM = socket.SOCK_STREAM
+    RAW = socket.SOCK_RAW
+
+class IPPROTO(enum.IntEnum):
+    ICMPV6 = socket.IPPROTO_ICMPV6
 
 class SOL(enum.IntEnum):
     """Stands for Sock Opt Level

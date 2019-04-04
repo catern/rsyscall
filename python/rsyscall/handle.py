@@ -274,6 +274,7 @@ class Pointer:
     @contextlib.asynccontextmanager
     async def borrow(self, task: Task) -> t.AsyncGenerator[Pointer, None]:
         # actual tracking of pointer references is not yet implemented
+        self.validate()
         yield self
 
     def validate(self) -> None:
@@ -504,6 +505,16 @@ class Task(rsyscall.far.Task):
             type |= lib.SOCK_CLOEXEC
         sockfd = await rsyscall.near.socket(self.sysif, family, type, protocol)
         return self.make_fd_handle(sockfd)
+
+    async def capset(self, hdrp: Pointer, datap: Pointer) -> None:
+        async with hdrp.borrow(self) as hdrp:
+            async with datap.borrow(self) as datap:
+                await rsyscall.near.capset(self.sysif, hdrp.near, datap.near)
+
+    async def capget(self, hdrp: Pointer, datap: Pointer) -> None:
+        async with hdrp.borrow(self) as hdrp:
+            async with datap.borrow(self) as datap:
+                await rsyscall.near.capget(self.sysif, hdrp.near, datap.near)
 
 @dataclass
 class Pipe:

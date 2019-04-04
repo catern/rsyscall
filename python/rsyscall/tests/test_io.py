@@ -16,6 +16,7 @@ import rsyscall.far as far
 from rsyscall.io import local_stdtask
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
+from rsyscall.capabilities import CAP, CapHeader, CapData
 import socket
 import struct
 import time
@@ -462,6 +463,44 @@ class TestIO(unittest.TestCase):
             from pyroute2 import IPBatch
             batch = IPBatch()
             evs = batch.marshal.parse(data)
+        trio.run(self.runner, test)
+
+    def test_ambient_caps(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            await stdtask.unshare_user()
+            await stdtask.unshare_net()
+            hdr_ptr = await stdtask.task.to_pointer(CapHeader())
+            data_ptr = await stdtask.task.malloc_type(CapData)
+            await stdtask.task.base.capget(hdr_ptr, data_ptr)
+            data = await data_ptr.read()
+            data.inheritable.add(CAP.NET_ADMIN)
+            await data_ptr.write(data)
+            await stdtask.task.base.capset(hdr_ptr, data_ptr)
+            await stdtask.task.base.prctl(near.PrctlOp.CAP_AMBIENT, near.CapAmbient.RAISE, CAP.NET_ADMIN)
+        trio.run(self.runner, test)
+
+    def test_umount_all(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            await stdtask.unshare_user()
+            await stdtask.unshare_mount()
+            rootdirfd = stdtask.task.root().open_directory()
+            # hmmmm
+            # so for each dent,
+            # we want to um.
+            # ok so yeah we really want the neat efficieny
+            # oh wait.
+            # we have to prefix it with / anyway! blah.
+            # unless... umount looks at cwd?
+            # hmm and does MNT_DETATCH actually work?
+            # let's just MNT_DETACH root! then we'll be fine.
+            # hmmmm.... can we somehow save /nix and then mount it again?
+            # hmm we can't just umount everything, because there has to be something at / to contain the /nix folder.
+            # oh and we don't want to umount /proc also
+            # but, could we use /proc to remount /nix?
+            # ok, idea: we cd to a place under /proc, then detach /, then bind mount from proc to /
+            # oh. or we just cd to /, then detach /, then bind mount from . to /?
+            # hm.
+            procself = stdtask.task.root().handle/"proc"/"self"/"ns"
         trio.run(self.runner, test)
 
     def test_spawn_exit(self) -> None:

@@ -12440,3 +12440,46 @@ seems good and nice
 hmm.
 the address can't be interpreted on its own. dang.
 you need to know the netlink protocol
+* sandboxing
+unmount everything
+enter another user namespace (though this blocks the CAP.NET_RAW usage, hmm)
+* sigwinch
+need to handle sigwinch I guess
+
+this is a pretty important TODO
+
+
+UGH stupid python establishes a signal handler for sigwinch
+
+which uhhhh I guess breaks us in the rsyscall threads
+
+hmmmmmmmmmmmm
+
+maybe we shouldn't share signal handlers?
+
+hmm no just doing that doesn't help
+
+hmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+
+so I guess the signal handle probably does things like access thread locals
+
+so it can't run in the thread
+
+which is fine, but:
+that means we need to disable it
+
+which is fine, but:
+won't that break some python stuff?
+
+okaaaaaaaaaaaaay sooooooooo
+I could unshare the sighand table, and also clear it at startup?
+I kind of think that might be how things Should Work?
+
+signal handlers are really very dubious, they assume quite a bit about their stack...
+
+maybe we could set this up with sigaltstack?
+right, so that instead of breaking in our threads, it successfully works
+
+hmmmmmmmmmm
+
+so every process is getting sigwinch because of the terminal resize. hmmmmmm.

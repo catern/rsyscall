@@ -17,3 +17,9 @@ class Struct:
         "The maximum size of this structure."
         ...
 
+def bits(n: int, one_indexed: bool=True) -> t.Iterator[int]:
+    "Yields the bit indices that are set in this integer"
+    while n:
+        b = n & (~n+1)
+        yield (b.bit_length() - (0 if one_indexed else 1))
+        n ^= b

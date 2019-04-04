@@ -46,6 +46,8 @@ class SYS(enum.IntEnum):
     ioctl = lib.SYS_ioctl
     socket = lib.SYS_socket
     bind = lib.SYS_bind
+    capget = lib.SYS_capget
+    capset = lib.SYS_capset
 
 class IdType(enum.IntEnum):
     PID = lib.P_PID # Wait for the child whose process ID matches id.
@@ -67,6 +69,10 @@ class UnshareFlag(enum.IntFlag):
 
 class PrctlOp(enum.IntEnum):
     SET_PDEATHSIG = lib.PR_SET_PDEATHSIG
+    CAP_AMBIENT = lib.PR_CAP_AMBIENT
+
+class CapAmbient(enum.IntEnum):
+    RAISE = lib.PR_CAP_AMBIENT_RAISE
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -320,3 +326,9 @@ async def socket(sysif: SyscallInterface, domain: int, type: int, protocol: int)
 
 async def bind(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: int) -> None:
     await sysif.syscall(SYS.bind, sockfd, addr, addrlen)
+
+async def capset(sysif: SyscallInterface, hdrp: Pointer, datap: Pointer) -> None:
+    await sysif.syscall(SYS.capset, hdrp, datap)
+
+async def capget(sysif: SyscallInterface, hdrp: Pointer, datap: Pointer) -> None:
+    await sysif.syscall(SYS.capget, hdrp, datap)

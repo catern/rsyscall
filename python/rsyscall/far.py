@@ -238,6 +238,10 @@ class Task:
     def to_near_mapping(self, mapping: MemoryMapping) -> rsyscall.near.MemoryMapping:
         return self.address_space.to_near_mapping(mapping)
 
+    async def prctl(self, option: rsyscall.near.PrctlOp, arg2: int, arg3: int=0, arg4: int=0, arg5: int=0) -> int:
+        return (await rsyscall.near.prctl(self.sysif, option, arg2, arg3, arg4, arg5))
+
+
 # These are like the instructions in near, but they also do the appropriate dynamic check.
 async def read(task: Task, fd: FileDescriptor, buf: Pointer, count: int) -> int:
     assert task.fd_table == fd.fd_table
