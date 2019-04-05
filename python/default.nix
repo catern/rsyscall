@@ -44,6 +44,7 @@ pytest ];
       pkgs.s6
       miredo
       pyroute2
+      pkgs.powerdns
   ];
 }
 
