@@ -3570,6 +3570,24 @@ hmm, actually it just occurred to me that this question is essentially the same 
    or just use one of theirs?
 
    Also we can grab the Epoller out of the ChildTaskMonitor, for that matter.
+** sharing SIGHAND/handling SIGWINCH/setting up thread locals
+   Python sets up a SIGWINCH handler.
+
+   In an rsyscall thread, the thread locals aren't set up.
+   So errno isn't set up properly, so any code based on the libc isn't going to work.
+
+   The signal handler will therefore segfault.
+
+   I could try to set up the thread locals properly, but that would require something libc-specific, probably.
+   Or using glibc's clone interface but... 
+   Yeah, it's not possible since I'd need to set up TLS on my own by paving memory etc
+   Not calling functions.
+
+   Well, I guess I could maybe have a helper for it?
+
+   In any case, it's complicated. Better to have these threads be thoroughly non-POSIX.
+   Which means they can't share signal handlers with the POSIX thread.
+   So we'll probably clear out the handlers on thread startup?
 * knowledge
 ** tkill vs kill
 The difference between kill and tkill (besides the special negative parameters to kill, which tkill
@@ -12536,3 +12554,6 @@ yeah generically it makes sense to use some existing sandboxing thing.
 ok so none of them support socket-passing
 
 but powerdns is probably what I'll use, so.
+* powerdns
+hmm okay sql
+hmmmmm so I could either write some raw sql, or dnsutil load-zone some thingsput 
