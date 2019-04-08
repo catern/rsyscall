@@ -12557,3 +12557,47 @@ but powerdns is probably what I'll use, so.
 * powerdns
 hmm okay sql
 hmmmmm so I could either write some raw sql, or dnsutil load-zone some thingsput 
+
+ok so I finally have the bind backend working so that's all good now
+
+so let's go ahead and do the passing-down
+
+hmmmmmmm
+
+creating this stuff and passing down sockets is a hassle
+
+let's start with making it run from python
+
+ah but then we have to recompile slowly which is a hassle, hmm...
+
+let's support more dynamic injection or something....
+
+we can set, uh... hmm.
+
+yeah just set up some thing where we pull the binaries from ~/.local/src/whatever, it's fine
+oh and we don't need the sql scripts! nice
+
+so we just need the binaries which should be easy
+
+ok so...
+
+maybe a separate fd array for UDP/TCP IPv4/IPv6? so four new config variables?
+
+hmm they could reasonably want some addresses passed in and others not
+
+ok, so a map then? one map per variable?
+
+yeah and then you can put whatever you want in local-address and it can be passed down
+
+eh no, we'll require something real I guess
+but still, a map
+
+oh maybe let's strtok an = away
+
+yeah that would be more expressive since then someone could come along later and add more
+
+oh but actually it's not great because it can't be passed by env var.
+
+so let's do it with the map, because that's more flexible
+
+ok so we'll turn it into a std::map?

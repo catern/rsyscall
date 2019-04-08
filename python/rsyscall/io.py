@@ -488,8 +488,7 @@ class FileDescriptor(t.Generic[T_file_co]):
 
     async def aclose(self):
         if self.open:
-            await raw_syscall.close(self.task.syscall, self.pure)
-            self.open = False
+            await self.handle.close()
         else:
             pass
 
@@ -510,16 +509,6 @@ class FileDescriptor(t.Generic[T_file_co]):
         await self.handle.close()
         self.open = False
 
-    def release(self) -> 'FileDescriptor[T_file_co]':
-        """Disassociate the file descriptor from this object
-
-        """
-        if self.open:
-            self.open = False
-            return self.__class__(self.task, self.handle, self.file)
-        else:
-            raise Exception("file descriptor already closed")
-
     def for_task(self, task: base.Task) -> 'FileDescriptor[T_file_co]':
         if self.open:
             return self.__class__(self.task, task.make_fd_handle(self.handle), self.file)
@@ -531,26 +520,6 @@ class FileDescriptor(t.Generic[T_file_co]):
             return self.__class__(self.task, self.handle.move(task), self.file)
         else:
             raise Exception("file descriptor already closed")
-
-    async def dup2(self, target: 'FileDescriptor') -> 'FileDescriptor[T_file_co]':
-        """Make a copy of this file descriptor at target.number
-
-        """
-        if self.pure.fd_table != target.pure.fd_table:
-            raise Exception("two fds are not in the same FDTable")
-        if self is target:
-            return self
-        await raw_syscall.dup3(self.task.syscall, self.pure, target.pure, 0)
-        target.open = False
-        new_fd = self.task.make_fd(target.handle.near, self.file)
-        # dup2 unsets cloexec on the new copy, so:
-        self.file.shared = True
-        return new_fd
-
-    async def move_to(self, target: 'FileDescriptor') -> 'FileDescriptor[T_file_co]':
-        ret = await self.dup2(target)
-        await self.aclose()
-        return ret
 
     async def copy_from(self, source: handle.FileDescriptor, flags=0) -> None:
         if self.handle.task.fd_table != source.task.fd_table:

@@ -510,6 +510,13 @@ class TestIO(unittest.TestCase):
                 await stdtask2.exit(0)
         trio.run(self.runner, test)
 
+    def test_cwd_path_encode(self) -> None:
+        async def test(stdtask: StandardTask) -> None:
+            cwd = stdtask.task.cwd()
+            self.assertEqual(os.fsdecode(cwd), '.')
+            self.assertEqual(os.fsdecode(cwd/"foo"), './foo')
+        trio.run(self.runner, test)
+
     def test_spawn_basic(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.spawn_exec()

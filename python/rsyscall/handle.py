@@ -13,6 +13,7 @@ import os
 import typing as t
 import logging
 import contextlib
+import socket
 logger = logging.getLogger(__name__)
 
 # This is like a far pointer plus a segment register.

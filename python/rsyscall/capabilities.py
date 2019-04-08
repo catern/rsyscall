@@ -50,7 +50,7 @@ def to_uint32s(caps: t.Set[CAP]) -> t.Tuple[int, int]:
         list_idx = (cap // 32)
         uint_idx = (cap % 32)
         ret[list_idx] |= 1 << uint_idx
-    return tuple(ret)
+    return tuple(ret) # type: ignore
 
 def from_uint32s(one: int, two: int) -> t.Set[CAP]:
     return {*{CAP(bit) for bit in bits(one, one_indexed=False)},
@@ -65,7 +65,7 @@ class CapHeader(Struct):
         struct = ffi.new('struct __user_cap_header_struct*', (lib._LINUX_CAPABILITY_VERSION_3, self.pid))
         return bytes(ffi.buffer(struct))
 
-    T = t.TypeVar('T', bound='CapData')
+    T = t.TypeVar('T', bound='CapHeader')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct __user_cap_header_struct*', ffi.from_buffer(data))
