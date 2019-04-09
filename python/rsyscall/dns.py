@@ -50,6 +50,15 @@ zone "neato.com" {
     tcp_sock = await thread.stdtask.task.socket_inet(socket.SOCK.STREAM)
     await tcp_sock.bind(rsc.InetAddress(1053, 0x7F_00_00_01))
     await tcp_sock.listen(10)
+
+    addr = socket.Inet6Address(0, "::1")
+    ptr = await thread.stdtask.task.to_pointer(addr)
+    udp6_sock = await thread.stdtask.task.base.socket(socket.AF.INET6, socket.SOCK.DGRAM)
+    await udp6_sock.bind(ptr, addr.sizeof())
+    tcp6_sock = await thread.stdtask.task.base.socket(socket.AF.INET6, socket.SOCK.STREAM)
+    await tcp6_sock.bind(ptr, addr.sizeof())
+    await tcp6_sock.listen(10)
+
     config = {
         "config-dir": os.fsdecode(cwd),
         "socket-dir": os.fsdecode(cwd),
@@ -60,15 +69,19 @@ zone "neato.com" {
         "launch": "bind",
         "bind-config": os.fsdecode(named_path),
         # relevant stuff
-        "local-address": "127.0.0.1,0.0.0.0",
-        "local-ipv6": "",
+        "local-address": "127.0.0.1",
+        "local-ipv6": "::1",
         "local-address-udp-fds": "127.0.0.1=" + str(int(udp_sock.handle.near)),
         "local-address-tcp-fds": "127.0.0.1=" + str(int(tcp_sock.handle.near)),
+        "local-ipv6-udp-fds": "::1=" + str(int(udp6_sock.near)),
+        "local-ipv6-tcp-fds": "::1=" + str(int(tcp6_sock.near)),
     }
     config_args = [f"--{name}={value}" for name, value in config.items()]
     await thread.stdtask.unshare_files(going_to_exec=True)
     await udp_sock.handle.disable_cloexec()
     await tcp_sock.handle.disable_cloexec()
+    await udp6_sock.disable_cloexec()
+    await tcp6_sock.disable_cloexec()
     child = await thread.exec(
         pdns_server.args(*config_args))
     nursery.start_soon(child.check)

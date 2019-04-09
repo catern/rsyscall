@@ -517,6 +517,16 @@ class TestIO(unittest.TestCase):
             self.assertEqual(os.fsdecode(cwd/"foo"), './foo')
         trio.run(self.runner, test)
 
+    def test_ipv6_encode(self) -> None:
+        from rsyscall.socket import Inet6Address
+        orig = Inet6Address(1234, "::", 1234, 1234)
+        data = orig.to_bytes()
+        out = Inet6Address.from_bytes(data)        
+        self.assertEqual(orig.port, out.port)
+        self.assertEqual(orig.addr, out.addr)
+        self.assertEqual(orig.flowinfo, out.flowinfo)
+        self.assertEqual(orig.scope_id, out.scope_id)
+
     def test_spawn_basic(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.spawn_exec()

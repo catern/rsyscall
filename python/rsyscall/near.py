@@ -48,6 +48,7 @@ class SYS(enum.IntEnum):
     bind = lib.SYS_bind
     capget = lib.SYS_capget
     capset = lib.SYS_capset
+    listen = lib.SYS_listen
 
 class IdType(enum.IntEnum):
     PID = lib.P_PID # Wait for the child whose process ID matches id.
@@ -332,3 +333,6 @@ async def capset(sysif: SyscallInterface, hdrp: Pointer, datap: Pointer) -> None
 
 async def capget(sysif: SyscallInterface, hdrp: Pointer, datap: Pointer) -> None:
     await sysif.syscall(SYS.capget, hdrp, datap)
+
+async def listen(sysif: SyscallInterface, sockfd: FileDescriptor, backlog: int) -> None:
+    await sysif.syscall(SYS.listen, sockfd, backlog)

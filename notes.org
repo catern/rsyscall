@@ -3691,6 +3691,22 @@ so we don't have to be generic.
 
    instead of uploading some program to some deployment system to run on your behalf in the appropriate environment,
    you just directly run your code.
+** totally separating "running a language" from "operating system API"
+   Usually the APIs for stuff like memory and files are tied closely to how the language actually runs.
+
+   But we don't care how the language runs at all.
+
+   The language implementation, and the OS API, are totally separate.
+
+   The language implementation probably uses memory under the hood,
+   but we expose a totally language-based API to memory,
+   that doesn't involve the details of, "oh these classes are actually pointers to memory".
+   Our memory isn't convertible to language objects except through explicitly reading it into the language implementation,
+   and deserializing it.
+
+   For us, memory isn't immediately accessible:
+   It must be explicitly read into the language core,
+   and explicitly written out from the language core.
 * explicitly modeling memory
 how would I do this?
 

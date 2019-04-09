@@ -259,6 +259,10 @@ class FileDescriptor:
         async with addr.borrow(self.task) as addr:
             await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addrlen)
 
+    async def listen(self, backlog: int) -> None:
+        self.validate()
+        await rsyscall.near.listen(self.task.sysif, self.near, backlog)
+
 @dataclass(eq=False)
 class Pointer:
     task: Task

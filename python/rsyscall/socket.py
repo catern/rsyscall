@@ -1,9 +1,10 @@
 import socket
-from rsyscall._raw import lib # type: ignore
+from rsyscall._raw import ffi, lib # type: ignore
 import enum
 from rsyscall.base import Address
 import typing as t
 from dataclasses import dataclass
+import ipaddress
 
 class AF(enum.IntEnum):
     UNIX = socket.AF_UNIX
@@ -37,28 +38,29 @@ class IP(enum.IntEnum):
 
 @dataclass
 class Inet6Address(Address):
-    # not an actual process pid, but rather "port id", which is unique per netlink socket
     port: int
-    # hmm I don't think I can actually store 2**128 in here
-    # well... ok it seems I can, but...
-    # buytes are probably better?
-    addr: int
+    addr: ipaddress.IPv6Address
     flowinfo: int = 0
     scope_id: int = 0
 
+    def __post_init__(self) -> None:
+        self.addr = ipaddress.IPv6Address(self.addr)
+
     def to_bytes(self) -> bytes:
         struct = ffi.new('struct sockaddr_in6*',
-                         (AF.INET6, socket.htons(self.port), self.pid, self.groups))
+                         (AF.INET6, socket.htons(self.port), self.flowinfo, (b'',), self.scope_id))
+        struct.sin6_addr.s6_addr = self.addr.packed
         return bytes(ffi.buffer(struct))
 
     T = t.TypeVar('T', bound='NetlinkAddress')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
-        if len(data) < self.sizeof():
+        if len(data) < cls.sizeof():
             raise Exception("data too small", data)
-        struct = ffi.cast('struct sockaddr_nl*', ffi.from_buffer(data))
-        return cls(struct.nl_pid, struct.nl_groups)
+        struct = ffi.cast('struct sockaddr_in6*', ffi.from_buffer(data))
+        return cls(socket.ntohs(struct.sin6_port), ipaddress.IPv6Address(bytes(struct.sin6_addr.s6_addr)),
+                   struct.sin6_flowinfo, struct.sin6_scope_id)
 
     @classmethod
     def sizeof(cls) -> int:
-        return ffi.sizeof('struct sockaddr_nl')
+        return ffi.sizeof('struct sockaddr_in6')
