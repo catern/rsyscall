@@ -12617,3 +12617,121 @@ oh but actually it's not great because it can't be passed by env var.
 so let's do it with the map, because that's more flexible
 
 ok so we'll turn it into a std::map?
+* wildcard NS records time
+
+sslip.io and ip6.name seem to be my options
+
+I don't think I can use lua records - unless wildcard records work?
+
+oh hey
+
+I guess I can use letsencrypt to get a cert for email too?
+
+NS record...
+
+maybe we can just redirect?
+
+hm, true genericness:
+any record you give me, I'll spit back a deterministic NS record for that
+
+and an SOA record?
+
+oh maybe I don't need SOA records
+
+ok so let's assume just NS record for now
+
+so as expected, I just need to spit out an NS record on some domain,
+then the other guy can have SOA records or whatever
+
+oh yeah I definitely don't need to generate an SOA record, looks like that can be delegated
+
+so...
+
+NS record for foo.bar.ns.rsv.to
+is NS foo.bar
+
+I guess?
+
+So we do...
+
+(long ipv6).ip6.name.ns.rsv.to
+
+Or....
+
+(shorter ipv6).tere.to.ns.to
+** lua record
+ok so we'll just shorten the ip, seems good
+
+wow this was easy!
+
+waaaaaaaait a second
+if I ask for... foo.whatever
+
+then...
+
+that's broken...
+
+ok hmmmmm
+
+so:
+
+if I had a path =/proc/magic/[some absolute path to unix socket]/more/stuff=
+
+I wouldn't know when to stop following the path segment.
+
+ok...
+
+so how about...
+
+ewwwwwwwwwwwwww
+
+OK so how about I start with a prefix indicating the number of components????
+
+yuck...
+
+
+ok so how does resolution work?
+we start from the bottom I guess?
+
+ok so this should work then... maybe?
+
+we request com.
+
+uhhh do I need glue records???
+
+I guess I query NS records for this domain...
+
+ok the problem is that I want to delegate:
+
+foo.bar.example.com.
+
+and I want bar.example.com. to... not be delegated I guess?
+
+so I guess I just keep returning myself until they get the full thing?
+
+then above that, I return um...
+
+the full thing?
+
+oh it's not just a matter of the full thing, it's that I need to tell them to keep requesting,
+rather than return an NS record.
+
+ok so I guess I do need an explicit length
+
+hmm how do we say "don't return a record, this is invalid"?
+** testing
+   ok so I've got the NS record thing working
+
+   even if I'm not sure it's quite right
+
+   now how do I test?
+
+   I want to do an iterative lookup, starting from one place
+
+   theoretically once I have this running,
+   all I need to do is... write a test which starts a nameserver on IPv6 and then...
+   normal DNS iteration will find it and resolve with it.
+
+   but, if I don't do that...
+
+   can I override my DNS server maybe?

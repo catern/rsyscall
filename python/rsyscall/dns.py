@@ -37,7 +37,12 @@ async def start_powerdns(nursery, stdtask: StandardTask, path: Path) -> Powerdns
  123
  123
 )
-foo.neato.com. 123 A 1.2.3.4
+*.neato.com. 123 LUA NS ("; local dn = qname:makeRelative(newDN('neato.com'));"
+                          "local labels = dn:getRawLabels();"
+                          "local components = labels[#labels];"
+                          "if tonumber(components) > (#labels - 1) then return nil end;"
+                          "local nslabels = {table.unpack(labels, #labels-components, #labels-1)};"
+                          "return table.concat(nslabels, '.');")
 """)
     named_path = await rsc.spit(cwd/"named.conf", """
 zone "neato.com" {
@@ -68,6 +73,7 @@ zone "neato.com" {
         # backend
         "launch": "bind",
         "bind-config": os.fsdecode(named_path),
+        "enable-lua-records": "yes",
         # relevant stuff
         "local-address": "127.0.0.1",
         "local-ipv6": "::1",
@@ -101,4 +107,11 @@ class TestPowerdns(TrioTestCase):
     async def test_powerdns(self) -> None:
         dig = await rsc.which(self.stdtask, "dig")
         await trio.sleep(.1)
-        await self.stdtask.run(dig.args('@localhost', '-p', '1053', 'foo.neato.com'))
+        # oh hmm we want to return an NS record for something else though
+        # that's awkward to do with lua records.
+        # or... maybe this is fine? can we return NS record for this domain at all levels?
+        # in any case, now we have this thing working.
+        # so... we can write a better test.
+        await self.stdtask.run(dig.args('@localhost', '-p', '1053', 'NS', 'a.b.c.2.neato.com'))
+        # await self.stdtask.run(dig.args('@localhost', '-p', '1053', 'NS', 'a.b.c.2.neato.com'))
+        # await self.stdtask.run(dig.args('@localhost', '-p', '1053', 'NS', 'foo.neato.com'))
