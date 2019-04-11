@@ -12617,6 +12617,21 @@ oh but actually it's not great because it can't be passed by env var.
 so let's do it with the map, because that's more flexible
 
 ok so we'll turn it into a std::map?
+* sandboxing
+   hmm, my user really is essentially root;
+   it would be trivial to intercept a sudo call I make,
+   or even if I do passwordless sudo.
+
+   hmm.
+   i need to take sandboxing seriously.
+
+   hmm so how to integrate sandboxing?
+   I can just always sandbox, I guess?
+   That seems best actually, yeah - assuming I can find a sandboxing tool that's low-overhead.
+
+   Or... maybe I shouldn't always sandbox?
+   No yeah let's always sandbox for now,
+   then later we can tweak it.
 * wildcard NS records time
 
 sslip.io and ip6.name seem to be my options
@@ -12735,3 +12750,112 @@ hmm how do we say "don't return a record, this is invalid"?
    but, if I don't do that...
 
    can I override my DNS server maybe?
+
+   HMmmm okay so what exactly am I wanting to test...
+
+   Server A says, talk to server B.
+
+   Locating server B requires asking server root.
+   (Or we can just make that static in /etc/hosts, that would be nice)
+
+   Then server B says, ok here's the record.
+
+   Oh, but wait... server B does need to know what it's serving right? Yeah that should be fine.
+
+   So we need two servers,
+   and a host configuration so that we know how to reach each of them without going to the root.
+
+   I guess I can make two IP addresses in a netns and run with listening sockets on them.
+
+   OK so apparently dig isn't super good at this.
+   So we need a real recursive resolver.
+   And we can override root-hints?
+
+   Cool okay yeah we'll do that.
+   It looks like pdns essentially does that too, heh.
+
+   OK so I guess we can, um... yeah we don't need to run this as root as this thing believes,
+   but we do need to bind the ports while privileged in a netns.
+   And... we'll run the things in that netns too.
+
+   So yeah we'll essentially reproduce that. Meh, fine!
+
+   Yeah so we'll have all these different IPs and things, all good
+
+   This is a good thing to port, the existing pdns regression tests are quite familiar,
+   they are a mix of shell and python like v1 (shell)/v2 (single python script) of my stuff (currently on v5)
+
+   So would be cool to demonstrate that we can regression test these.
+   In a ~good way~.
+
+   OK so.
+
+   Hah!
+   They have v1 tests (shell),
+   and one of the more recent tests (I assume) is v2 (single python script).
+
+   Time to bring them into the future.
+** things we need
+   so, okay.
+
+   we, I guess, need the ability to spin up a fair number of these servers.
+   and we need a recursor, I guess.
+
+   We'll operate in a network namespace I guess
+
+   And we can add a large range of IPs to loopback, that's neat.
+
+   Wait, hmm
+
+   Is it already possible to bind to 127.0.0.2?
+   Whaat!!! It is!!!???
+
+   I didn't know that...
+
+   OK so... can we use a random port?
+
+   no, we need to use 53, innit
+
+   OK so we need to use a random *address*.
+   And we need to have cap_net_bind anyway so we'll have to be in a netns.
+   So technically we can just increment and that will be safe.
+
+   it would be cool to do it with inaddr_any or something...
+
+   Whatever, not a big deal.
+   OK so we do our cap_net_admin,
+   then we bind inside there.
+
+   Seems cool and good.
+
+   First we need a recursor though?
+
+   Yeaaaah we'll run the recursor,
+   then we'll run recursor + hints to normal nameserver,
+   then we'll run (in ns) recursor + hints to my own 1 authoritative,
+   then we'll run (in ns) recursor + hints + multiple authoritative.
+** run recursor
+   ok so I did this, it's good, neat
+** run recursor plus hints
+   yeaaah let's do it
+
+   done!
+** run recursor plus auth
+   ok so we need to start everything in a netns,
+   and pass down the socket fds
+
+   seems... fairly straightforward
+
+   woo it's working
+
+   now let's test the lua records, hmm...
+* problems to fix
+** disable_cloexec is awkward
+  it's awkward to disable_cloexec for multiple fds, easy to forget something.
+  would be nice if we were required to disable_cloexec when stringifying the fd number...
+  like, as_argument?
+** pointers should carry sizes
+   Manually matching up sizes is a bug waiting to happen.
+   Maybe we should have some notion of memory region?
+** sandboxing
+    need to actually do it for everything probs

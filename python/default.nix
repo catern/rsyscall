@@ -37,6 +37,7 @@ pytest ];
   buildInputs = [ pkgs.openssh nix ];
   propagatedBuildInputs = [ (import ../c)
       trio cffi pkgconfig python-prctl pkgs.nginx typeguard
+      dnspython
       requests h11 pkgs.pkgconfig hydra
       pkgs.postgresql_11
       opensmtpd
