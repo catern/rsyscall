@@ -30,28 +30,46 @@ async def start_powerdns(nursery, stdtask: StandardTask, path: Path) -> Powerdns
     await thread.stdtask.task.unshare_fs()
     await thread.stdtask.task.chdir(path)
     cwd = thread.stdtask.task.cwd()
-    zone_path = await rsc.spit(cwd/"zone", """
-@ IN SOA foobar root.neato.com (
+    root_path = await rsc.spit(cwd/"root", """
+@ IN SOA ns.neato. root.neato. (
  1
  123
  123
  123
  123
 )
-*.neato.com. 123 LUA NS ("; local dn = qname:makeRelative(newDN('neato.com'));"
+. 123 NS ns.neato.
+neato. 123 NS ns.neato.
+ns.neato. 123 A 127.0.0.2
+""")
+    zone_path = await rsc.spit(cwd/"zone", """
+@ IN SOA ns.neato. root.neato. (
+ 1
+ 123
+ 123
+ 123
+ 123
+)
+neato. 123 NS ns.neato.
+ns.neato. 123 A 127.0.0.2
+*.neato. 123 LUA NS ("; local dn = qname:makeRelative(newDN('neato'));"
                           "local labels = dn:getRawLabels();"
                           "local components = labels[#labels];"
-                          "if tonumber(components) > (#labels - 1) then return nil end;"
+                          "if tonumber(components) > (#labels - 1) then return 'no.record' end;"
                           "local nslabels = {table.unpack(labels, #labels-components, #labels-1)};"
                           "return table.concat(nslabels, '.');")
-a.neato.com. 123 A 1.2.3.4
+a.neato. 123 A 1.2.3.4
 """)
     named_path = await rsc.spit(cwd/"named.conf", """
-zone "neato.com" {
+zone "." {
      type master;
      file "%s";
 };
-""" % (os.fsdecode(zone_path),))
+zone "neat" {
+     type master;
+     file "%s";
+};
+""" % (os.fsdecode(root_path), os.fsdecode(zone_path)))
     udp_sock = await thread.stdtask.task.socket_inet(socket.SOCK.DGRAM)
     await udp_sock.bind(rsc.InetAddress(53, 0x7F_00_00_02))
     tcp_sock = await thread.stdtask.task.socket_inet(socket.SOCK.STREAM)
@@ -125,7 +143,7 @@ async def start_recursor(nursery, stdtask: StandardTask, path: Path, root_hints:
         "loglevel": "9",
         "log-common-errors": "yes",
         "quiet": "no",
-        # "trace": "yes",
+        "trace": "yes",
         "dont-query": "",
         "logging-facility": "0",
         # relevant stuff
@@ -174,7 +192,9 @@ class TestPowerdns(TrioTestCase):
             rd('IN', 'A', 3600000, ['127.0.0.2'])
         ])
         self.powerdns = await start_recursor(self.nursery, self.stdtask, self.path, root_hints=hints)
-        await self.stdtask.run(self.dig.args('@127.0.0.1', '-p', '1053', 'A', 'a.neato.com'))
+        # await self.stdtask.run(self.dig.args('@127.0.0.2', '-p', '53', 'NS', 'a.b.c.2.neato'))
+        await self.stdtask.run(self.dig.args('@127.0.0.1', '-p', '1053', 'NS', 'a.b.c.2.neato'))
+        # await self.stdtask.run(self.dig.args('@127.0.0.1', '-p', '1053', 'A', 'a.neato'))
 
     async def test_powerdns(self) -> None:
         dig = await rsc.which(self.stdtask, "dig")
