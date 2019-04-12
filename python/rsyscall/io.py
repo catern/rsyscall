@@ -12,7 +12,7 @@ ssh_bootstrap_script_contents = importlib.resources.read_text('rsyscall', 'ssh_b
 from rsyscall.base import Pointer, RsyscallException, RsyscallHangup
 from rsyscall.base import to_local_pointer
 from rsyscall.base import SyscallInterface
-from rsyscall.base import T_addr, UnixAddress, PathTooLongError, InetAddress
+from rsyscall.base import T_addr, UnixAddress, PathTooLongError, InetAddress, SockaddrIn
 from rsyscall.base import IdType, EpollCtlOp, ChildCode, UncleanExit, ChildEvent
 import rsyscall.base as base
 from rsyscall.raw_syscalls import UnshareFlag, NsType, SigprocmaskHow

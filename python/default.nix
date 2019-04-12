@@ -23,6 +23,15 @@ let
     preConfigure = "cp ${pkgs.gettext}/share/gettext/gettext.h include/gettext.h";
     buildInputs = oldAttrs.buildInputs ++ [ pkgs.autoreconfHook ];
   });
+  dnspython = pkgs.python37Packages.dnspython.overrideAttrs (oldAttrs: rec {
+    version = "1.16.0";
+    src = pkgs.python37Packages.fetchPypi {
+      pname = oldAttrs.pname;
+      inherit version;
+      extension = "zip";
+      sha256 = "00cfamn97w2vhq3id87f10mjna8ag5yz5dw0cy5s0sa3ipiyii9n";
+    };
+  });
 in
 with pkgs.python37Packages;
 

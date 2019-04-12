@@ -9,6 +9,7 @@ import socket
 import struct
 import enum
 import signal
+import ipaddress
 from rsyscall.far import AddressSpace, FDTable, Pointer, Path
 from rsyscall.far import Process, ProcessGroup, FileDescriptor
 from rsyscall.handle import Task
@@ -122,14 +123,14 @@ class UnixAddress(Address):
     def __str__(self) -> str:
         return f"UnixAddress({self.path})"
 
-class InetAddress(Address):
+class SockaddrIn(Address):
     addrlen: int = ffi.sizeof('struct sockaddr_in')
-    def __init__(self, port: int, addr: int) -> None:
+    def __init__(self, port: int, addr: t.Union[int, ipaddress.IPv4Address]) -> None:
         # these are in host byte order, of course
         self.port = port
-        self.addr = addr
+        self.addr = ipaddress.IPv4Address(addr)
 
-    T = t.TypeVar('T', bound='InetAddress')
+    T = t.TypeVar('T', bound='SockaddrIn')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct sockaddr_in*', ffi.from_buffer(data))
@@ -138,7 +139,7 @@ class InetAddress(Address):
         return cls(socket.ntohs(struct.sin_port), socket.ntohl(struct.sin_addr.s_addr))
 
     def to_bytes(self) -> bytes:
-        addr = ffi.new('struct sockaddr_in*', (lib.AF_INET, socket.htons(self.port), (socket.htonl(self.addr),)))
+        addr = ffi.new('struct sockaddr_in*', (lib.AF_INET, socket.htons(self.port), (socket.htonl(int(self.addr)),)))
         return ffi.buffer(addr)
 
     @classmethod
@@ -147,11 +148,12 @@ class InetAddress(Address):
 
     def addr_as_string(self) -> str:
         "Returns the addr portion of this address in 127.0.0.1 form"
-        return socket.inet_ntoa(struct.pack("!I", self.addr))
+        return str(self.addr)
 
     def __str__(self) -> str:
-        return f"InetAddress({self.addr_as_string()}:{self.port})"
+        return f"SockaddrIn({self.addr_as_string()}:{self.port})"
 
+InetAddress = SockaddrIn
 
 class IdType(enum.IntEnum):
     PID = lib.P_PID # Wait for the child whose process ID matches id.

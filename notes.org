@@ -12849,6 +12849,42 @@ hmm how do we say "don't return a record, this is invalid"?
    woo it's working
 
    now let's test the lua records, hmm...
+
+   cool seems to work
+** run recursur plus two auth
+   OK so we need some object that represents the magic domain.
+   This can just be some data and formatting.
+
+   And we need another object which represents, a domain and the authority to serve it.
+   This can be a domain plus some sockets.
+
+   I guess we can create the latter first hmm.
+
+   Or hmm. Maybe it should be a domain, plus the ability to connect that domain to some sockets.
+
+   Hmmmmmmmmm.
+
+   I guess one domain per is fine.
+
+   yeah sure and I'll give it the sockets too.
+   I'll just run one instance per domain, that's fine
+
+   Ummm okay so we made domain plus socket and passed it down.
+
+   Maybe we need something to... bind a zone??
+   Well we could make a method which starts a powerdns instance,
+   which we can pass a zone.
+** dns server which doesn't care about the origin
+   ummm... is the idea that at any path, it gives us the same stuff?
+
+   well, no...
+
+   i dunno, doesn't make sense
+
+   this is a nice free domain idea :)
+   all you need is an A record and you can serve DNS -
+   and you can get an A record for any IP.
+
 * problems to fix
 ** disable_cloexec is awkward
   it's awkward to disable_cloexec for multiple fds, easy to forget something.
