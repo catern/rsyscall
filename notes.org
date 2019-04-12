@@ -12874,6 +12874,8 @@ hmm how do we say "don't return a record, this is invalid"?
    Maybe we need something to... bind a zone??
    Well we could make a method which starts a powerdns instance,
    which we can pass a zone.
+
+   hmm we want to send NODATA if the record doesn't exist
 ** dns server which doesn't care about the origin
    ummm... is the idea that at any path, it gives us the same stuff?
 

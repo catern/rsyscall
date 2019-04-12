@@ -340,11 +340,21 @@ class TestPowerdns(TrioTestCase):
             self.nursery, self.stdtask, path, [(udp_sock.handle, tcp_sock.handle)], [], root_hints=root_hints)
         return addr
 
+    async def test_bad_ns(self) -> None:
+        magic_addr = await self.start_authoritative(make_zone('.', {
+            '*': [make_rdset('IN', 'NS', 3600, ['foo.bar.'])],
+            # 'magical': [make_rdset('IN', 'NS', 3600, ['foo.bar.'])],
+            # '*': [make_rdset('IN', 'LUA', 3600, ["NS \"; return 'foo.bar.';\""])],
+        }))
+        await self.stdtask.run(self.dig.args('@'+str(magic_addr), 'NS', 'magical'))
+        raise Exception
+
     async def test_powerdns(self) -> None:
         user_addr = await self.start_authoritative(make_zone('user.1.magic', {
             'a': [make_rdset('IN', 'A', 3600, ['1.3.5.7'])],
         }))
         magic_addr = await self.start_authoritative(make_zone('magic', {
+            # 'a.user.1': [make_rdset('IN', 'NS', 3600, ['user.'])]
             '*': [make_rdset('IN', 'LUA', 3600, ["""NS (
 "; local dn = qname:makeRelative(newDN('magic'));"
 "local labels = dn:getRawLabels();"
@@ -352,7 +362,8 @@ class TestPowerdns(TrioTestCase):
 "if tonumber(components) > (#labels - 1) then return 'no.domain' end;"
 "local nslabels = {table.unpack(labels, #labels-components, #labels-1)};"
 "return table.concat(nslabels, '.');"
-)"""])]}))
+)"""])]
+        }))
         real_user_addr = await self.start_authoritative(make_zone('user', {
             '@': [make_rdset('IN', 'A', 3600, [str(user_addr)])],
         }))
@@ -363,11 +374,11 @@ class TestPowerdns(TrioTestCase):
             'user.glue.neato': [make_rdset('IN', 'A', 3600, [str(real_user_addr)])],
         }))
         recursor_addr = await self.start_recursor(make_zone('.', {
-            '@': [make_rdset('IN', 'NS', 3600000, ['A.ROOT-SERVERS.NET.'])],
+            '.': [make_rdset('IN', 'NS', 3600000, ['A.ROOT-SERVERS.NET.'])],
             'a.root-servers.net': [make_rdset('IN', 'A', 3600000, [str(root_addr)])],
         }))
 
-        host = await rsc.which(self.stdtask, "host")
+        self.host = await rsc.which(self.stdtask, "host")
         # oh hmm we want to return an NS record for something else though
         # that's awkward to do with lua records.
         # or... maybe this is fine? can we return NS record for this domain at all levels?
@@ -375,6 +386,11 @@ class TestPowerdns(TrioTestCase):
         # so... we can write a better test.
         # await self.stdtask.run(dig.args('@127.0.0.2', 'NS', 'a.root-servers.net'))
         # await self.stdtask.run(self.dig.args('@'+str(user_addr), 'A', 'a.user.1.magic'))
-        await self.stdtask.run(self.dig.args('@'+str(recursor_addr), 'A', 'a.user.1.magic'))
-        # await self.stdtask.run(self.dig.args('@'+str(magic_addr), 'NS', 'a.user.1.magic'))
+        # await self.stdtask.run(self.dig.args('@'+str(recursor_addr), '+trace', 'NS', 'user'))
+        # await self.stdtask.run(self.dig.args('@'+str(recursor_addr), 'A', 'a.user.1.magic'))
+        await self.stdtask.run(self.dig.args('@'+str(magic_addr), 'NS', 'a.user.1.magic'))
+        # await self.stdtask.run(self.dig.args('@'+str(recursor_addr), 'A', 'user'))
+        # await self.stdtask.run(self.dig.args('@'+str(recursor_addr), 'A', 'a.user.1.magic'))
+        # await self.stdtask.run(self.host.args('-v', '-a', 'a.user.1.magic', str(recursor_addr)))
+        # await self.stdtask.run(self.host.args('-a', 'a.user.1.magic', str(magic_addr)))
         # raise Exception('hi')
