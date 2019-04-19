@@ -14,6 +14,7 @@ import typing as t
 import logging
 import contextlib
 import socket
+from rsyscall.struct import T_struct
 logger = logging.getLogger(__name__)
 
 # This is like a far pointer plus a segment register.
@@ -254,18 +255,19 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.inotify_rm_watch(self.task.sysif, self.near, wd)
 
-    async def bind(self, addr: Pointer, addrlen: int) -> None:
+    async def bind(self, addr: Pointer) -> None:
         self.validate()
         async with addr.borrow(self.task) as addr:
-            await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addrlen)
+            await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addr.bytesize())
 
     async def listen(self, backlog: int) -> None:
         self.validate()
         await rsyscall.near.listen(self.task.sysif, self.near, backlog)
 
 @dataclass(eq=False)
-class Pointer:
+class Pointer(t.Generic[T_struct]):
     task: Task
+    data_cls: t.Type[T_struct]
     near: rsyscall.near.Pointer
     to_free: t.Callable[[], None]
     valid: bool = True
@@ -281,6 +283,9 @@ class Pointer:
         # actual tracking of pointer references is not yet implemented
         self.validate()
         yield self
+
+    def bytesize(self) -> int:
+        return self.data_cls.sizeof()
 
     def validate(self) -> None:
         if not self.valid:

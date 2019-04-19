@@ -42,8 +42,8 @@ async def exec_miredo_privproc(
         privproc_side: handle.FileDescriptor, tun_index: int) -> ChildProcess:
     privproc_side = privproc_side.move(thread.stdtask.task.base)
     await thread.stdtask.unshare_files(going_to_exec=True)
-    await thread.stdtask.stdin.copy_from(privproc_side.handle)
-    await thread.stdtask.stdout.replace_with(privproc_side.handle)
+    await thread.stdtask.stdin.copy_from(privproc_side)
+    await thread.stdtask.stdout.replace_with(privproc_side)
     child = await thread.exec(miredo_privproc.args(str(tun_index)))
     return child
 
@@ -113,7 +113,7 @@ async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
 
     privproc_thread = await ns_thread.stdtask.fork()
     await add_to_ambient(privproc_thread.stdtask.task, {CAP.NET_ADMIN})
-    privproc_child = await exec_miredo_privproc(privproc_thread, privproc_side, tun_index)
+    privproc_child = await exec_miredo_privproc(privproc_thread, privproc_side.handle, tun_index)
     nursery.start_soon(privproc_child.check)
 
     # TODO lock down the client thread, it's talking on the network and isn't audited...
@@ -143,11 +143,9 @@ class TestMiredo(TrioTestCase):
         print("b", time.time())
         self.netsock = await self.miredo.ns_thread.stdtask.task.base.socket(socket.AF.NETLINK, socket.SOCK.DGRAM, lib.NETLINK_ROUTE)
         print("b-1", time.time())
-        # TODO clean up this API so we can get the size from the pointer
         print("b0", time.time())
-        addr = NetlinkAddress(0, RTMGRP.IPV6_ROUTE)
-        ptr = await self.miredo.ns_thread.stdtask.task.to_pointer(addr)
-        await self.netsock.bind(ptr, addr.sizeof())
+        await self.netsock.bind(
+            await self.miredo.ns_thread.stdtask.task.to_pointer(NetlinkAddress(0, RTMGRP.IPV6_ROUTE)))
         print("b0.5", time.time())
 
 

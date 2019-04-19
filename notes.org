@@ -12898,7 +12898,7 @@ hmm how do we say "don't return a record, this is invalid"?
   it's awkward to disable_cloexec for multiple fds, easy to forget something.
   would be nice if we were required to disable_cloexec when stringifying the fd number.
   like, as_argument?
-** pointers should carry sizes
+** DONE pointers should carry sizes
    Manually matching up sizes is a bug waiting to happen.
    Maybe we should have some notion of memory region?
 *** design
@@ -13057,6 +13057,65 @@ but also, principled.
     for example, epoll's events thing
 
     what if we just made everything typed?
+*** types
+    Okay, yes, simple:
+    We just put a type on the handle.Pointer
+
+    We don't have a sized pointer, we just have typed pointers.
+    Python runtime is sufficiently expressive for that to work.
+
+    We'll have vectors of types,
+    and bytes, and things! It will be grand!
+
+    The type that we'll return will be specified by the type argument, I guess.
+
+    Directly, maybe?
+    The thing is, we need a serializer.
+
+    So I guess, we can have a serializer...
+    for itself????
+
+    Yeah the issue is, if the serializer is the type argument,
+    then the return type isn't directly the type argument.
+    cuz bytes won't work for that
+
+    If the serializer is not the type argument,
+    then where does the serializer come from?
+    And how do we know it's compatible
+
+    wait hmm
+
+    okay so
+
+    I want a type Ptr[C]
+
+    Which will have methods like
+
+    read() -> C and write(C) -> None,
+
+    and which on intialization takes a Serializer[C],
+
+    which should have to_bytes(C) -> bytes and from_bytes(bytes) -> C
+
+    and also sizeof(C) -> int?
+
+    because otherwise we don't know how much to allocate up front.
+
+    ummm hmmm
+
+    well don't we store the size
+
+    oh yeah and here's the thing, we want to be able to malloc a location to write one of these,
+    before having one.
+
+    since we might get one returned. okay.
+
+    Well we can do a protocol thing.
+
+    OK! This is simple enough!
+
+    We'll start by just doing it for basic structs!
+    Then more later.
 ** sandboxing
     need to actually do it for everything probs
 ** sigwinch segfault

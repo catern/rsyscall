@@ -439,17 +439,13 @@ class TestIO(unittest.TestCase):
 
     def test_rtnetlink(self) -> None:
         async def test(stdtask: StandardTask) -> None:
+            from rsyscall.netlink.address import NetlinkAddress
+            from rsyscall.netlink.route import RTMGRP
             await stdtask.unshare_user()
             await stdtask.unshare_net()
 
             netsock = await stdtask.task.base.socket(socket.AF_NETLINK, socket.SOCK_DGRAM, lib.NETLINK_ROUTE)
-            from rsyscall.netlink.address import NetlinkAddress
-            from rsyscall.netlink.route import RTMGRP
-            addr = NetlinkAddress(0, RTMGRP.LINK)
-            ptr = await stdtask.task.to_pointer(addr)
-            # hmm this is not quite right hmm
-            # maybe we should get the size from the pointer?
-            await netsock.bind(ptr, addr.sizeof())
+            await netsock.bind(await stdtask.task.to_pointer(NetlinkAddress(0, RTMGRP.LINK)))
 
             tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
             ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))

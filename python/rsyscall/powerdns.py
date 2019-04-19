@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import dns.zone
 from dns.rdataset import from_text_list as make_rdset
 import rsyscall.dnspython_LUA
+import typing as t
 dns.rdata.register_type(rsyscall.dnspython_LUA, 65402, 'LUA')
 
 @dataclass
@@ -311,8 +312,8 @@ class TestPowerdns(TrioTestCase):
         await tcp_sock.bind(sockaddr)
         await tcp_sock.listen(10)
 
-        def add_rdata(node: str, typ: str, ttl: int, data: str) -> None:
-            node = zone.find_node(node, create=True)
+        def add_rdata(nodename: str, typ: str, ttl: int, data: str) -> None:
+            node = zone.find_node(nodename, create=True)
             typ_int = dns.rdatatype.from_text(typ)
             rdata = dns.rdata.from_text(dns.rdataclass.IN, typ_int, data)
             node.find_rdataset(dns.rdataclass.IN, typ_int, create=True).add(rdata, ttl=ttl)

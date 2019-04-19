@@ -16,7 +16,7 @@ class NetlinkAddress(Address):
     T = t.TypeVar('T', bound='NetlinkAddress')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
-        if len(data) < self.sizeof():
+        if len(data) < cls.sizeof():
             raise Exception("data too small", data)
         struct = ffi.cast('struct sockaddr_nl*', ffi.from_buffer(data))
         return cls(struct.nl_pid, struct.nl_groups)

@@ -52,7 +52,7 @@ class Inet6Address(Address):
         struct.sin6_addr.s6_addr = self.addr.packed
         return bytes(ffi.buffer(struct))
 
-    T = t.TypeVar('T', bound='NetlinkAddress')
+    T = t.TypeVar('T', bound='Inet6Address')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         if len(data) < cls.sizeof():
