@@ -12888,12 +12888,176 @@ hmm how do we say "don't return a record, this is invalid"?
    and you can get an A record for any IP.
 
 * problems to fix
+** I'm doing all this work without fixing problems!
+   I should fix problems instead of ignoring badness.
+   I've definitely proved to myself that we can do real things with this.
+
+   Let's hit miredo.
+   We'll fix these issues here.
 ** disable_cloexec is awkward
   it's awkward to disable_cloexec for multiple fds, easy to forget something.
-  would be nice if we were required to disable_cloexec when stringifying the fd number...
+  would be nice if we were required to disable_cloexec when stringifying the fd number.
   like, as_argument?
 ** pointers should carry sizes
    Manually matching up sizes is a bug waiting to happen.
    Maybe we should have some notion of memory region?
+*** design
+    So, it's simple enough to attach a size to a pointer.
+    But what does that really mean?
+    What *is* a pointer?
+
+    Also, why do I call them pointers instead of addresses? Hmm.
+    Whatever that's fine
+
+    So, ptr + length, what's that similar to?
+
+    It's kind of like IP address + netmask.
+    That's also a way to specify a range.
+    Though in the pointer case you can specify an arbitrary integer-contiguous range.
+    Instead of a mask which says a range to stay within.
+
+    Pointers could have masks instead.
+
+    Hmmmmmmm tagged pointersss
+
+    I guess lisp-machines tag their pointers, so you can only access things in a type-safe way.
+
+    And you could embed the size into the pointer, capability-pointers style.
+    That's what I'm talking about anyway.
+
+    Let's read this CHERI paper.
+*** cheri insights
+    oh interesting, we should probably also have caps like read/write...
+
+    because some pointers aren't writable... or readable...
+
+    or executable - that's interesting... maybe we should track that...
+
+    so that we can understand function pointers as executable.
+
+    oh I see, the reason they need memory to understand capabilities is because,
+    memory isn't intermediated by the kernel,
+    but instead is directly accessed by instructions
+    so there's no way for the kernel to maintain invariants.
+
+    (hmm but could the kernel maintain invariants for memory at paging time perhaps?)
+    (guess that's what it does. hm. hmmm.)
+    (yeah, cool! I guess it makes sense to associate the bits with physical memory)
+    (i mean, the kernel could set them, but, it's the architecture that maintains them)
+
+    yeah it's important to maintain permissions otherwise I could pass constant memory,
+    to a syscall that writes...
+    although would that really be a big deal...
+
+    oh hmm should we track perms on mmap?
+    no, I don't think we should. this would be like tracking perms on fds.
+    ok so we shouldn't track permissions, then.
+    so what are we even trying to do?
+    just be convenient, not capsecure?
+    yes. hmm.
+*** essentially
+i'm just wondering what interface to memory I should provide in my high level language.
+
+arbitrary runtime costs are acceptable
+
+basically, i'm in a nice capability-secure language - and then I want to provide access to memory.
+
+how I do it?
+
+ok so in my nice capsec language,
+i don't actually want to be totally capsec:
+I just want to be convenient.
+but also, principled.
+*** masked pointer thing
+
+    ok so you can always cut down the size of your pointer
+
+    so it's like
+
+    4 bits, then...
+
+    an index, of bit-size increments...
+
+    well no it's the full
+*** hmm
+    so it's just a list of pointers to bytes
+
+    which I can turn into a bytestring
+    which I can feed into a program to get back an object.
+
+    it's a pointer to a serialization.
+    which, when partnered with a deserializer,
+    gives me back an object. hmm.
+
+    I can I guess append these things with a designated combiner,
+    which will deserialize one then the next.
+
+    Mmmmmmmmm
+
+    If I have an object thing,
+    and I serialize it,
+    that tells me how much space I need.
+
+    Well, I want to work with fixed-size things easily.
+    So I can write them to a pointer and read them from a pointer...
+
+    Oh also so I don't need to read incremental,
+    I can just read in one batch.
+
+    So hm.
+    If the interface is, I take this fixed-size string...
+    And output that fixed-size string...
+
+    Mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+
+    A span is just a bytestring at a remove.
+
+    A storage space for a bytestring.
+
+    I pass in a bytestring to the kernel.
+    Well, suppose that were the case!
+    Suppose I was just passing bytestrings in.
+    Which is where I want to be!
+
+    Would that be a good API? No!
+    I would want to constrain to... to...
+    the right type!
+
+    Well...
+    I can do that constraint for the pointers!
+    I can take a pointer to the right type.
+    And for things that can't take a pointer in such a way...
+    I pass in a bytestring.
+
+    Yes, yes...
+
+    OK so this seems fine.
+    It's by analogy to bytestrings...
+
+    And, we're passing in the cap to store a bytestring,
+    instead of just getting it returned into random crazy implicit memory.
+
+    And likewise with bytestrings,
+    where we can be more specific, we will be.
+
+    So, okay.
+    What about the handle API? should that take these nice typed pointers?
+    Or... not quite that, but... should the handle.Pointer be sized?
+    Hm...
+    This to_free is bad - it should be an Allocation,
+    so we can check if it's valid.
+    That way we can do pointer arithmetic. Well, do we even want to do that?
+    No. We shouldn't do pointer arithmetic, ever.
+
+    OK so should we have the size on the handle?
+
+    no pointer arithmetic, sure - but what about reducing the bounds?
+*** should we have size on handle.Pointer?
+*** What about variable sized pointers that are typed?
+    for example, epoll's events thing
+
+    what if we just made everything typed?
 ** sandboxing
     need to actually do it for everything probs
+** sigwinch segfault
+** garbage collection

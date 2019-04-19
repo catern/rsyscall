@@ -37,55 +37,6 @@ class Miredo:
     # Hopefully we can get a more lightweight setns-based approach later?
     ns_thread: RsyscallThread
 
-# TODO we should try running this with rtnetlink
-async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
-    miredo = await rsc.which(stdtask, "miredo")
-    sock = await stdtask.task.socket_inet(socket.SOCK.DGRAM)
-    await sock.bind(rsc.InetAddress(0, 0))
-    # set a bunch of sockopts
-    await sock.setsockopt(socket.SOL.IP, socket.IP.RECVERR, 1)
-    await sock.setsockopt(socket.SOL.IP, socket.IP.PKTINFO, 1)
-    await sock.setsockopt(socket.SOL.IP, socket.IP.MULTICAST_TTL, 1)
-    # hello fragments my old friend
-    await sock.setsockopt(socket.SOL.IP, socket.IP.MTU_DISCOVER, socket.IP.PMTUDISC_DONT)
-    ns_thread = await stdtask.fork()
-    # TODO properly inherit the caps we need instead of being root
-    await ns_thread.stdtask.unshare_user(0, 0)
-    await ns_thread.stdtask.unshare_net()
-    # we'll keep the ns thread around so we don't have to mess with setns;
-    # we'll fork off another thread to actually exec miredo.
-    # miredo doesn't properly clean up its child processes, so run it in a pid namespace
-    thread = await ns_thread.stdtask.fork(newpid=True)
-    sock = sock.move(thread.stdtask.task.base)
-    # hmm
-    config = ""
-    config += "InterfaceName teredo\n"
-    config += "ServerAddress teredo.remlab.net\n"
-    config += "InheritedFD " + str(sock.handle.near.number) + "\n"
-
-    config_fd = await thread.stdtask.task.memfd_create('miredo.conf')
-    await config_fd.write_all(config.encode())
-    await config_fd.lseek(0, os.SEEK_SET)
-    await thread.stdtask.unshare_files(going_to_exec=True)
-    await sock.handle.disable_cloexec()
-    await config_fd.handle.disable_cloexec()
-    # so for privsep let's just run privproc and main process separately, directly
-    # and put privproc in empty mount namespace and locked down, with inherited cap
-
-    # okay so I guess we'll bind the tunnel,
-    # and then create the privproc to manage it,
-    # and pass those down to the minimal miredo daemon
-    # ok so that's easy enough
-    # and then we don't need the pid namespace
-    # okay so it reloads configuration by just killing the process and restarting. lol
-    # okay so we should be able to cut this down a lot
-    miredo_command = miredo.args('-f', '-c', config_fd.handle.as_proc_path(), '-u', 'root')
-    print("command is", miredo_command.in_shell_form())
-    child = await thread.exec(miredo_command)
-    # child = await thread.exec(bash)
-    nursery.start_soon(child.check)
-    return Miredo(ns_thread)
-
 async def exec_miredo_privproc(
         thread: RsyscallThread,
         privproc_side: handle.FileDescriptor, tun_index: int) -> ChildProcess:
@@ -133,7 +84,7 @@ async def add_to_ambient(task: Task, capset: t.Set[CAP]) -> None:
     for cap in capset:
         await task.base.prctl(rsyscall.near.PrctlOp.CAP_AMBIENT, rsyscall.near.CapAmbient.RAISE, cap)
 
-async def start_new_miredo(nursery, stdtask: StandardTask) -> Miredo:
+async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
     inet_sock = await stdtask.task.socket_inet(socket.SOCK.DGRAM)
     await inet_sock.bind(rsc.InetAddress(0, 0))
     # set a bunch of sockopts
@@ -188,7 +139,7 @@ class TestMiredo(TrioTestCase):
         # what is even going on
         self.stdtask = rsc.local_stdtask
         print("a", time.time())
-        self.miredo = await start_new_miredo(self.nursery, self.stdtask)
+        self.miredo = await start_miredo(self.nursery, self.stdtask)
         print("b", time.time())
         self.netsock = await self.miredo.ns_thread.stdtask.task.base.socket(socket.AF.NETLINK, socket.SOCK.DGRAM, lib.NETLINK_ROUTE)
         print("b-1", time.time())
