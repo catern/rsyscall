@@ -10,7 +10,6 @@ import rsyscall.near
 from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import StandardTask, RsyscallThread, Path, Command
 from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
-from rsyscall.stat import DType
 from dataclasses import dataclass
 import dns.zone
 from dns.rdataset import from_text_list as make_rdset

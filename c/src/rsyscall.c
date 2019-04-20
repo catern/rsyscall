@@ -27,6 +27,7 @@ char hello[] = "hello world, I am the syscall server!\n";
 char read_failed[] = "rsyscall: read(infd, &request, sizeof(request)) failed\n";
 char read_eof[] = "rsyscall: read(infd, &request, sizeof(request)) returned EOF\n";
 char write_failed[] = "rsyscall: write(outfd, &response, sizeof(response)) failed\n";
+const int EINTR = 4;
 
 static long write(int fd, const void *buf, size_t count) {
     return rsyscall_raw_syscall(fd, (long) buf, (long) count, 0, 0, 0, SYS_write);
@@ -50,6 +51,7 @@ static int read_request(const int infd, struct rsyscall_syscall *request)
     size_t remaining = sizeof(*request);
     while (remaining) {
         long const ret = read(infd, buf, remaining);
+        if (ret == -EINTR) continue;
         if (ret < 0) {
 	    write(2, read_failed, sizeof(read_failed) - 1);
 	    return ret;
@@ -77,6 +79,7 @@ static int write_response(const int outfd, const int64_t response)
     size_t remaining = sizeof(response);
     while (remaining) {
         long const ret = write(outfd, data, remaining);
+        if (ret == -EINTR) continue;
         if (ret < 0) {
 	    write(2, write_failed, sizeof(write_failed) - 1);
 	    return ret;

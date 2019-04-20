@@ -90,6 +90,8 @@ class Sigaction(Struct):
     def sizeof(cls) -> int:
         return ffi.sizeof('struct kernel_sigaction')
 
+
+#### Tests ####
 from unittest import TestCase
 
 class TestSignal(TestCase):

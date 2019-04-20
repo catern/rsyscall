@@ -11,10 +11,14 @@ class AF(enum.IntEnum):
     INET = socket.AF_INET
     INET6 = socket.AF_INET6
 
-class SOCK(enum.IntEnum):
+class SOCK(enum.IntFlag):
+    # socket kinds
     DGRAM = socket.SOCK_DGRAM
     STREAM = socket.SOCK_STREAM
     RAW = socket.SOCK_RAW
+    # flags that can be or'd in
+    CLOEXEC = socket.SOCK_CLOEXEC
+    NONBLOCK = socket.SOCK_NONBLOCK
 
 class SOL(enum.IntEnum):
     """Stands for Sock Opt Level
@@ -25,6 +29,9 @@ class SOL(enum.IntEnum):
     """
     SOCKET = lib.SOL_SOCKET
     IP = lib.SOL_IP
+
+class SO(enum.IntEnum):
+    ERROR = lib.SO_ERROR
 
 T_addr = t.TypeVar('T_addr', bound='Address')
 # this is just a marker type to indicate different kinds of sockaddrs

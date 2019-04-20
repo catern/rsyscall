@@ -18,6 +18,19 @@ class ChildCode(enum.Enum):
     TRAPPED = lib.CLD_TRAPPED # traced child has trapped
     CONTINUED = lib.CLD_CONTINUED # child continued by SIGCONT
 
+class W(enum.IntEnum):
+    # wait for different statuses
+    EXITED = lib.WEXITED
+    STOPPED = lib.WSTOPPED
+    CONTINUED = lib.WCONTINUED
+    # additional options
+    NOHANG = lib.WNOHANG
+    NOWAIT = lib.WNOWAIT
+    # wait for different kinds of children
+    CLONE = lib._WCLONE
+    ALL = lib._WALL
+    NOTHREAD = lib._WNOTHREAD
+
 class UncleanExit(Exception):
     pass
 

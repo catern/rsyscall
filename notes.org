@@ -3590,6 +3590,11 @@ hmm, actually it just occurred to me that this question is essentially the same 
    So we'll probably clear out the handlers on thread startup?
 
    Yes.
+
+   OK, we just wipe out the SIGWINCH handler, because that's easy and solves the immediate segfaults.
+
+   We don't bother to properly deal with signal handlers other than that.
+   Don't send the rsyscall thread signals/don't established handlers in the main thread.
 ** module is organized in a way that mirrors C headers
    This is the only organization that has any chance of being familiar.
 * knowledge
@@ -13124,9 +13129,7 @@ but also, principled.
   it's awkward to disable_cloexec for multiple fds, easy to forget something.
   would be nice if we were required to disable_cloexec when stringifying the fd number.
   like, as_argument?
-** sandboxing
-    need to actually do it for everything probs
-** sigwinch segfault
+** DONE sigwinch segfault
    ok so we'll clear the handlers on thread startup? or what?
 
    I mean, it seems pretty weird:
@@ -13339,6 +13342,34 @@ but also, principled.
     and also, retry reads/writes/whatevers in the rsyscall thread on EINTR
 *** sigaction
     I guess I'll add support for it, fine
+** DONE retry on eintr in rsyscall thread
+** TODO don't actually read the memory when we read signalfd in childtaskmonitor
+   because we don't actually care about it, we just want to wait until there's a signal
+
+   hmm okay so how do we clean up asyncfd to have a nice, handlish interface
+
+   oh ok so here's a reason to have an untype pointer:
+   when we get midway through a buffer pointer with a partial read.
+
+   ok so the problem is how to pass a pointer to asyncfd.
+
+   with nice typing
+*** reworking pointer passing and returning
+    what does a partial read return to us?
+
+    yeah, that's the question:
+    so far all our structs have been fully read or written,
+    but now we need to engage with partial reads,
+    which is a super hassle.
+
+    we could maybe tag the type as partial.. completable with more data.
+*** getpeername return a pointer
+    if it's too large it tells us how much we need to read
+
+    oh god oh blog oh harb oh blurgh
+*** let's not innovate yet
+** sandboxing
+    need to actually do it for everything probs
 ** garbage collection
-** don't read the memory written by signalfd read
-   because we don't actually care about it, we just want to wait
+   OK. so. I need to actually do this.
+** organize things better

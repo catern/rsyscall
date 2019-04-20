@@ -26,6 +26,7 @@ ffibuilder.set_source(
 #include <linux/capability.h>
 #include <linux/if_tun.h>
 #include <linux/netlink.h>
+#include <linux/futex.h>
 #include <net/if.h>
 #include <netinet/ip.h>
 #include <netinet/ip.h>
@@ -65,20 +66,6 @@ struct linux_dirent64 {
 #define _WNOTHREAD __WNOTHREAD
 #define _WCLONE __WCLONE
 #define _WALL __WALL
-
-struct robust_list {
-  struct robust_list *next;
-};
-
-struct robust_list_head {
-  struct robust_list list;
-  long futex_offset;
-  struct robust_list *list_op_pending;
-};
-
-// sigh, glibc doesn't export these
-#define FUTEX_WAITERS 0x80000000
-#define FUTEX_TID_MASK 0x3fffffff
 
 #define SA_RESTORER 0x04000000
 typedef void (*sighandler_t)(int);

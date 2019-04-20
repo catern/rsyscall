@@ -18,20 +18,22 @@ import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.far as far
 import rsyscall.near as near
-from rsyscall.struct import Struct, T_struct
+from rsyscall.struct import T_struct
 
-from rsyscall.sys.socket import AF, SOCK
+from rsyscall.sys.socket import AF, SOCK, SOL, SO
 from rsyscall.sys.socket import T_addr
+from rsyscall.linux.futex import FUTEX_WAITERS, FUTEX_TID_MASK
+from rsyscall.sys.mount import MS
 from rsyscall.sys.un import SockaddrUn, PathTooLongError
 from rsyscall.netinet.in_ import SockaddrIn
-import rsyscall.sys.epoll
 from rsyscall.sys.epoll import EpollEvent, EpollEventMask, EpollCtlOp
-from rsyscall.sys.wait import IdType, ChildCode, UncleanExit, ChildEvent
+from rsyscall.sys.wait import ChildCode, UncleanExit, ChildEvent, W
+from rsyscall.sys.memfd import MFD
 from rsyscall.sched import UnshareFlag
 from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals
+from rsyscall.linux.dirent import Dirent
+from rsyscall.fcntl import AT
 
-from rsyscall.stat import Dirent, DType
-import rsyscall.stat
 import random
 import string
 import abc
@@ -308,7 +310,7 @@ class Task:
     async def memfd_create(self, name: t.Union[bytes, str]) -> FileDescriptor[MemoryFile]:
         fd = await memsys.memfd_create(
             self.base, self.transport, self.allocator,
-            os.fsencode(name), lib.MFD_CLOEXEC)
+            os.fsencode(name), MFD.CLOEXEC)
         return FileDescriptor(self, self.base.make_fd_handle(fd), MemoryFile())
 
     async def read(self, fd: far.FileDescriptor, count: int=4096) -> bytes:
@@ -322,7 +324,7 @@ class Task:
     # then we'll directly have StandardTask contain both Task and MemoryAbstractor?
     async def getdents(self, fd: far.FileDescriptor, count: int=4096) -> t.List[Dirent]:
         data = await memsys.getdents64(self.base, self.transport, self.allocator, fd, count)
-        return rsyscall.stat.getdents64_parse(data)
+        return Dirent.list_from_bytes(data)
 
     async def pipe(self, flags=os.O_CLOEXEC) -> Pipe:
         r, w = await memsys.pipe(self.syscall, self.transport, self.allocator, flags)
@@ -332,7 +334,7 @@ class Task:
     async def socketpair(self, domain: int, type: int, protocol: int
     ) -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
         l, r = await memsys.socketpair(self.syscall, self.transport, self.allocator,
-                                       domain, type|lib.SOCK_CLOEXEC, protocol)
+                                       domain, type|SOCK.CLOEXEC, protocol)
         return (self._make_fd(l, ReadableWritableFile(shared=False)),
                 self._make_fd(r, ReadableWritableFile(shared=False)))
 
@@ -922,7 +924,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 else:
                     raise
 
-    async def accept(self: 'AsyncFileDescriptor[SocketFile[T_addr]]', flags: int=lib.SOCK_CLOEXEC
+    async def accept(self: 'AsyncFileDescriptor[SocketFile[T_addr]]', flags: int=SOCK.CLOEXEC
     ) -> t.Tuple[FileDescriptor[SocketFile[T_addr]], T_addr]:
         while True:
             while not (self.is_readable or self.hangup):
@@ -939,7 +941,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     ) -> t.Tuple[AsyncFileDescriptor[SocketFile[T_addr]], T_addr]:
         connfd: FileDescriptor[SocketFile[T_addr]]
         addr: T_addr
-        connfd, addr = await self.accept(flags=lib.SOCK_CLOEXEC|lib.SOCK_NONBLOCK)
+        connfd, addr = await self.accept(flags=SOCK.CLOEXEC|SOCK.NONBLOCK)
         try:
             aconnfd = await AsyncFileDescriptor.make(
                 self.epolled.epoll_center, connfd, is_nonblock=True)
@@ -955,7 +957,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             if e.errno == errno.EINPROGRESS:
                 while not self.is_writable:
                     await self._wait_once()
-                retbuf = await self.underlying.getsockopt(lib.SOL_SOCKET, lib.SO_ERROR, ffi.sizeof('int'))
+                retbuf = await self.underlying.getsockopt(SOL.SOCKET, SO.ERROR, ffi.sizeof('int'))
                 err = ffi.cast('int*', ffi.from_buffer(retbuf))[0]
                 if err != 0:
                     raise OSError(err, os.strerror(err))
@@ -1048,7 +1050,7 @@ class Path(far.PathLike):
 
     async def rmdir(self) -> None:
         await memsys.unlinkat(self.task.syscall, self.task.transport, self.task.allocator,
-                              self.pure, rsyscall.stat.AT_REMOVEDIR)
+                              self.pure, AT.REMOVEDIR)
 
     async def link(self, oldpath: 'Path', flags: int=0) -> 'Path':
         "Create a hardlink at Path 'self' to the file at Path 'oldpath'"
@@ -1869,7 +1871,7 @@ class ChildProcessMonitorInternal:
                         logger.info("entering waitid")
                         siginfo = await memsys.waitid(
                             task.syscall, task.transport, task.allocator,
-                            None, lib._WALL|lib.WEXITED|lib.WSTOPPED|lib.WCONTINUED|lib.WNOHANG)
+                            None, W.ALL|W.EXITED|W.STOPPED|W.CONTINUED|W.NOHANG)
                         logger.info("done with waitid")
                 except ChildProcessError:
                     # no more children
@@ -2550,7 +2552,7 @@ async def call_function(task: Task, stack: BufferedStack, process_resources: Pro
     pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
     process = base.Process(task.base.pidns, near.Process(pid))
     siginfo = await memsys.waitid(task.syscall, task.transport, task.allocator,
-                                  process, lib._WALL|lib.WEXITED)
+                                  process, W.ALL|W.EXITED)
     struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
     child_event = ChildEvent.make(ChildCode(struct.si_code),
                                   pid=int(struct.si_pid), uid=int(struct.si_uid),
@@ -3263,7 +3265,7 @@ async def make_robust_futex_task(
     remote_mapping_pointer = remote_mapping.as_pointer()
 
     # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
-    futex_value = lib.FUTEX_WAITERS|(int(child_stdtask.task.base.process) & lib.FUTEX_TID_MASK)
+    futex_value = FUTEX_WAITERS|(int(child_stdtask.task.base.process) & FUTEX_TID_MASK)
     # this is distasteful and leaky, we're relying on the fact that the PreallocatedAllocator never frees things
     remote_futex_pointer = await set_singleton_robust_futex(
         child_stdtask.task.base, child_stdtask.task.transport,
@@ -3288,7 +3290,7 @@ async def rsyscall_exec(
     [(access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(1)
     # create this guy and pass him down to the new thread
     futex_memfd = await memsys.memfd_create(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
-                                                  b"child_robust_futex_list", lib.MFD_CLOEXEC)
+                                                  b"child_robust_futex_list", MFD.CLOEXEC)
     child_futex_memfd = stdtask.task.base.make_fd_handle(futex_memfd)
     parent_futex_memfd = parent_stdtask.task.base.make_fd_handle(futex_memfd)
     syscall: ChildConnection = stdtask.task.base.sysif # type: ignore
@@ -3759,7 +3761,7 @@ async def create_nix_container(
     # mutate dest_task so that it is nicely namespaced for the Nix container
     await dest_task.unshare_user()
     await dest_task.unshare_mount()
-    await dest_task.task.mount(b"nix", b"/nix", b"none", lib.MS_BIND, b"")
+    await dest_task.task.mount(b"nix", b"/nix", b"none", MS.BIND, b"")
     await bootstrap_nix_database(src_nix_store, src_task, dest_nix_store, dest_task, closure)
     return dest_nix_bin
 
@@ -4120,7 +4122,7 @@ async def setup_stub(
     # memfd for setting up the futex
     futex_memfd = await memsys.memfd_create(
         stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
-        b"child_robust_futex_list", lib.MFD_CLOEXEC)
+        b"child_robust_futex_list", MFD.CLOEXEC)
     # send the fds to the new process
     await memsys.sendmsg_fds(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator, bootstrap_sock.handle.far,
                              [passed_syscall_sock.far, passed_data_sock.far,
@@ -4207,7 +4209,7 @@ async def rsyscall_stdin_bootstrap(
      (access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(2)
     # memfd for setting up the futex
     futex_memfd = await memsys.memfd_create(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
-                                            b"child_robust_futex_list", lib.MFD_CLOEXEC)
+                                            b"child_robust_futex_list", MFD.CLOEXEC)
     # send the fds to the new process
     await memsys.sendmsg_fds(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator, parent_sock.handle.far,
                              [passed_syscall_sock.far, passed_data_sock.far,
