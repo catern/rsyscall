@@ -13305,4 +13305,40 @@ but also, principled.
     yuck.
 
     maybe I should figure out how to do that, blah.
+
+    h m M m M m M m M m
+
+    ok I can just store tls and set it, hum
+
+    If I do this I can even, hmm, I can even call glibc functions.
+
+    I can get the tls from, hm. The first process started.
+    Which should be glibc linked I guess... maybe...?
+    or it's statically linked maybe...
+
+    Is it safe in general to set the same TLS in another thread??
+
+    Ugh, but having to inherit the TLS everywhere is a hassle.
+
+    Let's test if signal 32 causes a segfault.
+
+    Hmm, it does interrupt read.
+    We should probably have read be resumed.
+
+    what! hmm!
+    an actual resize causes the segfault?
+
+    ok so I'm not sure exactly what's segfaulting
+
+    the segfault happens *after* we sigreturn
+
+    confusing, hmm.
+
+    let's just get rid of the sigwinch in python and then, whatever.
+
+    and also, retry reads/writes/whatevers in the rsyscall thread on EINTR
+*** sigaction
+    I guess I'll add support for it, fine
 ** garbage collection
+** don't read the memory written by signalfd read
+   because we don't actually care about it, we just want to wait

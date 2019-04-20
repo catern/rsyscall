@@ -1236,9 +1236,6 @@ class ProcessResources:
     trampoline_func: FunctionPointer
     futex_helper_func: FunctionPointer
 
-    async def decref(self) -> None:
-        pass
-
     @staticmethod
     def make_from_symbols(address_space: far.AddressSpace, symbols: t.Any) -> ProcessResources:
         def to_pointer(cffi_ptr) -> FunctionPointer:
@@ -1590,7 +1587,6 @@ class StandardTask:
         await self.task.exit(0)
 
     async def close(self) -> None:
-        await self.process.decref()
         await self.task.close()
 
     async def __aenter__(self) -> 'StandardTask':

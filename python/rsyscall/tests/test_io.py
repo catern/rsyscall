@@ -399,11 +399,14 @@ class TestIO(unittest.TestCase):
 
     def test_pidns_nest(self) -> None:
         async def test(stdtask: StandardTask) -> None:
+            import readline
+            import sys
+            print(sys.modules['faulthandler'])
             thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
-            async with thread as stdtask2:
-                thread2 = await stdtask2.spawn_exec()
-                async with thread2 as stdtask3:
-                    await self.do_async_things(stdtask3.epoller, stdtask3.task)
+            print(sys.modules['faulthandler'])
+            print(thread.stdtask.task.base.process)
+            print(sys.modules['faulthandler'])
+            await trio.sleep(5)
         trio.run(self.runner, test)
 
     def test_setns_ownership(self) -> None:
