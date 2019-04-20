@@ -399,14 +399,11 @@ class TestIO(unittest.TestCase):
 
     def test_pidns_nest(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            import readline
-            import sys
-            print(sys.modules['faulthandler'])
             thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
-            print(sys.modules['faulthandler'])
-            print(thread.stdtask.task.base.process)
-            print(sys.modules['faulthandler'])
-            await trio.sleep(5)
+            async with thread as stdtask2:
+                thread2 = await stdtask2.spawn_exec()
+                async with thread2 as stdtask3:
+                    await self.do_async_things(stdtask3.epoller, stdtask3.task)
         trio.run(self.runner, test)
 
     def test_setns_ownership(self) -> None:
@@ -481,28 +478,19 @@ class TestIO(unittest.TestCase):
             await stdtask.task.base.prctl(PrctlOp.CAP_AMBIENT, CapAmbient.RAISE, CAP.NET_ADMIN)
         trio.run(self.runner, test)
 
-    def test_umount_all(self) -> None:
+    def test_sigaction(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            await stdtask.unshare_user()
-            await stdtask.unshare_mount()
-            rootdirfd = stdtask.task.root().open_directory()
-            # hmmmm
-            # so for each dent,
-            # we want to um.
-            # ok so yeah we really want the neat efficieny
-            # oh wait.
-            # we have to prefix it with / anyway! blah.
-            # unless... umount looks at cwd?
-            # hmm and does MNT_DETATCH actually work?
-            # let's just MNT_DETACH root! then we'll be fine.
-            # hmmmm.... can we somehow save /nix and then mount it again?
-            # hmm we can't just umount everything, because there has to be something at / to contain the /nix folder.
-            # oh and we don't want to umount /proc also
-            # but, could we use /proc to remount /nix?
-            # ok, idea: we cd to a place under /proc, then detach /, then bind mount from proc to /
-            # oh. or we just cd to /, then detach /, then bind mount from . to /?
-            # hm.
-            procself = stdtask.task.root().handle/"proc"/"self"/"ns"
+            from rsyscall.signal import Sighandler, Sigaction, Sigset, Signals
+            import readline
+            sa = Sigaction(Sighandler.DFL)
+            ptr = await stdtask.task.to_pointer(sa)
+            await stdtask.task.base.rt_sigaction(Signals.SIGWINCH, ptr, None)
+            await stdtask.task.base.rt_sigaction(Signals.SIGWINCH, None, ptr)
+            out_sa = await ptr.read()
+            self.assertEqual(sa.handler, out_sa.handler)
+            self.assertEqual(sa.flags, out_sa.flags)
+            self.assertEqual(sa.mask, out_sa.mask)
+            self.assertEqual(sa.restorer, out_sa.restorer)
         trio.run(self.runner, test)
 
     def test_spawn_exit(self) -> None:

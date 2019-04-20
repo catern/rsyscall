@@ -7,6 +7,7 @@ import enum
 import abc
 import logging
 import typing as t
+import signal
 logger = logging.getLogger(__name__)
 
 from rsyscall.sys.epoll import EpollCtlOp
@@ -54,6 +55,7 @@ class SYS(enum.IntEnum):
     capset = lib.SYS_capset
     listen = lib.SYS_listen
     setsockopt = lib.SYS_setsockopt
+    rt_sigaction = lib.SYS_rt_sigaction
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -315,4 +317,14 @@ async def listen(sysif: SyscallInterface, sockfd: FileDescriptor, backlog: int) 
 async def setsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int, optname: int,
                      optval: Pointer, optlen: int) -> None:
     await sysif.syscall(SYS.setsockopt, sockfd, level, optname, optval, optlen)
+
+async def rt_sigaction(sysif: SyscallInterface, signum: signal.Signals,
+                       act: t.Optional[Pointer],
+                       oldact: t.Optional[Pointer],
+                       size: int) -> None:
+    if act is None:
+        act = 0 # type: ignore
+    if oldact is None:
+        oldact = 0 # type: ignore
+    await sysif.syscall(SYS.rt_sigaction, signum, act, oldact, size)
 

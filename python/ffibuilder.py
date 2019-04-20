@@ -79,6 +79,20 @@ struct robust_list_head {
 // sigh, glibc doesn't export these
 #define FUTEX_WAITERS 0x80000000
 #define FUTEX_TID_MASK 0x3fffffff
+
+#define SA_RESTORER 0x04000000
+typedef void (*sighandler_t)(int);
+typedef void (*sigrestore_t)(void);
+// we assume NSIGNALS == 64, so we don't need any more than this
+struct kernel_sigset {
+    unsigned long int val;
+};
+struct kernel_sigaction {
+	sighandler_t ksa_handler;
+	unsigned long ksa_flags;
+	sigrestore_t ksa_restorer;
+	struct kernel_sigset ksa_mask;
+};
 """ + "\n".join(f'const char {name}[] = "{value}";' for name, value in stored_paths.items()), **rsyscall)
 for name in stored_paths:
     ffibuilder.cdef(f"const char {name}[];")
@@ -176,22 +190,21 @@ typedef struct siginfo {
 #define SA_ONSTACK ...
 #define SA_RESETHAND ...
 #define SA_RESTART ...
-#define SA_RESTORER ...
 #define SA_SIGINFO ...
-
-typedef struct {
-    unsigned long int __val[1];
-} sigset_t
+#define SA_RESTORER ...
 
 typedef void (*sighandler_t)(int);
 typedef void (*sigrestore_t)(void);
-// this is sigaction as it's laid out by the kernel
-struct sigaction {
-	sighandler_t sa_handler;
-	unsigned long sa_flags;
-	sigrestore_t sa_restorer;
-	sigset_t sa_mask;
+struct kernel_sigset {
+    unsigned long int val;
 };
+struct kernel_sigaction {
+	sighandler_t ksa_handler;
+	unsigned long ksa_flags;
+	sigrestore_t ksa_restorer;
+	struct kernel_sigset ksa_mask;
+};
+#define SYS_rt_sigaction ...
 
 #define SYS_signalfd4 ...
 
@@ -203,9 +216,6 @@ struct sigaction {
 #define SIG_BLOCK ...
 #define SIG_UNBLOCK ...
 #define SIG_SETMASK ...
-
-#define SIG_IGN ...
-#define SIG_DFL ...
 
 struct signalfd_siginfo {
     uint32_t ssi_signo;    /* Signal number */

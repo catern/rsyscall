@@ -13,10 +13,12 @@ import os
 import typing as t
 import logging
 import contextlib
+logger = logging.getLogger(__name__)
+
 from rsyscall.sys.socket import AF, SOCK
 from rsyscall.sched import UnshareFlag
 from rsyscall.struct import T_struct
-logger = logging.getLogger(__name__)
+from rsyscall.signal import Sigaction, Sigset
 
 # This is like a far pointer plus a segment register.
 # It means that, as long as it doesn't throw an exception,
@@ -561,6 +563,21 @@ class Task(rsyscall.far.Task):
         async with hdrp.borrow(self) as hdrp:
             async with datap.borrow(self) as datap:
                 await rsyscall.near.capget(self.sysif, hdrp.near, datap.near)
+
+    async def rt_sigaction(self, signum: signal.Signals,
+                           act: t.Optional[Pointer[Sigaction]],
+                           oldact: t.Optional[Pointer[Sigaction]]) -> None:
+        async with contextlib.AsyncExitStack() as stack:
+            if act:
+                act = await stack.enter_async_context(act.borrow(self))
+            if oldact:
+                oldact = await stack.enter_async_context(oldact.borrow(self))
+            # rt_sigaction takes the size of the sigset, not the size of the sigaction;
+            # and sigset is a fixed size.
+            await rsyscall.near.rt_sigaction(self.sysif, signum,
+                                             act.near if act else None,
+                                             oldact.near if oldact else None,
+                                             Sigset.sizeof())
 
 @dataclass
 class Pipe:

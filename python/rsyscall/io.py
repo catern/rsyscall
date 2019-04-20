@@ -28,7 +28,7 @@ import rsyscall.sys.epoll
 from rsyscall.sys.epoll import EpollEvent, EpollEventMask, EpollCtlOp
 from rsyscall.sys.wait import IdType, ChildCode, UncleanExit, ChildEvent
 from rsyscall.sched import UnshareFlag
-from rsyscall.signal import SigprocmaskHow
+from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals
 
 from rsyscall.stat import Dirent, DType
 import rsyscall.stat
@@ -3664,8 +3664,6 @@ class SSHDCommand(Command):
     def make(cls, executable_path: handle.Path) -> SSHDCommand:
         return cls(executable_path, [b"sshd"], {})
 
-local_stdtask: StandardTask = trio.run(StandardTask.make_local) # type: ignore
-
 async def exec_cat(thread: RsyscallThread, cat: Command,
                    infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> ChildProcess:
     stdin = thread.stdtask.task.base.make_fd_handle(infd)
@@ -3977,7 +3975,6 @@ class ConsoleServerGenie(WishGranter):
         return ret
 
 my_wish_granter: ContextVar[WishGranter] = ContextVar('wish_granter')
-my_wish_granter.set(trio.run(ConsoleGenie.make, local_stdtask))
 
 def frames_to_traceback(frames: t.List[types.FrameType]) -> t.Optional[types.TracebackType]:
     tb = None
@@ -4283,3 +4280,15 @@ async def read_until_eof(fd: FileDescriptor[ReadableFile]) -> bytes:
         data += ret
         ret = await fd.read()
     return data
+
+local_stdtask: StandardTask
+async def _initialize_module() -> None:
+    global local_stdtask
+    local_stdtask = await StandardTask.make_local()
+    my_wish_granter.set(await ConsoleGenie.make(local_stdtask))
+    # wipe out the SIGWINCH handler that the readline module installs
+    import readline
+    await local_stdtask.task.base.rt_sigaction(
+        Signals.SIGWINCH, await local_stdtask.task.to_pointer(Sigaction(Sighandler.DFL)), None)
+
+trio.run(_initialize_module)
