@@ -13273,4 +13273,36 @@ but also, principled.
     (hah we can't even unshare sighand lol)
 
     the question is, what about our own stuff
+    um
+
+    signals with handlers established
+    should be reset to the default disposition across fork
+
+    that's what happens in exec, it should be the same
+
+    maybe, I guess maybe not.
+
+    I *guess* there are use cases for inheritance, WHATEVER.
+    And we can always block and clear them if we want. BLAH
+    Re-establishing could be hard, UGH.
+
+    There should be a SIG_RESETONEXEC or something to reset IGNs, blah.
+*** blah
+    Just clear all signal handlers at start of rsyscall thread.
+    Except, we do want to ignore SIGPIPE and SIGFILSIZE or whatever.
+
+    MMMMMMMMMMMMMMM
+    And there's still a race condition,
+    where we can get a signal,
+    and segfault.
+
+    Wait we don't want to remove the sigigns.
+
+    So... if we did set TLS, it would have the effect we want?!?!?!?!?!?!?
+
+    IT WOULD WORK?!??!?!
+
+    yuck.
+
+    maybe I should figure out how to do that, blah.
 ** garbage collection
