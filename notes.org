@@ -13343,6 +13343,10 @@ but also, principled.
 *** sigaction
     I guess I'll add support for it, fine
 ** DONE retry on eintr in rsyscall thread
+** DONE organize things better
+   Great I did even more organization in terms of headers
+
+   We can always do more of this of course.
 ** TODO don't actually read the memory when we read signalfd in childtaskmonitor
    because we don't actually care about it, we just want to wait until there's a signal
 
@@ -13370,6 +13374,26 @@ but also, principled.
 *** let's not innovate yet
 ** sandboxing
     need to actually do it for everything probs
+
+    OK! let's do this actually
+
+    more interesting
 ** garbage collection
    OK. so. I need to actually do this.
-** organize things better
+
+   Although, in my code, I should... endeavour to not leak anything?
+
+   Eh... that's a hassle.
+   Let's just GC freely.
+
+   Although, I can't really figure out how to check if something's leaking.
+** organization
+   Should I maybe use free functions instead of methods for everything?
+
+   Methods are a hassle and lead to huge classes.
+
+   But thiat would be churn, blah.
+
+   Eh, methods are convenient for the user.
+
+   Maybe I should just have both.
