@@ -13,7 +13,8 @@ import os
 import typing as t
 import logging
 import contextlib
-import socket
+from rsyscall.sys.socket import AF, SOCK
+from rsyscall.sched import UnshareFlag
 from rsyscall.struct import T_struct
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,24 @@ class FileDescriptor:
             finally:
                 await borrowed.invalidate()
 
+    def maybe_copy(self, task: Task) -> FileDescriptor:
+        """Copy this file descriptor into this task, if it isn't already in there.
+
+        The immediate use case for this is when we're passed some FD handle and some task to use for
+        some purpose, and we're taking ownership of the task. If the FD handle is already in the
+        task, we don't need to copy it, since we necessarily are taking ownership of it; but if the
+        FD handle is in some other task, then we do need to copy it.
+
+        More concretely, that situation happens if we're passed a FD handle and a thread and we're
+        going to exec in the thread. If we copy the FD handle unnecessarily, disable_cloexec won't
+        work because there will be multiple FD handles.
+
+        """
+        if self.task == task:
+            return self
+        else:
+            return self.for_task(task)
+
     def move(self, task: Task) -> FileDescriptor:
         """This is an optimized version of borrowing then invalidating
 
@@ -179,8 +198,12 @@ class FileDescriptor:
     async def disable_cloexec(self) -> None:
         self.validate()
         if not self.is_only_handle():
-            raise Exception("shouldn't set unset cloexec when there are multiple handles to this fd")
+            raise Exception("shouldn't disable cloexec when there are multiple handles to this fd")
         await rsyscall.near.fcntl(self.task.sysif, self.near, fcntl.F_SETFD, 0)
+
+    async def as_argument(self) -> int:
+        await self.disable_cloexec()
+        return int(self.near)
 
     # should I just take handle.Pointers instead of near or far stuff? hmm.
     # should I really require ownership in this way?
@@ -264,6 +287,19 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.listen(self.task.sysif, self.near, backlog)
 
+    async def setsockopt(self, level: int, optname: int, optval: Pointer) -> None:
+        self.validate()
+        await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval.near, optval.bytesize())
+
+# With handle.Pointer, we know the length of the region of memory
+# we're pointing to.  If we didn't know that, then this pointer
+# wouldn't make any sense as an owning handle that can be passed
+# around.  And as a further development, we don't just know the size
+# of the region of memory, but instead we actually know the "type" of
+# the region of memory; the struct that will be written there. The
+# size is merely a consequence of the type of the memory region, so
+# there's no point in having something that knows the size but not the
+# type.
 @dataclass(eq=False)
 class Pointer(t.Generic[T_struct]):
     task: Task
@@ -488,29 +524,29 @@ class Task(rsyscall.far.Task):
                                             old_fs.root, old_fs.cwd)
         self.fs = new_fs
         try:
-            await rsyscall.near.unshare(self.sysif, rsyscall.near.UnshareFlag.FS)
+            await rsyscall.near.unshare(self.sysif, UnshareFlag.FS)
         except:
             self.fs = old_fs
 
     async def unshare_user(self) -> None:
         # unsharing the user namespace implicitly unshares CLONE_FS
         await self.unshare_fs()
-        await rsyscall.near.unshare(self.sysif, rsyscall.near.UnshareFlag.NEWUSER)
+        await rsyscall.near.unshare(self.sysif, UnshareFlag.NEWUSER)
 
     async def unshare_net(self) -> None:
-        await rsyscall.near.unshare(self.sysif, rsyscall.near.UnshareFlag.NEWNET)
+        await rsyscall.near.unshare(self.sysif, UnshareFlag.NEWNET)
 
     async def setns_user(self, fd: FileDescriptor) -> None:
         async with fd.borrow(self) as fd:
             # can't setns to a user namespace while sharing CLONE_FS
             await self.unshare_fs()
-            await fd.setns(rsyscall.near.UnshareFlag.NEWUSER)
+            await fd.setns(UnshareFlag.NEWUSER)
 
     async def setns_net(self, fd: FileDescriptor) -> None:
         async with fd.borrow(self) as fd:
-            await fd.setns(rsyscall.near.UnshareFlag.NEWNET)
+            await fd.setns(UnshareFlag.NEWNET)
 
-    async def socket(self, family: int, type: socket.SocketKind, protocol: int=0, cloexec=True) -> FileDescriptor:
+    async def socket(self, family: AF, type: SOCK, protocol: int=0, cloexec=True) -> FileDescriptor:
         if cloexec:
             type |= lib.SOCK_CLOEXEC
         sockfd = await rsyscall.near.socket(self.sysif, family, type, protocol)

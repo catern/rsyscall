@@ -5,10 +5,12 @@ from rsyscall.io import AsyncFileDescriptor
 from rsyscall.io import local_stdtask, StandardTask, Path
 from rsyscall.io import Command
 import rsyscall.io as rsc
-import rsyscall.inotify as inotify
-from rsyscall.epoll import EpollEvent, EpollEventMask
+import rsyscall.sys.inotify as inotify
+from rsyscall.sys.epoll import EpollEvent, EpollEventMask
+from rsyscall.sys.capability import CAP, CapHeader, CapData
+from rsyscall.sys.prctl import PrctlOp, CapAmbient
 from rsyscall.tests.test_ssh import ssh_to_localhost
-import rsyscall.network as net
+from rsyscall.net.if_ import Ifreq
 import shutil
 import rsyscall.base as base
 import rsyscall.near as near
@@ -16,7 +18,6 @@ import rsyscall.far as far
 from rsyscall.io import local_stdtask
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
-from rsyscall.capabilities import CAP, CapHeader, CapData
 import socket
 import struct
 import time
@@ -426,6 +427,7 @@ class TestIO(unittest.TestCase):
 
     def test_make_tun(self) -> None:
         async def test(stdtask: StandardTask) -> None:
+            import rsyscall.net.if_ as net
             await stdtask.unshare_user()
             await stdtask.unshare_net()
             tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
@@ -439,13 +441,14 @@ class TestIO(unittest.TestCase):
 
     def test_rtnetlink(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            from rsyscall.netlink.address import NetlinkAddress
-            from rsyscall.netlink.route import RTMGRP
+            from rsyscall.linux.netlink import SockaddrNl
+            from rsyscall.linux.rtnetlink import RTMGRP
+            import rsyscall.net.if_ as net
             await stdtask.unshare_user()
             await stdtask.unshare_net()
 
             netsock = await stdtask.task.base.socket(socket.AF_NETLINK, socket.SOCK_DGRAM, lib.NETLINK_ROUTE)
-            await netsock.bind(await stdtask.task.to_pointer(NetlinkAddress(0, RTMGRP.LINK)))
+            await netsock.bind(await stdtask.task.to_pointer(SockaddrNl(0, RTMGRP.LINK)))
 
             tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
             ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
@@ -472,7 +475,7 @@ class TestIO(unittest.TestCase):
             data.inheritable.add(CAP.NET_ADMIN)
             await data_ptr.write(data)
             await stdtask.task.base.capset(hdr_ptr, data_ptr)
-            await stdtask.task.base.prctl(near.PrctlOp.CAP_AMBIENT, near.CapAmbient.RAISE, CAP.NET_ADMIN)
+            await stdtask.task.base.prctl(PrctlOp.CAP_AMBIENT, CapAmbient.RAISE, CAP.NET_ADMIN)
         trio.run(self.runner, test)
 
     def test_umount_all(self) -> None:
@@ -514,10 +517,10 @@ class TestIO(unittest.TestCase):
         trio.run(self.runner, test)
 
     def test_ipv6_encode(self) -> None:
-        from rsyscall.socket import Inet6Address
-        orig = Inet6Address(1234, "::", 1234, 1234)
+        from rsyscall.netinet.in_ import SockaddrIn6
+        orig = SockaddrIn6(1234, "::", 1234, 1234)
         data = orig.to_bytes()
-        out = Inet6Address.from_bytes(data)        
+        out = SockaddrIn6.from_bytes(data)        
         self.assertEqual(orig.port, out.port)
         self.assertEqual(orig.addr, out.addr)
         self.assertEqual(orig.flowinfo, out.flowinfo)

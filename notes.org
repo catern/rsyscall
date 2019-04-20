@@ -3588,6 +3588,10 @@ hmm, actually it just occurred to me that this question is essentially the same 
    In any case, it's complicated. Better to have these threads be thoroughly non-POSIX.
    Which means they can't share signal handlers with the POSIX thread.
    So we'll probably clear out the handlers on thread startup?
+
+   Yes.
+** module is organized in a way that mirrors C headers
+   This is the only organization that has any chance of being familiar.
 * knowledge
 ** tkill vs kill
 The difference between kill and tkill (besides the special negative parameters to kill, which tkill
@@ -12894,10 +12898,6 @@ hmm how do we say "don't return a record, this is invalid"?
 
    Let's hit miredo.
    We'll fix these issues here.
-** disable_cloexec is awkward
-  it's awkward to disable_cloexec for multiple fds, easy to forget something.
-  would be nice if we were required to disable_cloexec when stringifying the fd number.
-  like, as_argument?
 ** DONE pointers should carry sizes
    Manually matching up sizes is a bug waiting to happen.
    Maybe we should have some notion of memory region?
@@ -13116,7 +13116,161 @@ but also, principled.
 
     We'll start by just doing it for basic structs!
     Then more later.
+** DONE mirror C in the layout of types and classes and things
+   This allows just reading manpages for docs.
+
+   Yeah this is a great organization, very convenient.
+** DONE disable_cloexec is awkward
+  it's awkward to disable_cloexec for multiple fds, easy to forget something.
+  would be nice if we were required to disable_cloexec when stringifying the fd number.
+  like, as_argument?
 ** sandboxing
     need to actually do it for everything probs
 ** sigwinch segfault
+   ok so we'll clear the handlers on thread startup? or what?
+
+   I mean, it seems pretty weird:
+   if I have a signal handler registered that uses my thread locals,
+   how do I create a new process that doesn't have that same thread local setup?
+
+   it's inherently racy!
+   I have to do it before clone, mm.
+
+   ok so what are my options?
+   I could block all signals before cloning?
+   I *guess* that would be fine...
+
+   Hmmmmmm
+
+   It would be nice if new processes started out with all signals blocked, I guess?
+
+   I could just block sigwinch maybe.
+   HmMmMM
+
+   I could just remove the handler...
+
+   Oh hey I can just manually pump readline, HMMM.
+
+   Should I require users to do that? That would be nicely efficient...
+
+   But having signal handlers is a real valid use case.
+   And using TLS is a real valid thing to do.
+
+   OK so Python is installing a sigwinch handler, because they are stupid.
+   Maybe.
+
+   UMmmmmmmmmmm hmmmmmmmmmmmmm
+
+   Having signal handlers
+
+   Guess it would be nice if everything started out with all signals blocked,
+   Which I already said.
+
+   I could block before cloning.
+   Which I already said as well.
+
+   OK let's just deregister it in python,
+   we can do it robustly later *if* we ever need it.
+
+   We have to do it in python, we can't do it in the thread because it's racy
+
+   oh god there are multiple of them!!
+
+   what about these other ones...
+
+   32 and 33 must be pthreads, oh god...
+
+   what do I do.... what do I do!!!!!!!!
+
+   I can't just block them.
+   I need to unset the handlers.
+   Reset them all.
+
+   Uggghh Python also SIG_IGN's SIGPIPE, which gets inherited down over exec, hmm.
+   HMMM that is actually a real issue.
+
+   Ugh this is just like the signal blocks thing.
+
+   HMMM
+
+   We do want to ignore sigpipe, so it's fine to inherit across fork.
+
+   But we do also want to not ignore it after exec.
+   Hmmmmmmmmmmmmmmmmmmmmmmmmmm
+
+   Argh, I'd have to loop through all handlers resetting them.
+
+   Why don't we just go ahead and ban signal handlers?
+   They are a nightmare!!
+
+   sigblock is fine though
+
+   OK so... I'll drop all the handlers, I'll drop the sigign...
+   for both sigpipe and sigxfsz...
+
+   No handlers for anything...
+
+   arggggggh
+
+   32 and 33 are used by pthreads!!!
+
+   aieeeeeee
+
+   ughghghguhgu
+
+   okay so we could remove those handlers and further ban usage of pthreads?
+   that sounds like an actual badness though.
+   hmmmmmmmmmmmmmmm
+   hMMMMMMMMMMMMMMMMMMMMM
+
+   well they don't get inherited across exec at least
+
+   and... they PROBABLY won't be sent to my child?
+   but they could be, which would cause a segfault.
+
+   so... we need a way to... get rid of them...
+
+
+   ok so we'll unignore these signals, right...
+   ummm...
+   well...
+
+   we can do it in the thread or in the main python process
+   we need to reset handles in the thread anyway,
+   because of these pthreads handlers.
+
+   what if... hypothetically...
+
+   we did set TLS?
+
+   and we set it to our own TLS?
+   i.e. we inherited TLS.
+
+   that wouldn't help.
+   we still need to remove these sigign signals.
+
+   well we could remove those in python theoretically.
+*** hm
+    So it's kind of like fds leaking over a FILES unshare
+
+    If some thread set SIG_IGN,
+    and we unshare SIGHAND,
+    we'll have that SIG_IGN in our new SIGHAND space,
+    whether that's by clone or unshare or exec.
+
+    And so we need to clean it up.
+    (by unsharing first then running code and only then execing)
+
+    And there's a race where we could drop signals that have been SIG_IGN'd.
+    But that would also happen before,
+    so not a real issue.
+
+    But then what about...
+
+    UGH! This is the answer.
+    signal handlers should be reset to default across an unshare sighand.
+
+    (hah we can't even unshare sighand lol)
+
+    the question is, what about our own stuff
 ** garbage collection

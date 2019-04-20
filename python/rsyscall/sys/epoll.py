@@ -1,6 +1,7 @@
 from __future__ import annotations
 from rsyscall._raw import lib, ffi # type: ignore
 from rsyscall.struct import Struct
+import enum
 import os
 import select
 import typing as t
@@ -18,6 +19,11 @@ class BitField:
             instance.raw |= self.bitval
         else:
             instance.raw &= ~self.bitval
+
+class EpollCtlOp(enum.IntEnum):
+    ADD = lib.EPOLL_CTL_ADD
+    MOD = lib.EPOLL_CTL_MOD
+    DEL = lib.EPOLL_CTL_DEL
 
 @dataclass
 class EpollEventMask:

@@ -3,19 +3,15 @@ from rsyscall._raw import ffi, lib # type: ignore
 import types
 import traceback
 
-from rsyscall.epoll import EpollEvent, EpollEventMask
 import math
-import rsyscall.epoll
 import importlib.resources
 ssh_bootstrap_script_contents = importlib.resources.read_text('rsyscall', 'ssh_bootstrap.sh')
 
 from rsyscall.base import Pointer, RsyscallException, RsyscallHangup
 from rsyscall.base import to_local_pointer
 from rsyscall.base import SyscallInterface
-from rsyscall.base import T_addr, UnixAddress, PathTooLongError, InetAddress, SockaddrIn
-from rsyscall.base import IdType, EpollCtlOp, ChildCode, UncleanExit, ChildEvent
+
 import rsyscall.base as base
-from rsyscall.raw_syscalls import UnshareFlag, NsType, SigprocmaskHow
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
 import rsyscall.memory as memory
@@ -23,6 +19,16 @@ import rsyscall.handle as handle
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import Struct, T_struct
+
+from rsyscall.sys.socket import AF, SOCK
+from rsyscall.sys.socket import T_addr
+from rsyscall.sys.un import SockaddrUn, PathTooLongError
+from rsyscall.netinet.in_ import SockaddrIn
+import rsyscall.sys.epoll
+from rsyscall.sys.epoll import EpollEvent, EpollEventMask, EpollCtlOp
+from rsyscall.sys.wait import IdType, ChildCode, UncleanExit, ChildEvent
+from rsyscall.sched import UnshareFlag
+from rsyscall.signal import SigprocmaskHow
 
 from rsyscall.stat import Dirent, DType
 import rsyscall.stat
@@ -338,12 +344,12 @@ class Task:
         epfd = await near.inotify_init(self.syscall, flags)
         return self.make_fd(epfd, InotifyFile())
 
-    async def socket_unix(self, type: socket.SocketKind, protocol: int=0, cloexec=True) -> FileDescriptor[UnixSocketFile]:
-        sockfd = await self.base.socket(lib.AF_UNIX, type, protocol, cloexec=cloexec)
+    async def socket_unix(self, type: SOCK, protocol: int=0, cloexec=True) -> FileDescriptor[UnixSocketFile]:
+        sockfd = await self.base.socket(AF.UNIX, type, protocol, cloexec=cloexec)
         return FileDescriptor(self, sockfd, UnixSocketFile())
 
-    async def socket_inet(self, type: socket.SocketKind, protocol: int=0) -> FileDescriptor[InetSocketFile]:
-        sockfd = await self.base.socket(lib.AF_INET, type, protocol)
+    async def socket_inet(self, type: SOCK, protocol: int=0) -> FileDescriptor[InetSocketFile]:
+        sockfd = await self.base.socket(AF.INET, type, protocol)
         return FileDescriptor(self, sockfd, InetSocketFile())
 
     async def signalfd_create(self, mask: t.Set[signal.Signals], flags: int=0) -> FileDescriptor[SignalFile]:
@@ -452,11 +458,11 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
         fd = fd.task.make_fd(near.FileDescriptor(fdnum), type(self)())
         return fd, addr
 
-class UnixSocketFile(SocketFile[UnixAddress]):
-    address_type = UnixAddress
+class UnixSocketFile(SocketFile[SockaddrUn]):
+    address_type = SockaddrUn
 
-class InetSocketFile(SocketFile[InetAddress]):
-    address_type = InetAddress
+class InetSocketFile(SocketFile[SockaddrIn]):
+    address_type = SockaddrIn
 
 class InotifyFile(ReadableFile):
     pass
@@ -518,17 +524,6 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def replace_with(self, source: handle.FileDescriptor, flags=0) -> None:
         await self.copy_from(source)
         await source.invalidate()
-
-    async def as_argument(self) -> int:
-        # TODO unset cloexec
-        await self.disable_cloexec()
-        return self.handle.near.number
-
-    async def enable_cloexec(self) -> None:
-        raise NotImplementedError
-
-    async def disable_cloexec(self) -> None:
-        await raw_syscall.fcntl(self.task.syscall, self.pure, fcntl.F_SETFD, 0)
 
     # These are just helper methods which forward to the method on the underlying file object.
     async def set_nonblock(self: 'FileDescriptor[File]') -> None:
@@ -1088,7 +1083,7 @@ class Path(far.PathLike):
             await self.handle.base.fcntl(fcntl.F_SETFD, 0)
         return self._as_proc_path()
 
-    def unix_address(self) -> UnixAddress:
+    def unix_address(self) -> SockaddrUn:
         """Return an address that can be used with bind/connect for Unix sockets
 
         Linux doesn't support bindat/connectat or similar, so this is emulated with /proc.
@@ -1098,7 +1093,7 @@ class Path(far.PathLike):
         bytes for the pathname.
 
         """
-        return UnixAddress(self._as_proc_path())
+        return SockaddrUn(self._as_proc_path())
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> Path:
         return Path(self.task, self.handle/path_element)
@@ -1182,18 +1177,8 @@ async def robust_unix_connect(path: Path, sock: FileDescriptor[UnixSocketFile]) 
         except PathTooLongError:
             # connectat with AT_EMPTY_PATH would make this cleaner
             pathfd = await stack.enter_async_context(await path.open_path())
-            addr = UnixAddress(b"/".join([b"/proc/self/fd", str(pathfd.handle.near.number).encode()]))
+            addr = SockaddrUn(b"/".join([b"/proc/self/fd", str(pathfd.handle.near.number).encode()]))
         await sock.connect(addr)
-
-async def fspath(arg: t.Union[str, bytes, Path]) -> bytes:
-    if isinstance(arg, str):
-        return os.fsencode(arg)
-    elif isinstance(arg, bytes):
-        return arg
-    elif isinstance(arg, Path):
-        return (await arg.as_argument())
-    else:
-        raise ValueError
 
 @dataclass
 class StandardStreams:
@@ -1431,13 +1416,13 @@ class StandardTask:
         filesystem_resources = FilesystemResources.make_from_environ(base_task, environ)
         epoller = await task.make_epoll_center()
         child_monitor = await ChildProcessMonitor.make(task, epoller)
-        # connection_listening_socket = await task.socket_unix(socket.SOCK_STREAM)
+        # connection_listening_socket = await task.socket_unix(SOCK.STREAM)
         # sockpath = Path.from_bytes(task, b"./rsyscall.sock")
         # await robust_unix_bind(sockpath, connection_listening_socket)
         # await connection_listening_socket.listen(10)
         # access_connection = (sockpath, connection_listening_socket)
         access_connection = None
-        left_fd, right_fd = await task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+        left_fd, right_fd = await task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
         connecting_connection = (left_fd.handle, right_fd.handle)
         stdtask = StandardTask(
             task, epoller, access_connection,
@@ -1533,7 +1518,7 @@ class StandardTask:
         return exit_event
 
     async def fork_persistent(self, path: Path) -> t.Tuple[StandardTask, CThread, PersistentServer]:
-        listening_sock = await self.task.socket_unix(socket.SOCK_STREAM)
+        listening_sock = await self.task.socket_unix(SOCK.STREAM)
         await robust_unix_bind(path, listening_sock)
         await listening_sock.listen(1)
         [(access_sock, remote_sock)] = await self.make_async_connections(1)
@@ -1595,11 +1580,11 @@ class StandardTask:
         await self.task.base.setns_user(fd)
 
     async def unshare_mount(self) -> None:
-        await rsyscall.near.unshare(self.task.base.sysif, rsyscall.near.UnshareFlag.NEWNS)
+        await rsyscall.near.unshare(self.task.base.sysif, UnshareFlag.NEWNS)
 
     async def setns_mount(self, fd: handle.FileDescriptor) -> None:
         fd.check_is_for(self.task.base)
-        await fd.setns(rsyscall.near.UnshareFlag.NEWNS)
+        await fd.setns(UnshareFlag.NEWNS)
 
     async def exit(self, status) -> None:
         await self.task.exit(0)
@@ -2404,7 +2389,7 @@ class PersistentConnection(base.SyscallInterface):
     async def reconnect(self, stdtask: StandardTask) -> None:
         await self.rsyscall_connection.close()
         [(access_sock, remote_sock)] = await stdtask.make_async_connections(1)
-        connected_sock = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+        connected_sock = await stdtask.task.socket_unix(SOCK.STREAM)
         self.path = self.path.with_task(stdtask.task)
         await robust_unix_connect(self.path, connected_sock)
         await memsys.sendmsg_fds(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
@@ -3056,14 +3041,14 @@ async def make_connections(access_task: Task,
     connecting_socks: t.List[FileDescriptor[ReadableWritableFile]] = []
     if access_task.base.fd_table == connecting_task.base.fd_table:
         async def make_conn() -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
-            return (await access_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0))
+            return (await access_task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0))
     else:
         if access_connection is not None:
             access_connection_path, access_connection_socket = access_connection
         else:
             raise Exception("must pass access connection when access task and connecting task are different")
         async def make_conn() -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
-            left_sock = await access_task.socket_unix(socket.SOCK_STREAM)
+            left_sock = await access_task.socket_unix(SOCK.STREAM)
             await robust_unix_connect(access_connection_path, left_sock)
             right_sock: FileDescriptor[UnixSocketFile]
             right_sock, _ = await access_connection_socket.accept(os.O_CLOEXEC) # type: ignore
@@ -3180,7 +3165,7 @@ class PersistentServer:
     transport: t.Optional[SocketMemoryTransport] = None
 
     async def _connect_and_send(self, stdtask: StandardTask, fds: t.List[far.FileDescriptor]) -> t.List[near.FileDescriptor]:
-        connected_sock = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+        connected_sock = await stdtask.task.socket_unix(SOCK.STREAM)
         self.path = self.path.with_task(stdtask.task)
         await robust_unix_connect(self.path, connected_sock)
         await connected_sock.write(struct.pack('I', len(fds)))
@@ -3434,7 +3419,7 @@ async def ssh_bootstrap(
     # it would be better if sh supported fexecve, then I could unlink it before I exec...
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor[UnixSocketFile]:
-        sock = await task.socket_unix(socket.SOCK_STREAM)
+        sock = await task.socket_unix(SOCK.STREAM)
         await robust_unix_connect(local_data_path, sock)
         return (await AsyncFileDescriptor.make(parent_task.epoller, sock))
     async_local_syscall_sock = await make_async_connection()
@@ -3473,7 +3458,7 @@ async def ssh_bootstrap(
                     # we assume ssh zeroes the sigmask before starting us
                     SignalMask(set()),
     )
-    left_connecting_connection, right_connecting_connection = await new_task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    left_connecting_connection, right_connecting_connection = await new_task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
     connecting_connection = (left_connecting_connection.handle, right_connecting_connection.handle)
     epoller = await new_task.make_epoll_center()
     child_monitor = await ChildProcessMonitor.make(new_task, epoller)
@@ -3911,7 +3896,7 @@ class ConsoleGenie(WishGranter):
         async with self.lock:
             message = "".join(traceback.format_exception(None, wish, wish.__traceback__))
             wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
-            catfd, myfd = await self.stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+            catfd, myfd = await self.stdtask.task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
 
             term_stdin, repl_stdout = await self.stdtask.task.pipe()
             repl_stdin, term_stdout = await self.stdtask.task.pipe()
@@ -3970,7 +3955,7 @@ class ConsoleServerGenie(WishGranter):
         sock_name = self._uniquify_name(f'{wisher_frame.f_code.co_name}-{wisher_frame.f_lineno}')
         sock_path = self.sockdir/sock_name
         cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path.pure))
-        sockfd = await self.stdtask.task.socket_unix(socket.SOCK_STREAM)
+        sockfd = await self.stdtask.task.socket_unix(SOCK.STREAM)
         await robust_unix_bind(sock_path, sockfd)
         await sockfd.listen(10)
         async_sockfd = await AsyncFileDescriptor.make(self.stdtask.epoller, sockfd)
@@ -4106,7 +4091,7 @@ class StubServer:
 
     @classmethod
     async def make(cls, stdtask: StandardTask, path: Path) -> StubServer:
-        sockfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+        sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
         await sockfd.bind(path.unix_address())
         await sockfd.listen(10)
         asyncfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
@@ -4116,7 +4101,7 @@ class StubServer:
         if stdtask is None:
             stdtask = self.stdtask
         conn: FileDescriptor[UnixSocketFile]
-        addr: UnixAddress
+        addr: SockaddrUn
         conn, addr = await self.listening_sock.accept(os.O_CLOEXEC) # type: ignore
         argv, new_stdtask = await setup_stub(stdtask, conn)
         # have to drop first argument, which is the unix_stub executable; see make_stub
@@ -4216,7 +4201,7 @@ async def rsyscall_stdin_bootstrap(
     #### fork and exec into the bootstrap command
     thread = await stdtask.fork()
     # create the socketpair that will be used as stdin
-    parent_sock, child_sock_parent = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    parent_sock, child_sock_parent = await stdtask.task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
     child_sock = child_sock_parent.move(thread.stdtask.task.base)
     # set up stdin with socketpair
     await thread.stdtask.unshare_files(going_to_exec=True)

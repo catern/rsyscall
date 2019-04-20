@@ -1,27 +1,15 @@
 from rsyscall.exceptions import RsyscallException, RsyscallHangup
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.near import SyscallInterface, UnshareFlag, IdType
+from rsyscall.near import SyscallInterface
 from rsyscall.far import Pointer, Process, ProcessGroup, FileDescriptor
+from rsyscall.sys.wait import IdType
+from rsyscall.signal import SigprocmaskHow
 import trio
 import logging
 import signal
 import typing as t
 import enum
 logger = logging.getLogger(__name__)
-
-class NsType(enum.IntFlag):
-    NEWCGROUP = lib.CLONE_NEWCGROUP
-    NEWIPC = lib.CLONE_NEWIPC
-    NEWNET = lib.CLONE_NEWNET
-    NEWNS = lib.CLONE_NEWNS
-    NEWPID = lib.CLONE_NEWPID
-    NEWUSER = lib.CLONE_NEWUSER
-    NEWUTS = lib.CLONE_NEWUTS
-
-class SigprocmaskHow(enum.IntEnum):
-    BLOCK = lib.SIG_BLOCK
-    UNBLOCK = lib.SIG_UNBLOCK
-    SETMASK = lib.SIG_SETMASK
 
 class SYS(enum.IntEnum):
     accept4 = lib.SYS_accept4
@@ -110,13 +98,6 @@ async def exit(sysif: SyscallInterface, status: int) -> None:
 async def kill(sysif: SyscallInterface, pid: Process, sig: signal.Signals) -> None:
     logger.debug("kill(%s, %s)", pid, sig)
     await sysif.syscall(SYS.kill, pid, sig)
-
-async def unshare(sysif: SyscallInterface, flags: UnshareFlag) -> None:
-    logger.debug("unshare(%s)", flags)
-    await sysif.syscall(SYS.unshare, flags)
-    
-async def setns(sysif: SyscallInterface, fd: int, nstype: NsType) -> None:
-    raise NotImplementedError
 
 async def socket(sysif: SyscallInterface, domain: int, type: int, protocol: int) -> int:
     logger.debug("socket(%s, %s, %s)", domain, type, protocol)

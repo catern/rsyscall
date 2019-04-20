@@ -5,12 +5,14 @@ import abc
 import trio
 import socket
 import rsyscall.io as rsc
-import rsyscall.inotify as inotify
+import rsyscall.sys.inotify as inotify
 import rsyscall.handle as handle
 from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import StandardTask, RsyscallThread, Path, Command
 from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
 from dataclasses import dataclass
+
+from rsyscall.netinet.in_ import SockaddrIn
 
 class Dovecot:
     pass
@@ -100,13 +102,14 @@ async def start_smtpd(nursery, stdtask: StandardTask, path: Path,
     smtpd = await rsc.which(stdtask, "smtpd")
     thread = await stdtask.fork()
     smtp_listener = smtp_listener.move(thread.stdtask.task.base)
+    await thread.stdtask.unshare_files(going_to_exec=True)
 
     config = ""
     config += 'listen on socket path "' + os.fsdecode(path/"smtpd.sock") + '"\n'
     config += "table aliases file:" + os.fsdecode(await rsc.spit(path/"aliases", "")) + "\n"
     config += 'queue path "' + os.fsdecode(await (path/"spool").mkdir(mode=0o711)) + '"\n'
     config += 'path chroot "' + os.fsdecode(await (path/"empty").mkdir()) + '"\n'
-    config += "listen on localhost inherit " + str(smtp_listener.near.number) + '\n'
+    config += "listen on localhost inherit " + str(await smtp_listener.as_argument()) + '\n'
 
     # bind a socket in the parent
     lmtp_socket = await stdtask.task.socket_unix(socket.SOCK_STREAM, cloexec=False)
@@ -133,8 +136,6 @@ async def start_smtpd(nursery, stdtask: StandardTask, path: Path,
     config += "queue group root\n"
     config += "smtp user root\n"
 
-    await smtp_listener.disable_cloexec()
-
     config_path = await rsc.spit(path/"smtpd.config", config)
     child = await thread.exec(smtpd.args("-v", "-d", "-f", config_path))
     nursery.start_soon(child.check)
@@ -152,7 +153,7 @@ class TestMail(TrioTestCase):
         await rsc.update_symlink(self.tmpdir.parent, "test_mail.current", os.fsdecode(self.tmpdir.name))
         self.path = self.tmpdir.path
         smtp_sock = await self.stdtask.task.socket_inet(socket.SOCK_STREAM)
-        await smtp_sock.bind(rsc.InetAddress(3000, 0x7F_00_00_01))
+        await smtp_sock.bind(SockaddrIn(3000, 0x7F_00_00_01))
         await smtp_sock.listen(10)
         self.smtpd = await start_smtpd(self.nursery, self.stdtask, await (self.path/"smtpd").mkdir(), smtp_sock.handle)
         self.maildir = await Maildir.make(self.path/"mail")

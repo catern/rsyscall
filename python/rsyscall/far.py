@@ -5,6 +5,9 @@ import os
 import signal
 import rsyscall.near
 
+from rsyscall.sys.epoll import EpollCtlOp
+from rsyscall.sys.prctl import PrctlOp
+
 # These are like segment ids.
 # They set eq=False because they are identified by their Python object identity,
 # in lieu of a real identifier.
@@ -238,7 +241,7 @@ class Task:
     def to_near_mapping(self, mapping: MemoryMapping) -> rsyscall.near.MemoryMapping:
         return self.address_space.to_near_mapping(mapping)
 
-    async def prctl(self, option: rsyscall.near.PrctlOp, arg2: int, arg3: int=0, arg4: int=0, arg5: int=0) -> int:
+    async def prctl(self, option: PrctlOp, arg2: int, arg3: int=0, arg4: int=0, arg5: int=0) -> int:
         return (await rsyscall.near.prctl(self.sysif, option, arg2, arg3, arg4, arg5))
 
 
@@ -310,16 +313,16 @@ async def set_robust_list(task: Task, head: Pointer, len: int) -> None:
 async def getdents64(task: Task, fd: FileDescriptor, dirp: Pointer, count: int) -> int:
     return (await rsyscall.near.getdents64(task.sysif, task.to_near_fd(fd), task.to_near_pointer(dirp), count))
 
-async def epoll_ctl(task: Task, epfd: FileDescriptor, op: rsyscall.near.EpollCtlOp,
+async def epoll_ctl(task: Task, epfd: FileDescriptor, op: EpollCtlOp,
                     fd: FileDescriptor, event: t.Optional[Pointer]=None) -> None:
     await rsyscall.near.epoll_ctl(task.sysif, task.to_near_fd(epfd), op, task.to_near_fd(fd),
                                   task.to_near_pointer(event) if event else None)
 
 async def prctl_set_pdeathsig(task: Task, signal: t.Optional[signal.Signals]) -> None:
     if signal is not None:
-        await rsyscall.near.prctl(task.sysif, rsyscall.near.PrctlOp.SET_PDEATHSIG, signal)
+        await rsyscall.near.prctl(task.sysif, PrctlOp.SET_PDEATHSIG, signal)
     else:
-        await rsyscall.near.prctl(task.sysif, rsyscall.near.PrctlOp.SET_PDEATHSIG, 0)
+        await rsyscall.near.prctl(task.sysif, PrctlOp.SET_PDEATHSIG, 0)
 
 async def setsid(task: Task) -> int:
     return (await rsyscall.near.setsid(task.sysif))

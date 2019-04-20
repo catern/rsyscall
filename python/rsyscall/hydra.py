@@ -9,13 +9,14 @@ import os
 import requests
 import trio
 import rsyscall.io as rsc
-import rsyscall.inotify as inotify
+import rsyscall.sys.inotify as inotify
 import rsyscall.handle as handle
 import typing as t
 from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import StandardTask, RsyscallThread, Path, Command
 from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
 from dataclasses import dataclass
+from rsyscall.netinet.in_ import SockaddrIn
 
 class JobsetInput:
     @abc.abstractmethod
@@ -87,7 +88,7 @@ class HTTPClient:
         ])
 
     @staticmethod
-    async def connect_inet(stdtask: StandardTask, addr: rsc.InetAddress) -> HTTPClient:
+    async def connect_inet(stdtask: StandardTask, addr: SockaddrIn) -> HTTPClient:
         sock = await stdtask.task.socket_inet(socket.SOCK_STREAM)
         await sock.connect(addr)
         return HTTPClient(sock.read, sock.write, [
@@ -237,28 +238,26 @@ class NginxChild:
 async def exec_nginx(thread: RsyscallThread, nginx: Command,
                      path: Path, config: handle.FileDescriptor,
                      listen_fds: t.List[handle.FileDescriptor]) -> ChildProcess:
-    nginx_fds = [thread.stdtask.task.base.make_fd_handle(fd) for fd in listen_fds]
+    nginx_fds = [fd.maybe_copy(thread.stdtask.task.base) for fd in listen_fds]
+    config_fd = config.maybe_copy(thread.stdtask.task.base)
+    await thread.stdtask.unshare_files(going_to_exec=True)
     if nginx_fds:
-        nginx_var = ";".join(str(fd.near.number) for fd in nginx_fds) + ';'
+        nginx_var = ";".join([str(await fd.as_argument()) for fd in nginx_fds]) + ';'
     else:
         nginx_var = ""
-    config_fd = thread.stdtask.task.base.make_fd_handle(config)
-    await thread.stdtask.unshare_files(going_to_exec=True)
-    for fd in [*nginx_fds, config_fd]:
-        await fd.disable_cloexec()
     await (path/"logs").mkdir()
     child = await thread.exec(
-        nginx.env(NGINX=nginx_var).args("-p", path, "-c", config_fd.as_proc_path()))
+        nginx.env(NGINX=nginx_var).args("-p", path, "-c", f"/proc/self/fd/{await config_fd.as_argument()}"))
     return child
 
 async def start_fresh_nginx(
         nursery, stdtask: StandardTask, path: Path, sockpath: Path
-) -> t.Tuple[rsc.InetAddress, NginxChild]:
+) -> t.Tuple[SockaddrIn, NginxChild]:
     nginx = await rsc.which(stdtask, "nginx")
     thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
     sock = await thread.stdtask.task.socket_inet(socket.SOCK_STREAM)
-    await sock.bind(rsc.InetAddress(0, 0x7F_00_00_01))
-    addr: rsc.InetAddress = await sock.getsockname()
+    await sock.bind(SockaddrIn(0, 0x7F_00_00_01))
+    addr: SockaddrIn = await sock.getsockname()
     config = b"""
 error_log stderr error;
 daemon off;
@@ -298,7 +297,7 @@ http {
 }
 """ % os.fsencode(sockpath)
     sock = await thread.stdtask.task.socket_inet(socket.SOCK_STREAM)
-    await sock.bind(rsc.InetAddress(3000, 0x7F_00_00_01))
+    await sock.bind(SockaddrIn(3000, 0x7F_00_00_01))
     await sock.listen(10)
     config_fd = await (path.with_task(thread.stdtask.task)/"nginx.conf").open(os.O_RDWR|os.O_CREAT)
     await config_fd.write_all(config)

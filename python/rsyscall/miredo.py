@@ -1,4 +1,5 @@
 from __future__ import annotations
+import typing as t
 import time
 from rsyscall._raw.lib import miredo_path as miredo_path_cffi # type: ignore
 from rsyscall._raw import lib # type: ignore
@@ -7,19 +8,23 @@ import os
 import abc
 import trio
 import rsyscall.io as rsc
-import rsyscall.inotify as inotify
 import rsyscall.handle as handle
-import rsyscall.socket as socket
-import rsyscall.network as net
 import rsyscall.near
 from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import StandardTask, RsyscallThread, Path, Command
 from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
-from rsyscall.capabilities import CAP, CapHeader, CapData
 from rsyscall.stat import DType
 from dataclasses import dataclass
-from rsyscall.netlink.address import NetlinkAddress
-from rsyscall.netlink.route import RTMGRP
+from rsyscall.struct import Int32
+
+from rsyscall.sys.capability import CAP, CapHeader, CapData
+from rsyscall.sys.socket import AF, SOCK, SOL
+from rsyscall.sys.prctl import PrctlOp, CapAmbient
+from rsyscall.netinet.in_ import SockaddrIn
+from rsyscall.netinet.ip import IP, IPPROTO
+from rsyscall.linux.netlink import SockaddrNl
+from rsyscall.linux.rtnetlink import RTMGRP
+import rsyscall.net.if_ as netif
 
 miredo_path = rsc.local_stdtask.task.base.make_path_from_bytes(ffi.string(miredo_path_cffi))
 miredo_run_client = Command(miredo_path/"libexec"/"miredo"/"miredo-run-client", ["miredo-run-client"], {})
@@ -55,25 +60,15 @@ async def exec_miredo_run_client(
         icmp6_fd: handle.FileDescriptor,
         client_side: handle.FileDescriptor,
         server_name: str) -> ChildProcess:
-    inet_sock = inet_sock.move(thread.stdtask.task.base)
-    tun_fd = tun_fd.move(thread.stdtask.task.base)
-    reqsock = reqsock.move(thread.stdtask.task.base)
-    icmp6_fd = icmp6_fd.move(thread.stdtask.task.base)
-    client_side = client_side.move(thread.stdtask.task.base)
+    fd_args = [fd.move(thread.stdtask.task.base)
+               for fd in [inet_sock, tun_fd, reqsock, icmp6_fd, client_side]]
     await thread.stdtask.unshare_files(going_to_exec=True)
-    await inet_sock.handle.disable_cloexec()
-    await tun_fd.handle.disable_cloexec()
-    await reqsock.handle.disable_cloexec()
-    await icmp6_fd.disable_cloexec()
-    await client_side.handle.disable_cloexec()
     child = await thread.exec(miredo_run_client.args(
-        str(int(inet_sock.handle.near)), str(int(tun_fd.handle.near)),
-        str(int(reqsock.handle.near)), str(int(icmp6_fd.near)),
-        str(int(client_side.handle.near)),
+        *[str(await fd.as_argument()) for fd in fd_args],
         server_name, server_name))
     return child
 
-async def add_to_ambient(task: Task, capset: t.Set[CAP]) -> None:
+async def add_to_ambient(task: rsc.Task, capset: t.Set[CAP]) -> None:
     hdr_ptr = await task.to_pointer(CapHeader())
     data_ptr = await task.malloc_type(CapData)
     await task.base.capget(hdr_ptr, data_ptr)
@@ -82,34 +77,36 @@ async def add_to_ambient(task: Task, capset: t.Set[CAP]) -> None:
     await data_ptr.write(data)
     await task.base.capset(hdr_ptr, data_ptr)
     for cap in capset:
-        await task.base.prctl(rsyscall.near.PrctlOp.CAP_AMBIENT, rsyscall.near.CapAmbient.RAISE, cap)
+        await task.base.prctl(PrctlOp.CAP_AMBIENT, CapAmbient.RAISE, cap)
 
 async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
-    inet_sock = await stdtask.task.socket_inet(socket.SOCK.DGRAM)
-    await inet_sock.bind(rsc.InetAddress(0, 0))
+    inet_sock = await stdtask.task.base.socket(AF.INET, SOCK.DGRAM)
+    await inet_sock.bind(await stdtask.task.to_pointer(SockaddrIn(0, 0)))
     # set a bunch of sockopts
-    await inet_sock.setsockopt(socket.SOL.IP, socket.IP.RECVERR, 1)
-    await inet_sock.setsockopt(socket.SOL.IP, socket.IP.PKTINFO, 1)
-    await inet_sock.setsockopt(socket.SOL.IP, socket.IP.MULTICAST_TTL, 1)
+    one = await stdtask.task.to_pointer(Int32(1))
+    await inet_sock.setsockopt(SOL.IP, IP.RECVERR, one)
+    await inet_sock.setsockopt(SOL.IP, IP.PKTINFO, one)
+    await inet_sock.setsockopt(SOL.IP, IP.MULTICAST_TTL, one)
     # hello fragments my old friend
-    await inet_sock.setsockopt(socket.SOL.IP, socket.IP.MTU_DISCOVER, socket.IP.PMTUDISC_DONT)
+    await inet_sock.setsockopt(SOL.IP, IP.MTU_DISCOVER,
+                               await stdtask.task.to_pointer(Int32(IP.PMTUDISC_DONT)))
     ns_thread = await stdtask.fork()
     await ns_thread.stdtask.unshare_user()
     await ns_thread.stdtask.unshare_net()
     # create icmp6 fd so miredo can relay pings
-    icmp6_fd = await ns_thread.stdtask.task.base.socket(socket.AF.INET6, socket.SOCK.RAW, socket.IPPROTO.ICMPV6)
+    icmp6_fd = await ns_thread.stdtask.task.base.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
 
     # create the TUN interface
     tun_fd = await (ns_thread.stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
-    ptr = await stdtask.task.to_pointer(net.Ifreq(b'teredo', flags=net.IFF_TUN))
-    await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
+    ptr = await stdtask.task.to_pointer(netif.Ifreq(b'teredo', flags=netif.IFF_TUN))
+    await tun_fd.handle.ioctl(netif.TUNSETIFF, ptr)
     # create reqsock for ifreq operations in this network namespace
-    reqsock = await ns_thread.stdtask.task.socket_inet(socket.SOCK.STREAM)
-    await reqsock.handle.ioctl(net.SIOCGIFINDEX, ptr)
+    reqsock = await ns_thread.stdtask.task.base.socket(AF.INET, SOCK.STREAM)
+    await reqsock.ioctl(netif.SIOCGIFINDEX, ptr)
     tun_index = (await ptr.read()).ifindex
     ptr.free()
     # create socketpair for communication between privileged process and teredo client
-    privproc_side, client_side = await ns_thread.stdtask.task.socketpair(socket.AF.UNIX, socket.SOCK.STREAM, 0)
+    privproc_side, client_side = await ns_thread.stdtask.task.socketpair(AF.UNIX, SOCK.STREAM, 0)
 
     privproc_thread = await ns_thread.stdtask.fork()
     await add_to_ambient(privproc_thread.stdtask.task, {CAP.NET_ADMIN})
@@ -126,7 +123,7 @@ async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
     await client_thread.stdtask.unshare_mount()
     await client_thread.stdtask.unshare_user()
     client_child = await exec_miredo_run_client(
-        client_thread, inet_sock, tun_fd, reqsock, icmp6_fd, client_side, "teredo.remlab.net")
+        client_thread, inet_sock, tun_fd.handle, reqsock, icmp6_fd, client_side.handle, "teredo.remlab.net")
     nursery.start_soon(client_child.check)
 
     # we keep the ns thread around so we don't have to mess with setns
@@ -141,11 +138,11 @@ class TestMiredo(TrioTestCase):
         print("a", time.time())
         self.miredo = await start_miredo(self.nursery, self.stdtask)
         print("b", time.time())
-        self.netsock = await self.miredo.ns_thread.stdtask.task.base.socket(socket.AF.NETLINK, socket.SOCK.DGRAM, lib.NETLINK_ROUTE)
+        self.netsock = await self.miredo.ns_thread.stdtask.task.base.socket(AF.NETLINK, SOCK.DGRAM, lib.NETLINK_ROUTE)
         print("b-1", time.time())
         print("b0", time.time())
         await self.netsock.bind(
-            await self.miredo.ns_thread.stdtask.task.to_pointer(NetlinkAddress(0, RTMGRP.IPV6_ROUTE)))
+            await self.miredo.ns_thread.stdtask.task.to_pointer(SockaddrNl(0, RTMGRP.IPV6_ROUTE)))
         print("b0.5", time.time())
 
 

@@ -9,6 +9,11 @@ import logging
 import typing as t
 logger = logging.getLogger(__name__)
 
+from rsyscall.sys.epoll import EpollCtlOp
+from rsyscall.sys.prctl import PrctlOp
+from rsyscall.sys.wait import IdType
+from rsyscall.sched import UnshareFlag
+
 class SYS(enum.IntEnum):
     read = lib.SYS_read
     write = lib.SYS_write
@@ -48,31 +53,7 @@ class SYS(enum.IntEnum):
     capget = lib.SYS_capget
     capset = lib.SYS_capset
     listen = lib.SYS_listen
-
-class IdType(enum.IntEnum):
-    PID = lib.P_PID # Wait for the child whose process ID matches id.
-    PGID = lib.P_PGID # Wait for any child whose process group ID matches id.
-    ALL = lib.P_ALL # Wait for any child; id is ignored.
-
-class UnshareFlag(enum.IntFlag):
-    NONE = 0
-    FILES = lib.CLONE_FILES
-    FS = lib.CLONE_FS
-    NEWCGROUP = lib.CLONE_NEWCGROUP
-    NEWIPC = lib.CLONE_NEWIPC
-    NEWNET = lib.CLONE_NEWNET
-    NEWNS = lib.CLONE_NEWNS
-    NEWPID = lib.CLONE_NEWPID
-    NEWUSER = lib.CLONE_NEWUSER
-    NEWUTS = lib.CLONE_NEWUTS
-    SYSVSEM = lib.CLONE_SYSVSEM
-
-class PrctlOp(enum.IntEnum):
-    SET_PDEATHSIG = lib.PR_SET_PDEATHSIG
-    CAP_AMBIENT = lib.PR_CAP_AMBIENT
-
-class CapAmbient(enum.IntEnum):
-    RAISE = lib.PR_CAP_AMBIENT_RAISE
+    setsockopt = lib.SYS_setsockopt
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -266,11 +247,6 @@ async def getdents64(sysif: SyscallInterface, fd: FileDescriptor, dirp: Pointer,
 async def unshare(sysif: SyscallInterface, flags: UnshareFlag) -> None:
     await sysif.syscall(SYS.unshare, flags)
 
-class EpollCtlOp(enum.IntEnum):
-    ADD = lib.EPOLL_CTL_ADD
-    MOD = lib.EPOLL_CTL_MOD
-    DEL = lib.EPOLL_CTL_DEL
-
 async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: EpollCtlOp,
                     fd: FileDescriptor, event: t.Optional[Pointer]=None) -> None:
     if event is None:
@@ -335,3 +311,8 @@ async def capget(sysif: SyscallInterface, hdrp: Pointer, datap: Pointer) -> None
 
 async def listen(sysif: SyscallInterface, sockfd: FileDescriptor, backlog: int) -> None:
     await sysif.syscall(SYS.listen, sockfd, backlog)
+
+async def setsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int, optname: int,
+                     optval: Pointer, optlen: int) -> None:
+    await sysif.syscall(SYS.setsockopt, sockfd, level, optname, optval, optlen)
+

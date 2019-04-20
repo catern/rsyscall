@@ -4,16 +4,19 @@ import trio
 import os
 import socket
 import rsyscall.raw_syscalls as raw_syscall
-from rsyscall.raw_syscalls import SigprocmaskHow, IdType
 from rsyscall.base import SyscallInterface, MemoryTransport, MemoryWriter, MemoryReader
 from dataclasses import dataclass
 import rsyscall.base as base
 import rsyscall.far as far
 import rsyscall.near as near
-import rsyscall.epoll as epoll
 import rsyscall.memory as memory
 import rsyscall.handle as handle
+
 from rsyscall.struct import bits
+from rsyscall.sys.epoll import EpollEvent, EpollCtlOp
+from rsyscall.sys.wait import IdType
+from rsyscall.signal import SigprocmaskHow
+
 import array
 import typing as t
 import logging
@@ -96,20 +99,20 @@ async def waitid(sysif: SyscallInterface, transport: MemoryTransport, allocator:
 
 #### epoll ####
 async def epoll_ctl_add(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                        epfd: far.FileDescriptor, fd: far.FileDescriptor, event: epoll.EpollEvent) -> None:
+                        epfd: far.FileDescriptor, fd: far.FileDescriptor, event: EpollEvent) -> None:
     logger.debug("epoll_ctl_add(%s, %s, %s)", epfd, fd, event)
     async with localize_data(transport, allocator, event.to_bytes()) as (event_ptr, _):
-        await far.epoll_ctl(task, epfd, near.EpollCtlOp.ADD, fd, event_ptr)
+        await far.epoll_ctl(task, epfd, EpollCtlOp.ADD, fd, event_ptr)
 
 async def epoll_ctl_mod(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                        epfd: far.FileDescriptor, fd: far.FileDescriptor, event: epoll.EpollEvent) -> None:
+                        epfd: far.FileDescriptor, fd: far.FileDescriptor, event: EpollEvent) -> None:
     logger.debug("epoll_ctl_mod(%s, %s, %s)", epfd, fd, event)
     async with localize_data(transport, allocator, event.to_bytes()) as (event_ptr, _):
-        await far.epoll_ctl(task, epfd, near.EpollCtlOp.MOD, fd, event_ptr)
+        await far.epoll_ctl(task, epfd, EpollCtlOp.MOD, fd, event_ptr)
 
 async def epoll_ctl_del(task: far.Task, epfd: far.FileDescriptor, fd: far.FileDescriptor) -> None:
     logger.debug("epoll_ctl_del(%s, %s)", epfd, fd)
-    await far.epoll_ctl(task, epfd, near.EpollCtlOp.DEL, fd)
+    await far.epoll_ctl(task, epfd, EpollCtlOp.DEL, fd)
 
 
 #### signal mask manipulation ####

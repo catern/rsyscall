@@ -1,6 +1,6 @@
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.base import InetAddress
+from rsyscall.netinet.ip import SockaddrIn
 from rsyscall.struct import Struct
 import typing as t
 
@@ -32,11 +32,11 @@ class AddressField:
     def __init__(self, name: str) -> None:
         self.name = name
 
-    def __get__(self, instance, owner) -> InetAddress:
+    def __get__(self, instance, owner) -> SockaddrIn:
         data_bytes = bytes(ffi.buffer(ffi.addressof(instance.cffi, self.name)))
-        return InetAddress.from_bytes(data_bytes)
+        return SockaddrIn.from_bytes(data_bytes)
 
-    def __set__(self, instance, value: InetAddress) -> None:
+    def __set__(self, instance, value: SockaddrIn) -> None:
         data_bytes = value.to_bytes()
         lib.memcpy(ffi.addressof(instance.cffi, self.name),
                    ffi.from_buffer(data_bytes), len(data_bytes))

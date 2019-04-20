@@ -6,8 +6,8 @@ let
       rev = "b287df11b5f0dd41821349def360139b79f3bc65";
       sha256 = "0q8bnvz80dbg83z1m0mmg9rp3rv8y873vh4q1l04wkyqmzzimnnf";
   };});
-  hydra = pkgs.hydra;
-  # hydra = (pkgs.hydra.override { nix = nix; }).overrideAttrs (_: { src = /home/sbaugh/.local/src/hydra; });
+  # hydra = pkgs.hydra;
+  hydra = (pkgs.hydra.override { nix = nix; }).overrideAttrs (_: { src = /home/sbaugh/.local/src/hydra; });
   # hydra = pkgs.hydra.overrideAttrs (_: { src = pkgs.fetchFromGitHub {
   #     owner = "catern";
   #     repo = "hydra";

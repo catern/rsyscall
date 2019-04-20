@@ -1,5 +1,7 @@
 import abc
 import typing as t
+import struct
+from dataclasses import dataclass
 
 T_struct = t.TypeVar('T_struct', bound='Struct')
 class Struct:
@@ -23,3 +25,22 @@ def bits(n: int, one_indexed: bool=True) -> t.Iterator[int]:
         b = n & (~n+1)
         yield (b.bit_length() - (0 if one_indexed else 1))
         n ^= b
+
+@dataclass
+class Int32(Struct):
+    val: int
+
+    def to_bytes(self) -> bytes:
+        return struct.pack('i', self.val)
+
+    T = t.TypeVar('T', bound='Int32')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        if len(data) < cls.sizeof():
+            raise Exception("data too small", data)
+        val, = struct.pack('i', data)
+        return cls(val)
+        
+    @classmethod
+    def sizeof(cls) -> int:
+        return struct.calcsize('i')
