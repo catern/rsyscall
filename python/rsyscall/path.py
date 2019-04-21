@@ -5,13 +5,16 @@ import typing as t
 import os
 from pathlib import PurePosixPath
 
-class Path(Serializable, PurePosixPath):
+class Path(PurePosixPath, Serializable):
     def to_bytes(self) -> bytes:
-        return bytes(self)
+        return bytes(self) + b'\0'
 
     T = t.TypeVar('T', bound='Path')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        # uhhh I need to, I guess, strip the null byte?
+        # hmmmmmmmmmmmmmM
+        # HUMMMMM
         return cls(os.fsdecode(data))
 
 

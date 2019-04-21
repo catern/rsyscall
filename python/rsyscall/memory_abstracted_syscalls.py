@@ -16,6 +16,7 @@ from rsyscall.struct import bits
 from rsyscall.sys.epoll import EpollEvent, EpollCtlOp
 from rsyscall.sys.wait import IdType
 from rsyscall.signal import SigprocmaskHow
+from rsyscall.path import Path
 
 import array
 import typing as t
@@ -501,9 +502,7 @@ async def accept(sysif: SyscallInterface, transport: MemoryTransport, allocator:
         return fd, addr
 
 async def inotify_add_watch(transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                            fd: handle.FileDescriptor, path: handle.Path, mask: int) -> near.WatchDescriptor:
-    async with localize_path(transport, allocator, path.far) as (dirfd, pathname):
-        if dirfd is not None:
-            raise NotImplementedError("inotify_add_watch with dirfd not supported cuz lazy")
+                            fd: handle.FileDescriptor, path: Path, mask: int) -> near.WatchDescriptor:
+    async with localize_data(transport, allocator, path.to_bytes()) as (pathname, _):
         return (await fd.inotify_add_watch(pathname, mask))
 

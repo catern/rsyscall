@@ -238,10 +238,10 @@ class Task:
         return self.base.fd_table
 
     def root(self) -> Path:
-        return Path.from_bytes(self, b"/")
+        return Path(self, handle.Path("/"))
 
     def cwd(self) -> Path:
-        return Path.from_bytes(self, b".")
+        return Path(self, handle.Path("."))
 
     async def close(self):
         await self.syscall.close_interface()
@@ -284,10 +284,8 @@ class Task:
         await self.close()
 
     async def chdir(self, path: 'Path') -> None:
-        async with memsys.localize_path(self.transport, self.allocator, path.pure) as (dirfd, pathname):
-            if dirfd is not None:
-                await self.base.fs.fchdir(self.base, dirfd)
-            await self.base.fs.chdir(self.base, pathname)
+        with (await self.to_pointer(path.handle)) as ptr:
+            await self.base.chdir(ptr)
 
     async def fchdir(self, fd: handle.FileDescriptor) -> None:
         await self.base.fs.fchdir(self.base, fd.far)
@@ -308,9 +306,8 @@ class Task:
         Note that this can block forever if we're opening a FIFO
 
         """
-        fd = await memsys.openat(self.syscall, self.transport, self.allocator,
-                                 path.far, flags, mode)
-        return self.base.make_fd_handle(fd)
+        with (await self.to_pointer(path)) as ptr:
+            return await self.base.open(ptr, flags, mode)
 
     async def memfd_create(self, name: t.Union[bytes, str]) -> FileDescriptor[MemoryFile]:
         fd = await memsys.memfd_create(
@@ -415,16 +412,10 @@ class SignalFile(ReadableFile):
 
 class MemoryFile(ReadableWritableFile, SeekableFile):
     pass
-class DirectoryFile(SeekableFile):
-    def __init__(self, raw_path: base.Path) -> None:
-        # this is a fallback if we need to serialize this dirfd out
-        self.raw_path = raw_path
 
+class DirectoryFile(SeekableFile):
     async def getdents(self, fd: 'FileDescriptor[DirectoryFile]', count: int) -> t.List[Dirent]:
         return (await fd.task.getdents(fd.handle.far, count))
-
-    def as_path(self, fd: FileDescriptor[DirectoryFile]) -> Path:
-        return Path(fd.task, handle.Path(fd.handle, []))
 
 class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     address_type: t.Type[T_addr]
@@ -563,9 +554,6 @@ class FileDescriptor(t.Generic[T_file_co]):
 
     async def getdents(self: 'FileDescriptor[DirectoryFile]', count: int=4096) -> t.List[Dirent]:
         return (await self.file.getdents(self, count))
-
-    def as_path(self: FileDescriptor[DirectoryFile]) -> Path:
-        return self.file.as_path(self)
 
     async def lseek(self: 'FileDescriptor[SeekableFile]', offset: int, whence: int) -> int:
         return (await self.file.lseek(self, offset, whence))
@@ -979,24 +967,12 @@ class Path(far.PathLike):
         self.handle = handle
 
     def with_task(self, task: Task) -> Path:
-        return Path(task, task.base.make_path_handle(self.handle))
-
-    @property
-    def pure(self) -> far.Path:
-        return self.handle.far
-
-    def split(self) -> t.Tuple[Path, bytes]:
-        dir, name = self.handle.split()
-        return Path(self.task, dir), name
-
-    @staticmethod
-    def from_bytes(task: Task, path: bytes) -> Path:
-        return Path(task, task.base.make_path_from_bytes(path))
+        return Path(task, self.handle)
 
     async def mkdir(self, mode=0o777) -> Path:
-        await memsys.mkdirat(self.task.syscall, self.task.transport, self.task.allocator,
-                             self.pure, mode)
-        return self
+        with (await self.task.to_pointer(self.handle)) as ptr:
+            await self.task.base.mkdir(ptr, mode)
+            return self
 
     async def open(self, flags: int, mode=0o644) -> FileDescriptor:
         """Open a path
@@ -1012,13 +988,12 @@ class Path(far.PathLike):
         elif flags & os.O_RDWR:
             file = ReadableWritableFile()
         elif flags & os.O_DIRECTORY:
-            file = DirectoryFile(self.pure)
+            file = DirectoryFile()
         else:
             # os.O_RDONLY is 0, so if we don't have any of the rest, then...
             file = ReadableFile()
-        fd = await memsys.openat(self.task.syscall, self.task.transport, self.task.allocator,
-                                 self.pure, flags, mode)
-        return self.task.make_fd(fd, file)
+        fd = await self.task.open(self.handle, flags, mode)
+        return FileDescriptor(self.task, fd, file)
 
     async def open_directory(self) -> FileDescriptor[DirectoryFile]:
         return (await self.open(os.O_DIRECTORY))
@@ -1027,9 +1002,7 @@ class Path(far.PathLike):
         return (await self.open(os.O_PATH))
 
     async def creat(self, mode=0o644) -> FileDescriptor[WritableFile]:
-        fd = await memsys.openat(self.task.syscall, self.task.transport, self.task.allocator,
-                                 self.pure, os.O_WRONLY|os.O_CREAT|os.O_TRUNC, mode)
-        return self.task.make_fd(fd, WritableFile())
+        return await self.open(os.O_WRONLY|os.O_CREAT|os.O_TRUNC, mode)
 
     async def access(self, *, read=False, write=False, execute=False) -> bool:
         mode = 0
@@ -1042,65 +1015,41 @@ class Path(far.PathLike):
         # default to os.F_OK
         if mode == 0:
             mode = os.F_OK
-        try:
-            await memsys.faccessat(self.task.syscall, self.task.transport, self.task.allocator,
-                                   self.pure, mode, 0)
-            return True
-        except OSError:
-            return False
+        with (await self.task.to_pointer(self.handle)) as ptr:
+            try:
+                await self.task.base.access(ptr, mode)
+                return True
+            except OSError:
+                return False
 
     async def unlink(self, flags: int=0) -> None:
-        await memsys.unlinkat(self.task.syscall, self.task.transport, self.task.allocator,
-                              self.pure, flags)
+        with (await self.task.to_pointer(self.handle)) as ptr:
+            await self.task.base.unlink(ptr)
 
     async def rmdir(self) -> None:
-        await memsys.unlinkat(self.task.syscall, self.task.transport, self.task.allocator,
-                              self.pure, AT.REMOVEDIR)
+        with (await self.task.to_pointer(self.handle)) as ptr:
+            await self.task.base.rmdir(ptr)
 
-    async def link(self, oldpath: 'Path', flags: int=0) -> 'Path':
+    async def link(self, oldpath: Path, flags: int=0) -> Path:
         "Create a hardlink at Path 'self' to the file at Path 'oldpath'"
-        await memsys.linkat(self.task.syscall, self.task.transport, self.task.allocator,
-                            oldpath.pure, self.pure, flags)
+        with (await self.task.to_pointer(oldpath.handle)) as oldptr:
+            with (await self.task.to_pointer(self.handle)) as selfptr:
+                await self.task.base.link(oldptr, selfptr)
         return self
 
-    async def symlink(self, target: t.Union[str, bytes]) -> 'Path':
+    async def symlink(self, target: t.Union[bytes, str]) -> Path:
         "Create a symlink at Path 'self' pointing to the passed-in target"
-        await memsys.symlinkat(self.task.syscall, self.task.transport, self.task.allocator,
-                               self.pure, os.fsencode(target))
+        with (await self.task.to_pointer(handle.Path target)) as targetptr:
+            with (await self.task.to_pointer(self.handle)) as selfptr:
+                await self.task.base.symlink(targetptr, selfptr)
         return self
 
-
-    async def rename(self, oldpath: 'Path', flags: int=0) -> 'Path':
+    async def rename(self, oldpath: Path, flags: int=0) -> Path:
         "Create a file at Path 'self' by renaming the file at Path 'oldpath'"
-        await memsys.renameat(self.task.syscall, self.task.transport, self.task.allocator,
-                              oldpath.pure, self.pure, flags)
+        with (await self.task.to_pointer(oldpath.handle)) as oldptr:
+            with (await self.task.to_pointer(self.handle)) as selfptr:
+                await self.task.base.rename(oldptr, selfptr)
         return self
-
-    async def readlink(self, bufsiz: int=4096) -> bytes:
-        return (await memsys.readlinkat(self.task.syscall, self.task.transport, self.task.allocator,
-                                        self.pure, bufsiz))
-    
-    def _as_proc_path(self) -> bytes:
-        return self.handle.far._as_proc_path()
-
-    async def as_argument(self) -> bytes:
-        if isinstance(self.handle.base, handle.FileDescriptor):
-            # we disable cloexec to pass the dirfd as an argument.
-            # this is somewhat weird to do without ownership, but whatever.
-            await self.handle.base.fcntl(fcntl.F_SETFD, 0)
-        return self._as_proc_path()
-
-    def unix_address(self) -> SockaddrUn:
-        """Return an address that can be used with bind/connect for Unix sockets
-
-        Linux doesn't support bindat/connectat or similar, so this is emulated with /proc.
-
-        This will throw PathTooLongError if the bytes component of the
-        path is too long, because bind/connect have a limit of 108
-        bytes for the pathname.
-
-        """
-        return SockaddrUn(self._as_proc_path())
 
     def __truediv__(self, path_element: t.Union[str, bytes]) -> Path:
         return Path(self.task, self.handle/path_element)
@@ -1130,40 +1079,31 @@ async def robust_unix_bind(path: Path, sock: FileDescriptor[UnixSocketFile]) -> 
     function.
 
     """
-    async with contextlib.AsyncExitStack() as stack:
-        try:
-            addr = path.unix_address()
-        except PathTooLongError:
-            dir, name = path.split()
-            if not(isinstance(dir.handle.base, handle.FileDescriptor) and len(dir.pure.components) == 0):
-                # shrink the dir path by opening it directly as a dirfd
-                dirfd = await stack.enter_async_context(await dir.open_directory())
-                dir = dirfd.as_path()
-            await robust_unix_bind_helper(dir, name, sock)
-        else:
-            await sock.bind(addr)
+    try:
+        addr = SockaddrUn(path.to_bytes())
+    except PathTooLongError:
+        # shrink the path by opening its parent directly as a dirfd
+        with (await path.parent.open_directory()) as dirfd:
+            await bindat(sock, dirfd.handle, path.name)
+    else:
+        await sock.bind(addr)
 
-async def robust_unix_bind_helper(dir: Path, name: bytes, sock: FileDescriptor[UnixSocketFile]) -> None:
-    """Perform a Unix socket bind to dir/name, hacking around the 108 byte limit on socket addresses.
-
-    If `dir'/`name' is too long to fit in an address, this function will instead bind to a temporary
-    name in `dir', and then rename the resulting socket to `name'.
-
-    Make sure outside this function that `dir' is sufficiently short for this to work - ideally `dir'
-    should be based on a dirfd.
+async def bindat(sock: FileDescriptor[UnixSocketFile], dirfd: handle.FileDescriptor, name: str) -> None:
+    """Perform a Unix socket bind to dirfd/name
 
     TODO: This hack is actually semantically different from a normal direct bind: it's not
     atomic. That's tricky...
 
     """
+    dir = handle.Path("/proc/self/fd")/str(int(dirfd.near))
     path = dir/name
     try:
-        addr = path.unix_address()
+        addr = SockaddrUn(path.to_bytes())
     except PathTooLongError:
-        # TODO randomly pick this name and retry if it's used
-        tmppath = dir/"tmpsock"
-        tmpaddr = tmppath.unix_address()
-        await sock.bind(tmpaddr)
+        # TODO retry if this name is used
+        tmpname = ".temp_for_bindat." + random_string(k=16)
+        tmppath = dir/tmpname
+        await sock.bind(SockaddrUn(tmppath.to_bytes()))
         await path.rename(tmppath)
     else:
         await sock.bind(addr)
@@ -1178,14 +1118,19 @@ async def robust_unix_connect(path: Path, sock: FileDescriptor[UnixSocketFile]) 
     with O_PATH yourself rather than call into this function.
 
     """
-    async with contextlib.AsyncExitStack() as stack:
-        try:
-            addr = path.unix_address()
-        except PathTooLongError:
-            # connectat with AT_EMPTY_PATH would make this cleaner
-            pathfd = await stack.enter_async_context(await path.open_path())
-            addr = SockaddrUn(b"/".join([b"/proc/self/fd", str(pathfd.handle.near.number).encode()]))
+    try:
+        addr = UnixAddress(path.to_bytes())
+    except PathTooLongError:
+        async with (await path.open_path()) as fd:
+            await connectat(sock, fd.handle)
+    else:
         await sock.connect(addr)
+
+async def connectat(sock: FileDescriptor[UnixSocketFile], fd: handle.FileDescriptor) -> None:
+    "connect() a Unix socket to the passed-in fd"
+    path = handle.Path("/proc/self/fd")/str(int(pathfd.near))
+    addr = SockaddrUn(path.to_bytes())
+    await sock.connect(addr)
 
 @dataclass
 class StandardStreams:

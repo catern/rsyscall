@@ -19,6 +19,8 @@ from rsyscall.sys.socket import AF, SOCK
 from rsyscall.sched import UnshareFlag
 from rsyscall.struct import T_serializable
 from rsyscall.signal import Sigaction, Sigset, Signals
+from rsyscall.fcntl import AT
+from rsyscall.path import Path
 
 # This is like a far pointer plus a segment register.
 # It means that, as long as it doesn't throw an exception,
@@ -195,7 +197,7 @@ class FileDescriptor:
     def as_proc_path(self) -> Path:
         pid = self.task.process.near.id
         num = self.near.number
-        return self.task.make_path_from_bytes(f"/proc/{pid}/fd/{num}".encode())
+        return Path(f"/proc/{pid}/fd/{num}")
 
     async def disable_cloexec(self) -> None:
         self.validate()
@@ -343,71 +345,10 @@ class Pointer(t.Generic[T_serializable]):
     def __enter__(self) -> Pointer:
         return self
 
-    def __exit__(self) -> None:
+    def __exit__(self, *args) -> None:
         if self.valid:
             self.valid = False
             self.to_free() # type: ignore
-
-@dataclass
-class Root:
-    file: rsyscall.near.DirectoryFile
-    task: Task
-
-    def validate(self) -> None:
-        if self.file is not self.task.fs.root:
-            raise Exception("root directory mismatch", self.file, self.task.fs.root)
-
-@dataclass
-class CWD:
-    file: rsyscall.near.DirectoryFile
-    task: Task
-
-    def validate(self) -> None:
-        if self.file is not self.task.fs.cwd:
-            raise Exception("current working directory mismatch", self.file, self.task.fs.cwd)
-
-T_path = t.TypeVar('T_path', bound="Path")
-@dataclass
-class Path(rsyscall.far.PathLike):
-    base: t.Union[Root, CWD, FileDescriptor]
-    components: t.List[bytes]
-
-    @property
-    def far(self) -> rsyscall.far.Path:
-        base = self.base
-        if isinstance(base, Root):
-            base.validate()
-            return rsyscall.far.Path(rsyscall.far.Root(), self.components)
-        elif isinstance(base, CWD):
-            base.validate()
-            return rsyscall.far.Path(rsyscall.far.CWD(), self.components)
-        elif isinstance(base, FileDescriptor):
-            return rsyscall.far.Path(base.far, self.components)
-        else:
-            raise Exception("bad path base type", base, type(base))
-
-    def split(self) -> t.Tuple[Path, bytes]:
-        return Path(self.base, self.components[:-1]), self.components[-1]
-
-    def __truediv__(self, path_element: t.Union[str, bytes]) -> Path:
-        element: bytes = os.fsencode(path_element)
-        if b"/" in element:
-            raise Exception("no / allowed in path elements, do it one by one")
-        return type(self)(self.base, self.components+[element])
-
-    @t.overload
-    def __getitem__(self, i: int) -> bytes: ...
-    @t.overload
-    def __getitem__(self: T_path, s: slice) -> T_path: ...
-
-    def __getitem__(self: T_path, s: t.Union[int, slice]) -> t.Union[bytes, T_path]:
-        if isinstance(s, slice):
-            return type(self)(self.base, self.components[s])
-        else:
-            return self.components[s]
-
-    def __fspath__(self) -> str:
-        return self.far.__fspath__()
 
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
 
@@ -434,38 +375,18 @@ class Task(rsyscall.far.Task):
         fd_table_to_near_to_handles.setdefault(self.fd_table, {})
 
     @property
-    def root(self) -> Root:
-        return Root(self.fs.root, self)
+    def root(self) -> Path:
+        return Path('/')
 
     @property
-    def cwd(self) -> CWD:
-        return CWD(self.fs.cwd, self)
+    def cwd(self) -> Path:
+        return Path('.')
 
     def make_path_from_bytes(self, path: t.Union[str, bytes]) -> Path:
-        path = os.fsencode(path)
-        if path.startswith(b"/"):
-            path = path[1:]
-            if len(path) == 0:
-                return Path(self.root, [])
-            else:
-                return Path(self.root, path.split(b"/"))
-        else:
-            return Path(self.cwd, path.split(b"/"))
+        return Path(os.fsdecode(path))
 
     def make_path_handle(self, path: Path) -> Path:
-        base = path.base
-        if isinstance(base, Root):
-            if base.file is not self.fs.root:
-                raise Exception("root directory mismatch", base.file, self.fs.root)
-            return Path(self.root, path.components)
-        elif isinstance(base, CWD):
-            if base.file is not self.fs.cwd:
-                raise Exception("current working directory mismatch", base.file, self.fs.cwd)
-            return Path(self.cwd, path.components)
-        elif isinstance(base, FileDescriptor):
-            return Path(self.make_fd_handle(base), path.components)
-        else:
-            raise Exception("bad path base type", base, type(base))
+        return path
 
     def make_fd_handle(self, fd: t.Union[rsyscall.near.FileDescriptor,
                                          rsyscall.far.FileDescriptor,
@@ -579,6 +500,41 @@ class Task(rsyscall.far.Task):
                                              act.near if act else None,
                                              oldact.near if oldact else None,
                                              Sigset.sizeof())
+
+    async def open(self, ptr: Pointer[Path], flags: int, mode=0o644) -> FileDescriptor:
+        async with ptr.borrow(self) as ptr:
+            fd = await rsyscall.near.openat(self.sysif, None, ptr.near, flags, mode)
+            return self.make_fd_handle(fd)
+
+    async def mkdir(self, ptr: Pointer[Path], mode=0o644) -> None:
+        async with ptr.borrow(self) as ptr:
+            await rsyscall.near.mkdirat(self.sysif, None, ptr.near, mode)
+
+    async def access(self, ptr: Pointer[Path], mode: int, flags: int=0) -> None:
+        async with ptr.borrow(self) as ptr:
+            await rsyscall.near.faccessat(self.sysif, None, ptr.near, mode, flags)
+
+    async def unlink(self, ptr: Pointer[Path]) -> None:
+        async with ptr.borrow(self) as ptr:
+            await rsyscall.near.unlinkat(self.sysif, None, ptr.near, 0)
+
+    async def rmdir(self, ptr: Pointer[Path]) -> None:
+        async with ptr.borrow(self) as ptr:
+            await rsyscall.near.unlinkat(self.sysif, None, ptr.near, AT.REMOVEDIR)
+
+    async def link(self, oldpath: Pointer[Path], newpath: Pointer[Path]) -> None:
+        async with oldpath.borrow(self) as oldpath:
+            async with newpath.borrow(self) as newpath:
+                await rsyscall.near.linkat(self.sysif, None, oldpath.near, None, newpath.near, 0)
+
+    async def symlink(self, target: Pointer, linkpath: Pointer[Path]) -> None:
+        async with target.borrow(self) as target:
+            async with linkpath.borrow(self) as linkpath:
+                await rsyscall.near.symlinkat(self.sysif, target.near, None, linkpath.near)
+
+    async def chdir(self, path: Pointer[Path]) -> None:
+        async with path.borrow(self) as path:
+            await rsyscall.near.chdir(self.sysif, path.near)
 
 @dataclass
 class Pipe:

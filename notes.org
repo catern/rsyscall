@@ -13706,6 +13706,7 @@ but also, principled.
 
     which really is a consequence of them not have far/handle equivalents
     because embedding a dirfd is making something far, really.
+*** start implementing functions
 ** use a union for repl results, not inheritance
 ** convert serializer to tagless final style
    we'll encapsulate the code-to-optimize in a function,
@@ -13717,3 +13718,4 @@ but also, principled.
    indicating the lack of IO happening
 
    ok sure fine this is a good idea but still, what about Path?
+** use conventional syscalls instead of *at when not doing *at things

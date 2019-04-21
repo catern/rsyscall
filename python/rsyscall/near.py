@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 from rsyscall.sys.epoll import EpollCtlOp
 from rsyscall.sys.prctl import PrctlOp
 from rsyscall.sys.wait import IdType
+from rsyscall.fcntl import AT
 from rsyscall.sched import UnshareFlag
 
 class SYS(enum.IntEnum):
@@ -56,6 +57,14 @@ class SYS(enum.IntEnum):
     listen = lib.SYS_listen
     setsockopt = lib.SYS_setsockopt
     rt_sigaction = lib.SYS_rt_sigaction
+    openat = lib.SYS_openat
+    mkdirat = lib.SYS_mkdirat
+    faccessat = lib.SYS_faccessat
+    unlinkat = lib.SYS_unlinkat
+    linkat = lib.SYS_linkat
+    renameat2 = lib.SYS_renameat2
+    symlinkat = lib.SYS_symlinkat
+    readlinkat = lib.SYS_readlinkat
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -328,3 +337,60 @@ async def rt_sigaction(sysif: SyscallInterface, signum: signal.Signals,
         oldact = 0 # type: ignore
     await sysif.syscall(SYS.rt_sigaction, signum, act, oldact, size)
 
+async def openat(sysif: SyscallInterface, dirfd: t.Optional[FileDescriptor],
+                 path: Pointer, flags: int, mode: int) -> FileDescriptor:
+    if dirfd is None:
+        dirfd = AT.FDCWD # type: ignore
+    return FileDescriptor(await sysif.syscall(SYS.openat, dirfd, path, flags, mode))
+
+
+async def mkdirat(sysif: SyscallInterface,
+                  dirfd: t.Optional[FileDescriptor], path: Pointer, mode: int) -> None:
+    if dirfd is None:
+        dirfd = AT.FDCWD # type: ignore
+    await sysif.syscall(SYS.mkdirat, dirfd, path, mode)
+
+async def faccessat(sysif: SyscallInterface,
+                    dirfd: t.Optional[FileDescriptor], path: Pointer, flags: int, mode: int) -> None:
+    if dirfd is None:
+        dirfd = AT.FDCWD # type: ignore
+    await sysif.syscall(SYS.faccessat, dirfd, path, flags, mode)
+
+async def unlinkat(sysif: SyscallInterface,
+                   dirfd: t.Optional[FileDescriptor], path: Pointer, flags: int) -> None:
+    if dirfd is None:
+        dirfd = AT.FDCWD # type: ignore
+    await sysif.syscall(SYS.unlinkat, dirfd, path, flags)
+
+async def linkat(sysif: SyscallInterface,
+                 olddirfd: t.Optional[FileDescriptor], oldpath: Pointer,
+                 newdirfd: t.Optional[FileDescriptor], newpath: Pointer,
+                 flags: int) -> None:
+    if olddirfd is None:
+        olddirfd = AT.FDCWD # type: ignore
+    if newdirfd is None:
+        newdirfd = AT.FDCWD # type: ignore
+    await sysif.syscall(SYS.linkat, olddirfd, oldpath, newdirfd, newpath, flags)
+
+async def renameat2(sysif: SyscallInterface,
+                    olddirfd: t.Optional[FileDescriptor], oldpath: Pointer,
+                    newdirfd: t.Optional[FileDescriptor], newpath: Pointer,
+                    flags: int) -> None:
+    if olddirfd is None:
+        olddirfd = AT.FDCWD # type: ignore
+    if newdirfd is None:
+        newdirfd = AT.FDCWD # type: ignore
+    await sysif.syscall(SYS.renameat2, olddirfd, oldpath, newdirfd, newpath, flags)
+
+async def symlinkat(sysif: SyscallInterface,
+                    target: Pointer, newdirfd: t.Optional[FileDescriptor], linkpath: Pointer) -> None:
+    if newdirfd is None:
+        newdirfd = AT.FDCWD # type: ignore
+    await sysif.syscall(SYS.symlinkat, target, newdirfd, linkpath)
+
+async def readlinkat(sysif: SyscallInterface,
+                     dirfd: t.Optional[FileDescriptor], path: Pointer,
+                     buf: Pointer, bufsiz: int) -> int:
+    if dirfd is None:
+        dirfd = AT.FDCWD # type: ignore
+    return (await sysif.syscall(SYS.readlinkat, dirfd, path, buf, bufsiz))
