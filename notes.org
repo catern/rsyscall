@@ -13619,6 +13619,45 @@ but also, principled.
 
    which um. I can pass as a path,
    instead of this hassle of separate fd argument.
+*** hmmm
+    so what if we were fully object-oriented?
+
+    what if we just resolved names to fds,
+    and didn't have paths?
+
+    well then open would be something you'd do on an fd.
+    open this entry in this fd to get a new fd.
+    hmm.
+
+    ok so could we do the same thing?
+
+    basically the notion is that passing paths around is the wrong thing;
+
+    we should pass around names,
+    and have to deref them relative to fds.
+
+    yeah that's more legacy-free
+
+    ok and then paths can just be a list of components?
+
+    well, maybe we'll still explicitly denote whether there's a leading empty component or not?
+
+    AT_THIS_ROOT can still restrict absolute path lookups,
+    so we don't need to prevent users from passing absolute paths to openat
+
+    right okay so we want to be able to represent everything, so:
+    we'll allow zero-length components,
+    and we'll strip off a single leading zero-length component,
+    and we'll just have a tag which says 
+
+    um, prepend a zero-length component?
+
+    but what if we have multilpe leading zero components?
+    strip all?
+
+    what if we start with no components and someone wants to append one?
+
+    OK, let's just be a list of components then, no base.
 ** use a union for repl results, not inheritance
 ** convert serializer to tagless final style
    we'll encapsulate the code-to-optimize in a function,
