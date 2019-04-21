@@ -5,30 +5,34 @@ from rsyscall.io import AsyncFileDescriptor
 from rsyscall.io import local_stdtask, StandardTask, Path
 from rsyscall.io import Command
 import rsyscall.io as rsc
-import rsyscall.sys.inotify as inotify
-from rsyscall.sys.epoll import EpollEvent, EpollEventMask
-from rsyscall.sys.capability import CAP, CapHeader, CapData
-from rsyscall.sys.prctl import PrctlOp, CapAmbient
 from rsyscall.tests.test_ssh import ssh_to_localhost
-from rsyscall.net.if_ import Ifreq
 import shutil
 import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
 from rsyscall.io import local_stdtask
+from rsyscall.persistent import fork_persistent
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
 import socket
 import struct
 import time
-import signal
 import unittest
 import trio
 import trio.hazmat
 import rsyscall.io
 import os
+
+import rsyscall.sys.inotify as inotify
+from rsyscall.sys.epoll import EpollEvent, EpollEventMask
+from rsyscall.sys.capability import CAP, CapHeader, CapData
+from rsyscall.sys.prctl import PrctlOp, CapAmbient
+from rsyscall.sys.socket import SOCK, AF
+from rsyscall.linux.netlink import NETLINK
+from rsyscall.signal import Signals
+from rsyscall.net.if_ import Ifreq
+
 import logging
-import signal
 logger = logging.getLogger(__name__)
 
 # logging.basicConfig(level=logging.DEBUG)
@@ -71,8 +75,8 @@ class TestIO(unittest.TestCase):
             ifreq = Ifreq()
             ifreq.name = b"1234"
             ifreq.ifindex = 13
-            ptr = await stdtask.task.to_pointer(ifreq)
-            read_ifreq = await ptr.read()
+            iptr = await stdtask.task.to_pointer(ifreq)
+            read_ifreq = await iptr.read()
             self.assertEqual(read_ifreq.ifindex, ifreq.ifindex)
             self.assertEqual(read_ifreq.name, ifreq.name)
         trio.run(self.runner, test)
@@ -211,7 +215,7 @@ class TestIO(unittest.TestCase):
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             async with (await stdtask.mkdtemp()) as path:
-    #                 async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
+    #                 async with (await stdtask.task.socket_unix(SOCK.STREAM)) as sockfd:
     #                     addr = (path/"sock").unix_address()
     #                     await sockfd.bind(addr)
     #     trio.run(test)
@@ -219,11 +223,11 @@ class TestIO(unittest.TestCase):
     def test_listen(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
-                async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
+                async with (await stdtask.task.socket_unix(SOCK.STREAM)) as sockfd:
                     addr = (path/"sock").unix_address()
                     await sockfd.bind(addr)
                     await sockfd.listen(10)
-                    async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as clientfd:
+                    async with (await stdtask.task.socket_unix(SOCK.STREAM)) as clientfd:
                         await clientfd.connect(addr)
                         connfd, client_addr = await sockfd.accept(0) # type: ignore
                         async with connfd:
@@ -233,12 +237,12 @@ class TestIO(unittest.TestCase):
     def test_listen_async(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
-                sockfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+                sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
                 addr = (path/"sock").unix_address()
                 await sockfd.bind(addr)
                 await sockfd.listen(10)
                 async_sockfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
-                clientfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+                clientfd = await stdtask.task.socket_unix(SOCK.STREAM)
                 async_clientfd = await AsyncFileDescriptor.make(stdtask.epoller, clientfd)
                 await async_clientfd.connect(addr)
                 connfd, client_addr = await async_sockfd.accept(0) # type: ignore
@@ -251,12 +255,12 @@ class TestIO(unittest.TestCase):
     def test_listen_async_accept(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
-                sockfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+                sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
                 addr = (path/"sock").unix_address()
                 await sockfd.bind(addr)
                 await sockfd.listen(10)
                 async_sockfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
-                clientfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+                clientfd = await stdtask.task.socket_unix(SOCK.STREAM)
                 async_clientfd = await AsyncFileDescriptor.make(stdtask.epoller, clientfd)
                 await async_clientfd.connect(addr)
                 async_connfd, client_addr = await async_sockfd.accept_as_async() # type: ignore
@@ -281,12 +285,12 @@ class TestIO(unittest.TestCase):
     def test_repl(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
-                sockfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+                sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
                 addr = (path/"sock").unix_address()
                 await sockfd.bind(addr)
                 await sockfd.listen(10)
                 async_sockfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
-                clientfd = await stdtask.task.socket_unix(socket.SOCK_STREAM)
+                clientfd = await stdtask.task.socket_unix(SOCK.STREAM)
                 async_clientfd = await AsyncFileDescriptor.make(stdtask.epoller, clientfd)
                 await async_clientfd.connect(addr)
                 await async_clientfd.write(b"foo = 11\n")
@@ -300,11 +304,11 @@ class TestIO(unittest.TestCase):
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             async with (await stdtask.mkdtemp()) as path:
-    #                 async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as sockfd:
+    #                 async with (await stdtask.task.socket_unix(SOCK.STREAM)) as sockfd:
     #                     sockpath = path/("long"*25 + "sock")
     #                     await rsyscall.io.robust_unix_bind(sockpath, sockfd)
     #                     await sockfd.listen(10)
-    #                     async with (await stdtask.task.socket_unix(socket.SOCK_STREAM)) as clientfd:
+    #                     async with (await stdtask.task.socket_unix(SOCK.STREAM)) as clientfd:
     #                         # Unix sockets succeed in connecting immediately, but then block for writing.
     #                         await rsyscall.io.robust_unix_connect(sockpath, clientfd)
     #                         connfd, client_addr = await sockfd.accept(0) # type: ignore
@@ -318,13 +322,13 @@ class TestIO(unittest.TestCase):
     # def test_ip_listen_async(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #              async with (await stdtask.task.socket_inet(socket.SOCK_STREAM)) as sockfd:
+    #              async with (await stdtask.task.socket_inet(SOCK.STREAM)) as sockfd:
     #                  bind_addr = sockfd.file.address_type(0, 0x7F_00_00_01)
     #                  await sockfd.bind(bind_addr)
     #                  addr = await sockfd.getsockname()
     #                  await sockfd.listen(10)
     #                  async with (await AsyncFileDescriptor.make(stdtask.resources.epoller, sockfd)) as async_sockfd:
-    #                      clientfd = await stdtask.task.socket_inet(socket.SOCK_STREAM)
+    #                      clientfd = await stdtask.task.socket_inet(SOCK.STREAM)
     #                      async_clientfd = await AsyncFileDescriptor.make(stdtask.resources.epoller, clientfd)
     #                      async with async_clientfd:
     #                          await async_clientfd.connect(addr)
@@ -336,15 +340,15 @@ class TestIO(unittest.TestCase):
     # def test_ip_dgram_connect(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #              async with (await stdtask.task.socket_inet(socket.SOCK_DGRAM)) as recv_sockfd:
+    #              async with (await stdtask.task.socket_inet(SOCK.DGRAM)) as recv_sockfd:
     #                  await recv_sockfd.bind(recv_sockfd.file.address_type(0, 0x7F_00_00_01))
     #                  addr_recv = await recv_sockfd.getsockname()
-    #                  async with (await stdtask.task.socket_inet(socket.SOCK_DGRAM)) as send1_sockfd:
+    #                  async with (await stdtask.task.socket_inet(SOCK.DGRAM)) as send1_sockfd:
     #                      await send1_sockfd.bind(recv_sockfd.file.address_type(0, 0x7F_00_00_01))
     #                      addr_send1 = await send1_sockfd.getsockname()
     #                      await recv_sockfd.connect(addr_send1)
     #                      await send1_sockfd.connect(addr_recv)
-    #                      async with (await stdtask.task.socket_inet(socket.SOCK_DGRAM)) as send2_sockfd:
+    #                      async with (await stdtask.task.socket_inet(SOCK.DGRAM)) as send2_sockfd:
     #                          await send2_sockfd.bind(recv_sockfd.file.address_type(0, 0x7F_00_00_01))
     #                          await send2_sockfd.connect(addr_recv)
     #                          addr_send2 = await send1_sockfd.getsockname()
@@ -411,10 +415,10 @@ class TestIO(unittest.TestCase):
             thread1 = await stdtask.fork()
             await thread1.stdtask.unshare_user()
             await thread1.stdtask.unshare_net()
-            procself = stdtask.task.root().handle/"proc"/"self"/"ns"
-            netnsfd = await thread1.stdtask.task.open(selfns/"net", os.O_RDONLY)
+            procselfns = stdtask.task.root().handle/"proc"/"self"/"ns"
+            netnsfd = await thread1.stdtask.task.open(procselfns/"net", os.O_RDONLY)
             netnsfd = netnsfd.move(stdtask.task.base)
-            usernsfd = await thread1.stdtask.task.open(selfns/"user", os.O_RDONLY)
+            usernsfd = await thread1.stdtask.task.open(procselfns/"user", os.O_RDONLY)
             usernsfd = usernsfd.move(stdtask.task.base)
 
             thread2 = await stdtask.fork()
@@ -433,7 +437,7 @@ class TestIO(unittest.TestCase):
             tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
             ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
             await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
-            sock = await stdtask.task.socket_inet(socket.SOCK_STREAM)
+            sock = await stdtask.task.socket_inet(SOCK.STREAM)
             await sock.handle.ioctl(net.SIOCGIFINDEX, ptr)
             # this is the second interface in an empty netns
             self.assertEqual((await ptr.read()).ifindex, 2)
@@ -447,13 +451,13 @@ class TestIO(unittest.TestCase):
             await stdtask.unshare_user()
             await stdtask.unshare_net()
 
-            netsock = await stdtask.task.base.socket(socket.AF_NETLINK, socket.SOCK_DGRAM, lib.NETLINK_ROUTE)
+            netsock = await stdtask.task.base.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
             await netsock.bind(await stdtask.task.to_pointer(SockaddrNl(0, RTMGRP.LINK)))
 
             tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
             ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
             await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
-            sock = await stdtask.task.socket_inet(socket.SOCK_STREAM)
+            sock = await stdtask.task.socket_inet(SOCK.STREAM)
             await sock.handle.ioctl(net.SIOCGIFINDEX, ptr)
             # this is the second interface in an empty netns
             self.assertEqual((await ptr.read()).ifindex, 2)
@@ -665,7 +669,7 @@ class TestIO(unittest.TestCase):
     def test_persistent_thread_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as tmpdir:
-                per_stdtask, thread, connection = await stdtask.fork_persistent(tmpdir/"persist.sock")
+                per_stdtask, thread, connection = await fork_persistent(stdtask, tmpdir/"persist.sock")
                 await connection.reconnect(stdtask)
                 await per_stdtask.unshare_files()
                 await per_stdtask.exit(0)
@@ -674,7 +678,7 @@ class TestIO(unittest.TestCase):
     def test_persistent_thread_nest_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as tmpdir:
-                per_stdtask, thread2, connection = await stdtask.fork_persistent(tmpdir/"persist.sock")
+                per_stdtask, thread2, connection = await fork_persistent(stdtask, tmpdir/"persist.sock")
                 thread3 = await per_stdtask.fork()
                 async with thread3 as stdtask3:
                     stdtask3 = thread3.stdtask
@@ -687,7 +691,7 @@ class TestIO(unittest.TestCase):
             async with ssh_to_localhost(stdtask) as host:
                 local_child, remote_stdtask = await host.ssh(stdtask)
                 logger.info("about to fork")
-                per_stdtask, thread, connection = await remote_stdtask.fork_persistent(
+                per_stdtask, thread, connection = await fork_persistent(remote_stdtask,
                     remote_stdtask.task.cwd()/"persist.sock")
                 await per_stdtask.unshare_files()
                 await connection.reconnect(remote_stdtask)
@@ -708,7 +712,7 @@ class TestIO(unittest.TestCase):
                     # probably.
                     # so, okay. SSHHost perhaps?
                     logger.info("about to fork")
-                    per_stdtask, thread, server = await remote_stdtask.fork_persistent(path/"persist.sock")
+                    per_stdtask, thread, server = await fork_persistent(remote_stdtask, path/"persist.sock")
                     logger.info("forked persistent, %s", thread.child_task.process.near)
                     await server.make_persistent()
                     await local_child.kill()
@@ -770,11 +774,11 @@ class TestIO(unittest.TestCase):
             async with thread as stdtask2:
                 # have to use an epoller for that specific task
                 epoller = await stdtask2.task.make_epoll_center()
-                sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, epoller, {signal.SIGINT})
-                await thread.thread.child_task.send_signal(signal.SIGINT)
-                orig_mask = await rsyscall.io.SignalBlock.make(stdtask.task, {signal.SIGINT})
+                sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, epoller, {Signals.SIGINT})
+                await thread.thread.child_task.send_signal(Signals.SIGINT)
+                orig_mask = await rsyscall.io.SignalBlock.make(stdtask.task, {Signals.SIGINT})
                 sigdata = await sigqueue.read()
-                self.assertEqual(sigdata.ssi_signo, signal.SIGINT)
+                self.assertEqual(sigdata.ssi_signo, Signals.SIGINT)
         trio.run(self.runner, test)
 
     def test_ssh_basic(self) -> None:
@@ -852,9 +856,8 @@ class TestIO(unittest.TestCase):
     @unittest.skip("requires a user")
     def test_ssh_shell(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            async with ssh_to_localhost(stdtask) as ssh_command:
-                local_child, remote_stdtask = await rsyscall.io.spawn_ssh(
-                    stdtask, ssh_command)
+            async with ssh_to_localhost(stdtask) as host:
+                local_child, remote_stdtask = await host.ssh(stdtask)
                 async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
                     thread = await remote_stdtask.fork()
                     bash = await rsyscall.io.which(remote_stdtask, b"bash")
@@ -1056,7 +1059,7 @@ class TestIO(unittest.TestCase):
     # def test_pass_fd(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
     #             in_data = b"hello"
     #             await l.write(in_data)
     #             out_data = await r.read(len(in_data))
@@ -1066,7 +1069,7 @@ class TestIO(unittest.TestCase):
     # def test_socketpair(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
     #             in_data = b"hello"
     #             await l.write(in_data)
     #             out_data = await r.read(len(in_data))
@@ -1076,7 +1079,7 @@ class TestIO(unittest.TestCase):
     def test_pass_fd(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             task = stdtask.task
-            l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+            l, r = await stdtask.task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
             await memsys.sendmsg_fds(task.base, task.transport, task.allocator,
                                      l.handle.far, [l.handle.far])
             fds = await memsys.recvmsg_fds(task.base, task.transport, task.allocator,
@@ -1095,10 +1098,10 @@ class TestIO(unittest.TestCase):
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             task = stdtask.task
-    #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
     #             rsyscall_task, [r_remote] = await stdtask.spawn([r.handle.far])
     #             async with rsyscall_task as stdtask2:
-    #                 l2, r2 = await stdtask.task.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+    #                 l2, r2 = await stdtask.task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
     #                 await memsys.sendmsg_fds(task.base, task.gateway, task.allocator,
     #                                          l.handle.far, [r2.handle.far])
     #                 [r2_remote] = await memsys.recvmsg_fds(
@@ -1131,12 +1134,12 @@ class TestIO(unittest.TestCase):
     #                 child = await binder_process.execve(socket_binder_executable, ["socket_binder"])
     #                 data_path, pass_path = [rsyscall.io.Path.from_bytes(task, data_path) async
     #                                         for line in rsyscall.io.read_lines(async_describe)]
-    #                 pass_sock = await task.socket_unix(socket.SOCK_STREAM)
+    #                 pass_sock = await task.socket_unix(SOCK.STREAM)
     #                 await rsyscall.io.robust_unix_connect(pass_path, pass_sock)
     #                 listening_sock, = await memsys.recvmsg_fds(task.base, task.gateway, task.allocator,
     #                                                            pass_sock.handle.far, 1)
     #                 (await child.wait_for_exit()).check()
-    #             client_sock = await task.socket_unix(socket.SOCK_STREAM)
+    #             client_sock = await task.socket_unix(SOCK.STREAM)
     #             await rsyscall.io.robust_unix_connect(data_path, client_sock)
     #             server_fd = await near.accept4(task.base.sysif, listening_sock, None, None, os.O_CLOEXEC)
     #     trio.run(test)

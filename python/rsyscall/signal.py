@@ -39,7 +39,7 @@ class Sigset(t.Set[Signals], Struct):
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(self.to_cffi()))
 
-    T = t.TypeVar('T', bound='EpollEvent')
+    T = t.TypeVar('T', bound='Sigset')
     @classmethod
     def from_cffi(cls: t.Type[T], struct: t.Any) -> T:
         return cls({signal.Signals(bit) for bit in bits(struct.val)})
@@ -56,7 +56,7 @@ class Sigset(t.Set[Signals], Struct):
 @dataclass
 class Sigaction(Struct):
     handler: t.Union[Sighandler, Pointer]
-    flags: SA = 0
+    flags: SA = SA(0)
     mask: Sigset = field(default_factory=Sigset)
     restorer: t.Optional[Pointer] = None
 
@@ -68,7 +68,7 @@ class Sigaction(Struct):
             "ksa_mask": self.mask.to_cffi()[0],
         })))
 
-    T = t.TypeVar('T', bound='EpollEvent')
+    T = t.TypeVar('T', bound='Sigaction')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct kernel_sigaction const*', ffi.from_buffer(data))
@@ -96,7 +96,7 @@ from unittest import TestCase
 
 class TestSignal(TestCase):
     def test_sigaction(self) -> None:
-        sa = Sigaction(Sighandler.IGN, 0, Sigset(), Pointer(0x42))
+        sa = Sigaction(Sighandler.IGN, SA(0), Sigset(), Pointer(0x42))
         out_sa = Sigaction.from_bytes(sa.to_bytes())
         self.assertEqual(sa.handler, out_sa.handler)
         self.assertEqual(sa.flags, out_sa.flags)

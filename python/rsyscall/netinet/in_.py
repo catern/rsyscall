@@ -35,15 +35,18 @@ class SockaddrIn(Address):
     def __str__(self) -> str:
         return f"SockaddrIn({self.addr_as_string()}:{self.port})"
 
-@dataclass
 class SockaddrIn6(Address):
     port: int
     addr: ipaddress.IPv6Address
     flowinfo: int = 0
     scope_id: int = 0
-
-    def __post_init__(self) -> None:
-        self.addr = ipaddress.IPv6Address(self.addr)
+    def __init__(self, port: int, addr: t.Union[str, int, ipaddress.IPv6Address],
+                 flowinfo: int=0, scope_id: int=0) -> None:
+        # these are in host byte order, of course
+        self.port = port
+        self.addr = ipaddress.IPv6Address(addr)
+        self.flowinfo = flowinfo
+        self.scope_id = scope_id
 
     def to_bytes(self) -> bytes:
         struct = ffi.new('struct sockaddr_in6*',
@@ -64,3 +67,5 @@ class SockaddrIn6(Address):
     def sizeof(cls) -> int:
         return ffi.sizeof('struct sockaddr_in6')
 
+    def __str__(self) -> str:
+        return f"SockaddrIn6({self.addr_as_string()}:{self.port})"

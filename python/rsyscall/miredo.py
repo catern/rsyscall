@@ -21,7 +21,7 @@ from rsyscall.sys.socket import AF, SOCK, SOL
 from rsyscall.sys.prctl import PrctlOp, CapAmbient
 from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.netinet.ip import IP, IPPROTO
-from rsyscall.linux.netlink import SockaddrNl
+from rsyscall.linux.netlink import SockaddrNl, NETLINK
 from rsyscall.linux.rtnetlink import RTMGRP
 import rsyscall.net.if_ as netif
 
@@ -137,7 +137,7 @@ class TestMiredo(TrioTestCase):
         print("a", time.time())
         self.miredo = await start_miredo(self.nursery, self.stdtask)
         print("b", time.time())
-        self.netsock = await self.miredo.ns_thread.stdtask.task.base.socket(AF.NETLINK, SOCK.DGRAM, lib.NETLINK_ROUTE)
+        self.netsock = await self.miredo.ns_thread.stdtask.task.base.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
         print("b-1", time.time())
         print("b0", time.time())
         await self.netsock.bind(

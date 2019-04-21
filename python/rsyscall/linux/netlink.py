@@ -1,7 +1,11 @@
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.sys.socket import Address
+from rsyscall.sys.socket import Address, AF
 import typing as t
+import enum
 from dataclasses import dataclass
+
+class NETLINK(enum.IntEnum):
+    ROUTE = lib.NETLINK_ROUTE
 
 @dataclass
 class SockaddrNl(Address):
@@ -10,7 +14,7 @@ class SockaddrNl(Address):
     groups: int
 
     def to_bytes(self) -> bytes:
-        struct = ffi.new('struct sockaddr_nl*', (lib.AF_NETLINK, 0, self.pid, self.groups))
+        struct = ffi.new('struct sockaddr_nl*', (AF.NETLINK, 0, self.pid, self.groups))
         return bytes(ffi.buffer(struct))
 
     T = t.TypeVar('T', bound='SockaddrNl')

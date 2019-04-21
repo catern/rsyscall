@@ -13406,3 +13406,217 @@ but also, principled.
     Not the core stuff, of course, but sure, Nix for the external stuff.
 
     And... we can probably drop those binaries from stdtask
+** remove binaries from standardtask
+   And therefore all associated uses from them from io.py
+
+   We shouldn't have to depend on any binaries in the main thing.
+   Those should all be extensions.
+
+   We'll dep on binaries using Nix, that's fine.
+
+   The core is a C library, that's fine, we don't need remote stuff.
+
+   oh. blah. rm is useful though.
+   blaaah we're using sh to 
+*** TODO figure out temporary directory cleanup
+    blah blah argh blah
+
+    we're currently using sh to do it, hmm.
+
+    I *guess* we could just use sh from /bin/sh.
+
+    ugh no that would just be more constraints...
+
+    better to use actual binaries
+
+    let's just move it into an extension module along with the rest of binary-users
+
+    Or, we could add a C function for it.
+
+    Let's start by moving this out.
+
+    An external mkdtemp could find the binaries through, what means?
+    Well, if we're set up with Nix stuff,
+    we can rely on that being valid in all stdtasks,
+    roughly... might want to annotate some things there.
+
+    If we aren't set up with Nix stuff, we can use PATH.
+    We can have the executable cache be attached to the stdtask, that's fine;
+    or maybe not, maybe that can be external too.
+
+    Let's think about this.
+    Because, a robust solution to this,
+    is necessary for other processes to not be a hassle to run remotely.
+
+    And we want to move all this out anyway.
+
+    OK, ok, so.
+    Let's maybe be able to use both Nix stuff and PATH?
+    So, how can we represent the Nix stuff?
+
+    If I'm in some derivation...
+    or, rather, I was built in some derivation...
+    I know the paths I have available.
+    But, how do I know those are available remotely too?
+
+    After all - when I spawn a subprocess -
+    it only has the resources I gave it -
+    and when I'm in some low-level thing,
+    I spawn the subprocess with only some resources.
+
+    So then I guess what I should obviously do is deploy the Nix paths when I spawn.
+
+    I mean - merely spawning doesn't give me those paths.
+    And it shouldn't!
+    They're ancillary, not needed to the core thing.
+
+    But I could bundle them together.
+    I could maybe have some kind of Store abstraction,
+    with a list of valid paths?
+
+    Hm, very tricky.
+    I mean, this breaks the whole central idea of Nix:
+    correct deployment.
+    When I'm on a single host, for my code to run,
+    my references must all be valid.
+
+    For me to operate on a remote host...
+    well, what does it mean?
+
+    When I'm operating on a host, my references to things on that host must all be valid.
+    Nix guarantees this normally by looking at all my references,
+    and not allowing me to exist on disk if my references aren't all valid.
+    But, then again... in a dynamic system I could always, um...
+    get a new reference from someone else?
+    Right, like:
+    Someone could connect to me and tell me the path of an executable to run,
+    or a library to load.
+    Dynamically, we can't cover everything.
+
+    Well, does that really match what's going on here though?
+    There's a certain static-ness to operating on a remote host.
+    I mean, we can check all the validity up front before allowing the,
+    function/method-holding object to be constructed, or something.
+
+    Sure, I mean, that all seems fine.
+    But then - what about - how do we share information about validity?
+
+    Well how do we know things are still valid?
+    Hm - I guess - Nix gives no such gurantee to us...
+    unless! ah! We open temp roots for things.
+
+    OK, so say we open temp roots for things...
+    How do we know we already have temp roots for things?
+    Where's that info stored?
+
+    Could be in some per-store class thing,
+    or maybe per fsinformation/mount namespace or whatever.
+
+    I mean, nothing much wrong with that,
+    except, I feel reluctant to explicitly deal with such objects.
+    Although, maybe it's not so bad?
+
+    If we explicitly deal in the Nix store deployment object stuff.
+    That's kind of nice, really.
+    We'll have some classmethod to construct the executable object from a Nix store.
+
+    Then also we can support the alternative model of just,
+    looking things up on the path,
+    with another classmethod.
+    Maybe one which takes an executable path lookup cache thing.
+
+    that too is a separate class.
+
+    ok so the nix store object will check mount namespace and the root dir in fsinformation,
+    on the task it's working with.
+    
+    if they match, clearly it can be used.
+    but it can also be told about new mount namespaces,
+    and new root dirs,
+    which are valid.
+    a root dir is only valid in a specific mount namespace.
+    but might be valid in multiple.
+
+    right? it's organized like that?
+    could also be like: a mount namespace is only valid in a specific root dir,
+    but might be valid in multiple.
+
+    no that doesn't make sense, we'll organize it starting with root dir.
+*** TODO figure out pkglibexec things
+    OK, so.
+
+    These are all ancillary things. They aren't needed for the main stuff.
+
+    Also, they should be static binaries.
+    In which case, they can just be embedded into the library.
+    In... most cases.
+
+    move fork_persistent out
+    i'm on the edge of being done
+*** have only local calls in the main basic library
+    The thing to make rsyscall threads,
+    is on a level above just making syscalls in our current thread.
+
+    We can pare it down quite nicely to just local calls.
+** use struct pointers for paths
+   That is the big remaining place we don't use pointers.
+   And the main reason for variable-size things!
+
+   Well, we can always use PATH_MAX
+   No we can't use that.
+
+   Well then what do we do when we want to read a symlink target or whatever?
+   We allocate a buffer, fine, I guess.
+
+   Guessing the size.
+
+   When we want to send something over it's fine though.
+
+   Well... sizeof on Struct could just be a hint, maybe?
+   The size of the buffer to allocate for reading this thing?
+   But not the actual size?
+   That seems viable.t
+
+   what about for dirfd-rooted paths?
+   those are fine and not affected I guess
+   (empty paths are still not supported, they're from something else)
+
+   what about for the Path object which is object-oriented?
+   should it hold a pointer?
+
+   should we just regress to free functions?
+
+   well what would a free function even look like?
+   we'd need something that bundles together a pointer and a dirfd,
+   since I don't want to pass them separately.
+
+   so, having a Path object which holds a pointer, might be sound. hm.
+
+   what would it look like? would we put it in handle?
+
+   what if we had other structs like this?
+   which contain a reference to an fd?
+
+   or other structs which contain a reference to a function pointer?? we do!
+
+   how do we handle them?
+   one way would be to inherit from pointer and stick our additional things on the inheriting class.
+   that would at least preserve the references...
+
+   uhhh does that make sense though? how would we do that?
+   I mean...
+   we could boil ourselves down to some bytes and misc other stuff,
+   and also a class for the pointer...
+
+   well what if the pointer gets overwritten??
+   how do we determine if the references are leaked or what
+
+   this is the problem of garbage collection when we pass in references to the kernel.
+   or indeed, passing in references to anywhere we can't see.
+
+   ok i'm not too concerned about that, I'm just concerned about,
+   some kind of object, um.
+
+   which um. I can pass as a path,
+   instead of this hassle of separate fd argument.
+** use a union for repl results, not inheritance

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 from rsyscall.sys.socket import AF, SOCK
 from rsyscall.sched import UnshareFlag
 from rsyscall.struct import T_struct
-from rsyscall.signal import Sigaction, Sigset
+from rsyscall.signal import Sigaction, Sigset, Signals
 
 # This is like a far pointer plus a segment register.
 # It means that, as long as it doesn't throw an exception,
@@ -564,7 +564,7 @@ class Task(rsyscall.far.Task):
             async with datap.borrow(self) as datap:
                 await rsyscall.near.capget(self.sysif, hdrp.near, datap.near)
 
-    async def rt_sigaction(self, signum: signal.Signals,
+    async def rt_sigaction(self, signum: Signals,
                            act: t.Optional[Pointer[Sigaction]],
                            oldact: t.Optional[Pointer[Sigaction]]) -> None:
         async with contextlib.AsyncExitStack() as stack:
