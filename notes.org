@@ -13620,3 +13620,13 @@ but also, principled.
    which um. I can pass as a path,
    instead of this hassle of separate fd argument.
 ** use a union for repl results, not inheritance
+** convert serializer to tagless final style
+   we'll encapsulate the code-to-optimize in a function,
+   and we'll run it twice:
+   first time returning null pointers,
+   second time returning real things.
+
+   and the semantic functions will be normal, not async;
+   indicating the lack of IO happening
+
+   ok sure fine this is a good idea but still, what about Path?
