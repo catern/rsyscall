@@ -69,7 +69,7 @@ async def exec_miredo_run_client(
 
 async def add_to_ambient(task: rsc.Task, capset: t.Set[CAP]) -> None:
     hdr_ptr = await task.to_pointer(CapHeader())
-    data_ptr = await task.malloc_type(CapData)
+    data_ptr = await task.malloc_struct(CapData)
     await task.base.capget(hdr_ptr, data_ptr)
     data = await data_ptr.read()
     data.inheritable.update(capset)
@@ -147,17 +147,16 @@ class TestMiredo(TrioTestCase):
 
     async def test_miredo(self) -> None:
         print("b1", time.time())
-        ping6 = await rsc.which(self.stdtask, "ping6")
+        ping6 = (await rsc.which(self.stdtask, "ping")).args('-6')
         print("b1.5", time.time())
         # TODO lol actually parse this, don't just read and throw it away
         await self.miredo.ns_thread.stdtask.task.read(self.netsock.far)
         print("b2", time.time())
-        # ping needs root, so let's fork it off from the
-        # miredo-ns-thread, which has root in the namespace
         thread = await self.miredo.ns_thread.stdtask.fork()
         print("c", time.time())
         # bash = await rsc.which(self.stdtask, "bash")
         # await (await thread.exec(bash)).check()
+        await add_to_ambient(thread.stdtask.task, {CAP.NET_RAW})
         await (await thread.exec(ping6.args('-c', '1', 'google.com'))).check()
         print("d", time.time())
 

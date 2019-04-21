@@ -18,7 +18,7 @@ import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.far as far
 import rsyscall.near as near
-from rsyscall.struct import T_struct
+from rsyscall.struct import T_serializable, T_struct
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO
 from rsyscall.sys.socket import T_addr
@@ -195,22 +195,20 @@ class File:
 T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
-class TypedPointer(handle.Pointer[T_struct]):
-    def __init__(self, task: Task, data_cls: t.Type[T_struct], ptr: near.Pointer, to_free) -> None:
-        super().__init__(task.base, data_cls, ptr, to_free)
+class TypedPointer(handle.Pointer[T_serializable]):
+    def __init__(self, task: Task, data_cls: t.Type[T_serializable], ptr: near.Pointer, size: int, to_free) -> None:
+        super().__init__(task.base, data_cls, ptr, size, to_free)
         self.mem_task = task
 
-    async def write(self, data: T_struct) -> None:
-        size = self.data_cls.sizeof()
+    async def write(self, data: T_serializable) -> None:
         data_bytes = data.to_bytes()
-        if len(data_bytes) > size:
+        if len(data_bytes) > self.bytesize():
             raise Exception("data is too long", len(data_bytes),
-                            "for this typed pointer of size", size)
+                            "for this typed pointer of size", self.bytesize())
         await self.mem_task.transport.write(self.far, data_bytes)
 
-    async def read(self) -> T_struct:
-        size = self.data_cls.sizeof()
-        data = await self.mem_task.transport.read(self.far, size)
+    async def read(self) -> T_serializable:
+        data = await self.mem_task.transport.read(self.far, self.bytesize())
         return self.data_cls.from_bytes(data)
 
 class Task:
@@ -248,12 +246,19 @@ class Task:
     async def close(self):
         await self.syscall.close_interface()
 
-    async def malloc_type(self, cls: t.Type[T_struct]) -> TypedPointer[T_struct]:
-        allocation = await self.allocator.malloc(cls.sizeof())
-        return TypedPointer(self, cls, allocation.pointer.near, allocation.free)
+    async def malloc_struct(self, cls: t.Type[T_struct]) -> TypedPointer[T_struct]:
+        return await self.malloc_type(cls, cls.sizeof())
 
-    async def to_pointer(self, data: T_struct) -> TypedPointer[T_struct]:
-        ptr = await self.malloc_type(type(data))
+    async def malloc_type(self, cls: t.Type[T_serializable], size: int) -> TypedPointer[T_serializable]:
+        allocation = await self.allocator.malloc(size)
+        try:
+            return TypedPointer(self, cls, allocation.pointer.near, size, allocation.free)
+        except:
+            allocation.free()
+            raise
+
+    async def to_pointer(self, data: T_serializable) -> TypedPointer[T_serializable]:
+        ptr = await self.malloc_type(type(data), len(data.to_bytes()))
         try:
             await ptr.write(data)
         except:

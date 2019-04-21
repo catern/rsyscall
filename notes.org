@@ -13683,6 +13683,29 @@ but also, principled.
 
     OK, let's just be a list of components then, no base.
     Comparing for equality is hard anyway
+
+    Actually I could even use the Python pathlib PurePosixPath
+
+    I'll inherit from that and struct?
+
+    okay that all sounds good but:
+*** how do I read a path?
+    is there even any point to mallocing a path space?
+*** design decision about paths
+
+    two things:
+
+    no "far" or "handle" equivalent for paths
+    (everything could have a far/handle equivalent, but we don't do it for most structs.
+    because most of the time the ownership is too tricky.
+    we only do it when it's convenient, namely for fds, pointers, memory mappings;
+    things with clear ownership semantics)
+
+    no dirfds embedded in paths,
+    they're just names
+
+    which really is a consequence of them not have far/handle equivalents
+    because embedding a dirfd is making something far, really.
 ** use a union for repl results, not inheritance
 ** convert serializer to tagless final style
    we'll encapsulate the code-to-optimize in a function,

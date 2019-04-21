@@ -3,8 +3,16 @@ import typing as t
 import struct
 from dataclasses import dataclass
 
+T_serializable = t.TypeVar('T_serializable', bound='Serializable')
+class Serializable:
+    @abc.abstractmethod
+    def to_bytes(self) -> bytes: ...
+    @classmethod
+    @abc.abstractmethod
+    def from_bytes(cls: t.Type[T_serializable], data: bytes) -> T_serializable: ...
+
 T_struct = t.TypeVar('T_struct', bound='Struct')
-class Struct:
+class Struct(Serializable):
     "A fixed-size structure."
     @abc.abstractmethod
     def to_bytes(self) -> bytes:

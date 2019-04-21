@@ -473,7 +473,7 @@ class TestIO(unittest.TestCase):
             await stdtask.unshare_user()
             await stdtask.unshare_net()
             hdr_ptr = await stdtask.task.to_pointer(CapHeader())
-            data_ptr = await stdtask.task.malloc_type(CapData)
+            data_ptr = await stdtask.task.malloc_struct(CapData)
             await stdtask.task.base.capget(hdr_ptr, data_ptr)
             data = await data_ptr.read()
             data.inheritable.add(CAP.NET_ADMIN)

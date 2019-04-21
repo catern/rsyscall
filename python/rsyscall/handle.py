@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import AF, SOCK
 from rsyscall.sched import UnshareFlag
-from rsyscall.struct import T_struct
+from rsyscall.struct import T_serializable
 from rsyscall.signal import Sigaction, Sigset, Signals
 
 # This is like a far pointer plus a segment register.
@@ -303,10 +303,11 @@ class FileDescriptor:
 # there's no point in having something that knows the size but not the
 # type.
 @dataclass(eq=False)
-class Pointer(t.Generic[T_struct]):
+class Pointer(t.Generic[T_serializable]):
     task: Task
-    data_cls: t.Type[T_struct]
+    data_cls: t.Type[T_serializable]
     near: rsyscall.near.Pointer
+    size: int
     to_free: t.Callable[[], None]
     valid: bool = True
     
@@ -323,7 +324,7 @@ class Pointer(t.Generic[T_struct]):
         yield self
 
     def bytesize(self) -> int:
-        return self.data_cls.sizeof()
+        return self.size
 
     def validate(self) -> None:
         if not self.valid:
