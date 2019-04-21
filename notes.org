@@ -13372,12 +13372,6 @@ but also, principled.
 
     oh god oh blog oh harb oh blurgh
 *** let's not innovate yet
-** sandboxing
-    need to actually do it for everything probs
-
-    OK! let's do this actually
-
-    more interesting
 ** garbage collection
    OK. so. I need to actually do this.
 
@@ -13397,3 +13391,18 @@ but also, principled.
    Eh, methods are convenient for the user.
 
    Maybe I should just have both.
+** sandboxing
+    need to actually do it for everything probs
+
+    OK! let's do this actually
+
+    OK, let's use bwrap for this.
+    It seems nice and stable and good.
+
+    To know what paths we need to sandbox, we need to know our packaging mechanism.
+
+    I feel comfortable depending on Nix for these external binary scripts.
+
+    Not the core stuff, of course, but sure, Nix for the external stuff.
+
+    And... we can probably drop those binaries from stdtask

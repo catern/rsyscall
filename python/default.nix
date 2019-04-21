@@ -56,6 +56,7 @@ pytest ];
       miredo
       pyroute2
       pkgs.powerdns
+      pkgs.bubblewrap
   ];
 }
 
