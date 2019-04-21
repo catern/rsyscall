@@ -13619,6 +13619,30 @@ but also, principled.
 
    which um. I can pass as a path,
    instead of this hassle of separate fd argument.
+*** are paths real
+    okay so maybe I could just have fd-free paths?
+
+    but I do want people to be able to pass in a single thing?
+
+    it seems like it would be inconvenient to have to manage both a pointer,
+    and the dirfd it was relative to.
+
+    hmmm
+
+    if they were merged into a single structure,
+    that would be more convenient.
+
+    actually that would be perfect really, it would be so EASY
+
+    but they aren't.
+
+    okay so what's *real* tho?
+
+    a relative path could be fd-relative or cwd-relative
+
+    I *guess* I could separate them out?
+
+    And merge them again with the wrapper object-oriented class?
 *** hmmm
     so what if we were fully object-oriented?
 
@@ -13658,6 +13682,7 @@ but also, principled.
     what if we start with no components and someone wants to append one?
 
     OK, let's just be a list of components then, no base.
+    Comparing for equality is hard anyway
 ** use a union for repl results, not inheritance
 ** convert serializer to tagless final style
    we'll encapsulate the code-to-optimize in a function,
