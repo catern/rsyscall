@@ -12913,7 +12913,60 @@ hmm how do we say "don't return a record, this is invalid"?
    this is a nice free domain idea :)
    all you need is an A record and you can serve DNS -
    and you can get an A record for any IP.
+* extracted comment about wish infrastructure
+# hmm we can't make stdin/stdout async. hm. hm.
+# HM hm hm what a drag.
+# having a REPL that is concurrent with the other stuff is tricky. because it's hard to make terminals concurrent.
+# h m m.
+# very frustrating. hm.
+# ok so if we just instead force some kinda client thing, instead of directly working with stdin/stdout/stderr?
+# maybe that's a good idea?
+# hmm, mostly we'll be wanting to operate on the localhost anyway.
+# we do want to support multiple REPLs in multiple places in the task tree though, hm.
+# blah. hm.
+# what's a nice clean way of handling it? the fact that we want to start a REPL,
+# in a simple way?
+# I guess someone can sit on connecting to a Unix socket we have open, and we give them the REPL when they connect?
+# or, no, that's hacky.
 
+# what if, hm.
+# we have the management interface,
+# and it has a simple protocol where when some REPL starts, we send the fds and the info over.
+# that's complicated though, hm.
+# so, we have some fds, which one end of which, um, are probably in the runtime task,
+# but maybe are in a remote task and transported to the runtime, or whatever
+# and um, we want to move them around. hmm.
+# well, so, we could put the other ends of the REPL fds anywhere we want, really.
+# so we should do it in a place where we know users are.
+# so we should have some kind of object which allows us to start a REPL, and surface it to users.
+# hmm. we need to notify the user, and open the UI element, or at least allow them to connect to the REPL somehow.
+# should the REPLs be persistent? if they disconnect between each statement, should we save the globals?
+# nah...
+# okay, so we should surface the REPLs through Emacs, obviously, because that's the best.
+# so I guess I could have some list of current REPLs,
+# and um, I can open them, I guess.
+# what would I do if the program was itself written in Elisp?
+# well, I would... I guess, when there's an issue,
+# I'd open a buffer with the REPL in it?
+# and then maintain a list of issue-buffers?
+# and probably have a key to cycle between them?
+# and if I closed the buffer, the issue wouldn't go away I suppose.
+# well.
+# I guess if I closed the buffer, yeah, it would throw an exception up from that REPL.
+# How do things in Emacs usually notify?
+# so I guess I get circe notifications through them appearing in the modeline,
+# they open a buffer in the background - possibly in the foreground optionally.
+# and then, when I kill the buffer, presumably nothing happens - we just lose the history of that buffer,
+# but it doesn't, like, kick someone.
+# though when there's a process behind it, we get prompted when killing.
+# so I guess we can do the, "kill throws exception, but also prompts before killing"
+# eh, or we can just let the user do it themselves
+# so yeah I just have some thing which notifies me on error.
+# and I keep an active connection open, and when some REPL goes away, I get notified. hmm.
+# seems straightforward.
+# basically - we're having Emacs act as the handler for this effect of, go to REPL, right?
+# so Emacs needs to be able to accept these notifications, and handle things right.
+# but, if there is no active handler, things just hang - also fine.
 * problems to fix
 ** I'm doing all this work without fixing problems!
    I should fix problems instead of ignoring badness.
@@ -13365,218 +13418,7 @@ but also, principled.
    Great I did even more organization in terms of headers
 
    We can always do more of this of course.
-** TODO don't actually read the memory when we read signalfd in childtaskmonitor
-   because we don't actually care about it, we just want to wait until there's a signal
-
-   hmm okay so how do we clean up asyncfd to have a nice, handlish interface
-
-   oh ok so here's a reason to have an untype pointer:
-   when we get midway through a buffer pointer with a partial read.
-
-   ok so the problem is how to pass a pointer to asyncfd.
-
-   with nice typing
-*** reworking pointer passing and returning
-    what does a partial read return to us?
-
-    yeah, that's the question:
-    so far all our structs have been fully read or written,
-    but now we need to engage with partial reads,
-    which is a super hassle.
-
-    we could maybe tag the type as partial.. completable with more data.
-*** getpeername return a pointer
-    if it's too large it tells us how much we need to read
-
-    oh god oh blog oh harb oh blurgh
-*** let's not innovate yet
-** garbage collection
-   OK. so. I need to actually do this.
-
-   Although, in my code, I should... endeavour to not leak anything?
-
-   Eh... that's a hassle.
-   Let's just GC freely.
-
-   Although, I can't really figure out how to check if something's leaking.
-** organization
-   Should I maybe use free functions instead of methods for everything?
-
-   Methods are a hassle and lead to huge classes.
-
-   But thiat would be churn, blah.
-
-   Eh, methods are convenient for the user.
-
-   Maybe I should just have both.
-** sandboxing
-    need to actually do it for everything probs
-
-    OK! let's do this actually
-
-    OK, let's use bwrap for this.
-    It seems nice and stable and good.
-
-    To know what paths we need to sandbox, we need to know our packaging mechanism.
-
-    I feel comfortable depending on Nix for these external binary scripts.
-
-    Not the core stuff, of course, but sure, Nix for the external stuff.
-
-    And... we can probably drop those binaries from stdtask
-** remove binaries from standardtask
-   And therefore all associated uses from them from io.py
-
-   We shouldn't have to depend on any binaries in the main thing.
-   Those should all be extensions.
-
-   We'll dep on binaries using Nix, that's fine.
-
-   The core is a C library, that's fine, we don't need remote stuff.
-
-   oh. blah. rm is useful though.
-   blaaah we're using sh to 
-*** TODO figure out temporary directory cleanup
-    blah blah argh blah
-
-    we're currently using sh to do it, hmm.
-
-    I *guess* we could just use sh from /bin/sh.
-
-    ugh no that would just be more constraints...
-
-    better to use actual binaries
-
-    let's just move it into an extension module along with the rest of binary-users
-
-    Or, we could add a C function for it.
-
-    Let's start by moving this out.
-
-    An external mkdtemp could find the binaries through, what means?
-    Well, if we're set up with Nix stuff,
-    we can rely on that being valid in all stdtasks,
-    roughly... might want to annotate some things there.
-
-    If we aren't set up with Nix stuff, we can use PATH.
-    We can have the executable cache be attached to the stdtask, that's fine;
-    or maybe not, maybe that can be external too.
-
-    Let's think about this.
-    Because, a robust solution to this,
-    is necessary for other processes to not be a hassle to run remotely.
-
-    And we want to move all this out anyway.
-
-    OK, ok, so.
-    Let's maybe be able to use both Nix stuff and PATH?
-    So, how can we represent the Nix stuff?
-
-    If I'm in some derivation...
-    or, rather, I was built in some derivation...
-    I know the paths I have available.
-    But, how do I know those are available remotely too?
-
-    After all - when I spawn a subprocess -
-    it only has the resources I gave it -
-    and when I'm in some low-level thing,
-    I spawn the subprocess with only some resources.
-
-    So then I guess what I should obviously do is deploy the Nix paths when I spawn.
-
-    I mean - merely spawning doesn't give me those paths.
-    And it shouldn't!
-    They're ancillary, not needed to the core thing.
-
-    But I could bundle them together.
-    I could maybe have some kind of Store abstraction,
-    with a list of valid paths?
-
-    Hm, very tricky.
-    I mean, this breaks the whole central idea of Nix:
-    correct deployment.
-    When I'm on a single host, for my code to run,
-    my references must all be valid.
-
-    For me to operate on a remote host...
-    well, what does it mean?
-
-    When I'm operating on a host, my references to things on that host must all be valid.
-    Nix guarantees this normally by looking at all my references,
-    and not allowing me to exist on disk if my references aren't all valid.
-    But, then again... in a dynamic system I could always, um...
-    get a new reference from someone else?
-    Right, like:
-    Someone could connect to me and tell me the path of an executable to run,
-    or a library to load.
-    Dynamically, we can't cover everything.
-
-    Well, does that really match what's going on here though?
-    There's a certain static-ness to operating on a remote host.
-    I mean, we can check all the validity up front before allowing the,
-    function/method-holding object to be constructed, or something.
-
-    Sure, I mean, that all seems fine.
-    But then - what about - how do we share information about validity?
-
-    Well how do we know things are still valid?
-    Hm - I guess - Nix gives no such gurantee to us...
-    unless! ah! We open temp roots for things.
-
-    OK, so say we open temp roots for things...
-    How do we know we already have temp roots for things?
-    Where's that info stored?
-
-    Could be in some per-store class thing,
-    or maybe per fsinformation/mount namespace or whatever.
-
-    I mean, nothing much wrong with that,
-    except, I feel reluctant to explicitly deal with such objects.
-    Although, maybe it's not so bad?
-
-    If we explicitly deal in the Nix store deployment object stuff.
-    That's kind of nice, really.
-    We'll have some classmethod to construct the executable object from a Nix store.
-
-    Then also we can support the alternative model of just,
-    looking things up on the path,
-    with another classmethod.
-    Maybe one which takes an executable path lookup cache thing.
-
-    that too is a separate class.
-
-    ok so the nix store object will check mount namespace and the root dir in fsinformation,
-    on the task it's working with.
-    
-    if they match, clearly it can be used.
-    but it can also be told about new mount namespaces,
-    and new root dirs,
-    which are valid.
-    a root dir is only valid in a specific mount namespace.
-    but might be valid in multiple.
-
-    right? it's organized like that?
-    could also be like: a mount namespace is only valid in a specific root dir,
-    but might be valid in multiple.
-
-    no that doesn't make sense, we'll organize it starting with root dir.
-*** TODO figure out pkglibexec things
-    OK, so.
-
-    These are all ancillary things. They aren't needed for the main stuff.
-
-    Also, they should be static binaries.
-    In which case, they can just be embedded into the library.
-    In... most cases.
-
-    move fork_persistent out
-    i'm on the edge of being done
-*** have only local calls in the main basic library
-    The thing to make rsyscall threads,
-    is on a level above just making syscalls in our current thread.
-
-    We can pare it down quite nicely to just local calls.
-** use struct pointers for paths
+** DONE use struct pointers for paths
    That is the big remaining place we don't use pointers.
    And the main reason for variable-size things!
 
@@ -13732,6 +13574,218 @@ but also, principled.
 
     hmm, LSP doesn't have to apply for classes really
     from_bytes is a class method, there's no reason that it should be on the memory-full type
+** TODO sandboxing
+    need to actually do it for everything probs
+
+    OK! let's do this actually
+
+    OK, let's use bwrap for this.
+    It seems nice and stable and good.
+
+    To know what paths we need to sandbox, we need to know our packaging mechanism.
+
+    I feel comfortable depending on Nix for these external binary scripts.
+
+    Not the core stuff, of course, but sure, Nix for the external stuff.
+
+    And... we can probably drop those binaries from stdtask
+** TODO garbage collection
+   OK. so. I need to actually do this.
+
+   Although, in my code, I should... endeavour to not leak anything?
+
+   Eh... that's a hassle.
+   Let's just GC freely.
+
+   Although, I can't really figure out how to check if something's leaking.
+** TODO don't actually read the memory when we read signalfd in childtaskmonitor
+   because we don't actually care about it, we just want to wait until there's a signal
+
+   hmm okay so how do we clean up asyncfd to have a nice, handlish interface
+
+   oh ok so here's a reason to have an untype pointer:
+   when we get midway through a buffer pointer with a partial read.
+
+   ok so the problem is how to pass a pointer to asyncfd.
+
+   with nice typing
+*** reworking pointer passing and returning
+    what does a partial read return to us?
+
+    yeah, that's the question:
+    so far all our structs have been fully read or written,
+    but now we need to engage with partial reads,
+    which is a super hassle.
+
+    we could maybe tag the type as partial.. completable with more data.
+*** getpeername return a pointer
+    if it's too large it tells us how much we need to read
+
+    oh god oh blog oh harb oh blurgh
+*** let's not innovate yet
+    we can figure it out later
+** organization
+   Should I maybe use free functions instead of methods for everything?
+
+   Methods are a hassle and lead to huge classes.
+
+   But thiat would be churn, blah.
+
+   Eh, methods are convenient for the user.
+
+   Maybe I should just have both.
+** remove binaries from standardtask
+   And therefore all associated uses from them from io.py
+
+   We shouldn't have to depend on any binaries in the main thing.
+   Those should all be extensions.
+
+   We'll dep on binaries using Nix, that's fine.
+
+   The core is a C library, that's fine, we don't need remote stuff.
+
+   oh. blah. rm is useful though.
+   blaaah we're using sh to 
+*** TODO figure out temporary directory cleanup
+    blah blah argh blah
+
+    we're currently using sh to do it, hmm.
+
+    I *guess* we could just use sh from /bin/sh.
+
+    ugh no that would just be more constraints...
+
+    better to use actual binaries
+
+    let's just move it into an extension module along with the rest of binary-users
+
+    Or, we could add a C function for it.
+
+    Let's start by moving this out.
+
+    An external mkdtemp could find the binaries through, what means?
+    Well, if we're set up with Nix stuff,
+    we can rely on that being valid in all stdtasks,
+    roughly... might want to annotate some things there.
+
+    If we aren't set up with Nix stuff, we can use PATH.
+    We can have the executable cache be attached to the stdtask, that's fine;
+    or maybe not, maybe that can be external too.
+
+    Let's think about this.
+    Because, a robust solution to this,
+    is necessary for other processes to not be a hassle to run remotely.
+
+    And we want to move all this out anyway.
+
+    OK, ok, so.
+    Let's maybe be able to use both Nix stuff and PATH?
+    So, how can we represent the Nix stuff?
+
+    If I'm in some derivation...
+    or, rather, I was built in some derivation...
+    I know the paths I have available.
+    But, how do I know those are available remotely too?
+
+    After all - when I spawn a subprocess -
+    it only has the resources I gave it -
+    and when I'm in some low-level thing,
+    I spawn the subprocess with only some resources.
+
+    So then I guess what I should obviously do is deploy the Nix paths when I spawn.
+
+    I mean - merely spawning doesn't give me those paths.
+    And it shouldn't!
+    They're ancillary, not needed to the core thing.
+
+    But I could bundle them together.
+    I could maybe have some kind of Store abstraction,
+    with a list of valid paths?
+
+    Hm, very tricky.
+    I mean, this breaks the whole central idea of Nix:
+    correct deployment.
+    When I'm on a single host, for my code to run,
+    my references must all be valid.
+
+    For me to operate on a remote host...
+    well, what does it mean?
+
+    When I'm operating on a host, my references to things on that host must all be valid.
+    Nix guarantees this normally by looking at all my references,
+    and not allowing me to exist on disk if my references aren't all valid.
+    But, then again... in a dynamic system I could always, um...
+    get a new reference from someone else?
+    Right, like:
+    Someone could connect to me and tell me the path of an executable to run,
+    or a library to load.
+    Dynamically, we can't cover everything.
+
+    Well, does that really match what's going on here though?
+    There's a certain static-ness to operating on a remote host.
+    I mean, we can check all the validity up front before allowing the,
+    function/method-holding object to be constructed, or something.
+
+    Sure, I mean, that all seems fine.
+    But then - what about - how do we share information about validity?
+
+    Well how do we know things are still valid?
+    Hm - I guess - Nix gives no such gurantee to us...
+    unless! ah! We open temp roots for things.
+
+    OK, so say we open temp roots for things...
+    How do we know we already have temp roots for things?
+    Where's that info stored?
+
+    Could be in some per-store class thing,
+    or maybe per fsinformation/mount namespace or whatever.
+
+    I mean, nothing much wrong with that,
+    except, I feel reluctant to explicitly deal with such objects.
+    Although, maybe it's not so bad?
+
+    If we explicitly deal in the Nix store deployment object stuff.
+    That's kind of nice, really.
+    We'll have some classmethod to construct the executable object from a Nix store.
+
+    Then also we can support the alternative model of just,
+    looking things up on the path,
+    with another classmethod.
+    Maybe one which takes an executable path lookup cache thing.
+
+    that too is a separate class.
+
+    ok so the nix store object will check mount namespace and the root dir in fsinformation,
+    on the task it's working with.
+    
+    if they match, clearly it can be used.
+    but it can also be told about new mount namespaces,
+    and new root dirs,
+    which are valid.
+    a root dir is only valid in a specific mount namespace.
+    but might be valid in multiple.
+
+    right? it's organized like that?
+    could also be like: a mount namespace is only valid in a specific root dir,
+    but might be valid in multiple.
+
+    no that doesn't make sense, we'll organize it starting with root dir.
+*** TODO figure out pkglibexec things
+    OK, so.
+
+    These are all ancillary things. They aren't needed for the main stuff.
+
+    Also, they should be static binaries.
+    In which case, they can just be embedded into the library.
+    In... most cases.
+
+    move fork_persistent out
+    i'm on the edge of being done
+*** have only local calls in the main basic library
+    The thing to make rsyscall threads,
+    is on a level above just making syscalls in our current thread.
+
+    We can pare it down quite nicely to just local calls.
 ** use a union for repl results, not inheritance
 ** convert serializer to tagless final style
    we'll encapsulate the code-to-optimize in a function,

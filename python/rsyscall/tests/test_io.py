@@ -11,7 +11,6 @@ import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
 from rsyscall.io import local_stdtask
-from rsyscall.persistent import fork_persistent
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
 import socket
@@ -23,6 +22,10 @@ import trio.hazmat
 import rsyscall.io
 import os
 import rsyscall.path
+
+from rsyscall.tasks.persistent import fork_persistent
+from rsyscall.tasks.stdin_bootstrap import rsyscall_stdin_bootstrap
+from rsyscall.tasks.stub import StubServer
 
 import rsyscall.sys.inotify as inotify
 from rsyscall.sys.epoll import EpollEvent, EpollEventMask
@@ -577,7 +580,7 @@ class TestIO(unittest.TestCase):
             command = rsc.Command(stdtask.filesystem.rsyscall_unix_stub_path,
                                   ['rsyscall-unix-stub'], {})
             path = tmppath/"sock"
-            server = await rsc.StubServer.make(stdtask, path)
+            server = await StubServer.listen_on(stdtask, path)
             thread = await stdtask.fork()
             child_proc = await command.env(RSYSCALL_UNIX_STUB_SOCK_PATH=path).exec(thread)
             argv, new_stdtask = await server.accept()
@@ -589,7 +592,7 @@ class TestIO(unittest.TestCase):
             command = rsc.Command(stdtask.filesystem.rsyscall_unix_stub_path,
                                   ['rsyscall-unix-stub'], {})
             path = tmppath/"sock"
-            server = await rsc.StubServer.make(stdtask, path)
+            server = await StubServer.listen_on(stdtask, path)
             thread = await stdtask.fork()
             child_proc = await command.env(RSYSCALL_UNIX_STUB_SOCK_PATH=path).exec(thread)
             argv, new_stdtask = await server.accept()
@@ -601,7 +604,7 @@ class TestIO(unittest.TestCase):
             command = rsc.Command(stdtask.filesystem.rsyscall_unix_stub_path,
                                   ['rsyscall-unix-stub'], {})
             path = tmppath/"sock"
-            server = await rsc.StubServer.make(stdtask, path)
+            server = await StubServer.listen_on(stdtask, path)
 
             thread = await stdtask.fork()
             child_stdin, parent_write = await stdtask.task.pipe()
@@ -620,7 +623,7 @@ class TestIO(unittest.TestCase):
     def test_stub_exit(self) -> None:
         async def test(stdtask: StandardTask, tmppath: Path) -> None:
             name = "dummy"
-            server = await rsc.make_stub(stdtask, tmppath, name)
+            server = await StubServer.make(stdtask, tmppath, name)
             command = rsc.Command((tmppath/name).handle, [name], {})
             thread = await stdtask.fork()
             child_proc = await command.exec(thread)
@@ -631,7 +634,7 @@ class TestIO(unittest.TestCase):
     def test_stub_hello(self) -> None:
         async def test(stdtask: StandardTask, tmppath: Path) -> None:
             name = "dummy"
-            server = await rsc.make_stub(stdtask, tmppath, name)
+            server = await StubServer.make(stdtask, tmppath, name)
             data_in = "hello"
             command = rsc.Command(stdtask.filesystem.utilities.sh,
                                   ["sh", "-c", f"printf {data_in} | {name}"],
@@ -654,23 +657,23 @@ class TestIO(unittest.TestCase):
     def test_stdinboot_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             command = rsc.Command(stdtask.filesystem.rsyscall_stdin_bootstrap_path, ['rsyscall-stdin-bootstrap'], {})
-            child, new_stdtask = await rsc.rsyscall_stdin_bootstrap(stdtask, command)
+            child, new_stdtask = await rsyscall_stdin_bootstrap(stdtask, command)
             await new_stdtask.exit(0)
         trio.run(self.runner, test)
 
     def test_stdinboot_async(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             command = rsc.Command(stdtask.filesystem.rsyscall_stdin_bootstrap_path, ['rsyscall-stdin-bootstrap'], {})
-            child, new_stdtask = await rsc.rsyscall_stdin_bootstrap(stdtask, command)
+            child, new_stdtask = await rsyscall_stdin_bootstrap(stdtask, command)
             await self.do_async_things(new_stdtask.epoller, new_stdtask.task)
         trio.run(self.runner, test)
 
     def test_stdinboot_nest(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             command = rsc.Command(stdtask.filesystem.rsyscall_stdin_bootstrap_path, ['rsyscall-stdin-bootstrap'], {})
-            child, new_stdtask = await rsc.rsyscall_stdin_bootstrap(stdtask, command)
+            child, new_stdtask = await rsyscall_stdin_bootstrap(stdtask, command)
             async with child:
-                child2, new_stdtask2 = await rsc.rsyscall_stdin_bootstrap(new_stdtask, command)
+                child2, new_stdtask2 = await rsyscall_stdin_bootstrap(new_stdtask, command)
                 async with child2:
                     await self.do_async_things(new_stdtask2.epoller, new_stdtask2.task)
         trio.run(self.runner, test)
@@ -678,9 +681,9 @@ class TestIO(unittest.TestCase):
     def test_stdinboot_fork_exec(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             command = rsc.Command(stdtask.filesystem.rsyscall_stdin_bootstrap_path, ['rsyscall-stdin-bootstrap'], {})
-            child, new_stdtask = await rsc.rsyscall_stdin_bootstrap(stdtask, command)
+            child, new_stdtask = await rsyscall_stdin_bootstrap(stdtask, command)
             async with child:
-                child2, new_stdtask2 = await rsc.rsyscall_stdin_bootstrap(new_stdtask, command)
+                child2, new_stdtask2 = await rsyscall_stdin_bootstrap(new_stdtask, command)
                 async with child2:
                     await self.do_async_things(new_stdtask2.epoller, new_stdtask2.task)
         trio.run(self.runner, test)
