@@ -375,16 +375,15 @@ def serialize_null_terminated_array(serializer: Serializer, args: t.List[bytes])
     return argv_ser_ptr
 
 async def execveat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                   path: base.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> None:
+                   path: Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> None:
     logger.debug("execveat(%s, %s, <len(envp): %d>, %s)", path, argv, len(envp), flags)
-    # TODO we should batch this localize_path with the rest
-    async with localize_path(transport, allocator, path) as (dirfd, pathname):
-        serializer = Serializer()
-        argv_ser_ptr = serialize_null_terminated_array(serializer, argv)
-        envp_ser_ptr = serialize_null_terminated_array(serializer, envp)
+    serializer = Serializer()
+    path_ptr = serializer.serialize_data(path.to_bytes())
+    argv_ser_ptr = serialize_null_terminated_array(serializer, argv)
+    envp_ser_ptr = serialize_null_terminated_array(serializer, envp)
+    async with serializer.with_flushed(transport, allocator):
         try:
-            async with serializer.with_flushed(transport, allocator):
-                await raw_syscall.execveat(sysif, dirfd, pathname, argv_ser_ptr.pointer, envp_ser_ptr.pointer, flags)
+            await raw_syscall.execveat(sysif, None, path_ptr.pointer, argv_ser_ptr.pointer, envp_ser_ptr.pointer, flags)
         except FileNotFoundError as e:
             raise FileNotFoundError(e.errno, e.strerror, path) from None
 

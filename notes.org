@@ -13746,4 +13746,35 @@ but also, principled.
    Well... from_bytes...
 
    Hmm.
-   
+** readlink
+   ok how do we handle readlink, dang it
+   turns out we actually do need it
+
+   ok, the simple way is...
+   using a serializer struct which just passes through bytes, I guess
+
+   then we'll malloc_type(Bytes, bufsiz)
+
+   Easy, easy.
+
+   Oh, hmm.
+
+   We can... just do malloc_type(Path, bufsize)
+
+   That would be cool.
+
+   Hmmmmmm
+
+   Then, I guess, we know how much to read back?
+
+   The return value tells me how much of the buffer is valid.
+   So why not just return a valid pointer?
+   And, perhaps, also, an invalid pointer?
+*** partial reads
+    How does rust do this?
+
+    It would be good to show validity vs non-validity.
+    
+    Ugh, rust just returns an "amount of data read" number. Gross.
+
+are there any crates/examples of a more safe API for readers than std::io::Read? returning the number of bytes read is certainly very traditional and familiar, but one could mess up the usage of that number and read too many or too few bytes out of the buffer one passed to read(); 

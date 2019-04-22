@@ -1094,7 +1094,7 @@ async def robust_unix_bind(path: Path, sock: FileDescriptor[UnixSocketFile]) -> 
         addr = SockaddrUn(path.handle.to_bytes())
     except PathTooLongError:
         # shrink the path by opening its parent directly as a dirfd
-        with (await path.parent.open_directory()) as dirfd:
+        async with (await path.parent.open_directory()) as dirfd:
             await bindat(sock, dirfd.handle, path.name)
     else:
         await sock.bind(addr)
@@ -1291,7 +1291,7 @@ async def which(stdtask: StandardTask, name: t.Union[str, bytes]) -> Command:
     namebytes = os.fsencode(name)
     executable_dirs: t.List[Path] = []
     for prefix in stdtask.environment[b"PATH"].split(b":"):
-        executable_dirs.append(Path(stdtask.task, handle.Path(prefix)))
+        executable_dirs.append(Path(stdtask.task, handle.Path(os.fsdecode(prefix))))
     executable_path = await lookup_executable(executable_dirs, namebytes)
     return Command(executable_path.handle, [namebytes], {})
 
@@ -1918,7 +1918,7 @@ class Thread:
 
     async def execveat(self, sysif: SyscallInterface, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
                        path: handle.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> ChildProcess:
-        await memsys.execveat(sysif, transport, allocator, path.far, argv, envp, flags)
+        await memsys.execveat(sysif, transport, allocator, path, argv, envp, flags)
         return self.child_task
 
     async def wait_for_mm_release(self) -> ChildProcess:
@@ -3188,7 +3188,7 @@ class ArbitrarySSHHost(SSHHost):
         # speaking the openssh multiplexer protocol. or directly speaking the ssh
         # protocol for that matter.
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        name = (self.guess_hostname()+random_suffix+".sock").encode()
+        name = (self.guess_hostname()+random_suffix+".sock")
         local_socket_path: handle.Path = task.filesystem.tmpdir/name
         return (await spawn_ssh(task, self.command, self.root, local_socket_path))
 

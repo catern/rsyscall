@@ -541,6 +541,11 @@ class Task(rsyscall.far.Task):
         async with path.borrow(self) as path:
             await rsyscall.near.chdir(self.sysif, path.near)
 
+    async def readlink(self, path: Pointer[Path], buf: Pointer, bufsiz: int) -> int:
+        async with path.borrow(self) as path:
+            async with buf.borrow(self) as buf:
+                return (await rsyscall.near.readlinkat(self.sysif, None, path.near, buf.near, bufsiz))
+
 @dataclass
 class Pipe:
     read: FileDescriptor
