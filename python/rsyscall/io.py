@@ -2,6 +2,7 @@ from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 import types
 import traceback
+import pathlib
 
 import math
 import importlib.resources
@@ -960,11 +961,15 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     async def aclose(self) -> None:
         await self.epolled.aclose()
 
-class Path(far.PathLike):
+class Path(handle.Path):
     "This is a convenient combination of a Path and a Task to perform serialization."
-    def __init__(self, task: Task, handle: handle.Path) -> None:
+    def __init__(self, task: Task, handle: rsyscall.path.Path) -> None:
+        super().__init__(handle) # type: ignore
         self.task = task
-        self.handle = handle
+
+    @property
+    def handle(self) -> rsyscall.path.Path:
+        return rsyscall.path.Path(self)
 
     def with_task(self, task: Task) -> Path:
         return Path(task, self.handle)
@@ -1039,20 +1044,26 @@ class Path(far.PathLike):
 
     async def symlink(self, target: t.Union[bytes, str]) -> Path:
         "Create a symlink at Path 'self' pointing to the passed-in target"
-        with (await self.task.to_pointer(handle.Path target)) as targetptr:
+        with (await self.task.to_pointer(handle.Path(os.fsdecode(target)))) as targetptr:
             with (await self.task.to_pointer(self.handle)) as selfptr:
                 await self.task.base.symlink(targetptr, selfptr)
         return self
 
-    async def rename(self, oldpath: Path, flags: int=0) -> Path:
+    async def rename(self, oldpath: t.Union[Path, rsyscall.path.Path], flags: int=0) -> Path:
         "Create a file at Path 'self' by renaming the file at Path 'oldpath'"
-        with (await self.task.to_pointer(oldpath.handle)) as oldptr:
+        with (await self.task.to_pointer(oldpath)) as oldptr:
             with (await self.task.to_pointer(self.handle)) as selfptr:
                 await self.task.base.rename(oldptr, selfptr)
         return self
 
-    def __truediv__(self, path_element: t.Union[str, bytes]) -> Path:
-        return Path(self.task, self.handle/path_element)
+    # to_bytes and from_bytes, kinda sketchy, hmm....
+    # from_bytes will fail at runtime... whatever
+
+    T = t.TypeVar('T', bound='Path')
+    def __truediv__(self: T, key: t.Union[str, bytes, pathlib.PurePath]) -> T:
+        if isinstance(key, bytes):
+            key = os.fsdecode(key)
+        return type(self)(self.task, self.handle/key)
 
     def __fspath__(self) -> str:
         return self.handle.__fspath__()
@@ -1080,7 +1091,7 @@ async def robust_unix_bind(path: Path, sock: FileDescriptor[UnixSocketFile]) -> 
 
     """
     try:
-        addr = SockaddrUn(path.to_bytes())
+        addr = SockaddrUn(path.handle.to_bytes())
     except PathTooLongError:
         # shrink the path by opening its parent directly as a dirfd
         with (await path.parent.open_directory()) as dirfd:
@@ -1104,7 +1115,7 @@ async def bindat(sock: FileDescriptor[UnixSocketFile], dirfd: handle.FileDescrip
         tmpname = ".temp_for_bindat." + random_string(k=16)
         tmppath = dir/tmpname
         await sock.bind(SockaddrUn(tmppath.to_bytes()))
-        await path.rename(tmppath)
+        await Path(sock.task, path).rename(tmppath)
     else:
         await sock.bind(addr)
 
@@ -1119,7 +1130,7 @@ async def robust_unix_connect(path: Path, sock: FileDescriptor[UnixSocketFile]) 
 
     """
     try:
-        addr = UnixAddress(path.to_bytes())
+        addr = SockaddrUn(path.handle.to_bytes())
     except PathTooLongError:
         async with (await path.open_path()) as fd:
             await connectat(sock, fd.handle)
@@ -1128,7 +1139,7 @@ async def robust_unix_connect(path: Path, sock: FileDescriptor[UnixSocketFile]) 
 
 async def connectat(sock: FileDescriptor[UnixSocketFile], fd: handle.FileDescriptor) -> None:
     "connect() a Unix socket to the passed-in fd"
-    path = handle.Path("/proc/self/fd")/str(int(pathfd.near))
+    path = handle.Path("/proc/self/fd")/str(int(fd.near))
     addr = SockaddrUn(path.to_bytes())
     await sock.connect(addr)
 
@@ -1280,7 +1291,7 @@ async def which(stdtask: StandardTask, name: t.Union[str, bytes]) -> Command:
     namebytes = os.fsencode(name)
     executable_dirs: t.List[Path] = []
     for prefix in stdtask.environment[b"PATH"].split(b":"):
-        executable_dirs.append(Path.from_bytes(stdtask.task, prefix))
+        executable_dirs.append(Path(stdtask.task, handle.Path(prefix)))
     executable_path = await lookup_executable(executable_dirs, namebytes)
     return Command(executable_path.handle, [namebytes], {})
 
@@ -3628,7 +3639,7 @@ class ConsoleServerGenie(WishGranter):
         wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
         sock_name = self._uniquify_name(f'{wisher_frame.f_code.co_name}-{wisher_frame.f_lineno}')
         sock_path = self.sockdir/sock_name
-        cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path.pure))
+        cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path))
         sockfd = await self.stdtask.task.socket_unix(SOCK.STREAM)
         await robust_unix_bind(sock_path, sockfd)
         await sockfd.listen(10)

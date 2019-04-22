@@ -13719,3 +13719,31 @@ but also, principled.
 
    ok sure fine this is a good idea but still, what about Path?
 ** use conventional syscalls instead of *at when not doing *at things
+** serializable for path
+   ok so the to_bytes thing can work for the taskful path
+
+   but from_bytes doesn't make any sense cuz you can't pull the task from bytes
+
+   I wonder if we can somehow make this work, hm.
+
+   wait why don't we just, um..
+
+   ok so when we create a pointer, it should be a handle.Path.
+   naturally...
+
+   then that would all work.
+
+   hmm this is awkward though
+
+   I'd want to use the Path exactly as a handle.Path
+
+   It's awkward to have two types that need to be worked with
+
+   Hmmm
+
+   The issue is that it has a constructor that I need to work with.
+
+   Well... from_bytes...
+
+   Hmm.
+   

@@ -527,6 +527,11 @@ class Task(rsyscall.far.Task):
             async with newpath.borrow(self) as newpath:
                 await rsyscall.near.linkat(self.sysif, None, oldpath.near, None, newpath.near, 0)
 
+    async def rename(self, oldpath: Pointer[Path], newpath: Pointer[Path]) -> None:
+        async with oldpath.borrow(self) as oldpath:
+            async with newpath.borrow(self) as newpath:
+                await rsyscall.near.renameat2(self.sysif, None, oldpath.near, None, newpath.near, 0)
+
     async def symlink(self, target: Pointer, linkpath: Pointer[Path]) -> None:
         async with target.borrow(self) as target:
             async with linkpath.borrow(self) as linkpath:
