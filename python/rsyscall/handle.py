@@ -299,7 +299,7 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval.near, optval.bytesize())
 
-    async def readlinkat(self, path: Pointer[Path], buf: Pointer) -> int:
+    async def readlinkat(self, path: Pointer, buf: Pointer) -> int:
         self.validate()
         async with path.borrow(self) as path:
             async with buf.borrow(self) as buf:
