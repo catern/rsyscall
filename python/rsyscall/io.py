@@ -17,11 +17,13 @@ import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
 import rsyscall.memory as memory
 import rsyscall.handle as handle
+import rsyscall.handle
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_serializable, T_struct
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO
+from rsyscall.fcntl import AT, O
 from rsyscall.sys.socket import T_addr
 from rsyscall.linux.futex import FUTEX_WAITERS, FUTEX_TID_MASK
 from rsyscall.sys.mount import MS
@@ -33,7 +35,6 @@ from rsyscall.sys.memfd import MFD
 from rsyscall.sched import UnshareFlag
 from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals
 from rsyscall.linux.dirent import Dirent
-from rsyscall.fcntl import AT
 
 import random
 import string
@@ -188,7 +189,7 @@ class File:
             raise Exception("file object is shared and can't be mutated")
         if fd.file != self:
             raise Exception("can't set a file to nonblocking through a file descriptor that doesn't point to it")
-        await raw_syscall.fcntl(fd.task.syscall, fd.pure, fcntl.F_SETFL, os.O_NONBLOCK)
+        await raw_syscall.fcntl(fd.task.syscall, fd.pure, fcntl.F_SETFL, O.NONBLOCK)
 
     async def lseek(self, fd: 'FileDescriptor[File]', offset: int, whence: int) -> int:
         return (await raw_syscall.lseek(fd.task.syscall, fd.pure, offset, whence))
@@ -197,8 +198,8 @@ T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
 class TypedPointer(handle.Pointer[T_serializable]):
-    def __init__(self, task: Task, data_cls: t.Type[T_serializable], ptr: near.Pointer, size: int, to_free) -> None:
-        super().__init__(task.base, data_cls, ptr, size, to_free)
+    def __init__(self, task: Task, data_cls: t.Type[T_serializable], allocation: handle.AllocationInterface) -> None:
+        super().__init__(task.base, data_cls, allocation)
         self.mem_task = task
 
     async def write(self, data: T_serializable) -> None:
@@ -211,6 +212,12 @@ class TypedPointer(handle.Pointer[T_serializable]):
     async def read(self) -> T_serializable:
         data = await self.mem_task.transport.read(self.far, self.bytesize())
         return self.data_cls.from_bytes(data)
+
+    def split(self, size: int) -> t.Tuple[TypedPointer[T_serializable], TypedPointer]:
+        first_s, second_s = super().split(size)
+        first = TypedPointer(self.mem_task, first_s.data_cls, first_s.allocation)
+        second = TypedPointer(self.mem_task, second_s.data_cls, second_s.allocation)
+        return first, second
 
 class Task:
     def __init__(self,
@@ -253,7 +260,7 @@ class Task:
     async def malloc_type(self, cls: t.Type[T_serializable], size: int) -> TypedPointer[T_serializable]:
         allocation = await self.allocator.malloc(size)
         try:
-            return TypedPointer(self, cls, allocation.pointer.near, size, allocation.free)
+            return TypedPointer(self, cls, allocation)
         except:
             allocation.free()
             raise
@@ -329,7 +336,7 @@ class Task:
         data = await memsys.getdents64(self.base, self.transport, self.allocator, fd, count)
         return Dirent.list_from_bytes(data)
 
-    async def pipe(self, flags=os.O_CLOEXEC) -> Pipe:
+    async def pipe(self, flags=O.CLOEXEC) -> Pipe:
         r, w = await memsys.pipe(self.syscall, self.transport, self.allocator, flags)
         return Pipe(self._make_fd(r, ReadableFile(shared=False)),
                     self._make_fd(w, WritableFile(shared=False)))
@@ -358,7 +365,7 @@ class Task:
         return FileDescriptor(self, sockfd, InetSocketFile())
 
     async def signalfd_create(self, mask: t.Set[signal.Signals], flags: int=0) -> FileDescriptor[SignalFile]:
-        sigfd = await memsys.signalfd(self.syscall, self.transport, self.allocator, mask, os.O_CLOEXEC|flags)
+        sigfd = await memsys.signalfd(self.syscall, self.transport, self.allocator, mask, O.CLOEXEC|flags)
         return self._make_fd(sigfd, SignalFile(mask))
 
     async def mmap(self, length: int, prot: memory.ProtFlag, flags: memory.MapFlag) -> memory.AnonymousMapping:
@@ -961,23 +968,36 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     async def aclose(self) -> None:
         await self.epolled.aclose()
 
-class Path(handle.Path):
+class Path(rsyscall.path.PathLike):
     "This is a convenient combination of a Path and a Task to perform serialization."
     def __init__(self, task: Task, handle: rsyscall.path.Path) -> None:
-        super().__init__(handle) # type: ignore
         self.task = task
-
-    @property
-    def handle(self) -> rsyscall.path.Path:
-        return rsyscall.path.Path(self)
+        self.handle = handle
+        # we cache the pointer to the serialized path
+        self._ptr: t.Optional[rsyscall.handle.Pointer[rsyscall.path.Path]] = None
 
     def with_task(self, task: Task) -> Path:
         return Path(task, self.handle)
 
+    @property
+    def parent(self) -> Path:
+        return Path(self.task, self.handle.parent)
+
+    @property
+    def name(self) -> str:
+        return self.handle.name
+
+    async def to_pointer(self) -> handle.Pointer[rsyscall.path.Path]:
+        if self._ptr is None:
+            self._ptr = await self.task.to_pointer(self.handle)
+        return self._ptr
+
     async def mkdir(self, mode=0o777) -> Path:
-        with (await self.task.to_pointer(self.handle)) as ptr:
-            await self.task.base.mkdir(ptr, mode)
-            return self
+        try:
+            await self.task.base.mkdir(await self.to_pointer(), mode)
+        except FileExistsError as e:
+            raise FileExistsError(e.errno, e.strerror, self) from None
+        return self
 
     async def open(self, flags: int, mode=0o644) -> FileDescriptor:
         """Open a path
@@ -986,28 +1006,28 @@ class Path(handle.Path):
 
         """
         file: File
-        if flags & os.O_PATH:
+        if flags & O.PATH:
             file = File()
-        elif flags & os.O_WRONLY:
+        elif flags & O.WRONLY:
             file = WritableFile()
-        elif flags & os.O_RDWR:
+        elif flags & O.RDWR:
             file = ReadableWritableFile()
-        elif flags & os.O_DIRECTORY:
+        elif flags & O.DIRECTORY:
             file = DirectoryFile()
         else:
-            # os.O_RDONLY is 0, so if we don't have any of the rest, then...
+            # O.RDONLY is 0, so if we don't have any of the rest, then...
             file = ReadableFile()
         fd = await self.task.open(self.handle, flags, mode)
         return FileDescriptor(self.task, fd, file)
 
     async def open_directory(self) -> FileDescriptor[DirectoryFile]:
-        return (await self.open(os.O_DIRECTORY))
+        return (await self.open(O.DIRECTORY))
 
     async def open_path(self) -> FileDescriptor[File]:
-        return (await self.open(os.O_PATH))
+        return (await self.open(O.PATH))
 
     async def creat(self, mode=0o644) -> FileDescriptor[WritableFile]:
-        return await self.open(os.O_WRONLY|os.O_CREAT|os.O_TRUNC, mode)
+        return await self.open(O.WRONLY|O.CREAT|O.TRUNC, mode)
 
     async def access(self, *, read=False, write=False, execute=False) -> bool:
         mode = 0
@@ -1020,41 +1040,59 @@ class Path(handle.Path):
         # default to os.F_OK
         if mode == 0:
             mode = os.F_OK
-        with (await self.task.to_pointer(self.handle)) as ptr:
-            try:
-                await self.task.base.access(ptr, mode)
-                return True
-            except OSError:
-                return False
+        ptr = await self.to_pointer()
+        try:
+            await self.task.base.access(ptr, mode)
+            return True
+        except OSError:
+            return False
 
     async def unlink(self, flags: int=0) -> None:
-        with (await self.task.to_pointer(self.handle)) as ptr:
-            await self.task.base.unlink(ptr)
+        await self.task.base.unlink(await self.to_pointer())
 
     async def rmdir(self) -> None:
-        with (await self.task.to_pointer(self.handle)) as ptr:
-            await self.task.base.rmdir(ptr)
+        await self.task.base.rmdir(await self.to_pointer())
 
     async def link(self, oldpath: Path, flags: int=0) -> Path:
         "Create a hardlink at Path 'self' to the file at Path 'oldpath'"
-        with (await self.task.to_pointer(oldpath.handle)) as oldptr:
-            with (await self.task.to_pointer(self.handle)) as selfptr:
-                await self.task.base.link(oldptr, selfptr)
+        await self.task.base.link(await oldpath.to_pointer(), await self.to_pointer())
         return self
 
-    async def symlink(self, target: t.Union[bytes, str]) -> Path:
+    async def symlink(self, target: t.Union[bytes, str, Path]) -> Path:
         "Create a symlink at Path 'self' pointing to the passed-in target"
-        with (await self.task.to_pointer(handle.Path(os.fsdecode(target)))) as targetptr:
-            with (await self.task.to_pointer(self.handle)) as selfptr:
-                await self.task.base.symlink(targetptr, selfptr)
+        if isinstance(target, Path):
+            target_ptr = await target.to_pointer()
+        else:
+            # TODO should write the bytes directly, rather than going through Path;
+            # Path will canonicalize the bytes as a path, which isn't right
+            target_ptr = await self.task.to_pointer(handle.Path(os.fsdecode(target)))
+        await self.task.base.symlink(target_ptr, await self.to_pointer())
         return self
 
-    async def rename(self, oldpath: t.Union[Path, rsyscall.path.Path], flags: int=0) -> Path:
+    async def rename(self, oldpath: Path, flags: int=0) -> Path:
         "Create a file at Path 'self' by renaming the file at Path 'oldpath'"
-        with (await self.task.to_pointer(oldpath)) as oldptr:
-            with (await self.task.to_pointer(self.handle)) as selfptr:
-                await self.task.base.rename(oldptr, selfptr)
+        await self.task.base.rename(await oldpath.to_pointer(), await self.to_pointer())
         return self
+
+    async def readlink(self) -> Path:
+        selfptr = await self.to_pointer()
+        size = 4096
+        bufptr = await self.task.malloc_type(rsyscall.path.Path, size)
+        ret = await self.task.base.readlink(selfptr, bufptr)
+        if ret == size:
+            # ext4 limits symlinks to this size, so let's just throw if it's larger;
+            # we can add retry logic later if we ever need it
+            raise Exception("symlink longer than 4096 bytes, giving up on readlinking it")
+        pathptr, rest = bufptr.split(ret)
+        rest.free()
+        # readlink doesn't append a null byte, so unfortunately we can't save this buffer and use it for later calls
+        target = await pathptr.read()
+        pathptr.free()
+        return Path(self.task, target)
+
+    async def canonicalize(self) -> Path:
+        async with (await self.open_path()) as f:
+            return (await Path(self.task, f.handle.as_proc_path()).readlink())
 
     # to_bytes and from_bytes, kinda sketchy, hmm....
     # from_bytes will fail at runtime... whatever
@@ -1091,7 +1129,7 @@ async def robust_unix_bind(path: Path, sock: FileDescriptor[UnixSocketFile]) -> 
 
     """
     try:
-        addr = SockaddrUn(path.handle.to_bytes())
+        addr = SockaddrUn.from_path(path)
     except PathTooLongError:
         # shrink the path by opening its parent directly as a dirfd
         async with (await path.parent.open_directory()) as dirfd:
@@ -1106,16 +1144,16 @@ async def bindat(sock: FileDescriptor[UnixSocketFile], dirfd: handle.FileDescrip
     atomic. That's tricky...
 
     """
-    dir = handle.Path("/proc/self/fd")/str(int(dirfd.near))
+    dir = Path(sock.task, handle.Path("/proc/self/fd")/str(int(dirfd.near)))
     path = dir/name
     try:
-        addr = SockaddrUn(path.to_bytes())
+        addr = SockaddrUn.from_path(path)
     except PathTooLongError:
         # TODO retry if this name is used
         tmpname = ".temp_for_bindat." + random_string(k=16)
         tmppath = dir/tmpname
-        await sock.bind(SockaddrUn(tmppath.to_bytes()))
-        await Path(sock.task, path).rename(tmppath)
+        await sock.bind(SockaddrUn.from_path(tmppath))
+        await path.rename(tmppath)
     else:
         await sock.bind(addr)
 
@@ -1130,7 +1168,7 @@ async def robust_unix_connect(path: Path, sock: FileDescriptor[UnixSocketFile]) 
 
     """
     try:
-        addr = SockaddrUn(path.handle.to_bytes())
+        addr = SockaddrUn.from_path(path)
     except PathTooLongError:
         async with (await path.open_path()) as fd:
             await connectat(sock, fd.handle)
@@ -1140,7 +1178,7 @@ async def robust_unix_connect(path: Path, sock: FileDescriptor[UnixSocketFile]) 
 async def connectat(sock: FileDescriptor[UnixSocketFile], fd: handle.FileDescriptor) -> None:
     "connect() a Unix socket to the passed-in fd"
     path = handle.Path("/proc/self/fd")/str(int(fd.near))
-    addr = SockaddrUn(path.to_bytes())
+    addr = SockaddrUn.from_path(path)
     await sock.connect(addr)
 
 @dataclass
@@ -1303,15 +1341,15 @@ async def write_user_mappings(task: Task, uid: int, gid: int,
         in_namespace_gid = gid
     root = task.root()
 
-    uid_map = await (root/"proc"/"self"/"uid_map").open(os.O_WRONLY)
+    uid_map = await (root/"proc"/"self"/"uid_map").open(O.WRONLY)
     await uid_map.write(f"{in_namespace_uid} {uid} 1\n".encode())
     await uid_map.invalidate()
 
-    setgroups = await (root/"proc"/"self"/"setgroups").open(os.O_WRONLY)
+    setgroups = await (root/"proc"/"self"/"setgroups").open(O.WRONLY)
     await setgroups.write(b"deny")
     await setgroups.invalidate()
 
-    gid_map = await (root/"proc"/"self"/"gid_map").open(os.O_WRONLY)
+    gid_map = await (root/"proc"/"self"/"gid_map").open(O.WRONLY)
     await gid_map.write(f"{in_namespace_gid} {gid} 1\n".encode())
     await gid_map.invalidate()
 
@@ -2789,29 +2827,6 @@ class AsyncReadBuffer:
             raise Exception("bad netstring delimiter", comma)
         return data
 
-async def read_lines(fd: AsyncFileDescriptor[ReadableFile]) -> t.AsyncIterator[bytes]:
-    buf = b""
-    while True:
-        # invariant: buf contains no newlines
-        data = await fd.read()
-        if len(data) == 0:
-            # yield up whatever's left
-            print("got EOF while reading lines")
-            if len(buf) != 0:
-                yield buf
-            break
-        buf += data
-        # buf may contain newlines, yield up the lines
-        while True:
-            try:
-                i = buf.index(b"\n")
-            except ValueError:
-                break
-            else:
-                line = buf[:i]
-                yield line
-                buf = buf[i+1:]
-
 async def set_singleton_robust_futex(task: far.Task, transport: base.MemoryTransport, allocator: memory.PreallocatedAllocator,
                                      futex_value: int,
 ) -> Pointer:
@@ -2859,7 +2874,7 @@ async def make_connections(access_task: Task,
             left_sock = await access_task.socket_unix(SOCK.STREAM)
             await robust_unix_connect(access_connection_path, left_sock)
             right_sock: FileDescriptor[UnixSocketFile]
-            right_sock, _ = await access_connection_socket.accept(os.O_CLOEXEC) # type: ignore
+            right_sock, _ = await access_connection_socket.accept(O.CLOEXEC) # type: ignore
             return left_sock, right_sock
     for _ in range(count):
         access_sock, connecting_sock = await make_conn()
@@ -3030,7 +3045,7 @@ async def run_socket_binder(
     stdout_pipe = await task.task.pipe()
     async_stdout = await AsyncFileDescriptor.make(task.epoller, stdout_pipe.rfd)
     thread = await task.fork()
-    bootstrap_executable = await thread.stdtask.task.open(thread.stdtask.filesystem.rsyscall_bootstrap_path, os.O_RDONLY)
+    bootstrap_executable = await thread.stdtask.task.open(thread.stdtask.filesystem.rsyscall_bootstrap_path, O.RDONLY)
     stdout = thread.stdtask.task.base.make_fd_handle(stdout_pipe.wfd.handle)
     await stdout_pipe.wfd.handle.invalidate()
     await thread.stdtask.unshare_files()
@@ -3051,9 +3066,9 @@ async def run_socket_binder(
         # sigh, openssh doesn't close its local stdout when it sees HUP/EOF on
         # the remote stdout. so we can't use EOF to signal end of our lines, and
         # instead have to have a sentinel to tell us when to stop reading.
-        lines_aiter = read_lines(async_stdout)
-        tmp_path_bytes = await lines_aiter.__anext__()
-        done = await lines_aiter.__anext__()
+        lines_buf = AsyncReadBuffer(async_stdout)
+        tmp_path_bytes = await lines_buf.read_line()
+        done = await lines_buf.read_line()
         if done != b"done":
             raise Exception("socket binder violated protocol, got instead of done:", done)
         await async_stdout.aclose()
@@ -3073,8 +3088,8 @@ async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
     child_task = await ssh_command.local_forward(
         local_path, remote_path,
     ).args("-n", "echo forwarded; sleep inf").exec(thread)
-    lines_aiter = read_lines(async_stdout)
-    forwarded = await lines_aiter.__anext__()
+    lines_buf = AsyncReadBuffer(async_stdout)
+    forwarded = await lines_buf.read_line()
     if forwarded != b"forwarded":
         raise Exception("ssh forwarding violated protocol, got instead of forwarded:", forwarded)
     await async_stdout.aclose()
@@ -3459,7 +3474,7 @@ async def deploy_nix_bin(
         deploy_tar: Command, deploy_task: StandardTask,
         dest_task: StandardTask,
 ) -> handle.Path:
-    dest_nix_bin = NixPath(dest_task.task.base.root, src_nix_bin.components)
+    dest_nix_bin = NixPath(src_nix_bin)
     src_nix_store = Command(src_nix_bin/'nix-store', [b'nix-store'], {})
     dest_nix_store = Command(dest_nix_bin/'nix-store', [b'nix-store'], {})
     # TODO check if dest_nix_bin exists, and skip this stuff if it does
@@ -3749,23 +3764,20 @@ async def serve_repls(listenfd: AsyncFileDescriptor[SocketFile],
             num += 1
     return retval
 
-async def canonicalize(task: Task, path: handle.Path) -> handle.Path:
+async def canonicalize(task: Task, path: handle.Path) -> Path:
     f = await Path(task, path).open_path()
-    data = await Path(task, f.handle.as_proc_path()).readlink()
-    return task.base.make_path_from_bytes(data)
+    return (await Path(task, f.handle.as_proc_path()).readlink())
 
 class NixPath(handle.Path):
     "A path in the Nix store, which can therefore be deployed to a remote host with Nix."
     @classmethod
     async def make(cls, task: Task, path: handle.Path) -> NixPath:
-        path = await canonicalize(task, path)
-        return cls(path.base, path.components)
+        return cls((await canonicalize(task, path)).handle)
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.base, handle.Root):
-            raise Exception("path not rooted at root")
-        nix, store = self.components[:2]
-        if nix != b"nix" or store != b"store":
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        root, nix, store = self.parts[:3]
+        if root != b"/" or nix != b"nix" or store != b"store":
             raise Exception("path doesn't start with /nix/store")
 
 @dataclass
@@ -3776,7 +3788,7 @@ class StubServer:
     @classmethod
     async def make(cls, stdtask: StandardTask, path: Path) -> StubServer:
         sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
-        await sockfd.bind(path.unix_address())
+        await sockfd.bind(SockaddrUn.from_path(path))
         await sockfd.listen(10)
         asyncfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
         return StubServer(asyncfd, stdtask)
@@ -3786,7 +3798,7 @@ class StubServer:
             stdtask = self.stdtask
         conn: FileDescriptor[UnixSocketFile]
         addr: SockaddrUn
-        conn, addr = await self.listening_sock.accept(os.O_CLOEXEC) # type: ignore
+        conn, addr = await self.listening_sock.accept(O.CLOEXEC) # type: ignore
         argv, new_stdtask = await setup_stub(stdtask, conn)
         # have to drop first argument, which is the unix_stub executable; see make_stub
         return argv[1:], new_stdtask

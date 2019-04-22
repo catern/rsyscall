@@ -9,9 +9,10 @@ import struct
 import enum
 import signal
 import ipaddress
-from rsyscall.far import AddressSpace, FDTable, Pointer, Path
+from rsyscall.far import AddressSpace, FDTable, Pointer
 from rsyscall.far import Process, ProcessGroup, FileDescriptor
 from rsyscall.handle import Task
+import rsyscall.handle
 from rsyscall.near import SyscallInterface
 from rsyscall.exceptions import RsyscallException, RsyscallHangup
 import rsyscall.far

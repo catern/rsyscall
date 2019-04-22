@@ -22,12 +22,14 @@ import trio
 import trio.hazmat
 import rsyscall.io
 import os
+import rsyscall.path
 
 import rsyscall.sys.inotify as inotify
 from rsyscall.sys.epoll import EpollEvent, EpollEventMask
 from rsyscall.sys.capability import CAP, CapHeader, CapData
 from rsyscall.sys.prctl import PrctlOp, CapAmbient
 from rsyscall.sys.socket import SOCK, AF
+from rsyscall.sys.un import SockaddrUn
 from rsyscall.linux.netlink import NETLINK
 from rsyscall.signal import Signals
 from rsyscall.net.if_ import Ifreq
@@ -40,6 +42,36 @@ logger = logging.getLogger(__name__)
 nix_bin_bytes = b"/nix/store/wpbag7vnmr4pr9p8a3003s68907w9bxq-nix-2.2pre6600_85488a93/bin"
 
 class TestIO(unittest.TestCase):
+    async def do_async_things(self, epoller, task: rsyscall.io.Task) -> None:
+        async with (await task.pipe()) as pipe:
+            async_pipe_rfd = await AsyncFileDescriptor.make(epoller, pipe.rfd)
+            async_pipe_wfd = await AsyncFileDescriptor.make(epoller, pipe.wfd)
+            data = b"hello world"
+            async def stuff():
+                logger.info("performing read")
+                result = await async_pipe_rfd.read()
+                self.assertEqual(result, data)
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(stuff)
+                await trio.sleep(0.01)
+                logger.info("performing write")
+                # hmmm MMM MMMmmmm MMM mmm MMm mm MM mmm MM mm MM
+                # does this make sense?
+                await async_pipe_wfd.write(data)
+
+    async def runner(self, test: t.Callable[[StandardTask], t.Awaitable[None]]) -> None:
+        async with trio.open_nursery() as nursery:
+            await test(local_stdtask)
+
+    async def runner_with_tempdir(
+            self,
+            test: t.Callable[[StandardTask, Path], t.Awaitable[None]]
+    ) -> None:
+        stdtask = local_stdtask
+        async with trio.open_nursery() as nursery:
+            async with (await stdtask.mkdtemp()) as tmppath:
+                await test(stdtask, tmppath)
+
     def test_pipe(self):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.task.pipe()) as pipe:
@@ -79,6 +111,23 @@ class TestIO(unittest.TestCase):
             read_ifreq = await iptr.read()
             self.assertEqual(read_ifreq.ifindex, ifreq.ifindex)
             self.assertEqual(read_ifreq.name, ifreq.name)
+        trio.run(self.runner, test)
+
+    def test_readlinkat_non_symlink(self):
+        async def test(stdtask: StandardTask) -> None:
+            f = await stdtask.task.cwd().open_path()
+            empty_ptr = await stdtask.task.to_pointer(rsyscall.path.EmptyPath())
+            ptr = await stdtask.task.malloc_type(rsyscall.path.Path, 4096)
+            with self.assertRaises(FileNotFoundError):
+                await f.handle.readlinkat(empty_ptr, ptr)
+        trio.run(self.runner, test)
+
+    def test_readlink_proc(self):
+        async def test(stdtask: StandardTask) -> None:
+            f = await stdtask.task.cwd().open_path()
+            path_ptr = await stdtask.task.to_pointer(f.handle.as_proc_self_path())
+            ptr = await stdtask.task.malloc_type(rsyscall.path.Path, 4096)
+            await f.handle.readlinkat(path_ptr, ptr)
         trio.run(self.runner, test)
 
     # def test_cat(self) -> None:
@@ -151,23 +200,6 @@ class TestIO(unittest.TestCase):
     #                 await memsys.read(self.task.syscall, self.task.gateway, self.task.allocator, epoll.pure, 4096)
     #     trio.run(test)
 
-    async def do_async_things(self, epoller, task: rsyscall.io.Task) -> None:
-        async with (await task.pipe()) as pipe:
-            async_pipe_rfd = await AsyncFileDescriptor.make(epoller, pipe.rfd)
-            async_pipe_wfd = await AsyncFileDescriptor.make(epoller, pipe.wfd)
-            data = b"hello world"
-            async def stuff():
-                logger.info("performing read")
-                result = await async_pipe_rfd.read()
-                self.assertEqual(result, data)
-            async with trio.open_nursery() as nursery:
-                nursery.start_soon(stuff)
-                await trio.sleep(0.01)
-                logger.info("performing write")
-                # hmmm MMM MMMmmmm MMM mmm MMm mm MM mmm MM mm MM
-                # does this make sense?
-                await async_pipe_wfd.write(data)
-
     def test_async(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             await self.do_async_things(stdtask.epoller, stdtask.task)
@@ -216,7 +248,7 @@ class TestIO(unittest.TestCase):
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
     #             async with (await stdtask.mkdtemp()) as path:
     #                 async with (await stdtask.task.socket_unix(SOCK.STREAM)) as sockfd:
-    #                     addr = (path/"sock").unix_address()
+    #                     addr = SockaddrUn.from_path(path/"sock")
     #                     await sockfd.bind(addr)
     #     trio.run(test)
 
@@ -224,7 +256,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
                 async with (await stdtask.task.socket_unix(SOCK.STREAM)) as sockfd:
-                    addr = (path/"sock").unix_address()
+                    addr = SockaddrUn.from_path(path/"sock")
                     await sockfd.bind(addr)
                     await sockfd.listen(10)
                     async with (await stdtask.task.socket_unix(SOCK.STREAM)) as clientfd:
@@ -238,7 +270,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
-                addr = (path/"sock").unix_address()
+                addr = SockaddrUn.from_path(path/"sock")
                 await sockfd.bind(addr)
                 await sockfd.listen(10)
                 async_sockfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
@@ -256,7 +288,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
-                addr = (path/"sock").unix_address()
+                addr = SockaddrUn.from_path(path/"sock")
                 await sockfd.bind(addr)
                 await sockfd.listen(10)
                 async_sockfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
@@ -286,7 +318,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
-                addr = (path/"sock").unix_address()
+                addr = SockaddrUn.from_path(path/"sock")
                 await sockfd.bind(addr)
                 await sockfd.listen(10)
                 async_sockfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
@@ -387,19 +419,6 @@ class TestIO(unittest.TestCase):
     #             async with rsyscall_task as stdtask2:
     #                     await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
     #     trio.run(test)
-
-    async def runner(self, test: t.Callable[[StandardTask], t.Awaitable[None]]) -> None:
-        async with trio.open_nursery() as nursery:
-            await test(local_stdtask)
-
-    async def runner_with_tempdir(
-            self,
-            test: t.Callable[[StandardTask, Path], t.Awaitable[None]]
-    ) -> None:
-        stdtask = local_stdtask
-        async with trio.open_nursery() as nursery:
-            async with (await stdtask.mkdtemp()) as tmppath:
-                await test(stdtask, tmppath)
 
     def test_pidns_nest(self) -> None:
         async def test(stdtask: StandardTask) -> None:
@@ -508,7 +527,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             cwd = stdtask.task.cwd()
             self.assertEqual(os.fsdecode(cwd), '.')
-            self.assertEqual(os.fsdecode(cwd/"foo"), './foo')
+            self.assertEqual(os.fsdecode(cwd/"foo"), 'foo')
         trio.run(self.runner, test)
 
     def test_ipv6_encode(self) -> None:

@@ -69,7 +69,7 @@ class LocalSSHHost(SSHHost):
         # speaking the openssh multiplexer protocol. or directly speaking the ssh
         # protocol for that matter.
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        name = ("local_ssh."+random_suffix+".sock").encode()
+        name = "local_ssh."+random_suffix+".sock"
         local_socket_path: handle.Path = task.filesystem.tmpdir/name
         async with rsc.run_socket_binder(task, self.command) as tmp_path_bytes:
             return (await rsc.ssh_bootstrap(task, self.command, task.task.base.fs.root, local_socket_path, tmp_path_bytes))

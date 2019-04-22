@@ -5,6 +5,7 @@ from rsyscall.near import SyscallInterface
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.near
 import rsyscall.far as far
+import rsyscall.handle as handle
 import trio
 import abc
 import enum
@@ -14,29 +15,42 @@ import logging
 from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
-class ProtFlag(enum.IntFlag):
-    EXEC = lib.PROT_EXEC
-    READ = lib.PROT_READ
-    WRITE = lib.PROT_WRITE
-    NONE = lib.PROT_NONE
-
-class MapFlag(enum.IntFlag):
-    PRIVATE = lib.MAP_PRIVATE
-    SHARED = lib.MAP_SHARED
-    ANONYMOUS = lib.MAP_ANONYMOUS
+from rsyscall.sys.mman import ProtFlag, MapFlag
 
 @dataclass
-class Allocation:
+class Allocation(handle.AllocationInterface):
     arena: Arena
     start: int
     end: int
+    valid = True
 
     @property
     def pointer(self) -> Pointer:
         return self.arena.mapping.pointer + self.start
 
+    @property
+    def near(self) -> rsyscall.near.Pointer:
+        return self.pointer.near
+
     def free(self) -> None:
+        if not self.valid:
+            raise Exception("double-free")
+        self.valid = False
         self.arena.allocations.remove(self)
+
+    def size(self) -> int:
+        return self.end - self.start
+
+    def split(self, size: int) -> t.Tuple[Allocation, Allocation]:
+        if not self.valid:
+            raise Exception("can't split freed allocation")
+        idx = self.arena.allocations.index(self)
+        splitpoint = self.start+size
+        first = Allocation(self.arena, self.start, splitpoint)
+        second = Allocation(self.arena, splitpoint, self.end)
+        self.arena.allocations[idx:idx] = [first, second]
+        self.free()
+        return first, self
 
     def __enter__(self) -> 'Pointer':
         return self.pointer

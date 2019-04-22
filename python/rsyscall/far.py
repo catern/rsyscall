@@ -157,65 +157,6 @@ class NetNamespace:
     """
     creator_pid: int
 
-@dataclass
-class Root:
-    pass
-
-@dataclass
-class CWD:
-    pass
-
-if t.TYPE_CHECKING:
-    PathLike = os.PathLike
-else:
-    PathLike = object
-@dataclass
-class Path(PathLike):
-    base: t.Union[Root, CWD, FileDescriptor]
-    # The typical representation of a path as foo/bar/baz\0,
-    # is really just a serialization of a list of components using / as the in-band separator.
-    # We represent paths directly as the list they really are.
-    components: t.List[bytes]
-    def __post_init__(self) -> None:
-        # Each component has no / in it and is non-zero length.
-        for component in self.components:
-            assert len(component) != 0
-            assert b"/" not in component
-
-    def _as_proc_path(self) -> bytes:
-        """The path, using /proc to do dirfd-relative lookups
-
-        This is not too portable - there are many situations where /proc might
-        not be mounted. But if we have a dirfd-relative path, this is the only
-        way to build an AF_UNIX sock address from the path or to pass the path
-        to a subprocess.
-
-        """
-        pathdata = b"/".join(self.components)
-        if isinstance(self.base, Root):
-            ret = b"/" + pathdata
-        elif isinstance(self.base, CWD):
-            ret = pathdata
-        elif isinstance(self.base, FileDescriptor):
-            ret = b"/proc/self/fd/" + bytes(int(self.base)) + b"/" + pathdata
-        else:
-            raise Exception("invalid base type")
-        return ret
-
-    def __fspath__(self) -> str:
-        return os.fsdecode(self._as_proc_path())
-
-    def __repr__(self) -> str:
-        pathdata = os.fsdecode(b"/".join(self.components))
-        if isinstance(self.base, Root):
-            return f"Path(/{pathdata})"
-        elif isinstance(self.base, CWD):
-            return f"Path(./{pathdata})"
-        elif isinstance(self.base, FileDescriptor):
-            return f"Path({self.base}, {pathdata})"
-        else:
-            raise Exception("invalid base type")
-
 # This is like a segment register, if a segment register was write-only. Then
 # we'd need to maintain the knowledge of what the segment register was set to,
 # outside the segment register itself. That's what we do here.

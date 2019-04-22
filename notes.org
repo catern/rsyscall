@@ -3597,6 +3597,24 @@ hmm, actually it just occurred to me that this question is essentially the same 
    Don't send the rsyscall thread signals/don't established handlers in the main thread.
 ** module is organized in a way that mirrors C headers
    This is the only organization that has any chance of being familiar.
+** paths don't embed dirfds
+   Unlike cloudabi or other straightforward translations of capability-security into a POSIX environment,
+   our native path type doesn't embed a dirfd inside itself.
+
+    two things:
+
+    no "far" or "handle" equivalent for paths
+    (everything could have a far/handle equivalent, but we don't do it for most structs.
+    because most of the time the ownership is too tricky.
+    we only do it when it's convenient, namely for fds, pointers, memory mappings;
+    things with clear ownership semantics)
+
+    no dirfds embedded in paths,
+    they're just names
+
+    which really is a consequence of them not have far/handle equivalents
+    because embedding a dirfd is making something far, really.
+
 * knowledge
 ** tkill vs kill
 The difference between kill and tkill (besides the special negative parameters to kill, which tkill
@@ -13707,6 +13725,13 @@ but also, principled.
     which really is a consequence of them not have far/handle equivalents
     because embedding a dirfd is making something far, really.
 *** start implementing functions
+*** should the memory-abstracting task inherit from pure path?
+    points in favor: yes it totally should because not doing that is a major drag
+
+    points against: um then we have to clean up the struct stuff so that inheriting classes don't have from_bytes
+
+    hmm, LSP doesn't have to apply for classes really
+    from_bytes is a class method, there's no reason that it should be on the memory-full type
 ** use a union for repl results, not inheritance
 ** convert serializer to tagless final style
    we'll encapsulate the code-to-optimize in a function,
@@ -13746,6 +13771,16 @@ but also, principled.
    Well... from_bytes...
 
    Hmm.
+*** aaaaa
+aargh
+okay so having additional data on the path is a no-go.
+
+unfortunate.
+
+I guess we will just not inherit from the path?
+
+yeah.
+there's too many methods here to override
 ** readlink
    ok how do we handle readlink, dang it
    turns out we actually do need it
@@ -13777,4 +13812,87 @@ but also, principled.
     
     Ugh, rust just returns an "amount of data read" number. Gross.
 
-are there any crates/examples of a more safe API for readers than std::io::Read? returning the number of bytes read is certainly very traditional and familiar, but one could mess up the usage of that number and read too many or too few bytes out of the buffer one passed to read(); 
+are there any crates/examples of a more safe API for readers than
+std::io::Read? returning the number of bytes read is certainly very
+traditional and familiar, but one could mess up the usage of that
+number and read too many or too few bytes out of the buffer one passed
+to read();
+
+hmmmm
+*** just do it
+    ok so we can't make an empty path with pathlib
+
+    annoying, but fine
+
+    we need some other empty-path thing. hm.
+
+    how can we do that?
+
+    I guess we can just maybe have an EmptyPath object?
+
+    ummmm okaaaay
+
+    so we only want to read valid memory out of this readlink
+
+    I *guess* a model where we return the valid pointer could be good.
+*** ask osdev
+    anyone know a nicer user-level API for reading into a buffer than just returning the number of bytes read?
+
+    did any operating systems/languages ever have a nicer API for reading into a buffer
+    than just returning the number of bytes read?
+
+    like, say, returning a bounds-checked pointer to the 
+
+did any operating systems/languages/architectures ever have a nicer API 
+for reading into a buffer than just returning the number of bytes read?
+returning the number of bytes read seems easy to get wrong and not fully generic;
+if you were, say, an architecture with bounds-checked pointers, you might want to return a pointer instead,
+with bounds so it can only read the part of the buffer that was written to
+*** look at existing operating systems
+genode, nothing
+capsicum, returns bytes
+sel4, couldn't find it/nothing
+*** thinking
+    okay so returning the amount read is very old and standard.
+
+    can we somehow augment it?
+
+    say, just, return a pointer plus amount read?
+    hm.
+
+    blah let's do it
+
+    well hm m m m
+
+    when we pass in a buffer that's... null-terminated?
+    when do we ever have null-terminated buffers tho
+
+    pointer arithmetiiiic.
+
+    blah okay let's stick with returning size for now
+    we can revisit later
+** DONE support split in allocation
+*** make allocation interface and reference from handle
+    okaaaay
+
+    hmm I feel like I can clean up the allocator
+** NixPath
+   how should I model this?
+
+   A NixPath is a path that I know won't become invalid (because I should have a GC reference to it),
+   and which I can deploy to new places.
+   (because I know the list of its references)
+
+   I guess I'll just inherit from the taskful Path.
+** fix ssh tests/don't call unshare_net in main task
+   the ssh tests are breaking because we're calling unshare_net in some earlier tests
+* getting better at asking questions
+  when sending a question as an email:
+  - include a summary of relevant discoveries and thoughts so far
+
+** hm
+   hmm, the thing is,
+   previously I've been in positions where there are people with more knowledge than me,
+   who have some responsibility for answering my questions and therefore tolerate low-effort questions
+
+** hm

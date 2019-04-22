@@ -2,7 +2,7 @@ from __future__ import annotations
 import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.sys.socket import Address
-import rsyscall.far
+from rsyscall.path import PathLike
 import os
 
 class PathTooLongError(ValueError):
@@ -16,7 +16,7 @@ class SockaddrUn(Address):
         self.path = path
 
     @staticmethod
-    def from_path(self, path: rsyscall.far.Path) -> SockaddrUn:
+    def from_path(path: PathLike) -> SockaddrUn:
         return SockaddrUn(os.fsencode(path))
 
     T = t.TypeVar('T', bound='SockaddrUn')

@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 import copy
 import fcntl
 import rsyscall.raw_syscalls as raw_syscall
-import rsyscall.memory as memory
 import gc
 import rsyscall.far
 import rsyscall.near
@@ -13,6 +12,7 @@ import os
 import typing as t
 import logging
 import contextlib
+import abc
 logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import AF, SOCK
@@ -199,6 +199,10 @@ class FileDescriptor:
         num = self.near.number
         return Path(f"/proc/{pid}/fd/{num}")
 
+    def as_proc_self_path(self) -> Path:
+        num = self.near.number
+        return Path(f"/proc/self/fd/{num}")
+
     async def disable_cloexec(self) -> None:
         self.validate()
         if not self.is_only_handle():
@@ -295,6 +299,22 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval.near, optval.bytesize())
 
+    async def readlinkat(self, path: Pointer[Path], buf: Pointer) -> int:
+        self.validate()
+        async with path.borrow(self) as path:
+            async with buf.borrow(self) as buf:
+                return (await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, buf.near, buf.bytesize()))
+
+class AllocationInterface:
+    @abc.abstractproperty
+    def near(self) -> rsyscall.near.Pointer: ...
+    @abc.abstractmethod
+    def size(self) -> int: ...
+    @abc.abstractmethod
+    def split(self, size: int) -> t.Tuple[AllocationInterface, AllocationInterface]: ...
+    @abc.abstractmethod
+    def free(self) -> None: ...
+
 # With handle.Pointer, we know the length of the region of memory
 # we're pointing to.  If we didn't know that, then this pointer
 # wouldn't make any sense as an owning handle that can be passed
@@ -308,10 +328,15 @@ class FileDescriptor:
 class Pointer(t.Generic[T_serializable]):
     task: Task
     data_cls: t.Type[T_serializable]
-    near: rsyscall.near.Pointer
-    size: int
-    to_free: t.Callable[[], None]
+    allocation: AllocationInterface
     valid: bool = True
+
+    @property
+    def near(self) -> rsyscall.near.Pointer:
+        return self.allocation.near
+
+    def bytesize(self) -> int:
+        return self.allocation.size()
     
     @property
     def far(self) -> rsyscall.far.Pointer:
@@ -325,8 +350,15 @@ class Pointer(t.Generic[T_serializable]):
         self.validate()
         yield self
 
-    def bytesize(self) -> int:
-        return self.size
+    def split(self, size: int) -> t.Tuple[Pointer[T_serializable], Pointer]:
+        self.validate()
+        self.valid = False
+        # TODO we should only allow split if we are the only reference to this allocation
+        alloc1, alloc2 = self.allocation.split(size)
+        first = Pointer(self.task, self.data_cls, alloc1)
+        # TODO should degrade this pointer to raw bytes or something, or maybe no type at all
+        second = Pointer(self.task, self.data_cls, alloc2)
+        return first, second
 
     def validate(self) -> None:
         if not self.valid:
@@ -335,20 +367,16 @@ class Pointer(t.Generic[T_serializable]):
     def free(self) -> None:
         if self.valid:
             self.valid = False
-            self.to_free() # type: ignore
+            self.allocation.free()
 
     def __del__(self) -> None:
-        if self.valid:
-            self.valid = False
-            self.to_free() # type: ignore
+        self.free()
 
     def __enter__(self) -> Pointer:
         return self
 
     def __exit__(self, *args) -> None:
-        if self.valid:
-            self.valid = False
-            self.to_free() # type: ignore
+        self.free()
 
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
 
@@ -541,10 +569,12 @@ class Task(rsyscall.far.Task):
         async with path.borrow(self) as path:
             await rsyscall.near.chdir(self.sysif, path.near)
 
-    async def readlink(self, path: Pointer[Path], buf: Pointer, bufsiz: int) -> int:
+    async def readlink(self, path: Pointer[Path], buf: Pointer) -> int:
         async with path.borrow(self) as path:
             async with buf.borrow(self) as buf:
-                return (await rsyscall.near.readlinkat(self.sysif, None, path.near, buf.near, bufsiz))
+                size = await rsyscall.near.readlinkat(self.sysif, None, path.near, buf.near, buf.bytesize())
+                # so we want to split the buf pointer at this size point. hm.
+                return size
 
 @dataclass
 class Pipe:
