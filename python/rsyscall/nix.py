@@ -148,32 +148,45 @@ class NixPath(handle.Path):
 import importlib.resources
 import json
 
-class Dependency:
-    def __init__(self, path: str, closure: t.List[str]) -> None:
-        self._path = path
-        self._closure = closure
+class StorePath:
+    def __init__(self, path: handle.Path, closure: t.List[handle.Path]) -> None:
+        self.path = path
+        self.closure = closure
 
-    @classmethod
-    def load(self, name: str) -> None:
+    @classpath
+    def _load_without_registering(self, name: str) -> StorePath:
         text = importlib.resources.read_text('rsyscall.nixdeps', name + '.json')
         data = json.loads(text)
-        path = data["path"]
-        closure = data["closure"]
-        return Dependency(path, closure)
+        path = handle.Path(data["path"])
+        closure = [handle.Path(elem) for elem in data["closure"]]
+        return StorePath(path, closure)
 
-class Dependencies:
-    def __init__(self, task: Task) -> None:
-        self.task = task
+class Store:
+    def __init__(self, stdtask: StandardTask, nix: StorePath) -> None:
+        self.stdtask = stdtask
+        self.nix = nix
+        self.roots: t.Set[StorePath] = {nix}
 
-    async def realise(self, dep: Dependency) -> Path:
-        # if we're on the local host
-        # then we already have it
-        # how to determine if we're on local host?
-        # do we have one?
-        # we can inherit
-        # and return a path for this task
-        # well ok how about we just test if the mount namespace is the same
-        # oh wait a second, to realise this, if it's not there,
-        # we need a source and destination.
-        # hm!
+    async def create_root(self, path: handle.Path) -> None:
+        # TODO create a temp root pointing to this path
+        self.roots.add(store_path)
         pass
+
+    async def realise(self, store_path: StorePath) -> Path:
+        path = Path(self.stdtask.task, store_path.path)
+        if store_path in self.roots:
+            return store_path.path
+        if await path.access(read=True):
+            await self.create_root(store_path.path)
+            return path
+        raise NotImplementedError("TODO deploy this store_path from local_store")
+
+nix = StorePath._load_without_registering("nix")
+local_store = Store(local_stdtask, nix)
+
+def import_nix_dep(name: str) -> StorePath:
+    store_path = StorePath._load_without_registering(name)
+    # the local store has a root for every StorePath; that's where the
+    # paths actually originally are.
+    local_store.roots.add(store_path)
+    return store_path

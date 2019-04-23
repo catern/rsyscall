@@ -13814,6 +13814,36 @@ but also, principled.
     we could maybe represent paths on different hosts...?
 
     that's what we were trying with NixPath I guess
+
+    OK so we'll have NixDependency,
+    which will encapsulate... a store, a task, and the dep information.
+
+    Which has a property to give us the path, I guess.
+
+    And we'll have a method (NixDependency, StdTask, Store) -> NixDep
+
+    Hmm.
+    How do we make sure we don't use non-existent paths?
+    Well, who cares?
+    Let's not worry about it.
+
+    OK so, yeah, this way we have a clear chain of command
+
+    OK, so...
+    I guess we'll have some store object which we can pull from?
+    We'll have our dependencies, and we'll check for existence on the store object?
+
+    And, if the thing is not present...
+    We'll...
+    Deploy to that store object?
+
+    I guess we always have things locally,
+    and we always deploy them to something one hop away...
+
+    So maybe we can just deal with storepaths after all?
+    And deploy from localhost?
+
+    Yeah actually that seems fine, let's just do that.
 ** use a union for repl results, not inheritance
 ** convert serializer to tagless final style
    we'll encapsulate the code-to-optimize in a function,

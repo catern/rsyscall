@@ -16,7 +16,7 @@ import string
 
 from rsyscall.fcntl import O
 from rsyscall.sys.socket import SOCK, AF
-ssh_bootstrap_script_contents = importlib.resources.read_text('rsyscall', 'ssh_bootstrap.sh')
+ssh_bootstrap_script_contents = importlib.resources.read_text('rsyscall.tasks', 'ssh_bootstrap.sh')
 logger = logging.getLogger(__name__)
 
 
