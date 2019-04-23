@@ -13786,6 +13786,34 @@ but also, principled.
     is on a level above just making syscalls in our current thread.
 
     We can pare it down quite nicely to just local calls.
+*** nix deps
+    ok so basically we can have a separate instance of nix class,
+    for each derivation we dep on.
+    which has the path, and the closure, all that stuff
+
+    and i'll make these with json in a special dir,
+    and they'll be loaded by name at import time,
+    and everything will be fine.
+
+    and we, um, stick an instance into a dependencies class,
+    to copy it over to somewhere else.
+    um. to get the path on the remote host, eh?
+    so it returns a path?
+
+    and we make a temp root for them to stick around
+*** dependencies class
+    how do we determine if we're on local host?
+
+    do we have one of these classes for each task???
+    or many?
+
+    we can inherit this class into child tasks, that's cool
+*** source and dest?
+    hm!
+
+    we could maybe represent paths on different hosts...?
+
+    that's what we were trying with NixPath I guess
 ** use a union for repl results, not inheritance
 ** convert serializer to tagless final style
    we'll encapsulate the code-to-optimize in a function,
@@ -13948,5 +13976,3 @@ sel4, couldn't find it/nothing
    hmm, the thing is,
    previously I've been in positions where there are people with more knowledge than me,
    who have some responsibility for answering my questions and therefore tolerate low-effort questions
-
-** hm

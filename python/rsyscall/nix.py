@@ -1,0 +1,179 @@
+from __future__ import annotations
+import typing as t
+import os
+import rsyscall.handle as handle
+from rsyscall.io import StandardTask, DirectoryFile, read_all, which, Command, FileDescriptor, Task, Path
+import trio
+import struct
+from dataclasses import dataclass
+import logging
+
+from rsyscall.sys.mount import MS
+
+async def bootstrap_nix(
+        src_nix_store: Command, src_tar: Command, src_task: StandardTask,
+        dest_tar: Command, dest_task: StandardTask, dest_dir: FileDescriptor[DirectoryFile],
+) -> t.List[bytes]:
+    "Copies the Nix binaries into dest task's CWD. Returns the list of paths in the closure."
+    query_thread = await src_task.fork()
+    query_pipe = await src_task.task.pipe()
+    query_stdout = query_thread.stdtask.task.base.make_fd_handle(query_pipe.wfd.handle)
+    await query_pipe.wfd.invalidate()
+    await query_thread.stdtask.unshare_files(going_to_exec=True)
+    await query_thread.stdtask.stdout.replace_with(query_stdout)
+    await src_nix_store.args("--query", "--requisites",
+                             src_nix_store.executable_path).exec(query_thread)
+    closure = (await read_all(query_pipe.rfd)).split()
+
+    src_tar_thread = await src_task.fork()
+    dest_tar_thread = await dest_task.fork()
+    [(access_side, dest_tar_stdin)] = await dest_tar_thread.stdtask.make_connections(1)
+    src_tar_stdout = access_side.handle.move(src_tar_thread.stdtask.task.base)
+
+    await dest_tar_thread.stdtask.task.unshare_fs()
+    await dest_tar_thread.stdtask.task.fchdir(dest_dir.handle)
+    await dest_tar_thread.stdtask.unshare_files(going_to_exec=True)
+    await dest_tar_thread.stdtask.stdin.replace_with(dest_tar_stdin)
+    child_task = await dest_tar.args("--extract").exec(dest_tar_thread)
+
+    await src_tar_thread.stdtask.unshare_files(going_to_exec=True)
+    await src_tar_thread.stdtask.stdout.replace_with(src_tar_stdout)
+    await src_tar.args(
+        "--create", "--to-stdout", "--hard-dereference",
+        "--owner=0", "--group=0", "--mode=u+rw,uga+r",
+        *closure,
+    ).exec(src_tar_thread)
+    await child_task.wait_for_exit()
+    return closure
+
+async def bootstrap_nix_database(
+        src_nix_store: Command, src_task: StandardTask,
+        dest_nix_store: Command, dest_task: StandardTask,
+        closure: t.List[bytes],
+) -> None:
+    dump_db_thread = await src_task.fork()
+    load_db_thread = await dest_task.fork()
+    [(access_side, load_db_stdin)] = await load_db_thread.stdtask.make_connections(1)
+    dump_db_stdout = access_side.handle.move(dump_db_thread.stdtask.task.base)
+
+    await load_db_thread.stdtask.unshare_files(going_to_exec=True)
+    await load_db_thread.stdtask.stdin.replace_with(load_db_stdin)
+    child_task = await dest_nix_store.args("--load-db").env({'NIX_REMOTE': ''}).exec(load_db_thread)
+
+    await dump_db_thread.stdtask.unshare_files(going_to_exec=True)
+    await dump_db_thread.stdtask.stdout.replace_with(dump_db_stdout)
+    await src_nix_store.args("--dump-db", *closure).exec(dump_db_thread)
+    await child_task.check()
+
+async def create_nix_container(
+        src_nix_bin: handle.Path, src_task: StandardTask,
+        dest_task: StandardTask,
+) -> handle.Path:
+    dest_nix_bin = dest_task.task.base.make_path_handle(src_nix_bin)
+    src_nix_store = Command(src_nix_bin/'nix-store', [b'nix-store'], {})
+    dest_nix_store = Command(dest_nix_bin/'nix-store', [b'nix-store'], {})
+    # TODO check if dest_nix_bin exists, and skip this stuff if it does
+    # copy the nix binaries over
+    src_tar = await which(src_task, b"tar")
+    dest_tar = await which(dest_task, b"tar")
+    closure = await bootstrap_nix(src_nix_store, src_tar, src_task, dest_tar, dest_task) # type: ignore
+
+    # mutate dest_task so that it is nicely namespaced for the Nix container
+    await dest_task.unshare_user()
+    await dest_task.unshare_mount()
+    await dest_task.task.mount(b"nix", b"/nix", b"none", MS.BIND, b"")
+    await bootstrap_nix_database(src_nix_store, src_task, dest_nix_store, dest_task, closure)
+    return dest_nix_bin
+
+async def deploy_nix_bin(
+        src_nix_bin: NixPath, src_tar: Command, src_task: StandardTask,
+        deploy_tar: Command, deploy_task: StandardTask,
+        dest_task: StandardTask,
+) -> handle.Path:
+    dest_nix_bin = NixPath(src_nix_bin)
+    src_nix_store = Command(src_nix_bin/'nix-store', [b'nix-store'], {})
+    dest_nix_store = Command(dest_nix_bin/'nix-store', [b'nix-store'], {})
+    # TODO check if dest_nix_bin exists, and skip this stuff if it does
+    rootdir = await dest_task.task.root().open_directory()
+    closure = await bootstrap_nix(src_nix_store, src_tar, src_task, deploy_tar, deploy_task, rootdir)
+    await bootstrap_nix_database(src_nix_store, src_task, dest_nix_store, dest_task, closure)
+    return dest_nix_bin
+
+async def nix_deploy(
+        src_nix_bin: handle.Path, src_path: handle.Path, src_task: StandardTask,
+        dest_nix_bin: handle.Path, dest_task: StandardTask,
+) -> handle.Path:
+    dest_path = dest_task.task.base.make_path_handle(src_path)
+
+    query_thread = await src_task.fork()
+    query_pipe = await src_task.task.pipe()
+    query_stdout = query_pipe.wfd.handle.move(query_thread.stdtask.task.base)
+    await query_thread.stdtask.unshare_files(going_to_exec=True)
+    await query_thread.stdtask.stdout.replace_with(query_stdout)
+    await Command(src_nix_bin/"nix-store", [b"nix-store"], {}).args("--query", "--requisites", src_path).exec(query_thread)
+    closure = (await read_all(query_pipe.rfd)).split()
+
+    export_thread = await src_task.fork()
+    import_thread = await dest_task.fork()
+    [(access_side, import_stdin)] = await import_thread.stdtask.make_connections(1)
+    export_stdout = access_side.handle.move(export_thread.stdtask.task.base)
+
+    await import_thread.stdtask.unshare_files(going_to_exec=True)
+    await import_thread.stdtask.stdin.replace_with(import_stdin)
+    child_task = await import_thread.execve(dest_nix_bin/"nix-store", ["nix-store", "--import"])
+
+    await export_thread.stdtask.unshare_files(going_to_exec=True)
+    await export_thread.stdtask.stdout.replace_with(export_stdout)
+    await export_thread.execve(dest_nix_bin/"nix-store", ["nix-store", "--export", *closure])
+    await child_task.check()
+    return dest_path
+
+async def canonicalize(task: Task, path: handle.Path) -> Path:
+    f = await Path(task, path).open_path()
+    return (await Path(task, f.handle.as_proc_path()).readlink())
+
+class NixPath(handle.Path):
+    "A path in the Nix store, which can therefore be deployed to a remote host with Nix."
+    @classmethod
+    async def make(cls, task: Task, path: handle.Path) -> NixPath:
+        return cls((await canonicalize(task, path)).handle)
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        root, nix, store = self.parts[:3]
+        if root != b"/" or nix != b"nix" or store != b"store":
+            raise Exception("path doesn't start with /nix/store")
+
+
+import importlib.resources
+import json
+
+class Dependency:
+    def __init__(self, path: str, closure: t.List[str]) -> None:
+        self._path = path
+        self._closure = closure
+
+    @classmethod
+    def load(self, name: str) -> None:
+        text = importlib.resources.read_text('rsyscall.nixdeps', name + '.json')
+        data = json.loads(text)
+        path = data["path"]
+        closure = data["closure"]
+        return Dependency(path, closure)
+
+class Dependencies:
+    def __init__(self, task: Task) -> None:
+        self.task = task
+
+    async def realise(self, dep: Dependency) -> Path:
+        # if we're on the local host
+        # then we already have it
+        # how to determine if we're on local host?
+        # do we have one?
+        # we can inherit
+        # and return a path for this task
+        # well ok how about we just test if the mount namespace is the same
+        # oh wait a second, to realise this, if it's not there,
+        # we need a source and destination.
+        # hm!
+        pass

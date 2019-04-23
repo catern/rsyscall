@@ -5,7 +5,6 @@ from rsyscall.io import AsyncFileDescriptor
 from rsyscall.io import local_stdtask, StandardTask, Path
 from rsyscall.io import Command
 import rsyscall.io as rsc
-from rsyscall.tests.test_ssh import ssh_to_localhost
 import shutil
 import rsyscall.base as base
 import rsyscall.near as near
@@ -22,10 +21,14 @@ import trio.hazmat
 import rsyscall.io
 import os
 import rsyscall.path
+import rsyscall.repl
+import rsyscall.wish
+import rsyscall.nix
 
 from rsyscall.tasks.persistent import fork_persistent
 from rsyscall.tasks.stdin_bootstrap import rsyscall_stdin_bootstrap
 from rsyscall.tasks.stub import StubServer
+from rsyscall.tasks.ssh import ssh_to_localhost
 
 import rsyscall.sys.inotify as inotify
 from rsyscall.sys.epoll import EpollEvent, EpollEventMask
@@ -311,10 +314,16 @@ class TestIO(unittest.TestCase):
     def test_pure_repl(self) -> None:
         async def test() -> None:
             repl = rsyscall.repl.PureREPL({})
-            self.assertEqual((await repl.add_line('1\n')).value, 1)
-            self.assertEqual((await repl.add_line('1+1\n')).value, 2)
+            async def eval(line: str) -> t.Any:
+                result = await repl.add_line(line + '\n')
+                if isinstance(result, rsyscall.repl.ExpressionResult):
+                    return result.value
+                else:
+                    raise Exception("unexpected", result)
+            self.assertEqual(await eval('1'), 1)
+            self.assertEqual(await eval('1+1'), 2)
             await repl.add_line('foo = 1\n')
-            self.assertEqual((await repl.add_line('foo*4\n')).value, 4)
+            self.assertEqual(await eval('foo*4'), 4)
         rsyscall.repl.await_pure(test())
 
     def test_repl(self) -> None:
@@ -330,7 +339,7 @@ class TestIO(unittest.TestCase):
                 await async_clientfd.connect(addr)
                 await async_clientfd.write(b"foo = 11\n")
                 await async_clientfd.write(b"return foo * 2\n")
-                ret = await rsyscall.io.serve_repls(async_sockfd, {'locals': locals()}, int, "hello")
+                ret = await rsyscall.wish.serve_repls(async_sockfd, {'locals': locals()}, int, "hello")
                 self.assertEqual(ret, 22)
         trio.run(self.runner, test)
 
@@ -914,11 +923,11 @@ class TestIO(unittest.TestCase):
                 local_child, remote_stdtask = await host.ssh(stdtask)
                 thread = await remote_stdtask.fork()
                 src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
-                dest_nix_bin = await rsyscall.io.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
+                dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
                 # let's use nix-copy-closure or nix-store --import/--export or nix copy to copy bash over then run it?
                 # nix-store --import/--export
                 bash = await rsyscall.io.which(stdtask, b"bash")
-                dest_bash = await rsyscall.io.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
+                dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
                 child_task = await thread.execve(dest_bash, ["bash"])
                 await child_task.wait_for_exit()
         trio.run(self.runner, test)
@@ -928,9 +937,9 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
             src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
-            dest_nix_bin = await rsyscall.io.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
+            dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
             bash = await rsyscall.io.which(stdtask, b"bash")
-            dest_bash = await rsyscall.io.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
+            dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
             child_task = await thread.execve(dest_bash, ["bash", "--norc"])
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
@@ -941,7 +950,7 @@ class TestIO(unittest.TestCase):
             del stdtask.environment[b'NIX_REMOTE']
             thread = await stdtask.fork()
             src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
-            dest_nix_bin = await rsyscall.io.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
+            dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
             child_task = await thread.execve(dest_nix_bin/"nix-daemon", ["nix-daemon"], {'NIX_REMOTE':''})
 
             shell_thread = await stdtask.fork()
@@ -958,11 +967,11 @@ class TestIO(unittest.TestCase):
             await shell_thread.stdtask.task.mount(b"none", b"/nix", b"none",
                                                   lib.MS_BIND|lib.MS_REMOUNT|lib.MS_RDONLY, b"")
             bash = await rsyscall.io.which(stdtask, b"bash")
-            dest_bash = await rsyscall.io.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, shell_thread.stdtask)
+            dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, shell_thread.stdtask)
             mount = await rsyscall.io.which(stdtask, b"mount")
             # don't seem to be able to copy coreutils for some reason?
             # it doesn't have a valid signature?
-            await rsyscall.io.nix_deploy(src_nix_bin, mount.executable_path,
+            await rsyscall.nix.nix_deploy(src_nix_bin, mount.executable_path,
                                          stdtask, dest_nix_bin, shell_thread.stdtask)
             child_task = await shell_thread.execve(dest_bash, ["bash", "--norc"])
             await child_task.wait_for_exit()

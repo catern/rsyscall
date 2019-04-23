@@ -123,24 +123,25 @@ async def {wrapper_name}():
     func.__code__ = without_co_newlocals(func.__code__)
     return func()
 
-class Result:
+class BaseResult:
     pass
 
 @dataclass
-class ReturnResult(Result):
+class ReturnResult(BaseResult):
     value: t.Any
 
 @dataclass
-class ExceptionResult(Result):
+class ExceptionResult(BaseResult):
     exception: BaseException
 
 @dataclass
-class ExpressionResult(Result):
+class ExpressionResult(BaseResult):
     value: t.Any
 
 @dataclass
-class FallthroughResult(Result):
+class FallthroughResult(BaseResult):
     pass
+Result = t.Union[ReturnResult, ExceptionResult, ExpressionResult, FallthroughResult]
 
 async def eval_single(astob: ast.Interactive, global_vars: t.Dict[str, t.Any]) -> Result:
     awaitable = compile_to_awaitable(astob, global_vars)
