@@ -14014,6 +14014,36 @@ sel4, couldn't find it/nothing
       prints error message
 
       have to override develop
+** lambda neat
+   if I have some data which references other data,
+   but which in its final form drops the references...
+
+   or...
+
+   it needs to be serialized...
+
+   if I have something which references other data,
+   but which needs to be serialized to be used,
+   
+   then, storing it as a lambda instead, is a nice trick.
+   how do I think formally about that?
+*** dynamic scope???
+    implicit parameters?
+
+    silently passed down?
+
+    in the global environment?
+*** captp-style exports
+*** gc as an effect
+*** make "local" module which has all the local things in it
+** keeping nix store reference around
+   we don't want to GC the Store
+
+   we want to unite the two GCs, Nix's and our own.
+
+   well how do we do that then?
+
+   blaaaaaaaaaargh
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

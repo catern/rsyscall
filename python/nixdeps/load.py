@@ -9,7 +9,7 @@ class Nixdep:
     path: Path
     closure: t.List[Path]
 
-def import_nixdep(module: str, name: str) -> None:
+def import_nixdep(module: str, name: str) -> Nixdep:
     text = importlib.resources.read_text(module, name + '.json')
     data = json.loads(text)
     path = Path(data["path"])

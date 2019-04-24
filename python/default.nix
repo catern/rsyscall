@@ -32,6 +32,7 @@ let
       sha256 = "00cfamn97w2vhq3id87f10mjna8ag5yz5dw0cy5s0sa3ipiyii9n";
     };
   });
+  rsyscall = (import ../c);
 in
 with pkgs.python37Packages;
 
@@ -44,7 +45,7 @@ buildPythonPackage {
   typing-extensions
 pytest ];
   buildInputs = [ pkgs.openssh nix ];
-  propagatedBuildInputs = [ (import ../c)
+  propagatedBuildInputs = [ rsyscall
       trio cffi pkgconfig python-prctl pkgs.nginx typeguard
       dnspython
       requests h11 pkgs.pkgconfig hydra
@@ -59,9 +60,13 @@ pytest ];
   ];
   miredo = miredo;
   nix = nix;
+  rsyscall = rsyscall;
+  openssh = pkgs.openssh;
   exportReferencesGraph = [
     "miredo" pkgs.miredo
     "nix" pkgs.nix
+    "rsyscall" rsyscall
+    "openssh" pkgs.openssh
   ];
 }
 

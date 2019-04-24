@@ -28,7 +28,7 @@ import rsyscall.nix
 from rsyscall.tasks.persistent import fork_persistent
 from rsyscall.tasks.stdin_bootstrap import rsyscall_stdin_bootstrap
 from rsyscall.tasks.stub import StubServer
-from rsyscall.tasks.ssh import ssh_to_localhost
+from rsyscall.tasks.ssh import ssh_to_localhost, make_local_ssh, SSHExecutables, SSHDExecutables
 
 import rsyscall.sys.inotify as inotify
 from rsyscall.sys.epoll import EpollEvent, EpollEventMask
@@ -814,17 +814,19 @@ class TestIO(unittest.TestCase):
 
     def test_ssh_basic(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            async with ssh_to_localhost(stdtask) as host:
-                local_child, remote_stdtask = await host.ssh(stdtask)
-                logger.info("about to fork")
-                remote_thread = await remote_stdtask.fork()
-                logger.info("done with fork")
-                async with remote_thread:
-                    # there's no test on mount namespace at the moment, so it works to pull this from local
-                    logger.info("about to exec")
-                    child_task = await remote_thread.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
-                    logger.info("done exec, waiting now")
-                    await child_task.wait_for_exit()
+            executables = await SSHExecutables.from_store(rsyscall.nix.local_store)
+            sshd_executables = await SSHDExecutables.from_store(rsyscall.nix.local_store)
+            host = await make_local_ssh(stdtask, sshd_executables, executables)
+            local_child, remote_stdtask = await host.ssh(stdtask)
+            logger.info("about to fork")
+            remote_thread = await remote_stdtask.fork()
+            logger.info("done with fork")
+            async with remote_thread:
+                # there's no test on mount namespace at the moment, so it works to pull this from local
+                logger.info("about to exec")
+                child_task = await remote_thread.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                logger.info("done exec, waiting now")
+                await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
     def test_ssh_transmit(self) -> None:

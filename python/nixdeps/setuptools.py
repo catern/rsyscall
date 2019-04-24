@@ -27,6 +27,8 @@ def build_deps_module(self, output_dir: Path, deps: t.List[str]) -> None:
     for dep in deps:
         log.info("writing Nix dep %s" % dep)
         output_path = output_dir/(dep + '.json')
+        if dep not in os.environ:
+            raise Exception("couldn't find dep", dep, "in environment")
         path = os.environ[dep]
         if in_nix_shell:
             # use nix-store to dump the closure

@@ -165,20 +165,24 @@ class Store:
     def __init__(self, stdtask: StandardTask, nix: StorePath) -> None:
         self.stdtask = stdtask
         self.nix = nix
-        self.roots: t.Set[StorePath] = {nix}
+        # cache the target path, mildly useful caching for the pointers
+        self.roots: t.Dict[StorePath, Path] = {}
+        self._add_root(nix, Path(self.stdtask.task, nix.path))
 
-    async def create_root(self, path: handle.Path) -> None:
-        # TODO create a temp root pointing to this path
-        self.roots.add(store_path)
-        pass
+    def _add_root(self, store_path: StorePath, path: Path) -> None:
+        self.roots[store_path] = path
+
+    async def create_root(self, store_path: StorePath, path: Path) -> Path:
+        # TODO create a Nix temp root pointing to this path
+        self._add_root(store_path, path)
+        return path
 
     async def realise(self, store_path: StorePath) -> Path:
-        path = Path(self.stdtask.task, store_path.path)
         if store_path in self.roots:
-            return store_path.path
+            return self.roots[store_path]
+        path = Path(self.stdtask.task, store_path.path)
         if await path.access(read=True):
-            await self.create_root(store_path.path)
-            return path
+            return (await self.create_root(store_path, path))
         raise NotImplementedError("TODO deploy this store_path from local_store")
 
 nix = StorePath._load_without_registering("nix")
@@ -188,5 +192,7 @@ def import_nix_dep(name: str) -> StorePath:
     store_path = StorePath._load_without_registering(name)
     # the local store has a root for every StorePath; that's where the
     # paths actually originally are.
-    local_store.roots.add(store_path)
+    local_store._add_root(store_path, Path(local_store.stdtask.task, store_path.path))
     return store_path
+
+rsyscall = import_nix_dep("rsyscall")

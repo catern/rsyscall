@@ -14,11 +14,14 @@ import abc
 import random
 import string
 
+import rsyscall.nix as nix
+
 from rsyscall.fcntl import O
 from rsyscall.sys.socket import SOCK, AF
 ssh_bootstrap_script_contents = importlib.resources.read_text('rsyscall.tasks', 'ssh_bootstrap.sh')
 logger = logging.getLogger(__name__)
 
+openssh = nix.import_nix_dep("openssh")
 
 T_ssh_command = t.TypeVar('T_ssh_command', bound="SSHCommand")
 class SSHCommand(Command):
@@ -33,9 +36,6 @@ class SSHCommand(Command):
 
     def local_forward(self, local_socket: handle.Path, remote_socket: str) -> SSHCommand:
         return self.args("-L", os.fsdecode(local_socket) + ":" + os.fsdecode(remote_socket))
-
-    def as_host(self) -> ArbitrarySSHHost:
-        return ArbitrarySSHHost(near.DirectoryFile(), self)
 
     @classmethod
     def make(cls: t.Type[T_ssh_command], executable_path: handle.Path) -> T_ssh_command:
@@ -52,25 +52,62 @@ class SSHDCommand(Command):
     def make(cls, executable_path: handle.Path) -> SSHDCommand:
         return cls(executable_path, [b"sshd"], {})
 
+@dataclass
+class SSHExecutables:
+    base_ssh: SSHCommand
+    bootstrap_executable: handle.FileDescriptor
+
+    @classmethod
+    async def from_store(cls, store: nix.Store) -> SSHExecutables:
+        ssh_path = await store.realise(openssh)
+        rsyscall_path = await store.realise(nix.rsyscall)
+        base_ssh = SSHCommand.make(ssh_path.handle/"bin"/"ssh")
+        bootstrap_executable = (await (rsyscall_path/"libexec"/"rsyscall"/"rsyscall-bootstrap").open(O.RDONLY)).handle
+        return SSHExecutables(base_ssh, bootstrap_executable)
+
+    def host(self, to_host: t.Callable[[SSHCommand], SSHCommand]) -> SSHHost:
+        return SSHHost(self, to_host)
+
+@dataclass
+class SSHHost:
+    executables: SSHExecutables
+    to_host: t.Any[t.Callable[[SSHCommand], SSHCommand]]
+    async def ssh(self, task: StandardTask) -> t.Tuple[ChildProcess, StandardTask]:
+        # we could get rid of the need to touch the local filesystem by directly
+        # speaking the openssh multiplexer protocol. or directly speaking the ssh
+        # protocol for that matter.
+        ssh_to_host = self.to_host(self.executables.base_ssh)
+        # we guess that the last argument of ssh command is the hostname. it
+        # doesn't matter if it isn't, this is just used for a temp filename,
+        # just to be more human-readable
+        hostname = os.fsdecode(ssh_to_host.arguments[-1])
+        random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        name = (hostname+random_suffix+".sock")
+        local_socket_path: handle.Path = task.filesystem.tmpdir/name
+        # TODO let's check up front that the bootstrap_executable is in this task's fd space?
+        async with run_socket_binder(task, ssh_to_host, self.executables.bootstrap_executable) as tmp_path_bytes:
+            return (await ssh_bootstrap(task, ssh_to_host, local_socket_path, tmp_path_bytes))
+
 # Need to identify the host, I guess
 # I shouldn't abstract this too much - I should just use ssh.
 @contextlib.asynccontextmanager
 async def run_socket_binder(
         task: StandardTask,
         ssh_command: SSHCommand,
+        bootstrap_executable: handle.FileDescriptor,
 ) -> t.AsyncGenerator[bytes, None]:
     stdout_pipe = await task.task.pipe()
     async_stdout = await AsyncFileDescriptor.make(task.epoller, stdout_pipe.rfd)
     thread = await task.fork()
-    bootstrap_executable = await thread.stdtask.task.open(thread.stdtask.filesystem.rsyscall_bootstrap_path, O.RDONLY)
     stdout = thread.stdtask.task.base.make_fd_handle(stdout_pipe.wfd.handle)
     await stdout_pipe.wfd.handle.invalidate()
-    await thread.stdtask.unshare_files()
-    # TODO we are relying here on the fact that replace_with doesn't set cloexec on the new fd.
-    # maybe we should explicitly list what we want to pass down...
-    # or no, let's tag things as inheritable, maybe?
-    await thread.stdtask.stdout.replace_with(stdout)
-    await thread.stdtask.stdin.replace_with(bootstrap_executable)
+    async with bootstrap_executable.borrow(thread.stdtask.task.base) as bootstrap_executable:
+        await thread.stdtask.unshare_files()
+        # TODO we are relying here on the fact that replace_with doesn't set cloexec on the new fd.
+        # maybe we should explicitly list what we want to pass down...
+        # or no, let's tag things as inheritable, maybe?
+        await thread.stdtask.stdout.replace_with(stdout)
+        await thread.stdtask.stdin.replace_with(bootstrap_executable)
     async with thread:
         child = await ssh_command.args(ssh_bootstrap_script_contents).exec(thread)
         # from... local?
@@ -118,8 +155,6 @@ async def ssh_bootstrap(
         parent_task: StandardTask,
         # the actual ssh command to run
         ssh_command: SSHCommand,
-        # the root directory we'll have on the remote side
-        ssh_root: near.DirectoryFile,
         # the local path we'll use for the socket
         local_socket_path: handle.Path,
         # the directory we're bootstrapping out of
@@ -164,7 +199,7 @@ async def ssh_bootstrap(
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                     new_process.near, remote_syscall_fd.near)
     # the cwd is not the one from the ssh_host because we cd'd somewhere else as part of the bootstrap
-    new_fs_information = far.FSInformation(new_pid, root=ssh_root, cwd=near.DirectoryFile())
+    new_fs_information = far.FSInformation(new_pid, root=near.DirectoryFile(), cwd=near.DirectoryFile())
     # TODO we should get this from the SSHHost, this is usually going
     # to be common for all connections and we should express that
     net = far.NetNamespace(new_pid)
@@ -200,53 +235,34 @@ async def ssh_bootstrap(
     )
     return bootstrap_child_task, new_stdtask
 
-async def spawn_ssh(
-        task: StandardTask,
-        ssh_command: SSHCommand,
-        ssh_root: near.DirectoryFile,
-        local_socket_path: handle.Path,
-) -> t.Tuple[ChildProcess, StandardTask]:
-    async with run_socket_binder(task, ssh_command) as tmp_path_bytes:
-        return (await ssh_bootstrap(task, ssh_command, ssh_root, local_socket_path, tmp_path_bytes))
-
-class SSHHost:
-    @abc.abstractmethod
-    async def ssh(self, task: StandardTask) -> t.Tuple[ChildProcess, StandardTask]: ...
-
 @dataclass
-class ArbitrarySSHHost(SSHHost):
-    root: near.DirectoryFile
-    command: SSHCommand
-    async def ssh(self, task: StandardTask) -> t.Tuple[ChildProcess, StandardTask]:
-        # we could get rid of the need to touch the local filesystem by directly
-        # speaking the openssh multiplexer protocol. or directly speaking the ssh
-        # protocol for that matter.
-        random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        name = (self.guess_hostname()+random_suffix+".sock")
-        local_socket_path: handle.Path = task.filesystem.tmpdir/name
-        return (await spawn_ssh(task, self.command, self.root, local_socket_path))
+class SSHDExecutables:
+    ssh_keygen: Command
+    sshd: SSHDCommand
 
-    def guess_hostname(self) -> str:
-        # we guess that the last argument of ssh command is the hostname. it
-        # doesn't matter if it isn't, this is just for human-readability.
-        return os.fsdecode(self.command.arguments[-1])
+    @classmethod
+    async def from_store(cls, store: nix.Store) -> SSHDExecutables:
+        ssh_path = await store.realise(openssh)
+        ssh_keygen = Command(ssh_path.handle/"bin"/"ssh-keygen", ["ssh-keygen"], {})
+        sshd = SSHDCommand.make(ssh_path.handle/"bin"/"sshd")
+        return SSHDExecutables(ssh_keygen, sshd)
 
+async def make_local_ssh(stdtask: StandardTask,
+                         sshd_executables: SSHDExecutables, executables: SSHExecutables) -> SSHHost:
+    ssh_keygen = sshd_executables.ssh_keygen
+    sshd = sshd_executables.sshd
 
-class LocalSSHHost(SSHHost):
-    @staticmethod
-    async def make(stdtask: StandardTask) -> LocalSSHHost:
-        ssh_keygen = await which(stdtask, b"ssh-keygen")
-        keygen_command = ssh_keygen.args('-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key')
-        keygen_thread = await stdtask.fork()
-        async with (await stdtask.mkdtemp()) as tmpdir:
-            await keygen_thread.stdtask.task.chdir(tmpdir)
-            await (await keygen_command.exec(keygen_thread)).wait_for_exit()
-            privkey_file = await (tmpdir/'key').open(O.RDONLY)
-            pubkey_file = await (tmpdir/'key.pub').open(O.RDONLY)
+    keygen_command = ssh_keygen.args('-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key')
+    keygen_thread = await stdtask.fork()
+    # ugh, we have to make a directory because ssh-keygen really wants to output to a directory
+    async with (await stdtask.mkdtemp()) as tmpdir:
+        await keygen_thread.stdtask.task.chdir(tmpdir)
+        await (await keygen_command.exec(keygen_thread)).wait_for_exit()
+        privkey_file = await (tmpdir/'key').open(O.RDONLY)
+        pubkey_file = await (tmpdir/'key.pub').open(O.RDONLY)
+    def to_host(ssh: SSHCommand, privkey_file=privkey_file, pubkey_file=pubkey_file) -> SSHCommand:
         privkey = privkey_file.handle.as_proc_path()
         pubkey = pubkey_file.handle.as_proc_path()
-        ssh = SSHCommand.make((await which(stdtask, b"ssh")).executable_path)
-        sshd = SSHDCommand.make((await which(stdtask, b"sshd")).executable_path)
         sshd_command = sshd.args(
             '-i', '-e', '-f', '/dev/null',
         ).sshd_options({
@@ -268,27 +284,16 @@ class LocalSSHHost(SSHHost):
         }).proxy_command(sshd_command).args(
             "localhost",
         )
-        return LocalSSHHost(ssh_command, privkey_file, pubkey_file)
+        return ssh_command
+    return executables.host(to_host)
 
-    async def ssh(self, task: StandardTask) -> t.Tuple[ChildProcess, StandardTask]:
-        # we could get rid of the need to touch the local filesystem by directly
-        # speaking the openssh multiplexer protocol. or directly speaking the ssh
-        # protocol for that matter.
-        random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        name = "local_ssh."+random_suffix+".sock"
-        local_socket_path: handle.Path = task.filesystem.tmpdir/name
-        async with run_socket_binder(task, self.command) as tmp_path_bytes:
-            return (await ssh_bootstrap(task, self.command, task.task.base.fs.root, local_socket_path, tmp_path_bytes))
-
-    def __init__(self, command: SSHCommand,
-                 privkey: FileDescriptor[ReadableFile],
-                 pubkey: FileDescriptor[ReadableFile],
-    ) -> None:
-        self.command = command
-        self.privkey = privkey
-        self.pubkey = pubkey
-
+class LocalSSHHost:
+    @staticmethod
+    async def make(stdtask: StandardTask, sshd_executables: SSHDExecutables, ssh_executables: SSHExecutables) -> SSHHost:
+        return (await make_local_ssh(stdtask, sshd_executables, ssh_executables))
 
 @contextlib.asynccontextmanager
-async def ssh_to_localhost(stdtask: StandardTask) -> t.AsyncGenerator[SSHHost, None]:
-    yield (await LocalSSHHost.make(stdtask))
+async def ssh_to_localhost(stdtask: StandardTask,
+                           sshd_executables: SSHDExecutables,
+                           ssh_executables: SSHExecutables) -> t.AsyncGenerator[SSHHost, None]:
+    yield (await LocalSSHHost.make(stdtask, sshd_executables, ssh_executables))
