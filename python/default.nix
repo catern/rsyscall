@@ -39,7 +39,6 @@ buildPythonPackage {
   name = "rsyscall";
   src = ./.;
   # doCheck = false;
-  miredo = miredo;
   checkInputs = [
   (mypy.overrideAttrs (_: { src = /home/sbaugh/.local/src/mypy; }))
   typing-extensions
@@ -57,6 +56,12 @@ pytest ];
       pyroute2
       pkgs.powerdns
       pkgs.bubblewrap
+  ];
+  miredo = miredo;
+  nix = nix;
+  exportReferencesGraph = [
+    "miredo" pkgs.miredo
+    "nix" pkgs.nix
   ];
 }
 

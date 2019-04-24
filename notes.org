@@ -13998,6 +13998,22 @@ sel4, couldn't find it/nothing
    I guess I'll just inherit from the taskful Path.
 ** fix ssh tests/don't call unshare_net in main task
    the ssh tests are breaking because we're calling unshare_net in some earlier tests
+** nixdeps
+*** how to extend command
+**** build_ext
+***** pros
+      doesn't print error message because of append to py_modules
+
+      has working develop mode
+***** cons
+      have to override various methods in build_ext which try and build as a C library
+**** build_py
+***** pros
+      less needed to override
+***** cons
+      prints error message
+
+      have to override develop
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

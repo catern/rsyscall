@@ -25,3 +25,4 @@ c/stamp-h1
 __pycache__
 /python/.mypy_cache/
 /python/.pytest_cache/
+/python/rsyscall/_nixdeps

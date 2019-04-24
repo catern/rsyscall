@@ -16,10 +16,11 @@ setup(name='rsyscall',
       author_email='sbaugh@catern.com',
       license='MIT',
       cffi_modules=["ffibuilder.py:ffibuilder"],
-      packages=['rsyscall', 'rsyscall.tests'],
+      packages=['rsyscall', 'nixdeps', 'rsyscall.tests'],
+      nix_deps={'rsyscall._nixdeps': ['miredo', 'nix']},
       entry_points={
-          'distutils.commands': [
-              "nix_deps = rsyscall.setuptools:nix_deps",
+          'distutils.setup_keywords': [
+              "nix_deps = nixdeps.setuptools:nix_deps",
           ],
       },
 )

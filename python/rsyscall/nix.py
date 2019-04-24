@@ -2,10 +2,11 @@ from __future__ import annotations
 import typing as t
 import os
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask, DirectoryFile, read_all, which, Command, FileDescriptor, Task, Path
+from rsyscall.io import StandardTask, DirectoryFile, read_all, which, Command, FileDescriptor, Task, Path, local_stdtask
 import trio
 import struct
 from dataclasses import dataclass
+import nixdeps
 import logging
 
 from rsyscall.sys.mount import MS
@@ -153,12 +154,11 @@ class StorePath:
         self.path = path
         self.closure = closure
 
-    @classpath
+    @classmethod
     def _load_without_registering(self, name: str) -> StorePath:
-        text = importlib.resources.read_text('rsyscall.nixdeps', name + '.json')
-        data = json.loads(text)
-        path = handle.Path(data["path"])
-        closure = [handle.Path(elem) for elem in data["closure"]]
+        dep = nixdeps.import_nixdep('rsyscall._nixdeps', name)
+        path = handle.Path(dep.path)
+        closure = [handle.Path(elem) for elem in dep.closure]
         return StorePath(path, closure)
 
 class Store:
