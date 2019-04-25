@@ -28,7 +28,7 @@ from rsyscall.linux.futex import FUTEX_WAITERS, FUTEX_TID_MASK
 from rsyscall.sys.mount import MS
 from rsyscall.sys.un import SockaddrUn, PathTooLongError
 from rsyscall.netinet.in_ import SockaddrIn
-from rsyscall.sys.epoll import EpollEvent, EpollEventMask, EpollCtlOp, EpollFlag
+from rsyscall.sys.epoll import EpollEvent, EpollEventList, EpollEventMask, EpollCtlOp, EpollFlag
 from rsyscall.sys.wait import ChildCode, UncleanExit, ChildEvent, W
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
@@ -615,26 +615,22 @@ class EpollCenter:
 
 @dataclass
 class PendingEpollWait:
-    allocation: memory.Allocation
     syscall_response: near.SyscallResponse
-    memory_transport: base.MemoryTransport
-    received_events: t.Optional[t.List[EpollEvent]] = None
+    buf: TypedPointer[EpollEventList]
+    valid: t.Optional[TypedPointer[EpollEventList]] = None
+    received_events: t.Optional[EpollEventList] = None
 
-    async def receive(self) -> t.List[EpollEvent]:
-        if self.received_events is not None:
-            return self.received_events
-        else:
+    async def receive(self) -> EpollEventList:
+        # this function will be called multiple times if we are cancelled;
+        # it shouldn't repeat actions taken in earlier times it was called.
+        # these if-checks are to check what actions have been taken.
+        # TODO surely we could do this more nicely!
+        if self.valid is None:
             count = await self.syscall_response.receive()
-            bufsize = self.allocation.end - self.allocation.start
-            localbuf = await self.memory_transport.read(self.allocation.pointer, bufsize)
-            ret: t.List[EpollEvent] = []
-            cur = 0
-            for _ in range(count):
-                ret.append(EpollEvent.from_bytes(localbuf[cur:cur+EpollEvent.bytesize()]))
-                cur += EpollEvent.bytesize()
-            self.received_events = ret
-            self.allocation.free()
-            return ret
+            self.valid, _ = self.buf.split(count * EpollEvent.sizeof())
+        if self.received_events is None:
+            self.received_events = await self.valid.read()
+        return self.received_events
 
 class EpollWaiter:
     def __init__(self, task: Task, epfd: handle.FileDescriptor,
@@ -731,7 +727,7 @@ class EpollWaiter:
                         # performance. Or maybe we can just start specially handling streams.
                 else:
                     if self.pending_epoll_wait is None:
-                        pending = await self.submit_wait(maxevents=32, timeout=-1)
+                        pending = await self._submit_wait(maxevents=32, timeout=-1)
                         self.pending_epoll_wait = pending
                     else:
                         pending = self.pending_epoll_wait
@@ -743,29 +739,18 @@ class EpollWaiter:
                         queue = self.number_to_queue[event.data]
                         queue.send_nowait(event.events)
 
-    async def submit_wait(self, maxevents: int, timeout: int) -> PendingEpollWait:
-        allocation = await self.waiting_task.allocator.malloc(maxevents * EpollEvent.bytesize())
-        try:
-            syscall_response = await self.epfd.task.sysif.submit_syscall(
-                near.SYS.epoll_wait, self.epfd.near, allocation.pointer, maxevents, timeout)
-        except:
-            allocation.free()
-            raise
-        else:
-            return PendingEpollWait(allocation, syscall_response, self.waiting_task.transport)
+    async def _submit_wait(self, maxevents: int, timeout: int) -> PendingEpollWait:
+        buf = await self.waiting_task.malloc_type(EpollEventList, maxevents * EpollEvent.sizeof())
+        # we do this submit_syscall dance so that we can be cancelled without losing data
+        syscall_response = await self.epfd.task.sysif.submit_syscall(
+            near.SYS.epoll_wait, self.epfd.near, buf.near, maxevents, timeout)
+        return PendingEpollWait(syscall_response, buf)
 
-    async def wait(self, maxevents: int, timeout: int) -> t.List[EpollEvent]:
-        bufsize = maxevents * EpollEvent.bytesize()
-        with await self.waiting_task.allocator.malloc(bufsize) as events_ptr:
-            count = await self.epfd.epoll_wait(events_ptr, maxevents, timeout)
-            with trio.open_cancel_scope(shield=True):
-                localbuf = await self.waiting_task.transport.read(events_ptr, bufsize)
-        ret: t.List[EpollEvent] = []
-        cur = 0
-        for _ in range(count):
-            ret.append(EpollEvent.from_bytes(localbuf[cur:cur+EpollEvent.bytesize()]))
-            cur += EpollEvent.bytesize()
-        return ret
+    async def wait(self, maxevents: int, timeout: int) -> EpollEventList:
+        valid, _ = await self.epfd.epoll_wait(
+            await self.waiting_task.malloc_type(EpollEventList, maxevents * EpollEvent.sizeof()), timeout)
+        with trio.open_cancel_scope(shield=True):
+            return await valid.read()
 
 class AsyncFileDescriptor(t.Generic[T_file_co]):
     epolled: EpolledFileDescriptor

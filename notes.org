@@ -14058,6 +14058,18 @@ there's too many methods here to override
    I think we probably need to be guaranteeing that no-one calls invalidate on me while I'm in a syscall.
 
    Admittedly that's a misuse, but, whatever.
+** epoll
+   why am I doing this epoll stuff
+
+   oh, it's to support cancellation. argh.
+
+   I forgot that whole episode.
+
+   HMMMMMMMMMMMMMMM
+
+   bl a h urgh
+
+   ok let's just do a basic conversion
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

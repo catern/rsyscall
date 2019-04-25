@@ -1,6 +1,6 @@
 from __future__ import annotations
 from rsyscall._raw import lib, ffi # type: ignore
-from rsyscall.struct import Struct
+from rsyscall.struct import Struct, Serializable
 import enum
 import os
 import select
@@ -87,9 +87,22 @@ class EpollEvent(Struct):
         return cls(struct.data.u64, EpollEventMask(struct.events))
 
     @classmethod
-    def bytesize(cls) -> int:
-        return cls.sizeof()
-
-    @classmethod
     def sizeof(cls) -> int:
         return ffi.sizeof('struct epoll_event')
+
+class EpollEventList(t.List[EpollEvent], Serializable):
+    def to_bytes(self) -> bytes:
+        ret = b""
+        for ent in self:
+            ret += ent.to_bytes()
+        return ret
+
+    T = t.TypeVar('T', bound='EpollEventList')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        entries = []
+        while len(data) > 0:
+            ent = EpollEvent.from_bytes(data)
+            entries.append(ent)
+            data = data[EpollEvent.sizeof():]
+        return cls(entries)

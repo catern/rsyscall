@@ -21,7 +21,7 @@ from rsyscall.signal import Sigaction, Sigset, Signals
 from rsyscall.fcntl import AT, F
 from rsyscall.path import Path
 from rsyscall.unistd import SEEK
-from rsyscall.sys.epoll import EpollFlag, EpollCtlOp, EpollEvent
+from rsyscall.sys.epoll import EpollFlag, EpollCtlOp, EpollEvent, EpollEventList
 from rsyscall.linux.dirent import DirentList
 from rsyscall.sys.inotify import InotifyFlag
 
@@ -354,11 +354,14 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.setns(self.task.sysif, self.near, nstype)
 
-    async def epoll_wait(self, events: rsyscall.far.Pointer, maxevents: int, timeout: int) -> int:
+    T_pointer_eel = t.TypeVar('T_pointer_eel', bound='Pointer[EpollEventList]')
+    async def epoll_wait(self, events: T_pointer_eel, timeout: int) -> t.Tuple[T_pointer_eel, T_pointer_eel]:
         self.validate()
-        return (await rsyscall.near.epoll_wait(self.task.sysif, self.near,
-                                               self.task.to_near_pointer(events), maxevents,
-                                               timeout))
+        async with events.borrow(self.task) as myevents:
+            num = await rsyscall.near.epoll_wait(
+                self.task.sysif, self.near, myevents.near, myevents.bytesize()//EpollEvent.sizeof(), timeout)
+            valid_size = num * EpollEvent.sizeof()
+            return events.split(valid_size)
 
     async def epoll_ctl(self, op: EpollCtlOp, fd: FileDescriptor, event: t.Optional[Pointer[EpollEvent]]=None) -> None:
         self.validate()
