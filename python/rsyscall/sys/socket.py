@@ -45,7 +45,3 @@ class Address(Struct):
     @classmethod
     @abc.abstractmethod
     def sizeof(cls) -> int: ...
-
-    @classmethod
-    def parse(cls: t.Type[T_addr], data: bytes) -> T_addr:
-        return cls.from_bytes(data)

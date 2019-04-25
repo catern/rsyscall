@@ -325,18 +325,6 @@ async def setsockopt(sysif: SyscallInterface, transport: MemoryTransport, alloca
     async with localize_data(transport, allocator, optval) as (optval_ptr, optlen):
         await raw_syscall.setsockopt(sysif, sockfd, level, optname, optval_ptr, optlen)
 
-async def bind(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-               sockfd: base.FileDescriptor, addr: bytes) -> None:
-    logger.debug("bind(%s, %s)", sockfd, addr)
-    async with localize_data(transport, allocator, addr) as (addr_ptr, addr_len):
-        await raw_syscall.bind(sysif, sockfd, addr_ptr, addr_len)
-
-async def connect(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                  sockfd: base.FileDescriptor, addr: bytes) -> None:
-    logger.debug("connect(%s, %s)", sockfd, addr)
-    async with localize_data(transport, allocator, addr) as (addr_ptr, addr_len):
-        await raw_syscall.connect(sysif, sockfd, addr_ptr, addr_len)
-
 
 #### socket syscalls that read data, which all use a socklen value-result argument ####
 socklen = struct.Struct("Q")

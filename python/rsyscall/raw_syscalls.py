@@ -13,11 +13,9 @@ logger = logging.getLogger(__name__)
 
 class SYS(enum.IntEnum):
     accept4 = lib.SYS_accept4
-    bind = lib.SYS_bind
     chdir = lib.SYS_chdir
     clone = lib.SYS_clone
     close = lib.SYS_close
-    connect = lib.SYS_connect
     dup3 = lib.SYS_dup3
     execveat = lib.SYS_execveat
     exit = lib.SYS_exit
@@ -32,7 +30,6 @@ class SYS(enum.IntEnum):
     kill = lib.SYS_kill
     linkat = lib.SYS_linkat
     renameat2 = lib.SYS_renameat2
-    listen = lib.SYS_listen
     lseek = lib.SYS_lseek
     mkdirat = lib.SYS_mkdirat
     mmap = lib.SYS_mmap
@@ -112,10 +109,6 @@ async def fchdir(sysif: SyscallInterface, fd: FileDescriptor) -> None:
 async def lseek(sysif: SyscallInterface, fd: FileDescriptor, offset: int, whence: int) -> int:
     logger.debug("lseek(%s, %s, %s)", fd, offset, whence)
     return (await sysif.syscall(SYS.lseek, fd, offset, whence))
-
-async def listen(sysif: SyscallInterface, sockfd: FileDescriptor, backlog: int) -> None:
-    logger.debug("listen(%s, %s)", sockfd, backlog)
-    await sysif.syscall(SYS.listen, sockfd, backlog)
 
 async def waitid(sysif: SyscallInterface,
                  id: t.Union[Process, ProcessGroup, None], infop: t.Optional[Pointer], options: int, rusage: t.Optional[Pointer]) -> int:
@@ -285,14 +278,6 @@ async def getsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int
 async def setsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int, optname: int, optval: Pointer, optlen: int) -> None:
     logger.debug("setsockopt(%s, %s, %s, %s, %s)", sockfd, level, optname, optval, optlen)
     await sysif.syscall(SYS.setsockopt, sockfd, level, optname, optval, optlen)
-
-async def bind(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: int) -> None:
-    logger.debug("bind(%s, %s, %s)", sockfd, addr, addrlen)
-    await sysif.syscall(SYS.bind, sockfd, addr, addrlen)
-
-async def connect(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: int) -> None:
-    logger.debug("connect(%s, %s, %s)", sockfd, addr, addrlen)
-    await sysif.syscall(SYS.connect, sockfd, addr, addrlen)
 
 async def accept(sysif: SyscallInterface, sockfd: FileDescriptor,
                  addr: Pointer, addrlen: Pointer, flags: int) -> int:

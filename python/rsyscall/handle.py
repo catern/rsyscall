@@ -14,7 +14,7 @@ import contextlib
 import abc
 logger = logging.getLogger(__name__)
 
-from rsyscall.sys.socket import AF, SOCK
+from rsyscall.sys.socket import AF, SOCK, Address
 from rsyscall.sched import UnshareFlag
 from rsyscall.struct import T_serializable
 from rsyscall.signal import Sigaction, Sigset, Signals
@@ -298,8 +298,8 @@ class FileDescriptor:
 
     async def read(self, buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
-        async with buf.borrow(self) as mybuf:
-            ret = await rsyscall.near.read(self.task.sysif, self.near, mybuf.near, mybuf.bytesize())
+        async with buf.borrow(self) as buf_b:
+            ret = await rsyscall.near.read(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
             return buf.split(ret)
 
     async def write(self, buf: rsyscall.far.Pointer, count: int) -> int:
@@ -357,9 +357,9 @@ class FileDescriptor:
     T_pointer_eel = t.TypeVar('T_pointer_eel', bound='Pointer[EpollEventList]')
     async def epoll_wait(self, events: T_pointer_eel, timeout: int) -> t.Tuple[T_pointer_eel, T_pointer_eel]:
         self.validate()
-        async with events.borrow(self.task) as myevents:
+        async with events.borrow(self.task) as events_b:
             num = await rsyscall.near.epoll_wait(
-                self.task.sysif, self.near, myevents.near, myevents.bytesize()//EpollEvent.sizeof(), timeout)
+                self.task.sysif, self.near, events_b.near, events_b.bytesize()//EpollEvent.sizeof(), timeout)
             valid_size = num * EpollEvent.sizeof()
             return events.split(valid_size)
 
@@ -383,10 +383,15 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.inotify_rm_watch(self.task.sysif, self.near, wd)
 
-    async def bind(self, addr: Pointer) -> None:
+    async def bind(self, addr: Pointer[Address]) -> None:
         self.validate()
         async with addr.borrow(self.task) as addr:
             await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addr.bytesize())
+
+    async def connect(self, addr: Pointer[Address]) -> None:
+        self.validate()
+        async with addr.borrow(self.task) as addr:
+            await rsyscall.near.connect(self.task.sysif, self.near, addr.near, addr.bytesize())
 
     async def listen(self, backlog: int) -> None:
         self.validate()
@@ -396,17 +401,35 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval.near, optval.bytesize())
 
+    async def accept(self, addr: Pointer[Address], addrlen: Pointer[Socklen]) -> None:
+        # hMmmmmmmmmmmmmmmm
+        # what if I made a struct that was a pair for these two things?
+        # god I hate the socket API
+        # okaaaaaaaaaaaaaaay sooo hmmmmmmmmmmm
+        # basically we want to force the user to,
+        # read from socklen and,
+        # hm
+        # so, we hate this API.
+        # can we somehow force the user to not use it?
+        # no, we need to know peer addresses, which means we need to support getsockname/getpeername.
+        # so. the return value is null...
+        # I think a single unit would be good.
+        # and we can have something which allocates that unit for Address types?
+        raise Exception("not done")
+
     async def readlinkat(self, path: Pointer, buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
         async with path.borrow(self.task) as path:
-            async with buf.borrow(self.task) as mybuf:
-                ret = await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, mybuf.near, mybuf.bytesize())
+            async with buf.borrow(self.task) as buf_b:
+                ret = await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, buf_b.near, buf_b.bytesize())
                 return buf.split(ret)
 
-    async def getdents(self, dirp: Pointer[DirentList]) -> int:
+    T_pointer_dl = t.TypeVar('T_pointer_dl', bound='Pointer[DirentList]')
+    async def getdents(self, dirp: T_pointer_dl) -> t.Tuple[T_pointer_dl, T_pointer_dl]:
         self.validate()
-        async with dirp.borrow(self.task) as dirp:
-            return (await rsyscall.near.getdents64(self.task.sysif, self.near, dirp.near, dirp.bytesize()))
+        async with dirp.borrow(self.task) as dirp_b:
+            ret = await rsyscall.near.getdents64(self.task.sysif, self.near, dirp_b.near, dirp_b.bytesize())
+            return dirp.split(ret)
 
     async def signalfd(self, mask: Pointer[Sigset], flags: int) -> None:
         self.validate()
@@ -606,8 +629,8 @@ class Task(rsyscall.far.Task):
 
     async def readlink(self, path: Pointer[Path], buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
         async with path.borrow(self) as path:
-            async with buf.borrow(self) as mybuf:
-                ret = await rsyscall.near.readlinkat(self.sysif, None, path.near, mybuf.near, mybuf.bytesize())
+            async with buf.borrow(self) as buf_b:
+                ret = await rsyscall.near.readlinkat(self.sysif, None, path.near, buf_b.near, buf_b.bytesize())
                 return buf.split(ret)
 
     async def signalfd(self, mask: Pointer[Sigset], flags: int) -> FileDescriptor:

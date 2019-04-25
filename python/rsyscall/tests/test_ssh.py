@@ -50,7 +50,7 @@ class TestMiredo(TrioTestCase):
 
         data = b'hello world'
         await local_file.write(data)
-        await local_file.lseek(0, SEEK.SET)
+        await local_file.handle.lseek(0, SEEK.SET)
 
         [(local_sock, remote_sock)] = await self.remote_stdtask.make_connections(1)
 
@@ -63,7 +63,7 @@ class TestMiredo(TrioTestCase):
         await local_child.check()
         await remote_child.check()
 
-        await remote_file.lseek(0, SEEK.SET)
+        await remote_file.handle.lseek(0, SEEK.SET)
         self.assertEqual(await remote_file.read(), data)
 
     async def test_sigmask_bug(self) -> None:

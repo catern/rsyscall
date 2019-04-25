@@ -21,7 +21,7 @@ import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_serializable, T_struct
 
-from rsyscall.sys.socket import AF, SOCK, SOL, SO
+from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address
 from rsyscall.fcntl import AT, O, F
 from rsyscall.sys.socket import T_addr
 from rsyscall.linux.futex import FUTEX_WAITERS, FUTEX_TID_MASK
@@ -397,22 +397,13 @@ class DirectoryFile(SeekableFile):
 class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     address_type: t.Type[T_addr]
 
-    async def bind(self, fd: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
-        await memsys.bind(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, addr.to_bytes())
-
-    async def listen(self, fd: 'FileDescriptor[SocketFile]', backlog: int) -> None:
-        await raw_syscall.listen(fd.task.syscall, fd.pure, backlog)
-
-    async def connect(self, fd: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
-        await memsys.connect(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, addr.to_bytes())
-
     async def getsockname(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
         data = await memsys.getsockname(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, self.address_type.addrlen)
-        return self.address_type.parse(data)
+        return self.address_type.from_bytes(data)
 
     async def getpeername(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
         data = await memsys.getpeername(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, self.address_type.addrlen)
-        return self.address_type.parse(data)
+        return self.address_type.from_bytes(data)
 
     async def getsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
         return (await memsys.getsockopt(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, level, optname, optlen))
@@ -517,23 +508,17 @@ class FileDescriptor(t.Generic[T_file_co]):
             buf = buf[ret:]
 
     async def getdents(self, count: int=4096) -> DirentList:
-        dirp = await self.task.malloc_type(DirentList, count)
-        ret = await self.handle.getdents(dirp)
-        validp, _ = dirp.split(ret)
-        dirents = await validp.read()
-        return dirents
+        valid, _ = await self.handle.getdents(await self.task.malloc_type(DirentList, count))
+        return await valid.read()
 
-    async def lseek(self, offset: int, whence: SEEK) -> int:
-        return (await self.handle.lseek(offset, whence))
+    async def bind(self, addr: Address) -> None:
+        await self.handle.bind(await self.task.to_pointer(addr))
 
-    async def bind(self: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
-        await self.file.bind(self, addr)
+    async def connect(self, addr: Address) -> None:
+        await self.handle.connect(await self.task.to_pointer(addr))
 
     async def listen(self: 'FileDescriptor[SocketFile]', backlog: int) -> None:
-        await self.file.listen(self, backlog)
-
-    async def connect(self: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
-        await self.file.connect(self, addr)
+        await self.handle.listen(backlog)
 
     async def getsockname(self: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
         return (await self.file.getsockname(self))
