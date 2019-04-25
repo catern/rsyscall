@@ -13,7 +13,6 @@ import rsyscall.memory as memory
 import rsyscall.handle as handle
 
 from rsyscall.struct import bits
-from rsyscall.sys.epoll import EpollEvent, EpollCtlOp
 from rsyscall.sys.wait import IdType
 from rsyscall.signal import SigprocmaskHow
 from rsyscall.path import Path
@@ -96,24 +95,6 @@ async def waitid(sysif: SyscallInterface, transport: MemoryTransport, allocator:
         with trio.open_cancel_scope(shield=True):
             data = await read_to_bytes(transport, infop, siginfo_size)
             return data
-
-
-#### epoll ####
-async def epoll_ctl_add(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                        epfd: far.FileDescriptor, fd: far.FileDescriptor, event: EpollEvent) -> None:
-    logger.debug("epoll_ctl_add(%s, %s, %s)", epfd, fd, event)
-    async with localize_data(transport, allocator, event.to_bytes()) as (event_ptr, _):
-        await far.epoll_ctl(task, epfd, EpollCtlOp.ADD, fd, event_ptr)
-
-async def epoll_ctl_mod(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                        epfd: far.FileDescriptor, fd: far.FileDescriptor, event: EpollEvent) -> None:
-    logger.debug("epoll_ctl_mod(%s, %s, %s)", epfd, fd, event)
-    async with localize_data(transport, allocator, event.to_bytes()) as (event_ptr, _):
-        await far.epoll_ctl(task, epfd, EpollCtlOp.MOD, fd, event_ptr)
-
-async def epoll_ctl_del(task: far.Task, epfd: far.FileDescriptor, fd: far.FileDescriptor) -> None:
-    logger.debug("epoll_ctl_del(%s, %s)", epfd, fd)
-    await far.epoll_ctl(task, epfd, EpollCtlOp.DEL, fd)
 
 
 #### signal mask manipulation ####

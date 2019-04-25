@@ -13,15 +13,13 @@ class SFD(enum.IntFlag):
 
 @dataclass
 class SignalfdSiginfo(Struct):
+    # TODO fill in the rest of the data
+    # (even though we don't use any of it ourselves)
     signo: Signals
-    code: ChildCode
-    pid: int
 
     def to_bytes(self) -> bytes:
         struct = ffi.new('struct signalfd_siginfo*')
         struct.ssi_signo = self.signo
-        struct.ssi_code = self.code
-        struct.ssi_pid = self.pid
         return bytes(ffi.buffer(struct))
 
     T = t.TypeVar('T', bound='SignalfdSiginfo')
@@ -30,8 +28,6 @@ class SignalfdSiginfo(Struct):
         struct = ffi.cast('struct signalfd_siginfo const*', ffi.from_buffer(data))
         return cls(
             signo=Signals(struct.ssi_signo),
-            code=ChildCode(struct.ssi_code),
-            pid=struct.ssi_pid,
         )
 
     @classmethod

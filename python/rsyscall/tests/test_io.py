@@ -30,7 +30,7 @@ from rsyscall.tasks.stdin_bootstrap import rsyscall_stdin_bootstrap
 from rsyscall.tasks.stub import StubServer
 from rsyscall.tasks.ssh import make_local_ssh
 
-import rsyscall.sys.inotify as inotify
+import rsyscall.inotify_watch as inotify
 from rsyscall.sys.epoll import EpollEvent, EpollEventMask
 from rsyscall.sys.capability import CAP, CapHeader, CapData
 from rsyscall.sys.prctl import PrctlOp, CapAmbient
@@ -38,6 +38,7 @@ from rsyscall.sys.socket import SOCK, AF
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.linux.netlink import NETLINK
 from rsyscall.signal import Signals
+from rsyscall.sys.signalfd import SignalfdSiginfo
 from rsyscall.net.if_ import Ifreq
 from rsyscall.unistd import SEEK
 
@@ -812,8 +813,9 @@ class TestIO(unittest.TestCase):
                 sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, epoller, {Signals.SIGINT})
                 await thread.thread.child_task.send_signal(Signals.SIGINT)
                 orig_mask = await rsyscall.io.SignalBlock.make(stdtask.task, {Signals.SIGINT})
-                sigdata = await sigqueue.read()
-                self.assertEqual(sigdata.ssi_signo, Signals.SIGINT)
+                buf = await stdtask2.task.malloc_struct(SignalfdSiginfo)
+                sigdata = await sigqueue.read(buf)
+                self.assertEqual((await sigdata.read()).signo, Signals.SIGINT)
         trio.run(self.runner, test)
 
     @unittest.skip("requires a user")

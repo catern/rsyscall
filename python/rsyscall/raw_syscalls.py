@@ -19,8 +19,6 @@ class SYS(enum.IntEnum):
     close = lib.SYS_close
     connect = lib.SYS_connect
     dup3 = lib.SYS_dup3
-    epoll_ctl = lib.SYS_epoll_ctl
-    epoll_wait = lib.SYS_epoll_wait
     execveat = lib.SYS_execveat
     exit = lib.SYS_exit
     faccessat = lib.SYS_faccessat
@@ -163,18 +161,6 @@ async def clone(sysif: SyscallInterface, flags: int, child_stack: t.Optional[Poi
     if newtls is None:
         newtls = 0 # type: ignore
     return (await sysif.syscall(SYS.clone, flags, child_stack, ptid, ctid, newtls))
-
-async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: int, fd: FileDescriptor, event: t.Optional[Pointer]=None) -> None:
-    if event is None:
-        logger.debug("epoll_ctl(%d, %s, %d)", epfd, op, fd)
-        await sysif.syscall(SYS.epoll_ctl, epfd, op, fd, 0)
-    else:
-        logger.debug("epoll_ctl(%d, %s, %d, %s)", epfd, op, fd, event)
-        await sysif.syscall(SYS.epoll_ctl, epfd, op, fd, event)
-
-async def epoll_wait(sysif: SyscallInterface, epfd: FileDescriptor, events: Pointer, maxevents: int, timeout: int) -> int:
-    logger.debug("epoll_wait(%d, %d, %d, %d)", epfd, events, maxevents, timeout)
-    return (await sysif.syscall(SYS.epoll_wait, epfd, events, maxevents, timeout))
 
 async def rt_sigprocmask(sysif: SyscallInterface,
                          newset: t.Optional[t.Tuple[SigprocmaskHow, Pointer]],

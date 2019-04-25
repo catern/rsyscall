@@ -34,10 +34,9 @@ class TestMiredo(TrioTestCase):
         [(local_sock, remote_sock)] = await self.remote_stdtask.make_connections(1)
         data = b"hello world"
         await local_sock.write(data)
-        buf = await self.remote_stdtask.task.malloc_type(Bytes, len(data))
-        ret = await remote_sock.read(buf)
-        self.assertEqual(ret, len(data))
-        self.assertEqual(data, await buf.read())
+        valid, _ = await remote_sock.read(await self.remote_stdtask.task.malloc_type(Bytes, len(data)))
+        self.assertEqual(len(data), valid.bytesize())
+        self.assertEqual(data, await valid.read())
 
     async def test_exec(self) -> None:
         bash = await self.store.bin(bash_nixdep, "bash")

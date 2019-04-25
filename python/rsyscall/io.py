@@ -16,6 +16,7 @@ import rsyscall.memory_abstracted_syscalls as memsys
 import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.handle
+from rsyscall.handle import T_pointer
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_serializable, T_struct
@@ -31,6 +32,7 @@ from rsyscall.sys.epoll import EpollEvent, EpollEventMask, EpollCtlOp, EpollFlag
 from rsyscall.sys.wait import ChildCode, UncleanExit, ChildEvent, W
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
+from rsyscall.sys.inotify import InotifyFlag
 from rsyscall.sched import UnshareFlag
 from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals, Sigset
 from rsyscall.linux.dirent import Dirent, DirentList
@@ -202,15 +204,8 @@ class TypedPointer(handle.Pointer[T_serializable]):
         data = await self.mem_task.transport.read(self.far, self.bytesize())
         return self.data_cls.from_bytes(data)
 
-    def split(self, size: int) -> t.Tuple[TypedPointer[T_serializable], TypedPointer]:
-        # aaaaa this is wrong I see
-        # hmmm
-        first_s, second_s = super().split(size)
-        first_s.valid = False
-        first = TypedPointer(self.mem_task, first_s.data_cls, first_s.allocation)
-        second_s.valid = False
-        second = TypedPointer(self.mem_task, second_s.data_cls, second_s.allocation)
-        return first, second
+    def _with_alloc(self, allocation: handle.AllocationInterface) -> TypedPointer:
+        return type(self)(self.mem_task, self.data_cls, allocation)
 
 class Task:
     def __init__(self,
@@ -337,9 +332,9 @@ class Task:
         return (self._make_fd(l, ReadableWritableFile(shared=False)),
                 self._make_fd(r, ReadableWritableFile(shared=False)))
 
-    async def inotify_init(self, flags=lib.IN_CLOEXEC) -> FileDescriptor[InotifyFile]:
-        epfd = await near.inotify_init(self.syscall, flags)
-        return self.make_fd(epfd, InotifyFile())
+    async def inotify_init(self, flags: InotifyFlag) -> FileDescriptor[InotifyFile]:
+        fd = await self.base.inotify_init(flags)
+        return FileDescriptor(self, fd, InotifyFile())
 
     async def socket_unix(self, type: SOCK, protocol: int=0, cloexec=True) -> FileDescriptor[UnixSocketFile]:
         sockfd = await self.base.socket(AF.UNIX, type, protocol, cloexec=cloexec)
@@ -572,7 +567,7 @@ class EpolledFileDescriptor:
         self.in_epollfd = True
 
     async def modify(self, events: EpollEventMask) -> None:
-        await self.epoll_center.modify(self.fd.far, EpollEvent(self.number, events))
+        await self.epoll_center.modify(self.fd, EpollEvent(self.number, events))
 
     async def wait(self) -> t.List[EpollEvent]:
         while True:
@@ -584,7 +579,7 @@ class EpolledFileDescriptor:
     async def aclose(self) -> None:
         if self.in_epollfd:
             # TODO hmm, I guess we need to serialize this removal with calls to epoll?
-            await self.epoll_center.delete(self.fd.far)
+            await self.epoll_center.delete(self.fd)
             self.in_epollfd = False
         await self.fd.invalidate()
 
@@ -606,17 +601,17 @@ class EpollCenter:
             events = EpollEventMask.make()
         send, receive = trio.open_memory_channel(math.inf)
         number = self.epoller.add_and_allocate_number(send)
-        await self.add(fd.far, EpollEvent(number, events))
+        await self.add(fd, EpollEvent(number, events))
         return EpolledFileDescriptor(self, fd, receive, number)
 
-    async def add(self, fd: far.FileDescriptor, event: EpollEvent) -> None:
-        await memsys.epoll_ctl_add(self.epfd.task, self.task.transport, self.task.allocator, self.epfd.far, fd, event)
+    async def add(self, fd: handle.FileDescriptor, event: EpollEvent) -> None:
+        await self.epfd.epoll_ctl(EpollCtlOp.ADD, fd, await self.task.to_pointer(event))
 
-    async def modify(self, fd: far.FileDescriptor, event: EpollEvent) -> None:
-        await memsys.epoll_ctl_mod(self.epfd.task, self.task.transport, self.task.allocator, self.epfd.far, fd, event)
+    async def modify(self, fd: handle.FileDescriptor, event: EpollEvent) -> None:
+        await self.epfd.epoll_ctl(EpollCtlOp.MOD, fd, await self.task.to_pointer(event))
 
-    async def delete(self, fd: far.FileDescriptor) -> None:
-        await memsys.epoll_ctl_del(self.epfd.task, self.epfd.far, fd)
+    async def delete(self, fd: handle.FileDescriptor) -> None:
+        await self.epfd.epoll_ctl(EpollCtlOp.DEL, fd)
 
 @dataclass
 class PendingEpollWait:
@@ -665,12 +660,10 @@ class EpollWaiter:
     async def update_activity_fd(self, fd: handle.FileDescriptor) -> None:
         if self.activity_fd is not None:
             # del old activity fd 
-            await memsys.epoll_ctl_del(self.epfd.task, self.epfd.far, self.activity_fd.far)
+            await self.epfd.epoll_ctl(EpollCtlOp.DEL, fd)
         # add new activity fd
-        fd = fd.task.make_fd_handle(fd)
-        await memsys.epoll_ctl_add(self.epfd.task, self.waiting_task.transport, self.waiting_task.allocator,
-                                   self.epfd.far, fd.far,
-                                   EpollEvent(data=self.activity_fd_data, events=EpollEventMask.make(in_=True)))
+        await self.epfd.epoll_ctl(EpollCtlOp.ADD, fd, await self.waiting_task.to_pointer(
+            EpollEvent(data=self.activity_fd_data, events=EpollEventMask.make(in_=True))))
 
     async def do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
@@ -830,6 +823,18 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             data = await self.read_nonblock()
             if data is not None:
                 return data
+
+    async def read_handle(self, ptr: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
+        while True:
+            while not self.could_read():
+                await self._wait_once()
+            try:
+                return (await self.underlying.handle.read(ptr))
+            except OSError as e:
+                if e.errno == errno.EAGAIN:
+                    self.is_readable = False
+                else:
+                    raise
 
     async def wait_for_rdhup(self: 'AsyncFileDescriptor[ReadableFile]') -> None:
         while not (self.read_hangup or self.hangup):
@@ -1026,20 +1031,15 @@ class Path(rsyscall.path.PathLike):
         return self
 
     async def readlink(self) -> Path:
-        selfptr = await self.to_pointer()
         size = 4096
-        bufptr = await self.task.malloc_type(rsyscall.path.Path, size)
-        ret = await self.task.base.readlink(selfptr, bufptr)
-        if ret == size:
+        valid, _ = await self.task.base.readlink(await self.to_pointer(),
+                                                 await self.task.malloc_type(rsyscall.path.Path, size))
+        if valid.bytesize() == size:
             # ext4 limits symlinks to this size, so let's just throw if it's larger;
             # we can add retry logic later if we ever need it
             raise Exception("symlink longer than 4096 bytes, giving up on readlinking it")
-        pathptr, rest = bufptr.split(ret)
-        rest.free()
         # readlink doesn't append a null byte, so unfortunately we can't save this buffer and use it for later calls
-        target = await pathptr.read()
-        pathptr.free()
-        return Path(self.task, target)
+        return Path(self.task, await valid.read())
 
     async def canonicalize(self) -> Path:
         async with (await self.open_path()) as f:
@@ -1597,13 +1597,9 @@ class SignalQueue:
         async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd, is_nonblock=True)
         return cls(signal_block, async_sigfd)
 
-    async def read(self) -> t.Any:
-        data = await self.sigfd.read()
-        # lol, have to do this because it seems that ffi.cast drops the reference to the backing buffer.
-        dest = ffi.new('struct signalfd_siginfo*')
-        src = ffi.cast('struct signalfd_siginfo*', ffi.from_buffer(data))
-        ffi.memmove(dest, src, ffi.sizeof('struct signalfd_siginfo'))
-        return dest
+    async def read(self, buf: T_pointer) -> T_pointer:
+        validp, _ = await self.sigfd.read_handle(buf)
+        return validp
 
     async def close(self) -> None:
         await self.signal_block.close()
@@ -1775,11 +1771,10 @@ class ChildProcessMonitorInternal:
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
                 if not self.can_waitid:
+                    buf = await self.waiting_task.malloc_struct(SignalfdSiginfo)
                     # we don't care what information we get from the signal, we just want to
                     # sleep until a SIGCHLD happens
-                    logger.info("doing signal queue read")
-                    await self.signal_queue.read()
-                    logger.info("done with signal queue read")
+                    await self.signal_queue.read(buf)
                     self.can_waitid = True
                 # loop on waitid to flush all child events
                 task = self.waiting_task

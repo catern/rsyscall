@@ -52,6 +52,7 @@ ffibuilder.set_source(
 #include <sys/wait.h>
 #include <syscall.h>
 #include <unistd.h>
+#include <limits.h>
 
 struct linux_dirent64 {
     ino64_t        d_ino;    /* 64-bit inode number */
@@ -354,6 +355,8 @@ struct inotify_event {
     uint32_t len;      /* Size of name field */
     char     name[];   /* Optional null-terminated name */
 };
+
+#define NAME_MAX ...
 
 // events settable in both
 #define IN_ACCESS ...
