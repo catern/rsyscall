@@ -3614,7 +3614,14 @@ hmm, actually it just occurred to me that this question is essentially the same 
 
     which really is a consequence of them not have far/handle equivalents
     because embedding a dirfd is making something far, really.
+** don't attempt to abstract over memory
+   At multiple points, I decided to not abstract over memory as much as I had been doing in the past.
 
+   Abstracting over memory complicates the implementation,
+   and is less flexible for users.
+
+   We ultimately have gone with being as powerful as possible without abstracting over memory;
+   and it turns out, abstracting over memory isn't even really necessary to have a good user experience.
 * knowledge
 ** tkill vs kill
 The difference between kill and tkill (besides the special negative parameters to kill, which tkill
@@ -13637,7 +13644,7 @@ but also, principled.
    Eh, methods are convenient for the user.
 
    Maybe I should just have both.
-** remove binaries from standardtask
+** TODO remove binaries from standardtask
    And therefore all associated uses from them from io.py
 
    We shouldn't have to depend on any binaries in the main thing.
@@ -13773,7 +13780,7 @@ but also, principled.
     but might be valid in multiple.
 
     no that doesn't make sense, we'll organize it starting with root dir.
-*** TODO figure out pkglibexec things
+*** DONE figure out pkglibexec things
     OK, so.
 
     These are all ancillary things. They aren't needed for the main stuff.
@@ -13789,6 +13796,16 @@ but also, principled.
     is on a level above just making syscalls in our current thread.
 
     We can pare it down quite nicely to just local calls.
+*** DONE NixPath
+    how should I model this?
+
+    A NixPath is a path that I know won't become invalid (because I should have a GC reference to it),
+    and which I can deploy to new places.
+    (because I know the list of its references)
+
+    I guess I'll just inherit from the taskful Path.
+
+    no I ended up with a NixDep class
 *** nix deps
     ok so basically we can have a separate instance of nix class,
     for each derivation we dep on.
@@ -13847,56 +13864,7 @@ but also, principled.
     And deploy from localhost?
 
     Yeah actually that seems fine, let's just do that.
-** use a union for repl results, not inheritance
-** convert serializer to tagless final style
-   we'll encapsulate the code-to-optimize in a function,
-   and we'll run it twice:
-   first time returning null pointers,
-   second time returning real things.
-
-   and the semantic functions will be normal, not async;
-   indicating the lack of IO happening
-
-   ok sure fine this is a good idea but still, what about Path?
-** use conventional syscalls instead of *at when not doing *at things
-** serializable for path
-   ok so the to_bytes thing can work for the taskful path
-
-   but from_bytes doesn't make any sense cuz you can't pull the task from bytes
-
-   I wonder if we can somehow make this work, hm.
-
-   wait why don't we just, um..
-
-   ok so when we create a pointer, it should be a handle.Path.
-   naturally...
-
-   then that would all work.
-
-   hmm this is awkward though
-
-   I'd want to use the Path exactly as a handle.Path
-
-   It's awkward to have two types that need to be worked with
-
-   Hmmm
-
-   The issue is that it has a constructor that I need to work with.
-
-   Well... from_bytes...
-
-   Hmm.
-*** aaaaa
-aargh
-okay so having additional data on the path is a no-go.
-
-unfortunate.
-
-I guess we will just not inherit from the path?
-
-yeah.
-there's too many methods here to override
-** readlink
+** DONE readlink
    ok how do we handle readlink, dang it
    turns out we actually do need it
 
@@ -13986,22 +13954,80 @@ sel4, couldn't find it/nothing
 
     blah okay let's stick with returning size for now
     we can revisit later
+** DONE use a union for repl results, not inheritance
+** convert serializer to tagless final style
+   we'll encapsulate the code-to-optimize in a function,
+   and we'll run it twice:
+   first time returning null pointers,
+   second time returning real things.
+
+   and the semantic functions will be normal, not async;
+   indicating the lack of IO happening
+
+   ok sure fine this is a good idea but still, what about Path?
+** use conventional syscalls instead of *at when not doing *at things
+** serializable for path
+   ok so the to_bytes thing can work for the taskful path
+
+   but from_bytes doesn't make any sense cuz you can't pull the task from bytes
+
+   I wonder if we can somehow make this work, hm.
+
+   wait why don't we just, um..
+
+   ok so when we create a pointer, it should be a handle.Path.
+   naturally...
+
+   then that would all work.
+
+   hmm this is awkward though
+
+   I'd want to use the Path exactly as a handle.Path
+
+   It's awkward to have two types that need to be worked with
+
+   Hmmm
+
+   The issue is that it has a constructor that I need to work with.
+
+   Well... from_bytes...
+
+   Hmm.
+*** aaaaa
+aargh
+okay so having additional data on the path is a no-go.
+
+unfortunate.
+
+I guess we will just not inherit from the path?
+
+yeah.
+there's too many methods here to override
+** DONE port ssh to not use executables from stdtask
+   it's in progress! mostly done!
+*** passing around executables?
+    No, I'll pass around the store, and create the executable classes from them on the fly.
+
+    The store is cached.
+    Likewise with ExecutablePathLookup thing.
+
+    We'll pass them around;
+    the executables classes are just interfaces so the underlying functionality,
+    doesn't have to be aware of PATH vs Nix store vs whatever.
+*** DONE add interfaces for making ssh_hosts and things directly from store
+    in the case of sshexecutables, it's fine I guess, to just pull from store...
+
+    to maybe have... make_ssh_host(store, to_host)
+
+    and make_local_ssh_host(stdtask, store)?
 ** DONE support split in allocation
 *** make allocation interface and reference from handle
     okaaaay
 
     hmm I feel like I can clean up the allocator
-** NixPath
-   how should I model this?
-
-   A NixPath is a path that I know won't become invalid (because I should have a GC reference to it),
-   and which I can deploy to new places.
-   (because I know the list of its references)
-
-   I guess I'll just inherit from the taskful Path.
 ** fix ssh tests/don't call unshare_net in main task
    the ssh tests are breaking because we're calling unshare_net in some earlier tests
-** nixdeps
+** DONE nixdeps
 *** how to extend command
 **** build_ext
 ***** pros
@@ -14026,23 +14052,12 @@ sel4, couldn't find it/nothing
    well how do we do that then?
 
    blaaaaaaaaaargh
-** TODO port ssh to not use executables from stdtask
-   it's in progress! mostly done!
-*** passing around executables?
-    No, I'll pass around the store, and create the executable classes from them on the fly.
+** delete file stuff
+   Yeah, having a File for my file descriptors is a hassle.
+** maybe have validate in handle.FD be a contextmanager?
+   I think we probably need to be guaranteeing that no-one calls invalidate on me while I'm in a syscall.
 
-    The store is cached.
-    Likewise with ExecutablePathLookup thing.
-
-    We'll pass them around;
-    the executables classes are just interfaces so the underlying functionality,
-    doesn't have to be aware of PATH vs Nix store vs whatever.
-*** TODO add interfaces for making ssh_hosts and things directly from store
-    in the case of sshexecutables, it's fine I guess, to just pull from store...
-
-    to maybe have... make_ssh_host(store, to_host)
-
-    and make_local_ssh_host(stdtask, store)?
+   Admittedly that's a misuse, but, whatever.
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

@@ -2,7 +2,6 @@ from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass, field
 import copy
-import fcntl
 import rsyscall.raw_syscalls as raw_syscall
 import gc
 import rsyscall.far
@@ -19,8 +18,9 @@ from rsyscall.sys.socket import AF, SOCK
 from rsyscall.sched import UnshareFlag
 from rsyscall.struct import T_serializable
 from rsyscall.signal import Sigaction, Sigset, Signals
-from rsyscall.fcntl import AT
+from rsyscall.fcntl import AT, F
 from rsyscall.path import Path
+from rsyscall.unistd import SEEK
 
 # This is like a far pointer plus a segment register.
 # It means that, as long as it doesn't throw an exception,
@@ -204,10 +204,9 @@ class FileDescriptor:
         return Path(f"/proc/self/fd/{num}")
 
     async def disable_cloexec(self) -> None:
-        self.validate()
         if not self.is_only_handle():
             raise Exception("shouldn't disable cloexec when there are multiple handles to this fd")
-        await rsyscall.near.fcntl(self.task.sysif, self.near, fcntl.F_SETFD, 0)
+        await self.fcntl(F.SETFD, 0)
 
     async def as_argument(self) -> int:
         await self.disable_cloexec()
@@ -227,6 +226,10 @@ class FileDescriptor:
         self.validate()
         return (await rsyscall.near.pread(self.task.sysif, self.near,
                                           self.task.to_near_pointer(buf), count, offset))
+
+    async def lseek(self, offset: int, whence: SEEK) -> int:
+        self.validate()
+        return (await rsyscall.near.lseek(self.task.sysif, self.near, offset, whence))
 
     async def ftruncate(self, length: int) -> None:
         self.validate()
@@ -272,6 +275,17 @@ class FileDescriptor:
                                                self.task.to_near_pointer(events), maxevents,
                                                timeout))
 
+    async def epoll_ctl(self, op: EpollCtlOp, fd: FileDescriptor, event: t.Optional[Pointer[EpollEvent]]=None) -> int:
+        if event.bytesize() < EpollEvent.sizeof():
+            raise Exception("pointer is too small", event.bytesize(), "to be an EpollEvent", EpollEvent.sizeof())
+        self.validate()
+        async with fd.borrow(self.task) as fd:
+            if event:
+                async with event.borrow(self.task) as event:
+                    return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near, event.near))
+            else:
+                return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near))
+
     async def inotify_add_watch(self, pathname: rsyscall.far.Pointer, mask: int) -> rsyscall.near.WatchDescriptor:
         self.validate()
         return (await rsyscall.near.inotify_add_watch(
@@ -299,6 +313,16 @@ class FileDescriptor:
         async with path.borrow(self) as path:
             async with buf.borrow(self) as buf:
                 return (await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, buf.near, buf.bytesize()))
+
+    async def getdents(self, dirp: Pointer[DirentList]) -> int:
+        self.validate()
+        async with dirp.borrow(self) as dirp:
+            return (await rsyscall.near.getdents64(self.task.sysif, self.near, dirp.near, dirp.bytesize()))
+
+    async def signalfd(self, dirp: Pointer[DirentList]) -> int:
+        self.validate()
+        async with dirp.borrow(self) as dirp:
+            return (await rsyscall.near.getdents64(self.task.sysif, self.near, dirp.near, dirp.bytesize()))
 
 class AllocationInterface:
     @abc.abstractproperty
@@ -347,13 +371,15 @@ class Pointer(t.Generic[T_serializable]):
 
     def split(self, size: int) -> t.Tuple[Pointer[T_serializable], Pointer]:
         self.validate()
+        # TODO uhhhh if split throws an exception... don't we need to free... or something...
         self.valid = False
         # TODO we should only allow split if we are the only reference to this allocation
         alloc1, alloc2 = self.allocation.split(size)
         first = Pointer(self.task, self.data_cls, alloc1)
         # TODO should degrade this pointer to raw bytes or something, or maybe no type at all
         second = Pointer(self.task, self.data_cls, alloc2)
-        return first, second
+        ret = first, second
+        return ret
 
     def validate(self) -> None:
         if not self.valid:

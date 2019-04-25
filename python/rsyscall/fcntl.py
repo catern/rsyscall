@@ -1,4 +1,5 @@
 from rsyscall._raw import lib, ffi # type: ignore
+import fcntl
 import enum
 import os
 
@@ -30,3 +31,6 @@ class O(enum.IntFlag):
     PATH = os.O_PATH
     TMPFILE = os.O_TMPFILE
 
+class F(enum.IntEnum):
+    SETFD = fcntl.F_SETFD
+    SETFL = fcntl.F_SETFL

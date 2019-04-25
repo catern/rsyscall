@@ -34,7 +34,7 @@ class Allocation(handle.AllocationInterface):
 
     def free(self) -> None:
         if not self.valid:
-            raise Exception("double-free")
+            raise Exception("double-free", self.arena, self.start, self.end)
         self.valid = False
         self.arena.allocations.remove(self)
 
@@ -50,7 +50,7 @@ class Allocation(handle.AllocationInterface):
         second = Allocation(self.arena, splitpoint, self.end)
         self.arena.allocations[idx:idx] = [first, second]
         self.free()
-        return first, self
+        return first, second
 
     def __enter__(self) -> 'Pointer':
         return self.pointer

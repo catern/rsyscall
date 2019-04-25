@@ -21,7 +21,7 @@ import rsyscall.near as near
 from rsyscall.struct import T_serializable, T_struct
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO
-from rsyscall.fcntl import AT, O
+from rsyscall.fcntl import AT, O, F
 from rsyscall.sys.socket import T_addr
 from rsyscall.linux.futex import FUTEX_WAITERS, FUTEX_TID_MASK
 from rsyscall.sys.mount import MS
@@ -32,7 +32,7 @@ from rsyscall.sys.wait import ChildCode, UncleanExit, ChildEvent, W
 from rsyscall.sys.memfd import MFD
 from rsyscall.sched import UnshareFlag
 from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals
-from rsyscall.linux.dirent import Dirent
+from rsyscall.linux.dirent import Dirent, DirentList
 
 import random
 import string
@@ -181,16 +181,6 @@ class File:
     def __init__(self, shared: bool=False, flags: int=None) -> None:
         self.shared = shared
 
-    async def set_nonblock(self, fd: FileDescriptor[File]) -> None:
-        if self.shared:
-            raise Exception("file object is shared and can't be mutated")
-        if fd.file != self:
-            raise Exception("can't set a file to nonblocking through a file descriptor that doesn't point to it")
-        await raw_syscall.fcntl(fd.task.syscall, fd.pure, fcntl.F_SETFL, O.NONBLOCK)
-
-    async def lseek(self, fd: 'FileDescriptor[File]', offset: int, whence: int) -> int:
-        return (await raw_syscall.lseek(fd.task.syscall, fd.pure, offset, whence))
-
 T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
@@ -211,8 +201,12 @@ class TypedPointer(handle.Pointer[T_serializable]):
         return self.data_cls.from_bytes(data)
 
     def split(self, size: int) -> t.Tuple[TypedPointer[T_serializable], TypedPointer]:
+        # aaaaa this is wrong I see
+        # hmmm
         first_s, second_s = super().split(size)
+        first_s.valid = False
         first = TypedPointer(self.mem_task, first_s.data_cls, first_s.allocation)
+        second_s.valid = False
         second = TypedPointer(self.mem_task, second_s.data_cls, second_s.allocation)
         return first, second
 
@@ -329,10 +323,6 @@ class Task:
     # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
     # and they'll take an handle.FileDescriptor.
     # then we'll directly have StandardTask contain both Task and MemoryAbstractor?
-    async def getdents(self, fd: far.FileDescriptor, count: int=4096) -> t.List[Dirent]:
-        data = await memsys.getdents64(self.base, self.transport, self.allocator, fd, count)
-        return Dirent.list_from_bytes(data)
-
     async def pipe(self, flags=O.CLOEXEC) -> Pipe:
         r, w = await memsys.pipe(self.syscall, self.transport, self.allocator, flags)
         return Pipe(self._make_fd(r, ReadableFile(shared=False)),
@@ -419,8 +409,7 @@ class MemoryFile(ReadableWritableFile, SeekableFile):
     pass
 
 class DirectoryFile(SeekableFile):
-    async def getdents(self, fd: 'FileDescriptor[DirectoryFile]', count: int) -> t.List[Dirent]:
-        return (await fd.task.getdents(fd.handle.far, count))
+    pass
 
 class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     address_type: t.Type[T_addr]
@@ -529,9 +518,9 @@ class FileDescriptor(t.Generic[T_file_co]):
         await source.invalidate()
 
     # These are just helper methods which forward to the method on the underlying file object.
-    async def set_nonblock(self: 'FileDescriptor[File]') -> None:
+    async def set_nonblock(self) -> None:
         "Set the O_NONBLOCK flag on the underlying file object"
-        await self.file.set_nonblock(self)
+        await self.handle.fcntl(F.SETFL, O.NONBLOCK)
 
     async def read(self: 'FileDescriptor[ReadableFile]', count: int=4096) -> bytes:
         return (await self.file.read(self, count))
@@ -544,24 +533,15 @@ class FileDescriptor(t.Generic[T_file_co]):
             ret = await self.write(buf)
             buf = buf[ret:]
 
-    async def add(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor', event: Pointer) -> None:
-        await self.file.add(self, fd, event)
+    async def getdents(self, count: int=4096) -> DirentList:
+        dirp = await self.task.malloc_type(DirentList, count)
+        ret = await self.handle.getdents(dirp)
+        validp, wastep = dirp.split(ret)
+        dirents = await validp.read()
+        return dirents
 
-    async def modify(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor', event: Pointer) -> None:
-        await self.file.modify(self, fd, event)
-
-    async def delete(self: 'FileDescriptor[EpollFile]', fd: 'FileDescriptor') -> None:
-        await self.file.delete(self, fd)
-
-    async def wait(self: 'FileDescriptor[EpollFile]',
-                   events: Pointer, maxevents: int, timeout: int) -> int:
-        return (await self.file.wait(self, events, maxevents, timeout))
-
-    async def getdents(self: 'FileDescriptor[DirectoryFile]', count: int=4096) -> t.List[Dirent]:
-        return (await self.file.getdents(self, count))
-
-    async def lseek(self: 'FileDescriptor[SeekableFile]', offset: int, whence: int) -> int:
-        return (await self.file.lseek(self, offset, whence))
+    async def lseek(self, offset: int, whence: int) -> int:
+        return (await self.handle.lseek(offset, whence))
 
     async def signalfd(self: 'FileDescriptor[SignalFile]', mask: t.Set[signal.Signals]) -> None:
         await self.file.signalfd(self, mask)
@@ -592,18 +572,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         return (await self.file.accept(self, flags))
 
 class EpollFile(File):
-    async def add(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: Pointer) -> None:
-        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.pure, EpollCtlOp.ADD, fd.pure, event)
-
-    async def modify(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor, event: Pointer) -> None:
-        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.pure, EpollCtlOp.MOD, fd.pure, event)
-
-    async def delete(self, epfd: FileDescriptor['EpollFile'], fd: FileDescriptor) -> None:
-        await raw_syscall.epoll_ctl(epfd.task.syscall, epfd.pure, EpollCtlOp.DEL, fd.pure)
-
-    async def wait(self, epfd: 'FileDescriptor[EpollFile]',
-                   events: Pointer, maxevents: int, timeout: int) -> int:
-        return (await raw_syscall.epoll_wait(epfd.task.syscall, epfd.pure, events, maxevents, timeout))
+    pass
 
 class EpolledFileDescriptor:
     def __init__(self,

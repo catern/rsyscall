@@ -65,6 +65,7 @@ class SYS(enum.IntEnum):
     renameat2 = lib.SYS_renameat2
     symlinkat = lib.SYS_symlinkat
     readlinkat = lib.SYS_readlinkat
+    lseek = lib.SYS_lseek
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -394,3 +395,6 @@ async def readlinkat(sysif: SyscallInterface,
     if dirfd is None:
         dirfd = AT.FDCWD # type: ignore
     return (await sysif.syscall(SYS.readlinkat, dirfd, path, buf, bufsiz))
+
+async def lseek(sysif: SyscallInterface, fd: FileDescriptor, offset: int, whence: int) -> int:
+    return (await sysif.syscall(SYS.lseek, fd, offset, whence))
