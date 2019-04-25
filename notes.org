@@ -3734,6 +3734,9 @@ so we don't have to be generic.
    For us, memory isn't immediately accessible:
    It must be explicitly read into the language core,
    and explicitly written out from the language core.
+** first-class processes
+   Treating operating system processes as a first-class object to be manipulated.
+   The methods of this object? System calls in that process.
 * explicitly modeling memory
 how would I do this?
 
@@ -14014,7 +14017,42 @@ sel4, couldn't find it/nothing
       prints error message
 
       have to override develop
-** lambda neat
+** make "local" module which has all the local things in it
+** keeping nix store reference around
+   we don't want to GC the Store
+
+   we want to unite the two GCs, Nix's and our own.
+
+   well how do we do that then?
+
+   blaaaaaaaaaargh
+** TODO port ssh to not use executables from stdtask
+   it's in progress! mostly done!
+*** passing around executables?
+    No, I'll pass around the store, and create the executable classes from them on the fly.
+
+    The store is cached.
+    Likewise with ExecutablePathLookup thing.
+
+    We'll pass them around;
+    the executables classes are just interfaces so the underlying functionality,
+    doesn't have to be aware of PATH vs Nix store vs whatever.
+*** TODO add interfaces for making ssh_hosts and things directly from store
+    in the case of sshexecutables, it's fine I guess, to just pull from store...
+
+    to maybe have... make_ssh_host(store, to_host)
+
+    and make_local_ssh_host(stdtask, store)?
+* getting better at asking questions
+  when sending a question as an email:
+  - include a summary of relevant discoveries and thoughts so far
+
+** hm
+   hmm, the thing is,
+   previously I've been in positions where there are people with more knowledge than me,
+   who have some responsibility for answering my questions and therefore tolerate low-effort questions
+* misc thoughts
+** lambda for storing references idea
    if I have some data which references other data,
    but which in its final form drops the references...
 
@@ -14034,21 +14072,4 @@ sel4, couldn't find it/nothing
 
     in the global environment?
 *** captp-style exports
-*** gc as an effect
-*** make "local" module which has all the local things in it
-** keeping nix store reference around
-   we don't want to GC the Store
-
-   we want to unite the two GCs, Nix's and our own.
-
-   well how do we do that then?
-
-   blaaaaaaaaaargh
-* getting better at asking questions
-  when sending a question as an email:
-  - include a summary of relevant discoveries and thoughts so far
-
-** hm
-   hmm, the thing is,
-   previously I've been in positions where there are people with more knowledge than me,
-   who have some responsibility for answering my questions and therefore tolerate low-effort questions
+** gc as an effect

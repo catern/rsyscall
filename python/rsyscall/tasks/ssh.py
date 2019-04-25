@@ -66,6 +66,30 @@ class SSHExecutables:
         return SSHExecutables(base_ssh, bootstrap_executable)
 
     def host(self, to_host: t.Callable[[SSHCommand], SSHCommand]) -> SSHHost:
+        """Create an object for sshing to a host.
+
+        Important design decision here: the user doesn't pass in a
+        hostname, username, various options, etc etc.
+
+        Instead, they just give us a partial ssh command that we'll
+        then use to do the sshing by appending our own shell command
+        arguments.
+
+        This allows using fancy options, connection sharing, all kinds
+        of stuff, without us having to explicitly support it.
+
+        The only constraint is that the user (obviously) shouldn't
+        include an actual shell command in their ssh command.
+
+        ---
+
+        There's a further design decision here: We take a function
+        instead of a completed SSHCommand. This is just so that we can
+        pass in the basic SSHCommand to use, and then the user can
+        extend it - it gives both us and the user the ability to add
+        arbitrary exciting arguments.
+
+        """
         return SSHHost(self, to_host)
 
 @dataclass
@@ -88,8 +112,6 @@ class SSHHost:
         async with run_socket_binder(task, ssh_to_host, self.executables.bootstrap_executable) as tmp_path_bytes:
             return (await ssh_bootstrap(task, ssh_to_host, local_socket_path, tmp_path_bytes))
 
-# Need to identify the host, I guess
-# I shouldn't abstract this too much - I should just use ssh.
 @contextlib.asynccontextmanager
 async def run_socket_binder(
         task: StandardTask,
