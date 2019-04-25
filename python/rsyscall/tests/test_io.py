@@ -28,7 +28,7 @@ import rsyscall.nix
 from rsyscall.tasks.persistent import fork_persistent
 from rsyscall.tasks.stdin_bootstrap import rsyscall_stdin_bootstrap
 from rsyscall.tasks.stub import StubServer
-from rsyscall.tasks.ssh import ssh_to_localhost, make_local_ssh, SSHExecutables, SSHDExecutables
+from rsyscall.tasks.ssh import make_local_ssh
 
 import rsyscall.sys.inotify as inotify
 from rsyscall.sys.epoll import EpollEvent, EpollEventMask
@@ -39,6 +39,7 @@ from rsyscall.sys.un import SockaddrUn
 from rsyscall.linux.netlink import NETLINK
 from rsyscall.signal import Signals
 from rsyscall.net.if_ import Ifreq
+
 
 import logging
 logger = logging.getLogger(__name__)
@@ -810,80 +811,6 @@ class TestIO(unittest.TestCase):
                 orig_mask = await rsyscall.io.SignalBlock.make(stdtask.task, {Signals.SIGINT})
                 sigdata = await sigqueue.read()
                 self.assertEqual(sigdata.ssi_signo, Signals.SIGINT)
-        trio.run(self.runner, test)
-
-    def test_ssh_basic(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            executables = await SSHExecutables.from_store(rsyscall.nix.local_store)
-            sshd_executables = await SSHDExecutables.from_store(rsyscall.nix.local_store)
-            host = await make_local_ssh(stdtask, sshd_executables, executables)
-            local_child, remote_stdtask = await host.ssh(stdtask)
-            logger.info("about to fork")
-            remote_thread = await remote_stdtask.fork()
-            logger.info("done with fork")
-            async with remote_thread:
-                # there's no test on mount namespace at the moment, so it works to pull this from local
-                logger.info("about to exec")
-                child_task = await remote_thread.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
-                logger.info("done exec, waiting now")
-                await child_task.wait_for_exit()
-        trio.run(self.runner, test)
-
-    def test_ssh_transmit(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            async with ssh_to_localhost(stdtask) as host:
-                local_child, remote_stdtask = await host.ssh(stdtask)
-                async with (await stdtask.mkdtemp()) as local_tmpdir:
-                    async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
-                        [(local_sock, remote_sock)] = await remote_stdtask.make_connections(1)
-                        data = b"hello world"
-                        await local_sock.write(data)
-                        read_data = await remote_stdtask.task.read(remote_sock.far)
-                        self.assertEqual(read_data, data)
-        trio.run(self.runner, test)
-
-    def test_ssh_copy(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            async with ssh_to_localhost(stdtask) as host:
-                local_child, remote_stdtask = await host.ssh(stdtask)
-                async with (await stdtask.mkdtemp()) as local_tmpdir:
-                    async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
-                        remote_file = await (remote_tmpdir/"dest").open(os.O_RDWR|os.O_CREAT)
-                        local_file = await (local_tmpdir/"source").open(os.O_RDWR|os.O_CREAT)
-                        data = b'hello world'
-                        await local_file.write(data)
-                        await local_file.lseek(0, os.SEEK_SET)
-
-                        [(local_sock, remote_sock)] = await remote_stdtask.make_connections(1)
-
-                        local_thread = await stdtask.fork()
-                        local_cat = await rsyscall.io.which(stdtask, b"cat")
-                        local_child_task = await rsyscall.io.exec_cat(
-                            local_thread, local_cat, infd=local_file.handle, outfd=local_sock.handle)
-                        await local_sock.handle.invalidate()
-                        await local_child_task.wait_for_exit()
-
-                        remote_thread = await remote_stdtask.fork()
-                        remote_cat = await rsyscall.io.which(remote_stdtask, b"cat")
-                        remote_child_task = await rsyscall.io.exec_cat(
-                            remote_thread, remote_cat, infd=remote_sock, outfd=remote_file.handle)
-                        await remote_sock.invalidate()
-                        await remote_child_task.wait_for_exit()
-
-                        await remote_file.lseek(0, os.SEEK_SET)
-                        self.assertEqual(await remote_file.read(), data)
-        trio.run(self.runner, test)
-
-    def test_ssh_bug(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            async with ssh_to_localhost(stdtask) as host:
-                local_child, remote_stdtask = await host.ssh(stdtask)
-                thread = await stdtask.fork()
-                await thread.stdtask.unshare_files(going_to_exec=True)
-                await rsyscall.io.do_cloexec_except(
-                    thread.stdtask.task, thread.stdtask.process,
-                    [fd.near for fd in thread.stdtask.task.base.fd_handles])
-                await thread.stdtask.task.sigmask.setmask(thread.stdtask.task, set())
         trio.run(self.runner, test)
 
     @unittest.skip("requires a user")

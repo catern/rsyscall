@@ -213,15 +213,10 @@ class FileDescriptor:
         await self.disable_cloexec()
         return int(self.near)
 
-    # should I just take handle.Pointers instead of near or far stuff? hmm.
-    # should I really require ownership in this way?
-    # well, the invalidation needs to work.
-    # oh hmm! if the pointer comes from another task, how does that work?
-    # so I'll take far Pointers, and Union[handle.FileDescriptor, far.FileDescriptor]
-    async def read(self, buf: rsyscall.far.Pointer, count: int) -> int:
+    async def read(self, buf: Pointer) -> int:
         self.validate()
-        return (await rsyscall.near.read(self.task.sysif, self.near,
-                                         self.task.to_near_pointer(buf), count))
+        async with buf.borrow(self) as buf:
+            return (await rsyscall.near.read(self.task.sysif, self.near, buf.near, buf.bytesize()))
 
     async def write(self, buf: rsyscall.far.Pointer, count: int) -> int:
         self.validate()

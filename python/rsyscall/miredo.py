@@ -131,7 +131,6 @@ async def start_miredo(nursery, stdtask: StandardTask) -> Miredo:
 class TestMiredo(TrioTestCase):
     async def asyncSetUp(self) -> None:
         # TODO lmao stracing this stuff causes a bug,
-        # waiting a long time between runs causes a bug,
         # what is even going on
         self.stdtask = rsc.local_stdtask
         print("a", time.time())

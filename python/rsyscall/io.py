@@ -1501,7 +1501,8 @@ class StandardTask:
         )
         return RsyscallThread(stdtask, thread)
 
-    async def run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
+    async def run(self, command: Command, check=True,
+                  *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
         thread = await self.fork(fs=False)
         child = await command.exec(thread)
         task_status.started(child)
@@ -1523,6 +1524,17 @@ class StandardTask:
             await unshare_files(self.task, self.child_monitor, self.process,
                                 close_in_old_space, copy_to_new_space, going_to_exec)
         await self.task.base.unshare_files(do_unshare)
+
+    async def unshare_files_and_replace(self, mapping: t.Dict[handle.FileDescriptor, handle.FileDescriptor],
+                                        going_to_exec=False) -> None:
+        async with contextlib.AsyncExitStack() as stack:
+            mapping = {await stack.enter_async_context(key.borrow(self.task.base)):
+                       await stack.enter_async_context(val.borrow(self.task.base))
+                       for key, val in mapping.items()}
+            await self.unshare_files(going_to_exec=going_to_exec)
+            for dest, source in mapping.items():
+                await source.dup3(dest, 0)
+                await source.invalidate()
 
     async def unshare_user(self,
                            in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
@@ -3158,12 +3170,11 @@ class Command:
 
 
 async def exec_cat(thread: RsyscallThread, cat: Command,
-                   infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> ChildProcess:
-    stdin = thread.stdtask.task.base.make_fd_handle(infd)
-    stdout = thread.stdtask.task.base.make_fd_handle(outfd)
-    await thread.stdtask.unshare_files()
-    await thread.stdtask.stdin.replace_with(stdin)
-    await thread.stdtask.stdout.replace_with(stdout)
+                   stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> ChildProcess:
+    await thread.stdtask.unshare_files_and_replace({
+        thread.stdtask.stdin.handle: stdin,
+        thread.stdtask.stdout.handle: stdout,
+    }, going_to_exec=True)
     child_task = await cat.exec(thread)
     return child_task
 

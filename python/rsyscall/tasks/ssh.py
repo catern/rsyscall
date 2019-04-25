@@ -15,9 +15,19 @@ import random
 import string
 
 import rsyscall.nix as nix
-
 from rsyscall.fcntl import O
 from rsyscall.sys.socket import SOCK, AF
+
+__all__ = [
+    "SSHCommand",
+    "SSHDCommand",
+    "SSHExecutables",
+    "SSHDExecutables",
+    "make_local_ssh_from_executables",
+    "make_ssh_host",
+    "make_local_ssh",
+]
+
 ssh_bootstrap_script_contents = importlib.resources.read_text('rsyscall.tasks', 'ssh_bootstrap.sh')
 logger = logging.getLogger(__name__)
 
@@ -186,6 +196,7 @@ async def ssh_bootstrap(
     task = parent_task.task
     local_data_path = Path(task, local_socket_path)
     # start port forwarding; we'll just leak this process, no big deal
+    # TODO we shouldn't leak processes; we should be GCing processes at some point
     forward_child = await ssh_forward(
         parent_task, ssh_command, local_socket_path, (tmp_path_bytes + b"/data").decode())
     # start bootstrap
@@ -269,8 +280,8 @@ class SSHDExecutables:
         sshd = SSHDCommand.make(ssh_path.handle/"bin"/"sshd")
         return SSHDExecutables(ssh_keygen, sshd)
 
-async def make_local_ssh(stdtask: StandardTask,
-                         sshd_executables: SSHDExecutables, executables: SSHExecutables) -> SSHHost:
+async def make_local_ssh_from_executables(stdtask: StandardTask,
+                                          executables: SSHExecutables, sshd_executables: SSHDExecutables) -> SSHHost:
     ssh_keygen = sshd_executables.ssh_keygen
     sshd = sshd_executables.sshd
 
@@ -309,13 +320,14 @@ async def make_local_ssh(stdtask: StandardTask,
         return ssh_command
     return executables.host(to_host)
 
-class LocalSSHHost:
-    @staticmethod
-    async def make(stdtask: StandardTask, sshd_executables: SSHDExecutables, ssh_executables: SSHExecutables) -> SSHHost:
-        return (await make_local_ssh(stdtask, sshd_executables, ssh_executables))
+# Helpers
+async def make_ssh_host(store: nix.Store, to_host: t.Callable[[SSHCommand], SSHCommand]) -> SSHHost:
+    ssh = await SSHExecutables.from_store(store)
+    return ssh.host(to_host)
 
-@contextlib.asynccontextmanager
-async def ssh_to_localhost(stdtask: StandardTask,
-                           sshd_executables: SSHDExecutables,
-                           ssh_executables: SSHExecutables) -> t.AsyncGenerator[SSHHost, None]:
-    yield (await LocalSSHHost.make(stdtask, sshd_executables, ssh_executables))
+async def make_local_ssh(stdtask: StandardTask, store: nix.Store) -> SSHHost:
+    ssh = await SSHExecutables.from_store(store)
+    sshd = await SSHDExecutables.from_store(store)
+    return (await make_local_ssh_from_executables(stdtask, ssh, sshd))
+
+

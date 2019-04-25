@@ -185,6 +185,10 @@ class Store:
             return (await self.create_root(store_path, path))
         raise NotImplementedError("TODO deploy this store_path from local_store")
 
+    async def bin(self, store_path: StorePath, name: str) -> Command:
+        path = await self.realise(store_path)
+        return Command(path.handle/"bin"/name, [name], {})
+
 nix = StorePath._load_without_registering("nix")
 local_store = Store(local_stdtask, nix)
 

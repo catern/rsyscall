@@ -62,11 +62,15 @@ pytest ];
   nix = nix;
   rsyscall = rsyscall;
   openssh = pkgs.openssh;
+  bash = pkgs.bash;
+  coreutils = pkgs.coreutils;
   exportReferencesGraph = [
     "miredo" pkgs.miredo
     "nix" pkgs.nix
     "rsyscall" rsyscall
     "openssh" pkgs.openssh
+    "bash" pkgs.bash
+    "coreutils" pkgs.coreutils
   ];
 }
 
