@@ -10,7 +10,7 @@ class IdType(enum.IntEnum):
     PGID = lib.P_PGID # Wait for any child whose process group ID matches id.
     ALL = lib.P_ALL # Wait for any child; id is ignored.
 
-class ChildCode(enum.Enum):
+class ChildCode(enum.IntEnum):
     EXITED = lib.CLD_EXITED # child called _exit(2)
     KILLED = lib.CLD_KILLED # child killed by signal
     DUMPED = lib.CLD_DUMPED # child killed by signal, and dumped core

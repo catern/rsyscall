@@ -30,8 +30,9 @@ from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.sys.epoll import EpollEvent, EpollEventMask, EpollCtlOp
 from rsyscall.sys.wait import ChildCode, UncleanExit, ChildEvent, W
 from rsyscall.sys.memfd import MFD
+from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
 from rsyscall.sched import UnshareFlag
-from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals
+from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals, Sigset
 from rsyscall.linux.dirent import Dirent, DirentList
 
 import random
@@ -351,10 +352,6 @@ class Task:
         sockfd = await self.base.socket(AF.INET, type, protocol)
         return FileDescriptor(self, sockfd, InetSocketFile())
 
-    async def signalfd_create(self, mask: t.Set[signal.Signals], flags: int=0) -> FileDescriptor[SignalFile]:
-        sigfd = await memsys.signalfd(self.syscall, self.transport, self.allocator, mask, O.CLOEXEC|flags)
-        return self._make_fd(sigfd, SignalFile(mask))
-
     async def mmap(self, length: int, prot: memory.ProtFlag, flags: memory.MapFlag) -> memory.AnonymousMapping:
         # currently doesn't support specifying an address, nor specifying a file descriptor
         return (await memory.AnonymousMapping.make(self.base, length, prot, flags))
@@ -397,13 +394,7 @@ class ReadableWritableFile(ReadableFile, WritableFile):
     pass
 
 class SignalFile(ReadableFile):
-    def __init__(self, mask: t.Set[signal.Signals], shared=False) -> None:
-        super().__init__(shared=shared)
-        self.mask = mask
-
-    async def signalfd(self, fd: 'FileDescriptor[SignalFile]', mask: t.Set[signal.Signals]) -> None:
-        await memsys.signalfd(fd.task.syscall, fd.task.transport, fd.task.allocator, mask, 0, fd=fd.pure)
-        self.mask = mask
+    pass
 
 class MemoryFile(ReadableWritableFile, SeekableFile):
     pass
@@ -536,15 +527,12 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def getdents(self, count: int=4096) -> DirentList:
         dirp = await self.task.malloc_type(DirentList, count)
         ret = await self.handle.getdents(dirp)
-        validp, wastep = dirp.split(ret)
+        validp, _ = dirp.split(ret)
         dirents = await validp.read()
         return dirents
 
     async def lseek(self, offset: int, whence: int) -> int:
         return (await self.handle.lseek(offset, whence))
-
-    async def signalfd(self: 'FileDescriptor[SignalFile]', mask: t.Set[signal.Signals]) -> None:
-        await self.file.signalfd(self, mask)
 
     async def bind(self: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
         await self.file.bind(self, addr)
@@ -1607,8 +1595,9 @@ class SignalQueue:
             if signal_block.mask != mask:
                 raise Exception("passed-in SignalBlock", signal_block, "has mask", signal_block.mask,
                                 "which does not match the mask for the SignalQueue we're making", mask)
-        sigfd = await task.signalfd_create(mask)
-        async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd)
+        sigfd_handle = await task.base.signalfd(await task.to_pointer(Sigset(mask)), SFD.NONBLOCK|SFD.CLOEXEC)
+        sigfd = FileDescriptor(task, sigfd_handle, SignalFile())
+        async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd, is_nonblock=True)
         return cls(signal_block, async_sigfd)
 
     async def read(self) -> t.Any:
@@ -1743,7 +1732,7 @@ class ChildProcessMonitorInternal:
         self.is_reaper = is_reaper
         self.task_map: t.Dict[int, trio.abc.SendChannel[ChildEvent]] = {}
         self.wait_lock = trio.Lock()
-        if self.signal_queue.sigfd.underlying.file.mask != set([signal.SIGCHLD]):
+        if self.signal_queue.signal_block.mask != set([signal.SIGCHLD]):
             raise Exception("ChildProcessMonitor should get a SignalQueue only for SIGCHLD")
         self.running_wait = OneAtATime()
         self.can_waitid = False

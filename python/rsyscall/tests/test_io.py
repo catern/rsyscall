@@ -241,7 +241,6 @@ class TestIO(unittest.TestCase):
             async with (await stdtask.mkdtemp()) as path:
                 async with (await path.open_directory()) as dirfd:
                     dirents = await dirfd.getdents()
-                    print(dirents)
                     self.assertCountEqual([dirent.name for dirent in dirents], ['.', '..'])
                     text = b"Hello world!"
                     name = "hello"

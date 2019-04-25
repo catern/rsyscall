@@ -310,19 +310,19 @@ class FileDescriptor:
 
     async def readlinkat(self, path: Pointer, buf: Pointer) -> int:
         self.validate()
-        async with path.borrow(self) as path:
-            async with buf.borrow(self) as buf:
+        async with path.borrow(self.task) as path:
+            async with buf.borrow(self.task) as buf:
                 return (await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, buf.near, buf.bytesize()))
 
     async def getdents(self, dirp: Pointer[DirentList]) -> int:
         self.validate()
-        async with dirp.borrow(self) as dirp:
+        async with dirp.borrow(self.task) as dirp:
             return (await rsyscall.near.getdents64(self.task.sysif, self.near, dirp.near, dirp.bytesize()))
 
-    async def signalfd(self, dirp: Pointer[DirentList]) -> int:
+    async def signalfd(self, mask: Pointer[Sigset], flags: int) -> None:
         self.validate()
-        async with dirp.borrow(self) as dirp:
-            return (await rsyscall.near.getdents64(self.task.sysif, self.near, dirp.near, dirp.bytesize()))
+        async with mask.borrow(self.task) as mask:
+            await rsyscall.near.signalfd4(self.task.sysif, self.near, mask.near, mask.bytesize(), flags)
 
 class AllocationInterface:
     @abc.abstractproperty
@@ -596,6 +596,11 @@ class Task(rsyscall.far.Task):
                 size = await rsyscall.near.readlinkat(self.sysif, None, path.near, buf.near, buf.bytesize())
                 # so we want to split the buf pointer at this size point. hm.
                 return size
+
+    async def signalfd(self, mask: Pointer[Sigset], flags: int) -> FileDescriptor:
+        async with mask.borrow(self) as mask:
+            fd = await rsyscall.near.signalfd4(self.sysif, None, mask.near, mask.bytesize(), flags)
+            return self.make_fd_handle(fd)
 
 @dataclass
 class Pipe:
