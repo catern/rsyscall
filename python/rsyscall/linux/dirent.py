@@ -48,7 +48,7 @@ class DirentList(t.List[Dirent], Serializable):
             ret += ent.to_bytes()
         return ret
 
-    T = t.TypeVar('T', bound='Bytes')
+    T = t.TypeVar('T', bound='DirentList')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         entries = []

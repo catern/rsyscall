@@ -125,13 +125,6 @@ def sigset_to_bytes(set: t.Set[signal.Signals]) -> bytes:
         set_integer |= 1 << (sig-1)
     return sigset.pack(set_integer)
 
-async def signalfd(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                   mask: t.Set[signal.Signals], flags: int,
-                   fd: t.Optional[base.FileDescriptor]=None) -> int:
-    logger.debug("signalfd(%s, %s, %s)", mask, flags, fd)
-    async with localize_data(transport, allocator, sigset_to_bytes(mask)) as (mask_ptr, mask_len):
-        return (await raw_syscall.signalfd4(sysif, mask_ptr, mask_len, flags, fd=fd))
-
 def bytes_to_sigset(data: bytes) -> t.Set[signal.Signals]:
     set_integer, = sigset.unpack(data)
     return {signal.Signals(bit) for bit in bits(set_integer)}

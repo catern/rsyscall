@@ -39,6 +39,7 @@ from rsyscall.sys.un import SockaddrUn
 from rsyscall.linux.netlink import NETLINK
 from rsyscall.signal import Signals
 from rsyscall.net.if_ import Ifreq
+from rsyscall.unistd import SEEK
 
 
 import logging
@@ -247,7 +248,7 @@ class TestIO(unittest.TestCase):
                     hello_path = await rsyscall.io.spit(path/name, text)
                     async with (await hello_path.open(os.O_RDONLY)) as readable:
                         self.assertEqual(await readable.read(), text)
-                    await dirfd.lseek(0, os.SEEK_SET)
+                    await dirfd.lseek(0, SEEK.SET)
                     self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], ['.', '..', name])
         trio.run(self.runner, test)
 
@@ -835,7 +836,7 @@ class TestIO(unittest.TestCase):
                 source_file = await (tmpdir/"source").open(os.O_RDWR|os.O_CREAT)
                 data = b'hello world'
                 await source_file.write(data)
-                await source_file.lseek(0, os.SEEK_SET)
+                await source_file.lseek(0, SEEK.SET)
                 dest_file = await (tmpdir/"dest").open(os.O_RDWR|os.O_CREAT)
 
                 thread = await stdtask.fork()
@@ -843,7 +844,7 @@ class TestIO(unittest.TestCase):
                 child_task = await rsyscall.io.exec_cat(thread, cat, source_file.handle, dest_file.handle)
                 await child_task.wait_for_exit()
 
-                await dest_file.lseek(0, os.SEEK_SET)
+                await dest_file.lseek(0, SEEK.SET)
                 self.assertEqual(await dest_file.read(), data)
         trio.run(self.runner, test)
 

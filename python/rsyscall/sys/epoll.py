@@ -20,6 +20,9 @@ class BitField:
         else:
             instance.raw &= ~self.bitval
 
+class EpollFlag(enum.IntFlag):
+    CLOEXEC = lib.EPOLL_CLOEXEC
+
 class EpollCtlOp(enum.IntEnum):
     ADD = lib.EPOLL_CTL_ADD
     MOD = lib.EPOLL_CTL_MOD

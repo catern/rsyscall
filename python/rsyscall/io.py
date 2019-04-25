@@ -27,13 +27,14 @@ from rsyscall.linux.futex import FUTEX_WAITERS, FUTEX_TID_MASK
 from rsyscall.sys.mount import MS
 from rsyscall.sys.un import SockaddrUn, PathTooLongError
 from rsyscall.netinet.in_ import SockaddrIn
-from rsyscall.sys.epoll import EpollEvent, EpollEventMask, EpollCtlOp
+from rsyscall.sys.epoll import EpollEvent, EpollEventMask, EpollCtlOp, EpollFlag
 from rsyscall.sys.wait import ChildCode, UncleanExit, ChildEvent, W
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
 from rsyscall.sched import UnshareFlag
 from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals, Sigset
 from rsyscall.linux.dirent import Dirent, DirentList
+from rsyscall.unistd import SEEK
 
 import random
 import string
@@ -336,10 +337,6 @@ class Task:
         return (self._make_fd(l, ReadableWritableFile(shared=False)),
                 self._make_fd(r, ReadableWritableFile(shared=False)))
 
-    async def epoll_create(self, flags=lib.EPOLL_CLOEXEC) -> FileDescriptor[EpollFile]:
-        epfd = await raw_syscall.epoll_create(self.syscall, flags)
-        return self._make_fd(epfd, EpollFile())
-
     async def inotify_init(self, flags=lib.IN_CLOEXEC) -> FileDescriptor[InotifyFile]:
         epfd = await near.inotify_init(self.syscall, flags)
         return self.make_fd(epfd, InotifyFile())
@@ -357,19 +354,19 @@ class Task:
         return (await memory.AnonymousMapping.make(self.base, length, prot, flags))
 
     async def make_epoll_center(self) -> EpollCenter:
-        epfd = await self.epoll_create()
+        epfd = await self.base.epoll_create(EpollFlag.CLOEXEC)
         if self.syscall.activity_fd is not None:
-            epoll_waiter = EpollWaiter(self, epfd.handle, None)
-            epoll_center = EpollCenter(epoll_waiter, epfd.handle, self)
+            epoll_waiter = EpollWaiter(self, epfd, None)
+            epoll_center = EpollCenter(epoll_waiter, epfd, self)
             activity_fd = self.base.make_fd_handle(self.syscall.activity_fd)
             await epoll_waiter.update_activity_fd(activity_fd)
         else:
             # TODO this is a pretty low-level detail, not sure where is the right place to do this
             async def wait_readable():
-                logger.debug("wait_readable(%s)", epfd.handle.near.number)
-                await trio.hazmat.wait_readable(epfd.handle.near.number)
-            epoll_waiter = EpollWaiter(self, epfd.handle, wait_readable)
-            epoll_center = EpollCenter(epoll_waiter, epfd.handle, self)
+                logger.debug("wait_readable(%s)", epfd.near.number)
+                await trio.hazmat.wait_readable(epfd.near.number)
+            epoll_waiter = EpollWaiter(self, epfd, wait_readable)
+            epoll_center = EpollCenter(epoll_waiter, epfd, self)
         return epoll_center
 
     async def getuid(self) -> int:
@@ -531,7 +528,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         dirents = await validp.read()
         return dirents
 
-    async def lseek(self, offset: int, whence: int) -> int:
+    async def lseek(self, offset: int, whence: SEEK) -> int:
         return (await self.handle.lseek(offset, whence))
 
     async def bind(self: 'FileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:

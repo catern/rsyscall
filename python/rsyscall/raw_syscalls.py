@@ -19,7 +19,6 @@ class SYS(enum.IntEnum):
     close = lib.SYS_close
     connect = lib.SYS_connect
     dup3 = lib.SYS_dup3
-    epoll_create1 = lib.SYS_epoll_create1
     epoll_ctl = lib.SYS_epoll_ctl
     epoll_wait = lib.SYS_epoll_wait
     execveat = lib.SYS_execveat
@@ -46,7 +45,6 @@ class SYS(enum.IntEnum):
     readlinkat = lib.SYS_readlinkat
     rt_sigprocmask = lib.SYS_rt_sigprocmask
     setsockopt = lib.SYS_setsockopt
-    signalfd4 = lib.SYS_signalfd4
     socket = lib.SYS_socket
     socketpair = lib.SYS_socketpair
     symlinkat = lib.SYS_symlinkat
@@ -166,10 +164,6 @@ async def clone(sysif: SyscallInterface, flags: int, child_stack: t.Optional[Poi
         newtls = 0 # type: ignore
     return (await sysif.syscall(SYS.clone, flags, child_stack, ptid, ctid, newtls))
 
-async def epoll_create(sysif: SyscallInterface, flags: int) -> int:
-    logger.debug("epoll_create(%s)", flags)
-    return (await sysif.syscall(SYS.epoll_create1, flags))
-
 async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: int, fd: FileDescriptor, event: t.Optional[Pointer]=None) -> None:
     if event is None:
         logger.debug("epoll_ctl(%d, %s, %d)", epfd, op, fd)
@@ -181,13 +175,6 @@ async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: int, fd: 
 async def epoll_wait(sysif: SyscallInterface, epfd: FileDescriptor, events: Pointer, maxevents: int, timeout: int) -> int:
     logger.debug("epoll_wait(%d, %d, %d, %d)", epfd, events, maxevents, timeout)
     return (await sysif.syscall(SYS.epoll_wait, epfd, events, maxevents, timeout))
-
-async def signalfd4(sysif: SyscallInterface, mask: Pointer, sizemask: int, flags: int,
-                   fd: t.Optional[FileDescriptor]=None) -> int:
-    logger.debug("signalfd(%s, %s, %s, %s)", fd, mask, sizemask, flags)
-    if fd is None:
-        fd = -1 # type: ignore
-    return (await sysif.syscall(SYS.signalfd4, fd, mask, sizemask, flags))
 
 async def rt_sigprocmask(sysif: SyscallInterface,
                          newset: t.Optional[t.Tuple[SigprocmaskHow, Pointer]],

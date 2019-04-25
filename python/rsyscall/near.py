@@ -67,6 +67,7 @@ class SYS(enum.IntEnum):
     readlinkat = lib.SYS_readlinkat
     lseek = lib.SYS_lseek
     signalfd4 = lib.SYS_signalfd4
+    epoll_create1 = lib.SYS_epoll_create1
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -405,3 +406,6 @@ async def signalfd4(sysif: SyscallInterface, fd: t.Optional[FileDescriptor],
     if fd is None:
         fd = -1 # type: ignore
     return FileDescriptor(await sysif.syscall(SYS.signalfd4, fd, mask, sizemask, flags))
+
+async def epoll_create(sysif: SyscallInterface, flags: int) -> FileDescriptor:
+    return FileDescriptor(await sysif.syscall(SYS.epoll_create1, flags))

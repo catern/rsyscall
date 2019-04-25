@@ -1,6 +1,7 @@
 import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.struct import Struct
+from dataclasses import dataclass
 
 from rsyscall.signal import Signals
 from rsyscall.sys.wait import ChildCode
@@ -10,6 +11,7 @@ class SFD(enum.IntFlag):
     NONBLOCK = lib.SFD_NONBLOCK
     CLOEXEC = lib.SFD_CLOEXEC
 
+@dataclass
 class SignalfdSiginfo(Struct):
     signo: Signals
     code: ChildCode
@@ -22,14 +24,14 @@ class SignalfdSiginfo(Struct):
         struct.ssi_pid = self.pid
         return bytes(ffi.buffer(struct))
 
-    T = t.TypeVar('T', bound='Sigaction')
+    T = t.TypeVar('T', bound='SignalfdSiginfo')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct signalfd_siginfo const*', ffi.from_buffer(data))
         return cls(
             signo=Signals(struct.ssi_signo),
             code=ChildCode(struct.ssi_code),
-            pid=ssi_pid,
+            pid=struct.ssi_pid,
         )
 
     @classmethod

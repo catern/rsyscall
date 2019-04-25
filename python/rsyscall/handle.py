@@ -21,6 +21,8 @@ from rsyscall.signal import Sigaction, Sigset, Signals
 from rsyscall.fcntl import AT, F
 from rsyscall.path import Path
 from rsyscall.unistd import SEEK
+from rsyscall.sys.epoll import EpollFlag, EpollCtlOp, EpollEvent
+from rsyscall.linux.dirent import DirentList
 
 # This is like a far pointer plus a segment register.
 # It means that, as long as it doesn't throw an exception,
@@ -275,14 +277,14 @@ class FileDescriptor:
                                                self.task.to_near_pointer(events), maxevents,
                                                timeout))
 
-    async def epoll_ctl(self, op: EpollCtlOp, fd: FileDescriptor, event: t.Optional[Pointer[EpollEvent]]=None) -> int:
-        if event.bytesize() < EpollEvent.sizeof():
-            raise Exception("pointer is too small", event.bytesize(), "to be an EpollEvent", EpollEvent.sizeof())
+    async def epoll_ctl(self, op: EpollCtlOp, fd: FileDescriptor, event: t.Optional[Pointer[EpollEvent]]=None) -> None:
         self.validate()
         async with fd.borrow(self.task) as fd:
-            if event:
-                async with event.borrow(self.task) as event:
-                    return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near, event.near))
+            if event is not None:
+                if event.bytesize() < EpollEvent.sizeof():
+                    raise Exception("pointer is too small", event.bytesize(), "to be an EpollEvent", EpollEvent.sizeof())
+                async with event.borrow(self.task) as eventp:
+                    return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near, eventp.near))
             else:
                 return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near))
 
@@ -601,6 +603,10 @@ class Task(rsyscall.far.Task):
         async with mask.borrow(self) as mask:
             fd = await rsyscall.near.signalfd4(self.sysif, None, mask.near, mask.bytesize(), flags)
             return self.make_fd_handle(fd)
+
+    async def epoll_create(self, flags: EpollFlag) -> FileDescriptor:
+        fd = await rsyscall.near.epoll_create(self.sysif, flags)
+        return self.make_fd_handle(fd)
 
 @dataclass
 class Pipe:
