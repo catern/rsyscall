@@ -19,7 +19,7 @@ import rsyscall.handle
 from rsyscall.handle import T_pointer
 import rsyscall.far as far
 import rsyscall.near as near
-from rsyscall.struct import T_serializable, T_struct
+from rsyscall.struct import T_serializable, T_struct, Bytes, Int32
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr
 from rsyscall.fcntl import AT, O, F
@@ -383,12 +383,10 @@ class Task:
 
 
 class ReadableFile(File):
-    async def read(self, fd: 'FileDescriptor[ReadableFile]', count: int=4096) -> bytes:
-        return (await fd.task.read(fd.handle.far, count))
+    pass
 
 class WritableFile(File):
-    async def write(self, fd: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
-        return (await memsys.write(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, buf))
+    pass
 
 class SeekableFile(File):
     pass
@@ -407,26 +405,6 @@ class DirectoryFile(SeekableFile):
 
 class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     address_type: t.Type[T_addr]
-
-    async def getsockname(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        data = await memsys.getsockname(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, self.address_type.sizeof())
-        return self.address_type.from_bytes(data)
-
-    async def getpeername(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        data = await memsys.getpeername(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, self.address_type.sizeof())
-        return self.address_type.from_bytes(data)
-
-    async def getsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
-        return (await memsys.getsockopt(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, level, optname, optlen))
-
-    async def setsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int,
-                         optval: t.Union[bytes, int]) -> None:
-        if isinstance(optval, bytes):
-            optbytes = optval
-        else:
-            optbytes = struct.pack('i', optval)
-        return (await memsys.setsockopt(fd.task.syscall, fd.task.transport, fd.task.allocator,
-                                        fd.pure, level, optname, optbytes))
 
 class UnixSocketFile(SocketFile[SockaddrUn]):
     address_type = SockaddrUn
@@ -500,16 +478,18 @@ class FileDescriptor(t.Generic[T_file_co]):
         "Set the O_NONBLOCK flag on the underlying file object"
         await self.handle.fcntl(F.SETFL, O.NONBLOCK)
 
-    async def read(self: 'FileDescriptor[ReadableFile]', count: int=4096) -> bytes:
-        return (await self.file.read(self, count))
+    async def read(self, count: int=4096) -> bytes:
+        valid, _ = await self.handle.read(await self.task.malloc_type(Bytes, count))
+        return await valid.read()
 
-    async def write(self: 'FileDescriptor[WritableFile]', buf: bytes) -> int:
-        return (await self.file.write(self, buf))
+    async def write(self, data: bytes) -> int:
+        written, _ = await self.handle.write(await self.task.to_pointer(Bytes(data)))
+        return written.bytesize()
 
-    async def write_all(self: 'FileDescriptor[WritableFile]', buf: bytes) -> None:
-        while len(buf) > 0:
-            ret = await self.write(buf)
-            buf = buf[ret:]
+    async def write_all(self, data: bytes) -> None:
+        remaining = await self.task.to_pointer(Bytes(data))
+        while remaining.bytesize() > 0:
+            written, remaining = await self.handle.write(remaining)
 
     async def getdents(self, count: int=4096) -> DirentList:
         valid, _ = await self.handle.getdents(await self.task.malloc_type(DirentList, count))
@@ -521,21 +501,39 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def connect(self, addr: Address) -> None:
         await self.handle.connect(await self.task.to_pointer(addr))
 
-    async def listen(self: 'FileDescriptor[SocketFile]', backlog: int) -> None:
+    async def listen(self, backlog: int) -> None:
         await self.handle.listen(backlog)
 
-    async def getsockname(self: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        return (await self.file.getsockname(self))
+    async def setsockopt(self, level: int, optname: int, optval: t.Union[bytes, int]) -> None:
+        if isinstance(optval, bytes):
+            ptr: TypedPointer = await self.task.to_pointer(Bytes(optval))
+        else:
+            ptr = await self.task.to_pointer(Int32(optval))
+        await self.handle.setsockopt(level, optname, ptr)
 
-    async def getpeername(self: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        return (await self.file.getpeername(self))
+    async def getsockname(self) -> Address:
+        buf = await self.task.malloc_struct(GenericSockaddr)
+        socklen = await self.task.to_pointer(Socklen(buf.bytesize()))
+        await self.handle.getsockname(buf, socklen)
+        real_len = await socklen.read()
+        valid, _ = buf.split(real_len)
+        return (await valid.read()).parse()
 
-    async def setsockopt(self: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int,
-                         optval: t.Union[bytes, int]) -> None:
-        await self.file.setsockopt(self, level, optname, optval)
+    async def getpeername(self) -> Address:
+        buf = await self.task.malloc_struct(GenericSockaddr)
+        socklen = await self.task.to_pointer(Socklen(buf.bytesize()))
+        await self.handle.getpeername(buf, socklen)
+        real_len = await socklen.read()
+        valid, _ = buf.split(real_len)
+        return (await valid.read()).parse()
 
-    async def getsockopt(self: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
-        return (await self.file.getsockopt(self, level, optname, optlen))
+    async def getsockopt(self, level: int, optname: int, optlen: int) -> bytes:
+        buf = await self.task.malloc_type(Bytes, optlen)
+        socklen = await self.task.to_pointer(Socklen(buf.bytesize()))
+        await self.handle.getsockopt(level, optname, buf, socklen)
+        real_len = await socklen.read()
+        valid, _ = buf.split(real_len)
+        return await valid.read()
 
     async def accept(self, flags: SOCK) -> t.Tuple[FileDescriptor, Address]:
         buf = await self.task.malloc_struct(GenericSockaddr)

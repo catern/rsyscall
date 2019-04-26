@@ -311,10 +311,11 @@ class FileDescriptor:
             ret = await rsyscall.near.read(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
             return buf.split(ret)
 
-    async def write(self, buf: rsyscall.far.Pointer, count: int) -> int:
+    async def write(self, buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
-        return (await rsyscall.near.write(self.task.sysif, self.near,
-                                          self.task.to_near_pointer(buf), count))
+        async with buf.borrow(self) as buf_b:
+            ret = await rsyscall.near.write(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
+            return buf.split(ret)
 
     async def pread(self, buf: rsyscall.far.Pointer, count: int, offset: int) -> int:
         self.validate()
@@ -406,16 +407,45 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.listen(self.task.sysif, self.near, backlog)
 
+    async def getsockopt(self, level: int, optname: int, optval: Pointer, optlen: WrittenPointer[Socklen]) -> None:
+        self.validate()
+        if optlen.data > optval.bytesize():
+            raise ValueError("optlen contains", optlen.data,
+                             "should contain the length of the opt buf", optval.bytesize())
+        async with optval.borrow(self.task) as optval_b:
+            async with optlen.borrow(self.task) as optlen_b:
+                await rsyscall.near.getsockopt(self.task.sysif, self.near, level, optname, optval_b.near, optlen_b.near)
+
     async def setsockopt(self, level: int, optname: int, optval: Pointer) -> None:
         self.validate()
-        await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval.near, optval.bytesize())
+        async with optval.borrow(self.task) as optval_b:
+            await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval_b.near, optval_b.bytesize())
+
+    async def getsockname(self, addr: Pointer, addrlen: WrittenPointer[Socklen]) -> None:
+        self.validate()
+        if addrlen.data > addr.bytesize():
+            raise ValueError("addrlen contains", addrlen.data,
+                             "should contain the length of the addr buf", addr.bytesize())
+        async with addr.borrow(self.task) as addr_b:
+            async with addrlen.borrow(self.task) as addrlen_b:
+                await rsyscall.near.getsockname(self.task.sysif, self.near, addr_b.near, addrlen_b.near)
+
+    async def getpeername(self, addr: Pointer, addrlen: WrittenPointer[Socklen]) -> None:
+        self.validate()
+        if addrlen.data > addr.bytesize():
+            raise ValueError("addrlen contains", addrlen.data,
+                             "should contain the length of the addr buf", addr.bytesize())
+        async with addr.borrow(self.task) as addr_b:
+            async with addrlen.borrow(self.task) as addrlen_b:
+                await rsyscall.near.getpeername(self.task.sysif, self.near, addr_b.near, addrlen_b.near)
 
     @t.overload
     async def accept(self, flags: SOCK) -> FileDescriptor: ...
     @t.overload
-    async def accept(self, flags: SOCK, addr: T_pointer, addrlen: WrittenPointer[Socklen]) -> FileDescriptor: ...
+    async def accept(self, flags: SOCK, addr: Pointer, addrlen: WrittenPointer[Socklen]) -> FileDescriptor: ...
 
-    async def accept(self, flags: SOCK, addr: t.Optional[T_pointer]=None, addrlen: t.Optional[WrittenPointer[Socklen]]=None) -> FileDescriptor:
+    async def accept(self, flags: SOCK,
+                     addr: t.Optional[Pointer]=None, addrlen: t.Optional[WrittenPointer[Socklen]]=None) -> FileDescriptor:
         self.validate()
         if addr is None:
             fd = await rsyscall.near.accept4(self.task.sysif, self.near, None, None, flags)
@@ -423,6 +453,9 @@ class FileDescriptor:
         else:
             if addrlen is None:
                 raise ValueError("if you pass addr, you must also pass addrlen")
+            if addrlen.data > addr.bytesize():
+                raise ValueError("addrlen contains", addrlen.data,
+                                 "should contain the length of the addr buf", addr.bytesize())
             async with addrlen.borrow(self.task) as addrlen_b:
                 async with addr.borrow(self.task) as addr_b:
                     fd = await rsyscall.near.accept4(self.task.sysif, self.near, addr_b.near, addrlen_b.near, flags)

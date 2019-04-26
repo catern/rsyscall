@@ -55,6 +55,7 @@ class SYS(enum.IntEnum):
     capget = lib.SYS_capget
     capset = lib.SYS_capset
     listen = lib.SYS_listen
+    getsockopt = lib.SYS_getsockopt
     setsockopt = lib.SYS_setsockopt
     rt_sigaction = lib.SYS_rt_sigaction
     openat = lib.SYS_openat
@@ -69,6 +70,8 @@ class SYS(enum.IntEnum):
     signalfd4 = lib.SYS_signalfd4
     epoll_create1 = lib.SYS_epoll_create1
     connect = lib.SYS_connect
+    getpeername = lib.SYS_getpeername
+    getsockname = lib.SYS_getsockname
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -327,9 +330,18 @@ async def capget(sysif: SyscallInterface, hdrp: Pointer, datap: Pointer) -> None
 async def listen(sysif: SyscallInterface, sockfd: FileDescriptor, backlog: int) -> None:
     await sysif.syscall(SYS.listen, sockfd, backlog)
 
+async def getsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int, optname: int, optval: Pointer, optlen: Pointer) -> None:
+    await sysif.syscall(SYS.getsockopt, sockfd, level, optname, optval, optlen)
+
 async def setsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int, optname: int,
                      optval: Pointer, optlen: int) -> None:
     await sysif.syscall(SYS.setsockopt, sockfd, level, optname, optval, optlen)
+
+async def getsockname(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: Pointer) -> None:
+    await sysif.syscall(SYS.getsockname, sockfd, addr, addrlen)
+
+async def getpeername(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: Pointer) -> None:
+    await sysif.syscall(SYS.getpeername, sockfd, addr, addrlen)
 
 async def rt_sigaction(sysif: SyscallInterface, signum: signal.Signals,
                        act: t.Optional[Pointer],

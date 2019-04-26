@@ -318,14 +318,6 @@ async def recvmsg_fds(task: far.Task, transport: MemoryTransport, allocator: mem
         return received_fds
 
 
-#### socket syscalls that write data ####
-async def setsockopt(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                     sockfd: base.FileDescriptor, level: int, optname: int, optval: bytes) -> None:
-    logger.debug("setsockopt(%s, %s, %s, %s)", sockfd, level, optname, optval)
-    async with localize_data(transport, allocator, optval) as (optval_ptr, optlen):
-        await raw_syscall.setsockopt(sysif, sockfd, level, optname, optval_ptr, optlen)
-
-
 #### socket syscalls that read data, which all use a socklen value-result argument ####
 socklen = struct.Struct("Q")
 @contextlib.asynccontextmanager
@@ -346,38 +338,6 @@ async def read_sockbuf(
     buflen_result, = socklen.unpack(buflen_data)
     buf = await read_to_bytes(transport, buf_ptr, buflen_result)
     return buf
-
-async def getsockname(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                      sockfd: base.FileDescriptor, addrlen: int) -> bytes:
-    logger.debug("getsockname(%s, %s)", sockfd, addrlen)
-    async with alloc_sockbuf(transport, allocator, addrlen) as (addr_ptr, addrlen_ptr):
-        # uggghh, the socket api requires a write before, a syscall, and a read after - so much overhead!
-        # whyyy doesn't it just return the possible read length as an integer?
-        await raw_syscall.getsockname(sysif, sockfd, addr_ptr, addrlen_ptr)
-        return (await read_sockbuf(transport, addr_ptr, addrlen, addrlen_ptr))
-
-async def getpeername(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                      sockfd: base.FileDescriptor, addrlen: int) -> bytes:
-    logger.debug("getpeername(%s, %s)", sockfd, addrlen)
-    async with alloc_sockbuf(transport, allocator, addrlen) as (addr_ptr, addrlen_ptr):
-        await raw_syscall.getpeername(sysif, sockfd, addr_ptr, addrlen_ptr)
-        return (await read_sockbuf(transport, addr_ptr, addrlen, addrlen_ptr))
-
-async def getsockopt(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                     sockfd: base.FileDescriptor, level: int, optname: int, optlen: int) -> bytes:
-    logger.debug("getsockopt(%s, %s, %s, %s)", sockfd, level, optname, optlen)
-    async with alloc_sockbuf(transport, allocator, optlen) as (opt_ptr, optlen_ptr):
-        await raw_syscall.getsockopt(sysif, sockfd, level, optname, opt_ptr, optlen_ptr)
-        return (await read_sockbuf(transport, opt_ptr, optlen, optlen_ptr))
-
-async def accept(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                 sockfd: base.FileDescriptor, addrlen: int, flags: int) -> t.Tuple[int, bytes]:
-    logger.debug("accept(%s, %s, %s)", sockfd, addrlen, flags)
-    async with alloc_sockbuf(transport, allocator, addrlen) as (addr_ptr, addrlen_ptr):
-        fd = await raw_syscall.accept(sysif, sockfd, addr_ptr, addrlen_ptr, flags)
-        with trio.open_cancel_scope(shield=True):
-            addr = await read_sockbuf(transport, addr_ptr, addrlen, addrlen_ptr)
-        return fd, addr
 
 async def inotify_add_watch(transport: MemoryTransport, allocator: memory.AllocatorInterface,
                             fd: handle.FileDescriptor, path: Path, mask: int) -> near.WatchDescriptor:

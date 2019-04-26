@@ -3627,6 +3627,8 @@ hmm, actually it just occurred to me that this question is essentially the same 
 
    We ultimately have gone with being as powerful as possible without abstracting over memory;
    and it turns out, abstracting over memory isn't even really necessary to have a good user experience.
+
+   I hate the socket API though, because it's the one wart here.
 * knowledge
 ** tkill vs kill
 The difference between kill and tkill (besides the special negative parameters to kill, which tkill

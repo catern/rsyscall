@@ -26,7 +26,6 @@ class SYS(enum.IntEnum):
     getpeername = lib.SYS_getpeername
     getpid = lib.SYS_getpid
     getsockname = lib.SYS_getsockname
-    getsockopt = lib.SYS_getsockopt
     kill = lib.SYS_kill
     linkat = lib.SYS_linkat
     renameat2 = lib.SYS_renameat2
@@ -39,7 +38,6 @@ class SYS(enum.IntEnum):
     read = lib.SYS_read
     readlinkat = lib.SYS_readlinkat
     rt_sigprocmask = lib.SYS_rt_sigprocmask
-    setsockopt = lib.SYS_setsockopt
     socket = lib.SYS_socket
     socketpair = lib.SYS_socketpair
     symlinkat = lib.SYS_symlinkat
@@ -270,14 +268,6 @@ async def getsockname(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Poi
 async def getpeername(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: Pointer) -> None:
     logger.debug("getpeername(%s, %s, %s)", sockfd, addr, addrlen)
     await sysif.syscall(SYS.getpeername, sockfd, addr, addrlen)
-
-async def getsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int, optname: int, optval: Pointer, optlen: Pointer) -> None:
-    logger.debug("getsockopt(%s, %s, %s, %s, %s)", sockfd, level, optname, optval, optlen)
-    await sysif.syscall(SYS.getsockopt, sockfd, level, optname, optval, optlen)
-
-async def setsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int, optname: int, optval: Pointer, optlen: int) -> None:
-    logger.debug("setsockopt(%s, %s, %s, %s, %s)", sockfd, level, optname, optval, optlen)
-    await sysif.syscall(SYS.setsockopt, sockfd, level, optname, optval, optlen)
 
 async def accept(sysif: SyscallInterface, sockfd: FileDescriptor,
                  addr: Pointer, addrlen: Pointer, flags: int) -> int:

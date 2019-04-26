@@ -73,7 +73,7 @@ async def add_to_ambient(task: rsc.Task, capset: t.Set[CAP]) -> None:
     await task.base.capget(hdr_ptr, data_ptr)
     data = await data_ptr.read()
     data.inheritable.update(capset)
-    await data_ptr.write(data)
+    data_ptr = await data_ptr.write(data)
     await task.base.capset(hdr_ptr, data_ptr)
     for cap in capset:
         await task.base.prctl(PrctlOp.CAP_AMBIENT, CapAmbient.RAISE, cap)
