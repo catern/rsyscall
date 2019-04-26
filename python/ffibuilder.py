@@ -67,6 +67,7 @@ struct linux_dirent64 {
 #define _WNOTHREAD __WNOTHREAD
 #define _WCLONE __WCLONE
 #define _WALL __WALL
+#define _ss_padding __ss_padding
 
 #define SA_RESTORER 0x04000000
 typedef void (*sighandler_t)(int);
@@ -469,6 +470,11 @@ struct in6_addr {
 struct sockaddr {
     sa_family_t    sa_family;
     ...;
+};
+
+struct sockaddr_storage {
+    sa_family_t    ss_family;
+    char _ss_padding[...];
 };
 
 /* Internet address. */

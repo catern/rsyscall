@@ -512,7 +512,7 @@ class TestIO(unittest.TestCase):
             await stdtask.task.base.capget(hdr_ptr, data_ptr)
             data = await data_ptr.read()
             data.inheritable.add(CAP.NET_ADMIN)
-            await data_ptr.write(data)
+            data_ptr = await data_ptr.write(data)
             await stdtask.task.base.capset(hdr_ptr, data_ptr)
             await stdtask.task.base.prctl(PrctlOp.CAP_AMBIENT, CapAmbient.RAISE, CAP.NET_ADMIN)
         trio.run(self.runner, test)

@@ -34,16 +34,14 @@ def bits(n: int, one_indexed: bool=True) -> t.Iterator[int]:
         yield (b.bit_length() - (0 if one_indexed else 1))
         n ^= b
 
-@dataclass
-class Int32(Struct):
-    val: int
-
-    def to_bytes(self) -> bytes:
-        return struct.pack('i', self.val)
+# mypy is very upset with me for inheriting from int and overriding int's methods in an incompatible way
+class Int32(Struct, int): # type: ignore
+    def to_bytes(self) -> bytes: # type: ignore
+        return struct.pack('i', self)
 
     T = t.TypeVar('T', bound='Int32')
     @classmethod
-    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+    def from_bytes(cls: t.Type[T], data: bytes) -> T: # type: ignore
         if len(data) < cls.sizeof():
             raise Exception("data too small", data)
         val, = struct.pack('i', data)

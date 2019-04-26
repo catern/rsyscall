@@ -3468,6 +3468,11 @@ hmm, actually it just occurred to me that this question is essentially the same 
    since I can maybe avoid process child waiting raciness by just having,
    when I waitid,
    everything is from orphans.
+** put additional flags in accept4(flags) to accept only specific sock types
+   If I can just put additional flags in accept4,
+   that allows me to conveniently do additional typechecking of my accept.
+
+   similar to nsenter.
 * possible kernel bugs
 ** MMAP_GROWSDOWN doesn't seem to work
    It doesn't grow.
@@ -14072,6 +14077,208 @@ there's too many methods here to override
    ok let's just do a basic conversion
 ** cancellation
    remember that????
+** merge pointers
+
+   And I can support radd!
+
+   So I can do None + ptr
+
+   Which is useful cuz then I can do 
+   valid = None
+   valid += ptr
+
+   Very cool.
+*** but
+    what about non-adjacent pointers?
+
+    like, what if I actually have to allocate two buffers to hold a single object?
+** pointers with data attached
+so I could have a WrittenPointer
+which inherits from Pointer
+and holds a value
+
+and a WrittenTypedPointer which has the like relationship with TypedPointer
+
+the value holds references to pointers?
+
+not only do we have this with pointers with references to pointers,
+we also have it with fds
+
+what if I pass in a WrittenPointer[IovecList],
+and um.
+
+how do I determine the return type in the IovecList?
+
+I guess my type will be... um...
+
+WrittenPointer[T_iovec_list] -> T_iovec_list
+
+Yeah that makes sense.
+IovecList can take a pointer argument too?
+
+OK. so...
+
+If we do that then,
+
+I guess everything is fine.
+
+That is frighteningly special-cased though.
+
+wait how does writtentypedpointer work
+
+does it inherit from two things?
+
+yes I guess we'll just do that
+** deal with sockbufs
+*** thoughts
+   oh, argh, I have to write the length beforehand.
+
+   My idea of passing them as two pointers and assembling them after, doesn't work.
+
+   Hm.
+
+   So, a type that's passed in, once again sounds like a good idea.
+
+(not to mention how annoying it is to abstract over in a garbage-free environment...)
+
+OK wait, what if we just passed them as one pointer?
+
+That's what we would do if we were really just wanting to be garbage free.
+
+And we'd return...
+
+Oh uh.
+
+Argh
+
+No, a single pointer is hard;
+writing the length to it is annoying.
+
+hm. on linux, sockaddrs have a maximum size of 128.
+
+can we exploit this fact?
+
+I don't think so.
+
+Well, it's useful as.
+
+Oh wait can I do sockaddr_storage
+
+Ah yes there's a sockaddr_storage struct which I can use, instead of hardcoding 128.
+OK seems fine.
+
+OK so we need a single unit to pass both of them. Hm. hm. hm.
+
+Wait wait wait WAIT wait wait.
+
+How am I going to deal with readv?
+
+OK so...
+
+the iovec parameter isn't mutated on either readv or writev. OK, that's good.
+
+Instead the size written/read is returned. Good, that's good.
+
+But, we still need to be able to create iovecs. Tricky.
+
+So we'll have some iovec list thing...
+which we'll write to...
+
+Hm.
+The difficult is the same as with sockaddr.
+
+Well, different.
+
+For iovecs, we pass in a pointer,
+but we need to keep the references that it has alive.
+
+We still need to do a write in advance.
+
+I guess... we frequently need to do writes in advance.
+SO that's fine.
+
+The issue is we need to write valid data;
+but again that's fine, we always need to do that.
+
+Well, usually we can't violate memory safety if we write invalid data...
+*** efficiency
+Oh hm. We could actually do this read in a single blow.
+Read the entire buffer, and read the pointer saying how much of it is valid;
+then pare it down locally.
+
+Ugghhhhh
+*** plan
+
+OK my type will be (Pointer[Address], WrittenPointer[Int32]),
+and I'll validate that the latter matches the size of the former,
+and then I'll return... what?
+
+A function from memory-reading to an Address?
+
+That would allow me to optimize internally,
+but I want to expose reality to the user,
+hmm.
+
+Well, reality is that the pointers that are passed in,
+can be read to get stuff out.
+
+But, you could easily read invalid data from the address buf,
+and think it's part of the address! (well okay not really but maybe!)
+
+Actually.
+
+We don't even need the out pointer.
+
+We can just read the address, and the extra bytes can be discarded?
+
+That... could work.
+Saves us a read...
+
+And since we know the max address size, it's not actually incorrect...
+
+We just need to be able to dispatch on address type.
+
+Or, at least, assert that it's right.
+
+Yeah okay this seems good and fine.
+
+We'll return the entire Pointer[Address] as valid.    
+
+Essentially, it's a fixed-size buffer.
+
+We'll just always write 128 (or a more specific size) to WrittenPointer.
+
+Oh, hey, yeah, we don't even need that to know the size.
+We can get the size from the Address.
+
+We'll need to check that the thing is null-terminated in sockaddr_un...
+either null-terminated, or exactly 108 bytes.
+
+Ok this seems fine and good.
+
+Basically, we ignore the socklen as an out-parameter.
+We only use it as an in-parameter.
+
+uggghh but I'm hurting my users here :(
+they can't pass around opaque sockaddrs.
+
+well, they can, they just have to use struct sockaddr_storage;
+which they would have to do anyway...
+
+but they can't truncate their storage usage to the amount of memory that is *actually* being used.
+because they don't know that.
+
+well, they could, if they really wanted to.
+yeah okay.
+*** neat writtenpointer thing
+    If i'm actually moving validity into the writtenpointer each time I write,
+    I get robust tracking of what I last wrote - I can't save an old writtenpointer and use it.
+
+    Oh but we can just invalidate the last pointer each time.
+
+    the multiple inheritance thing seems good though
+
+    mmmmmmmmmmmmmmmmmmmmmm
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

@@ -215,17 +215,6 @@ async def recvmsg(task: Task, fd: FileDescriptor, msg: Pointer, flags: int) -> i
 async def dup3(task: Task, oldfd: FileDescriptor, newfd: FileDescriptor, flags: int) -> None:
     await rsyscall.near.dup3(task.sysif, task.to_near_fd(oldfd), task.to_near_fd(newfd), flags)
 
-async def accept4(task: Task, sockfd: FileDescriptor,
-                  addr: t.Optional[Pointer], addrlen: t.Optional[Pointer], flags: int) -> int:
-    if addr is None:
-        addr = 0 # type: ignore
-    if addrlen is None:
-        addrlen = 0 # type: ignore
-    return (await rsyscall.near.accept4(task.sysif, task.to_near_fd(sockfd),
-                                        task.to_near_pointer(addr) if addr else None,
-                                        task.to_near_pointer(addrlen) if addrlen else None,
-                                        flags))
-
 async def memfd_create(task: Task, name: Pointer, flags: int) -> FileDescriptor:
     ret = await rsyscall.near.memfd_create(task.sysif, task.to_near_pointer(name), flags)
     return FileDescriptor(task.fd_table, ret)

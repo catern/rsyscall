@@ -217,12 +217,12 @@ async def dup3(sysif: SyscallInterface, oldfd: FileDescriptor, newfd: FileDescri
     await sysif.syscall(SYS.dup3, oldfd, newfd, flags)
 
 async def accept4(sysif: SyscallInterface, sockfd: FileDescriptor,
-                  addr: t.Optional[Pointer], addrlen: t.Optional[Pointer], flags: int) -> int:
+                  addr: t.Optional[Pointer], addrlen: t.Optional[Pointer], flags: int) -> FileDescriptor:
     if addr is None:
         addr = 0 # type: ignore
     if addrlen is None:
         addrlen = 0 # type: ignore
-    return (await sysif.syscall(SYS.accept4, sockfd, addr, addrlen, flags))
+    return FileDescriptor(await sysif.syscall(SYS.accept4, sockfd, addr, addrlen, flags))
 
 async def memfd_create(sysif: SyscallInterface, name: Pointer, flags: int) -> FileDescriptor:
     ret = await sysif.syscall(SYS.memfd_create, name, flags)

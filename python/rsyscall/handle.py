@@ -14,7 +14,7 @@ import contextlib
 import abc
 logger = logging.getLogger(__name__)
 
-from rsyscall.sys.socket import AF, SOCK, Address
+from rsyscall.sys.socket import AF, SOCK, Address, Socklen
 from rsyscall.sched import UnshareFlag
 from rsyscall.struct import T_serializable
 from rsyscall.signal import Sigaction, Sigset, Signals
@@ -105,6 +105,15 @@ class Pointer(t.Generic[T_serializable]):
 
     def __exit__(self, *args) -> None:
         self.free()
+
+class WrittenPointer(Pointer[T_serializable]):
+    def __init__(self,
+                 task: Task,
+                 data: T_serializable,
+                 allocation: AllocationInterface,
+    ) -> None:
+        super().__init__(task, type(data), allocation)
+        self.data = data
 
 # This is like a far pointer plus a segment register.
 # It means that, as long as it doesn't throw an exception,
@@ -401,21 +410,23 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval.near, optval.bytesize())
 
-    async def accept(self, addr: Pointer[Address], addrlen: Pointer[Socklen]) -> None:
-        # hMmmmmmmmmmmmmmmm
-        # what if I made a struct that was a pair for these two things?
-        # god I hate the socket API
-        # okaaaaaaaaaaaaaaay sooo hmmmmmmmmmmm
-        # basically we want to force the user to,
-        # read from socklen and,
-        # hm
-        # so, we hate this API.
-        # can we somehow force the user to not use it?
-        # no, we need to know peer addresses, which means we need to support getsockname/getpeername.
-        # so. the return value is null...
-        # I think a single unit would be good.
-        # and we can have something which allocates that unit for Address types?
-        raise Exception("not done")
+    @t.overload
+    async def accept(self, flags: SOCK) -> FileDescriptor: ...
+    @t.overload
+    async def accept(self, flags: SOCK, addr: T_pointer, addrlen: WrittenPointer[Socklen]) -> FileDescriptor: ...
+
+    async def accept(self, flags: SOCK, addr: t.Optional[T_pointer]=None, addrlen: t.Optional[WrittenPointer[Socklen]]=None) -> FileDescriptor:
+        self.validate()
+        if addr is None:
+            fd = await rsyscall.near.accept4(self.task.sysif, self.near, None, None, flags)
+            return self.task.make_fd_handle(fd)
+        else:
+            if addrlen is None:
+                raise ValueError("if you pass addr, you must also pass addrlen")
+            async with addrlen.borrow(self.task) as addrlen_b:
+                async with addr.borrow(self.task) as addr_b:
+                    fd = await rsyscall.near.accept4(self.task.sysif, self.near, addr_b.near, addrlen_b.near, flags)
+                    return self.task.make_fd_handle(fd)
 
     async def readlinkat(self, path: Pointer, buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()

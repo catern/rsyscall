@@ -21,7 +21,7 @@ import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_serializable, T_struct
 
-from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address
+from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr
 from rsyscall.fcntl import AT, O, F
 from rsyscall.sys.socket import T_addr
 from rsyscall.linux.futex import FUTEX_WAITERS, FUTEX_TID_MASK
@@ -193,19 +193,31 @@ class TypedPointer(handle.Pointer[T_serializable]):
         super().__init__(task.base, data_cls, allocation)
         self.mem_task = task
 
-    async def write(self, data: T_serializable) -> None:
+    async def write(self, data: T_serializable) -> WrittenTypedPointer:
+        self.validate()
         data_bytes = data.to_bytes()
         if len(data_bytes) > self.bytesize():
             raise Exception("data is too long", len(data_bytes),
                             "for this typed pointer of size", self.bytesize())
         await self.mem_task.transport.write(self.far, data_bytes)
+        self.valid = False
+        return WrittenTypedPointer(self.mem_task, data, self.allocation)
 
     async def read(self) -> T_serializable:
+        self.validate()
         data = await self.mem_task.transport.read(self.far, self.bytesize())
         return self.data_cls.from_bytes(data)
 
     def _with_alloc(self, allocation: handle.AllocationInterface) -> TypedPointer:
         return type(self)(self.mem_task, self.data_cls, allocation)
+
+class WrittenTypedPointer(TypedPointer[T_serializable], handle.WrittenPointer[T_serializable]):
+    def __init__(self, task: Task, data: T_serializable, allocation: handle.AllocationInterface) -> None:
+        TypedPointer.__init__(self, task, type(data), allocation)
+        handle.WrittenPointer.__init__(self, task.base, data, allocation)
+
+    def _with_alloc(self, allocation: handle.AllocationInterface) -> WrittenTypedPointer:
+        return type(self)(self.mem_task, self.data, allocation)
 
 class Task:
     def __init__(self,
@@ -253,14 +265,13 @@ class Task:
             allocation.free()
             raise
 
-    async def to_pointer(self, data: T_serializable) -> TypedPointer[T_serializable]:
+    async def to_pointer(self, data: T_serializable) -> WrittenTypedPointer[T_serializable]:
         ptr = await self.malloc_type(type(data), len(data.to_bytes()))
         try:
-            await ptr.write(data)
+            return await ptr.write(data)
         except:
             ptr.free()
             raise
-        return ptr
 
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: int,
@@ -398,11 +409,11 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
     address_type: t.Type[T_addr]
 
     async def getsockname(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        data = await memsys.getsockname(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, self.address_type.addrlen)
+        data = await memsys.getsockname(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, self.address_type.sizeof())
         return self.address_type.from_bytes(data)
 
     async def getpeername(self, fd: 'FileDescriptor[SocketFile[T_addr]]') -> T_addr:
-        data = await memsys.getpeername(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, self.address_type.addrlen)
+        data = await memsys.getpeername(fd.task.syscall, fd.task.transport, fd.task.allocator, fd.pure, self.address_type.sizeof())
         return self.address_type.from_bytes(data)
 
     async def getsockopt(self, fd: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
@@ -416,13 +427,6 @@ class SocketFile(t.Generic[T_addr], ReadableWritableFile):
             optbytes = struct.pack('i', optval)
         return (await memsys.setsockopt(fd.task.syscall, fd.task.transport, fd.task.allocator,
                                         fd.pure, level, optname, optbytes))
-
-    async def accept(self, fd: 'FileDescriptor[SocketFile[T_addr]]', flags: int) -> t.Tuple['FileDescriptor[SocketFile[T_addr]]', T_addr]:
-        fdnum, data = await memsys.accept(fd.task.syscall, fd.task.transport, fd.task.allocator,
-                                          fd.pure, self.address_type.addrlen, flags)
-        addr = self.address_type.from_bytes(data)
-        fd = fd.task.make_fd(near.FileDescriptor(fdnum), type(self)())
-        return fd, addr
 
 class UnixSocketFile(SocketFile[SockaddrUn]):
     address_type = SockaddrUn
@@ -533,8 +537,13 @@ class FileDescriptor(t.Generic[T_file_co]):
     async def getsockopt(self: 'FileDescriptor[SocketFile[T_addr]]', level: int, optname: int, optlen: int) -> bytes:
         return (await self.file.getsockopt(self, level, optname, optlen))
 
-    async def accept(self: FileDescriptor[SocketFile[T_addr]], flags: int) -> t.Tuple[FileDescriptor[SocketFile[T_addr]], T_addr]:
-        return (await self.file.accept(self, flags))
+    async def accept(self, flags: SOCK) -> t.Tuple[FileDescriptor, Address]:
+        buf = await self.task.malloc_struct(GenericSockaddr)
+        socklen = await self.task.to_pointer(Socklen(buf.bytesize()))
+        fd = await self.handle.accept(flags, buf, socklen)
+        real_len = await socklen.read()
+        valid, _ = buf.split(real_len)
+        return FileDescriptor(self.task, fd, type(self.file)()), (await valid.read()).parse()
 
 class EpollFile(File):
     pass
@@ -851,8 +860,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 else:
                     raise
 
-    async def accept(self: 'AsyncFileDescriptor[SocketFile[T_addr]]', flags: int=SOCK.CLOEXEC
-    ) -> t.Tuple[FileDescriptor[SocketFile[T_addr]], T_addr]:
+    async def accept(self, flags: SOCK=SOCK.CLOEXEC) -> t.Tuple[FileDescriptor, Address]:
         while True:
             while not (self.is_readable or self.hangup):
                 await self._wait_once()
@@ -864,10 +872,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 else:
                     raise
 
-    async def accept_as_async(self: 'AsyncFileDescriptor[SocketFile[T_addr]]'
-    ) -> t.Tuple[AsyncFileDescriptor[SocketFile[T_addr]], T_addr]:
-        connfd: FileDescriptor[SocketFile[T_addr]]
-        addr: T_addr
+    async def accept_as_async(self) -> t.Tuple[AsyncFileDescriptor, Address]:
         connfd, addr = await self.accept(flags=SOCK.CLOEXEC|SOCK.NONBLOCK)
         try:
             aconnfd = await AsyncFileDescriptor.make(

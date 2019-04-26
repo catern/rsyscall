@@ -1,28 +1,29 @@
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.sys.socket import Address, AF
+from rsyscall.sys.socket import Address, AF, _register_sockaddr
 import ipaddress
 import socket
 import typing as t
 from dataclasses import dataclass
 
 class SockaddrIn(Address):
-    addrlen: int = ffi.sizeof('struct sockaddr_in')
-    def __init__(self, port: int, addr: t.Union[int, ipaddress.IPv4Address]) -> None:
+    family = AF.INET
+    def __init__(self, port: int, addr: t.Union[str, int, ipaddress.IPv4Address]) -> None:
         # these are in host byte order, of course
         self.port = port
         self.addr = ipaddress.IPv4Address(addr)
 
-    T = t.TypeVar('T', bound='SockaddrIn')
-    @classmethod
-    def from_bytes(cls: t.Type[T], data: bytes) -> T:
-        struct = ffi.cast('struct sockaddr_in*', ffi.from_buffer(data))
-        if struct.sin_family != AF.INET:
-            raise Exception("sin_family must be", AF.INET, "is instead", struct.sin_family)
-        return cls(socket.ntohs(struct.sin_port), socket.ntohl(struct.sin_addr.s_addr))
-
     def to_bytes(self) -> bytes:
         addr = ffi.new('struct sockaddr_in*', (AF.INET, socket.htons(self.port), (socket.htonl(int(self.addr)),)))
         return ffi.buffer(addr)
+
+    T = t.TypeVar('T', bound='SockaddrIn')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        if len(data) < cls.sizeof():
+            raise Exception("data too small", data)
+        struct = ffi.cast('struct sockaddr_in*', ffi.from_buffer(data))
+        cls.check_family(AF(struct.sin_family))
+        return cls(socket.ntohs(struct.sin_port), socket.ntohl(struct.sin_addr.s_addr))
 
     @classmethod
     def sizeof(cls) -> int:
@@ -34,12 +35,11 @@ class SockaddrIn(Address):
 
     def __str__(self) -> str:
         return f"SockaddrIn({self.addr_as_string()}:{self.port})"
+_register_sockaddr(SockaddrIn)
+
 
 class SockaddrIn6(Address):
-    port: int
-    addr: ipaddress.IPv6Address
-    flowinfo: int = 0
-    scope_id: int = 0
+    family = AF.INET6
     def __init__(self, port: int, addr: t.Union[str, int, ipaddress.IPv6Address],
                  flowinfo: int=0, scope_id: int=0) -> None:
         # these are in host byte order, of course
@@ -60,6 +60,7 @@ class SockaddrIn6(Address):
         if len(data) < cls.sizeof():
             raise Exception("data too small", data)
         struct = ffi.cast('struct sockaddr_in6*', ffi.from_buffer(data))
+        cls.check_family(AF(struct.sin6_family))
         return cls(socket.ntohs(struct.sin6_port), ipaddress.IPv6Address(bytes(struct.sin6_addr.s6_addr)),
                    struct.sin6_flowinfo, struct.sin6_scope_id)
 
@@ -69,3 +70,29 @@ class SockaddrIn6(Address):
 
     def __str__(self) -> str:
         return f"SockaddrIn6({self.addr_as_string()}:{self.port})"
+_register_sockaddr(SockaddrIn6)
+
+
+#### Tests ####
+from unittest import TestCase
+class TestIn(TestCase):
+    def test_sockaddrin(self) -> None:
+        initial = SockaddrIn(42, "127.0.0.1")
+        output = SockaddrIn.from_bytes(initial.to_bytes())
+        self.assertEqual(initial.port, output.port)
+        self.assertEqual(initial.addr, output.addr)
+        from rsyscall.sys.socket import GenericSockaddr
+        out = GenericSockaddr.from_bytes(initial.to_bytes()).parse()
+        self.assertEqual(initial.port, output.port)
+        self.assertEqual(initial.addr, output.addr)
+
+    def test_sockaddrIn6(self) -> None:
+        initial = SockaddrIn6(42, "34:12::19:9a")
+        output = SockaddrIn6.from_bytes(initial.to_bytes())
+        self.assertEqual(initial.port, output.port)
+        self.assertEqual(initial.addr, output.addr)
+        from rsyscall.sys.socket import GenericSockaddr
+        out = GenericSockaddr.from_bytes(initial.to_bytes()).parse()
+        self.assertEqual(initial.port, output.port)
+        self.assertEqual(initial.addr, output.addr)
+        
