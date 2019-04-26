@@ -744,11 +744,11 @@ class EpollWaiter:
         with trio.open_cancel_scope(shield=True):
             return await valid.read()
 
-class AsyncFileDescriptor(t.Generic[T_file_co]):
+class AsyncFileDescriptor:
     epolled: EpolledFileDescriptor
 
     @staticmethod
-    async def make(epoller: EpollCenter, fd: FileDescriptor[T_file], is_nonblock=False) -> 'AsyncFileDescriptor[T_file]':
+    async def make(epoller: EpollCenter, fd: FileDescriptor, is_nonblock=False) -> 'AsyncFileDescriptor':
         if not is_nonblock:
             await fd.set_nonblock()
         epolled = await epoller.register(fd.handle, EpollEventMask.make(
@@ -781,7 +781,17 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
     def could_read(self) -> bool:
         return self.is_readable or self.read_hangup or self.hangup or self.error
 
-    async def read_nonblock(self: 'AsyncFileDescriptor[ReadableFile]', count: int=4096) -> t.Optional[bytes]:
+    # OK. so now how do I make this API good?
+    # basically, we need to... not run read until we get an edge saying we're readable,
+    # and then if we get an EAGAIN from read, we go back to not being readable.
+    # we need to be able to do it in an arbitrary task,
+    # and against a pointer.
+    # hmm...
+    # arbitrary task, let's relax, I guess.
+    # so let's just make read_handle the main API?
+    # oh but how do we do this read_nonblock?
+    # delete it lol
+    async def _read_nonblock(self, count: int=4096) -> t.Optional[bytes]:
         if not self.could_read():
             return None
         try:
@@ -793,11 +803,11 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             else:
                 raise
 
-    async def read(self: 'AsyncFileDescriptor[ReadableFile]', count: int=4096) -> bytes:
+    async def read(self, count: int=4096) -> bytes:
         while True:
             while not self.could_read():
                 await self._wait_once()
-            data = await self.read_nonblock()
+            data = await self._read_nonblock()
             if data is not None:
                 return data
 
@@ -813,7 +823,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 else:
                     raise
 
-    async def wait_for_rdhup(self: 'AsyncFileDescriptor[ReadableFile]') -> None:
+    async def wait_for_rdhup(self) -> None:
         while not (self.read_hangup or self.hangup):
             await self._wait_once()
 
@@ -829,7 +839,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
                 else:
                     raise
 
-    async def write(self: 'AsyncFileDescriptor[WritableFile]', buf: bytes) -> None:
+    async def write(self, buf: bytes) -> None:
         while len(buf) > 0:
             while not (self.is_writable or self.error):
                 await self._wait_once()
@@ -880,7 +890,7 @@ class AsyncFileDescriptor(t.Generic[T_file_co]):
             await connfd.aclose()
             raise
 
-    async def connect(self: 'AsyncFileDescriptor[SocketFile[T_addr]]', addr: T_addr) -> None:
+    async def connect(self, addr: T_addr) -> None:
         try:
             await self.underlying.connect(addr)
         except OSError as e:
@@ -1372,7 +1382,7 @@ class StandardTask:
         return rsyscall_thread
 
     async def make_async_connections(self, count: int) -> t.List[
-            t.Tuple[AsyncFileDescriptor[ReadableWritableFile], handle.FileDescriptor]
+            t.Tuple[AsyncFileDescriptor, handle.FileDescriptor]
     ]:
         conns = await self.make_connections(count)
         access_socks, local_socks = zip(*conns)
@@ -1551,7 +1561,7 @@ class SignalBlock:
         await self.close()
 
 class SignalQueue:
-    def __init__(self, signal_block: SignalBlock, sigfd: AsyncFileDescriptor[SignalFile]) -> None:
+    def __init__(self, signal_block: SignalBlock, sigfd: AsyncFileDescriptor) -> None:
         self.signal_block = signal_block
         self.sigfd = sigfd
 
@@ -2478,7 +2488,7 @@ class SocketMemoryTransport(base.MemoryTransport):
     is empty; otherwise later users will get that stray leftover data when they try to use it.
 
     """
-    local: AsyncFileDescriptor[ReadableWritableFile]
+    local: AsyncFileDescriptor
     remote: handle.FileDescriptor
     pending_writes: t.List[WriteOp] = field(default_factory=list)
     running_write: OneAtATime = field(default_factory=OneAtATime)
@@ -2641,7 +2651,7 @@ class SocketMemoryTransport(base.MemoryTransport):
         return [op.data for op in read_ops]
 
 class AsyncReadBuffer:
-    def __init__(self, fd: AsyncFileDescriptor[ReadableFile]) -> None:
+    def __init__(self, fd: AsyncFileDescriptor) -> None:
         self.fd = fd
         self.buf = b""
 
@@ -2830,7 +2840,7 @@ async def make_connections(access_task: Task,
     return ret
 
 async def spawn_rsyscall_thread(
-        access_sock: AsyncFileDescriptor[ReadableWritableFile],
+        access_sock: AsyncFileDescriptor,
         remote_sock: handle.FileDescriptor,
         parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
         newuser: bool, newpid: bool, fs: bool, sighand: bool,

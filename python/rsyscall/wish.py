@@ -150,8 +150,8 @@ async def wish(wish: Wish[T], from_exn: t.Union[BaseException, None, bool]=False
     ret = await wish_granter.wish(wish)
     return ret
 
-async def run_repl(infd: AsyncFileDescriptor[ReadableFile],
-                   outfd: AsyncFileDescriptor[WritableFile],
+async def run_repl(infd: AsyncFileDescriptor,
+                   outfd: AsyncFileDescriptor,
                    global_vars: t.Dict[str, t.Any],
                    wanted_type: t.Type[T], message: str) -> T:
     async with trio.open_nursery() as repl_nursery:
@@ -166,7 +166,7 @@ async def run_repl(infd: AsyncFileDescriptor[ReadableFile],
         repl_nursery.cancel_scope.cancel()
     return ret
 
-async def serve_repls(listenfd: AsyncFileDescriptor[SocketFile],
+async def serve_repls(listenfd: AsyncFileDescriptor,
                       initial_vars: t.Dict[str, t.Any],
                       wanted_type: t.Type[T], message: str) -> T:
     """Serves REPLs on a socket until someone gives us the type we want
@@ -187,7 +187,7 @@ async def serve_repls(listenfd: AsyncFileDescriptor[SocketFile],
     repl_vars: t.Dict[str, t.Dict[str, t.Any]] = {}
     retval = None
     async with trio.open_nursery() as nursery:
-        async def do_repl(connfd: AsyncFileDescriptor[ReadableWritableFile],
+        async def do_repl(connfd: AsyncFileDescriptor,
                           global_vars: t.Dict[str, t.Any]) -> None:
             try:
                 ret = await run_repl(connfd, connfd, global_vars, wanted_type, message)
@@ -203,7 +203,7 @@ async def serve_repls(listenfd: AsyncFileDescriptor[SocketFile],
                 await connfd.aclose()
         num = 0
         while True:
-            connfd: AsyncFileDescriptor[ReadableWritableFile]
+            connfd: AsyncFileDescriptor
             connfd, _ = await listenfd.accept_as_async()
             global_vars = {**initial_vars, '__repls__': repl_vars, '__repl_stdin__': connfd,  '__repl_stdout__': connfd}
             repl_vars[str(num)] = global_vars

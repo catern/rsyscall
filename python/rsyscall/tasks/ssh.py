@@ -207,7 +207,7 @@ async def ssh_bootstrap(
     # TODO should unlink the bootstrap after I'm done execing.
     # it would be better if sh supported fexecve, then I could unlink it before I exec...
     # Connect to local socket 4 times
-    async def make_async_connection() -> AsyncFileDescriptor[UnixSocketFile]:
+    async def make_async_connection() -> AsyncFileDescriptor:
         sock = await task.socket_unix(SOCK.STREAM)
         await robust_unix_connect(local_data_path, sock)
         return (await AsyncFileDescriptor.make(parent_task.epoller, sock))

@@ -78,14 +78,6 @@ async def memfd_create(task: far.Task, transport: MemoryTransport, allocator: me
     async with localize_data(transport, allocator, name+b"\0") as (name_ptr, _):
         return (await far.memfd_create(task, name_ptr, flags))
 
-async def getdents64(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                     fd: far.FileDescriptor, count: int) -> bytes:
-    logger.debug("getdents64(%s, %s)", fd, count)
-    with await allocator.malloc(count) as dirp:
-        ret = await far.getdents64(task, fd, dirp, count)
-        with trio.open_cancel_scope(shield=True):
-            return (await read_to_bytes(transport, dirp, ret))
-
 siginfo_size = ffi.sizeof('siginfo_t')
 async def waitid(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                  id: t.Union[base.Process, base.ProcessGroup, None], options: int) -> bytes:
@@ -316,28 +308,6 @@ async def recvmsg_fds(task: far.Task, transport: MemoryTransport, allocator: mem
         local_fds_bytes = await transport.read(fds_buf, buf_len)
         received_fds = [near.FileDescriptor(fd) for fd, in fd_struct.iter_unpack(local_fds_bytes)]
         return received_fds
-
-
-#### socket syscalls that read data, which all use a socklen value-result argument ####
-socklen = struct.Struct("Q")
-@contextlib.asynccontextmanager
-async def alloc_sockbuf(
-        transport: MemoryTransport, allocator: memory.AllocatorInterface, buflen: int
-) -> t.AsyncGenerator[t.Tuple[base.Pointer, base.Pointer], None]:
-    # TODO we should batch these allocations together
-    with await allocator.malloc(buflen) as buf_ptr:
-        buflen_data = socklen.pack(buflen)
-        async with localize_data(transport, allocator, buflen_data) as (buflen_ptr, buflen_len):
-            yield buf_ptr, buflen_ptr
-
-async def read_sockbuf(
-        transport: MemoryTransport, buf_ptr: base.Pointer, buflen: int, buflen_ptr: base.Pointer
-) -> bytes:
-    # TODO we should optimize this to just do a single batch memcpy
-    buflen_data = await read_to_bytes(transport, buflen_ptr, socklen.size)
-    buflen_result, = socklen.unpack(buflen_data)
-    buf = await read_to_bytes(transport, buf_ptr, buflen_result)
-    return buf
 
 async def inotify_add_watch(transport: MemoryTransport, allocator: memory.AllocatorInterface,
                             fd: handle.FileDescriptor, path: Path, mask: int) -> near.WatchDescriptor:

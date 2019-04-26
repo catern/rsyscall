@@ -23,7 +23,7 @@ from rsyscall.fcntl import O
 
 @dataclass
 class StubServer:
-    listening_sock: AsyncFileDescriptor[UnixSocketFile]
+    listening_sock: AsyncFileDescriptor
     stdtask: StandardTask
 
     @classmethod

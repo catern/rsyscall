@@ -230,7 +230,7 @@ class PersistentServer:
             await fd.invalidate()
 
 async def spawn_rsyscall_persistent_server(
-        access_sock: AsyncFileDescriptor[ReadableWritableFile],
+        access_sock: AsyncFileDescriptor,
         remote_sock: handle.FileDescriptor,
         listening_sock: handle.FileDescriptor,
         parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,

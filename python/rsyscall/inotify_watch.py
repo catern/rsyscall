@@ -60,7 +60,7 @@ _inotify_minimum_size_to_read_one_event = (ffi.sizeof('struct inotify_event') + 
 assert _inotify_read_size > _inotify_minimum_size_to_read_one_event
 
 class Inotify:
-    def __init__(self, asyncfd: AsyncFileDescriptor[InotifyFile], task: Task) -> None:
+    def __init__(self, asyncfd: AsyncFileDescriptor, task: Task) -> None:
         self.asyncfd = asyncfd
         self.task = task
         self.wd_to_channel: t.Dict[WatchDescriptor, trio.abc.SendChannel] = {}
