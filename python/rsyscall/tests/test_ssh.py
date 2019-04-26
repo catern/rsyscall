@@ -23,7 +23,7 @@ async def start_cat(stdtask: StandardTask, cat: Command,
     child = await thread.exec(cat)
     return child
 
-class TestMiredo(TrioTestCase):
+class TestSSH(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.stdtask = local_stdtask
         self.store = local_store

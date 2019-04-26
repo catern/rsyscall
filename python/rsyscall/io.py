@@ -2044,12 +2044,12 @@ class ThreadMaker:
 class RsyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
-                 tofd: AsyncFileDescriptor[WritableFile],
-                 fromfd: AsyncFileDescriptor[ReadableFile],
+                 tofd: AsyncFileDescriptor,
+                 fromfd: AsyncFileDescriptor,
     ) -> None:
         self.tofd = tofd
         self.fromfd = fromfd
-        self.buffer = ReadBuffer()
+        self.buffer = AsyncReadBuffer(self.fromfd)
 
     async def close(self) -> None:
         await self.tofd.aclose()
@@ -2067,17 +2067,10 @@ class RsyscallConnection:
             raise RsyscallException() from e
 
     async def read_response(self) -> int:
-        size = ffi.sizeof('unsigned long')
-        response_bytes = self.buffer.read_length(size)
-        while response_bytes is None:
-            new_data = await self.fromfd.read()
-            if len(new_data) == 0:
-                raise RsyscallHangup()
-            self.buffer.feed_bytes(new_data)
-            response_bytes = self.buffer.read_length(size)
-        else:
-            response, = struct.unpack('q', response_bytes)
-            return response
+        try:
+            return await self.buffer.read_cffi('long')
+        except EOFException:
+            raise RsyscallHangup()
 
 class ChildExit(RsyscallHangup):
     pass
@@ -2650,6 +2643,9 @@ class SocketMemoryTransport(base.MemoryTransport):
         await self._do_reads()
         return [op.data for op in read_ops]
 
+class EOFException(Exception):
+    pass
+
 class AsyncReadBuffer:
     def __init__(self, fd: AsyncFileDescriptor) -> None:
         self.fd = fd
@@ -2659,7 +2655,7 @@ class AsyncReadBuffer:
         data = await self.fd.read()
         if len(data) == 0:
             if len(self.buf) != 0:
-                raise Exception("got EOF while we still hold unhandled buffered data")
+                raise EOFException("got EOF while we still hold unhandled buffered data")
             else:
                 return None
         else:
@@ -2679,7 +2675,7 @@ class AsyncReadBuffer:
         size = ffi.sizeof(name)
         data = await self.read_length(size)
         if data is None:
-            raise Exception("got EOF while expecting to read a", name)
+            raise EOFException("got EOF while expecting to read a", name)
         nameptr = name + '*'
         dest = ffi.new(nameptr)
         # ffi.cast drops the reference to the backing buffer, so we have to copy it
@@ -2691,7 +2687,7 @@ class AsyncReadBuffer:
         elem_size = await self.read_cffi('size_t')
         elem = await self.read_length(elem_size)
         if elem is None:
-            raise Exception("got EOF while expecting to read environment element of length", elem_size)
+            raise EOFException("got EOF while expecting to read environment element of length", elem_size)
         return elem
 
     async def read_length_prefixed_array(self, length: int) -> t.List[bytes]:
@@ -2740,10 +2736,10 @@ class AsyncReadBuffer:
     async def read_known_keyval(self, expected_key: bytes) -> bytes:
         keyval = await self.read_keyval()
         if keyval is None:
-            raise Exception("expected key value pair with key", expected_key, "but got EOF instead")
+            raise EOFException("expected key value pair with key", expected_key, "but got EOF instead")
         key, val = keyval
         if key != expected_key:
-            raise Exception("expected key", expected_key, "but got", key)
+            raise EOFException("expected key", expected_key, "but got", key)
         return val
 
     async def read_known_int(self, expected_key: bytes) -> int:
@@ -2759,10 +2755,10 @@ class AsyncReadBuffer:
         length = int(length_bytes)
         data = await self.read_length(length)
         if data is None:
-            raise Exception("hangup before netstring data")
+            raise EOFException("hangup before netstring data")
         comma = await self.read_length(1)        
         if comma is None:
-            raise Exception("hangup before comma at end of netstring")
+            raise EOFException("hangup before comma at end of netstring")
         if comma != b",":
             raise Exception("bad netstring delimiter", comma)
         return data
