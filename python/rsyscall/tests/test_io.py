@@ -95,7 +95,7 @@ class TestIO(unittest.TestCase):
     def test_new_pipe(self):
         async def test(stdtask: StandardTask) -> None:
             from rsyscall.handle import Pipe
-            pipe = await (await stdtask.task.base.pipe(await stdtask.task.malloc(Pipe), O.CLOEXEC)).read()
+            pipe = await (await stdtask.task.base.pipe(await stdtask.task.malloc_struct(Pipe), O.CLOEXEC)).read()
             in_data = b"hello"
             written, _ = await pipe.write.write(await stdtask.task.to_pointer(Bytes(in_data)))
             valid, _ = await pipe.read.read(written)
@@ -1055,7 +1055,7 @@ class TestIO(unittest.TestCase):
     def test_pass_fd(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             task = stdtask.task
-            l, r = await stdtask.task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
+            l, r = await stdtask.task.socketpair(AF.UNIX, SOCK.STREAM, 0)
             await memsys.sendmsg_fds(task.base, task.transport, task.allocator,
                                      l.handle.far, [l.handle.far])
             fds = await memsys.recvmsg_fds(task.base, task.transport, task.allocator,

@@ -36,7 +36,6 @@ class SYS(enum.IntEnum):
     read = lib.SYS_read
     readlinkat = lib.SYS_readlinkat
     socket = lib.SYS_socket
-    socketpair = lib.SYS_socketpair
     symlinkat = lib.SYS_symlinkat
     unlinkat = lib.SYS_unlinkat
     unshare = lib.SYS_unshare
@@ -85,10 +84,6 @@ async def exit(sysif: SyscallInterface, status: int) -> None:
 async def kill(sysif: SyscallInterface, pid: Process, sig: signal.Signals) -> None:
     logger.debug("kill(%s, %s)", pid, sig)
     await sysif.syscall(SYS.kill, pid, sig)
-
-async def socket(sysif: SyscallInterface, domain: int, type: int, protocol: int) -> int:
-    logger.debug("socket(%s, %s, %s)", domain, type, protocol)
-    return (await sysif.syscall(SYS.socket, domain, type, protocol))
 
 async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: int, arg: t.Optional[t.Union[int, Pointer]]=None) -> int:
     logger.debug("fcntl(%s, %s, %s)", fd, cmd, arg)
@@ -220,8 +215,3 @@ async def execveat(sysif: SyscallInterface,
             return exn
     with trio.MultiError.catch(handle):
         await sysif.syscall(SYS.execveat, dirfd, path, argv, envp, flags)
-
-# socket stuff
-async def socketpair(sysif: SyscallInterface, domain: int, type: int, protocol: int, sv: Pointer) -> None:
-    logger.debug("socketpair(%s, %s, %s, %s)", domain, type, protocol, sv)
-    await sysif.syscall(SYS.socketpair, domain, type, protocol, sv)

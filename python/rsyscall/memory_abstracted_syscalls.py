@@ -41,31 +41,6 @@ async def read_to_bytes(transport: MemoryReader, data: base.Pointer, count: int)
     return (await transport.read(data, count))
 
 
-#### two syscalls returning a pair of integers ####
-intpair = struct.Struct("II")
-
-async def read_to_intpair(transport: MemoryTransport, pair_ptr: base.Pointer) -> t.Tuple[int, int]:
-    data = await read_to_bytes(transport, pair_ptr, intpair.size)
-    a, b = intpair.unpack(data)
-    return a, b
-
-async def pipe(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-               flags: int) -> t.Tuple[int, int]:
-    logger.debug("pipe(%s)", flags)
-    with await allocator.malloc(intpair.size) as bufptr:
-        await raw_syscall.pipe2(sysif, bufptr, flags)
-        with trio.open_cancel_scope(shield=True):
-            return (await read_to_intpair(transport, bufptr))
-
-async def socketpair(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                     domain: int, type: int, protocol: int) -> t.Tuple[int, int]:
-    logger.debug("socketpair(%s, %s, %s)", domain, type, protocol)
-    with await allocator.malloc(intpair.size) as bufptr:
-        await raw_syscall.socketpair(sysif, domain, type, protocol, bufptr)
-        with trio.open_cancel_scope(shield=True):
-            return (await read_to_intpair(transport, bufptr))
-
-
 #### execveat, which requires a lot of memory fiddling ####
 class SerializedPointer:
     def __init__(self, size: int) -> None:

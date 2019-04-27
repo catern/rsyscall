@@ -14435,6 +14435,28 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    ok yeah it now drops the writtenness.
 
    but I'm still confuzzled about what should happen.
+** typeclasses for serialization
+hmm
+
+as an alternative, I could just write overloads.
+
+but, it would be nice to split out the implementation into different places.
+
+oh neat
+
+functools.singledispatch
+
+I could use that!
+
+well it's not typechecked which is awkward
+
+Oh, I can fall back to that. yeah! simple!
+
+ok lol I don't need this, I can just special-case bytes
+
+and I can have serializable always take the Task... er wait no
+
+that's a circular depppp
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

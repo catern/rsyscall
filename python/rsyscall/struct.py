@@ -4,8 +4,6 @@ import typing as t
 import struct
 from dataclasses import dataclass
 
-T_serializable = t.TypeVar('T_serializable', bound='Serializable')
-
 T = t.TypeVar('T')
 class Serializer(t.Generic[T]):
     @abc.abstractmethod
@@ -13,24 +11,30 @@ class Serializer(t.Generic[T]):
     @abc.abstractmethod
     def from_bytes(self, data: bytes) -> T: ...
 
-class Serializable:
+T_has_serializer = t.TypeVar('T_has_serializer', bound='HasSerializer')
+class HasSerializer:
+    @classmethod
+    def get_serializer(cls: t.Type[T_has_serializer], task) -> Serializer[T_has_serializer]: ...
+
+T_fixed_size = t.TypeVar('T_fixed_size', bound='FixedSize')
+class FixedSize(HasSerializer):
+    @classmethod
+    @abc.abstractmethod
+    def sizeof(cls) -> int: ...
+
+T_serializable = t.TypeVar('T_serializable', bound='Serializable')
+class Serializable(HasSerializer):
     @abc.abstractmethod
     def to_bytes(self) -> bytes: ...
     @classmethod
     @abc.abstractmethod
     def from_bytes(cls: t.Type[T_serializable], data: bytes) -> T_serializable: ...
     @classmethod
-    def get_serializer(cls: t.Type[T_serializable]) -> Serializer[T_serializable]:
+    def get_serializer(cls: t.Type[T_serializable], task) -> Serializer[T_serializable]:
         return cls # type: ignore
 
-T_struct = t.TypeVar('T_struct', bound='Struct')
-class Struct(Serializable):
-    "A fixed-size structure."
-    @classmethod
-    @abc.abstractmethod
-    def sizeof(cls) -> int:
-        "The maximum size of this structure."
-        ...
+class Struct(Serializable, FixedSize):
+    pass
 
 def bits(n: int, one_indexed: bool=True) -> t.Iterator[int]:
     "Yields the bit indices that are set in this integer"

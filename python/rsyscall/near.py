@@ -76,6 +76,7 @@ class SYS(enum.IntEnum):
     getpeername = lib.SYS_getpeername
     getsockname = lib.SYS_getsockname
     pipe2 = lib.SYS_pipe2
+    socketpair = lib.SYS_socketpair
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -444,3 +445,6 @@ async def waitid(sysif: SyscallInterface,
 
 async def pipe2(sysif: SyscallInterface, pipefd: Pointer, flags: int) -> None:
     await sysif.syscall(SYS.pipe2, pipefd, flags)
+
+async def socketpair(sysif: SyscallInterface, domain: int, type: int, protocol: int, sv: Pointer) -> None:
+    await sysif.syscall(SYS.socketpair, domain, type, protocol, sv)

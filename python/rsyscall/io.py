@@ -15,10 +15,10 @@ import rsyscall.memory_abstracted_syscalls as memsys
 import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.handle
-from rsyscall.handle import T_pointer, T_taskstruct
+from rsyscall.handle import T_pointer
 import rsyscall.far as far
 import rsyscall.near as near
-from rsyscall.struct import T_serializable, T_struct, Bytes, Int32, Serializer, Struct
+from rsyscall.struct import T_has_serializer, T_fixed_size, Bytes, Int32, Serializer, Struct
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr
 from rsyscall.fcntl import AT, O, F
@@ -208,11 +208,11 @@ class Task:
     async def close(self):
         await self.syscall.close_interface()
 
-    async def malloc_struct(self, cls: t.Type[T_struct]) -> TypedPointer[T_struct]:
-        return await self.malloc_serializer(cls.get_serializer(), cls.sizeof())
+    async def malloc_struct(self, cls: t.Type[T_fixed_size]) -> TypedPointer[T_fixed_size]:
+        return await self.malloc_type(cls, cls.sizeof())
 
-    async def malloc_type(self, cls: t.Type[T_serializable], size: int) -> TypedPointer[T_serializable]:
-        return await self.malloc_serializer(cls.get_serializer(), size)
+    async def malloc_type(self, cls: t.Type[T_has_serializer], size: int) -> TypedPointer[T_has_serializer]:
+        return await self.malloc_serializer(cls.get_serializer(self.base), size)
 
     async def malloc_serializer(self, serializer: Serializer[T], size: int) -> TypedPointer[T]:
         allocation = await self.allocator.malloc(size)
@@ -222,27 +222,10 @@ class Task:
             allocation.free()
             raise
 
-    @t.overload
-    async def malloc(self, cls: t.Type[T_taskstruct]) -> TypedPointer[T_taskstruct]: ...
-    @t.overload
-    async def malloc(self, cls: t.Type[T_struct]) -> TypedPointer[T_struct]: ...
-
-    async def malloc(self, x: t.Union[
-            t.Type[T_struct],
-            t.Type[T_taskstruct],
-    ]) -> t.Union[
-        TypedPointer[T_struct],
-        TypedPointer[T_taskstruct],
-    ]:            
-        if issubclass(x, Struct):
-            return await self.malloc_struct(x)
-        elif issubclass(x, handle.TaskStruct):
-            return await self.malloc_serializer(x.get_serializer(self.base), x.sizeof())
-        else:
-            raise ValueError("bad type of argument to malloc", x)
-
-    async def to_pointer(self, data: T_serializable) -> WrittenTypedPointer[T_serializable]:
-        ptr = await self.malloc_serializer(data.get_serializer(), len(data.to_bytes()))
+    async def to_pointer(self, data: T_has_serializer) -> WrittenTypedPointer[T_has_serializer]:
+        serializer = data.get_serializer(self.base)
+        data_bytes = serializer.to_bytes(data)
+        ptr = await self.malloc_serializer(serializer, len(data_bytes))
         try:
             return await ptr.write(data)
         except:
@@ -297,16 +280,14 @@ class Task:
     # and they'll take an handle.FileDescriptor.
     # then we'll directly have StandardTask contain both Task and MemoryAbstractor?
     async def pipe(self, flags=O.CLOEXEC) -> Pipe:
-        r, w = await memsys.pipe(self.syscall, self.transport, self.allocator, flags)
-        return Pipe(self._make_fd(r, ReadableFile(shared=False)),
-                    self._make_fd(w, WritableFile(shared=False)))
+        pipe = await (await self.base.pipe(await self.malloc_struct(handle.Pipe), O.CLOEXEC)).read()
+        return Pipe(FileDescriptor(self, pipe.read, File()),
+                    FileDescriptor(self, pipe.write, File()))
 
-    async def socketpair(self, domain: int, type: int, protocol: int
-    ) -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
-        l, r = await memsys.socketpair(self.syscall, self.transport, self.allocator,
-                                       domain, type|SOCK.CLOEXEC, protocol)
-        return (self._make_fd(l, ReadableWritableFile(shared=False)),
-                self._make_fd(r, ReadableWritableFile(shared=False)))
+    async def socketpair(self, domain: AF, type: SOCK, protocol: int) -> t.Tuple[FileDescriptor, FileDescriptor]:
+        pair = await (await self.base.socketpair(domain, type, protocol, await self.malloc_struct(handle.FDPair))).read()
+        return (FileDescriptor(self, pair.first, File()),
+                FileDescriptor(self, pair.second, File()))
 
     async def inotify_init(self, flags: InotifyFlag) -> FileDescriptor[InotifyFile]:
         fd = await self.base.inotify_init(flags)
@@ -2641,7 +2622,7 @@ async def make_connections(access_task: Task,
     connecting_socks: t.List[FileDescriptor[ReadableWritableFile]] = []
     if access_task.base.fd_table == connecting_task.base.fd_table:
         async def make_conn() -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
-            return (await access_task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0))
+            return (await access_task.socketpair(AF.UNIX, SOCK.STREAM, 0))
     else:
         if access_connection is not None:
             access_connection_path, access_connection_socket = access_connection

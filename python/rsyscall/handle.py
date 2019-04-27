@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import AF, SOCK, Address, Socklen
 from rsyscall.sched import UnshareFlag
-from rsyscall.struct import T_serializable, Serializer
+from rsyscall.struct import Serializer, HasSerializer, FixedSize
 from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path
@@ -734,6 +734,12 @@ class Task(rsyscall.far.Task):
             await rsyscall.near.pipe2(self.sysif, buf_b.near, flags)
             return buf
 
+    T_pointer_fdpair = t.TypeVar('T_pointer_fdpair', bound='Pointer[FDPair]')
+    async def socketpair(self, domain: AF, type: SOCK, protocol: int, sv: T_pointer_fdpair) -> T_pointer_fdpair:
+        async with sv.borrow(self) as sv_b:
+            await rsyscall.near.socketpair(self.sysif, domain, type, protocol, sv_b.near)
+            return sv
+
 @dataclass
 class Process:
     task: Task
@@ -756,20 +762,38 @@ class MemoryMapping:
     async def munmap(self) -> None:
         await rsyscall.far.munmap(self.task, self.far)
 
-T_taskstruct = t.TypeVar('T_taskstruct', bound='TaskStruct')
-class TaskStruct:
-    "A fixed-size structure."
+T_pipe = t.TypeVar('T_pipe', bound='Pipe')
+@dataclass
+class Pipe(FixedSize):
+    read: FileDescriptor
+    write: FileDescriptor
+
     @classmethod
-    @abc.abstractmethod
     def sizeof(cls) -> int:
-        "The maximum size of this structure."
-        ...
+        return ffi.sizeof('struct fdpair')
+
     @classmethod
-    def get_serializer(cls: t.Type[T], task: Task) -> Serializer[T]: ...
+    def get_serializer(cls: t.Type[T_pipe], task: Task) -> Serializer[T_pipe]:
+        return PipeSerializer(cls, task)
+
+@dataclass
+class PipeSerializer(Serializer[T_pipe]):
+    cls: t.Type[T_pipe]
+    task: Task
+
+    def to_bytes(self, pair: T_pipe) -> bytes:
+        struct = ffi.new('struct fdpair*', (pair.read, pair.write))
+        return bytes(ffi.buffer(struct))
+
+    def from_bytes(self, data: bytes) -> T_pipe:
+        struct = ffi.cast('struct fdpair const*', ffi.from_buffer(data))
+        def make(n: int) -> FileDescriptor:
+            return self.task.make_fd_handle(rsyscall.near.FileDescriptor(int(n)))
+        return self.cls(make(struct.first), make(struct.second))
 
 T_fdpair = t.TypeVar('T_fdpair', bound='FDPair')
 @dataclass
-class FDPair(TaskStruct):
+class FDPair(FixedSize):
     first: FileDescriptor
     second: FileDescriptor
 
@@ -781,32 +805,16 @@ class FDPair(TaskStruct):
     def get_serializer(cls: t.Type[T_fdpair], task: Task) -> Serializer[T_fdpair]:
         return FDPairSerializer(cls, task)
 
-T_pipe = t.TypeVar('T_pipe', bound='Pipe')
 @dataclass
-class Pipe(TaskStruct):
-    read: FileDescriptor
-    write: FileDescriptor
-
-    @classmethod
-    def sizeof(cls) -> int:
-        return ffi.sizeof('struct fdpair')
-
-    @classmethod
-    def get_serializer(cls: t.Type[T_pipe], task: Task) -> Serializer[T_pipe]:
-        return FDPairSerializer(cls, task)
-
-T_tuple = t.TypeVar('T_tuple', bound='t.Tuple')
-@dataclass
-class FDPairSerializer(Serializer[T_tuple]):
-    cls: t.Type[T_tuple]
+class FDPairSerializer(Serializer[T_fdpair]):
+    cls: t.Type[T_fdpair]
     task: Task
 
-    def to_bytes(self, pair: T_tuple) -> bytes:
-        first, second = pair
-        struct = ffi.new('struct fdpair*', (first, second))
+    def to_bytes(self, pair: T_fdpair) -> bytes:
+        struct = ffi.new('struct fdpair*', (pair.first, pair.second))
         return bytes(ffi.buffer(struct))
 
-    def from_bytes(self, data: bytes) -> T_tuple:
+    def from_bytes(self, data: bytes) -> T_fdpair:
         struct = ffi.cast('struct fdpair const*', ffi.from_buffer(data))
         def make(n: int) -> FileDescriptor:
             return self.task.make_fd_handle(rsyscall.near.FileDescriptor(int(n)))

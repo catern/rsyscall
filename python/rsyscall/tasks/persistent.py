@@ -72,7 +72,7 @@ class PersistentConnection(base.SyscallInterface):
                                  [remote_sock.far, remote_sock.far])
         await remote_sock.invalidate()
         fd_bytes = await connected_sock.read()
-        infd, outfd = memsys.intpair.unpack(fd_bytes)
+        infd, outfd = struct.Struct("II").unpack(fd_bytes)
         self.rsyscall_connection = RsyscallConnection(access_sock, access_sock)
         self.infd = self.task.make_fd_handle(near.FileDescriptor(infd))
         self.outfd = self.task.make_fd_handle(near.FileDescriptor(outfd))
