@@ -18,7 +18,7 @@ from rsyscall.sys.socket import AF, SOCK, Address, Socklen
 from rsyscall.sched import UnshareFlag
 from rsyscall.struct import T_serializable, Serializer
 from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
-from rsyscall.fcntl import AT, F
+from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path
 from rsyscall.unistd import SEEK
 from rsyscall.sys.epoll import EpollFlag, EpollCtlOp, EpollEvent, EpollEventList
@@ -728,6 +728,12 @@ class Task(rsyscall.far.Task):
                 oldset_b = None
             await rsyscall.near.rt_sigprocmask(self.sysif, newset_b, oldset_b, Sigset.sizeof())
 
+    T_pointer_pipe = t.TypeVar('T_pointer_pipe', bound='Pointer[Pipe]')
+    async def pipe(self, buf: T_pointer_pipe, flags: O) -> T_pointer_pipe:
+        async with buf.borrow(self) as buf_b:
+            await rsyscall.near.pipe2(self.sysif, buf_b.near, flags)
+            return buf
+
 @dataclass
 class Process:
     task: Task
@@ -743,11 +749,6 @@ class Process:
                     await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, rusage_b.near)
 
 @dataclass
-class Pipe:
-    read: FileDescriptor
-    write: FileDescriptor
-
-@dataclass
 class MemoryMapping:
     task: rsyscall.far.Task
     far: rsyscall.far.MemoryMapping
@@ -755,7 +756,8 @@ class MemoryMapping:
     async def munmap(self) -> None:
         await rsyscall.far.munmap(self.task, self.far)
 
-class StructWithTask:
+T_taskstruct = t.TypeVar('T_taskstruct', bound='TaskStruct')
+class TaskStruct:
     "A fixed-size structure."
     @classmethod
     @abc.abstractmethod
@@ -767,7 +769,7 @@ class StructWithTask:
 
 T_fdpair = t.TypeVar('T_fdpair', bound='FDPair')
 @dataclass
-class FDPair(StructWithTask):
+class FDPair(TaskStruct):
     first: FileDescriptor
     second: FileDescriptor
 
@@ -779,16 +781,32 @@ class FDPair(StructWithTask):
     def get_serializer(cls: t.Type[T_fdpair], task: Task) -> Serializer[T_fdpair]:
         return FDPairSerializer(cls, task)
 
+T_pipe = t.TypeVar('T_pipe', bound='Pipe')
 @dataclass
-class FDPairSerializer(Serializer[T_fdpair]):
-    cls: t.Type[T_fdpair]
+class Pipe(TaskStruct):
+    read: FileDescriptor
+    write: FileDescriptor
+
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('struct fdpair')
+
+    @classmethod
+    def get_serializer(cls: t.Type[T_pipe], task: Task) -> Serializer[T_pipe]:
+        return FDPairSerializer(cls, task)
+
+T_tuple = t.TypeVar('T_tuple', bound='t.Tuple')
+@dataclass
+class FDPairSerializer(Serializer[T_tuple]):
+    cls: t.Type[T_tuple]
     task: Task
 
-    def to_bytes(self, pair: T_fdpair) -> bytes:
-        struct = ffi.new('struct fdpair*', (pair.first, pair.second))
+    def to_bytes(self, pair: T_tuple) -> bytes:
+        first, second = pair
+        struct = ffi.new('struct fdpair*', (first, second))
         return bytes(ffi.buffer(struct))
 
-    def from_bytes(self, data: bytes) -> T_fdpair:
+    def from_bytes(self, data: bytes) -> T_tuple:
         struct = ffi.cast('struct fdpair const*', ffi.from_buffer(data))
         def make(n: int) -> FileDescriptor:
             return self.task.make_fd_handle(rsyscall.near.FileDescriptor(int(n)))

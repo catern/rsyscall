@@ -82,6 +82,10 @@ struct kernel_sigaction {
 	sigrestore_t ksa_restorer;
 	struct kernel_sigset ksa_mask;
 };
+struct fdpair {
+    int first;
+    int second;
+};
 """ + "\n".join(f'const char {name}[] = "{value}";' for name, value in stored_paths.items()), **rsyscall)
 for name in stored_paths:
     ffibuilder.cdef(f"const char {name}[];")
@@ -97,6 +101,11 @@ struct epoll_event {
 };
 """, packed=True)
 ffibuilder.cdef("""
+struct fdpair {
+    int first;
+    int second;
+};
+
 int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
 int epoll_create1(int flags);
 int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);

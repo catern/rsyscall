@@ -14411,13 +14411,30 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    It certainly would be interesting to be able to attach Task at deserialization time, hm.
 
    hMmMmMmM
-** haskell
-   so I guess the nicely typed way to do it would be to,
+*** haskell
+    so I guess the nicely typed way to do it would be to,
 
-   pass in the additional data thiny at pointer construction time
+    pass in the additional data thiny at pointer construction time
 
 
-   ok yeah i just need serializer objects, it's obviou
+    ok yeah i just need serializer objects, it's obviou
+*** serializer objects
+    boom, got 'em
+** writtenpointer
+   properly deal with split
+
+   what should happen when we split one of these?
+
+   what currently happens is, both of them become writtenpointers,
+   which is, rather wacky
+
+   oh wait no, it drops the writtenpointerness. so this is fine.
+
+   no wait no it doesn't
+
+   ok yeah it now drops the writtenness.
+
+   but I'm still confuzzled about what should happen.
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

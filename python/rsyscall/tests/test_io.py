@@ -40,6 +40,7 @@ from rsyscall.signal import Signals
 from rsyscall.sys.signalfd import SignalfdSiginfo
 from rsyscall.net.if_ import Ifreq
 from rsyscall.unistd import SEEK
+from rsyscall.fcntl import O
 
 from rsyscall.struct import Bytes
 
@@ -89,6 +90,16 @@ class TestIO(unittest.TestCase):
                 await pipe.wfd.write(in_data)
                 out_data = await pipe.rfd.read(len(in_data))
                 self.assertEqual(in_data, out_data)
+        trio.run(self.runner, test)
+
+    def test_new_pipe(self):
+        async def test(stdtask: StandardTask) -> None:
+            from rsyscall.handle import Pipe
+            pipe = await (await stdtask.task.base.pipe(await stdtask.task.malloc(Pipe), O.CLOEXEC)).read()
+            in_data = b"hello"
+            written, _ = await pipe.write.write(await stdtask.task.to_pointer(Bytes(in_data)))
+            valid, _ = await pipe.read.read(written)
+            self.assertEqual(in_data, await valid.read())
         trio.run(self.runner, test)
 
     def test_recv_pipe(self) -> None:

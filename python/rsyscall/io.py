@@ -15,10 +15,10 @@ import rsyscall.memory_abstracted_syscalls as memsys
 import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.handle
-from rsyscall.handle import T_pointer
+from rsyscall.handle import T_pointer, T_taskstruct
 import rsyscall.far as far
 import rsyscall.near as near
-from rsyscall.struct import T_serializable, T_struct, Bytes, Int32, Serializer
+from rsyscall.struct import T_serializable, T_struct, Bytes, Int32, Serializer, Struct
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr
 from rsyscall.fcntl import AT, O, F
@@ -166,15 +166,12 @@ class TypedPointer(handle.Pointer[T]):
         return self.serializer.from_bytes(data)
 
     def _with_alloc(self, allocation: handle.AllocationInterface) -> TypedPointer:
-        return type(self)(self.mem_task, self.serializer, allocation)
+        return TypedPointer(self.mem_task, self.serializer, allocation)
 
 class WrittenTypedPointer(TypedPointer[T], handle.WrittenPointer[T]):
     def __init__(self, task: Task, data: T, serializer: Serializer[T], allocation: handle.AllocationInterface) -> None:
         TypedPointer.__init__(self, task, serializer, allocation)
         handle.WrittenPointer.__init__(self, task.base, data, serializer, allocation)
-
-    def _with_alloc(self, allocation: handle.AllocationInterface) -> WrittenTypedPointer:
-        return type(self)(self.mem_task, self.data, self.serializer, allocation)
 
 class Task:
     def __init__(self,
@@ -224,6 +221,25 @@ class Task:
         except:
             allocation.free()
             raise
+
+    @t.overload
+    async def malloc(self, cls: t.Type[T_taskstruct]) -> TypedPointer[T_taskstruct]: ...
+    @t.overload
+    async def malloc(self, cls: t.Type[T_struct]) -> TypedPointer[T_struct]: ...
+
+    async def malloc(self, x: t.Union[
+            t.Type[T_struct],
+            t.Type[T_taskstruct],
+    ]) -> t.Union[
+        TypedPointer[T_struct],
+        TypedPointer[T_taskstruct],
+    ]:            
+        if issubclass(x, Struct):
+            return await self.malloc_struct(x)
+        elif issubclass(x, handle.TaskStruct):
+            return await self.malloc_serializer(x.get_serializer(self.base), x.sizeof())
+        else:
+            raise ValueError("bad type of argument to malloc", x)
 
     async def to_pointer(self, data: T_serializable) -> WrittenTypedPointer[T_serializable]:
         ptr = await self.malloc_serializer(data.get_serializer(), len(data.to_bytes()))
