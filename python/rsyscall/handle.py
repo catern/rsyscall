@@ -321,10 +321,11 @@ class FileDescriptor:
             ret = await rsyscall.near.write(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
             return buf.split(ret)
 
-    async def pread(self, buf: rsyscall.far.Pointer, count: int, offset: int) -> int:
+    async def recv(self, buf: T_pointer, flags: int) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
-        return (await rsyscall.near.pread(self.task.sysif, self.near,
-                                          self.task.to_near_pointer(buf), count, offset))
+        async with buf.borrow(self.task) as buf_b:
+            ret = await rsyscall.near.recv(self.task.sysif, self.near, buf_b.near, buf_b.bytesize(), flags)
+            return buf.split(ret)
 
     async def lseek(self, offset: int, whence: SEEK) -> int:
         self.validate()

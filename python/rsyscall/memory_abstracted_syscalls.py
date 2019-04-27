@@ -41,16 +41,6 @@ async def read_to_bytes(transport: MemoryReader, data: base.Pointer, count: int)
     return (await transport.read(data, count))
 
 
-#### miscellaneous ####
-async def recv(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-               fd: far.FileDescriptor, count: int, flags: int) -> bytes:
-    logger.debug("recv(%s, %s, %s)", fd, count, flags)
-    with await allocator.malloc(count) as buf_ptr:
-        ret = await far.recv(task, fd, buf_ptr, count, flags)
-        with trio.open_cancel_scope(shield=True):
-            return (await read_to_bytes(transport, buf_ptr, ret))
-
-
 #### two syscalls returning a pair of integers ####
 intpair = struct.Struct("II")
 

@@ -103,8 +103,7 @@ class TestIO(unittest.TestCase):
                 in_data = b"hello"
                 await pipe.wfd.write(in_data)
                 with self.assertRaises(OSError):
-                    out_data = await memsys.recv(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
-                                                 pipe.rfd.handle.far, len(in_data), 0)
+                    out_data = await pipe.rfd.handle.recv(await stdtask.task.malloc_type(Bytes, len(in_data)), 0)
         trio.run(self.runner, test)
 
     def test_to_pointer(self):
