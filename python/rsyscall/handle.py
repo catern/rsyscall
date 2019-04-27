@@ -23,7 +23,7 @@ from rsyscall.path import Path
 from rsyscall.unistd import SEEK
 from rsyscall.sys.epoll import EpollFlag, EpollCtlOp, EpollEvent, EpollEventList
 from rsyscall.linux.dirent import DirentList
-from rsyscall.sys.inotify import InotifyFlag
+from rsyscall.sys.inotify import InotifyFlag, IN
 
 class AllocationInterface:
     @abc.abstractproperty
@@ -67,8 +67,10 @@ class Pointer(t.Generic[T_serializable]):
 
     @contextlib.asynccontextmanager
     async def borrow(self, task: Task) -> t.AsyncGenerator[Pointer, None]:
-        # actual tracking of pointer references is not yet implemented
+        # TODO actual tracking of pointer references is not yet implemented
         self.validate()
+        if task.address_space != self.task.address_space:
+            raise Exception("pointer is in different address space")
         yield self
 
     def _with_alloc(self: T_pointer, allocation: AllocationInterface) -> T_pointer:
@@ -307,13 +309,13 @@ class FileDescriptor:
 
     async def read(self, buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
-        async with buf.borrow(self) as buf_b:
+        async with buf.borrow(self.task) as buf_b:
             ret = await rsyscall.near.read(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
             return buf.split(ret)
 
     async def write(self, buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
-        async with buf.borrow(self) as buf_b:
+        async with buf.borrow(self.task) as buf_b:
             ret = await rsyscall.near.write(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
             return buf.split(ret)
 
@@ -384,10 +386,10 @@ class FileDescriptor:
             else:
                 return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near))
 
-    async def inotify_add_watch(self, pathname: rsyscall.far.Pointer, mask: int) -> rsyscall.near.WatchDescriptor:
+    async def inotify_add_watch(self, pathname: Pointer[Path], mask: IN) -> rsyscall.near.WatchDescriptor:
         self.validate()
-        return (await rsyscall.near.inotify_add_watch(
-            self.task.sysif, self.near, self.task.to_near_pointer(pathname), mask))
+        async with pathname.borrow(self.task) as pathname_b:
+            return (await rsyscall.near.inotify_add_watch(self.task.sysif, self.near, pathname_b.near, mask))
 
     async def inotify_rm_watch(self, wd: rsyscall.near.WatchDescriptor) -> None:
         self.validate()

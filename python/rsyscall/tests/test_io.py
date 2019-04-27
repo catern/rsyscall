@@ -661,9 +661,9 @@ class TestIO(unittest.TestCase):
     def test_inotify_create(self) -> None:
         async def test(stdtask: StandardTask, path: Path) -> None:
             inty = await inotify.Inotify.make(stdtask)
-            watch = await inty.add(path.handle, inotify.Mask.CREATE)
+            watch = await inty.add(path.handle, inotify.IN.CREATE)
             fd = await (path/"foo").creat()
-            await watch.wait_until_event(inotify.Mask.CREATE, "foo")
+            await watch.wait_until_event(inotify.IN.CREATE, "foo")
         trio.run(self.runner_with_tempdir, test)
 
     def test_stdinboot_exit(self) -> None:

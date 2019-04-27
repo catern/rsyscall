@@ -283,9 +283,3 @@ async def recvmsg_fds(task: far.Task, transport: MemoryTransport, allocator: mem
         local_fds_bytes = await transport.read(fds_buf, buf_len)
         received_fds = [near.FileDescriptor(fd) for fd, in fd_struct.iter_unpack(local_fds_bytes)]
         return received_fds
-
-async def inotify_add_watch(transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                            fd: handle.FileDescriptor, path: Path, mask: int) -> near.WatchDescriptor:
-    async with localize_data(transport, allocator, path.to_bytes()) as (pathname, _):
-        return (await fd.inotify_add_watch(pathname, mask))
-

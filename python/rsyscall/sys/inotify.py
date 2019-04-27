@@ -10,7 +10,7 @@ class InotifyFlag(enum.IntFlag):
     CLOEXEC = lib.IN_CLOEXEC
     NONBLOCK = lib.IN_NONBLOCK
 
-class Mask(enum.IntFlag):
+class IN(enum.IntFlag):
     # possible events, specified in inotify_add_watch and returned in struct inotify_event
     ACCESS = lib.IN_ACCESS
     ATTRIB = lib.IN_ATTRIB
@@ -39,7 +39,7 @@ class Mask(enum.IntFlag):
 @dataclass
 class InotifyEvent:
     wd: WatchDescriptor
-    mask: Mask
+    mask: IN
     cookie: int
     name: t.Optional[str]
 
@@ -64,7 +64,7 @@ class InotifyEvent:
         struct = ffi.cast('struct inotify_event*', ffi.from_buffer(data))
         value = cls(
             wd=WatchDescriptor(struct.wd),
-            mask=Mask(struct.mask),
+            mask=IN(struct.mask),
             cookie=struct.cookie,
             name=ffi.string(struct.name, struct.len).decode() if struct.len else None,
         )

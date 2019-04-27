@@ -245,16 +245,3 @@ async def execveat(sysif: SyscallInterface,
 async def socketpair(sysif: SyscallInterface, domain: int, type: int, protocol: int, sv: Pointer) -> None:
     logger.debug("socketpair(%s, %s, %s, %s)", domain, type, protocol, sv)
     await sysif.syscall(SYS.socketpair, domain, type, protocol, sv)
-
-async def getsockname(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: Pointer) -> None:
-    logger.debug("getsockname(%s, %s, %s)", sockfd, addr, addrlen)
-    await sysif.syscall(SYS.getsockname, sockfd, addr, addrlen)
-
-async def getpeername(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: Pointer) -> None:
-    logger.debug("getpeername(%s, %s, %s)", sockfd, addr, addrlen)
-    await sysif.syscall(SYS.getpeername, sockfd, addr, addrlen)
-
-async def accept(sysif: SyscallInterface, sockfd: FileDescriptor,
-                 addr: Pointer, addrlen: Pointer, flags: int) -> int:
-    logger.debug("accept(%s, %s, %s, %s)", sockfd, addr, addrlen, flags)
-    return (await sysif.syscall(SYS.accept4, sockfd, addr, addrlen, flags))

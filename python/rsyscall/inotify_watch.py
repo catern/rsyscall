@@ -4,7 +4,6 @@ from rsyscall.io import StandardTask, AsyncFileDescriptor, InotifyFile, Task
 from rsyscall.io import OneAtATime, AsyncReadBuffer
 from rsyscall.near import WatchDescriptor
 import os
-import rsyscall.memory_abstracted_syscalls as memsys
 import rsyscall.handle as handle
 import trio
 import typing as t
@@ -12,7 +11,7 @@ from dataclasses import dataclass, field
 import math
 import enum
 
-from rsyscall.sys.inotify import InotifyFlag, Mask, InotifyEvent, InotifyEventList
+from rsyscall.sys.inotify import InotifyFlag, IN, InotifyEvent, InotifyEventList
 from rsyscall.limits import NAME_MAX
 
 @dataclass
@@ -30,7 +29,7 @@ class Watch:
             try:
                 event = self.channel.receive_nowait()
                 print("inotify event", event)
-                if event.mask & Mask.IGNORED:
+                if event.mask & IN.IGNORED:
                     # the name is a bit confusing - getting IGNORED means this watch was removed
                     self.removed = True
                 events.append(event)
@@ -40,7 +39,7 @@ class Watch:
                 else:
                     return events
 
-    async def wait_until_event(self, mask: Mask, name: t.Optional[str]=None) -> InotifyEvent:
+    async def wait_until_event(self, mask: IN, name: t.Optional[str]=None) -> InotifyEvent:
         while True:
             events = await self.wait()
             print(events)
@@ -76,9 +75,8 @@ class Inotify:
         asyncfd = await AsyncFileDescriptor.make(stdtask.epoller, fd, is_nonblock=True)
         return Inotify(asyncfd, stdtask.task)
 
-    async def add(self, path: handle.Path, mask: Mask) -> Watch:
-        wd = await memsys.inotify_add_watch(self.task.transport, self.task.allocator,
-                                            self.asyncfd.underlying.handle, path, mask)
+    async def add(self, path: handle.Path, mask: IN) -> Watch:
+        wd = await self.asyncfd.handle.inotify_add_watch(await self.task.to_pointer(path), mask)
         send, receive = trio.open_memory_channel(math.inf)
         watch = Watch(self, receive, wd)
         # if we wrap, this could overwrite a removed watch that still
