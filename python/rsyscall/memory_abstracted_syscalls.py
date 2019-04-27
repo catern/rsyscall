@@ -123,13 +123,6 @@ class Serializer:
         self.operations.append(SerializerOperation(ptr, None))
         return ptr
 
-    def serialize_preallocated(self, real_ptr: base.Pointer, data: bytes) -> SerializedPointer:
-        size = len(data)
-        ptr = SerializedPointer(size)
-        ptr._real_pointer = real_ptr
-        self.operations.append(SerializerOperation(ptr, data))
-        return ptr
-
     @contextlib.asynccontextmanager
     async def with_flushed(self, transport: MemoryTransport, allocator: memory.AllocatorInterface
     ) -> t.AsyncGenerator[None, None]:

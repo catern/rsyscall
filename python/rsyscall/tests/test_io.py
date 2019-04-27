@@ -461,11 +461,9 @@ class TestIO(unittest.TestCase):
             thread1 = await stdtask.fork()
             await thread1.stdtask.unshare_user()
             await thread1.stdtask.unshare_net()
-            procselfns = stdtask.task.root().handle/"proc"/"self"/"ns"
-            netnsfd = await thread1.stdtask.task.open(procselfns/"net", os.O_RDONLY)
-            netnsfd = netnsfd.move(stdtask.task.base)
-            usernsfd = await thread1.stdtask.task.open(procselfns/"user", os.O_RDONLY)
-            usernsfd = usernsfd.move(stdtask.task.base)
+            procselfns = thread1.stdtask.task.root()/"proc"/"self"/"ns"
+            netnsfd = (await (procselfns/"net").open(os.O_RDONLY)).handle.move(stdtask.task.base)
+            usernsfd = (await (procselfns/"user").open(os.O_RDONLY)).handle.move(stdtask.task.base)
 
             thread2 = await stdtask.fork()
             await thread2.stdtask.unshare_user()

@@ -250,8 +250,7 @@ class Task:
         await self.close()
 
     async def chdir(self, path: 'Path') -> None:
-        with (await self.to_pointer(path.handle)) as ptr:
-            await self.base.chdir(ptr)
+        await self.base.chdir(await path.to_pointer())
 
     async def unshare_fs(self) -> None:
         # TODO we want this to return something that we can use to chdir
@@ -262,15 +261,6 @@ class Task:
 
     def make_fd(self, fd: near.FileDescriptor, file: T_file) -> FileDescriptor[T_file]:
         return FileDescriptor(self, self.base.make_fd_handle(fd), file)
-
-    async def open(self, path: handle.Path, flags: int, mode=0o644) -> handle.FileDescriptor:
-        """Open a path
-
-        Note that this can block forever if we're opening a FIFO
-
-        """
-        with (await self.to_pointer(path)) as ptr:
-            return await self.base.open(ptr, flags, mode)
 
     async def memfd_create(self, name: t.Union[bytes, str]) -> FileDescriptor:
         fd = await self.base.memfd_create(await self.to_pointer(handle.Path(os.fsdecode(name))), MFD.CLOEXEC)
@@ -863,7 +853,7 @@ class Path(rsyscall.path.PathLike):
         self.task = task
         self.handle = handle
         # we cache the pointer to the serialized path
-        self._ptr: t.Optional[rsyscall.handle.Pointer[rsyscall.path.Path]] = None
+        self._ptr: t.Optional[rsyscall.handle.WrittenPointer[rsyscall.path.Path]] = None
 
     def with_task(self, task: Task) -> Path:
         return Path(task, self.handle)
@@ -876,7 +866,7 @@ class Path(rsyscall.path.PathLike):
     def name(self) -> str:
         return self.handle.name
 
-    async def to_pointer(self) -> handle.Pointer[rsyscall.path.Path]:
+    async def to_pointer(self) -> rsyscall.handle.WrittenPointer[rsyscall.path.Path]:
         if self._ptr is None:
             self._ptr = await self.task.to_pointer(self.handle)
         return self._ptr
@@ -906,7 +896,7 @@ class Path(rsyscall.path.PathLike):
         else:
             # O.RDONLY is 0, so if we don't have any of the rest, then...
             file = ReadableFile()
-        fd = await self.task.open(self.handle, flags, mode)
+        fd = await self.task.base.open(await self.to_pointer(), flags, mode)
         return FileDescriptor(self.task, fd, file)
 
     async def open_directory(self) -> FileDescriptor[DirectoryFile]:

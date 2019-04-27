@@ -13962,16 +13962,6 @@ sel4, couldn't find it/nothing
     blah okay let's stick with returning size for now
     we can revisit later
 ** DONE use a union for repl results, not inheritance
-** convert serializer to tagless final style
-   we'll encapsulate the code-to-optimize in a function,
-   and we'll run it twice:
-   first time returning null pointers,
-   second time returning real things.
-
-   and the semantic functions will be normal, not async;
-   indicating the lack of IO happening
-
-   ok sure fine this is a good idea but still, what about Path?
 ** use conventional syscalls instead of *at when not doing *at things
 ** serializable for path
    ok so the to_bytes thing can work for the taskful path
@@ -14345,13 +14335,7 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     before doing this, let's get rid of the remaining calls in memory_abstracted_syscalls.
 ** turn SignalMask/SignalBlock into a handle
     I guess? Or at least re-evaluate this design
-** upgrade to cffi 1.12
-   Then I can use the fancy new features!
-
-   ffi.from_buffer("type", object) is a major advance!
-
-   and direct pkgconfig support!
-** convert socketpair and pipe (and other calls returning fds in memory) to handle style
+** DONE convert socketpair and pipe to handle style
    OK so what will we return?
 
    I guess, we know the type of the memory in a loose sense;
@@ -14420,6 +14404,12 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     ok yeah i just need serializer objects, it's obviou
 *** serializer objects
     boom, got 'em
+** upgrade to cffi 1.12
+   Then I can use the fancy new features!
+
+   ffi.from_buffer("type", object) is a major advance!
+
+   and direct pkgconfig support!
 ** writtenpointer
    properly deal with split
 
@@ -14435,28 +14425,34 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    ok yeah it now drops the writtenness.
 
    but I'm still confuzzled about what should happen.
-** typeclasses for serialization
-hmm
+** convert serializer to tagless final style
+   we'll encapsulate the code-to-optimize in a function,
+   and we'll run it twice:
+   first time returning null pointers,
+   second time returning real things.
 
-as an alternative, I could just write overloads.
+   and the semantic functions will be normal, not async;
+   indicating the lack of IO happening
 
-but, it would be nice to split out the implementation into different places.
+   ok sure fine this is a good idea but still, what about Path?
+** execveat to handle style
+   The big kahuna.
 
-oh neat
+   We want to figure out a clean way to handle Serializer first.
 
-functools.singledispatch
+   Will we convert it to tagless final style?
 
-I could use that!
+   What can we do with our nice Abstractor API?
 
-well it's not typechecked which is awkward
+   ok so we obviously use to_pointer and malloc, nice, nice.
 
-Oh, I can fall back to that. yeah! simple!
+   How can we use our Serializable API here?
 
-ok lol I don't need this, I can just special-case bytes
+   I guess we can return handle pointers or something?
+   but for what task?
+   we don't want them to be actually usable.
 
-and I can have serializable always take the Task... er wait no
-
-that's a circular depppp
+   I guess the handle execveat API will take a bunch of WrittenPointers.
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far
