@@ -42,6 +42,11 @@ class MemoryAbstractor:
     # returning Pointers would be nicer for the user...
     # allocationinterface is more direct and exposes more internals to the user, though...
     # hmMmMmmMmm
+    # ah but I can just have to_pointer etc be helpers on the interface, which call the real interface methods.
+    # that is optimal
+
+    # oh yeah we don't want to return pointers anyway, because this isn't our exact interface;
+    # we want somethign typed
     @abc.abstractmethod
     def to_pointer(self, data: bytes) -> Pointer: ...
     @abc.abstractmethod

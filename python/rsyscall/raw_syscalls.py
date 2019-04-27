@@ -3,7 +3,6 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.near import SyscallInterface
 from rsyscall.far import Pointer, Process, ProcessGroup, FileDescriptor
 from rsyscall.sys.wait import IdType
-from rsyscall.signal import SigprocmaskHow
 import trio
 import logging
 import signal
@@ -37,7 +36,6 @@ class SYS(enum.IntEnum):
     pipe2 = lib.SYS_pipe2
     read = lib.SYS_read
     readlinkat = lib.SYS_readlinkat
-    rt_sigprocmask = lib.SYS_rt_sigprocmask
     socket = lib.SYS_socket
     socketpair = lib.SYS_socketpair
     symlinkat = lib.SYS_symlinkat
@@ -152,19 +150,6 @@ async def clone(sysif: SyscallInterface, flags: int, child_stack: t.Optional[Poi
     if newtls is None:
         newtls = 0 # type: ignore
     return (await sysif.syscall(SYS.clone, flags, child_stack, ptid, ctid, newtls))
-
-async def rt_sigprocmask(sysif: SyscallInterface,
-                         newset: t.Optional[t.Tuple[SigprocmaskHow, Pointer]],
-                         oldset: t.Optional[Pointer],
-                         sigsetsize: int) -> None:
-    logger.debug("rt_sigprocmask(%s, %s, %s)", newset, oldset, sigsetsize)
-    if newset is not None:
-        how, set = newset
-    else:
-        how, set = 0, 0 # type: ignore
-    if oldset is None:
-        oldset = 0 # type: ignore
-    await sysif.syscall(SYS.rt_sigprocmask, how, set, oldset, sigsetsize)
 
 # filesystem stuff
 async def chdir(sysif: SyscallInterface, path: Pointer) -> None:

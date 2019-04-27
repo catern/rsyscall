@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 from rsyscall.sys.socket import AF, SOCK, Address, Socklen
 from rsyscall.sched import UnshareFlag
 from rsyscall.struct import T_serializable
-from rsyscall.signal import Sigaction, Sigset, Signals
+from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow
 from rsyscall.fcntl import AT, F
 from rsyscall.path import Path
 from rsyscall.unistd import SEEK
@@ -614,9 +614,9 @@ class Task(rsyscall.far.Task):
             async with datap.borrow(self) as datap:
                 await rsyscall.near.capget(self.sysif, hdrp.near, datap.near)
 
-    async def rt_sigaction(self, signum: Signals,
-                           act: t.Optional[Pointer[Sigaction]],
-                           oldact: t.Optional[Pointer[Sigaction]]) -> None:
+    async def sigaction(self, signum: Signals,
+                        act: t.Optional[Pointer[Sigaction]],
+                        oldact: t.Optional[Pointer[Sigaction]]) -> None:
         async with contextlib.AsyncExitStack() as stack:
             if act:
                 act = await stack.enter_async_context(act.borrow(self))
@@ -691,6 +691,21 @@ class Task(rsyscall.far.Task):
     async def inotify_init(self, flags: InotifyFlag) -> FileDescriptor:
         fd = await rsyscall.near.inotify_init(self.sysif, flags)
         return self.make_fd_handle(fd)
+
+    async def sigprocmask(self, newset: t.Optional[t.Tuple[SigprocmaskHow, WrittenPointer[Sigset]]],
+                          oldset: t.Optional[Pointer[Sigset]]=None) -> None:
+        async with contextlib.AsyncExitStack() as stack:
+            newset_b: t.Optional[t.Tuple[SigprocmaskHow, rsyscall.near.Pointer]]
+            if newset:
+                newset_b = newset[0], (await stack.enter_async_context(newset[1].borrow(self))).near
+            else:
+                newset_b = None
+            oldset_b: t.Optional[rsyscall.near.Pointer]
+            if oldset:
+                oldset_b = (await stack.enter_async_context(oldset.borrow(self))).near
+            else:
+                oldset_b = None
+            await rsyscall.near.rt_sigprocmask(self.sysif, newset_b, oldset_b, Sigset.sizeof())
 
 @dataclass
 class Pipe:

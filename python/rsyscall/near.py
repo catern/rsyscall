@@ -8,6 +8,7 @@ import abc
 import logging
 import typing as t
 import signal
+from rsyscall.ctypes import Pointer
 logger = logging.getLogger(__name__)
 
 from rsyscall.sys.epoll import EpollCtlOp
@@ -15,6 +16,7 @@ from rsyscall.sys.prctl import PrctlOp
 from rsyscall.sys.wait import IdType
 from rsyscall.fcntl import AT
 from rsyscall.sched import UnshareFlag
+from rsyscall.signal import SigprocmaskHow
 
 class SYS(enum.IntEnum):
     read = lib.SYS_read
@@ -58,6 +60,7 @@ class SYS(enum.IntEnum):
     getsockopt = lib.SYS_getsockopt
     setsockopt = lib.SYS_setsockopt
     rt_sigaction = lib.SYS_rt_sigaction
+    rt_sigprocmask = lib.SYS_rt_sigprocmask
     openat = lib.SYS_openat
     mkdirat = lib.SYS_mkdirat
     faccessat = lib.SYS_faccessat
@@ -131,25 +134,6 @@ class File:
 
 class DirectoryFile(File):
     pass
-
-@dataclass
-class Pointer:
-    address: int
-
-    def __add__(self, other: int) -> 'Pointer':
-        return Pointer(self.address + other)
-
-    def __sub__(self, other: int) -> 'Pointer':
-        return Pointer(self.address - other)
-
-    def __str__(self) -> str:
-        return f"Pointer({hex(self.address)})"
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __int__(self) -> int:
-        return self.address
 
 @dataclass
 class MemoryMapping:
@@ -352,6 +336,18 @@ async def rt_sigaction(sysif: SyscallInterface, signum: signal.Signals,
     if oldact is None:
         oldact = 0 # type: ignore
     await sysif.syscall(SYS.rt_sigaction, signum, act, oldact, size)
+
+async def rt_sigprocmask(sysif: SyscallInterface,
+                         newset: t.Optional[t.Tuple[SigprocmaskHow, Pointer]],
+                         oldset: t.Optional[Pointer],
+                         sigsetsize: int) -> None:
+    if newset is not None:
+        how, set = newset
+    else:
+        how, set = 0, 0 # type: ignore
+    if oldset is None:
+        oldset = 0 # type: ignore
+    await sysif.syscall(SYS.rt_sigprocmask, how, set, oldset, sigsetsize)
 
 async def openat(sysif: SyscallInterface, dirfd: t.Optional[FileDescriptor],
                  path: Pointer, flags: int, mode: int) -> FileDescriptor:

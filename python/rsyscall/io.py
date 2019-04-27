@@ -91,39 +91,34 @@ class FunctionPointer:
         self.pointer = pointer
 
 class SignalMask:
-    def __init__(self, mask: t.Set[signal.Signals]) -> None:
+    def __init__(self, mask: t.Set[Signals]) -> None:
         self.mask = mask
 
     def inherit(self) -> 'SignalMask':
         return SignalMask(self.mask)
 
-    def _validate(self, task: 'Task') -> SyscallInterface:
+    async def _sigprocmask(self, task: Task, how: SigprocmaskHow, mask: Sigset) -> None:
         if task.sigmask != self:
-            raise Exception
-        return task.syscall
-
-    async def block(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
-        syscall = self._validate(task)
-        old_mask = await memsys.rt_sigprocmask(syscall, task.transport, task.allocator, SigprocmaskHow.BLOCK, mask)
+            raise Exception("SignalMask", self, "running for task", task,
+                            "which contains a different SignalMask", task.sigmask)
+        newset = await task.to_pointer(Sigset(mask))
+        oldset = await task.malloc_struct(Sigset)
+        await task.base.sigprocmask((how, newset), oldset)
+        old_mask = await oldset.read()
         if self.mask != old_mask:
             raise Exception("SignalMask tracking got out of sync, thought mask was",
                             self.mask, "but was actually", old_mask)
+
+    async def block(self, task: 'Task', mask: Sigset) -> None:
+        await self._sigprocmask(task, SigprocmaskHow.BLOCK, mask)
         self.mask = self.mask.union(mask)
 
-    async def unblock(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
-        syscall = self._validate(task)
-        old_mask = await memsys.rt_sigprocmask(syscall, task.transport, task.allocator, SigprocmaskHow.UNBLOCK, mask)
-        if self.mask != old_mask:
-            raise Exception("SignalMask tracking got out of sync, thought mask was",
-                            self.mask, "but was actually", old_mask)
+    async def unblock(self, task: 'Task', mask: Sigset) -> None:
+        await self._sigprocmask(task, SigprocmaskHow.UNBLOCK, mask)
         self.mask = self.mask - mask
 
-    async def setmask(self, task: 'Task', mask: t.Set[signal.Signals]) -> None:
-        syscall = self._validate(task)
-        old_mask = await memsys.rt_sigprocmask(syscall, task.transport, task.allocator, SigprocmaskHow.SETMASK, mask)
-        if self.mask != old_mask:
-            raise Exception("SignalMask tracking got out of sync, thought mask was",
-                            self.mask, "but was actually", old_mask)
+    async def setmask(self, task: 'Task', mask: Sigset) -> None:
+        await self._sigprocmask(task, SigprocmaskHow.SETMASK, mask)
         self.mask = mask
 
 T = t.TypeVar('T')
@@ -1422,7 +1417,7 @@ class SignalBlock:
         if len(mask.intersection(task.sigmask.mask)) != 0:
             raise Exception("can't allocate a SignalBlock for a signal that was already blocked",
                             mask, task.sigmask.mask)
-        await task.sigmask.block(task, mask)
+        await task.sigmask.block(task, Sigset(mask))
         return SignalBlock(task, mask)
 
     def __init__(self, task: Task, mask: t.Set[signal.Signals]) -> None:
@@ -1430,7 +1425,7 @@ class SignalBlock:
         self.mask = mask
 
     async def close(self) -> None:
-        await self.task.sigmask.unblock(self.task, self.mask)
+        await self.task.sigmask.unblock(self.task, Sigset(self.mask))
 
     async def __aenter__(self) -> 'SignalBlock':
         return self
@@ -2851,7 +2846,7 @@ class RsyscallThread:
         sigmask: t.Set[signal.Signals] = set()
         for block in inherited_signal_blocks:
             sigmask = sigmask.union(block.mask)
-        await self.stdtask.task.sigmask.setmask(self.stdtask.task, sigmask)
+        await self.stdtask.task.sigmask.setmask(self.stdtask.task, Sigset(sigmask))
         envp: t.Dict[bytes, bytes] = {**self.stdtask.environment}
         for key in env_updates:
             envp[os.fsencode(key)] = os.fsencode(env_updates[key])

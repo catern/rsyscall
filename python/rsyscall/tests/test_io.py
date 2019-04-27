@@ -522,8 +522,8 @@ class TestIO(unittest.TestCase):
             import readline
             sa = Sigaction(Sighandler.DFL)
             ptr = await stdtask.task.to_pointer(sa)
-            await stdtask.task.base.rt_sigaction(Signals.SIGWINCH, ptr, None)
-            await stdtask.task.base.rt_sigaction(Signals.SIGWINCH, None, ptr)
+            await stdtask.task.base.sigaction(Signals.SIGWINCH, ptr, None)
+            await stdtask.task.base.sigaction(Signals.SIGWINCH, None, ptr)
             out_sa = await ptr.read()
             self.assertEqual(sa.handler, out_sa.handler)
             self.assertEqual(sa.flags, out_sa.flags)

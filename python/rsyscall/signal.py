@@ -1,7 +1,7 @@
 from __future__ import annotations
 import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.near import Pointer
+from rsyscall.ctypes import Pointer
 from rsyscall.struct import Struct, bits
 from dataclasses import dataclass, field
 import enum

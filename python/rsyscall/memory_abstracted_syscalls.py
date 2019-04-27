@@ -14,7 +14,6 @@ import rsyscall.handle as handle
 
 from rsyscall.struct import bits
 from rsyscall.sys.wait import IdType
-from rsyscall.signal import SigprocmaskHow
 from rsyscall.path import Path
 
 import array
@@ -87,30 +86,6 @@ async def waitid(sysif: SyscallInterface, transport: MemoryTransport, allocator:
         with trio.open_cancel_scope(shield=True):
             data = await read_to_bytes(transport, infop, siginfo_size)
             return data
-
-
-#### signal mask manipulation ####
-# sigset_t is just a 64bit bitmask of signals, I don't need the manipulation macros.
-sigset = struct.Struct("Q")
-def sigset_to_bytes(set: t.Set[signal.Signals]) -> bytes:
-    set_integer = 0
-    for sig in set:
-        set_integer |= 1 << (sig-1)
-    return sigset.pack(set_integer)
-
-def bytes_to_sigset(data: bytes) -> t.Set[signal.Signals]:
-    set_integer, = sigset.unpack(data)
-    return {signal.Signals(bit) for bit in bits(set_integer)}
-
-async def rt_sigprocmask(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                         how: SigprocmaskHow, newset: t.Set[signal.Signals]) -> t.Set[signal.Signals]:
-    logger.debug("rt_sigprocmask(%s, %s)", how, set)
-    async with localize_data(transport, allocator, sigset_to_bytes(newset)) as (newset_ptr, _):
-        with await allocator.malloc(sigset.size) as oldset_ptr:
-            await raw_syscall.rt_sigprocmask(sysif, (how, newset_ptr), oldset_ptr, sigset.size)
-            with trio.open_cancel_scope(shield=True):
-                oldset_data = await read_to_bytes(transport, oldset_ptr, sigset.size)
-            return bytes_to_sigset(oldset_data)
 
 
 #### two syscalls returning a pair of integers ####

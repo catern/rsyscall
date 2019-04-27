@@ -127,7 +127,7 @@ async def _initialize_module() -> None:
     stdtask = await _make_local_stdtask()
     # wipe out the SIGWINCH handler that the readline module installs
     import readline
-    await stdtask.task.base.rt_sigaction(
+    await stdtask.task.base.sigaction(
         Signals.SIGWINCH, await stdtask.task.to_pointer(Sigaction(Sighandler.DFL)), None)
 
 task = _make_local_task()

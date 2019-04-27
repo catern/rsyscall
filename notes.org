@@ -14280,7 +14280,7 @@ yeah okay.
     the multiple inheritance thing seems good though
 
     mmmmmmmmmmmmmmmmmmmmmm
-** make "rsyscall.tasks.local" which has all the local things in it
+** DONE make "rsyscall.tasks.local" which has all the local things in it
    It's a local task!
 
    Just like all the other tasks!
@@ -14341,6 +14341,16 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 *** TODO to_pointer can have pointer cache in it
     like a page cache kinda
 *** TODO can do epoll on remotte side?
+*** preparation
+    before doing this, let's get rid of the remaining calls in memory_abstracted_syscalls.
+** turn SignalMask/SignalBlock into a handle
+    I guess? Or at least re-evaluate this design
+** upgrade to cffi 1.12
+   Then I can use the fancy new features!
+
+   ffi.from_buffer("type", object) is a major advance!
+
+   and direct pkgconfig support!
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far
