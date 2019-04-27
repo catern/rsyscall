@@ -274,9 +274,6 @@ class Task:
         fd = await self.base.memfd_create(await self.to_pointer(handle.Path(os.fsdecode(name))), MFD.CLOEXEC)
         return FileDescriptor(self, fd, MemoryFile())
 
-    async def pread(self, fd: handle.FileDescriptor, count: int, offset: int) -> bytes:
-        return (await memsys.pread(self.base, self.transport, self.allocator, fd.far, count, offset))
-
     # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
     # and they'll take an handle.FileDescriptor.
     # then we'll directly have StandardTask contain both Task and MemoryAbstractor?

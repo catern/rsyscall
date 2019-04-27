@@ -42,19 +42,6 @@ async def read_to_bytes(transport: MemoryReader, data: base.Pointer, count: int)
 
 
 #### miscellaneous ####
-async def write(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                fd: base.FileDescriptor, buf: bytes) -> int:
-    async with localize_data(transport, allocator, buf) as (buf_ptr, buf_len):
-        return (await raw_syscall.write(sysif, fd, buf_ptr, buf_len))
-
-async def pread(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                fd: far.FileDescriptor, count: int, offset: int) -> bytes:
-    logger.debug("pread(%s, %s, %s)", fd, count, offset)
-    with await allocator.malloc(count) as buf_ptr:
-        ret = await far.pread(task, fd, buf_ptr, count, offset)
-        with trio.open_cancel_scope(shield=True):
-            return (await read_to_bytes(transport, buf_ptr, ret))
-
 async def recv(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                fd: far.FileDescriptor, count: int, flags: int) -> bytes:
     logger.debug("recv(%s, %s, %s)", fd, count, flags)
