@@ -14331,6 +14331,16 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    then reads that pointer to bytes - cheating again, by just returning the underlying bytearray,
    which it pulls out of the allocation?
    MemoryAbstractor??
+*** TODO the bes
+    the best way is to have thsi interface all as one
+
+    and i'll stay with my current bytes to pointer (preallocated) thing 
+    since that allows rearranging
+
+    oh I guess if we controlled allocation too we could even do that nicely
+*** TODO to_pointer can have pointer cache in it
+    like a page cache kinda
+*** TODO can do epoll on remotte side?
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far
