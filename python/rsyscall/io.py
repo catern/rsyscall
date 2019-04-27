@@ -2374,11 +2374,6 @@ class SocketMemoryTransport(base.MemoryTransport):
         # need an additional cap: to turn bytes to a pointer.
         src = base.to_local_pointer(data)
         n = len(data)
-        # if self.sockets_in_same_address_space():
-        #     if not self.direct_transport:
-        #         raise Exception("um", self.direct_transport)
-        #     base.memcpy(dest, src, n)
-        #     return
         rtask = self.remote.task
         near_read_fd = self.remote.near
         near_dest = rtask.to_near_pointer(dest)
@@ -2443,9 +2438,6 @@ class SocketMemoryTransport(base.MemoryTransport):
     async def _unlocked_single_read(self, src: Pointer, n: int) -> bytes:
         buf = bytearray(n)
         dest = base.to_local_pointer(buf)
-        if self.sockets_in_same_address_space():
-            base.memcpy(dest, src, n)
-            return bytes(buf)
         rtask = self.local.underlying.task.base
         near_dest = rtask.to_near_pointer(dest)
         near_read_fd = self.local.underlying.handle.near

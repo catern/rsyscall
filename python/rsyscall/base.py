@@ -37,11 +37,6 @@ class MemoryTransport(MemoryWriter, MemoryReader):
     @abc.abstractmethod
     def inherit(self, task: Task) -> MemoryTransport: ...
 
-def memcpy(dest: Pointer, src: Pointer, n: int) -> None:
-    neardest = local_address_space.to_near(dest)
-    nearsrc = local_address_space.to_near(src)
-    lib.memcpy(ffi.cast('void*', int(neardest)), ffi.cast('void*', int(nearsrc)), n)
-
 class MemoryAbstractor:
     # should we return AllocationInterfaces, or Pointers directly?
     # returning Pointers would be nicer for the user...

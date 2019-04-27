@@ -103,11 +103,6 @@ async def _make_local_stdtask() -> StandardTask:
     filesystem_resources = rsc.FilesystemResources.make_from_environ(task, environ)
     epoller = await mem_task.make_epoll_center()
     child_monitor = await rsc.ChildProcessMonitor.make(mem_task, epoller)
-    # connection_listening_socket = await mem_task.socket_unix(SOCK.STREAM)
-    # sockpath = Path.from_bytes(task, b"./rsyscall.sock")
-    # await robust_unix_bind(sockpath, connection_listening_socket)
-    # await connection_listening_socket.listen(10)
-    # access_connection = (sockpath, connection_listening_socket)
     access_connection = None
     left_fd, right_fd = await mem_task.socketpair(AF.UNIX, SOCK.STREAM, 0)
     connecting_connection = (left_fd.handle, right_fd.handle)
@@ -135,6 +130,5 @@ async def _initialize_module() -> None:
     await stdtask.task.base.rt_sigaction(
         Signals.SIGWINCH, await stdtask.task.to_pointer(Sigaction(Sighandler.DFL)), None)
 
-# stdtask = rsc.local_stdtask
 task = _make_local_task()
 trio.run(_initialize_module)

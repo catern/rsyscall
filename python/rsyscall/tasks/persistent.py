@@ -221,7 +221,10 @@ class PersistentServer:
         self.syscall.rsyscall_connection = RsyscallConnection(access_syscall_sock, access_syscall_sock)
         self.syscall.infd = self.task.base.make_fd_handle(infd)
         self.syscall.outfd = self.task.base.make_fd_handle(outfd)
-        transport = SocketMemoryTransport(access_syscall_sock, self.task.base.make_fd_handle(remote_data_sock), None)
+        # TODO technically this could still be in the same address space - that's the case in our tests.
+        # we should figure out a way to give it a direct_transport=LocalMemoryTransport so it can copy efficiently
+        transport = SocketMemoryTransport(access_data_sock, self.task.base.make_fd_handle(remote_data_sock),
+                                          None)
         self.task.transport = transport
         self.transport = transport
         # close remote fds we are no longer using - can only do this here because we've

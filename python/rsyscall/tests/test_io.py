@@ -720,7 +720,7 @@ class TestIO(unittest.TestCase):
                     await stdtask3.exit(0)
         trio.run(self.runner, test)
 
-    @unittest.skip("not working right now")
+    @unittest.skip("broken due to unshare net stuff")
     def test_ssh_persistent_thread_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             host = await make_local_ssh(stdtask, rsyscall.nix.local_store)
@@ -737,33 +737,33 @@ class TestIO(unittest.TestCase):
     def test_ssh_persistent_thread_reconnect(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp("rsyscall_state")) as path:
-                async with ssh_to_localhost(stdtask) as host:
-                    local_child, remote_stdtask = await host.ssh(stdtask)
-                    # TODO need to have notion of "Host",
-                    # which I can pull the namespaces out of. hm.
-                    # it's to represent that two ssh connections to the same place,
-                    # will have the same,
-                    # namespaces and stuff.
-                    # probably.
-                    # so, okay. SSHHost perhaps?
-                    logger.info("about to fork")
-                    per_stdtask, thread, server = await fork_persistent(remote_stdtask, path/"persist.sock")
-                    logger.info("forked persistent, %s", thread.child_task.process.near)
-                    await server.make_persistent()
-                    await local_child.kill()
-                    local_child, remote_stdtask = await host.ssh(stdtask)
-                    # OK, so it is indeed non-deterministic.
-                    # await per_stdtask.unshare_files()
-                    # await connection.rsyscall_connection.close()
-                    # hmm. if the connection is down then...
-                    # probably the data connection is down too...
-                    # AAA ok so the data connection is down. how do we repair it?
-                    # I guess we can just return the Transport as well as the Syscall,
-                    # and have a reconnectable transport thing.
-                    await server.reconnect(remote_stdtask)
-                    # don't have to unshare because the only other
-                    # thing in the fd space was the original ssh task.
-                    await per_stdtask.exit(0)
+                host = await make_local_ssh(stdtask, rsyscall.nix.local_store)
+                local_child, remote_stdtask = await host.ssh(stdtask)
+                # TODO need to have notion of "Host",
+                # which I can pull the namespaces out of. hm.
+                # it's to represent that two ssh connections to the same place,
+                # will have the same,
+                # namespaces and stuff.
+                # probably.
+                # so, okay. SSHHost perhaps?
+                logger.info("about to fork")
+                per_stdtask, thread, server = await fork_persistent(remote_stdtask, path/"persist.sock")
+                logger.info("forked persistent, %s", thread.child_task.process.near)
+                await server.make_persistent()
+                await local_child.kill()
+                local_child, remote_stdtask = await host.ssh(stdtask)
+                # OK, so it is indeed non-deterministic.
+                # await per_stdtask.unshare_files()
+                # await connection.rsyscall_connection.close()
+                # hmm. if the connection is down then...
+                # probably the data connection is down too...
+                # AAA ok so the data connection is down. how do we repair it?
+                # I guess we can just return the Transport as well as the Syscall,
+                # and have a reconnectable transport thing.
+                await server.reconnect(remote_stdtask)
+                # don't have to unshare because the only other
+                # thing in the fd space was the original ssh task.
+                await per_stdtask.exit(0)
         trio.run(self.runner, test)
 
     def test_thread_nest_exit(self) -> None:
@@ -820,15 +820,15 @@ class TestIO(unittest.TestCase):
     @unittest.skip("requires a user")
     def test_ssh_shell(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            async with ssh_to_localhost(stdtask) as host:
-                local_child, remote_stdtask = await host.ssh(stdtask)
-                async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
-                    thread = await remote_stdtask.fork()
-                    bash = await rsyscall.io.which(remote_stdtask, b"bash")
-                    await thread.stdtask.task.chdir(remote_tmpdir)
-                    await ((await (remote_tmpdir/"var").mkdir())/"stuff").mkdir()
-                    child_task = await bash.exec(thread)
-                    await child_task.wait_for_exit()
+            host = await make_local_ssh(stdtask, rsyscall.nix.local_store)
+            local_child, remote_stdtask = await host.ssh(stdtask)
+            async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
+                thread = await remote_stdtask.fork()
+                bash = await rsyscall.io.which(remote_stdtask, b"bash")
+                await thread.stdtask.task.chdir(remote_tmpdir)
+                await ((await (remote_tmpdir/"var").mkdir())/"stuff").mkdir()
+                child_task = await bash.exec(thread)
+                await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
     def test_copy(self) -> None:
@@ -852,17 +852,17 @@ class TestIO(unittest.TestCase):
     @unittest.skip("Nix deploy is broken")
     def test_ssh_nix_shell(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            async with ssh_to_localhost(stdtask) as host:
-                local_child, remote_stdtask = await host.ssh(stdtask)
-                thread = await remote_stdtask.fork()
-                src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
-                dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
-                # let's use nix-copy-closure or nix-store --import/--export or nix copy to copy bash over then run it?
-                # nix-store --import/--export
-                bash = await rsyscall.io.which(stdtask, b"bash")
-                dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
-                child_task = await thread.execve(dest_bash, ["bash"])
-                await child_task.wait_for_exit()
+            host = await make_local_ssh(stdtask, rsyscall.nix.local_store)
+            local_child, remote_stdtask = await host.ssh(stdtask)
+            thread = await remote_stdtask.fork()
+            src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
+            dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
+            # let's use nix-copy-closure or nix-store --import/--export or nix copy to copy bash over then run it?
+            # nix-store --import/--export
+            bash = await rsyscall.io.which(stdtask, b"bash")
+            dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
+            child_task = await thread.execve(dest_bash, ["bash"])
+            await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
     @unittest.skip("Nix deploy is broken")
