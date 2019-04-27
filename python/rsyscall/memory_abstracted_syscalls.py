@@ -42,14 +42,6 @@ async def read_to_bytes(transport: MemoryReader, data: base.Pointer, count: int)
 
 
 #### miscellaneous ####
-async def read(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-               fd: far.FileDescriptor, count: int) -> bytes:
-    logger.debug("read(%s, %s)", fd, count)
-    with await allocator.malloc(count) as buf_ptr:
-        ret = await far.read(task, fd, buf_ptr, count)
-        with trio.open_cancel_scope(shield=True):
-            return (await read_to_bytes(transport, buf_ptr, ret))
-
 async def write(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                 fd: base.FileDescriptor, buf: bytes) -> int:
     async with localize_data(transport, allocator, buf) as (buf_ptr, buf_len):

@@ -41,6 +41,8 @@ from rsyscall.sys.signalfd import SignalfdSiginfo
 from rsyscall.net.if_ import Ifreq
 from rsyscall.unistd import SEEK
 
+from rsyscall.struct import Bytes
+
 
 import logging
 logger = logging.getLogger(__name__)
@@ -496,10 +498,10 @@ class TestIO(unittest.TestCase):
             # this is the second interface in an empty netns
             self.assertEqual((await ptr.read()).ifindex, 2)
 
-            data = await stdtask.task.read(netsock.far)
+            valid, _ = await netsock.read(await stdtask.task.malloc_type(Bytes, 4096))
             from pyroute2 import IPBatch
             batch = IPBatch()
-            evs = batch.marshal.parse(data)
+            evs = batch.marshal.parse(await valid.read())
         trio.run(self.runner, test)
 
     def test_ambient_caps(self) -> None:

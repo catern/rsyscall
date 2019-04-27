@@ -274,9 +274,6 @@ class Task:
         fd = await self.base.memfd_create(await self.to_pointer(handle.Path(os.fsdecode(name))), MFD.CLOEXEC)
         return FileDescriptor(self, fd, MemoryFile())
 
-    async def read(self, fd: far.FileDescriptor, count: int=4096) -> bytes:
-        return (await memsys.read(self.base, self.transport, self.allocator, fd, count))
-
     async def pread(self, fd: handle.FileDescriptor, count: int, offset: int) -> bytes:
         return (await memsys.pread(self.base, self.transport, self.allocator, fd.far, count, offset))
 
