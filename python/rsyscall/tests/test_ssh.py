@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.io
-from rsyscall.io import local_stdtask
 from rsyscall.nix import local_store
 from rsyscall.misc import bash_nixdep, coreutils_nixdep
 from rsyscall.struct import Bytes
 from rsyscall.tasks.ssh import *
+import rsyscall.tasks.local as local
 
 from rsyscall.unistd import SEEK
 
@@ -25,7 +25,7 @@ async def start_cat(stdtask: StandardTask, cat: Command,
 
 class TestSSH(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.stdtask = local_stdtask
+        self.stdtask = local.stdtask
         self.store = local_store
         self.host = await make_local_ssh(self.stdtask, self.store)
         self.local_child, self.remote_stdtask = await self.host.ssh(self.stdtask)

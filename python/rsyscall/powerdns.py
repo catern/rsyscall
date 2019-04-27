@@ -121,7 +121,8 @@ def make_zone(origin: t.Union[str, dns.name.Name],
 
 class TestPowerdns(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.ns_thread = await rsc.local_stdtask.fork()
+        import rsyscall.tasks.local as local
+        self.ns_thread = await local.stdtask.fork()
         self.stdtask = self.ns_thread.stdtask
         await self.stdtask.unshare_user(0, 0)
         await self.stdtask.unshare_net()

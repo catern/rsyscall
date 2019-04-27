@@ -16,6 +16,7 @@ from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
 from dataclasses import dataclass
 from rsyscall.struct import Int32
 
+import rsyscall.tasks.local as local
 from rsyscall.sys.capability import CAP, CapHeader, CapData
 from rsyscall.sys.socket import AF, SOCK, SOL
 from rsyscall.sys.prctl import PrctlOp, CapAmbient
@@ -25,7 +26,7 @@ from rsyscall.linux.netlink import SockaddrNl, NETLINK
 from rsyscall.linux.rtnetlink import RTMGRP
 import rsyscall.net.if_ as netif
 
-miredo_path = rsc.local_stdtask.task.base.make_path_from_bytes(ffi.string(miredo_path_cffi))
+miredo_path = local.stdtask.task.base.make_path_from_bytes(ffi.string(miredo_path_cffi))
 miredo_run_client = Command(miredo_path/"libexec"/"miredo"/"miredo-run-client", ["miredo-run-client"], {})
 miredo_privproc = Command(miredo_path/"libexec"/"miredo"/"miredo-privproc", ["miredo-privproc"], {})
 
@@ -132,7 +133,7 @@ class TestMiredo(TrioTestCase):
     async def asyncSetUp(self) -> None:
         # TODO lmao stracing this stuff causes a bug,
         # what is even going on
-        self.stdtask = rsc.local_stdtask
+        self.stdtask = local.stdtask
         print("a", time.time())
         self.miredo = await start_miredo(self.nursery, self.stdtask)
         print("b", time.time())

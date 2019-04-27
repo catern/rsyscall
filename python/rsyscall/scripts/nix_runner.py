@@ -5,6 +5,7 @@ import socket
 import trio
 import typing as t
 import argparse
+import rsyscall.tasks.local as local
 
 async def deploy_nix_daemon(remote_stdtask: rsc.StandardTask,
                             container_stdtask: rsc.StandardTask) -> rsc.Command:
@@ -12,7 +13,7 @@ async def deploy_nix_daemon(remote_stdtask: rsc.StandardTask,
     # TODO check if remote_nix_store exists, and skip this stuff if it does
     remote_tar = await rsc.which(remote_stdtask, b"tar")
     # copy the nix binaries over outside the container
-    nix_bin = await rsc.deploy_nix_bin(local.nix_bin_dir, local.tar, rsc.local_stdtask,
+    nix_bin = await rsc.deploy_nix_bin(local.nix_bin_dir, local.tar, local.stdtask,
                                        remote_tar, remote_stdtask,
                                        container_stdtask)
     return rsc.Command(nix_bin/"nix-daemon", [b'nix-daemon'], {})
@@ -32,14 +33,14 @@ async def make_container(root: Path, stdtask: StandardTask) -> StandardTask:
     return container_stdtask
 
 async def run_nix(host: rsc.SSHHost) -> None:
-    ssh_child, remote_stdtask = await host.ssh(rsc.local_stdtask)
+    ssh_child, remote_stdtask = await host.ssh(local.stdtask)
     container_stdtask = await make_container(remote_stdtask.task.cwd(), remote_stdtask)
     await run_nix_daemon(remote_stdtask, container_stdtask)
 
 async def run_nix_in_local_container() -> None:
-    async with (await rsc.local_stdtask.mkdtemp()) as tmpdir:
-        container_stdtask = await make_container(tmpdir, rsc.local_stdtask)
-        await run_nix_daemon(rsc.local_stdtask, container_stdtask)
+    async with (await local.stdtask.mkdtemp()) as tmpdir:
+        container_stdtask = await make_container(tmpdir, local.stdtask)
+        await run_nix_daemon(local.stdtask, container_stdtask)
 
 async def run_nix_daemon(remote_stdtask: rsc.StandardTask, container_stdtask: rsc.StandardTask) -> None:
     "Deploys Nix from the local_stdtask to this remote_stdtask and runs nix-daemon there"
@@ -91,7 +92,7 @@ async def isolate_exit(f, *args, **kwargs) -> None:
 from rsyscall.tests.test_ssh import LocalSSHHost
 email_address = 'me@example.com'
 hosts = [
-    trio.run(LocalSSHHost.make, rsc.local_stdtask)
+    trio.run(LocalSSHHost.make, local.stdtask)
     # local.ssh.args('localhost').as_host()
 ]
 

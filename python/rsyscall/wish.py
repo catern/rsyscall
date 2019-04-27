@@ -211,8 +211,9 @@ async def serve_repls(listenfd: AsyncFileDescriptor,
             num += 1
     return retval
 
-async def _initialize_module() -> None:
-    from rsyscall.io import local_stdtask
-    my_wish_granter.set(await ConsoleGenie.make(local_stdtask))
-
-trio.run(_initialize_module)
+async def _init_wish_granter(stdtask: StandardTask) -> None:
+    my_wish_granter.set(await ConsoleGenie.make(stdtask))
+def _initialize_module() -> None:
+    import rsyscall.tasks.local as local
+    trio.run(_init_wish_granter, local.stdtask)
+_initialize_module()

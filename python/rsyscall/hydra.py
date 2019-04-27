@@ -17,6 +17,7 @@ from rsyscall.io import StandardTask, RsyscallThread, Path, Command
 from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
 from dataclasses import dataclass
 from rsyscall.netinet.in_ import SockaddrIn
+import rsyscall.tasks.local as local
 
 class JobsetInput:
     @abc.abstractmethod
@@ -473,7 +474,7 @@ class HydraClient:
 
 class TestHydra(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.stdtask = rsc.local_stdtask
+        self.stdtask = local.stdtask
         self.tmpdir = await self.stdtask.mkdtemp("test_hydra")
         await rsc.update_symlink(self.tmpdir.parent, "test_hydra.current", os.fsdecode(self.tmpdir.name))
         self.path = self.tmpdir.path

@@ -148,7 +148,8 @@ async def start_smtpd(nursery, stdtask: StandardTask, path: Path,
 
 class TestMail(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.stdtask = rsc.local_stdtask
+        import rsyscall.tasks.local as local
+        self.stdtask = local.stdtask
         self.tmpdir = await self.stdtask.mkdtemp("test_mail")
         await rsc.update_symlink(self.tmpdir.parent, "test_mail.current", os.fsdecode(self.tmpdir.name))
         self.path = self.tmpdir.path

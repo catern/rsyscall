@@ -2,7 +2,8 @@ from __future__ import annotations
 import typing as t
 import os
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask, DirectoryFile, read_all, which, Command, FileDescriptor, Task, Path, local_stdtask
+from rsyscall.io import StandardTask, DirectoryFile, read_all, which, Command, FileDescriptor, Task, Path
+import rsyscall.tasks.local as local
 import trio
 import struct
 from dataclasses import dataclass
@@ -190,7 +191,7 @@ class Store:
         return Command(path.handle/"bin"/name, [name], {})
 
 nix = StorePath._load_without_registering("nix")
-local_store = Store(local_stdtask, nix)
+local_store = Store(local.stdtask, nix)
 
 def import_nix_dep(name: str) -> StorePath:
     store_path = StorePath._load_without_registering(name)

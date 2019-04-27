@@ -1,15 +1,13 @@
 import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.io import wrap_stdin_out_err
 from rsyscall.io import AsyncFileDescriptor
-from rsyscall.io import local_stdtask, StandardTask, Path
+from rsyscall.io import StandardTask, Path
 from rsyscall.io import Command
 import rsyscall.io as rsc
 import shutil
 import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
-from rsyscall.io import local_stdtask
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
 import socket
@@ -29,6 +27,7 @@ from rsyscall.tasks.persistent import fork_persistent
 from rsyscall.tasks.stdin_bootstrap import rsyscall_stdin_bootstrap
 from rsyscall.tasks.stub import StubServer
 from rsyscall.tasks.ssh import make_local_ssh
+import rsyscall.tasks.local as local
 
 import rsyscall.inotify_watch as inotify
 from rsyscall.sys.epoll import EpollEvent, EpollEventMask
@@ -70,13 +69,13 @@ class TestIO(unittest.TestCase):
 
     async def runner(self, test: t.Callable[[StandardTask], t.Awaitable[None]]) -> None:
         async with trio.open_nursery() as nursery:
-            await test(local_stdtask)
+            await test(local.stdtask)
 
     async def runner_with_tempdir(
             self,
             test: t.Callable[[StandardTask, Path], t.Awaitable[None]]
     ) -> None:
-        stdtask = local_stdtask
+        stdtask = local.stdtask
         async with trio.open_nursery() as nursery:
             async with (await stdtask.mkdtemp()) as tmppath:
                 await test(stdtask, tmppath)
@@ -933,8 +932,8 @@ class TestIO(unittest.TestCase):
 
     # def test_epoll_two(self) -> None:
     #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as local_stdtask:
-    #             rsyscall_task, _ = await local_stdtask.spawn([])
+    #         async with (await rsyscall.io.StandardTask.make_local()) as local.stdtask:
+    #             rsyscall_task, _ = await local.stdtask.spawn([])
     #             async with rsyscall_task as stdtask:
     #                 epoller1 = stdtask.resources.epoller
     #                 task = stdtask.task
