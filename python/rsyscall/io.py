@@ -2364,17 +2364,17 @@ class SocketMemoryTransport(base.MemoryTransport):
         outputs.append((last_op, last_orig_ops))
         return outputs
 
-    @property
-    def remote_is_local(self) -> bool:
-        return self.remote.task.address_space == base.local_address_space
+    def sockets_in_same_address_space(self) -> bool:
+        return self.remote.task.address_space == self.local.handle.task.address_space
 
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
         return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote), self.direct_transport)
 
     async def _unlocked_single_write(self, dest: Pointer, data: bytes) -> None:
+        # need an additional cap: to turn bytes to a pointer.
         src = base.to_local_pointer(data)
         n = len(data)
-        if self.remote_is_local:
+        if self.sockets_in_same_address_space():
             base.memcpy(dest, src, n)
             return
         rtask = self.remote.task
@@ -2430,15 +2430,18 @@ class SocketMemoryTransport(base.MemoryTransport):
                     write.done = True
 
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
-        write_ops = [self._start_single_write(dest, data) for (dest, data) in ops]
-        await self._do_writes()
-        for op in write_ops:
-            op.assert_done()
+        if self.direct_transport and self.sockets_in_same_address_space():
+            await self.direct_transport.batch_write(ops)
+        else:
+            write_ops = [self._start_single_write(dest, data) for (dest, data) in ops]
+            await self._do_writes()
+            for op in write_ops:
+                op.assert_done()
 
     async def _unlocked_single_read(self, src: Pointer, n: int) -> bytes:
         buf = bytearray(n)
         dest = base.to_local_pointer(buf)
-        if self.remote_is_local:
+        if self.sockets_in_same_address_space():
             base.memcpy(dest, src, n)
             return bytes(buf)
         rtask = self.local.underlying.task.base
@@ -2486,9 +2489,12 @@ class SocketMemoryTransport(base.MemoryTransport):
                         orig_op.done, data = data[:orig_op.n], data[orig_op.n:]
 
     async def batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
-        read_ops = [self._start_single_read(src, n) for src, n in ops]
-        await self._do_reads()
-        return [op.data for op in read_ops]
+        if self.direct_transport and self.sockets_in_same_address_space():
+            return await self.direct_transport.batch_read(ops)
+        else:
+            read_ops = [self._start_single_read(src, n) for src, n in ops]
+            await self._do_reads()
+            return [op.data for op in read_ops]
 
 class EOFException(Exception):
     pass
