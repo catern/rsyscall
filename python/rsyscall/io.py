@@ -2374,9 +2374,11 @@ class SocketMemoryTransport(base.MemoryTransport):
         # need an additional cap: to turn bytes to a pointer.
         src = base.to_local_pointer(data)
         n = len(data)
-        if self.sockets_in_same_address_space():
-            base.memcpy(dest, src, n)
-            return
+        # if self.sockets_in_same_address_space():
+        #     if not self.direct_transport:
+        #         raise Exception("um", self.direct_transport)
+        #     base.memcpy(dest, src, n)
+        #     return
         rtask = self.remote.task
         near_read_fd = self.remote.near
         near_dest = rtask.to_near_pointer(dest)
