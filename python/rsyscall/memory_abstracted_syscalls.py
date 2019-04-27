@@ -13,7 +13,6 @@ import rsyscall.memory as memory
 import rsyscall.handle as handle
 
 from rsyscall.struct import bits
-from rsyscall.sys.wait import IdType
 from rsyscall.path import Path
 
 import array
@@ -71,21 +70,6 @@ async def recv(task: far.Task, transport: MemoryTransport, allocator: memory.All
         ret = await far.recv(task, fd, buf_ptr, count, flags)
         with trio.open_cancel_scope(shield=True):
             return (await read_to_bytes(transport, buf_ptr, ret))
-
-async def memfd_create(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                       name: bytes, flags: int) -> far.FileDescriptor:
-    async with localize_data(transport, allocator, name+b"\0") as (name_ptr, _):
-        return (await far.memfd_create(task, name_ptr, flags))
-
-siginfo_size = ffi.sizeof('siginfo_t')
-async def waitid(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                 id: t.Union[base.Process, base.ProcessGroup, None], options: int) -> bytes:
-    logger.debug("waitid(%s, %s)", id, options)
-    with await allocator.malloc(siginfo_size) as infop:
-        await raw_syscall.waitid(sysif, id, infop, options, None)
-        with trio.open_cancel_scope(shield=True):
-            data = await read_to_bytes(transport, infop, siginfo_size)
-            return data
 
 
 #### two syscalls returning a pair of integers ####

@@ -65,13 +65,12 @@ async def setup_stub(
     [(access_syscall_sock, passed_syscall_sock),
      (access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(2)
     # memfd for setting up the futex
-    futex_memfd = await memsys.memfd_create(
-        stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
-        b"child_robust_futex_list", MFD.CLOEXEC)
+    futex_memfd = await stdtask.task.base.memfd_create(
+        await stdtask.task.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
     # send the fds to the new process
     await memsys.sendmsg_fds(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator, bootstrap_sock.handle.far,
                              [passed_syscall_sock.far, passed_data_sock.far,
-                              futex_memfd, stdtask.connecting_connection[1].far])
+                              futex_memfd.far, stdtask.connecting_connection[1].far])
     # close our reference to fds that only the new process needs
     await passed_syscall_sock.invalidate()
     await passed_data_sock.invalidate()

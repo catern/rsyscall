@@ -33,7 +33,7 @@ from rsyscall.sys.memfd import MFD
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
 from rsyscall.sys.inotify import InotifyFlag
 from rsyscall.sched import UnshareFlag
-from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals, Sigset
+from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals, Sigset, Siginfo
 from rsyscall.linux.dirent import Dirent, DirentList
 from rsyscall.unistd import SEEK
 
@@ -270,11 +270,9 @@ class Task:
         with (await self.to_pointer(path)) as ptr:
             return await self.base.open(ptr, flags, mode)
 
-    async def memfd_create(self, name: t.Union[bytes, str]) -> FileDescriptor[MemoryFile]:
-        fd = await memsys.memfd_create(
-            self.base, self.transport, self.allocator,
-            os.fsencode(name), MFD.CLOEXEC)
-        return FileDescriptor(self, self.base.make_fd_handle(fd), MemoryFile())
+    async def memfd_create(self, name: t.Union[bytes, str]) -> FileDescriptor:
+        fd = await self.base.memfd_create(await self.to_pointer(handle.Path(os.fsdecode(name))), MFD.CLOEXEC)
+        return FileDescriptor(self, fd, MemoryFile())
 
     async def read(self, fd: far.FileDescriptor, count: int=4096) -> bytes:
         return (await memsys.read(self.base, self.transport, self.allocator, fd, count))
@@ -1640,31 +1638,23 @@ class ChildProcessMonitorInternal:
                 # maybe by passing in the waiting queue?
                 # could do the same for epoll too.
                 # though we have to wake other people up too...
+                siginfo_buf = await task.malloc_struct(Siginfo)
                 try:
                     # have to serialize against things which use pids; we can't do a wait
                     # while something else is making a syscall with a pid, because we
                     # might collect the zombie for that pid and cause pid reuse
-                    logger.info("taking waitid lock")
                     async with self.wait_lock:
-                        logger.info("entering waitid")
-                        siginfo = await memsys.waitid(
-                            task.syscall, task.transport, task.allocator,
-                            None, W.ALL|W.EXITED|W.STOPPED|W.CONTINUED|W.NOHANG)
-                        logger.info("done with waitid")
+                        await task.base.waitid(W.ALL|W.EXITED|W.STOPPED|W.CONTINUED|W.NOHANG, siginfo_buf)
                 except ChildProcessError:
                     # no more children
-                    logger.info("no more children")
                     self.can_waitid = False
                     return
-                struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
-                if struct.si_pid == 0:
+                siginfo = await siginfo_buf.read()
+                if siginfo.pid == 0:
                     # no more waitable events, but we still have children
-                    logger.info("no more waitable events")
                     self.can_waitid = False
                     return
-                child_event = ChildEvent.make(ChildCode(struct.si_code),
-                                              pid=int(struct.si_pid), uid=int(struct.si_uid),
-                                              status=int(struct.si_status))
+                child_event = ChildEvent.make_from_siginfo(siginfo)
                 logger.info("got child event %s", child_event)
                 pid = child_event.pid
                 if pid not in self.task_map:
@@ -2204,14 +2194,10 @@ async def call_function(task: Task, stack: BufferedStack, process_resources: Pro
     stack_pointer = await stack.flush(task.transport)
     # we directly spawn a thread for the function and wait on it
     pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
-    process = base.Process(task.base.pidns, near.Process(pid))
-    siginfo = await memsys.waitid(task.syscall, task.transport, task.allocator,
-                                  process, W.ALL|W.EXITED)
-    struct = ffi.cast('siginfo_t*', ffi.from_buffer(siginfo))
-    child_event = ChildEvent.make(ChildCode(struct.si_code),
-                                  pid=int(struct.si_pid), uid=int(struct.si_uid),
-                                  status=int(struct.si_status))
-    return child_event
+    process = handle.Process(task.base, near.Process(pid))
+    siginfo_buf = await task.malloc_struct(Siginfo)
+    await process.waitid(W.ALL|W.EXITED, siginfo_buf)
+    return ChildEvent.make_from_siginfo(await siginfo_buf.read())
 
 async def do_cloexec_except(task: Task, process_resources: ProcessResources,
                             excluded_fds: t.Iterable[near.FileDescriptor]) -> None:
@@ -2770,10 +2756,9 @@ async def rsyscall_exec(
     stdtask = rsyscall_thread.stdtask
     [(access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(1)
     # create this guy and pass him down to the new thread
-    futex_memfd = await memsys.memfd_create(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
-                                                  b"child_robust_futex_list", MFD.CLOEXEC)
-    child_futex_memfd = stdtask.task.base.make_fd_handle(futex_memfd)
-    parent_futex_memfd = parent_stdtask.task.base.make_fd_handle(futex_memfd)
+    child_futex_memfd = await stdtask.task.base.memfd_create(
+        await stdtask.task.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
+    parent_futex_memfd = parent_stdtask.task.base.make_fd_handle(child_futex_memfd)
     syscall: ChildConnection = stdtask.task.base.sysif # type: ignore
     def encode(fd: near.FileDescriptor) -> bytes:
         return str(int(fd)).encode()

@@ -2,7 +2,7 @@ from __future__ import annotations
 import typing as t
 from dataclasses import dataclass
 from rsyscall._raw import ffi, lib # type: ignore
-import signal
+from rsyscall.signal import Siginfo, Signals
 import enum
 
 class IdType(enum.IntEnum):
@@ -18,7 +18,7 @@ class ChildCode(enum.IntEnum):
     TRAPPED = lib.CLD_TRAPPED # traced child has trapped
     CONTINUED = lib.CLD_CONTINUED # child continued by SIGCONT
 
-class W(enum.IntEnum):
+class W(enum.IntFlag):
     # wait for different statuses
     EXITED = lib.WEXITED
     STOPPED = lib.WSTOPPED
@@ -40,14 +40,20 @@ class ChildEvent:
     pid: int
     uid: int
     exit_status: t.Optional[int]
-    sig: t.Optional[signal.Signals]
+    sig: t.Optional[Signals]
 
     @staticmethod
-    def make(code: ChildCode, pid: int, uid: int, status: int):
+    def make(code: ChildCode, pid: int, uid: int, status: int) -> ChildEvent:
         if code is ChildCode.EXITED:
             return ChildEvent(code, pid, uid, status, None)
         else:
-            return ChildEvent(code, pid, uid, None, signal.Signals(status))
+            return ChildEvent(code, pid, uid, None, Signals(status))
+
+    @staticmethod
+    def make_from_siginfo(siginfo: Siginfo) -> ChildEvent:
+        return ChildEvent.make(ChildCode(siginfo.code),
+                               pid=siginfo.pid, uid=siginfo.uid,
+                               status=siginfo.status)
 
     def died(self) -> bool:
         return self.code in [ChildCode.EXITED, ChildCode.KILLED, ChildCode.DUMPED]
@@ -60,7 +66,7 @@ class ChildEvent:
         else:
             raise UncleanExit(self)
 
-    def killed_with(self) -> signal.Signals:
+    def killed_with(self) -> Signals:
         """What signal was the child killed with?
 
         Throws if the child was not killed with a signal.
@@ -71,3 +77,12 @@ class ChildEvent:
         if self.sig is None:
             raise Exception("Child wasn't killed with a signal")
         return self.sig
+
+
+#### Tests ####
+from unittest import TestCase
+
+class TestWait(TestCase):
+    def test_child_event(self) -> None:
+        event = ChildEvent.make_from_siginfo(Siginfo(code=ChildCode.EXITED, pid=1, uid=13, status=1))
+        self.assertFalse(event.clean())

@@ -421,3 +421,22 @@ async def epoll_create(sysif: SyscallInterface, flags: int) -> FileDescriptor:
 
 async def connect(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: int) -> None:
     await sysif.syscall(SYS.connect, sockfd, addr, addrlen)
+
+async def waitid(sysif: SyscallInterface,
+                 id: t.Union[Process, ProcessGroup, None], infop: t.Optional[Pointer], options: int,
+                 rusage: t.Optional[Pointer]) -> int:
+    logger.debug("waitid(%s, %s, %s, %s)", id, infop, options, rusage)
+    if isinstance(id, Process):
+        idtype = IdType.PID
+    elif isinstance(id, ProcessGroup):
+        idtype = IdType.PGID
+    elif id is None:
+        idtype = IdType.ALL
+        id = 0 # type: ignore
+    else:
+        raise ValueError("unknown id type", id)
+    if infop is None:
+        infop = 0 # type: ignore
+    if rusage is None:
+        rusage = 0 # type: ignore
+    return (await sysif.syscall(SYS.waitid, idtype, id, infop, options, rusage))

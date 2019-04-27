@@ -166,6 +166,7 @@ int faccessat(int dirfd, const char *pathname, int mode, int flags);
 typedef int... pid_t;
 typedef unsigned... uid_t;
 typedef struct siginfo {
+    int      si_signo;
     int      si_code;      /* Signal code */
     pid_t    si_pid;       /* Sending process ID */
     uid_t    si_uid;       /* Real user ID of sending process */

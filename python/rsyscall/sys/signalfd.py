@@ -4,7 +4,6 @@ from rsyscall.struct import Struct
 from dataclasses import dataclass
 
 from rsyscall.signal import Signals
-from rsyscall.sys.wait import ChildCode
 import enum
 
 class SFD(enum.IntFlag):

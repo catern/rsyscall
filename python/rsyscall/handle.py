@@ -17,13 +17,15 @@ logger = logging.getLogger(__name__)
 from rsyscall.sys.socket import AF, SOCK, Address, Socklen
 from rsyscall.sched import UnshareFlag
 from rsyscall.struct import T_serializable
-from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow
+from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
 from rsyscall.fcntl import AT, F
 from rsyscall.path import Path
 from rsyscall.unistd import SEEK
 from rsyscall.sys.epoll import EpollFlag, EpollCtlOp, EpollEvent, EpollEventList
 from rsyscall.linux.dirent import DirentList
 from rsyscall.sys.inotify import InotifyFlag, IN
+from rsyscall.sys.memfd import MFD
+from rsyscall.sys.wait import W
 
 class AllocationInterface:
     @abc.abstractproperty
@@ -694,6 +696,20 @@ class Task(rsyscall.far.Task):
         fd = await rsyscall.near.inotify_init(self.sysif, flags)
         return self.make_fd_handle(fd)
 
+    async def memfd_create(self, name: Pointer[Path], flags: MFD) -> FileDescriptor:
+        async with name.borrow(self) as name_b:
+            fd = await rsyscall.near.memfd_create(self.sysif, name_b.near, flags)
+            return self.make_fd_handle(fd)
+
+    async def waitid(self, options: W, infop: Pointer[Siginfo],
+                     *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:
+        async with infop.borrow(self) as infop_b:
+            if rusage is None:
+                await rsyscall.near.waitid(self.sysif, None, infop_b.near, options, None)
+            else:
+                async with rusage.borrow(self) as rusage_b:
+                    await rsyscall.near.waitid(self.sysif, None, infop_b.near, options, rusage_b.near)
+
     async def sigprocmask(self, newset: t.Optional[t.Tuple[SigprocmaskHow, WrittenPointer[Sigset]]],
                           oldset: t.Optional[Pointer[Sigset]]=None) -> None:
         async with contextlib.AsyncExitStack() as stack:
@@ -708,6 +724,20 @@ class Task(rsyscall.far.Task):
             else:
                 oldset_b = None
             await rsyscall.near.rt_sigprocmask(self.sysif, newset_b, oldset_b, Sigset.sizeof())
+
+@dataclass
+class Process:
+    task: Task
+    near: rsyscall.near.Process
+
+    async def waitid(self, options: W, infop: Pointer[Siginfo],
+                     *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:
+        async with infop.borrow(self.task) as infop_b:
+            if rusage is None:
+                await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, None)
+            else:
+                async with rusage.borrow(self.task) as rusage_b:
+                    await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, rusage_b.near)
 
 @dataclass
 class Pipe:
