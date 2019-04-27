@@ -7,7 +7,6 @@ import pathlib
 import math
 
 from rsyscall.base import Pointer, RsyscallException, RsyscallHangup
-from rsyscall.base import to_local_pointer
 from rsyscall.base import SyscallInterface
 
 import rsyscall.base as base
@@ -60,14 +59,6 @@ import contextlib
 import inspect
 logger = logging.getLogger(__name__)
 
-async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
-    "Make a syscall directly in the current thread."
-    args = (ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
-            ffi.cast('long', arg4), ffi.cast('long', arg5), ffi.cast('long', arg6),
-            number)
-    ret = lib.rsyscall_raw_syscall(*args)
-    return ret
-
 def raise_if_error(response: int) -> None:
     if -4095 < response < 0:
         err = -response
@@ -93,35 +84,6 @@ def log_syscall(logger, number, arg1, arg2, arg3, arg4, arg5, arg6) -> None:
             logger.debug("%s(%s, %s, %s, %s, %s)", number, arg1, arg2, arg3, arg4, arg5)
     else:
         logger.debug("%s(%s, %s, %s, %s, %s, %s)", number, arg1, arg2, arg3, arg4, arg5, arg6)
-
-class LocalSyscall(base.SyscallInterface):
-    activity_fd = None
-    identifier_process = near.Process(os.getpid())
-    logger = logging.getLogger("rsyscall.LocalSyscall")
-    async def close_interface(self) -> None:
-        pass
-
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> near.SyscallResponse:
-        raise Exception("not supported for local syscaller")
-
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-        try:
-            result = await self._syscall(
-                number,
-                arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-                arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        except Exception as exn:
-            self.logger.debug("%s -> %s", number, exn)
-            raise
-        else:
-            self.logger.debug("%s -> %s", number, result)
-            return result
-
-    async def _syscall(self, number: int, arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> int:
-        ret = await direct_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        raise_if_error(ret)
-        return ret
 
 class FunctionPointer:
     "A function pointer."
@@ -1117,32 +1079,6 @@ async def connectat(sock: FileDescriptor[UnixSocketFile], fd: handle.FileDescrip
     await sock.connect(addr)
 
 @dataclass
-class StandardStreams:
-    stdin: FileDescriptor[ReadableFile]
-    stdout: FileDescriptor[WritableFile]
-    stderr: FileDescriptor[WritableFile]
-
-@dataclass
-class UnixBootstrap:
-    """The resources traditionally given to a process on startup in Unix.
-
-    These are not absolutely guaranteed; environ and stdstreams are
-    both userspace conventions. Still, we will rely on this for our
-    tasks.
-
-    """
-    task: Task
-    argv: t.List[bytes]
-    environ: t.Mapping[bytes, bytes]
-    stdstreams: StandardStreams
-
-def wrap_stdin_out_err(task: Task) -> StandardStreams:
-    stdin = task._make_fd(0, ReadableFile(shared=True))
-    stdout = task._make_fd(1, WritableFile(shared=True))
-    stderr = task._make_fd(2, WritableFile(shared=True))
-    return StandardStreams(stdin, stdout, stderr)
-
-@dataclass
 class UnixUtilities:
     rm: handle.Path
     sh: handle.Path
@@ -1201,15 +1137,6 @@ class ProcessResources:
         return stack
 
 trampoline_stack_size = ffi.sizeof('struct rsyscall_trampoline_stack') + 8
-
-local_process_resources = ProcessResources(
-    server_func=FunctionPointer(base.cffi_to_local_pointer(lib.rsyscall_server)),
-    persistent_server_func=FunctionPointer(base.cffi_to_local_pointer(lib.rsyscall_persistent_server)),
-    do_cloexec_func=FunctionPointer(base.cffi_to_local_pointer(lib.rsyscall_do_cloexec)),
-    stop_then_close_func=FunctionPointer(base.cffi_to_local_pointer(lib.rsyscall_stop_then_close)),
-    trampoline_func=FunctionPointer(base.cffi_to_local_pointer(lib.rsyscall_trampoline)),
-    futex_helper_func=FunctionPointer(base.cffi_to_local_pointer(lib.rsyscall_futex_helper)),
-)
 
 @dataclass
 class FilesystemResources:
@@ -1319,56 +1246,6 @@ class StandardTask:
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
-
-    @staticmethod
-    async def make_local() -> StandardTask:
-        syscall = LocalSyscall()
-        pid = os.getpid()
-        pid_namespace = far.PidNamespace(pid)
-        # how do I make a socketpair without a socketpair...
-        # guess I can just use the near syscall.
-        # oh no I also need to register on the epoller, I can't do that.
-        process = far.Process(pid_namespace, near.Process(pid))
-        base_task = handle.Task(syscall, process, base.FDTable(pid), base.local_address_space,
-                                far.FSInformation(pid),
-                                pid_namespace,
-                                far.NetNamespace(pid),
-        )
-        local_transport = LocalMemoryTransport()
-        task = Task(base_task,
-                    local_transport,
-                    memory.AllocatorClient.make_allocator(base_task),
-                    SignalMask(set()))
-        environ = {key.encode(): value.encode() for key, value in os.environ.items()}
-        stdstreams = wrap_stdin_out_err(task)
-
-        # TODO fix this to... pull it from the bootstrap or something...
-        process_resources = local_process_resources
-        filesystem_resources = FilesystemResources.make_from_environ(base_task, environ)
-        epoller = await task.make_epoll_center()
-        child_monitor = await ChildProcessMonitor.make(task, epoller)
-        # connection_listening_socket = await task.socket_unix(SOCK.STREAM)
-        # sockpath = Path.from_bytes(task, b"./rsyscall.sock")
-        # await robust_unix_bind(sockpath, connection_listening_socket)
-        # await connection_listening_socket.listen(10)
-        # access_connection = (sockpath, connection_listening_socket)
-        access_connection = None
-        left_fd, right_fd = await task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
-        connecting_connection = (left_fd.handle, right_fd.handle)
-        stdtask = StandardTask(
-            task, epoller, access_connection,
-            task, connecting_connection,
-            task, process_resources, filesystem_resources,
-            epoller, child_monitor,
-            {**environ},
-            stdstreams.stdin,
-            stdstreams.stdout,
-            stdstreams.stderr,
-        )
-        # We don't need this ourselves, but we keep it around so others can inherit it.
-        [(access_sock, remote_sock)] = await stdtask.make_async_connections(1)
-        task.transport = SocketMemoryTransport(access_sock, remote_sock, local_transport)
-        return stdtask
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
         parent = Path(self.task, self.filesystem.tmpdir)
@@ -2383,33 +2260,6 @@ async def unshare_files(
     if not going_to_exec:
         await do_cloexec_except(task, process_resources, copy_to_new_space)
 
-class LocalMemoryTransport(base.MemoryTransport):
-    "This is a memory transport that only works on local pointers."
-    def inherit(self, task: handle.Task) -> LocalMemoryTransport:
-        return self
-
-    async def write(self, dest: Pointer, data: bytes) -> None:
-        await self.batch_write([(dest, data)])
-
-    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
-        for dest, data in ops:
-            src = base.to_local_pointer(data)
-            n = len(data)
-            base.memcpy(dest, src, n)
-
-    async def read(self, src: Pointer, n: int) -> bytes:
-        [data] = await self.batch_read([(src, n)])
-        return data
-
-    async def batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
-        ret: t.List[bytes] = []
-        for src, n in ops:
-            buf = bytearray(n)
-            dest = base.to_local_pointer(buf)
-            base.memcpy(dest, src, n)
-            ret.append(bytes(buf))
-        return ret
-
 @dataclass
 class OneAtATime:
     running: t.Optional[trio.Event] = None
@@ -3116,14 +2966,3 @@ async def read_full(read: t.Callable[[int], t.Awaitable[bytes]], size: int) -> b
     while len(buf) < size:
         buf += await read(size - len(buf))
     return buf
-
-local_stdtask: StandardTask
-async def _initialize_module() -> None:
-    global local_stdtask
-    local_stdtask = await StandardTask.make_local()
-    # wipe out the SIGWINCH handler that the readline module installs
-    import readline
-    await local_stdtask.task.base.rt_sigaction(
-        Signals.SIGWINCH, await local_stdtask.task.to_pointer(Sigaction(Sighandler.DFL)), None)
-
-trio.run(_initialize_module)

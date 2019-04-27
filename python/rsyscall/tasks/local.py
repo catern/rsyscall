@@ -81,7 +81,6 @@ def _make_local_task() -> Task:
         far.NetNamespace(pid),
     )
     return base_task
-# task = _make_local_task()
 def _make_local_function(cffi_object) -> rsc.FunctionPointer:
     return rsc.FunctionPointer(far.Pointer(task.address_space, near.Pointer(int(ffi.cast('long', cffi_object)))))
 
@@ -136,5 +135,6 @@ async def _initialize_module() -> None:
     await stdtask.task.base.rt_sigaction(
         Signals.SIGWINCH, await stdtask.task.to_pointer(Sigaction(Sighandler.DFL)), None)
 
-stdtask = rsc.local_stdtask
-# trio.run(_initialize_module)
+# stdtask = rsc.local_stdtask
+task = _make_local_task()
+trio.run(_initialize_module)
