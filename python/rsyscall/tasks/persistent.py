@@ -221,7 +221,7 @@ class PersistentServer:
         self.syscall.rsyscall_connection = RsyscallConnection(access_syscall_sock, access_syscall_sock)
         self.syscall.infd = self.task.base.make_fd_handle(infd)
         self.syscall.outfd = self.task.base.make_fd_handle(outfd)
-        transport = SocketMemoryTransport(access_syscall_sock, self.task.base.make_fd_handle(remote_data_sock))
+        transport = SocketMemoryTransport(access_syscall_sock, self.task.base.make_fd_handle(remote_data_sock), None)
         self.task.transport = transport
         self.transport = transport
         # close remote fds we are no longer using - can only do this here because we've

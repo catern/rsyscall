@@ -14050,7 +14050,6 @@ there's too many methods here to override
       prints error message
 
       have to override develop
-** make "local" module which has all the local things in it
 ** keeping nix store reference around
    we don't want to GC the Store
 
@@ -14281,6 +14280,57 @@ yeah okay.
     the multiple inheritance thing seems good though
 
     mmmmmmmmmmmmmmmmmmmmmm
+** make "rsyscall.tasks.local" which has all the local things in it
+   It's a local task!
+
+   Just like all the other tasks!
+
+   so uniform!!!
+** remove casts from rsyscall.tasks.local direct_syscall
+   These seem pointless
+** make far.Process into a handle
+hmm so far.Process really should be made a handle, innit?
+because when we unshare pid namespace, it's only for our children...
+hmm...
+essentially, we do change pid namespace,
+but the pid of our children (and everything else, true) stays valid.
+TODO maybe change it to a handle
+well, obviously we can signal ourselves...
+
+oh yeah and if we make it a handle, then we can gc processes nicely, that's cool
+
+including entire tasks - when we drop the task, we drop the process, and it dies, and everything is cool
+** TODO add nice memoryabstractor API
+   make SocketMemoryTransport use the direct_transport to convert bytes to pointer
+   as well as allocating memory
+
+   We should implement a local allocator that uses the Python heap.
+
+   That would be nicely efficient.
+
+   Or, rather - it would be faster than our current allocator.
+
+   And allow us to not worry about the fact that direct_transport will call into the local allocator,
+   which currently is a bit worrying to me in its performance overhead.
+
+   Maybe we should have a to_pointer interface.
+   Which can just byte-cast it when it's local,
+   but can also be backed by a transport and allocator.
+
+   Yes that would be even more nice and efficient.
+
+   For that matter, can't we have that right now, then?
+
+   No, hmm, this won't work for bytearray, right?
+
+   For that, we need, instead...
+
+   allocate, then read?
+
+   Well... we can do something that allocates a pointer, which is just a bytearray,
+   then reads that pointer to bytes - cheating again, by just returning the underlying bytearray,
+   which it pulls out of the allocation?
+   MemoryAbstractor??
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

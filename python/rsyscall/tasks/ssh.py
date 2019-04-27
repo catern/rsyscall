@@ -231,8 +231,7 @@ async def ssh_bootstrap(
     new_process = far.Process(new_pid_namespace, near.Process(new_pid))
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                     new_process.near, remote_syscall_fd.near)
-    # the cwd is not the one from the ssh_host because we cd'd somewhere else as part of the bootstrap
-    new_fs_information = far.FSInformation(new_pid, root=near.DirectoryFile(), cwd=near.DirectoryFile())
+    new_fs_information = far.FSInformation(new_pid)
     # TODO we should get this from the SSHHost, this is usually going
     # to be common for all connections and we should express that
     net = far.NetNamespace(new_pid)
@@ -241,7 +240,7 @@ async def ssh_bootstrap(
     handle_remote_syscall_fd = new_base_task.make_fd_handle(remote_syscall_fd)
     new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
-    new_transport = SocketMemoryTransport(async_local_data_sock, handle_remote_data_fd)
+    new_transport = SocketMemoryTransport(async_local_data_sock, handle_remote_data_fd, None)
     new_task = Task(new_base_task, new_transport,
                     memory.AllocatorClient.make_allocator(new_base_task),
                     # we assume ssh zeroes the sigmask before starting us

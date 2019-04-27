@@ -294,9 +294,6 @@ class Task:
         with (await self.to_pointer(path.handle)) as ptr:
             await self.base.chdir(ptr)
 
-    async def fchdir(self, fd: handle.FileDescriptor) -> None:
-        await self.base.fs.fchdir(self.base, fd.far)
-
     async def unshare_fs(self) -> None:
         # TODO we want this to return something that we can use to chdir
         await self.base.unshare_fs()
@@ -754,6 +751,10 @@ class AsyncFileDescriptor:
         epolled = await epoller.register(fd.handle, EpollEventMask.make(
             in_=True, out=True, rdhup=True, pri=True, err=True, hup=True, et=True))
         return AsyncFileDescriptor(epolled, fd)
+
+    @property
+    def handle(self) -> rsyscall.handle.FileDescriptor:
+        return self.underlying.handle
 
     def __init__(self, epolled: EpolledFileDescriptor, underlying: FileDescriptor[T_file_co]) -> None:
         self.epolled = epolled
@@ -1329,13 +1330,13 @@ class StandardTask:
         # oh no I also need to register on the epoller, I can't do that.
         process = far.Process(pid_namespace, near.Process(pid))
         base_task = handle.Task(syscall, process, base.FDTable(pid), base.local_address_space,
-                                far.FSInformation(pid, root=near.DirectoryFile(),
-                                                  cwd=near.DirectoryFile()),
+                                far.FSInformation(pid),
                                 pid_namespace,
                                 far.NetNamespace(pid),
         )
+        local_transport = LocalMemoryTransport()
         task = Task(base_task,
-                    LocalMemoryTransport(),
+                    local_transport,
                     memory.AllocatorClient.make_allocator(base_task),
                     SignalMask(set()))
         environ = {key.encode(): value.encode() for key, value in os.environ.items()}
@@ -1366,7 +1367,7 @@ class StandardTask:
         )
         # We don't need this ourselves, but we keep it around so others can inherit it.
         [(access_sock, remote_sock)] = await stdtask.make_async_connections(1)
-        task.transport = SocketMemoryTransport(access_sock, remote_sock)
+        task.transport = SocketMemoryTransport(access_sock, remote_sock, local_transport)
         return stdtask
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
@@ -2483,6 +2484,9 @@ class SocketMemoryTransport(base.MemoryTransport):
     """
     local: AsyncFileDescriptor
     remote: handle.FileDescriptor
+    # This is a more efficient transport used if the two sockets are in the same address space;
+    # which is essentially only the case when we're transporting to a thread.
+    direct_transport: t.Optional[base.MemoryTransport]
     pending_writes: t.List[WriteOp] = field(default_factory=list)
     running_write: OneAtATime = field(default_factory=OneAtATime)
     pending_reads: t.List[ReadOp] = field(default_factory=list)
@@ -2515,7 +2519,7 @@ class SocketMemoryTransport(base.MemoryTransport):
         return self.remote.task.address_space == base.local_address_space
 
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
-        return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote))
+        return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote), self.direct_transport)
 
     async def _unlocked_single_write(self, dest: Pointer, data: bytes) -> None:
         src = base.to_local_pointer(data)
@@ -2575,9 +2579,6 @@ class SocketMemoryTransport(base.MemoryTransport):
                 for write in writes:
                     write.done = True
 
-    async def write(self, dest: Pointer, data: bytes) -> None:
-        await self.batch_write([(dest, data)])
-
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         write_ops = [self._start_single_write(dest, data) for (dest, data) in ops]
         await self._do_writes()
@@ -2633,10 +2634,6 @@ class SocketMemoryTransport(base.MemoryTransport):
                     data = op.data
                     for orig_op in orig_ops:
                         orig_op.done, data = data[:orig_op.n], data[orig_op.n:]
-
-    async def read(self, src: Pointer, n: int) -> bytes:
-        [data] = await self.batch_read([(src, n)])
-        return data
 
     async def batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
         read_ops = [self._start_single_read(src, n) for src, n in ops]
@@ -2859,8 +2856,7 @@ async def spawn_rsyscall_thread(
     if fs:
         fs_information = parent_task.base.fs
     else:
-        fs_information = far.FSInformation(
-            cthread.child_task.process.near.id, root=parent_task.base.fs.root, cwd=parent_task.base.fs.cwd)
+        fs_information = far.FSInformation(cthread.child_task.process.near.id)
     if newpid:
         pidns = far.PidNamespace(cthread.child_task.process.near.id)
     else:
@@ -2961,7 +2957,7 @@ async def rsyscall_exec(
         # we mutate the allocator instead of replacing to so that anything that
         # has stored the allocator continues to work
         stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)
-        stdtask.task.transport = SocketMemoryTransport(access_data_sock, passed_data_sock)
+        stdtask.task.transport = SocketMemoryTransport(access_data_sock, passed_data_sock, None)
     await stdtask.task.base.unshare_files(do_unshare)
 
     #### make new futex task

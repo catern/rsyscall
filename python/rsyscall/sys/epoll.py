@@ -106,3 +106,12 @@ class EpollEventList(t.List[EpollEvent], Serializable):
             entries.append(ent)
             data = data[EpollEvent.sizeof():]
         return cls(entries)
+
+
+#### Tests ####
+from unittest import TestCase
+class TestEpoll(TestCase):
+    def test_epoll_event_list(self) -> None:
+        initial = EpollEventList([EpollEvent(42, EpollEventMask.make(in_=True,pri=True))])
+        output = EpollEventList.from_bytes(initial.to_bytes())
+        self.assertEqual(initial, output)

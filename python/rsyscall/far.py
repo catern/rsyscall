@@ -134,20 +134,6 @@ class AddressSpaceMismatchError(NamespaceMismatchError):
 class FSInformation:
     "Filesystem root, current working directory, and umask; controlled by CLONE_FS."
     creator_pid: int
-    root: rsyscall.near.DirectoryFile
-    cwd: rsyscall.near.DirectoryFile
-    # TODO add chroot too
-    async def chdir(self, task: Task, path: Pointer) -> None:
-        if task.fs != self:
-            raise NamespaceMismatchError("can only chdir in a task with this FSInformation")
-        self.cwd = rsyscall.near.DirectoryFile()
-        await rsyscall.near.chdir(task.sysif, task.to_near_pointer(path))
-
-    async def fchdir(self, task: Task, fd: FileDescriptor) -> None:
-        if task.fs != self:
-            raise NamespaceMismatchError("can only chdir in a task with this FSInformation")
-        self.cwd = rsyscall.near.DirectoryFile()
-        await rsyscall.near.fchdir(task.sysif, task.to_near_fd(fd))
 
 @dataclass(eq=False)
 class NetNamespace:

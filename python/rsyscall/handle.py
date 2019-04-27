@@ -574,9 +574,7 @@ class Task(rsyscall.far.Task):
 
     async def unshare_fs(self) -> None:
         old_fs = self.fs
-        new_fs = rsyscall.far.FSInformation(self.sysif.identifier_process.id,
-                                            old_fs.root, old_fs.cwd)
-        self.fs = new_fs
+        self.fs = rsyscall.far.FSInformation(self.sysif.identifier_process.id)
         try:
             await rsyscall.near.unshare(self.sysif, UnshareFlag.FS)
         except:
@@ -670,6 +668,10 @@ class Task(rsyscall.far.Task):
     async def chdir(self, path: Pointer[Path]) -> None:
         async with path.borrow(self) as path:
             await rsyscall.near.chdir(self.sysif, path.near)
+
+    async def fchdir(self, fd: FileDescriptor) -> None:
+        async with fd.borrow(self) as fd:
+            await rsyscall.near.fchdir(self.sysif, fd.near)
 
     async def readlink(self, path: Pointer[Path], buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
         async with path.borrow(self) as path:

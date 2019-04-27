@@ -38,10 +38,12 @@ class AddressField:
 
     def __set__(self, instance, value: SockaddrIn) -> None:
         data_bytes = value.to_bytes()
-        lib.memcpy(ffi.addressof(instance.cffi, self.name),
-                   ffi.from_buffer(data_bytes), len(data_bytes))
+        ffi.memmove(ffi.addressof(instance.cffi, self.name),
+                    ffi.from_buffer(data_bytes), len(data_bytes))
 
 class Ifreq(Struct):
+    # I'm doing it this way because this struct is just one big
+    # union. Might be a better way though.
     name = BytesField("ifr_name")
     addr = AddressField("ifr_addr")
     ifindex = IntField("ifr_ifindex")
@@ -66,7 +68,7 @@ class Ifreq(Struct):
             raise Exception("data length", len(data),
                             "doesn't match actual length of struct ifreq", cls.sizeof())
         cffi = ffi.new('struct ifreq*')
-        lib.memcpy(cffi, ffi.from_buffer(data), cls.sizeof())
+        ffi.memmove(cffi, ffi.from_buffer(data), cls.sizeof())
         return cls(cffi=cffi)
 
     @classmethod
@@ -82,3 +84,16 @@ class Ifreq(Struct):
             return f"Ifreq({strname}, ...)"
         else:
             return "Ifreq(<no interface name>, ...)"
+
+
+#### Tests ####
+from unittest import TestCase
+class TestIf(TestCase):
+    def test_ifreq(self) -> None:
+        initial = Ifreq()
+        initial.name = b"hello"
+        initial.addr = SockaddrIn(42, "127.0.0.1")
+        output = Ifreq.from_bytes(initial.to_bytes())
+        self.assertEqual(initial.name, output.name)
+        self.assertEqual(initial.addr.port, output.addr.port)
+        self.assertEqual(initial.addr.addr, output.addr.addr)

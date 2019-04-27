@@ -87,8 +87,7 @@ async def setup_stub(
     pid = describe_struct.pid
     fd_table = far.FDTable(pid)
     address_space = far.AddressSpace(pid)
-    # we assume root is shared, but cwd changes
-    fs_information = far.FSInformation(pid, root=stdtask.task.base.fs.root, cwd=near.DirectoryFile())
+    fs_information = far.FSInformation(pid)
     # we assume pid namespace is shared
     pidns = stdtask.task.base.pidns
     process = far.Process(pidns, near.Process(pid))
@@ -104,7 +103,7 @@ async def setup_stub(
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     task = Task(base_task,
                 SocketMemoryTransport(access_data_sock,
-                                      base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd))),
+                                      base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd)), None),
                 memory.AllocatorClient.make_allocator(base_task),
                 SignalMask({Signals(bit) for bit in memsys.bits(describe_struct.sigmask)}),
     )
