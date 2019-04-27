@@ -18,7 +18,7 @@ import rsyscall.handle
 from rsyscall.handle import T_pointer
 import rsyscall.far as far
 import rsyscall.near as near
-from rsyscall.struct import T_serializable, T_struct, Bytes, Int32
+from rsyscall.struct import T_serializable, T_struct, Bytes, Int32, Serializer
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr
 from rsyscall.fcntl import AT, O, F
@@ -145,36 +145,36 @@ class File:
 T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
-class TypedPointer(handle.Pointer[T_serializable]):
-    def __init__(self, task: Task, data_cls: t.Type[T_serializable], allocation: handle.AllocationInterface) -> None:
-        super().__init__(task.base, data_cls, allocation)
+class TypedPointer(handle.Pointer[T]):
+    def __init__(self, task: Task, serializer: Serializer[T], allocation: handle.AllocationInterface) -> None:
+        handle.Pointer.__init__(self, task.base, serializer, allocation)
         self.mem_task = task
 
-    async def write(self, data: T_serializable) -> WrittenTypedPointer:
+    async def write(self, data: T) -> WrittenTypedPointer:
         self.validate()
-        data_bytes = data.to_bytes()
+        data_bytes = self.serializer.to_bytes(data)
         if len(data_bytes) > self.bytesize():
             raise Exception("data is too long", len(data_bytes),
                             "for this typed pointer of size", self.bytesize())
         await self.mem_task.transport.write(self.far, data_bytes)
         self.valid = False
-        return WrittenTypedPointer(self.mem_task, data, self.allocation)
+        return WrittenTypedPointer(self.mem_task, data, self.serializer, self.allocation)
 
-    async def read(self) -> T_serializable:
+    async def read(self) -> T:
         self.validate()
         data = await self.mem_task.transport.read(self.far, self.bytesize())
-        return self.data_cls.from_bytes(data)
+        return self.serializer.from_bytes(data)
 
     def _with_alloc(self, allocation: handle.AllocationInterface) -> TypedPointer:
-        return type(self)(self.mem_task, self.data_cls, allocation)
+        return type(self)(self.mem_task, self.serializer, allocation)
 
-class WrittenTypedPointer(TypedPointer[T_serializable], handle.WrittenPointer[T_serializable]):
-    def __init__(self, task: Task, data: T_serializable, allocation: handle.AllocationInterface) -> None:
-        TypedPointer.__init__(self, task, type(data), allocation)
-        handle.WrittenPointer.__init__(self, task.base, data, allocation)
+class WrittenTypedPointer(TypedPointer[T], handle.WrittenPointer[T]):
+    def __init__(self, task: Task, data: T, serializer: Serializer[T], allocation: handle.AllocationInterface) -> None:
+        TypedPointer.__init__(self, task, serializer, allocation)
+        handle.WrittenPointer.__init__(self, task.base, data, serializer, allocation)
 
     def _with_alloc(self, allocation: handle.AllocationInterface) -> WrittenTypedPointer:
-        return type(self)(self.mem_task, self.data, allocation)
+        return type(self)(self.mem_task, self.data, self.serializer, allocation)
 
 class Task:
     def __init__(self,
@@ -212,18 +212,21 @@ class Task:
         await self.syscall.close_interface()
 
     async def malloc_struct(self, cls: t.Type[T_struct]) -> TypedPointer[T_struct]:
-        return await self.malloc_type(cls, cls.sizeof())
+        return await self.malloc_serializer(cls.get_serializer(), cls.sizeof())
 
     async def malloc_type(self, cls: t.Type[T_serializable], size: int) -> TypedPointer[T_serializable]:
+        return await self.malloc_serializer(cls.get_serializer(), size)
+
+    async def malloc_serializer(self, serializer: Serializer[T], size: int) -> TypedPointer[T]:
         allocation = await self.allocator.malloc(size)
         try:
-            return TypedPointer(self, cls, allocation)
+            return TypedPointer(self, serializer, allocation)
         except:
             allocation.free()
             raise
 
     async def to_pointer(self, data: T_serializable) -> WrittenTypedPointer[T_serializable]:
-        ptr = await self.malloc_type(type(data), len(data.to_bytes()))
+        ptr = await self.malloc_serializer(data.get_serializer(), len(data.to_bytes()))
         try:
             return await ptr.write(data)
         except:

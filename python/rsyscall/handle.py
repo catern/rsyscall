@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import AF, SOCK, Address, Socklen
 from rsyscall.sched import UnshareFlag
-from rsyscall.struct import T_serializable
+from rsyscall.struct import T_serializable, Serializer
 from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
 from rsyscall.fcntl import AT, F
 from rsyscall.path import Path
@@ -46,11 +46,12 @@ class AllocationInterface:
 # size is merely a consequence of the type of the memory region, so
 # there's no point in having something that knows the size but not the
 # type.
+T = t.TypeVar('T')
 T_pointer = t.TypeVar('T_pointer', bound='Pointer')
 @dataclass(eq=False)
-class Pointer(t.Generic[T_serializable]):
+class Pointer(t.Generic[T]):
     task: Task
-    data_cls: t.Type[T_serializable]
+    serializer: Serializer[T]
     allocation: AllocationInterface
     valid: bool = True
 
@@ -79,7 +80,7 @@ class Pointer(t.Generic[T_serializable]):
         # TODO how can I do this statically?
         if type(self) is not Pointer:
             raise Exception("subclasses of Pointer must override _with_alloc")
-        return type(self)(self.task, self.data_cls, allocation)
+        return type(self)(self.task, self.serializer, allocation)
 
     def split(self: T_pointer, size: int) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
@@ -110,13 +111,14 @@ class Pointer(t.Generic[T_serializable]):
     def __exit__(self, *args) -> None:
         self.free()
 
-class WrittenPointer(Pointer[T_serializable]):
+class WrittenPointer(Pointer[T]):
     def __init__(self,
                  task: Task,
-                 data: T_serializable,
+                 data: T,
+                 serializer: Serializer[T],
                  allocation: AllocationInterface,
     ) -> None:
-        super().__init__(task, type(data), allocation)
+        super().__init__(task, serializer, allocation)
         self.data = data
 
 # This is like a far pointer plus a segment register.
@@ -753,3 +755,41 @@ class MemoryMapping:
     async def munmap(self) -> None:
         await rsyscall.far.munmap(self.task, self.far)
 
+class StructWithTask:
+    "A fixed-size structure."
+    @classmethod
+    @abc.abstractmethod
+    def sizeof(cls) -> int:
+        "The maximum size of this structure."
+        ...
+    @classmethod
+    def get_serializer(cls: t.Type[T], task: Task) -> Serializer[T]: ...
+
+T_fdpair = t.TypeVar('T_fdpair', bound='FDPair')
+@dataclass
+class FDPair(StructWithTask):
+    first: FileDescriptor
+    second: FileDescriptor
+
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('struct fdpair')
+
+    @classmethod
+    def get_serializer(cls: t.Type[T_fdpair], task: Task) -> Serializer[T_fdpair]:
+        return FDPairSerializer(cls, task)
+
+@dataclass
+class FDPairSerializer(Serializer[T_fdpair]):
+    cls: t.Type[T_fdpair]
+    task: Task
+
+    def to_bytes(self, pair: T_fdpair) -> bytes:
+        struct = ffi.new('struct fdpair*', (pair.first, pair.second))
+        return bytes(ffi.buffer(struct))
+
+    def from_bytes(self, data: bytes) -> T_fdpair:
+        struct = ffi.cast('struct fdpair const*', ffi.from_buffer(data))
+        def make(n: int) -> FileDescriptor:
+            return self.task.make_fd_handle(rsyscall.near.FileDescriptor(int(n)))
+        return self.cls(make(struct.first), make(struct.second))

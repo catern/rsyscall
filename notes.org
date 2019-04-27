@@ -14351,6 +14351,73 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    ffi.from_buffer("type", object) is a major advance!
 
    and direct pkgconfig support!
+** convert socketpair and pipe (and other calls returning fds in memory) to handle style
+   OK so what will we return?
+
+   I guess, we know the type of the memory in a loose sense;
+   but...
+
+   I guess it would be cool if we could, like,
+   return a pointer which, when you read from it,
+   gives you an fdpair of handles.
+
+   So that would be optimal, yes.
+
+   So, for writing handles to memory,
+   we have WrittenPointer.
+   So we store the handles along with the pointer;
+   seems fine and good.
+
+   For reading them out, what do we do?
+   Well, we need to know what task owns them,
+   and that's about it.
+
+   Well... we do have that information on the pointer.
+   Maybe struct deserialization can just use that information?
+
+   That would be interesting... so essentially every struct would now be able to be handle-aware?
+   We'd just pass the task in along with the bytes?
+
+   That actually makes a lot of sense, hm.
+
+   Hmm, it could enhance a lot of things.
+   Also, this makes clear the distinction between the task, and the mem_task;
+   the latter is just what we use to read and write the memory.
+
+   We have the invariant that everything in a block of memory is owned by a single task...
+   that's certainly true since Linux doesn't have any cross-task operations
+   (well okay ptrace might be bad but whatever)
+
+   And so, yes, we'll just pass the task in. Hm.
+
+   Huh. Huh. I guess we could even...
+   Have handle.FD etc be actual structs.
+
+   Well, not really necessary, but yeah, we could.
+
+   So we could have Task at a low level,
+   and then handle.FD above it,
+   in specific files,
+   just like any other struct. Hmm.
+
+   But that doesn't work because of management stuff. Hm.
+
+   Also, Task still uses types from classes.
+
+   I... *guess* we could use far.Task.
+
+   We... could have mixins for different handle features. Or something.
+
+   It certainly would be interesting to be able to attach Task at deserialization time, hm.
+
+   hMmMmMmM
+** haskell
+   so I guess the nicely typed way to do it would be to,
+
+   pass in the additional data thiny at pointer construction time
+
+
+   ok yeah i just need serializer objects, it's obviou
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

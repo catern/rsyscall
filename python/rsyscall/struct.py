@@ -1,26 +1,31 @@
+from __future__ import annotations
 import abc
 import typing as t
 import struct
 from dataclasses import dataclass
 
 T_serializable = t.TypeVar('T_serializable', bound='Serializable')
+
+T = t.TypeVar('T')
+class Serializer(t.Generic[T]):
+    @abc.abstractmethod
+    def to_bytes(self, val: T) -> bytes: ...
+    @abc.abstractmethod
+    def from_bytes(self, data: bytes) -> T: ...
+
 class Serializable:
     @abc.abstractmethod
     def to_bytes(self) -> bytes: ...
     @classmethod
     @abc.abstractmethod
     def from_bytes(cls: t.Type[T_serializable], data: bytes) -> T_serializable: ...
+    @classmethod
+    def get_serializer(cls: t.Type[T_serializable]) -> Serializer[T_serializable]:
+        return cls # type: ignore
 
 T_struct = t.TypeVar('T_struct', bound='Struct')
 class Struct(Serializable):
     "A fixed-size structure."
-    @abc.abstractmethod
-    def to_bytes(self) -> bytes:
-        "This method is allowed to return less than sizeof() bytes, as an optimization."
-        ...
-    @classmethod
-    @abc.abstractmethod
-    def from_bytes(cls: t.Type[T_struct], data: bytes) -> T_struct: ...
     @classmethod
     @abc.abstractmethod
     def sizeof(cls) -> int:
