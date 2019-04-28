@@ -14514,6 +14514,11 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     we could have a list of pairs though
 *** okay, structured, now to batch
     I have the structure I want, now let's switch to batchpointers.
+*** hmm, problem with handle pointers
+    Leaking this pointer is causing exceptions.
+    Why??? merely leaking shouldn't cause problems.
+
+    ugh it was an alignment bug, of course
 ** better execveat interface in general
     It's pretty awkward to have to go through the thread. Hm.
 

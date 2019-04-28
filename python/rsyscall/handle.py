@@ -103,6 +103,10 @@ class Pointer(t.Generic[T]):
             self.allocation.free()
 
     def __del__(self) -> None:
+        # This isn't strictly necessary because the allocation will free itself on __del__.
+        # But, that will only happen when *all* pointers referring to the allocation are collected;
+        # not just the valid one.
+        # So, this ensures GC is a bit more prompt.
         self.free()
 
     def __enter__(self) -> Pointer:

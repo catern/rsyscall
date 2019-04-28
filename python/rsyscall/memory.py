@@ -26,6 +26,8 @@ class Allocation(handle.AllocationInterface):
 
     @property
     def pointer(self) -> Pointer:
+        if not self.valid:
+            raise Exception("can't get pointer for freed allocation")
         return self.arena.mapping.pointer + self.start
 
     @property
@@ -33,10 +35,9 @@ class Allocation(handle.AllocationInterface):
         return self.pointer.near
 
     def free(self) -> None:
-        if not self.valid:
-            raise Exception("double-free", self.arena, self.start, self.end)
-        self.valid = False
-        self.arena.allocations.remove(self)
+        if self.valid:
+            self.valid = False
+            self.arena.allocations.remove(self)
 
     def size(self) -> int:
         return self.end - self.start
@@ -56,6 +57,9 @@ class Allocation(handle.AllocationInterface):
         return self.pointer
 
     def __exit__(self, *args, **kwargs) -> None:
+        self.free()
+
+    def __del__(self) -> None:
         self.free()
 
 class AnonymousMapping:
@@ -113,7 +117,13 @@ class Arena:
         await self.mapping.unmap()
 
 def align(num: int, alignment: int) -> int:
-    return num + (alignment - (num % alignment))
+    # TODO this is ugly, isn't there an easier way to do this?
+    # we do it this way so that we don't overallocate when overhang is 0;
+    overhang = (num % alignment)
+    if overhang > 0:
+        return num + (alignment - overhang)
+    else:
+        return num
 
 class AllocatorInterface:
     @contextlib.asynccontextmanager
@@ -173,7 +183,9 @@ class Allocator:
                         # we hit the end of the arena and now need to allocate more for the remaining sizes:
                         rest_sizes = sizes[size_index:]
                         # let's do it in bulk:
-                        remaining_size = sum([size for size, alignment in rest_sizes])
+                        # TODO this usage of align() overestimates how much memory we need;
+                        # it's not a big deal though, because most things have alignment=1
+                        remaining_size = sum([align(size, alignment) for size, alignment in rest_sizes])
                         mapping = await AnonymousMapping.make(self.task,
                                                               align(remaining_size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
                         arena = Arena(mapping)
@@ -182,7 +194,8 @@ class Allocator:
                                 raise Exception("can't handle alignments of more than 4096 bytes", alignment)
                             alloc = arena.malloc(size, alignment)
                             if alloc is None:
-                                raise Exception("some kind of internal error caused a freshly created memory arena to return null for an allocation")
+                                raise Exception("some kind of internal error caused a freshly created memory arena",
+                                                " to return null for an allocation, size", size, "alignment", alignment)
                             else:
                                 pointers.append(stack.enter_context(alloc))
                 yield pointers
