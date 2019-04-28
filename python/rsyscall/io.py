@@ -227,7 +227,7 @@ class Task:
                              mountflags, data_ptr.near)
 
     async def exit(self, status: int) -> None:
-        await raw_syscall.exit(self.syscall, status)
+        await self.base.exit(status)
         await self.close()
 
     async def chdir(self, path: 'Path') -> None:

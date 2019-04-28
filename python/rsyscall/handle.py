@@ -827,6 +827,16 @@ class Task(rsyscall.far.Task):
                 await stack.enter_async_context(arg.borrow(self))
             await rsyscall.near.execveat(self.sysif, None, filename.near, argv.near, envp.near, flags)
 
+    async def exit(self, status: int) -> None:
+        await rsyscall.near.exit(self.sysif, status)
+
+    async def clone(self, flags: int, child_stack: t.Optional[WrittenPointer],
+                    # these are both standard pointers 8-byte integers
+                    ptid: t.Optional[Pointer], ctid: t.Optional[Pointer],
+                    # this is a pretty wacky pointer
+                    newtls: t.Optional[Pointer]) -> int:
+        pass
+
 @dataclass
 class Process:
     task: Task
