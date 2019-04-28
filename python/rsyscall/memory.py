@@ -6,6 +6,7 @@ import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.near
 import rsyscall.far as far
 import rsyscall.handle as handle
+from rsyscall.handle import AllocationInterface
 import trio
 import abc
 import enum
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 from rsyscall.sys.mman import ProtFlag, MapFlag
 
 @dataclass
-class Allocation(handle.AllocationInterface):
+class Allocation(AllocationInterface):
     arena: Arena
     start: int
     end: int
@@ -126,17 +127,43 @@ def align(num: int, alignment: int) -> int:
         return num
 
 class AllocatorInterface:
-    @contextlib.asynccontextmanager
-    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.AsyncGenerator[t.List[Pointer], None]:
+    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[AllocationInterface]:
         # A naive bulk allocator
-        pointers: t.List[Pointer] = []
+        allocs: t.List[AllocationInterface] = []
         with contextlib.ExitStack() as stack:
             for size, alignment in sizes:
-                pointers.append(stack.enter_context(await self.malloc(size, alignment)))
-            yield pointers
+                allocs.append(await self.malloc(size, alignment))
+            return allocs
 
     @abc.abstractmethod
-    def malloc(self, size: int, alignment: int) -> t.Awaitable[t.ContextManager[Pointer]]: ...
+    async def malloc(self, size: int, alignment: int) -> AllocationInterface: ...
+
+class PreallocatedAllocation(AllocationInterface):
+    def __init__(self, pointer: Pointer, size: int) -> None:
+        self.pointer = pointer
+        self._size = size
+
+    @property
+    def near(self) -> rsyscall.near.Pointer:
+        return self.pointer.near
+
+    def free(self) -> None:
+        pass
+
+    def split(self, size: int) -> t.Tuple[PreallocatedAllocation, PreallocatedAllocation]:
+        raise Exception("can't split preallocated")
+
+    def size(self) -> int:
+        return self._size
+
+    def __enter__(self) -> 'Pointer':
+        return self.pointer
+
+    def __exit__(self, *args, **kwargs) -> None:
+        self.free()
+
+    def __del__(self) -> None:
+        self.free()
 
 class PreallocatedAllocator(AllocatorInterface):
     def __init__(self, base_pointer: far.Pointer, length: int) -> None:
@@ -144,13 +171,12 @@ class PreallocatedAllocator(AllocatorInterface):
         self.length = length
         self.index = 0
 
-    async def malloc(self, size: int, alignment: int) -> t.ContextManager[Pointer]:
+    async def malloc(self, size: int, alignment: int) -> PreallocatedAllocation:
         if (self.index + size > self.length):
             raise Exception("too much memory allocated")
         ret = self.base_pointer + self.index
         self.index += size
-        return contextlib.nullcontext(ret) # type: ignore
-        # we don't free the memory
+        return PreallocatedAllocation(ret, size)
 
 class Allocator:
     """A somewhat-efficient memory allocator.
@@ -162,43 +188,41 @@ class Allocator:
         self.lock = trio.Lock()
         self.arenas: t.List[Arena] = []
 
-    @contextlib.asynccontextmanager
-    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.AsyncGenerator[t.List[Pointer], None]:
-            pointers: t.List[Pointer] = []
-            async with contextlib.AsyncExitStack() as stack:
-                async with self.lock:
-                    size_index = 0
-                    for arena in self.arenas:
-                        size, alignment = sizes[size_index]
-                        if alignment > 4096:
-                            raise Exception("can't handle alignments of more than 4096 bytes", alignment)
-                        alloc = arena.malloc(size, alignment)
-                        if alloc:
-                            pointers.append(stack.enter_context(alloc))
-                            size_index += 1
-                            if size_index == len(sizes):
-                                # we finished all the allocations, stop allocating
-                                break
-                    if size_index != len(sizes):
-                        # we hit the end of the arena and now need to allocate more for the remaining sizes:
-                        rest_sizes = sizes[size_index:]
-                        # let's do it in bulk:
-                        # TODO this usage of align() overestimates how much memory we need;
-                        # it's not a big deal though, because most things have alignment=1
-                        remaining_size = sum([align(size, alignment) for size, alignment in rest_sizes])
-                        mapping = await AnonymousMapping.make(self.task,
-                                                              align(remaining_size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
-                        arena = Arena(mapping)
-                        for size, alignment in rest_sizes:
-                            if alignment > 4096:
-                                raise Exception("can't handle alignments of more than 4096 bytes", alignment)
-                            alloc = arena.malloc(size, alignment)
-                            if alloc is None:
-                                raise Exception("some kind of internal error caused a freshly created memory arena",
-                                                " to return null for an allocation, size", size, "alignment", alignment)
-                            else:
-                                pointers.append(stack.enter_context(alloc))
-                yield pointers
+    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.List[Allocation]:
+        allocations: t.List[Allocation] = []
+        async with self.lock:
+            size_index = 0
+            for arena in self.arenas:
+                size, alignment = sizes[size_index]
+                if alignment > 4096:
+                    raise Exception("can't handle alignments of more than 4096 bytes", alignment)
+                alloc = arena.malloc(size, alignment)
+                if alloc:
+                    allocations.append(alloc)
+                    size_index += 1
+                    if size_index == len(sizes):
+                        # we finished all the allocations, stop allocating
+                        break
+            if size_index != len(sizes):
+                # we hit the end of the arena and now need to allocate more for the remaining sizes:
+                rest_sizes = sizes[size_index:]
+                # let's do it in bulk:
+                # TODO this usage of align() overestimates how much memory we need;
+                # it's not a big deal though, because most things have alignment=1
+                remaining_size = sum([align(size, alignment) for size, alignment in rest_sizes])
+                mapping = await AnonymousMapping.make(self.task,
+                                                      align(remaining_size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
+                arena = Arena(mapping)
+                for size, alignment in rest_sizes:
+                    if alignment > 4096:
+                        raise Exception("can't handle alignments of more than 4096 bytes", alignment)
+                    alloc = arena.malloc(size, alignment)
+                    if alloc is None:
+                        raise Exception("some kind of internal error caused a freshly created memory arena",
+                                        " to return null for an allocation, size", size, "alignment", alignment)
+                    else:
+                        allocations.append(alloc)
+        return allocations
 
     async def malloc(self, size: int, alignment: int) -> Allocation:
         if alignment > 4096:
@@ -238,20 +262,14 @@ class AllocatorClient(AllocatorInterface):
     def inherit(self, task: far.Task) -> AllocatorClient:
         return AllocatorClient(task, self.allocator)
 
-    def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.AsyncContextManager[t.List[Pointer]]:
+    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[AllocationInterface]:
         if self.task.address_space != self.allocator.task.address_space:
             raise Exception("task and allocator are in different address spaces",
                             self.task.address_space, self.allocator.task.address_space)
-        return self.allocator.bulk_malloc(sizes)
+        return await self.allocator.bulk_malloc(sizes)
 
-    def bulk_malloc_a(self, sizes: t.List[t.Tuple[int, int]]) -> t.AsyncContextManager[t.List[Pointer]]:
+    async def malloc(self, size: int, alignment: int=1) -> Allocation:
         if self.task.address_space != self.allocator.task.address_space:
             raise Exception("task and allocator are in different address spaces",
                             self.task.address_space, self.allocator.task.address_space)
-        return self.allocator.bulk_malloc_a(sizes)
-
-    def malloc(self, size: int, alignment: int=1) -> t.Awaitable[Allocation]:
-        if self.task.address_space != self.allocator.task.address_space:
-            raise Exception("task and allocator are in different address spaces",
-                            self.task.address_space, self.allocator.task.address_space)
-        return self.allocator.malloc(size, alignment)
+        return await self.allocator.malloc(size, alignment)

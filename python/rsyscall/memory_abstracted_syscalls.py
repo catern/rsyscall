@@ -105,9 +105,10 @@ async def perform_batch(
         batch: t.Callable[[BatchSemantics], T],
 ) -> T:
     sizes = NullSemantics.run(batch)
-    ptrs = await stack.enter_async_context(allocator.bulk_malloc(sizes))
-    allocations = [BatchPointer(ptr, size) for ptr, (size, alignment) in zip(ptrs, sizes)]
-    ret, desired_writes = WriteSemantics.run(batch, allocations)
+    allocations = await allocator.bulk_malloc(sizes)
+    ptrs = [BatchPointer(allocation.pointer, size)
+            for allocation, (size, alignment) in zip(allocations, sizes)]
+    ret, desired_writes = WriteSemantics.run(batch, ptrs)
     await transport.batch_write(desired_writes)
     return ret
 
