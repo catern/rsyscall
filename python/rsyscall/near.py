@@ -78,6 +78,7 @@ class SYS(enum.IntEnum):
     pipe2 = lib.SYS_pipe2
     socketpair = lib.SYS_socketpair
     execveat = lib.SYS_execveat
+    kill = lib.SYS_kill
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -465,3 +466,6 @@ async def execveat(sysif: SyscallInterface,
             return exn
     with trio.MultiError.catch(handle):
         await sysif.syscall(SYS.execveat, dirfd, path, argv, envp, flags)
+
+async def kill(sysif: SyscallInterface, pid: Process, sig: signal.Signals) -> None:
+    await sysif.syscall(SYS.kill, pid, sig)

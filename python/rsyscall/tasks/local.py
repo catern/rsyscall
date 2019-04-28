@@ -75,7 +75,7 @@ def _make_local_task() -> Task:
     pid_namespace = far.PidNamespace(pid)
     process = far.Process(pid_namespace, near.Process(pid))
     base_task = handle.Task(
-        LocalSyscall(process.near), process, base.FDTable(pid), base.local_address_space,
+        LocalSyscall(process.near), process.near, base.FDTable(pid), base.local_address_space,
         far.FSInformation(pid),
         pid_namespace,
         far.NetNamespace(pid),

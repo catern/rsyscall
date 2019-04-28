@@ -568,7 +568,7 @@ class Task(rsyscall.far.Task):
     # TODO delete this
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
-                 process: rsyscall.far.Process,
+                 process: t.Union[rsyscall.near.Process, Process],
                  fd_table: rsyscall.far.FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  fs: rsyscall.far.FSInformation,
@@ -576,7 +576,10 @@ class Task(rsyscall.far.Task):
                  netns: rsyscall.far.NetNamespace,
     ) -> None:
         self.sysif = sysif
-        self.process = process
+        if isinstance(process, Process):
+            self.process = process
+        else:
+            self.process = Process(self, process)
         self.fd_table = fd_table
         self.address_space = address_space
         self.fs = fs
@@ -829,6 +832,11 @@ class Process:
     task: Task
     near: rsyscall.near.Process
 
+    @property
+    def far(self) -> rsyscall.far.Process:
+        # TODO delete this property
+        return rsyscall.far.Process(self.task.pidns, self.near)
+
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:
         async with infop.borrow(self.task) as infop_b:
@@ -837,6 +845,9 @@ class Process:
             else:
                 async with rusage.borrow(self.task) as rusage_b:
                     await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, rusage_b.near)
+
+    async def kill(self, sig: Signals) -> None:
+        await rsyscall.near.kill(self.task.sysif, self.near, sig)
 
 @dataclass
 class MemoryMapping:

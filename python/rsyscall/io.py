@@ -1445,7 +1445,7 @@ class Multiplexer:
     pass
 
 class ChildProcess:
-    def __init__(self, process: base.Process, child_events_channel: trio.abc.SendChannel,
+    def __init__(self, process: handle.Process, child_events_channel: trio.abc.SendChannel,
                  monitor: ChildProcessMonitorInternal) -> None:
         self.process = process
         self.child_events_channel = child_events_channel
@@ -1499,7 +1499,7 @@ class ChildProcess:
         return self.monitor.signal_queue.sigfd.underlying.task.syscall
 
     @contextlib.asynccontextmanager
-    async def get_pid(self) -> t.AsyncGenerator[t.Optional[base.Process], None]:
+    async def get_pid(self) -> t.AsyncGenerator[t.Optional[handle.Process], None]:
         """Returns the underlying process, or None if it's already dead.
 
         Operating on the pid of a child process requires taking the wait_lock to make sure
@@ -1518,14 +1518,14 @@ class ChildProcess:
     async def send_signal(self, sig: signal.Signals) -> None:
         async with self.get_pid() as process:
             if process:
-                await raw_syscall.kill(self.syscall, process, sig)
+                await process.kill(sig)
             else:
                 raise Exception("child is already dead!")
 
     async def kill(self) -> None:
         async with self.get_pid() as process:
             if process:
-                await raw_syscall.kill(self.syscall, process, signal.SIGKILL)
+                await process.kill(Signals.SIGKILL)
 
     async def __aenter__(self) -> None:
         pass
@@ -1553,7 +1553,7 @@ class ChildProcessMonitorInternal:
         self.cloning_task: t.Optional[base.Task] = None
         self.waited_on_while_cloning: t.Optional[ChildProcess] = None
 
-    def add_task(self, process: base.Process) -> ChildProcess:
+    def add_task(self, process: handle.Process) -> ChildProcess:
         send, receive = trio.open_memory_channel(math.inf)
         child_task = ChildProcess(process, receive, self)
         self.task_map[process.near.id] = send
@@ -1584,7 +1584,7 @@ class ChildProcessMonitorInternal:
             if waited_on_while_cloning is not None:
                 return waited_on_while_cloning
             else:
-                return self.add_task(base.Process(clone_task.pidns, near.Process(tid)))
+                return self.add_task(handle.Process(clone_task, near.Process(tid)))
 
     async def do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
@@ -1625,7 +1625,7 @@ class ChildProcessMonitorInternal:
                 if pid not in self.task_map:
                     if self.cloning_task is not None:
                         # this is the child we were just cloning. it died before clone returned.
-                        child_task = self.add_task(base.Process(self.cloning_task.pidns, near.Process(pid)))
+                        child_task = self.add_task(handle.Process(self.cloning_task, near.Process(pid)))
                         self.waited_on_while_cloning = child_task
                         # only one clone happens at a time, if we get more unknown tids, they're a bug
                         self.cloning_task = None
@@ -1669,8 +1669,8 @@ class ChildProcessMonitor:
                             "we can't be inherited because we can't use CLONE_PARENT")
         if child.monitor is not self.internal:
             raise Exception("child", child, "is not from our monitor", self.internal)
-        if child.process is not cloning_task.process:
-            raise Exception("child process", child, "is not the same as cloning task process", cloning_task)
+        if child.process != cloning_task.process:
+            raise Exception("child process", child.process, "is not the same as cloning task process", cloning_task.process)
         # we now know that the cloning task is in a process which is a child process of the waiting task.  so
         # we know that if use CLONE_PARENT while cloning in the cloning task, the resulting tasks will be
         # children of the waiting task, so we can use the waiting task to wait on them.
@@ -1965,7 +1965,7 @@ class ChildConnection(base.SyscallInterface):
         self.server_task = server_task
         self.futex_task = futex_task
         self.identifier_process = self.server_task.process.near
-        self.logger = logging.getLogger(f"rsyscall.ChildConnection.{int(self.server_task.process)}")
+        self.logger = logging.getLogger(f"rsyscall.ChildConnection.{int(self.server_task.process.near)}")
         self.infd: handle.FileDescriptor
         self.outfd: handle.FileDescriptor
         self.activity_fd: near.FileDescriptor
@@ -2724,7 +2724,7 @@ async def make_robust_futex_task(
     remote_mapping_pointer = remote_mapping.as_pointer()
 
     # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
-    futex_value = FUTEX_WAITERS|(int(child_stdtask.task.base.process) & FUTEX_TID_MASK)
+    futex_value = FUTEX_WAITERS|(int(child_stdtask.task.base.process.near) & FUTEX_TID_MASK)
     # this is distasteful and leaky, we're relying on the fact that the PreallocatedAllocator never frees things
     remote_futex_pointer = await set_singleton_robust_futex(
         child_stdtask.task.base, child_stdtask.task.transport,

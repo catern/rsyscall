@@ -105,7 +105,7 @@ class PidNamespace:
     "The namespace for tasks, processes, process groups, and sessions"
     creator_pid: int
 
-@dataclass
+@dataclass(eq=False)
 class Process:
     namespace: PidNamespace
     near: rsyscall.near.Process
@@ -149,7 +149,6 @@ class NetNamespace:
 @dataclass
 class Task:
     sysif: rsyscall.near.SyscallInterface
-    process: Process
     fd_table: FDTable
     address_space: AddressSpace
     fs: FSInformation

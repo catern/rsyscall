@@ -235,7 +235,7 @@ async def ssh_bootstrap(
     # TODO we should get this from the SSHHost, this is usually going
     # to be common for all connections and we should express that
     net = far.NetNamespace(new_pid)
-    new_base_task = handle.Task(new_syscall, new_process, new_fd_table, new_address_space, new_fs_information,
+    new_base_task = handle.Task(new_syscall, new_process.near, new_fd_table, new_address_space, new_fs_information,
                                 new_pid_namespace, net)
     handle_remote_syscall_fd = new_base_task.make_fd_handle(remote_syscall_fd)
     new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
