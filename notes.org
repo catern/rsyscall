@@ -14673,6 +14673,12 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
    we need to figure out how we are going to manage ownership of the pointer
 ** improve exceptions for path operations by using path in WrittenPointer
+** throw an exception if we try to free a pointer while it's borrowed
+** consider naming enum which can't be shortened to just a prefix, SpecificPREFIX
+   i.e.,
+   the MSG flags for sendmsg can't be named MSG since there are other such flags.
+
+   But I could name the enum SendMSG.
 ** make socklen functions return Pointer[Pointer[Sockaddr]]
    Essentially we'll transform the type of the socklen buffer,
    and augment the serializer,

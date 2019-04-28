@@ -48,6 +48,7 @@ class AllocationInterface:
 # there's no point in having something that knows the size but not the
 # type.
 T = t.TypeVar('T')
+U = t.TypeVar('U')
 T_pointer = t.TypeVar('T_pointer', bound='Pointer')
 @dataclass(eq=False)
 class Pointer(t.Generic[T]):
@@ -129,6 +130,14 @@ class Pointer(t.Generic[T]):
         data = await self.transport.read(self.far, self.bytesize())
         return self.serializer.from_bytes(data)
 
+    def _reinterpret(self, serializer: Serializer[U]) -> Pointer[U]:
+        # TODO how can we check to make sure we don't reinterpret in wacky ways?
+        # maybe we should only be able to reinterpret in ways that are allowed by the serializer?
+        # so maybe it's a method on the Serializer? cast_to(Type)?
+        self.validate()
+        self.valid = False
+        return Pointer(self.task, self.transport, serializer, self.allocation)
+
     def __enter__(self) -> Pointer:
         return self
 
@@ -146,10 +155,15 @@ class WrittenPointer(Pointer[T]):
         super().__init__(task, transport, serializer, allocation)
         self.data = data
 
+    @property
+    def value(self) -> T:
+        # can't decide what to call this field
+        return self.data
+
     def _with_alloc(self, allocation: AllocationInterface) -> WrittenPointer:
         if type(self) is not WrittenPointer:
             raise Exception("subclasses of WrittenPointer must override _with_alloc")
-        return WrittenPointer(self.task, self.transport, self.data, self.serializer, allocation)
+        return type(self)(self.task, self.transport, self.data, self.serializer, allocation)
 
 # This is like a far pointer plus a segment register.
 # It means that, as long as it doesn't throw an exception,
@@ -354,12 +368,33 @@ class FileDescriptor:
             return buf.split(ret)
 
     async def sendmsg(self, msg: WrittenPointer[SendMsghdr], flags: SendmsgFlags
-    ) -> t.Tuple[t.List[Pointer], t.List[Pointer]]:
-        raise Exception
+    ) -> t.Tuple[IovecList, IovecList]:
+        async with contextlib.AsyncExitStack() as stack:
+            await stack.enter_async_context(msg.borrow(self.task))
+            if msg.value.name:
+                await stack.enter_async_context(msg.value.name.borrow(self.task))
+            if msg.value.control:
+                await stack.enter_async_context(msg.value.control.borrow(self.task))
+            await stack.enter_async_context(msg.value.iov.borrow(self.task))
+            for iovec_elem in msg.value.iov.value:
+                await stack.enter_async_context(iovec_elem.borrow(self.task))
+            ret = await rsyscall.near.sendmsg(self.task.sysif, self.near, msg.near, flags)
+        return msg.value.iov.value.split(ret)
 
     async def recvmsg(self, msg: WrittenPointer[RecvMsghdr], flags: RecvmsgFlags
-    ) -> t.Tuple[t.List[Pointer], t.List[Pointer], Pointer[RecvMsghdrOut]]:
-        raise Exception
+    ) -> t.Tuple[IovecList, IovecList, Pointer[RecvMsghdrOut]]:
+        async with contextlib.AsyncExitStack() as stack:
+            await stack.enter_async_context(msg.borrow(self.task))
+            if msg.value.name:
+                await stack.enter_async_context(msg.value.name.borrow(self.task))
+            if msg.value.control:
+                await stack.enter_async_context(msg.value.control.borrow(self.task))
+            await stack.enter_async_context(msg.value.iov.borrow(self.task))
+            for iovec_elem in msg.value.iov.value:
+                await stack.enter_async_context(iovec_elem.borrow(self.task))
+            ret = await rsyscall.near.recvmsg(self.task.sysif, self.near, msg.near, flags)
+        valid, invalid = msg.value.iov.value.split(ret)
+        return valid, invalid, msg.value.to_out(msg)
 
     async def recv(self, buf: T_pointer, flags: int) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
@@ -883,7 +918,7 @@ class Arg(bytes, Serializable):
             return cls(data[0:nullidx])
 
 T_arglist = t.TypeVar('T_arglist', bound='ArgList')
-class ArgList(t.List[Pointer], HasSerializer):
+class ArgList(t.List[Pointer[Arg]], HasSerializer):
     @classmethod
     def get_serializer(cls, task: Task) -> Serializer[T_arglist]:
         return ArgListSerializer()
@@ -902,19 +937,39 @@ class ArgListSerializer(Serializer[T_arglist]):
 
 ################################################################################
 # sendmsg/recvmsg
+class IovecList(t.List[Pointer], Serializable):
+    def split(self, n: int) -> t.Tuple[IovecList, IovecList]:
+        valid: t.List[Pointer] = []
+        invalid: t.List[Pointer] = []
+        for ptr in self:
+            size = ptr.bytesize()
+            if size >= n:
+                valid.append(ptr)
+                n -= size
+            elif n > 0:
+                validp, invalidp = ptr.split(n)
+                valid.append(validp)
+                assert len(invalid) == 0
+                invalid.append(invalidp)
+                n = 0
+            else:
+                invalid.append(ptr)
+        return IovecList(valid), IovecList(invalid)
 
+    def to_bytes(self) -> bytes:
+        ret = b""
+        for ptr in self:
+            ret += bytes(ffi.buffer(ffi.new('struct iovec const*', {
+                "iov_base": ffi.cast('void*', int(ptr.near)),
+                "iov_len": ptr.bytesize(),
+            })))
+        return ret
 
-# hmm it would be nice if this could be generic in the pointer type
-# though, hmm, maybe we don't even need typedpointer.
-# maybe we can just have a method on some transport... which takes pointer and data.
-# urgh.
-# anyway the thought is, I want Msghdr to contain writable/readable pointers.
-# so the user can just read off this struct, and boom
-# oh but we can't even have higher-kinded type params
-# so at most we can be generic in terms of some capability object,
-# which says whether or not we can read/write or not.
-class IovecList:
-    pass
+    T = t.TypeVar('T', bound='IovecList')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        raise Exception("can't get pointer handles from raw bytes")
+
 class CmsghdrList:
     pass
 
@@ -925,7 +980,15 @@ class SendMsghdr(Serializable):
     control: t.Optional[WrittenPointer[CmsghdrList]]
 
     def to_bytes(self) -> bytes:
-        raise Exception("not done yet")
+        return bytes(ffi.buffer(ffi.new('struct msghdr*', {
+            "msg_name": ffi.cast('void*', int(self.name.near)) if self.name else ffi.NULL,
+            "msg_namelen": self.name.bytesize() if self.name else 0,
+            "msg_iov": ffi.cast('void*', int(self.iov.near)),
+            "msg_iovlen": len(self.iov.value),
+            "msg_control": ffi.cast('void*', int(self.control.near)) if self.control else ffi.NULL,
+            "msg_controllen": self.control.bytesize() if self.control else 0,
+            "msg_flags": 0,
+        })))
 
     T = t.TypeVar('T', bound='SendMsghdr')
     @classmethod
@@ -939,12 +1002,25 @@ class RecvMsghdr(Serializable):
     control: t.Optional[Pointer[CmsghdrList]]
 
     def to_bytes(self) -> bytes:
-        raise Exception("not done yet")
+        return bytes(ffi.buffer(ffi.new('struct msghdr*', {
+            "msg_name": ffi.cast('void*', int(self.name.near)) if self.name else ffi.NULL,
+            "msg_namelen": self.name.bytesize() if self.name else 0,
+            "msg_iov": ffi.cast('void*', int(self.iov.near)),
+            "msg_iovlen": len(self.iov.value),
+            "msg_control": ffi.cast('void*', int(self.control.near)) if self.control else ffi.NULL,
+            "msg_controllen": self.control.bytesize() if self.control else 0,
+            "msg_flags": 0,
+        })))
 
     T = t.TypeVar('T', bound='RecvMsghdr')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         raise Exception("can't get pointer handles from raw bytes")
+
+    def to_out(self, ptr: Pointer[RecvMsghdr]) -> Pointer[RecvMsghdrOut]:
+        # what a mouthful
+        serializer = RecvMsghdrOutSerializer(self.name, self.control)
+        return ptr._reinterpret(serializer)
 
 @dataclass
 class RecvMsghdrOut:
@@ -957,22 +1033,23 @@ class RecvMsghdrOut:
     control_rest: t.Optional[Pointer[CmsghdrList]]
 
 @dataclass
-class MsghdrOutSerializer(Serializer[RecvMsghdrOut]):
+class RecvMsghdrOutSerializer(Serializer[RecvMsghdrOut]):
     name: t.Optional[Pointer[Address]]
     control: t.Optional[Pointer[CmsghdrList]]
 
     def to_bytes(self, x: RecvMsghdrOut) -> bytes:
         raise Exception("not going to bother implementing this")
 
-    @classmethod
     def from_bytes(self, data: bytes) -> RecvMsghdrOut:
         struct = ffi.cast('struct msghdr*', ffi.from_buffer(data))
         if self.name is None:
             name: t.Optional[Pointer[Address]] = None
+            name_rest: t.Optional[Pointer[Address]] = None
         else:
             name, name_rest = self.name.split(struct.msg_namelen)
         if self.control is None:
             control: t.Optional[Pointer[CmsghdrList]] = None
+            control_rest: t.Optional[Pointer[CmsghdrList]] = None
         else:
             control, control_rest = self.control.split(struct.msg_controllen)
         flags = MsghdrFlags(struct.msg_flags)
