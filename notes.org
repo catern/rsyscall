@@ -14487,7 +14487,7 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    now I'll do exec without batching,
    so that I can see how it looks with the handle memory nice API,
    and then figure out how to improve the batch API to work with that.
-*** how to structure execveat pointers
+*** DONE how to structure execveat pointers
     So the ArgList is the big tricky one.
 
     We can have its serializer throw if you call from_bytes, that's fine.
@@ -14505,6 +14505,32 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     which the real handles inherit from...
 
     or, an interface...
+
+    oh, or be a generic, taking the pointer to use as an argument
+
+    we can't have an env class because it doesn't make sense,
+    we can't serialize the pointers within it separately.
+
+    we could have a list of pairs though
+*** okay, structured, now to batch
+    I have the structure I want, now let's switch to batchpointers.
+** better execveat interface in general
+    It's pretty awkward to have to go through the thread. Hm.
+
+    ugh what, wait_for_mm_release isn't even used :(
+
+    ah okay, but we do get mmrelease as an exception
+
+    cool cool
+
+    could we get rid of thread then?
+
+    confusing
+
+    the principle is, we need to be able to know when the other side has hung up,
+    inside the syscallinterface.
+
+    if we know that, then yes, we don't need thread.
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

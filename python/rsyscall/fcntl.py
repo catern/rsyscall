@@ -4,6 +4,7 @@ import enum
 import os
 
 class AT(enum.IntFlag):
+    NONE = 0
     FDCWD = lib.AT_FDCWD
     REMOVEDIR = lib.AT_REMOVEDIR
     EMPTY_PATH = lib.AT_EMPTY_PATH

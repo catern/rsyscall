@@ -77,6 +77,7 @@ class SYS(enum.IntEnum):
     getsockname = lib.SYS_getsockname
     pipe2 = lib.SYS_pipe2
     socketpair = lib.SYS_socketpair
+    execveat = lib.SYS_execveat
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -448,3 +449,19 @@ async def pipe2(sysif: SyscallInterface, pipefd: Pointer, flags: int) -> None:
 
 async def socketpair(sysif: SyscallInterface, domain: int, type: int, protocol: int, sv: Pointer) -> None:
     await sysif.syscall(SYS.socketpair, domain, type, protocol, sv)
+
+import trio
+from rsyscall.exceptions import RsyscallHangup
+async def execveat(sysif: SyscallInterface,
+                   dirfd: t.Optional[FileDescriptor], path: Pointer,
+                   argv: Pointer, envp: Pointer, flags: int) -> None:
+    logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
+    if dirfd is None:
+        dirfd = AT.FDCWD # type: ignore
+    def handle(exn):
+        if isinstance(exn, RsyscallHangup):
+            return None
+        else:
+            return exn
+    with trio.MultiError.catch(handle):
+        await sysif.syscall(SYS.execveat, dirfd, path, argv, envp, flags)
