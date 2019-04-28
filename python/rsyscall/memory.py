@@ -93,14 +93,14 @@ class Arena:
         self.mapping = mapping
         self.allocations: t.List[Allocation] = []
 
-    def malloc(self, size: int) -> t.Optional[Allocation]:
+    def malloc(self, size: int, alignment: int) -> t.Optional[Allocation]:
         newstart = 0
         for i, alloc in enumerate(self.allocations):
             if (newstart+size) <= alloc.start:
                 newalloc = Allocation(self, newstart, newstart+size)
                 self.allocations.insert(i, newalloc)
                 return newalloc
-            newstart = alloc.end
+            newstart = align(alloc.end, alignment)
         if (newstart+size) <= self.mapping.length:
             newalloc = Allocation(self, newstart, newstart+size)
             self.allocations.append(newalloc)
@@ -117,16 +117,16 @@ def align(num: int, alignment: int) -> int:
 
 class AllocatorInterface:
     @contextlib.asynccontextmanager
-    async def bulk_malloc(self, sizes: t.List[int]) -> t.AsyncGenerator[t.List[Pointer], None]:
+    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.AsyncGenerator[t.List[Pointer], None]:
         # A naive bulk allocator
         pointers: t.List[Pointer] = []
         with contextlib.ExitStack() as stack:
-            for size in sizes:
-                pointers.append(stack.enter_context(await self.malloc(size)))
+            for size, alignment in sizes:
+                pointers.append(stack.enter_context(await self.malloc(size, alignment)))
             yield pointers
 
     @abc.abstractmethod
-    def malloc(self, size: int) -> t.Awaitable[t.ContextManager[Pointer]]: ...
+    def malloc(self, size: int, alignment: int) -> t.Awaitable[t.ContextManager[Pointer]]: ...
 
 class PreallocatedAllocator(AllocatorInterface):
     def __init__(self, base_pointer: far.Pointer, length: int) -> None:
@@ -134,7 +134,7 @@ class PreallocatedAllocator(AllocatorInterface):
         self.length = length
         self.index = 0
 
-    async def malloc(self, size: int) -> t.ContextManager[Pointer]:
+    async def malloc(self, size: int, alignment: int) -> t.ContextManager[Pointer]:
         if (self.index + size > self.length):
             raise Exception("too much memory allocated")
         ret = self.base_pointer + self.index
@@ -153,13 +153,16 @@ class Allocator:
         self.arenas: t.List[Arena] = []
 
     @contextlib.asynccontextmanager
-    async def bulk_malloc(self, sizes: t.List[int]) -> t.AsyncGenerator[t.List[Pointer], None]:
+    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.AsyncGenerator[t.List[Pointer], None]:
             pointers: t.List[Pointer] = []
             async with contextlib.AsyncExitStack() as stack:
                 async with self.lock:
                     size_index = 0
                     for arena in self.arenas:
-                        alloc = arena.malloc(sizes[size_index])
+                        size, alignment = sizes[size_index]
+                        if alignment > 4096:
+                            raise Exception("can't handle alignments of more than 4096 bytes", alignment)
+                        alloc = arena.malloc(size, alignment)
                         if alloc:
                             pointers.append(stack.enter_context(alloc))
                             size_index += 1
@@ -170,30 +173,34 @@ class Allocator:
                         # we hit the end of the arena and now need to allocate more for the remaining sizes:
                         rest_sizes = sizes[size_index:]
                         # let's do it in bulk:
-                        remaining_size = sum(rest_sizes)
+                        remaining_size = sum([size for size, alignment in rest_sizes])
                         mapping = await AnonymousMapping.make(self.task,
                                                               align(remaining_size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
                         arena = Arena(mapping)
-                        for size in rest_sizes:
-                            alloc = arena.malloc(size)
+                        for size, alignment in rest_sizes:
+                            if alignment > 4096:
+                                raise Exception("can't handle alignments of more than 4096 bytes", alignment)
+                            alloc = arena.malloc(size, alignment)
                             if alloc is None:
                                 raise Exception("some kind of internal error caused a freshly created memory arena to return null for an allocation")
                             else:
                                 pointers.append(stack.enter_context(alloc))
                 yield pointers
 
-    async def malloc(self, size: int) -> Allocation:
+    async def malloc(self, size: int, alignment: int) -> Allocation:
+        if alignment > 4096:
+            raise Exception("can't handle alignments of more than 4096 bytes", alignment)
         # TODO should coalesce together multiple pending mallocs waiting on the lock
         async with self.lock:
             for arena in self.arenas:
-                alloc = arena.malloc(size)
+                alloc = arena.malloc(size, alignment)
                 if alloc:
                     return alloc
             mapping = await AnonymousMapping.make(self.task,
                                                   align(size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
             arena = Arena(mapping)
             self.arenas.append(arena)
-            result = arena.malloc(size)
+            result = arena.malloc(size, alignment)
             if result is None:
                 raise Exception("some kind of internal error caused a freshly created memory arena to return null for an allocation")
             else:
@@ -218,14 +225,14 @@ class AllocatorClient(AllocatorInterface):
     def inherit(self, task: far.Task) -> AllocatorClient:
         return AllocatorClient(task, self.allocator)
 
-    def bulk_malloc(self, sizes: t.List[int]) -> t.AsyncContextManager[t.List[Pointer]]:
+    def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.AsyncContextManager[t.List[Pointer]]:
         if self.task.address_space != self.allocator.task.address_space:
             raise Exception("task and allocator are in different address spaces",
                             self.task.address_space, self.allocator.task.address_space)
         return self.allocator.bulk_malloc(sizes)
 
-    def malloc(self, size: int) -> t.Awaitable[Allocation]:
+    def malloc(self, size: int, alignment: int=1) -> t.Awaitable[Allocation]:
         if self.task.address_space != self.allocator.task.address_space:
             raise Exception("task and allocator are in different address spaces",
                             self.task.address_space, self.allocator.task.address_space)
-        return self.allocator.malloc(size)
+        return self.allocator.malloc(size, alignment)

@@ -34,7 +34,7 @@ async def localize_data(
         transport: MemoryWriter, allocator: memory.AllocatorInterface, data: bytes
 ) -> t.AsyncGenerator[t.Tuple[base.Pointer, int], None]:
     data_len = len(data)
-    with await allocator.malloc(data_len) as data_ptr:
+    with await allocator.malloc(data_len, 1) as data_ptr:
         await transport.write(data_ptr, data)
         yield data_ptr, data_len
 
@@ -133,7 +133,7 @@ class Serializer:
             size = op.size_to_allocate()
             if size:
                 needs_allocation.append((op, size))
-        async with allocator.bulk_malloc([size for (op, size) in needs_allocation]) as pointers:
+        async with allocator.bulk_malloc([(size, 1) for (op, size) in needs_allocation]) as pointers:
             for ptr, (op, _) in zip(pointers, needs_allocation):
                 op.supply_allocation(ptr)
             real_operations: t.List[t.Tuple[base.Pointer, bytes]] = []
@@ -167,13 +167,13 @@ class BatchSemantics:
 T = t.TypeVar('T')
 class NullSemantics(BatchSemantics):
     def __init__(self) -> None:
-        self.allocations: t.List[int] = []
+        self.allocations: t.List[t.Tuple[int, int]] = []
 
-    def to_pointer(self, data: bytes) -> BatchPointer:
-        return self.malloc(len(data))
+    def to_pointer(self, data: bytes, alignment: int=1) -> BatchPointer:
+        return self.malloc(len(data), alignment)
 
-    def malloc(self, n: int) -> BatchPointer:
-        self.allocations.append(n)
+    def malloc(self, n: int, alignment: int=1) -> BatchPointer:
+        self.allocations.append((n, alignment))
         ptr = base.Pointer(None, near.Pointer(0)) # type: ignore
         return BatchPointer(ptr, n)
 
@@ -181,7 +181,7 @@ class NullSemantics(BatchSemantics):
         pass
 
     @staticmethod
-    def run(batch: t.Callable[[BatchSemantics], T]) -> t.List[int]:
+    def run(batch: t.Callable[[BatchSemantics], T]) -> t.List[t.Tuple[int, int]]:
         sem = NullSemantics()
         batch(sem)
         return sem.allocations
@@ -221,7 +221,7 @@ async def perform_batch(
 ) -> T:
     sizes = NullSemantics.run(batch)
     ptrs = await stack.enter_async_context(allocator.bulk_malloc(sizes))
-    allocations = [BatchPointer(ptr, size) for ptr, size in zip(ptrs, sizes)]
+    allocations = [BatchPointer(ptr, size) for ptr, (size, alignment) in zip(ptrs, sizes)]
     ret, desired_writes = WriteSemantics.run(batch, allocations)
     await transport.batch_write(desired_writes)
     return ret
