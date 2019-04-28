@@ -112,26 +112,6 @@ async def perform_batch(
     await transport.batch_write(desired_writes)
     return ret
 
-pointer = struct.Struct("Q")
-def write_null_terminated_array(sem: BatchSemantics, args: t.List[bytes]) -> BatchPointer:
-    ptrs = [sem.to_pointer(arg+b"\0") for arg in args]
-    return sem.to_pointer(b"".join(pointer.pack(int(ptr.near)) for ptr in ptrs) + pointer.pack(0))
-
-async def execveat(sysif: SyscallInterface, transport: MemoryTransport, allocator: memory.AllocatorInterface,
-                   path: Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> None:
-    logger.debug("execveat(%s, %s, <len(envp): %d>, %s)", path, argv, len(envp), flags)
-    def op(sem: BatchSemantics) -> t.Tuple[BatchPointer, BatchPointer, BatchPointer]:
-        path_ptr = sem.to_pointer(path.to_bytes())
-        argv_ptr = write_null_terminated_array(sem, argv)
-        envp_ptr = write_null_terminated_array(sem, envp)
-        return path_ptr, argv_ptr, envp_ptr
-    async with contextlib.AsyncExitStack() as stack:
-        (path_ptr, argv_ptr, envp_ptr) = await perform_batch(transport, allocator, stack, op)
-        try:
-            await raw_syscall.execveat(sysif, None, path_ptr.ptr, argv_ptr.ptr, envp_ptr.ptr, flags)
-        except FileNotFoundError as e:
-            raise FileNotFoundError(e.errno, e.strerror, path) from None
-
 async def sendmsg_fds(task: far.Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
                       fd: far.FileDescriptor, send_fds: t.List[far.FileDescriptor]) -> None:
     def op(sem: BatchSemantics) -> BatchPointer:

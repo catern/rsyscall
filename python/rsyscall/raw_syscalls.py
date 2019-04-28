@@ -15,7 +15,6 @@ class SYS(enum.IntEnum):
     clone = lib.SYS_clone
     close = lib.SYS_close
     dup3 = lib.SYS_dup3
-    execveat = lib.SYS_execveat
     exit = lib.SYS_exit
     faccessat = lib.SYS_faccessat
     fchdir = lib.SYS_fchdir
@@ -201,17 +200,3 @@ async def readlinkat(sysif: SyscallInterface,
     if dirfd is None:
         dirfd = lib.AT_FDCWD # type: ignore
     return (await sysif.syscall(SYS.readlinkat, dirfd, path, buf, bufsiz))
-
-async def execveat(sysif: SyscallInterface,
-                   dirfd: t.Optional[FileDescriptor], path: Pointer,
-                   argv: Pointer, envp: Pointer, flags: int) -> None:
-    logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
-    if dirfd is None:
-        dirfd = lib.AT_FDCWD # type: ignore
-    def handle(exn):
-        if isinstance(exn, RsyscallHangup):
-            return None
-        else:
-            return exn
-    with trio.MultiError.catch(handle):
-        await sysif.syscall(SYS.execveat, dirfd, path, argv, envp, flags)
