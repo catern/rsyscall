@@ -14425,16 +14425,6 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    ok yeah it now drops the writtenness.
 
    but I'm still confuzzled about what should happen.
-** convert serializer to tagless final style
-   we'll encapsulate the code-to-optimize in a function,
-   and we'll run it twice:
-   first time returning null pointers,
-   second time returning real things.
-
-   and the semantic functions will be normal, not async;
-   indicating the lack of IO happening
-
-   ok sure fine this is a good idea but still, what about Path?
 ** execveat to handle style
    The big kahuna.
 
@@ -14453,6 +14443,43 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    we don't want them to be actually usable.
 
    I guess the handle execveat API will take a bunch of WrittenPointers.
+
+   like, one for path
+** convert serializer to tagless final style
+   we'll encapsulate the code-to-optimize in a function,
+   and we'll run it twice:
+   first time returning null pointers,
+   second time returning real things.
+
+   and the semantic functions will be normal, not async;
+   indicating the lack of IO happening
+
+   ok sure fine this is a good idea but still, what about Path?
+*** doing it
+    hmm we want to be able to return memory instead of use this ugly contextmanager
+
+    also we want to not have to use base pointers I guess
+
+    hmm what if batch frees something
+    it could be reused while we are doing the writes
+*** hacking it
+    okay we're just going to hackily use this new batch thing,
+    in a way compatible with old-style allocation,
+    so we can delete the serializer
+*** hmm alignment
+    okaaaaaay
+
+    let's do it in the allocator
+
+    we'll finish the rest of the conversions first
+
+    lol how do I do this when I do a python allocator
+
+    oh well
+*** hmm self-reference
+    Well, we don't really need to support this... or do we?
+
+    Mmmmmm, possibly.
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

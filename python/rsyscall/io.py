@@ -12,6 +12,7 @@ from rsyscall.base import SyscallInterface
 import rsyscall.base as base
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
+from rsyscall.memory_abstracted_syscalls import BatchSemantics, BatchPointer, perform_batch
 import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.handle
@@ -235,15 +236,19 @@ class Task:
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: int,
                     data: bytes) -> None:
-        serializer = memsys.Serializer()
-        source_ptr = serializer.serialize_null_terminated_data(source)
-        target_ptr = serializer.serialize_null_terminated_data(target)
-        filesystemtype_ptr = serializer.serialize_null_terminated_data(filesystemtype)
-        data_ptr = serializer.serialize_null_terminated_data(data)
-        async with serializer.with_flushed(self.transport, self.allocator):
+        def op(sem: BatchSemantics) -> t.Tuple[BatchPointer, BatchPointer, BatchPointer, BatchPointer]:
+            return (
+                sem.to_pointer(source + b"\0"),
+                sem.to_pointer(target + b"\0"),
+                sem.to_pointer(filesystemtype + b"\0"),
+                sem.to_pointer(data + b"\0"),
+            )
+        async with contextlib.AsyncExitStack() as stack:
+            source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await perform_batch(
+                self.transport, self.allocator, stack, op)
             await near.mount(self.base.sysif,
-                             source_ptr.pointer.near, target_ptr.pointer.near, filesystemtype_ptr.pointer.near,
-                             mountflags, data_ptr.pointer.near)
+                             source_ptr.near, target_ptr.near, filesystemtype_ptr.near,
+                             mountflags, data_ptr.near)
 
     async def exit(self, status: int) -> None:
         await raw_syscall.exit(self.syscall, status)
@@ -1821,15 +1826,15 @@ class BufferedStack:
 async def launch_futex_monitor(task: base.Task, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
                                process_resources: ProcessResources, monitor: ChildProcessMonitor,
                                futex_pointer: Pointer, futex_value: int) -> ChildProcess:
-    serializer = memsys.Serializer()
-    # build the trampoline and push it on the stack
-    stack_data = process_resources.build_trampoline_stack(process_resources.futex_helper_func, futex_pointer, futex_value)
-    # TODO we need appropriate alignment here, we're just lucky because the alignment works fine by accident right now
-    stack_pointer = serializer.serialize_data(stack_data)
+    def op(sem: BatchSemantics) -> BatchPointer:
+        # TODO we need appropriate alignment here, we're just lucky because the alignment works fine by accident right now
+        return sem.to_pointer(
+            process_resources.build_trampoline_stack(process_resources.futex_helper_func, futex_pointer, futex_value))
     logger.info("about to serialize")
-    async with serializer.with_flushed(transport, allocator):
+    async with contextlib.AsyncExitStack() as stack:
+        stack_pointer = await perform_batch(transport, allocator, stack, op)
         logger.info("did serialize")
-        futex_task = await monitor.clone(lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_pointer.pointer)
+        futex_task = await monitor.clone(lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_pointer.ptr)
         # wait for futex helper to SIGSTOP itself,
         # which indicates the trampoline is done and we can deallocate the stack.
         event = await futex_task.wait_for_stop_or_exit()
@@ -2578,20 +2583,25 @@ class AsyncReadBuffer:
 async def set_singleton_robust_futex(task: far.Task, transport: base.MemoryTransport, allocator: memory.PreallocatedAllocator,
                                      futex_value: int,
 ) -> Pointer:
-    serializer = memsys.Serializer()
     futex_offset = ffi.sizeof('struct robust_list')
-    futex_data = struct.pack('=I', futex_value)
-    robust_list_entry = serializer.serialize_lambda(
-        futex_offset + len(futex_data),
-        # we indicate that this is the last entry in the list by pointing it to itself
-        lambda: (bytes(ffi.buffer(ffi.new('struct robust_list*', (ffi.cast('void*', robust_list_entry.pointer),))))
-                 + futex_data))
-    robust_list_head = serializer.serialize_cffi(
-        'struct robust_list_head', lambda:
-        ((ffi.cast('void*', robust_list_entry.pointer),), futex_offset, ffi.cast('void*', 0)))
-    async with serializer.with_flushed(transport, allocator):
-        await far.set_robust_list(task, robust_list_head.pointer, robust_list_head.size)
-    futex_pointer = robust_list_entry.pointer + futex_offset
+    def op(sem: BatchSemantics) -> t.Tuple[BatchPointer, BatchPointer]:
+        def robust_list(self: int) -> bytes:
+            return (bytes(ffi.buffer(ffi.new('struct robust_list*', (ffi.cast('void*', self),))))
+                    + struct.pack('=I', futex_value))
+        # TODO we build the bytes four times; we could get it down to two, if the semantics had support for self-reference;
+        # the semantics could take and call this function directly
+        robust_list_entry = sem.malloc(len(robust_list(0)))
+        sem.write(robust_list_entry, robust_list(int(robust_list_entry.near)))
+        robust_list_head = sem.to_pointer(
+            bytes(ffi.buffer(ffi.new('struct robust_list_head*', (
+                (ffi.cast('void*', robust_list_entry.near),),
+                futex_offset,
+                ffi.cast('void*', 0))))))
+        return robust_list_entry, robust_list_head
+    async with contextlib.AsyncExitStack() as stack:
+        robust_list_entry, robust_list_head = await perform_batch(transport, allocator, stack, op)
+        await far.set_robust_list(task, robust_list_head.ptr, robust_list_head.size)
+    futex_pointer = robust_list_entry.ptr + futex_offset
     return futex_pointer
 
 async def make_connections(access_task: Task,

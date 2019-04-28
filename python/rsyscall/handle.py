@@ -740,6 +740,13 @@ class Task(rsyscall.far.Task):
             await rsyscall.near.socketpair(self.sysif, domain, type, protocol, sv_b.near)
             return sv
 
+    async def execve(self, filename: WrittenPointer[Path], argv: WrittenPointer, envp: WrittenPointer,
+                     flags: AT) -> None:
+        # hmmmmmmmmmmmmmmmmmmmmmm
+        # how do we borrow the pointers nested inside the argv and envp?
+        # I guess we can just look at the writtenpointer value. hm. that's fine.
+        raise Exception("hm")
+
 @dataclass
 class Process:
     task: Task
