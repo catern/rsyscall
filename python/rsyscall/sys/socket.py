@@ -52,6 +52,9 @@ class SOL(enum.IntEnum):
 class SO(enum.IntEnum):
     ERROR = lib.SO_ERROR
 
+class SCM(enum.IntEnum):
+    RIGHTS = socket.SCM_RIGHTS
+
 @dataclass
 class GenericSockaddr(Address):
     family: AF
@@ -107,6 +110,7 @@ class RecvmsgFlags(enum.IntFlag):
 
 class MsghdrFlags(enum.IntFlag):
     NONE = 0
+    CTRUNC = lib.MSG_CTRUNC
 
 
 #### Tests ####

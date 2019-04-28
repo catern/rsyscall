@@ -1060,9 +1060,10 @@ class TestIO(unittest.TestCase):
                                            r.handle.far, 1)
         trio.run(self.runner, test)
 
-    def test_recv_send_msg(self) -> None:
+    def test_send_recv_msg(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            from rsyscall.handle import FDPair, SendMsghdr, RecvMsghdr, IovecList, SendmsgFlags, RecvmsgFlags
+            from rsyscall.handle import (FDPair, SendMsghdr, RecvMsghdr, IovecList, SendmsgFlags, RecvmsgFlags,
+                                         CmsghdrSCMRights, CmsghdrList, MsghdrFlags)
             task = stdtask.task
             fds = await (await task.base.socketpair(
                 AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC, 0,
@@ -1070,8 +1071,9 @@ class TestIO(unittest.TestCase):
             in_data = b"hello"
 
             iovec = await task.to_pointer(IovecList([await task.to_pointer(Bytes(in_data))]))
+            cmsgs = await task.to_pointer(CmsghdrList([CmsghdrSCMRights([fds.second])]))
             [written], [] = await fds.second.sendmsg(
-                await task.to_pointer(SendMsghdr(None, iovec, None)), SendmsgFlags.NONE)
+                await task.to_pointer(SendMsghdr(None, iovec, cmsgs)), SendmsgFlags.NONE)
 
             [valid], [], hdr = await fds.first.recvmsg(
                 await task.to_pointer(RecvMsghdr(None, iovec, None)), RecvmsgFlags.NONE)
@@ -1081,7 +1083,7 @@ class TestIO(unittest.TestCase):
             hdrval = await hdr.read()
             self.assertEqual(hdrval.name, None)
             self.assertEqual(hdrval.control, None)
-            self.assertEqual(hdrval.flags, 0)
+            self.assertEqual(hdrval.flags, MsghdrFlags.CTRUNC)
         trio.run(self.runner, test)
 
     def test_fork_exec(self) -> None:

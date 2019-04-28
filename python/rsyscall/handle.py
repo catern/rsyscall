@@ -15,7 +15,7 @@ import abc
 import rsyscall.memint as memint
 logger = logging.getLogger(__name__)
 
-from rsyscall.sys.socket import AF, SOCK, Address, Socklen, SendmsgFlags, RecvmsgFlags, MsghdrFlags
+from rsyscall.sys.socket import AF, SOCK, SOL, SCM, Address, Socklen, SendmsgFlags, RecvmsgFlags, MsghdrFlags
 from rsyscall.sched import UnshareFlag
 from rsyscall.struct import Serializer, HasSerializer, FixedSize, Serializable
 from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
@@ -970,8 +970,40 @@ class IovecList(t.List[Pointer], Serializable):
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         raise Exception("can't get pointer handles from raw bytes")
 
-class CmsghdrList:
+class Cmsghdr(Serializable):
     pass
+
+import array
+@dataclass
+class CmsghdrSCMRights(Cmsghdr):
+    fds: t.List[FileDescriptor]
+
+    def to_bytes(self) -> bytes:
+        fds_bytes = array.array('i', (int(fd.near) for fd in self.fds)).tobytes()
+        header = bytes(ffi.buffer(ffi.new('struct cmsghdr*', {
+            "cmsg_len": ffi.sizeof('struct cmsghdr') + len(fds_bytes),
+            "cmsg_level": SOL.SOCKET,
+            "cmsg_type": SCM.RIGHTS,
+        })))
+        return header + fds_bytes
+
+    T = t.TypeVar('T', bound='CmsghdrSCMRights')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        raise Exception("can't get pointer handles from raw bytes")
+
+class CmsghdrList(t.List[Cmsghdr], Serializable):
+    def to_bytes(self) -> bytes:
+        ret = b""
+        for cmsg in self:
+            # TODO is this correct alignment/padding???
+            ret += cmsg.to_bytes()
+        return ret
+
+    T = t.TypeVar('T', bound='CmsghdrList')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        raise Exception("can't get pointer handles from raw bytes")
 
 @dataclass
 class SendMsghdr(Serializable):
