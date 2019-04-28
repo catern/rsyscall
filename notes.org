@@ -14460,7 +14460,7 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     Well, we don't really need to support this... or do we?
 
     Mmmmmm, possibly.
-** execveat to handle style
+** DONE execveat to handle style
    The big kahuna.
 
    We want to figure out a clean way to handle Serializer first.
@@ -14512,13 +14512,147 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     we can't serialize the pointers within it separately.
 
     we could have a list of pairs though
-*** okay, structured, now to batch
+*** DONE okay, structured, now to batch
     I have the structure I want, now let's switch to batchpointers.
-*** hmm, problem with handle pointers
+*** DONE hmm, problem with handle pointers
     Leaking this pointer is causing exceptions.
     Why??? merely leaking shouldn't cause problems.
 
     ugh it was an alignment bug, of course
+** sendmsg/recvmsg in handle style
+   OK so I need to implement structs for all these things.
+   Yes...
+*** memory-abstracted structs
+    OK so I could have a basepointer,
+    which takes two generic parameters:
+
+    Its type, and the capability type for operating on the pointer.
+
+    And it can have methods which just use that capability type.
+
+    And then, my structs can be generic in the latter one.
+
+    And we'll bound it to some minimal cap base type.
+
+    eh...
+
+    does this let us break the circular dep?
+
+    ...
+
+    kind of?
+
+    no not really
+
+    only for pointers
+
+    for FileDescriptors...
+
+    well, we'd have this base class, then...
+
+    lol it would be nice to do curiously-recurring template pattern
+
+    we could pass in the type we'll use for pointers,
+    and then inherit from it?
+
+    mmm no...
+
+    ok so sure that's an option
+
+    also Pipes could take a generic parameter for their fd type
+
+    for now though, let's just depend on handle.py,
+    that's fine.
+*** concrete
+    So, sticking bytes on disk, and then being able to read a pointer back from them,
+    is gross.
+
+    On the other hand, we don't have any casting interface.
+    (lol no but we can, like, just read from an fd)
+    We can just, like...
+
+    You know, if we guarantee we're reading from something of the right type,
+    then it's valid to read the pointer back.
+
+    Well...
+    Here's the thing, we don't need the pointers back, just the counts.
+    Which then let us split the pointers so they can be read.
+
+    I guess there could be a pool of valid pointers,
+    specific to the serializer,
+    (which incidentally in this case is exactly what we wrote)
+    and we're only allowed to read back pointers in that pool.
+
+    ok so and we have a helper which takes ints and turns them to realized pointers
+
+    hm.
+
+    essentially int to allocation, I guess? if allocation is the cap...
+
+    or maybe
+
+    I could just turn it into a pointer with the appropriate specialization
+
+    you give me a type as well and I do the rest
+
+    uhhh okayyyy yeah
+
+    and I'll just have my Pointer[T] be alias for BasePointer[T, Writable]
+
+    ummm is that possible?
+
+    shrug, even if we have to always write two args to pointer, that's not a big deal
+
+    ok and we can't always make a serializer,
+    so our args will be: (int, T) -> something, Serializer[T]
+    the valid pointer store will contain within it the serializers for the pointers it knows.
+
+    (and it'll do a typecheck I guess)
+
+    Oh hey, simple solution:
+    Just let whether pointers are writable or not be a dynamic property.
+
+    Always have the methods,
+    but use them with an interface.
+
+    Can do the same with Task for that matter.
+
+    Hmm we can merge this interface with the allocation interface.
+    (instead of having a cap for writing to arbitrary memory)
+
+    essentially pointer as a whole is an interface then;
+    could we do that?
+
+    seems big, better not
+
+    yeah so being dynamic is actually good because it's less typing overhead
+
+    because most of the time, even all the time, we'll have memory access available
+*** type transformation!
+    we'll just do that.
+
+    have WrittenPointer[Msghdr],
+    then return Pointer[MsghdrOut]
+
+
+** turn pointer into an interface (which throws exceptions if not readable)
+   but how do we establish persistent references to pointers across calls to fork?
+
+   well, we can't even use task for that;
+   we can't unshare_vm so it's truly useless to be able to do that with task.
+
+   heck, it's even kind of silly to use task for it for fork.
+   would be nice to establish references before forking.
+** improve exceptions for path operations by using path in WrittenPointer
+** make socklen functions return Pointer[Pointer[Sockaddr]]
+   Essentially we'll transform the type of the socklen buffer,
+   and augment the serializer,
+   so that first you read from the socklen,
+   and that tells you the valid pointer for the sockaddr,
+   which you can then read.
+
+   oh, and nicely, we can just not invalidate the sockaddr pointer until you read socklen.
+   so you can always fall back on just reading all of that and guessing the type
 ** better execveat interface in general
     It's pretty awkward to have to go through the thread. Hm.
 

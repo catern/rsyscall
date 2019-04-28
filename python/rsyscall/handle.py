@@ -852,19 +852,6 @@ class Arg(bytes, Serializable):
         else:
             return cls(data[0:nullidx])
 
-# hmmmmmMMMmMMmMMmmmmmMmmmmmm
-# so we want this list to not lose the types of the pointers contained within it...
-# although that's not *currently* an issue because we aren't reading it back...
-# hmmmmm
-# actually, do we want to further enforce that this contains writtenpointers pointing to args?
-# er... pointing to null-terminated strings, right...
-# well, no, we don't want to enforce their type,
-# but we do want them as writtenpointers, sure
-# no wait they can't be writtenpointers because then we can't implement get_bytes;
-# we can't get the values in the pointers
-# we'll also have an Arg which is just, I guess, a string, which we write out as null-terminated.
-# lol we could enforce env (a, b) structure with this
-# heck we could even have an environment class which is a dict
 T_arglist = t.TypeVar('T_arglist', bound='ArgList')
 class ArgList(t.List[Pointer], HasSerializer):
     @classmethod
@@ -883,3 +870,32 @@ class ArgListSerializer(Serializer[T_arglist]):
     def from_bytes(self, data: bytes) -> T_arglist:
         raise Exception("can't get pointer handles from raw bytes")
 
+################################################################################
+# sendmsg/recvmsg
+
+
+# hmm it would be nice if this could be generic in the pointer type
+# though, hmm, maybe we don't even need typedpointer.
+# maybe we can just have a method on some transport... which takes pointer and data.
+# urgh.
+# anyway the thought is, I want Msghdr to contain writable/readable pointers.
+# so the user can just read off this struct, and boom
+# oh but we can't even have higher-kinded type params
+# so at most we can be generic in terms of some capability object,
+# which says whether or not we can read/write or not.
+@dataclass
+class Msghdr(Serializable):
+    name: t.Optional[WrittenPointer[Address]]
+    iov: WrittenPointer[IovecList]
+    control: Pointer
+    flags: MsghdrFlags = 0
+
+    def to_bytes(self) -> bytes:
+        raise Exception("not done yet")
+
+    T = t.TypeVar('T', bound='Msghdr')
+    @classmethod
+    def from_bytes(cls: t.Type[Msghdr], data: bytes) -> Msghdr:
+        # AAAAAAAAARGh we do need to read it back though
+        # it's an out-param
+        raise Exception("can't get pointer handles from raw bytes")
