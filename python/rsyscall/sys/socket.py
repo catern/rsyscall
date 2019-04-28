@@ -99,6 +99,15 @@ class Socklen(Struct, int): # type: ignore
     def sizeof(cls) -> int:
         return ffi.sizeof('socklen_t')
 
+class SendmsgFlags(enum.IntFlag):
+    NONE = 0
+
+class RecvmsgFlags(enum.IntFlag):
+    NONE = 0
+
+class MsghdrFlags(enum.IntFlag):
+    NONE = 0
+
 
 #### Tests ####
 from unittest import TestCase

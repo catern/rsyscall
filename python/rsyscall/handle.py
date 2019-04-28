@@ -14,7 +14,7 @@ import contextlib
 import abc
 logger = logging.getLogger(__name__)
 
-from rsyscall.sys.socket import AF, SOCK, Address, Socklen
+from rsyscall.sys.socket import AF, SOCK, Address, Socklen, SendmsgFlags, RecvmsgFlags, MsghdrFlags
 from rsyscall.sched import UnshareFlag
 from rsyscall.struct import Serializer, HasSerializer, FixedSize, Serializable
 from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
@@ -330,6 +330,14 @@ class FileDescriptor:
         async with buf.borrow(self.task) as buf_b:
             ret = await rsyscall.near.write(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
             return buf.split(ret)
+
+    async def sendmsg(self, msg: WrittenPointer[SendMsghdr], flags: SendmsgFlags
+    ) -> t.Tuple[t.List[Pointer], t.List[Pointer]]:
+        raise Exception
+
+    async def recvmsg(self, msg: WrittenPointer[RecvMsghdr], flags: RecvmsgFlags
+    ) -> t.Tuple[t.List[Pointer], t.List[Pointer], Pointer[RecvMsghdrOut]]:
+        raise Exception
 
     async def recv(self, buf: T_pointer, flags: int) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
@@ -883,19 +891,67 @@ class ArgListSerializer(Serializer[T_arglist]):
 # oh but we can't even have higher-kinded type params
 # so at most we can be generic in terms of some capability object,
 # which says whether or not we can read/write or not.
+class IovecList:
+    pass
+class CmsghdrList:
+    pass
+
 @dataclass
-class Msghdr(Serializable):
+class SendMsghdr(Serializable):
     name: t.Optional[WrittenPointer[Address]]
     iov: WrittenPointer[IovecList]
-    control: Pointer
-    flags: MsghdrFlags = 0
+    control: t.Optional[WrittenPointer[CmsghdrList]]
 
     def to_bytes(self) -> bytes:
         raise Exception("not done yet")
 
-    T = t.TypeVar('T', bound='Msghdr')
+    T = t.TypeVar('T', bound='SendMsghdr')
     @classmethod
-    def from_bytes(cls: t.Type[Msghdr], data: bytes) -> Msghdr:
-        # AAAAAAAAARGh we do need to read it back though
-        # it's an out-param
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
         raise Exception("can't get pointer handles from raw bytes")
+
+@dataclass
+class RecvMsghdr(Serializable):
+    name: t.Optional[Pointer[Address]]
+    iov: WrittenPointer[IovecList]
+    control: t.Optional[Pointer[CmsghdrList]]
+
+    def to_bytes(self) -> bytes:
+        raise Exception("not done yet")
+
+    T = t.TypeVar('T', bound='RecvMsghdr')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        raise Exception("can't get pointer handles from raw bytes")
+
+@dataclass
+class RecvMsghdrOut:
+    name: t.Optional[Pointer[Address]]
+    control: t.Optional[Pointer[CmsghdrList]]
+    flags: MsghdrFlags
+    # the _rest fields are the invalid, unused parts of the buffers;
+    # almost everyone can ignore these.
+    name_rest: t.Optional[Pointer[Address]]
+    control_rest: t.Optional[Pointer[CmsghdrList]]
+
+@dataclass
+class MsghdrOutSerializer(Serializer[RecvMsghdrOut]):
+    name: t.Optional[Pointer[Address]]
+    control: t.Optional[Pointer[CmsghdrList]]
+
+    def to_bytes(self, x: RecvMsghdrOut) -> bytes:
+        raise Exception("not going to bother implementing this")
+
+    @classmethod
+    def from_bytes(self, data: bytes) -> RecvMsghdrOut:
+        struct = ffi.cast('struct msghdr*', ffi.from_buffer(data))
+        if self.name is None:
+            name: t.Optional[Pointer[Address]] = None
+        else:
+            name, name_rest = self.name.split(struct.msg_namelen)
+        if self.control is None:
+            control: t.Optional[Pointer[CmsghdrList]] = None
+        else:
+            control, control_rest = self.control.split(struct.msg_controllen)
+        flags = MsghdrFlags(struct.msg_flags)
+        return RecvMsghdrOut(name, control, flags, name_rest, control_rest)

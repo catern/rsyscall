@@ -14633,8 +14633,20 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
     have WrittenPointer[Msghdr],
     then return Pointer[MsghdrOut]
+*** okay so
+    the plan is to add read/write methods to Pointer,
+    on top of some interface,
+    so that it is a dynamic attribute whether a Pointer can be read/written.
 
+    Then, we can have these dataclasses containing pointers,
+    which are useful also as out-parameters.
 
+    Once we have that, it's relatively smooth sailing
+*** add read/write to Pointer
+    OK so are we going to do this by making the whole thing an interface,
+    or by just adding those methods?
+
+    I think we should make the whole thing an interface.
 ** turn pointer into an interface (which throws exceptions if not readable)
    but how do we establish persistent references to pointers across calls to fork?
 
@@ -14653,6 +14665,9 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
    oh, and nicely, we can just not invalidate the sockaddr pointer until you read socklen.
    so you can always fall back on just reading all of that and guessing the type
+** somehow enforce that the user read pipe/socketpair/recvmsg buffers
+   So that they don't leak file descriptors;
+   this can even happen maliciously in the recvmsg case.
 ** better execveat interface in general
     It's pretty awkward to have to go through the thread. Hm.
 
