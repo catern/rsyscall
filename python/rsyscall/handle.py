@@ -923,9 +923,9 @@ class ArgList(t.List[Pointer[Arg]], HasSerializer):
     def get_serializer(cls, task: Task) -> Serializer[T_arglist]:
         return ArgListSerializer()
 
+import struct
 class ArgListSerializer(Serializer[T_arglist]):
     def to_bytes(self, arglist: T_arglist) -> bytes:
-        import struct
         ret = b""
         for ptr in arglist:
             ret += struct.Struct("Q").pack(int(ptr.near))
@@ -970,46 +970,105 @@ class IovecList(t.List[Pointer], Serializable):
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         raise Exception("can't get pointer handles from raw bytes")
 
-class Cmsghdr(Serializable):
-    pass
+T_cmsg = t.TypeVar('T_cmsg', bound='Cmsg')
+class Cmsg(HasSerializer):
+    @abc.abstractmethod
+    def to_data(self) -> bytes: ...
+    @classmethod
+    @abc.abstractmethod
+    def from_data(cls: t.Type[T], task: Task, data: bytes) -> T: ...
+    @classmethod
+    @abc.abstractmethod
+    def level(cls: t.Type[T]) -> SOL: ...
+    @classmethod
+    @abc.abstractmethod
+    def type(cls: t.Type[T]) -> int: ...
+
+    @classmethod
+    def get_serializer(cls: t.Type[T_cmsg], task: Task) -> Serializer[T_cmsg]:
+        return CmsgSerializer(cls, task)
+
+class CmsgSerializer(Serializer[T_cmsg]):
+    def __init__(self, cls: t.Type[T_cmsg], task: Task) -> None:
+        self.cls = cls
+        self.task = task
+
+    def to_bytes(self, val: T_cmsg) -> bytes:
+        if not isinstance(val, self.cls):
+            raise Exception("Serializer for", self.cls,
+                            "had to_bytes called on different type", val)
+        data = val.to_data()
+        header = bytes(ffi.buffer(ffi.new('struct cmsghdr*', {
+            "cmsg_len": ffi.sizeof('struct cmsghdr') + len(data),
+            "cmsg_level": val.level(),
+            "cmsg_type": val.type(),
+        })))
+        return header + data
+
+    def from_bytes(self, data: bytes) -> T_cmsg:
+        record = ffi.cast('struct cmsghdr*', ffi.from_buffer(data))
+        if record.cmsg_level != self.cls.level():
+            raise Exception("serializer for level", self.cls.level(),
+                            "got message for level", record.cmsg_level)
+        if record.cmsg_type != self.cls.type():
+            raise Exception("serializer for type", self.cls.type(),
+                            "got message for type", record.cmsg_type)
+        return self.cls.from_data(self.task, data[ffi.sizeof('struct cmsghdr'):record.cmsg_len])
 
 import array
-@dataclass
-class CmsghdrSCMRights(Cmsghdr):
-    fds: t.List[FileDescriptor]
-
-    def to_bytes(self) -> bytes:
-        fds_bytes = array.array('i', (int(fd.near) for fd in self.fds)).tobytes()
-        header = bytes(ffi.buffer(ffi.new('struct cmsghdr*', {
-            "cmsg_len": ffi.sizeof('struct cmsghdr') + len(fds_bytes),
-            "cmsg_level": SOL.SOCKET,
-            "cmsg_type": SCM.RIGHTS,
-        })))
-        return header + fds_bytes
-
-    T = t.TypeVar('T', bound='CmsghdrSCMRights')
+class CmsgSCMRights(Cmsg, t.List[FileDescriptor]):
+    def to_data(self) -> bytes:
+        return array.array('i', (int(fd.near) for fd in self)).tobytes()
+    T = t.TypeVar('T', bound='CmsgSCMRights')
     @classmethod
-    def from_bytes(cls: t.Type[T], data: bytes) -> T:
-        raise Exception("can't get pointer handles from raw bytes")
+    def from_data(cls: t.Type[T], task: Task, data: bytes) -> T:
+        fds = [rsyscall.near.FileDescriptor(fd) for fd, in struct.Struct('i').iter_unpack(data)]
+        return CmsgSCMRights([task.make_fd_handle(fd) for fd in fds])
 
-class CmsghdrList(t.List[Cmsghdr], Serializable):
-    def to_bytes(self) -> bytes:
+    @classmethod
+    def level(cls) -> SOL:
+        return SOL.SOCKET
+    @classmethod
+    def type(cls) -> int:
+        return SCM.RIGHTS
+
+T_cmsglist = t.TypeVar('T_cmsglist', bound='CmsgList')
+class CmsgList(t.List[Cmsg], HasSerializer):
+    @classmethod
+    def get_serializer(cls: t.Type[T_cmsglist], task: Task) -> Serializer[T_cmsglist]:
+        return CmsgListSerializer(cls, task)
+
+class CmsgListSerializer(Serializer[T_cmsglist]):
+    def __init__(self, cls: t.Type[T_cmsglist], task: Task) -> None:
+        self.cls = cls
+        self.task = task
+
+    def to_bytes(self, val: T_cmsglist) -> bytes:
         ret = b""
-        for cmsg in self:
+        for cmsg in val:
             # TODO is this correct alignment/padding???
-            ret += cmsg.to_bytes()
+            # I don't think so...
+            ret += cmsg.get_serializer(self.task).to_bytes(cmsg)
         return ret
 
-    T = t.TypeVar('T', bound='CmsghdrList')
-    @classmethod
-    def from_bytes(cls: t.Type[T], data: bytes) -> T:
-        raise Exception("can't get pointer handles from raw bytes")
+    def from_bytes(self, data: bytes) -> T_cmsglist:
+        entries = []
+        while len(data) > 0:
+            record = ffi.cast('struct cmsghdr*', ffi.from_buffer(data))
+            record_data = data[:record.cmsg_len]
+            level = SOL(record.cmsg_level)
+            if level == SOL.SOCKET and record.cmsg_type == int(SCM.RIGHTS):
+                entries.append(CmsgSCMRights.get_serializer(self.task).from_bytes(record_data))
+            else:
+                raise Exception("unknown cmsg level/type sorry", level, type)
+            data = data[record.cmsg_len:]
+        return self.cls(entries)
 
 @dataclass
 class SendMsghdr(Serializable):
     name: t.Optional[WrittenPointer[Address]]
     iov: WrittenPointer[IovecList]
-    control: t.Optional[WrittenPointer[CmsghdrList]]
+    control: t.Optional[WrittenPointer[CmsgList]]
 
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct msghdr*', {
@@ -1031,7 +1090,7 @@ class SendMsghdr(Serializable):
 class RecvMsghdr(Serializable):
     name: t.Optional[Pointer[Address]]
     iov: WrittenPointer[IovecList]
-    control: t.Optional[Pointer[CmsghdrList]]
+    control: t.Optional[Pointer[CmsgList]]
 
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct msghdr*', {
@@ -1057,17 +1116,17 @@ class RecvMsghdr(Serializable):
 @dataclass
 class RecvMsghdrOut:
     name: t.Optional[Pointer[Address]]
-    control: t.Optional[Pointer[CmsghdrList]]
+    control: t.Optional[Pointer[CmsgList]]
     flags: MsghdrFlags
     # the _rest fields are the invalid, unused parts of the buffers;
     # almost everyone can ignore these.
     name_rest: t.Optional[Pointer[Address]]
-    control_rest: t.Optional[Pointer[CmsghdrList]]
+    control_rest: t.Optional[Pointer[CmsgList]]
 
 @dataclass
 class RecvMsghdrOutSerializer(Serializer[RecvMsghdrOut]):
     name: t.Optional[Pointer[Address]]
-    control: t.Optional[Pointer[CmsghdrList]]
+    control: t.Optional[Pointer[CmsgList]]
 
     def to_bytes(self, x: RecvMsghdrOut) -> bytes:
         raise Exception("not going to bother implementing this")
@@ -1080,8 +1139,8 @@ class RecvMsghdrOutSerializer(Serializer[RecvMsghdrOut]):
         else:
             name, name_rest = self.name.split(struct.msg_namelen)
         if self.control is None:
-            control: t.Optional[Pointer[CmsghdrList]] = None
-            control_rest: t.Optional[Pointer[CmsghdrList]] = None
+            control: t.Optional[Pointer[CmsgList]] = None
+            control_rest: t.Optional[Pointer[CmsgList]] = None
         else:
             control, control_rest = self.control.split(struct.msg_controllen)
         flags = MsghdrFlags(struct.msg_flags)

@@ -14660,6 +14660,20 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     the only usage of TypedPointer at the moment is, well, unfortunate to lose,
     but oh well...
 *** stick transport in Pointer
+*** time to deserialize cmsgs
+    OK so this is non-trivial right?
+
+    Wait actually it's easy,
+    we already have the task.
+
+    OK so...
+
+    I guess we peek ahead precisely one headersworth;
+
+    or, rather, we deserialize out a Cmsghdr.
+    And call parse on it so that it actually gets parsed down?
+
+    Uhhh
 ** turn pointer into an interface (which throws exceptions if not readable)
    but how do we establish persistent references to pointers across calls to fork?
 
