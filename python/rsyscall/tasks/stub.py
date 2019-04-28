@@ -14,8 +14,11 @@ from dataclasses import dataclass
 import logging
 import rsyscall.memory as memory
 
+import rsyscall.batch as batch
+from rsyscall.struct import Bytes
+
 from rsyscall.sched import CLONE
-from rsyscall.sys.socket import SOCK, AF
+from rsyscall.sys.socket import SOCK, AF, SendmsgFlags
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.signal import Signals
@@ -68,9 +71,12 @@ async def setup_stub(
     futex_memfd = await stdtask.task.base.memfd_create(
         await stdtask.task.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
     # send the fds to the new process
-    await memsys.sendmsg_fds(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator, bootstrap_sock.handle.far,
-                             [passed_syscall_sock.far, passed_data_sock.far,
-                              futex_memfd.far, stdtask.connecting_connection[1].far])
+    def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.SendMsghdr]:
+        iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
+        cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([
+            passed_syscall_sock, passed_data_sock, futex_memfd, stdtask.connecting_connection[1]])]))
+        return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
+    _, [] = await bootstrap_sock.handle.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
     # close our reference to fds that only the new process needs
     await passed_syscall_sock.invalidate()
     await passed_data_sock.invalidate()

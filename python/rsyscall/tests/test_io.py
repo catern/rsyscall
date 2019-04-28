@@ -1052,16 +1052,6 @@ class TestIO(unittest.TestCase):
 
     def test_pass_fd(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            task = stdtask.task
-            l, r = await stdtask.task.socketpair(AF.UNIX, SOCK.STREAM, 0)
-            await memsys.sendmsg_fds(task.base, task.transport, task.allocator,
-                                     l.handle.far, [l.handle.far])
-            fds = await memsys.recvmsg_fds(task.base, task.transport, task.allocator,
-                                           r.handle.far, 1)
-        trio.run(self.runner, test)
-
-    def test_send_recv_msg(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
             from rsyscall.handle import (FDPair, SendMsghdr, RecvMsghdr, IovecList, SendmsgFlags, RecvmsgFlags,
                                          CmsgSCMRights, CmsgList, MsghdrFlags)
             task = stdtask.task

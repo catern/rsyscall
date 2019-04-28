@@ -10,9 +10,12 @@ import trio
 import struct
 from dataclasses import dataclass
 import logging
+import rsyscall.batch as batch
+
+from rsyscall.struct import Bytes
 
 from rsyscall.sched import CLONE
-from rsyscall.sys.socket import SOCK
+from rsyscall.sys.socket import SOCK, SendmsgFlags
 from rsyscall.signal import Signals
 
 class PersistentConnection(base.SyscallInterface):
@@ -67,9 +70,11 @@ class PersistentConnection(base.SyscallInterface):
         connected_sock = await stdtask.task.socket_unix(SOCK.STREAM)
         self.path = self.path.with_task(stdtask.task)
         await robust_unix_connect(self.path, connected_sock)
-        await memsys.sendmsg_fds(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
-                                 connected_sock.handle.far,
-                                 [remote_sock.far, remote_sock.far])
+        def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.SendMsghdr]:
+            iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
+            cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([remote_sock, remote_sock])]))
+            return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
+        _, [] = await connected_sock.handle.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
         await remote_sock.invalidate()
         fd_bytes = await connected_sock.read()
         infd, outfd = struct.Struct("II").unpack(fd_bytes)
@@ -173,13 +178,16 @@ class PersistentServer:
     listening_sock: handle.FileDescriptor
     transport: t.Optional[SocketMemoryTransport] = None
 
-    async def _connect_and_send(self, stdtask: StandardTask, fds: t.List[far.FileDescriptor]) -> t.List[near.FileDescriptor]:
+    async def _connect_and_send(self, stdtask: StandardTask, fds: t.List[handle.FileDescriptor]) -> t.List[near.FileDescriptor]:
         connected_sock = await stdtask.task.socket_unix(SOCK.STREAM)
         self.path = self.path.with_task(stdtask.task)
         await robust_unix_connect(self.path, connected_sock)
         await connected_sock.write(struct.pack('I', len(fds)))
-        await memsys.sendmsg_fds(stdtask.task.base, stdtask.task.transport, stdtask.task.allocator,
-                                 connected_sock.handle.far, fds)
+        def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.SendMsghdr]:
+            iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
+            cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights(fds)]))
+            return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
+        _, [] = await connected_sock.handle.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
         fd_bytes = await connected_sock.read()
         remote_fds = [near.FileDescriptor(i) for i, in struct.iter_unpack('I', fd_bytes)]
         await connected_sock.aclose()
@@ -210,7 +218,7 @@ class PersistentServer:
         # so, having some other thread handle the cleanup for an exited thread, does make sense.
         [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await stdtask.make_async_connections(2)
         [infd, outfd, remote_data_sock] = await self._connect_and_send(
-            stdtask, [syscall_sock.far, syscall_sock.far, data_sock.far])
+            stdtask, [syscall_sock, syscall_sock, data_sock])
         await syscall_sock.invalidate()
         await data_sock.invalidate()
         # update the syscall and transport with new connections
