@@ -375,6 +375,7 @@ class FileDescriptor:
                 await stack.enter_async_context(msg.value.name.borrow(self.task))
             if msg.value.control:
                 await stack.enter_async_context(msg.value.control.borrow(self.task))
+                await msg.value.control.value.borrow_with(stack, self.task)
             await stack.enter_async_context(msg.value.iov.borrow(self.task))
             for iovec_elem in msg.value.iov.value:
                 await stack.enter_async_context(iovec_elem.borrow(self.task))
@@ -974,6 +975,8 @@ T_cmsg = t.TypeVar('T_cmsg', bound='Cmsg')
 class Cmsg(HasSerializer):
     @abc.abstractmethod
     def to_data(self) -> bytes: ...
+    @abc.abstractmethod
+    async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None: ...
     @classmethod
     @abc.abstractmethod
     def from_data(cls: t.Type[T], task: Task, data: bytes) -> T: ...
@@ -1019,11 +1022,15 @@ import array
 class CmsgSCMRights(Cmsg, t.List[FileDescriptor]):
     def to_data(self) -> bytes:
         return array.array('i', (int(fd.near) for fd in self)).tobytes()
+    async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None:
+        for fd in self:
+            await stack.enter_async_context(fd.borrow(task))
+
     T = t.TypeVar('T', bound='CmsgSCMRights')
     @classmethod
     def from_data(cls: t.Type[T], task: Task, data: bytes) -> T:
         fds = [rsyscall.near.FileDescriptor(fd) for fd, in struct.Struct('i').iter_unpack(data)]
-        return CmsgSCMRights([task.make_fd_handle(fd) for fd in fds])
+        return cls([task.make_fd_handle(fd) for fd in fds])
 
     @classmethod
     def level(cls) -> SOL:
@@ -1037,6 +1044,10 @@ class CmsgList(t.List[Cmsg], HasSerializer):
     @classmethod
     def get_serializer(cls: t.Type[T_cmsglist], task: Task) -> Serializer[T_cmsglist]:
         return CmsgListSerializer(cls, task)
+
+    async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None:
+        for cmsg in self:
+            await cmsg.borrow_with(stack, task)
 
 class CmsgListSerializer(Serializer[T_cmsglist]):
     def __init__(self, cls: t.Type[T_cmsglist], task: Task) -> None:

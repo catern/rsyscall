@@ -14674,6 +14674,39 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     And call parse on it so that it actually gets parsed down?
 
     Uhhh
+** DONE fd.near in serialization
+   OK so uh, we are serializing the fds.
+
+   But... don't we need to borrow them in the task? Hm!
+
+   hm hm hm.
+
+   we can't just borrow them, right, because we need to keep the reference around,
+   like, stick it inside the writtenpointer.
+
+   so the issue is,
+   if... the fds that I have a reference to,
+   are held by a task,
+   which then unshares away,
+   and those fds aren't otherwise referenced by the task that actually makes the syscall,
+   then. we have an issue.
+
+   merely borrowing doesn't help, because the borrow goes away before we actually make the syscall.
+   really we need to attach the fds to the writtenpointer.
+
+   well...
+
+   oh!
+   wait, do we even have an issue?
+
+   because, can't we borrow the fds in sendmsg, using the writtenpointer?
+
+   aha, problem solved.
+   we indeed, have now, just borrowed the fds in sendmsg, using the cmsg interface.
+** nicer APIs for sizing buffers
+   So currently it's not clear how to size a buffer for, say, some cmsgs.
+
+   Would be nice to make that simpler.
 ** turn pointer into an interface (which throws exceptions if not readable)
    but how do we establish persistent references to pointers across calls to fork?
 

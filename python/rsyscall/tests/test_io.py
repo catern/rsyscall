@@ -1081,7 +1081,7 @@ class TestIO(unittest.TestCase):
             self.assertEqual(in_data, await valid.read())
 
             hdrval = await hdr.read()
-            [[passed_fd]] = await hdrval.control.read()
+            [[passed_fd]] = await hdrval.control.read() # type: ignore
             self.assertEqual(hdrval.name, None)
             self.assertEqual(hdrval.flags, MsghdrFlags.NONE)
         trio.run(self.runner, test)
