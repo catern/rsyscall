@@ -826,3 +826,39 @@ class FDPairSerializer(Serializer[T_fdpair]):
         def make(n: int) -> FileDescriptor:
             return self.task.make_fd_handle(rsyscall.near.FileDescriptor(int(n)))
         return self.cls(make(struct.first), make(struct.second))
+
+# hmmmmmMMMmMMmMMmmmmmMmmmmmm
+# so we want this list to not lose the types of the pointers contained within it...
+# although that's not *currently* an issue because we aren't reading it back...
+# hmmmmm
+# actually, do we want to further enforce that this contains writtenpointers pointing to args?
+# er... pointing to null-terminated strings, right...
+# well, no, we don't want to enforce their type,
+# but we do want them as writtenpointers, sure
+# no wait they can't be writtenpointers because then we can't implement get_bytes;
+# we can't get the values in the pointers
+# we'll also have an Arg which is just, I guess, a string, which we write out as null-terminated.
+# lol we could enforce env (a, b) structure with this
+# heck we could even have an environment class which is a dict
+class ArgList(t.List[Pointer], HasSerializer):
+    @classmethod
+    def get_serializer(cls, task: Task) -> Serializer[ArgList]:
+        return ArgListSerializer(task)
+
+# lol how do we deserialize the arglist
+# how do we even generate an allocation thing
+# we can't deserialize it, it doesn't work
+# we don't know how to manage the memory
+# unless... we told the serializer about it?
+# what would we really be doing here????
+class ArgListSerializer(Serializer[ArgList]):
+    def to_bytes(self, arglist: ArgList) -> bytes:
+        return sem.to_pointer(b"".join(pointer.pack(int(ptr.near)) for ptr in ptrs) + pointer.pack(0))
+        struct = ffi.new('struct fdpair*', (pair.first, pair.second))
+        return bytes(ffi.buffer(struct))
+
+    def from_bytes(self, data: bytes) -> ArgList:
+        struct = ffi.cast('struct fdpair const*', ffi.from_buffer(data))
+        def make(n: int) -> FileDescriptor:
+            return self.task.make_fd_handle(rsyscall.near.FileDescriptor(int(n)))
+        return self.cls(make(struct.first), make(struct.second))

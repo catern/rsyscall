@@ -14480,6 +14480,31 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    I guess the handle execveat API will take a bunch of WrittenPointers.
 
    like, one for path
+
+   so, like:
+   we just got the basic batch serializer stuff working.
+
+   now I'll do exec without batching,
+   so that I can see how it looks with the handle memory nice API,
+   and then figure out how to improve the batch API to work with that.
+*** how to structure execveat pointers
+    So the ArgList is the big tricky one.
+
+    We can have its serializer throw if you call from_bytes, that's fine.
+
+    We want to do that because - how do you find what allocation a pointer is tied to?
+    Tricky tricky.
+
+    in general the concept of these serializable classes,
+    containing handles for data,
+    is... tricky.
+
+    not least because it's not clear what module to put them in.
+
+    well, if I can have them just contain some base class,
+    which the real handles inherit from...
+
+    or, an interface...
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far
