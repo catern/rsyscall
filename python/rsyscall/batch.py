@@ -26,6 +26,9 @@ class BatchSemantics:
             ptr.free()
             raise
 
+    def malloc_type(self, cls: t.Type[T_has_serializer], size: int) -> Pointer[T_has_serializer]:
+        return self.malloc_serializer(cls.get_serializer(self.task), size)
+
     @abc.abstractmethod
     def malloc_serializer(self, serializer: Serializer[T], n: int, alignment: int=1) -> Pointer[T]: ...
     # we'll do self-reference by passing a function Pointer -> bytes
@@ -53,9 +56,9 @@ class NullAllocation(AllocationInterface):
 class NullGateway(memint.MemoryGateway):
     # TODO we should actually implement write I guess
     async def batch_read(self, ops: t.List[t.Tuple[far.Pointer, int]]) -> t.List[bytes]:
-        raise Exception("ouch")
+        raise Exception("shouldn't try to read")
     async def batch_write(self, ops: t.List[t.Tuple[far.Pointer, bytes]]) -> None:
-        raise Exception("ouch")
+        raise Exception("shouldn't try to write")
         
 class NullSemantics(BatchSemantics):
     def __init__(self, task: Task) -> None:
@@ -112,7 +115,7 @@ async def perform_batch(
 ) -> T:
     sizes = NullSemantics.run(task, batch)
     allocations = await allocator.bulk_malloc([(size, alignment) for size, alignment, _ in sizes])
-    ptrs = [Pointer(task, NullGateway(), serializer, allocation)
+    ptrs = [Pointer(task, transport, serializer, allocation)
             for (_, _, serializer), allocation in zip(sizes, allocations)]
     ret, desired_writes = WriteSemantics.run(task, batch, ptrs)
     await transport.batch_write([(ptr.far, ptr.serializer.to_bytes(ptr.data))

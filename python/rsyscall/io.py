@@ -22,7 +22,7 @@ import rsyscall.near as near
 from rsyscall.struct import T_has_serializer, T_fixed_size, Bytes, Int32, Serializer, Struct
 import rsyscall.batch as batch
 
-from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr
+from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr, SendmsgFlags, RecvmsgFlags
 from rsyscall.fcntl import AT, O, F
 from rsyscall.sys.socket import T_addr
 from rsyscall.linux.futex import FUTEX_WAITERS, FUTEX_TID_MASK
@@ -205,6 +205,9 @@ class Task:
         except:
             ptr.free()
             raise
+
+    async def perform_batch(self, op: t.Callable[[batch.BatchSemantics], T]) -> T:
+        return await batch.perform_batch(self.base, self.transport, self.allocator, op)
 
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: int,
@@ -2629,11 +2632,23 @@ async def make_connections(access_task: Task,
             await sock.handle.invalidate()
     else:
         assert connecting_connection is not None
-        await memsys.sendmsg_fds(connecting_task.base, connecting_task.transport, connecting_task.allocator,
-                                 connecting_connection[0].far, [sock.handle.far for sock in connecting_socks])
-        near_passed_socks = await memsys.recvmsg_fds(parent_task.base, parent_task.transport, parent_task.allocator,
-                                                     connecting_connection[1].far, count)
-        passed_socks = [parent_task.base.make_fd_handle(sock) for sock in near_passed_socks]
+        def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.SendMsghdr]:
+            iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
+            cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([sock.handle for sock in connecting_socks])]))
+            return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
+        _, [] = await connecting_connection[0].sendmsg(await connecting_task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
+        def recvmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.RecvMsghdr]:
+            iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
+            cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([sock.handle for sock in connecting_socks])]))
+            return sem.to_pointer(handle.RecvMsghdr(None, iovec, cmsgs))
+        _, [], hdr = await connecting_connection[1].recvmsg(await parent_task.perform_batch(recvmsg_op), RecvmsgFlags.NONE)
+        cmsgs_ptr = (await hdr.read()).control
+        if cmsgs_ptr is None:
+            raise Exception("cmsgs field of header is, impossibly, None")
+        [cmsg] = await cmsgs_ptr.read()
+        if not isinstance(cmsg, handle.CmsgSCMRights):
+            raise Exception("expected SCM_RIGHTS cmsg, instead got", cmsg)
+        passed_socks = cmsg
         # don't need these in the connecting task anymore
         for sock in connecting_socks:
             await sock.aclose()

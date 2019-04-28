@@ -14707,6 +14707,21 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    So currently it's not clear how to size a buffer for, say, some cmsgs.
 
    Would be nice to make that simpler.
+** batch operations across more than one task??
+   So that if they are in the same address space, we get cheapness...
+** why aren't the pointers in the IovecList being invalidated by the sendmsg call's split operation?
+   reuse buffer from in previous sendmsg call
+   in subsequent call to recvmsg
+
+   the trick is that the buffer.
+
+   oh. huh. the buffer can be reused. it's not invalidated.
+   at least that's what test_io appears to be doing.
+
+   what? why not???
+
+   same for cmsgs too!
+   very curious
 ** turn pointer into an interface (which throws exceptions if not readable)
    but how do we establish persistent references to pointers across calls to fork?
 
