@@ -109,6 +109,10 @@ class Pointer(t.Generic[T]):
         # So, this ensures GC is a bit more prompt.
         self.free()
 
+    def _wrote(self, data: T) -> WrittenPointer[T]:
+        self.valid = False
+        return WrittenPointer(self.task, data, self.serializer, self.allocation)
+
     def __enter__(self) -> Pointer:
         return self
 

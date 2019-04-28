@@ -20,7 +20,7 @@ from rsyscall.handle import T_pointer
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_has_serializer, T_fixed_size, Bytes, Int32, Serializer, Struct
-import rsyscall.batch
+import rsyscall.batch as batch
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr
 from rsyscall.fcntl import AT, O, F
@@ -152,13 +152,16 @@ class TypedPointer(handle.Pointer[T]):
         handle.Pointer.__init__(self, task.base, serializer, allocation)
         self.mem_task = task
 
-    async def write(self, data: T) -> WrittenTypedPointer:
+    async def write(self, data: T) -> WrittenTypedPointer[T]:
         self.validate()
         data_bytes = self.serializer.to_bytes(data)
         if len(data_bytes) > self.bytesize():
             raise Exception("data is too long", len(data_bytes),
                             "for this typed pointer of size", self.bytesize())
         await self.mem_task.transport.write(self.far, data_bytes)
+        return self._wrote(data)
+
+    def _wrote(self, data: T) -> WrittenTypedPointer[T]:
         self.valid = False
         return WrittenTypedPointer(self.mem_task, data, self.serializer, self.allocation)
 
@@ -1749,12 +1752,16 @@ class Thread:
 
     async def execveat(self, task: Task, path: handle.Path,
                        argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> ChildProcess:
-        argv_ptrs = handle.ArgList([await task.to_pointer(handle.Arg(arg)) for arg in argv])
-        envp_ptrs = handle.ArgList([await task.to_pointer(handle.Arg(arg)) for arg in envp])
-        await task.base.execve(await task.to_pointer(path),
-                               await task.to_pointer(argv_ptrs),
-                               await task.to_pointer(envp_ptrs),
-                               flags)
+        def op(sem: batch.BatchSemantics) -> t.Tuple[handle.WrittenPointer[handle.Path],
+                                                     handle.WrittenPointer[handle.ArgList],
+                                                     handle.WrittenPointer[handle.ArgList]]:
+            argv_ptrs = handle.ArgList([sem.to_pointer(handle.Arg(arg)) for arg in argv])
+            envp_ptrs = handle.ArgList([sem.to_pointer(handle.Arg(arg)) for arg in envp])
+            return (sem.to_pointer(path),
+                    sem.to_pointer(argv_ptrs),
+                    sem.to_pointer(envp_ptrs))
+        filename, argv_ptr, envp_ptr = await batch.perform_batch(task.base, task.transport, task.allocator, op)
+        await task.base.execve(filename, argv_ptr, envp_ptr, flags)
         return self.child_task
 
     async def wait_for_mm_release(self) -> ChildProcess:
