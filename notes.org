@@ -14425,27 +14425,7 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    ok yeah it now drops the writtenness.
 
    but I'm still confuzzled about what should happen.
-** execveat to handle style
-   The big kahuna.
-
-   We want to figure out a clean way to handle Serializer first.
-
-   Will we convert it to tagless final style?
-
-   What can we do with our nice Abstractor API?
-
-   ok so we obviously use to_pointer and malloc, nice, nice.
-
-   How can we use our Serializable API here?
-
-   I guess we can return handle pointers or something?
-   but for what task?
-   we don't want them to be actually usable.
-
-   I guess the handle execveat API will take a bunch of WrittenPointers.
-
-   like, one for path
-** convert serializer to tagless final style
+** DONE convert serializer to tagless final style
    we'll encapsulate the code-to-optimize in a function,
    and we'll run it twice:
    first time returning null pointers,
@@ -14480,6 +14460,26 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     Well, we don't really need to support this... or do we?
 
     Mmmmmm, possibly.
+** execveat to handle style
+   The big kahuna.
+
+   We want to figure out a clean way to handle Serializer first.
+
+   Will we convert it to tagless final style?
+
+   What can we do with our nice Abstractor API?
+
+   ok so we obviously use to_pointer and malloc, nice, nice.
+
+   How can we use our Serializable API here?
+
+   I guess we can return handle pointers or something?
+   but for what task?
+   we don't want them to be actually usable.
+
+   I guess the handle execveat API will take a bunch of WrittenPointers.
+
+   like, one for path
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

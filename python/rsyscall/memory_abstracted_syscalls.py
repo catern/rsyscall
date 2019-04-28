@@ -28,122 +28,7 @@ logger = logging.getLogger(__name__)
 # TODO I think we should have these take a MemoryAbstractedTask or something,
 # above the base Task,
 # instead of separate arguments.
-
-@contextlib.asynccontextmanager
-async def localize_data(
-        transport: MemoryWriter, allocator: memory.AllocatorInterface, data: bytes
-) -> t.AsyncGenerator[t.Tuple[base.Pointer, int], None]:
-    data_len = len(data)
-    with await allocator.malloc(data_len, 1) as data_ptr:
-        await transport.write(data_ptr, data)
-        yield data_ptr, data_len
-
-async def read_to_bytes(transport: MemoryReader, data: base.Pointer, count: int) -> bytes:
-    return (await transport.read(data, count))
-
-
 #### execveat, which requires a lot of memory fiddling ####
-class SerializedPointer:
-    def __init__(self, size: int) -> None:
-        self.size = size
-        self._real_pointer: t.Optional[base.Pointer] = None
-
-    @property
-    def pointer(self) -> base.Pointer:
-        if self._real_pointer is None:
-            raise Exception("SerializedPointer's pointer was accessed before it was actually allocated")
-        else:
-            return self._real_pointer
-
-def align_pointer(ptr: base.Pointer, alignment: int) -> base.Pointer:
-    misalignment = int(ptr) % alignment
-    if misalignment == 0:
-        return ptr
-    else:
-        return ptr + (alignment - misalignment)
-
-@dataclass
-class SerializerOperation:
-    ptr: SerializedPointer
-    data: t.Union[bytes, t.Callable[[], bytes], None]
-    alignment: int = 1
-    def __post_init__(self) -> None:
-        assert self.alignment > 0
-
-    def size_to_allocate(self) -> t.Optional[int]:
-        if self.ptr._real_pointer is not None:
-            return None
-        else:
-            return self.ptr.size + (self.alignment-1)
-
-    def supply_allocation(self, ptr: base.Pointer) -> None:
-        self.ptr._real_pointer = align_pointer(ptr, self.alignment)
-
-    def data_to_copy(self) -> t.Optional[bytes]:
-        if isinstance(self.data, bytes):
-            return self.data
-        elif callable(self.data):
-            data_bytes = self.data()
-            if len(data_bytes) != self.ptr.size:
-                print(self.data)
-                print(data_bytes)
-                raise Exception("size provided", self.ptr.size, "doesn't match size of bytes",
-                                len(data_bytes))
-            return data_bytes
-        elif self.data is None:
-            return None
-        else:
-            raise Exception("nonsense value in operations", self.data)
-
-class Serializer:
-    def __init__(self) -> None:
-        self.operations: t.List[SerializerOperation] = []
-
-    def serialize_data(self, data: bytes) -> SerializedPointer:
-        size = len(data)
-        ptr = SerializedPointer(size)
-        self.operations.append(SerializerOperation(ptr, data))
-        return ptr
-
-    def serialize_null_terminated_data(self, data: bytes) -> SerializedPointer:
-        return self.serialize_data(data + b"\0")
-
-    def serialize_lambda(self, size: int, func: t.Callable[[], bytes], alignment=1) -> SerializedPointer:
-        ptr = SerializedPointer(size)
-        self.operations.append(SerializerOperation(ptr, func, alignment))
-        return ptr
-
-    def serialize_cffi(self, typ: str, func: t.Callable[[], t.Any]) -> SerializedPointer:
-        size = ffi.sizeof(typ)
-        ptr = SerializedPointer(size)
-        self.operations.append(SerializerOperation(ptr, lambda: bytes(ffi.buffer(ffi.new(typ+"*", func())))))
-        return ptr
-
-    def serialize_uninitialized(self, size: int) -> SerializedPointer:
-        ptr = SerializedPointer(size)
-        self.operations.append(SerializerOperation(ptr, None))
-        return ptr
-
-    @contextlib.asynccontextmanager
-    async def with_flushed(self, transport: MemoryTransport, allocator: memory.AllocatorInterface
-    ) -> t.AsyncGenerator[None, None]:
-        # some are already allocated, so we skip them
-        needs_allocation: t.List[t.Tuple[SerializerOperation, int]] = []
-        for op in self.operations:
-            size = op.size_to_allocate()
-            if size:
-                needs_allocation.append((op, size))
-        async with allocator.bulk_malloc([(size, 1) for (op, size) in needs_allocation]) as pointers:
-            for ptr, (op, _) in zip(pointers, needs_allocation):
-                op.supply_allocation(ptr)
-            real_operations: t.List[t.Tuple[base.Pointer, bytes]] = []
-            for op in self.operations:
-                data = op.data_to_copy()
-                if data:
-                    real_operations.append((op.ptr.pointer, data))
-            # copy all the bytes in bulk
-            await transport.batch_write(real_operations)
-            yield
 
 import abc
 @dataclass
@@ -158,9 +43,9 @@ class BatchPointer:
 
 class BatchSemantics:
     @abc.abstractmethod
-    def to_pointer(self, data: bytes) -> BatchPointer: ...
+    def to_pointer(self, data: bytes, alignment: int=1) -> BatchPointer: ...
     @abc.abstractmethod
-    def malloc(self, n: int) -> BatchPointer: ...
+    def malloc(self, n: int, alignment: int=1) -> BatchPointer: ...
     @abc.abstractmethod
     def write(self, ptr: BatchPointer, data: bytes) -> None: ...
 
@@ -191,12 +76,12 @@ class WriteSemantics(BatchSemantics):
         self.allocations = allocations
         self.writes: t.List[t.Tuple[base.Pointer, bytes]] = []
 
-    def to_pointer(self, data: bytes) -> BatchPointer:
+    def to_pointer(self, data: bytes, alignment: int=1) -> BatchPointer:
         ptr = self.malloc(len(data))
         self.write(ptr, data)
         return ptr
 
-    def malloc(self, n: int) -> BatchPointer:
+    def malloc(self, n: int, alignment: int=1) -> BatchPointer:
         alloc = self.allocations.pop(0)
         if alloc.size != n:
             raise Exception("batch operation seems to be non-deterministic, ",

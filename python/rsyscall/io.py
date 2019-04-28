@@ -2207,17 +2207,18 @@ async def unshare_files(
         copy_to_new_space: t.List[near.FileDescriptor],
         going_to_exec: bool,
 ) -> None:
-    serializer = memsys.Serializer()
-    fds_ptr = serializer.serialize_data(array.array('i', [int(fd) for fd in close_in_old_space]).tobytes())
-    stack_ptr = serializer.serialize_lambda(trampoline_stack_size,
-        lambda: process_resources.build_trampoline_stack(process_resources.stop_then_close_func,
-                                                         fds_ptr.pointer, len(close_in_old_space)),
-                                            # aligned for the stack
-                                            alignment=16)
-    async with serializer.with_flushed(task.transport, task.allocator):
+    def op(sem: BatchSemantics) -> BatchPointer:
+        fds_ptr = sem.to_pointer(array.array('i', [int(fd) for fd in close_in_old_space]).tobytes())
+        stack_ptr = sem.to_pointer(process_resources.build_trampoline_stack(
+            process_resources.stop_then_close_func, fds_ptr.ptr, len(close_in_old_space)),
+                                   # x86_64 requires 16-byte alignment for stacks
+                                   alignment=16)
+        return stack_ptr
+    async with contextlib.AsyncExitStack() as stack:
+        stack_pointer = await perform_batch(task.transport, task.allocator, stack, op)
         closer_task = await monitor.clone(
             lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SIGHAND|lib.CLONE_SYSVSEM|signal.SIGCHLD,
-            stack_ptr.pointer)
+            stack_pointer.ptr)
         event = await closer_task.wait_for_stop_or_exit()
         if event.died():
             raise Exception("stop_then_close task died unexpectedly", event)
