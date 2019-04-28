@@ -63,10 +63,10 @@ class NullGateway(memint.MemoryGateway):
 class NullSemantics(BatchSemantics):
     def __init__(self, task: Task) -> None:
         super().__init__(task)
-        self.allocations: t.List[t.Tuple[int, int, Serializer]] = []
+        self.allocations: t.List[t.Tuple[int, int]] = []
 
     def malloc_serializer(self, serializer: Serializer[T], n: int, alignment: int=1) -> Pointer[T]:
-        self.allocations.append((n, alignment, serializer))
+        self.allocations.append((n, alignment))
         ptr = Pointer(self.task, NullGateway(), serializer, NullAllocation(n))
         return ptr
 
@@ -74,26 +74,24 @@ class NullSemantics(BatchSemantics):
         return ptr._wrote(data)
 
     @staticmethod
-    def run(task: Task, batch: t.Callable[[BatchSemantics], T]) -> t.List[t.Tuple[int, int, Serializer]]:
+    def run(task: Task, batch: t.Callable[[BatchSemantics], T]) -> t.List[t.Tuple[int, int]]:
         sem = NullSemantics(task)
         batch(sem)
         return sem.allocations
 
 class WriteSemantics(BatchSemantics):
-    def __init__(self, task: Task, allocations: t.List[Pointer]) -> None:
+    def __init__(self, task: Task, transport: base.MemoryTransport, allocations: t.Sequence[AllocationInterface]) -> None:
         super().__init__(task)
-        self.allocations = allocations
+        self.transport = transport
+        self.allocations = list(allocations)
         self.writes: t.List[WrittenPointer] = []
 
     def malloc_serializer(self, serializer: Serializer[T], n: int, alignment: int=1) -> Pointer[T]:
-        ptr = self.allocations.pop(0)
-        if ptr.bytesize() != n:
+        allocation = self.allocations.pop(0)
+        if allocation.size() != n:
             raise Exception("batch operation seems to be non-deterministic, ",
                             "allocating different sizes/in different order on second run")
-        if type(ptr.serializer) != type(serializer):
-            raise Exception("batch operation seems to be non-deterministic, ",
-                            "allocating different serializers/in different order on second run")
-        return ptr
+        return Pointer(self.task, self.transport, serializer, allocation)
 
     def write(self, ptr: Pointer[T], data: T) -> WrittenPointer[T]:
         written = ptr._wrote(data)
@@ -101,9 +99,10 @@ class WriteSemantics(BatchSemantics):
         return written
 
     @staticmethod
-    def run(task: Task, batch: t.Callable[[BatchSemantics], T], allocations: t.List[Pointer]
+    def run(task: Task, transport: base.MemoryTransport, batch: t.Callable[[BatchSemantics], T],
+            allocations: t.Sequence[AllocationInterface]
     ) -> t.Tuple[T, t.List[WrittenPointer]]:
-        sem = WriteSemantics(task, allocations)
+        sem = WriteSemantics(task, transport, allocations)
         ret = batch(sem)
         return ret, sem.writes
 
@@ -114,10 +113,8 @@ async def perform_batch(
         batch: t.Callable[[BatchSemantics], T],
 ) -> T:
     sizes = NullSemantics.run(task, batch)
-    allocations = await allocator.bulk_malloc([(size, alignment) for size, alignment, _ in sizes])
-    ptrs = [Pointer(task, transport, serializer, allocation)
-            for (_, _, serializer), allocation in zip(sizes, allocations)]
-    ret, desired_writes = WriteSemantics.run(task, batch, ptrs)
+    allocations = await allocator.bulk_malloc([(size, alignment) for size, alignment in sizes])
+    ret, desired_writes = WriteSemantics.run(task, transport, batch, allocations)
     await transport.batch_write([(ptr.far, ptr.serializer.to_bytes(ptr.data))
                                  for ptr in desired_writes])
     return ret
