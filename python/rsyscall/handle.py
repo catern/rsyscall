@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import AF, SOCK, Address, Socklen
 from rsyscall.sched import UnshareFlag
-from rsyscall.struct import Serializer, HasSerializer, FixedSize
+from rsyscall.struct import Serializer, HasSerializer, FixedSize, Serializable
 from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path
@@ -744,12 +744,15 @@ class Task(rsyscall.far.Task):
             await rsyscall.near.socketpair(self.sysif, domain, type, protocol, sv_b.near)
             return sv
 
-    async def execve(self, filename: WrittenPointer[Path], argv: WrittenPointer, envp: WrittenPointer,
+    async def execve(self, filename: WrittenPointer[Path],
+                     argv: WrittenPointer[ArgList],
+                     envp: WrittenPointer[ArgList],
                      flags: AT) -> None:
-        # hmmmmmmmmmmmmmmmmmmmmmm
-        # how do we borrow the pointers nested inside the argv and envp?
-        # I guess we can just look at the writtenpointer value. hm. that's fine.
-        raise Exception("hm")
+        async with contextlib.AsyncExitStack() as stack:
+            await stack.enter_async_context(filename.borrow(self))
+            for arg in [*argv.data, *envp.data]:
+                await stack.enter_async_context(arg.borrow(self))
+            await rsyscall.near.execveat(self.sysif, None, filename.near, argv.near, envp.near, flags)
 
 @dataclass
 class Process:
@@ -831,6 +834,20 @@ class FDPairSerializer(Serializer[T_fdpair]):
             return self.task.make_fd_handle(rsyscall.near.FileDescriptor(int(n)))
         return self.cls(make(struct.first), make(struct.second))
 
+class Arg(bytes, Serializable):
+    def to_bytes(self) -> bytes:
+        return self + b'\0'
+
+    T = t.TypeVar('T', bound='Arg')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        try:
+            nullidx = data.index(b'\0')
+        except ValueError:
+            return cls(data)
+        else:
+            return cls(data[0:nullidx])
+
 # hmmmmmMMMmMMmMMmmmmmMmmmmmm
 # so we want this list to not lose the types of the pointers contained within it...
 # although that's not *currently* an issue because we aren't reading it back...
@@ -844,25 +861,21 @@ class FDPairSerializer(Serializer[T_fdpair]):
 # we'll also have an Arg which is just, I guess, a string, which we write out as null-terminated.
 # lol we could enforce env (a, b) structure with this
 # heck we could even have an environment class which is a dict
+T_arglist = t.TypeVar('T_arglist', bound='ArgList')
 class ArgList(t.List[Pointer], HasSerializer):
     @classmethod
-    def get_serializer(cls, task: Task) -> Serializer[ArgList]:
-        return ArgListSerializer(task)
+    def get_serializer(cls, task: Task) -> Serializer[T_arglist]:
+        return ArgListSerializer()
 
-# lol how do we deserialize the arglist
-# how do we even generate an allocation thing
-# we can't deserialize it, it doesn't work
-# we don't know how to manage the memory
-# unless... we told the serializer about it?
-# what would we really be doing here????
-class ArgListSerializer(Serializer[ArgList]):
-    def to_bytes(self, arglist: ArgList) -> bytes:
-        return sem.to_pointer(b"".join(pointer.pack(int(ptr.near)) for ptr in ptrs) + pointer.pack(0))
-        struct = ffi.new('struct fdpair*', (pair.first, pair.second))
-        return bytes(ffi.buffer(struct))
+class ArgListSerializer(Serializer[T_arglist]):
+    def to_bytes(self, arglist: T_arglist) -> bytes:
+        import struct
+        ret = b""
+        for ptr in arglist:
+            ret += struct.Struct("Q").pack(int(ptr.near))
+        ret += struct.Struct("Q").pack(0)
+        return ret
 
-    def from_bytes(self, data: bytes) -> ArgList:
-        struct = ffi.cast('struct fdpair const*', ffi.from_buffer(data))
-        def make(n: int) -> FileDescriptor:
-            return self.task.make_fd_handle(rsyscall.near.FileDescriptor(int(n)))
-        return self.cls(make(struct.first), make(struct.second))
+    def from_bytes(self, data: bytes) -> T_arglist:
+        raise Exception("can't get pointer handles from raw bytes")
+

@@ -20,6 +20,7 @@ from rsyscall.handle import T_pointer
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_has_serializer, T_fixed_size, Bytes, Int32, Serializer, Struct
+import rsyscall.batch
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr
 from rsyscall.fcntl import AT, O, F
@@ -1746,9 +1747,14 @@ class Thread:
         self.futex_mapping = futex_mapping
         self.released = False
 
-    async def execveat(self, sysif: SyscallInterface, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
-                       path: handle.Path, argv: t.List[bytes], envp: t.List[bytes], flags: int) -> ChildProcess:
-        await memsys.execveat(sysif, transport, allocator, path, argv, envp, flags)
+    async def execveat(self, task: Task, path: handle.Path,
+                       argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> ChildProcess:
+        argv_ptrs = handle.ArgList([await task.to_pointer(handle.Arg(arg)) for arg in argv])
+        envp_ptrs = handle.ArgList([await task.to_pointer(handle.Arg(arg)) for arg in envp])
+        await task.base.execve(await task.to_pointer(path),
+                               await task.to_pointer(argv_ptrs),
+                               await task.to_pointer(envp_ptrs),
+                               flags)
         return self.child_task
 
     async def wait_for_mm_release(self) -> ChildProcess:
@@ -2835,9 +2841,9 @@ class RsyscallThread:
             raw_envp.append(b''.join([key_bytes, b'=', value]))
         task = self.stdtask.task
         logger.info("execveat(%s, %s, %s)", path, argv, env_updates)
-        return (await self.thread.execveat(task.base.sysif, task.transport, task.allocator,
+        return (await self.thread.execveat(task,
                                            path, [os.fsencode(arg) for arg in argv],
-                                           raw_envp, flags=0))
+                                           raw_envp, AT.NONE))
 
     async def run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
         child = await command.exec(self)

@@ -244,6 +244,12 @@ class AllocatorClient(AllocatorInterface):
                             self.task.address_space, self.allocator.task.address_space)
         return self.allocator.bulk_malloc(sizes)
 
+    def bulk_malloc_a(self, sizes: t.List[t.Tuple[int, int]]) -> t.AsyncContextManager[t.List[Pointer]]:
+        if self.task.address_space != self.allocator.task.address_space:
+            raise Exception("task and allocator are in different address spaces",
+                            self.task.address_space, self.allocator.task.address_space)
+        return self.allocator.bulk_malloc_a(sizes)
+
     def malloc(self, size: int, alignment: int=1) -> t.Awaitable[Allocation]:
         if self.task.address_space != self.allocator.task.address_space:
             raise Exception("task and allocator are in different address spaces",
