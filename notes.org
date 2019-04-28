@@ -14647,6 +14647,19 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     or by just adding those methods?
 
     I think we should make the whole thing an interface.
+
+    OK, making the whole thing an interface requires figuring out something to replace task.
+
+    that's tricky so let's skip it for now.
+    we do want to do that though, as part of making pointer lower-level than the header modules,
+    so they can use pointer,
+    and therefore we can move the dataclasses using pointer into header modules.
+
+    ok so we can just stick a transport into handle.Pointer
+
+    the only usage of TypedPointer at the moment is, well, unfortunate to lose,
+    but oh well...
+*** stick transport in Pointer
 ** turn pointer into an interface (which throws exceptions if not readable)
    but how do we establish persistent references to pointers across calls to fork?
 
@@ -14655,6 +14668,10 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
    heck, it's even kind of silly to use task for it for fork.
    would be nice to establish references before forking.
+
+   ok so, let's figure it out.
+
+   we need to figure out how we are going to manage ownership of the pointer
 ** improve exceptions for path operations by using path in WrittenPointer
 ** make socklen functions return Pointer[Pointer[Sockaddr]]
    Essentially we'll transform the type of the socklen buffer,

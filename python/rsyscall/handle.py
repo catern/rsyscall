@@ -12,6 +12,7 @@ import typing as t
 import logging
 import contextlib
 import abc
+import rsyscall.memint as memint
 logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import AF, SOCK, Address, Socklen, SendmsgFlags, RecvmsgFlags, MsghdrFlags
@@ -51,6 +52,7 @@ T_pointer = t.TypeVar('T_pointer', bound='Pointer')
 @dataclass(eq=False)
 class Pointer(t.Generic[T]):
     task: Task
+    transport: memint.MemoryGateway
     serializer: Serializer[T]
     allocation: AllocationInterface
     valid: bool = True
@@ -80,7 +82,7 @@ class Pointer(t.Generic[T]):
         # TODO how can I do this statically?
         if type(self) is not Pointer:
             raise Exception("subclasses of Pointer must override _with_alloc")
-        return type(self)(self.task, self.serializer, allocation)
+        return type(self)(self.task, self.transport, self.serializer, allocation)
 
     def split(self: T_pointer, size: int) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
@@ -111,7 +113,21 @@ class Pointer(t.Generic[T]):
 
     def _wrote(self, data: T) -> WrittenPointer[T]:
         self.valid = False
-        return WrittenPointer(self.task, data, self.serializer, self.allocation)
+        return WrittenPointer(self.task, self.transport, data, self.serializer, self.allocation)
+
+    async def write(self, data: T) -> WrittenPointer[T]:
+        self.validate()
+        data_bytes = self.serializer.to_bytes(data)
+        if len(data_bytes) > self.bytesize():
+            raise Exception("data is too long", len(data_bytes),
+                            "for this typed pointer of size", self.bytesize())
+        await self.transport.write(self.far, data_bytes)
+        return self._wrote(data)
+
+    async def read(self) -> T:
+        self.validate()
+        data = await self.transport.read(self.far, self.bytesize())
+        return self.serializer.from_bytes(data)
 
     def __enter__(self) -> Pointer:
         return self
@@ -122,12 +138,18 @@ class Pointer(t.Generic[T]):
 class WrittenPointer(Pointer[T]):
     def __init__(self,
                  task: Task,
+                 transport: memint.MemoryGateway,
                  data: T,
                  serializer: Serializer[T],
                  allocation: AllocationInterface,
     ) -> None:
-        super().__init__(task, serializer, allocation)
+        super().__init__(task, transport, serializer, allocation)
         self.data = data
+
+    def _with_alloc(self, allocation: AllocationInterface) -> WrittenPointer:
+        if type(self) is not WrittenPointer:
+            raise Exception("subclasses of WrittenPointer must override _with_alloc")
+        return WrittenPointer(self.task, self.transport, self.data, self.serializer, allocation)
 
 # This is like a far pointer plus a segment register.
 # It means that, as long as it doesn't throw an exception,

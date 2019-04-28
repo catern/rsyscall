@@ -106,7 +106,7 @@ async def perform_batch(
 ) -> T:
     sizes = NullSemantics.run(batch)
     allocations = await allocator.bulk_malloc(sizes)
-    ptrs = [BatchPointer(allocation.pointer, size)
+    ptrs = [BatchPointer(allocation.pointer, size) # type: ignore
             for allocation, (size, alignment) in zip(allocations, sizes)]
     ret, desired_writes = WriteSemantics.run(batch, ptrs)
     await transport.batch_write(desired_writes)

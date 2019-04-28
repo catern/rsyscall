@@ -147,37 +147,6 @@ class File:
 T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
-class TypedPointer(handle.Pointer[T]):
-    def __init__(self, task: Task, serializer: Serializer[T], allocation: handle.AllocationInterface) -> None:
-        handle.Pointer.__init__(self, task.base, serializer, allocation)
-        self.mem_task = task
-
-    async def write(self, data: T) -> WrittenTypedPointer[T]:
-        self.validate()
-        data_bytes = self.serializer.to_bytes(data)
-        if len(data_bytes) > self.bytesize():
-            raise Exception("data is too long", len(data_bytes),
-                            "for this typed pointer of size", self.bytesize())
-        await self.mem_task.transport.write(self.far, data_bytes)
-        return self._wrote(data)
-
-    def _wrote(self, data: T) -> WrittenTypedPointer[T]:
-        self.valid = False
-        return WrittenTypedPointer(self.mem_task, data, self.serializer, self.allocation)
-
-    async def read(self) -> T:
-        self.validate()
-        data = await self.mem_task.transport.read(self.far, self.bytesize())
-        return self.serializer.from_bytes(data)
-
-    def _with_alloc(self, allocation: handle.AllocationInterface) -> TypedPointer:
-        return TypedPointer(self.mem_task, self.serializer, allocation)
-
-class WrittenTypedPointer(TypedPointer[T], handle.WrittenPointer[T]):
-    def __init__(self, task: Task, data: T, serializer: Serializer[T], allocation: handle.AllocationInterface) -> None:
-        TypedPointer.__init__(self, task, serializer, allocation)
-        handle.WrittenPointer.__init__(self, task.base, data, serializer, allocation)
-
 class Task:
     def __init__(self,
                  base_: base.Task,
@@ -213,21 +182,21 @@ class Task:
     async def close(self):
         await self.syscall.close_interface()
 
-    async def malloc_struct(self, cls: t.Type[T_fixed_size]) -> TypedPointer[T_fixed_size]:
+    async def malloc_struct(self, cls: t.Type[T_fixed_size]) -> handle.Pointer[T_fixed_size]:
         return await self.malloc_type(cls, cls.sizeof())
 
-    async def malloc_type(self, cls: t.Type[T_has_serializer], size: int) -> TypedPointer[T_has_serializer]:
+    async def malloc_type(self, cls: t.Type[T_has_serializer], size: int) -> handle.Pointer[T_has_serializer]:
         return await self.malloc_serializer(cls.get_serializer(self.base), size)
 
-    async def malloc_serializer(self, serializer: Serializer[T], size: int) -> TypedPointer[T]:
+    async def malloc_serializer(self, serializer: Serializer[T], size: int) -> handle.Pointer[T]:
         allocation = await self.allocator.malloc(size)
         try:
-            return TypedPointer(self, serializer, allocation)
+            return handle.Pointer(self.base, self.transport, serializer, allocation)
         except:
             allocation.free()
             raise
 
-    async def to_pointer(self, data: T_has_serializer) -> WrittenTypedPointer[T_has_serializer]:
+    async def to_pointer(self, data: T_has_serializer) -> handle.WrittenPointer[T_has_serializer]:
         serializer = data.get_serializer(self.base)
         data_bytes = serializer.to_bytes(data)
         ptr = await self.malloc_serializer(serializer, len(data_bytes))
@@ -451,7 +420,7 @@ class FileDescriptor(t.Generic[T_file_co]):
 
     async def setsockopt(self, level: int, optname: int, optval: t.Union[bytes, int]) -> None:
         if isinstance(optval, bytes):
-            ptr: TypedPointer = await self.task.to_pointer(Bytes(optval))
+            ptr: handle.Pointer = await self.task.to_pointer(Bytes(optval))
         else:
             ptr = await self.task.to_pointer(Int32(optval))
         await self.handle.setsockopt(level, optname, ptr)
@@ -553,8 +522,8 @@ class EpollCenter:
 @dataclass
 class PendingEpollWait:
     syscall_response: near.SyscallResponse
-    buf: TypedPointer[EpollEventList]
-    valid: t.Optional[TypedPointer[EpollEventList]] = None
+    buf: handle.Pointer[EpollEventList]
+    valid: t.Optional[handle.Pointer[EpollEventList]] = None
     received_events: t.Optional[EpollEventList] = None
 
     async def receive(self) -> EpollEventList:
