@@ -101,7 +101,7 @@ async def _make_local_stdtask() -> StandardTask:
         server_func=_make_local_function(lib.rsyscall_server),
         persistent_server_func=_make_local_function(lib.rsyscall_persistent_server),
         do_cloexec_func=_make_local_function_handle(lib.rsyscall_do_cloexec),
-        stop_then_close_func=_make_local_function(lib.rsyscall_stop_then_close),
+        stop_then_close_func=_make_local_function_handle(lib.rsyscall_stop_then_close),
         trampoline_func=_make_local_function_handle(lib.rsyscall_trampoline),
         futex_helper_func=_make_local_function(lib.rsyscall_futex_helper),
     )

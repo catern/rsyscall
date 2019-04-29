@@ -893,12 +893,6 @@ class Task(rsyscall.far.Task):
             process = await rsyscall.near.clone(self.sysif, flags, stack_data.near, ptid_n, ctid_n, newtls_n)
         # TODO the safety of this depends on no-one borrowing/freeing the stack in borrow __aexit__
         # should try to do this a bit more robustly...
-        # maybe we shouldn't merge it, eh
-        # mmmmmmmmmmmmmmmmmmmmm
-        # yeah we do want to do this, because, we want to be able to reuse buffers after reading from them, I guess.
-        # well... yeah like in an iovec right?
-        # we might want to merge two iovecs...
-        # ok let's do merge
         merged_stack = stack_alloc.merge(stack_data)
         return Process(self, process), merged_stack
 

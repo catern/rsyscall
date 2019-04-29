@@ -17,7 +17,7 @@ from rsyscall.memory_abstracted_syscalls import BatchSemantics, BatchPointer, pe
 import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.handle
-from rsyscall.handle import T_pointer
+from rsyscall.handle import T_pointer, Stack, WrittenPointer
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_has_serializer, T_fixed_size, Bytes, Int32, Serializer, Struct
@@ -1136,7 +1136,7 @@ class ProcessResources:
     server_func: FunctionPointer
     persistent_server_func: FunctionPointer
     do_cloexec_func: handle.Pointer[handle.NativeFunction]
-    stop_then_close_func: FunctionPointer
+    stop_then_close_func: handle.Pointer[handle.NativeFunction]
     trampoline_func: handle.Pointer[handle.NativeFunction]
     futex_helper_func: FunctionPointer
 
@@ -1153,7 +1153,7 @@ class ProcessResources:
             server_func=to_pointer(symbols.rsyscall_server),
             persistent_server_func=to_pointer(symbols.rsyscall_persistent_server),
             do_cloexec_func=to_handle(symbols.rsyscall_do_cloexec),
-            stop_then_close_func=to_pointer(symbols.rsyscall_stop_then_close),
+            stop_then_close_func=to_handle(symbols.rsyscall_stop_then_close),
             trampoline_func=to_handle(symbols.rsyscall_trampoline),
             futex_helper_func=to_pointer(symbols.rsyscall_futex_helper),
         )
@@ -1670,6 +1670,29 @@ class ChildProcessMonitorInternal:
             else:
                 return self.add_task(handle.Process(clone_task, near.Process(tid)))
 
+    async def new_clone(self,
+                        clone_task: base.Task,
+                        flags: CLONE,
+                        child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
+                        ctid: t.Optional[handle.Pointer]=None) -> t.Tuple[ChildProcess, handle.Pointer[Stack]]:
+        if self.is_reaper:
+            # if we're a reaper, we can't simultaneously wait and clone.
+            lock = self.wait_lock
+        else:
+            lock = self.clone_lock
+        async with lock:
+            self.cloning_task = clone_task
+            try:
+                process, usedstack = await clone_task.clone(flags|Signals.SIGCHLD, child_stack, None, ctid, None)
+                waited_on_while_cloning = self.waited_on_while_cloning
+            finally:
+                self.waited_on_while_cloning = None
+                self.cloning_task = None
+            if waited_on_while_cloning is not None:
+                return waited_on_while_cloning, usedstack
+            else:
+                return self.add_task(process), usedstack
+
     async def do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
@@ -1714,13 +1737,13 @@ class ChildProcessMonitorInternal:
                         # only one clone happens at a time, if we get more unknown tids, they're a bug
                         self.cloning_task = None
                     else:
-                        if not self.is_reaper:
-                            raise Exception("got event for some unknown pid", child_event,
-                                            "but we weren't configured as a reaper")
-                        else:
+                        if self.is_reaper:
                             # just ignore events for children that were reparented to us
                             logger.info("got orphaned child event!")
                             print("got orphaned child event!")
+                        else:
+                            raise Exception("got event for some unknown pid", child_event,
+                                            "but we weren't configured as a reaper")
                 self.task_map[pid].send_nowait(child_event)
                 if child_event.died():
                     # this child is dead. if its pid is reused, we don't want to send
@@ -2247,9 +2270,8 @@ class RsyscallInterface(base.SyscallInterface):
 async def do_cloexec_except(task: Task, process_resources: ProcessResources,
                             excluded_fds: t.Iterable[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
-    async def op(sem: batch.BatchSemantics
-    ) -> t.Tuple[t.Tuple[handle.Pointer[handle.Stack], handle.WrittenPointer[handle.Stack]],
-                 handle.Pointer[Siginfo]]:
+    async def op(sem: batch.BatchSemantics) -> t.Tuple[t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
+                                                       handle.Pointer[Siginfo]]:
         fd_array = array.array('i', [int(fd) for fd in excluded_fds])
         fd_array_ptr = sem.to_pointer(Bytes(fd_array.tobytes()))
         stack_value = process_resources.make_trampoline_stack(Trampoline(
@@ -2271,26 +2293,27 @@ async def unshare_files(
         copy_to_new_space: t.List[near.FileDescriptor],
         going_to_exec: bool,
 ) -> None:
-    def op(sem: BatchSemantics) -> BatchPointer:
-        fds_ptr = sem.to_pointer(array.array('i', [int(fd) for fd in close_in_old_space]).tobytes())
-        stack_ptr = sem.to_pointer(process_resources.build_trampoline_stack(
-            process_resources.stop_then_close_func, fds_ptr.ptr, len(close_in_old_space)),
-                                   # x86_64 requires 16-byte alignment for stacks
-                                   alignment=16)
-        return stack_ptr
-    async with contextlib.AsyncExitStack() as stack:
-        stack_pointer = await perform_batch(task.transport, task.allocator, stack, op)
-        closer_task = await monitor.clone(
-            lib.CLONE_VM|lib.CLONE_FS|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SIGHAND|lib.CLONE_SYSVSEM|signal.SIGCHLD,
-            stack_pointer.ptr)
-        event = await closer_task.wait_for_stop_or_exit()
-        if event.died():
-            raise Exception("stop_then_close task died unexpectedly", event)
-        # perform the actual unshare
-        await near.unshare(task.base.sysif, near.UnshareFlag.FILES)
-        # tell the closer task to close
-        await closer_task.send_signal(signal.SIGCONT)
-        await closer_task.wait_for_exit()
+    async def op(sem: batch.BatchSemantics) -> t.Tuple[t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
+                                                       handle.Pointer[Siginfo]]:
+        fd_array = array.array('i', [int(fd) for fd in close_in_old_space])
+        fd_array_ptr = sem.to_pointer(Bytes(fd_array.tobytes()))
+        stack_value = process_resources.make_trampoline_stack(Trampoline(
+            process_resources.stop_then_close_func, [fd_array_ptr, len(fd_array)]))
+        stack_buf = sem.malloc_type(handle.Stack, 4096)
+        stack = await stack_buf.write_to_end(stack_value, alignment=16)
+        siginfo_buf = sem.malloc_struct(Siginfo)
+        return stack, siginfo_buf
+    stack, siginfo_buf = await task.perform_async_batch(op)
+    process, used_stack = await task.base.clone(CLONE.VM|CLONE.FILES|CLONE.FS|CLONE.IO|CLONE.SIGHAND|CLONE.SYSVSEM,
+                                                stack, ptid=None, ctid=None, newtls=None)
+    await process.waitid(W.ALL|W.STOPPED|W.EXITED, siginfo_buf)
+    event = ChildEvent.make_from_siginfo(await siginfo_buf.read())
+    if event.died():
+        raise Exception("stop_then_close task died unexpectedly", event)
+    # perform the actual unshare
+    await near.unshare(task.base.sysif, near.UnshareFlag.FILES)
+    await process.kill(Signals.SIGCONT)
+    await process.waitid(W.ALL|W.EXITED, siginfo_buf)
     # perform a cloexec
     if not going_to_exec:
         await do_cloexec_except(task, process_resources, copy_to_new_space)

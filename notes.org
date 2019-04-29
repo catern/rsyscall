@@ -14681,6 +14681,20 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
    ok lol I don't need this bufferedstack thing,
    it's just a super primitive batch serializer.
+*** first step, do_cloexec_except
+    it's done!
+
+    next is all the other usages.
+*** rest of the usage of clone
+    childtaskmonitor.
+    a tricky one.
+*** remove usage of monitor in unshare_files
+** batch do_cloexec_except allocations together with unshare_file
+   That would be a nice optimization.
+
+   Although... we don't actually need both of them at once.
+
+   So that will over-allocate memory. Hmm.
 ** remove usage of far for syscalls
    I notice immediately, set_robust_list
 ** re-optimize do_cloexec_except
