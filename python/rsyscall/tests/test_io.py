@@ -581,7 +581,7 @@ class TestIO(unittest.TestCase):
                     await self.do_async_things(stdtask3.epoller, stdtask3.task)
         trio.run(self.runner, test)
 
-    def test_thread_nest(self) -> None:
+    def test_thread_nest_async(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread1 = await stdtask.fork()
             async with thread1 as stdtask2:

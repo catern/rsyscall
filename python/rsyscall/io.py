@@ -1529,33 +1529,45 @@ class Multiplexer:
     pass
 
 class ChildProcess:
-    def __init__(self, process: handle.Process, child_events_channel: trio.abc.SendChannel,
+    def __init__(self, process: handle.Process,
                  monitor: ChildProcessMonitorInternal) -> None:
         self.process = process
-        self.child_events_channel = child_events_channel
         self.monitor = monitor
+        # we might have already gotten events for this process and ignored the signal
+        self.wait_for_signal = False
+        self.task = self.monitor.signal_queue.sigfd.underlying.task
         self.death_event: t.Optional[ChildEvent] = None
 
     async def wait(self) -> t.List[ChildEvent]:
         if self.death_event:
             raise Exception("child is already dead!")
+        flags = W.EXITED|W.STOPPED|W.CONTINUED
         while True:
+            print("start", self.process.near, self.process.task.process.near)
+            if self.wait_for_signal:
+                await self.monitor.do_wait()
             try:
-                event = self.child_events_channel.receive_nowait()
+                # oh. wrong task.
+                # hah!
+                # it's not always the case that the process that creates,
+                # is the process that owns.
+                # we should have a reference to our ppid...
+                siginfo_buf = await self.process.waitid(flags|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
+            except:
+                print("except", self.process.near)
+                raise
+            siginfo = await siginfo_buf.read()
+            if siginfo.pid == 0:
+                print("no", self.process.near)
+                # we didn't get an event, so we know there's nothing to see for this pid;
+                # we've got to wait for the next SIGCHLD before waitiding again
+                self.wait_for_signal = True
+            else:
+                event = ChildEvent.make_from_siginfo(siginfo)
+                print("got", self.process.near, event)
                 if event.died():
                     self.death_event = event
                 return [event]
-            except trio.WouldBlock:
-                await self.monitor.do_wait()
-
-    def _flush_nowait(self) -> None:
-        while True:
-            try:
-                event = self.child_events_channel.receive_nowait()
-                if event.died():
-                    self.death_event = event
-            except trio.WouldBlock:
-                return
 
     async def wait_for_exit(self) -> ChildEvent:
         if self.death_event:
@@ -1593,7 +1605,6 @@ class ChildProcess:
         # TODO this could really be a reader-writer lock, with this use as the reader and
         # wait as the writer.
         async with self.monitor.wait_lock:
-            self._flush_nowait()
             if self.death_event:
                 yield None
             else:
@@ -1626,129 +1637,49 @@ class ChildProcessMonitorInternal:
         self.waiting_task = waiting_task
         self.signal_queue = signal_queue
         self.is_reaper = is_reaper
-        self.task_map: t.Dict[int, trio.abc.SendChannel[ChildEvent]] = {}
         self.wait_lock = trio.Lock()
         if self.signal_queue.signal_block.mask != set([signal.SIGCHLD]):
             raise Exception("ChildProcessMonitor should get a SignalQueue only for SIGCHLD")
         self.running_wait = OneAtATime()
-        self.can_waitid = False
-
-        self.clone_lock = trio.Lock()
-        self.cloning_task: t.Optional[base.Task] = None
-        self.waited_on_while_cloning: t.Optional[ChildProcess] = None
+        self.processes: t.List[ChildProcess] = []
 
     def add_task(self, process: handle.Process) -> ChildProcess:
-        send, receive = trio.open_memory_channel(math.inf)
-        child_task = ChildProcess(process, receive, self)
-        self.task_map[process.near.id] = send
-        return child_task
+        process = ChildProcess(process, self)
+        self.processes.append(process)
+        return process
 
     async def clone(self,
                     clone_task: base.Task,
                     flags: int,
                     child_stack: Pointer, ctid: Pointer=None, newtls: Pointer=None) -> ChildProcess:
-        # Careful synchronization between calls to clone and calls to wait is required.
-        # We can only call clone in one task at a time.
-        # See my bloggo posto for more.
-        # TODO write my bloggo posto
-        if self.is_reaper:
-            # if we're a reaper, we can't simultaneously wait and clone.
-            lock = self.wait_lock
+        clone_parent = bool(flags & CLONE.PARENT)
+        if clone_parent:
+            if clone_task.parent_task is None:
+                raise Exception("using CLONE.PARENT, but we don't know our parent task")
+            owning_task = clone_task.parent_task
         else:
-            lock = self.clone_lock
-        async with lock:
-            self.cloning_task = clone_task
-            try:
-                tid = await raw_syscall.clone(clone_task.sysif, flags|signal.SIGCHLD, child_stack,
-                                              ptid=None, ctid=ctid, newtls=newtls)
-                waited_on_while_cloning = self.waited_on_while_cloning
-            finally:
-                self.waited_on_while_cloning = None
-                self.cloning_task = None
-            if waited_on_while_cloning is not None:
-                return waited_on_while_cloning
-            else:
-                return self.add_task(handle.Process(clone_task, near.Process(tid)))
+            owning_task = clone_task
+        tid = await raw_syscall.clone(clone_task.sysif, flags|signal.SIGCHLD, child_stack,
+                                      ptid=None, ctid=ctid, newtls=newtls)
+        return self.add_task(handle.Process(owning_task, near.Process(tid)))
 
     async def new_clone(self,
                         clone_task: base.Task,
                         flags: CLONE,
                         child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
                         ctid: t.Optional[handle.Pointer]=None) -> t.Tuple[ChildProcess, handle.Pointer[Stack]]:
-        if self.is_reaper:
-            # if we're a reaper, we can't simultaneously wait and clone.
-            lock = self.wait_lock
-        else:
-            lock = self.clone_lock
-        async with lock:
-            self.cloning_task = clone_task
-            try:
-                process, usedstack = await clone_task.clone(flags|Signals.SIGCHLD, child_stack, None, ctid, None)
-                waited_on_while_cloning = self.waited_on_while_cloning
-            finally:
-                self.waited_on_while_cloning = None
-                self.cloning_task = None
-            if waited_on_while_cloning is not None:
-                return waited_on_while_cloning, usedstack
-            else:
-                return self.add_task(process), usedstack
+        process, usedstack = await clone_task.clone(flags|Signals.SIGCHLD, child_stack, None, ctid, None)
+        return self.add_task(process), usedstack
 
     async def do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
-                if not self.can_waitid:
-                    buf = await self.waiting_task.malloc_struct(SignalfdSiginfo)
-                    # we don't care what information we get from the signal, we just want to
-                    # sleep until a SIGCHLD happens
-                    await self.signal_queue.read(buf)
-                    self.can_waitid = True
-                # loop on waitid to flush all child events
-                task = self.waiting_task
-                # TODO if we could just detect when the ChildProcess that we are wait()ing for
-                # has gotten an event, we could handle events in this function indefinitely,
-                # and only return once we've sent an event to that ChildProcess.
-                # maybe by passing in the waiting queue?
-                # could do the same for epoll too.
-                # though we have to wake other people up too...
-                siginfo_buf = await task.malloc_struct(Siginfo)
-                try:
-                    # have to serialize against things which use pids; we can't do a wait
-                    # while something else is making a syscall with a pid, because we
-                    # might collect the zombie for that pid and cause pid reuse
-                    async with self.wait_lock:
-                        await task.base.waitid(W.ALL|W.EXITED|W.STOPPED|W.CONTINUED|W.NOHANG, siginfo_buf)
-                except ChildProcessError:
-                    # no more children
-                    self.can_waitid = False
-                    return
-                siginfo = await siginfo_buf.read()
-                if siginfo.pid == 0:
-                    # no more waitable events, but we still have children
-                    self.can_waitid = False
-                    return
-                child_event = ChildEvent.make_from_siginfo(siginfo)
-                logger.info("got child event %s", child_event)
-                pid = child_event.pid
-                if pid not in self.task_map:
-                    if self.cloning_task is not None:
-                        # this is the child we were just cloning. it died before clone returned.
-                        child_task = self.add_task(handle.Process(self.cloning_task, near.Process(pid)))
-                        self.waited_on_while_cloning = child_task
-                        # only one clone happens at a time, if we get more unknown tids, they're a bug
-                        self.cloning_task = None
-                    else:
-                        if self.is_reaper:
-                            # just ignore events for children that were reparented to us
-                            logger.info("got orphaned child event!")
-                            print("got orphaned child event!")
-                        else:
-                            raise Exception("got event for some unknown pid", child_event,
-                                            "but we weren't configured as a reaper")
-                self.task_map[pid].send_nowait(child_event)
-                if child_event.died():
-                    # this child is dead. if its pid is reused, we don't want to send
-                    # any more events to the same ChildProcess.
-                    del self.task_map[pid]
+                buf = await self.waiting_task.malloc_struct(SignalfdSiginfo)
+                # we don't care what information we get from the signal, we just want to
+                # sleep until a SIGCHLD happens
+                await self.signal_queue.read(buf)
+                for process in self.processes:
+                    process.wait_for_signal = False
 
     async def close(self) -> None:
         await self.signal_queue.close()
@@ -1793,7 +1724,7 @@ class ChildProcessMonitor:
 
     async def clone(self, flags: int, child_stack: Pointer, ctid: Pointer=None, newtls: Pointer=None) -> ChildProcess:
         if self.use_clone_parent:
-            flags |= lib.CLONE_PARENT
+            flags |= CLONE.PARENT
         return (await self.internal.clone(self.cloning_task, flags, child_stack, ctid, newtls))
 
 class Thread:
@@ -2546,6 +2477,9 @@ class SocketMemoryTransport(base.MemoryTransport):
         else:
             read_ops = [self._start_single_read(src, n) for src, n in ops]
             await self._do_reads()
+            if not(all(op.done for op in read_ops)):
+                print(len(read_ops))
+                print(read_ops)
             return [op.data for op in read_ops]
 
 class EOFException(Exception):
@@ -2787,7 +2721,7 @@ async def spawn_rsyscall_thread(
     else:
         pidns = parent_task.base.pidns
     netns = parent_task.base.netns
-    new_base_task = base.Task(syscall, cthread.child_task.process,
+    new_base_task = base.Task(syscall, cthread.child_task.process, parent_task.base,
                               parent_task.fd_table, parent_task.address_space, fs_information, pidns, netns)
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)

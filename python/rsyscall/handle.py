@@ -598,6 +598,7 @@ class Task(rsyscall.far.Task):
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
                  process: t.Union[rsyscall.near.Process, Process],
+                 parent_task: t.Optional[Task],
                  fd_table: rsyscall.far.FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  fs: rsyscall.far.FSInformation,
@@ -609,6 +610,7 @@ class Task(rsyscall.far.Task):
             self.process = process
         else:
             self.process = Process(self, process)
+        self.parent_task = parent_task
         self.fd_table = fd_table
         self.address_space = address_space
         self.fs = fs
@@ -876,6 +878,15 @@ class Task(rsyscall.far.Task):
                     ptid: t.Optional[Pointer], ctid: t.Optional[Pointer],
                     # this points to anything, it depends on the thread implementation
                     newtls: t.Optional[Pointer]) -> t.Tuple[Process, Pointer[Stack]]:
+        clone_parent = bool(flags & CLONE.PARENT)
+        if clone_parent:
+            print("clone parenting in HANDLE")
+            if self.parent_task is None:
+                raise Exception("using CLONE.PARENT, but we don't know our parent task")
+            # TODO also check that the parent_task hasn't shut down... not sure how to do that
+            owning_task = self.parent_task
+        else:
+            owning_task = self
         async with contextlib.AsyncExitStack() as stack:
             stack_alloc, stack_data = child_stack
             if (int(stack_data.near) % 16) != 0:
@@ -894,7 +905,7 @@ class Task(rsyscall.far.Task):
         # TODO the safety of this depends on no-one borrowing/freeing the stack in borrow __aexit__
         # should try to do this a bit more robustly...
         merged_stack = stack_alloc.merge(stack_data)
-        return Process(self, process), merged_stack
+        return Process(owning_task, process), merged_stack
 
 class Borrowable:
     async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None:
@@ -930,13 +941,14 @@ class Process:
         return rsyscall.far.Process(self.task.pidns, self.near)
 
     async def waitid(self, options: W, infop: Pointer[Siginfo],
-                     *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:
+                     *, rusage: t.Optional[Pointer[Siginfo]]=None) -> Pointer[Siginfo]:
         async with infop.borrow(self.task) as infop_b:
             if rusage is None:
                 await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, None)
             else:
                 async with rusage.borrow(self.task) as rusage_b:
                     await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, rusage_b.near)
+        return infop
 
     async def kill(self, sig: Signals) -> None:
         await rsyscall.near.kill(self.task.sysif, self.near, sig)

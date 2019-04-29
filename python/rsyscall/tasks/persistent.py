@@ -252,7 +252,7 @@ async def spawn_rsyscall_persistent_server(
         function, remote_sock.near, remote_sock.near, listening_sock.near)
     syscall = RsyscallInterface(RsyscallConnection(access_sock, access_sock),
                                 cthread.child_task.process.near, remote_sock.near)
-    new_base_task = base.Task(syscall, cthread.child_task.process.near,
+    new_base_task = base.Task(syscall, cthread.child_task.process.near, None,
                               parent_task.fd_table, parent_task.address_space, parent_task.base.fs,
                               parent_task.base.pidns,
                               parent_task.base.netns)
