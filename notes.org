@@ -14903,6 +14903,27 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     And, practically, it's still O(M), since we'll batch the syscalls.
 ** change child_task_monitor to issue waitids for each process
    instead of waitid W_ALL
+
+   wait hm
+
+   can we... redesign this entirely???
+
+   can we just issue waitids???
+
+   from the original thread? that would be very cool.
+
+   the reason we can do that is because, lol, even with a central thing,
+   we still can't get information about what triggered the event.
+*** hm
+    can we used waitid(W.ALL|W.NOWAIT) to speed things up?
+
+    Say we make that call;
+    and it tells us some pid...
+    well regardless we still have to do a roundtrip, which is not workable.
+*** verify that the syscallinterface actually makes concurrent syscalls
+    This is, of course, the most important part.
+
+    Yeah looks concurrent to me.
 ** batch do_cloexec_except allocations together with unshare_file
    That would be a nice optimization.
 
