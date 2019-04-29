@@ -2185,6 +2185,10 @@ async def call_function(task: Task, process_resources: ProcessResources,
         # hmmmmmmmmmmm okay
         # so, how do I split this so it's aligned?
         # and, how do I know how much to split?
+        # okay, so I think I'll just add a write_to_end helper on pointer.
+        # which returns the split...
+        # then I don't have to have any temporaries.
+        # and I'll have clone merge the pointers back together and return the merged pointer
         stack_buf = await (await task.malloc_type(handle.StackArgs, 4096))
         stack_value = process_resources.make_trampoline_stack(
             function, arg1, arg2, arg3, arg4, arg5, arg6)
