@@ -14697,7 +14697,7 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    StaticAllocation, NullGateway, etc
 ** make things uniformly return the pointers they were passed in
    It's convenient for expression-oriented programming.
-** manage keeping stackptr alive
+** manage keeping stackptr alive, validity tracking for processes, handle.ChildProcess
    So, we could just stick it on the Process.
    Return an inherited class from clone...
 
@@ -14716,6 +14716,43 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
    Hmm it's also interesting to think about, maybe, validity tracking for processes.
    So that a process can be marked as valid or invalid.
+
+   We could have handle.ChildProcess,
+   and also have waitid automatically update its validity information.
+** maybe implement borrow interface for all dataclasses? or maybe just Stack[T_borrow]?
+   Then they can contain pointers which we can then borrow?
+
+   hMMMmmmmmmmmMMMmm
+   so the trampoline needs to... maintain references to these guys I guess?
+   no that's too extreme, fuggedaboutit
+   but how would we do it?
+   I guess we get an WrittenPointer[FDList], and...
+   I guess we'd maybe have WrittenPointer override borrow, so that it borrows things inside the thing?
+   and... we require every dataclass implement borrow?
+
+   Oh, we can constrain it to just things which are arguments on the stack.
+   We already have this constraint for sendmsg,
+   its tree implements borrow.
+   So we can do the same for Stack.
+
+   We need to do this already to borrow Trampoline. So might as well...
+** add async perform batch, but run it with a null async runner
+   So we can be sure it doesn't actually perform effects.
+
+   Well... we should maybe have direct_syscall do a yield, just so it breaks when running in null async runner.
+** handle resumable function for epoll by just re-running repeatedly
+   ICFP-style, woo!
+
+   As long as it doesn't have side effects, we can just re-run it indefinitely,
+   storing previous results.
+** general purpose syscall batching
+   We could do a general purpose batching thing.
+
+   We would, I guess, stick the interface in at the SyscallInterface level.
+
+   We'd return None or 0 or something from all syscalls
+
+   Hopefully that would be enough so that we don't have to stick the interface at the task level.
 ** DONE fd.near in serialization
    OK so uh, we are serializing the fds.
 

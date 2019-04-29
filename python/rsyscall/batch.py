@@ -4,7 +4,7 @@ from rsyscall.handle import Task, Pointer, WrittenPointer, AllocationInterface
 import rsyscall.near
 import contextlib
 import abc
-from rsyscall.struct import T_has_serializer, Serializer
+from rsyscall.struct import T_has_serializer, T_fixed_size, Serializer
 import rsyscall.memory as memory
 import rsyscall.base as base
 import rsyscall.far as far
@@ -29,6 +29,9 @@ class BatchSemantics:
     def malloc_type(self, cls: t.Type[T_has_serializer], size: int) -> Pointer[T_has_serializer]:
         return self.malloc_serializer(cls.get_serializer(self.task), size)
 
+    def malloc_struct(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]:
+        return self.malloc_type(cls, cls.sizeof())
+
     @abc.abstractmethod
     def malloc_serializer(self, serializer: Serializer[T], n: int, alignment: int=1) -> Pointer[T]: ...
     # we'll do self-reference by passing a function Pointer -> bytes
@@ -48,7 +51,7 @@ class NullAllocation(AllocationInterface):
         return self.n
 
     def split(self, size: int) -> t.Tuple[AllocationInterface, AllocationInterface]:
-        raise Exception
+        return NullAllocation(self.size() - size), NullAllocation(size)
 
     def merge(self, other: AllocationInterface) -> AllocationInterface:
         raise Exception("can't merge")
@@ -56,12 +59,11 @@ class NullAllocation(AllocationInterface):
     def free(self) -> None:
         pass
 
-class NullGateway(memint.MemoryGateway):
-    # TODO we should actually implement write I guess
+class NoopGateway(memint.MemoryGateway):
     async def batch_read(self, ops: t.List[t.Tuple[far.Pointer, int]]) -> t.List[bytes]:
         raise Exception("shouldn't try to read")
     async def batch_write(self, ops: t.List[t.Tuple[far.Pointer, bytes]]) -> None:
-        raise Exception("shouldn't try to write")
+        pass
         
 class NullSemantics(BatchSemantics):
     def __init__(self, task: Task) -> None:
@@ -70,16 +72,16 @@ class NullSemantics(BatchSemantics):
 
     def malloc_serializer(self, serializer: Serializer[T], n: int, alignment: int=1) -> Pointer[T]:
         self.allocations.append((n, alignment))
-        ptr = Pointer(self.task, NullGateway(), serializer, NullAllocation(n))
+        ptr = Pointer(self.task, NoopGateway(), serializer, NullAllocation(n))
         return ptr
 
     def write(self, ptr: Pointer[T], data: T) -> WrittenPointer[T]:
         return ptr._wrote(data)
 
     @staticmethod
-    def run(task: Task, batch: t.Callable[[BatchSemantics], T]) -> t.List[t.Tuple[int, int]]:
+    async def run(task: Task, batch: t.Callable[[BatchSemantics], t.Awaitable[T]]) -> t.List[t.Tuple[int, int]]:
         sem = NullSemantics(task)
-        batch(sem)
+        await batch(sem)
         return sem.allocations
 
 class WriteSemantics(BatchSemantics):
@@ -102,12 +104,26 @@ class WriteSemantics(BatchSemantics):
         return written
 
     @staticmethod
-    def run(task: Task, transport: base.MemoryTransport, batch: t.Callable[[BatchSemantics], T],
-            allocations: t.Sequence[AllocationInterface]
+    async def run(task: Task, transport: base.MemoryTransport,
+                  batch: t.Callable[[BatchSemantics], t.Awaitable[T]],
+                  allocations: t.Sequence[AllocationInterface]
     ) -> t.Tuple[T, t.List[WrittenPointer]]:
         sem = WriteSemantics(task, transport, allocations)
-        ret = batch(sem)
+        ret = await batch(sem)
         return ret, sem.writes
+
+async def perform_async_batch(
+        task: Task,
+        transport: base.MemoryTransport,
+        allocator: memory.AllocatorInterface,
+        batch: t.Callable[[BatchSemantics], t.Awaitable[T]],
+) -> T:
+    sizes = await NullSemantics.run(task, batch)
+    allocations = await allocator.bulk_malloc([(size, alignment) for size, alignment in sizes])
+    ret, desired_writes = await WriteSemantics.run(task, transport, batch, allocations)
+    await transport.batch_write([(ptr.far, ptr.serializer.to_bytes(ptr.data))
+                                 for ptr in desired_writes])
+    return ret
 
 async def perform_batch(
         task: Task,
@@ -115,9 +131,6 @@ async def perform_batch(
         allocator: memory.AllocatorInterface,
         batch: t.Callable[[BatchSemantics], T],
 ) -> T:
-    sizes = NullSemantics.run(task, batch)
-    allocations = await allocator.bulk_malloc([(size, alignment) for size, alignment in sizes])
-    ret, desired_writes = WriteSemantics.run(task, transport, batch, allocations)
-    await transport.batch_write([(ptr.far, ptr.serializer.to_bytes(ptr.data))
-                                 for ptr in desired_writes])
-    return ret
+    async def abatch(sem: BatchSemantics) -> T:
+        return batch(sem)
+    return await perform_async_batch(task, transport, allocator, abatch)

@@ -902,11 +902,20 @@ class Task(rsyscall.far.Task):
         merged_stack = stack_alloc.merge(stack_data)
         return Process(self, process), merged_stack
 
+class Borrowable:
+    async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None:
+        raise NotImplementedError("borrow_with not implemented on", type(self))
+
+T_borrowable = t.TypeVar('T_borrowable', bound=Borrowable)
 @dataclass
-class Stack(Serializable, t.Generic[T]):
+class Stack(Serializable, t.Generic[T_borrowable]):
     function: Pointer
-    data: T
-    serializer: Serializer[T]
+    data: T_borrowable
+    serializer: Serializer[T_borrowable]
+
+    async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None:
+        await stack.enter_async_context(self.function.borrow(task))
+        await self.data.borrow_with(stack, task)
 
     def to_bytes(self) -> bytes:
         return struct.Struct("Q").pack(int(self.function.near)) + self.serializer.to_bytes(self.data)
@@ -1257,8 +1266,8 @@ class RecvMsghdrOutSerializer(Serializer[RecvMsghdrOut]):
         flags = MsghdrFlags(struct.msg_flags)
         return RecvMsghdrOut(name, control, flags, name_rest, control_rest)
 
-class CFunction:
+class NativeFunction:
     pass
 
-class CFunctionSerializer(Serializer[CFunction]):
+class NativeFunctionSerializer(Serializer[NativeFunction]):
     pass

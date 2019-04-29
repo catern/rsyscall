@@ -84,9 +84,9 @@ def _make_local_task() -> Task:
     return base_task
 def _make_local_function(cffi_object) -> rsc.FunctionPointer:
     return rsc.FunctionPointer(far.Pointer(task.address_space, near.Pointer(int(ffi.cast('long', cffi_object)))))
-def _make_local_function_handle(cffi_ptr) -> handle.Pointer[handle.CFunction]:
+def _make_local_function_handle(cffi_ptr) -> handle.Pointer[handle.NativeFunction]:
     return handle.Pointer(
-        task, batch.NullGateway(), handle.CFunctionSerializer(),
+        task, rsc.NullGateway(), handle.NativeFunctionSerializer(),
         rsc.StaticAllocation(near.Pointer(int(ffi.cast('ssize_t', cffi_ptr)))))
 
 async def _make_local_stdtask() -> StandardTask:
@@ -100,7 +100,7 @@ async def _make_local_stdtask() -> StandardTask:
     process_resources = rsc.ProcessResources(
         server_func=_make_local_function(lib.rsyscall_server),
         persistent_server_func=_make_local_function(lib.rsyscall_persistent_server),
-        do_cloexec_func=_make_local_function(lib.rsyscall_do_cloexec),
+        do_cloexec_func=_make_local_function_handle(lib.rsyscall_do_cloexec),
         stop_then_close_func=_make_local_function(lib.rsyscall_stop_then_close),
         trampoline_func=_make_local_function_handle(lib.rsyscall_trampoline),
         futex_helper_func=_make_local_function(lib.rsyscall_futex_helper),

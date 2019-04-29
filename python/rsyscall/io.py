@@ -10,6 +10,7 @@ from rsyscall.base import Pointer, RsyscallException, RsyscallHangup
 from rsyscall.base import SyscallInterface
 
 import rsyscall.base as base
+import rsyscall.memint as memint
 import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.memory_abstracted_syscalls as memsys
 from rsyscall.memory_abstracted_syscalls import BatchSemantics, BatchPointer, perform_batch
@@ -208,6 +209,9 @@ class Task:
 
     async def perform_batch(self, op: t.Callable[[batch.BatchSemantics], T]) -> T:
         return await batch.perform_batch(self.base, self.transport, self.allocator, op)
+
+    async def perform_async_batch(self, op: t.Callable[[batch.BatchSemantics], t.Awaitable[T]]) -> T:
+        return await batch.perform_async_batch(self.base, self.transport, self.allocator, op)
 
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: int,
@@ -1057,9 +1061,9 @@ async def spit(path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
     return path
 
 @dataclass
-class Trampoline(handle.Serializable):
-    function: FunctionPointer
-    args: t.List[t.Union[handle.FileDescriptor, handle.Pointer, int]]
+class Trampoline(handle.Serializable, handle.Borrowable):
+    function: handle.Pointer[handle.NativeFunction]
+    args: t.List[t.Union[handle.FileDescriptor, handle.WrittenPointer[handle.Borrowable], handle.Pointer, int]]
 
     def __post_init__(self) -> None:
         if len(self.args) > 6:
@@ -1076,7 +1080,7 @@ class Trampoline(handle.Serializable):
                 args.append(int(arg))
         arg1, arg2, arg3, arg4, arg5, arg6 = args + [0]*(6 - len(args))
         struct = ffi.new('struct rsyscall_trampoline_stack*', {
-            'function': ffi.cast('void*', int(self.function.pointer.near)),
+            'function': ffi.cast('void*', int(self.function.near)),
             'rdi': int(arg1),
             'rsi': int(arg2),
             'rdx': int(arg3),
@@ -1085,6 +1089,16 @@ class Trampoline(handle.Serializable):
             'r9':  int(arg6),
         })
         return bytes(ffi.buffer(struct))
+
+    async def borrow_with(self, stack: contextlib.AsyncExitStack, task: handle.Task) -> None:
+        await stack.enter_async_context(self.function.borrow(task))
+        for arg in self.args:
+            if isinstance(arg, int):
+                pass
+            elif isinstance(arg, handle.WrittenPointer):
+                await arg.value.borrow_with(stack, task)
+            else:
+                await stack.enter_async_context(arg.borrow(task))
 
     T = t.TypeVar('T', bound='Trampoline')
     @classmethod
@@ -1111,13 +1125,19 @@ class StaticAllocation(handle.AllocationInterface):
     def free(self) -> None:
         pass
 
+class NullGateway(memint.MemoryGateway):
+    async def batch_read(self, ops: t.List[t.Tuple[far.Pointer, int]]) -> t.List[bytes]:
+        raise Exception("shouldn't try to read")
+    async def batch_write(self, ops: t.List[t.Tuple[far.Pointer, bytes]]) -> None:
+        raise Exception("shouldn't try to write")
+
 @dataclass
 class ProcessResources:
     server_func: FunctionPointer
     persistent_server_func: FunctionPointer
-    do_cloexec_func: FunctionPointer
+    do_cloexec_func: handle.Pointer[handle.NativeFunction]
     stop_then_close_func: FunctionPointer
-    trampoline_func: handle.Pointer[handle.CFunction]
+    trampoline_func: handle.Pointer[handle.NativeFunction]
     futex_helper_func: FunctionPointer
 
     @staticmethod
@@ -1125,14 +1145,14 @@ class ProcessResources:
         def to_pointer(cffi_ptr) -> FunctionPointer:
             return FunctionPointer(
                 far.Pointer(task.address_space, near.Pointer(int(ffi.cast('ssize_t', cffi_ptr)))))
-        def to_handle(cffi_ptr) -> handle.Pointer[handle.CFunction]:
+        def to_handle(cffi_ptr) -> handle.Pointer[handle.NativeFunction]:
             return handle.Pointer(
-                task, batch.NullGateway(), handle.CFunctionSerializer(),
+                task, NullGateway(), handle.NativeFunctionSerializer(),
                 StaticAllocation(near.Pointer(int(ffi.cast('ssize_t', cffi_ptr)))))
         return ProcessResources(
             server_func=to_pointer(symbols.rsyscall_server),
             persistent_server_func=to_pointer(symbols.rsyscall_persistent_server),
-            do_cloexec_func=to_pointer(symbols.rsyscall_do_cloexec),
+            do_cloexec_func=to_handle(symbols.rsyscall_do_cloexec),
             stop_then_close_func=to_pointer(symbols.rsyscall_stop_then_close),
             trampoline_func=to_handle(symbols.rsyscall_trampoline),
             futex_helper_func=to_pointer(symbols.rsyscall_futex_helper),
@@ -2224,31 +2244,24 @@ class RsyscallInterface(base.SyscallInterface):
             self.logger.debug("%s -> %s", number, result)
             return result
 
-async def call_function(task: Task, process_resources: ProcessResources,
-                        function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> ChildEvent:
-    "Calls a C function and waits for it to complete. Returns the ChildEvent that the child thread terminated with."
-    # and I'll have clone merge the pointers back together and return the merged pointer
-    stack_value = process_resources.make_trampoline_stack(Trampoline(function, [arg1, arg2, arg3, arg4, arg5, arg6]))
-    # hmmmmmmmm.
-    # we want to keep this stackptr around.
-    # this is the same tricky business as before. hm. hm.
-    # maybe we should inherit from Process?
-    process, stackptr = await task.base.clone(
-        CLONE.VM|CLONE.FILES,
-        await (await task.malloc_type(handle.Stack, 4096)).write_to_end(stack_value, alignment=16),
-        ptid=None, ctid=None, newtls=None)
-    # process = handle.Process(task.base, near.Process(pid))
-    siginfo_buf = await task.malloc_struct(Siginfo)
-    await process.waitid(W.ALL|W.EXITED, siginfo_buf)
-    return ChildEvent.make_from_siginfo(await siginfo_buf.read())
-
 async def do_cloexec_except(task: Task, process_resources: ProcessResources,
                             excluded_fds: t.Iterable[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
-    fd_array = array.array('i', [int(fd) for fd in excluded_fds])
-    fd_array_ptr = await task.to_pointer(Bytes(fd_array.tobytes()))
-    child_event = await call_function(task, process_resources,
-                                      process_resources.do_cloexec_func, fd_array_ptr.near, len(fd_array))
+    async def op(sem: batch.BatchSemantics
+    ) -> t.Tuple[t.Tuple[handle.Pointer[handle.Stack], handle.WrittenPointer[handle.Stack]],
+                 handle.Pointer[Siginfo]]:
+        fd_array = array.array('i', [int(fd) for fd in excluded_fds])
+        fd_array_ptr = sem.to_pointer(Bytes(fd_array.tobytes()))
+        stack_value = process_resources.make_trampoline_stack(Trampoline(
+            process_resources.do_cloexec_func, [fd_array_ptr, len(fd_array)]))
+        stack_buf = sem.malloc_type(handle.Stack, 4096)
+        stack = await stack_buf.write_to_end(stack_value, alignment=16)
+        siginfo_buf = sem.malloc_struct(Siginfo)
+        return stack, siginfo_buf
+    stack, siginfo_buf = await task.perform_async_batch(op)
+    process, used_stack = await task.base.clone(CLONE.VM|CLONE.FILES, stack, ptid=None, ctid=None, newtls=None)
+    await process.waitid(W.ALL|W.EXITED, siginfo_buf)
+    child_event = ChildEvent.make_from_siginfo(await siginfo_buf.read())
     if not child_event.clean():
         raise Exception("cloexec function child died!", child_event)
 
