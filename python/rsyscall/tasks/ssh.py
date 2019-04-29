@@ -256,7 +256,7 @@ async def ssh_bootstrap(
         access_connection=(local_data_path, new_task.make_fd(listening_fd.near, UnixSocketFile())),
         connecting_task=new_task, connecting_connection=connecting_connection,
         task=new_task,
-        process_resources=ProcessResources.make_from_symbols(new_address_space, describe_struct.symbols),
+        process_resources=ProcessResources.make_from_symbols(new_base_task, describe_struct.symbols),
         filesystem_resources=FilesystemResources.make_from_environ(new_base_task, environ),
         epoller=epoller,
         child_monitor=child_monitor,

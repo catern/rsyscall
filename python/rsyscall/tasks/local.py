@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import rsyscall.memory as memory
 from rsyscall.signal import Signals, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
+import rsyscall.batch as batch
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
@@ -83,6 +84,10 @@ def _make_local_task() -> Task:
     return base_task
 def _make_local_function(cffi_object) -> rsc.FunctionPointer:
     return rsc.FunctionPointer(far.Pointer(task.address_space, near.Pointer(int(ffi.cast('long', cffi_object)))))
+def _make_local_function_handle(cffi_ptr) -> handle.Pointer[handle.CFunction]:
+    return handle.Pointer(
+        task, batch.NullGateway(), handle.CFunctionSerializer(),
+        rsc.StaticAllocation(near.Pointer(int(ffi.cast('ssize_t', cffi_ptr)))))
 
 async def _make_local_stdtask() -> StandardTask:
     local_transport = LocalMemoryTransport()
@@ -97,7 +102,7 @@ async def _make_local_stdtask() -> StandardTask:
         persistent_server_func=_make_local_function(lib.rsyscall_persistent_server),
         do_cloexec_func=_make_local_function(lib.rsyscall_do_cloexec),
         stop_then_close_func=_make_local_function(lib.rsyscall_stop_then_close),
-        trampoline_func=_make_local_function(lib.rsyscall_trampoline),
+        trampoline_func=_make_local_function_handle(lib.rsyscall_trampoline),
         futex_helper_func=_make_local_function(lib.rsyscall_futex_helper),
     )
     filesystem_resources = rsc.FilesystemResources.make_from_environ(task, environ)

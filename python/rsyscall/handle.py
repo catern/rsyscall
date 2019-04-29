@@ -125,6 +125,23 @@ class Pointer(t.Generic[T]):
         await self.transport.write(self.far, data_bytes)
         return self._wrote(data)
 
+    def split_from_end(self: T_pointer, size: int, alignment: int) -> t.Tuple[T_pointer, T_pointer]:
+        extra_to_remove = (int(self.near) + size) % alignment
+        return self.split(self.bytesize() - size - extra_to_remove)
+
+    async def write_to_end(self, data: T, alignment: int) -> t.Tuple[Pointer[T], WrittenPointer[T]]:
+        """Write a piece of data to the end of the range of this pointer
+
+        Splits the pointer, and returns both parts.  This function is only useful for preparing
+        stacks. Would be nice to figure out either a more generic way to prep stacks, or to figure
+        out more things that write_to_end could be used for.
+
+        """
+        data_bytes = self.serializer.to_bytes(data)
+        rest, write_buf = self.split_from_end(len(data_bytes), alignment)
+        written = await write_buf.write(data)
+        return rest, written
+
     async def read(self) -> T:
         self.validate()
         data = await self.transport.read(self.far, self.bytesize())
@@ -842,7 +859,7 @@ class Task(rsyscall.far.Task):
                     # these two pointers must be adjacent; the end of the first is the start of the
                     # second. the first is the allocation for stack growth, the second is the data
                     # we've written on the stack will be popped off for arguments.
-                    child_stack: t.Tuple[Pointer, WrittenPointer[StackArgs]],
+                    child_stack: t.Tuple[Pointer, WrittenPointer[Stack]],
                     # these are both standard pointers to 8-byte integers
                     ptid: t.Optional[Pointer], ctid: t.Optional[Pointer],
                     # this points to anything, it depends on the thread implementation
@@ -866,7 +883,7 @@ class Task(rsyscall.far.Task):
         return Process(self, process)
 
 @dataclass
-class StackArgs(Serializable, t.Generic[T]):
+class Stack(Serializable, t.Generic[T]):
     function: Pointer
     data: T
     serializer: Serializer[T]
@@ -874,9 +891,9 @@ class StackArgs(Serializable, t.Generic[T]):
     def to_bytes(self) -> bytes:
         return struct.Struct("Q").pack(int(self.function.near)) + self.serializer.to_bytes(self.data)
 
-    T_stackargs = t.TypeVar('T_stackargs', bound='StackArgs')
+    T_stack = t.TypeVar('T_stack', bound='Stack')
     @classmethod
-    def from_bytes(cls: t.Type[T_stackargs], data: bytes) -> T_stackargs:
+    def from_bytes(cls: t.Type[T_stack], data: bytes) -> T_stack:
         raise Exception("nay")
 
 @dataclass
@@ -1219,3 +1236,9 @@ class RecvMsghdrOutSerializer(Serializer[RecvMsghdrOut]):
             control, control_rest = self.control.split(struct.msg_controllen)
         flags = MsghdrFlags(struct.msg_flags)
         return RecvMsghdrOut(name, control, flags, name_rest, control_rest)
+
+class CFunction:
+    pass
+
+class CFunctionSerializer(Serializer[CFunction]):
+    pass

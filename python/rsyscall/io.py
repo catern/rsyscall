@@ -1057,25 +1057,81 @@ async def spit(path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
     return path
 
 @dataclass
+class Trampoline(handle.Serializable):
+    function: FunctionPointer
+    args: t.List[t.Union[handle.FileDescriptor, handle.Pointer, int]]
+
+    def __post_init__(self) -> None:
+        if len(self.args) > 6:
+            raise Exception("only six arguments can be passed via trampoline")
+
+    def to_bytes(self) -> bytes:
+        args: t.List[int] = []
+        for arg in self.args:
+            if isinstance(arg, handle.FileDescriptor):
+                args.append(int(arg.near))
+            elif isinstance(arg, handle.Pointer):
+                args.append(int(arg.near))
+            else:
+                args.append(int(arg))
+        arg1, arg2, arg3, arg4, arg5, arg6 = args + [0]*(6 - len(args))
+        struct = ffi.new('struct rsyscall_trampoline_stack*', {
+            'function': ffi.cast('void*', int(self.function.pointer.near)),
+            'rdi': int(arg1),
+            'rsi': int(arg2),
+            'rdx': int(arg3),
+            'rcx': int(arg4),
+            'r8':  int(arg5),
+            'r9':  int(arg6),
+        })
+        return bytes(ffi.buffer(struct))
+
+    T = t.TypeVar('T', bound='Trampoline')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        raise Exception("not implemented")
+
+class StaticAllocation(handle.AllocationInterface):
+    def __init__(self, ptr: near.Pointer) -> None:
+        self.ptr = ptr
+
+    @property
+    def near(self) -> rsyscall.near.Pointer:
+        return self.ptr
+
+    def size(self) -> int:
+        raise Exception
+
+    def split(self, size: int) -> t.Tuple[handle.AllocationInterface, handle.AllocationInterface]:
+        raise Exception
+
+    def free(self) -> None:
+        pass
+
+@dataclass
 class ProcessResources:
     server_func: FunctionPointer
     persistent_server_func: FunctionPointer
     do_cloexec_func: FunctionPointer
     stop_then_close_func: FunctionPointer
-    trampoline_func: FunctionPointer
+    trampoline_func: handle.Pointer[handle.CFunction]
     futex_helper_func: FunctionPointer
 
     @staticmethod
-    def make_from_symbols(address_space: far.AddressSpace, symbols: t.Any) -> ProcessResources:
+    def make_from_symbols(task: handle.Task, symbols: t.Any) -> ProcessResources:
         def to_pointer(cffi_ptr) -> FunctionPointer:
             return FunctionPointer(
-                far.Pointer(address_space, near.Pointer(int(ffi.cast('ssize_t', cffi_ptr)))))
+                far.Pointer(task.address_space, near.Pointer(int(ffi.cast('ssize_t', cffi_ptr)))))
+        def to_handle(cffi_ptr) -> handle.Pointer[handle.CFunction]:
+            return handle.Pointer(
+                task, batch.NullGateway(), handle.CFunctionSerializer(),
+                StaticAllocation(near.Pointer(int(ffi.cast('ssize_t', cffi_ptr)))))
         return ProcessResources(
             server_func=to_pointer(symbols.rsyscall_server),
             persistent_server_func=to_pointer(symbols.rsyscall_persistent_server),
             do_cloexec_func=to_pointer(symbols.rsyscall_do_cloexec),
             stop_then_close_func=to_pointer(symbols.rsyscall_stop_then_close),
-            trampoline_func=to_pointer(symbols.rsyscall_trampoline),
+            trampoline_func=to_handle(symbols.rsyscall_trampoline),
             futex_helper_func=to_pointer(symbols.rsyscall_futex_helper),
         )
 
@@ -1089,10 +1145,15 @@ class ProcessResources:
         stack_struct.r8  = int(arg5)
         stack_struct.r9  = int(arg6)
         stack_struct.function = ffi.cast('void*', int(function.pointer.near))
-        logger.info("trampoline_func %s", self.trampoline_func.pointer)
-        packed_trampoline_addr = struct.pack('Q', int(self.trampoline_func.pointer.near))
+        logger.info("trampoline_func %s", self.trampoline_func.near)
+        packed_trampoline_addr = struct.pack('Q', int(self.trampoline_func.near))
         stack = packed_trampoline_addr + bytes(ffi.buffer(stack_struct))
         return stack
+
+    def make_trampoline_stack(self, trampoline: Trampoline) -> handle.Stack[Trampoline]:
+        # ugh okaaaaaaaaaaaaay
+        # need to figure out how to handle these function pointers. hMmMmM
+        return handle.Stack(self.trampoline_func, trampoline, trampoline.get_serializer(None))
 
 trampoline_stack_size = ffi.sizeof('struct rsyscall_trampoline_stack') + 8
 
@@ -2189,30 +2250,16 @@ async def call_function(task: Task, process_resources: ProcessResources,
         # which returns the split...
         # then I don't have to have any temporaries.
         # and I'll have clone merge the pointers back together and return the merged pointer
-        stack_buf = await (await task.malloc_type(handle.StackArgs, 4096))
-        stack_value = process_resources.make_trampoline_stack(
-            function, arg1, arg2, arg3, arg4, arg5, arg6)
-        # TODO how do we guarantee alignment of this split, hm
-        stack_alloc, stack_data_buf = stack_buf.split(
-            stack_buf.bytesize() - len(stack_value.to_bytes()))
-        # lol I think my aligned alloc feature is useless
-        stack_data = await stack_data.write(stack_value)
-        
-        # pass
-        # stack_pointer = stack_pointer_handle.near + len(stack.buffer)
-        # okay so it needs to be laid out as,
-        # large area of uninitialized memory,
-        # then our pre-written stack args. (which should start with an address)
-        # I don't know how to handle that other than by passing two pointers.
-
+        stack_value = process_resources.make_trampoline_stack(Trampoline(function, [arg1, arg2, arg3, arg4, arg5, arg6]))
+        rest, stack_p = await (await task.malloc_type(handle.Stack, 4096)).write_to_end(stack_value, alignment=16)
 
         # stack_pointer = await task.to_pointer(Bytes(
         #     process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)), alignment=16)
         # we directly spawn a thread for the function and wait on it
         # pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
-        process = await task.base.clone(CLONE.VM|CLONE.FILES, (stack_alloc, stack_data)
+        process = await task.base.clone(CLONE.VM|CLONE.FILES, (rest, stack_p),
                                         ptid=None, ctid=None, newtls=None)
-        process = handle.Process(task.base, near.Process(pid))
+        # process = handle.Process(task.base, near.Process(pid))
         siginfo_buf = await task.malloc_struct(Siginfo)
         await process.waitid(W.ALL|W.EXITED, siginfo_buf)
         return ChildEvent.make_from_siginfo(await siginfo_buf.read())
@@ -2809,7 +2856,7 @@ async def rsyscall_exec(
         #### read symbols from describe fd
         describe_buf = AsyncReadBuffer(access_data_sock)
         symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')
-        stdtask.process = ProcessResources.make_from_symbols(stdtask.task.base.address_space, symbol_struct)
+        stdtask.process = ProcessResources.make_from_symbols(stdtask.task.base, symbol_struct)
         # the futex task we used before is dead now that we've exec'd, have
         # to null it out
         syscall.futex_task = None

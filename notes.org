@@ -14689,6 +14689,12 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    We could re-optimize it by making a Serializable for the stack, maybe.
    That would be kind of cool.
    Then you could batchop it all together...
+** remove aligned allocation again???
+   Since... it's actually useless?
+
+   Since we can't use it...
+** clean up static allocation
+   StaticAllocation, NullGateway, etc
 ** DONE fd.near in serialization
    OK so uh, we are serializing the fds.
 

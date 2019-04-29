@@ -6,10 +6,11 @@ from dataclasses import dataclass
 
 T = t.TypeVar('T')
 class Serializer(t.Generic[T]):
-    @abc.abstractmethod
-    def to_bytes(self, val: T) -> bytes: ...
-    @abc.abstractmethod
-    def from_bytes(self, data: bytes) -> T: ...
+    def to_bytes(self, val: T) -> bytes:
+        raise NotImplementedError("to_bytes not implemented on", type(self))
+
+    def from_bytes(self, data: bytes) -> T:
+        raise NotImplementedError("from_bytes not implemented on", type(self))
 
 T_has_serializer = t.TypeVar('T_has_serializer', bound='HasSerializer')
 class HasSerializer:
