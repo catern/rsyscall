@@ -2174,6 +2174,11 @@ async def call_function(task: Task, process_resources: ProcessResources,
         # oOHHHOIHOAHIFWOOI
         # the issue is that we're PUSHING things on to the stack
         # FUCUK
+        # okay so I guess I can allocate a big thing,
+        # and have a pointer type which,
+        # I can use to get the pointer in the middle
+        # i'll have a Stack type which is some bytes,
+        # but which I allocate more bytes...
         raise Exception("argh")
         stack_pointer = await stack.flush(task.transport)
         # stack_pointer_handle = await task.to_pointer(Bytes(stack.buffer), alignment=16)
