@@ -839,26 +839,45 @@ class Task(rsyscall.far.Task):
             return ptr.near
 
     async def clone(self, flags: CLONE,
-                    # at a minimum, this needs to have an instruction written to the end of its range.
-                    # we'll take care of flipping the pointer around, so that it points to the end of the range,
-                    # and therefore can be used as a stack.
-                    # so note: users should pass a pointer to the base of the stack! not the high address!
-                    # ugh
-                    child_stack: WrittenPointer[Stack],
+                    # these two pointers must be adjacent; the end of the first is the start of the
+                    # second. the first is the allocation for stack growth, the second is the data
+                    # we've written on the stack will be popped off for arguments.
+                    child_stack: t.Tuple[Pointer, WrittenPointer[StackArgs]],
                     # these are both standard pointers to 8-byte integers
                     ptid: t.Optional[Pointer], ctid: t.Optional[Pointer],
                     # this points to anything, it depends on the thread implementation
                     newtls: t.Optional[Pointer]) -> Process:
         async with contextlib.AsyncExitStack() as stack:
-            if (int(child_stack.near) % 16) != 0:
+            stack_alloc, stack_data = child_stack
+            if (int(stack_data.near) % 16) != 0:
                 raise Exception("child stack must have 16-byte alignment, so says Intel")
-            await stack.enter_async_context(child_stack.borrow(self))
-            stack_high_address = child_stack.near + child_stack.bytesize()
+            stack_alloc_end = stack_alloc.near + stack_alloc.bytesize()
+            if stack_alloc_end != stack_data.near:
+                raise Exception("the end of the stack allocation pointer", stack_alloc_end,
+                                "and the beginning of the stack data pointer", stack_data.near,
+                                "must be the same")
+                
+            await stack.enter_async_context(stack_alloc.borrow(self))
+            await stack.enter_async_context(stack_data.borrow(self))
             ptid_n = await self._borrow_optional(stack, ptid)
             ctid_n = await self._borrow_optional(stack, ctid)
             newtls_n = await self._borrow_optional(stack, newtls)
-            process = await rsyscall.near.clone(self.sysif, flags, stack_high_address, ptid_n, ctid_n, newtls_n)
+            process = await rsyscall.near.clone(self.sysif, flags, stack_data.near, ptid_n, ctid_n, newtls_n)
         return Process(self, process)
+
+@dataclass
+class StackArgs(Serializable, t.Generic[T]):
+    function: Pointer
+    data: T
+    serializer: Serializer[T]
+
+    def to_bytes(self) -> bytes:
+        return struct.Struct("Q").pack(int(self.function.near)) + self.serializer.to_bytes(self.data)
+
+    T_stackargs = t.TypeVar('T_stackargs', bound='StackArgs')
+    @classmethod
+    def from_bytes(cls: t.Type[T_stackargs], data: bytes) -> T_stackargs:
+        raise Exception("nay")
 
 @dataclass
 class Process:

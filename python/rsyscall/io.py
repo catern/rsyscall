@@ -185,7 +185,7 @@ class Task:
     async def malloc_struct(self, cls: t.Type[T_fixed_size]) -> handle.Pointer[T_fixed_size]:
         return await self.malloc_type(cls, cls.sizeof())
 
-    async def malloc_type(self, cls: t.Type[T_has_serializer], size: int) -> handle.Pointer[T_has_serializer]:
+    async def malloc_type(self, cls: t.Type[T_has_serializer], size: int, alignment: int=1) -> handle.Pointer[T_has_serializer]:
         return await self.malloc_serializer(cls.get_serializer(self.base), size)
 
     async def malloc_serializer(self, serializer: Serializer[T], size: int, alignment: int=1) -> handle.Pointer[T]:
@@ -2179,19 +2179,35 @@ async def call_function(task: Task, process_resources: ProcessResources,
         # I can use to get the pointer in the middle
         # i'll have a Stack type which is some bytes,
         # but which I allocate more bytes...
-        raise Exception("argh")
-        stack_pointer = await stack.flush(task.transport)
-        # stack_pointer_handle = await task.to_pointer(Bytes(stack.buffer), alignment=16)
-        # stack_pointer = stack_pointer_handle.near
+        # stack_pointer = await stack.flush(task.transport)
+        # stack_pointer_handle = await (await task.malloc_type(handle.Stack, 4096, alignment=16)
+        # ).write(handle.Stack(stack.buffer))
+        # hmmmmmmmmmmm okay
+        # so, how do I split this so it's aligned?
+        # and, how do I know how much to split?
+        stack_buf = await (await task.malloc_type(handle.StackArgs, 4096))
+        stack_value = process_resources.make_trampoline_stack(
+            function, arg1, arg2, arg3, arg4, arg5, arg6)
+        # TODO how do we guarantee alignment of this split, hm
+        stack_alloc, stack_data_buf = stack_buf.split(
+            stack_buf.bytesize() - len(stack_value.to_bytes()))
+        # lol I think my aligned alloc feature is useless
+        stack_data = await stack_data.write(stack_value)
+        
+        # pass
+        # stack_pointer = stack_pointer_handle.near + len(stack.buffer)
+        # okay so it needs to be laid out as,
+        # large area of uninitialized memory,
+        # then our pre-written stack args. (which should start with an address)
+        # I don't know how to handle that other than by passing two pointers.
 
 
         # stack_pointer = await task.to_pointer(Bytes(
         #     process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)), alignment=16)
         # we directly spawn a thread for the function and wait on it
-        pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
-        # process = await task.base.clone(CLONE.VM|CLONE.FILES, await task.to_pointer(Bytes(
-        #     process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)), alignment=16),
-        #                                 ptid=None, ctid=None, newtls=None)
+        # pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
+        process = await task.base.clone(CLONE.VM|CLONE.FILES, (stack_alloc, stack_data)
+                                        ptid=None, ctid=None, newtls=None)
         process = handle.Process(task.base, near.Process(pid))
         siginfo_buf = await task.malloc_struct(Siginfo)
         await process.waitid(W.ALL|W.EXITED, siginfo_buf)
