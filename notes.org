@@ -14519,7 +14519,7 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     Why??? merely leaking shouldn't cause problems.
 
     ugh it was an alignment bug, of course
-** sendmsg/recvmsg in handle style
+** DONE sendmsg/recvmsg in handle style
    OK so I need to implement structs for all these things.
    Yes...
 *** memory-abstracted structs
@@ -14676,6 +14676,19 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     Uhhh
 *** convert the rest
     done!
+** clone in handle style
+   I guess we can have a Serializable for the stack???
+
+   ok lol I don't need this bufferedstack thing,
+   it's just a super primitive batch serializer.
+** remove usage of far for syscalls
+   I notice immediately, set_robust_list
+** re-optimize do_cloexec_except
+   We added an additional memory write when we removed BufferedStack.
+
+   We could re-optimize it by making a Serializable for the stack, maybe.
+   That would be kind of cool.
+   Then you could batchop it all together...
 ** DONE fd.near in serialization
    OK so uh, we are serializing the fds.
 
@@ -14705,6 +14718,20 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
    aha, problem solved.
    we indeed, have now, just borrowed the fds in sendmsg, using the cmsg interface.
+** using newtls to cut down thread bootstrapping cost
+   So, I think we could use newtls to avoid the need for a stack...?
+
+   Oh, wait, no. We at least need to write a pointer to return to, on the stack.
+   Hmm I guess we could have the syscall handle dispatch on newtls.
+   If it sees a different newtls, do something different?
+
+   That would only be worth it if we could remove the need for any writing.
+   We could maybe stick the fd number into newtls?
+   Then write the rest of the bootstrap information there?
+   Eh, we need memory to save things across syscalls...
+   Or do we?
+   Well, we at least need memory to read and write responses!
+   I don't think we can escape allocating memory, but maybe we can escape writing to memory on fork startup?
 ** nicer APIs for sizing buffers
    So currently it's not clear how to size a buffer for, say, some cmsgs.
 

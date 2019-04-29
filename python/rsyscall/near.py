@@ -80,6 +80,7 @@ class SYS(enum.IntEnum):
     execveat = lib.SYS_execveat
     kill = lib.SYS_kill
     exit = lib.SYS_exit
+    clone = lib.SYS_clone
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -479,3 +480,18 @@ async def exit(sysif: SyscallInterface, status: int) -> None:
 
 async def kill(sysif: SyscallInterface, pid: Process, sig: signal.Signals) -> None:
     await sysif.syscall(SYS.kill, pid, sig)
+
+async def clone(sysif: SyscallInterface, flags: int, child_stack: Pointer,
+                ptid: t.Optional[Pointer], ctid: t.Optional[Pointer],
+                newtls: t.Optional[Pointer]) -> Process:
+    # I don't use CLONE_THREAD, so I can say without confusion, that clone returns a Process.
+    if child_stack is None:
+        child_stack = 0 # type: ignore
+    if ptid is None:
+        ptid = 0 # type: ignore
+    if ctid is None:
+        ctid = 0 # type: ignore
+    if newtls is None:
+        newtls = 0 # type: ignore
+    return Process(await sysif.syscall(SYS.clone, flags, child_stack, ptid, ctid, newtls))
+

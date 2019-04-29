@@ -34,7 +34,7 @@ from rsyscall.sys.wait import ChildCode, UncleanExit, ChildEvent, W
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
 from rsyscall.sys.inotify import InotifyFlag
-from rsyscall.sched import UnshareFlag
+from rsyscall.sched import UnshareFlag, CLONE
 from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals, Sigset, Siginfo
 from rsyscall.linux.dirent import Dirent, DirentList
 from rsyscall.unistd import SEEK
@@ -188,18 +188,18 @@ class Task:
     async def malloc_type(self, cls: t.Type[T_has_serializer], size: int) -> handle.Pointer[T_has_serializer]:
         return await self.malloc_serializer(cls.get_serializer(self.base), size)
 
-    async def malloc_serializer(self, serializer: Serializer[T], size: int) -> handle.Pointer[T]:
-        allocation = await self.allocator.malloc(size)
+    async def malloc_serializer(self, serializer: Serializer[T], size: int, alignment: int=1) -> handle.Pointer[T]:
+        allocation = await self.allocator.malloc(size, alignment=alignment)
         try:
             return handle.Pointer(self.base, self.transport, serializer, allocation)
         except:
             allocation.free()
             raise
 
-    async def to_pointer(self, data: T_has_serializer) -> handle.WrittenPointer[T_has_serializer]:
+    async def to_pointer(self, data: T_has_serializer, alignment: int=1) -> handle.WrittenPointer[T_has_serializer]:
         serializer = data.get_serializer(self.base)
         data_bytes = serializer.to_bytes(data)
-        ptr = await self.malloc_serializer(serializer, len(data_bytes))
+        ptr = await self.malloc_serializer(serializer, len(data_bytes), alignment=alignment)
         try:
             return await ptr.write(data)
         except:
@@ -2160,31 +2160,47 @@ class RsyscallInterface(base.SyscallInterface):
             self.logger.debug("%s -> %s", number, result)
             return result
 
-async def call_function(task: Task, stack: BufferedStack, process_resources: ProcessResources,
+async def call_function(task: Task, process_resources: ProcessResources,
                         function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> ChildEvent:
     "Calls a C function and waits for it to complete. Returns the ChildEvent that the child thread terminated with."
-    stack.align()
-    stack.push(process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
-    stack_pointer = await stack.flush(task.transport)
-    # we directly spawn a thread for the function and wait on it
-    pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
-    process = handle.Process(task.base, near.Process(pid))
-    siginfo_buf = await task.malloc_struct(Siginfo)
-    await process.waitid(W.ALL|W.EXITED, siginfo_buf)
-    return ChildEvent.make_from_siginfo(await siginfo_buf.read())
+    stack_size = 4096
+    async with (await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)) as mapping:
+        stack = BufferedStack(mapping.pointer + stack_size)
+        stack.align()
+        stack.push(process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
+        # print("length", len(process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)))
+
+
+        # oOHHHOIHOAHIFWOOI
+        # the issue is that we're PUSHING things on to the stack
+        # FUCUK
+        raise Exception("argh")
+        stack_pointer = await stack.flush(task.transport)
+        # stack_pointer_handle = await task.to_pointer(Bytes(stack.buffer), alignment=16)
+        # stack_pointer = stack_pointer_handle.near
+
+
+        # stack_pointer = await task.to_pointer(Bytes(
+        #     process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)), alignment=16)
+        # we directly spawn a thread for the function and wait on it
+        pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
+        # process = await task.base.clone(CLONE.VM|CLONE.FILES, await task.to_pointer(Bytes(
+        #     process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)), alignment=16),
+        #                                 ptid=None, ctid=None, newtls=None)
+        process = handle.Process(task.base, near.Process(pid))
+        siginfo_buf = await task.malloc_struct(Siginfo)
+        await process.waitid(W.ALL|W.EXITED, siginfo_buf)
+        return ChildEvent.make_from_siginfo(await siginfo_buf.read())
 
 async def do_cloexec_except(task: Task, process_resources: ProcessResources,
                             excluded_fds: t.Iterable[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
-    stack_size = 4096
-    async with (await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)) as mapping:
-        stack = BufferedStack(mapping.pointer + stack_size)
-        fd_array = array.array('i', [int(fd) for fd in excluded_fds])
-        fd_array_ptr = stack.push(fd_array.tobytes())
-        child_event = await call_function(task, stack, process_resources,
-                                          process_resources.do_cloexec_func, fd_array_ptr, len(fd_array))
-        if not child_event.clean():
-            raise Exception("cloexec function child died!", child_event)
+    fd_array = array.array('i', [int(fd) for fd in excluded_fds])
+    fd_array_ptr = await task.to_pointer(Bytes(fd_array.tobytes()))
+    child_event = await call_function(task, process_resources,
+                                      process_resources.do_cloexec_func, fd_array_ptr.near, len(fd_array))
+    if not child_event.clean():
+        raise Exception("cloexec function child died!", child_event)
 
 async def unshare_files(
         task: Task, monitor: ChildProcessMonitor, process_resources: ProcessResources,

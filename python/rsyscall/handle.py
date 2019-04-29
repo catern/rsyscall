@@ -16,7 +16,7 @@ import rsyscall.memint as memint
 logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SCM, Address, Socklen, SendmsgFlags, RecvmsgFlags, MsghdrFlags
-from rsyscall.sched import UnshareFlag
+from rsyscall.sched import UnshareFlag, CLONE
 from rsyscall.struct import Serializer, HasSerializer, FixedSize, Serializable
 from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
 from rsyscall.fcntl import AT, F, O
@@ -830,12 +830,35 @@ class Task(rsyscall.far.Task):
     async def exit(self, status: int) -> None:
         await rsyscall.near.exit(self.sysif, status)
 
-    async def clone(self, flags: int, child_stack: t.Optional[WrittenPointer],
-                    # these are both standard pointers 8-byte integers
+    async def _borrow_optional(self, stack: contextlib.AsyncExitStack, ptr: t.Optional[Pointer]
+    ) -> t.Optional[rsyscall.near.Pointer]:
+        if ptr is None:
+            return None
+        else:
+            await stack.enter_async_context(ptr.borrow(self))
+            return ptr.near
+
+    async def clone(self, flags: CLONE,
+                    # at a minimum, this needs to have an instruction written to the end of its range.
+                    # we'll take care of flipping the pointer around, so that it points to the end of the range,
+                    # and therefore can be used as a stack.
+                    # so note: users should pass a pointer to the base of the stack! not the high address!
+                    # ugh
+                    child_stack: WrittenPointer[Stack],
+                    # these are both standard pointers to 8-byte integers
                     ptid: t.Optional[Pointer], ctid: t.Optional[Pointer],
-                    # this is a pretty wacky pointer
-                    newtls: t.Optional[Pointer]) -> int:
-        pass
+                    # this points to anything, it depends on the thread implementation
+                    newtls: t.Optional[Pointer]) -> Process:
+        async with contextlib.AsyncExitStack() as stack:
+            if (int(child_stack.near) % 16) != 0:
+                raise Exception("child stack must have 16-byte alignment, so says Intel")
+            await stack.enter_async_context(child_stack.borrow(self))
+            stack_high_address = child_stack.near + child_stack.bytesize()
+            ptid_n = await self._borrow_optional(stack, ptid)
+            ctid_n = await self._borrow_optional(stack, ctid)
+            newtls_n = await self._borrow_optional(stack, newtls)
+            process = await rsyscall.near.clone(self.sysif, flags, stack_high_address, ptid_n, ctid_n, newtls_n)
+        return Process(self, process)
 
 @dataclass
 class Process:
