@@ -1105,6 +1105,9 @@ class StaticAllocation(handle.AllocationInterface):
     def split(self, size: int) -> t.Tuple[handle.AllocationInterface, handle.AllocationInterface]:
         raise Exception
 
+    def merge(self, other: handle.AllocationInterface) -> handle.AllocationInterface:
+        raise Exception("can't merge")
+
     def free(self) -> None:
         pass
 
@@ -2224,45 +2227,20 @@ class RsyscallInterface(base.SyscallInterface):
 async def call_function(task: Task, process_resources: ProcessResources,
                         function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> ChildEvent:
     "Calls a C function and waits for it to complete. Returns the ChildEvent that the child thread terminated with."
-    stack_size = 4096
-    async with (await task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)) as mapping:
-        stack = BufferedStack(mapping.pointer + stack_size)
-        stack.align()
-        stack.push(process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
-        # print("length", len(process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)))
-
-
-        # oOHHHOIHOAHIFWOOI
-        # the issue is that we're PUSHING things on to the stack
-        # FUCUK
-        # okay so I guess I can allocate a big thing,
-        # and have a pointer type which,
-        # I can use to get the pointer in the middle
-        # i'll have a Stack type which is some bytes,
-        # but which I allocate more bytes...
-        # stack_pointer = await stack.flush(task.transport)
-        # stack_pointer_handle = await (await task.malloc_type(handle.Stack, 4096, alignment=16)
-        # ).write(handle.Stack(stack.buffer))
-        # hmmmmmmmmmmm okay
-        # so, how do I split this so it's aligned?
-        # and, how do I know how much to split?
-        # okay, so I think I'll just add a write_to_end helper on pointer.
-        # which returns the split...
-        # then I don't have to have any temporaries.
-        # and I'll have clone merge the pointers back together and return the merged pointer
-        stack_value = process_resources.make_trampoline_stack(Trampoline(function, [arg1, arg2, arg3, arg4, arg5, arg6]))
-        rest, stack_p = await (await task.malloc_type(handle.Stack, 4096)).write_to_end(stack_value, alignment=16)
-
-        # stack_pointer = await task.to_pointer(Bytes(
-        #     process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6)), alignment=16)
-        # we directly spawn a thread for the function and wait on it
-        # pid = await raw_syscall.clone(task.syscall, lib.CLONE_VM|lib.CLONE_FILES, stack_pointer, ptid=None, ctid=None, newtls=None)
-        process = await task.base.clone(CLONE.VM|CLONE.FILES, (rest, stack_p),
-                                        ptid=None, ctid=None, newtls=None)
-        # process = handle.Process(task.base, near.Process(pid))
-        siginfo_buf = await task.malloc_struct(Siginfo)
-        await process.waitid(W.ALL|W.EXITED, siginfo_buf)
-        return ChildEvent.make_from_siginfo(await siginfo_buf.read())
+    # and I'll have clone merge the pointers back together and return the merged pointer
+    stack_value = process_resources.make_trampoline_stack(Trampoline(function, [arg1, arg2, arg3, arg4, arg5, arg6]))
+    # hmmmmmmmm.
+    # we want to keep this stackptr around.
+    # this is the same tricky business as before. hm. hm.
+    # maybe we should inherit from Process?
+    process, stackptr = await task.base.clone(
+        CLONE.VM|CLONE.FILES,
+        await (await task.malloc_type(handle.Stack, 4096)).write_to_end(stack_value, alignment=16),
+        ptid=None, ctid=None, newtls=None)
+    # process = handle.Process(task.base, near.Process(pid))
+    siginfo_buf = await task.malloc_struct(Siginfo)
+    await process.waitid(W.ALL|W.EXITED, siginfo_buf)
+    return ChildEvent.make_from_siginfo(await siginfo_buf.read())
 
 async def do_cloexec_except(task: Task, process_resources: ProcessResources,
                             excluded_fds: t.Iterable[near.FileDescriptor]) -> None:

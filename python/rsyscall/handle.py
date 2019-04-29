@@ -36,6 +36,8 @@ class AllocationInterface:
     @abc.abstractmethod
     def split(self, size: int) -> t.Tuple[AllocationInterface, AllocationInterface]: ...
     @abc.abstractmethod
+    def merge(self, other: AllocationInterface) -> AllocationInterface: ...
+    @abc.abstractmethod
     def free(self) -> None: ...
 
 # With handle.Pointer, we know the length of the region of memory
@@ -95,6 +97,16 @@ class Pointer(t.Generic[T]):
         # TODO should degrade this pointer to raw bytes or something, or maybe no type at all
         second = self._with_alloc(alloc2)
         return first, second
+
+    def merge(self: T_pointer, ptr: T_pointer) -> T_pointer:
+        self.validate()
+        ptr.validate()
+        # TODO should assert that these two pointers both serialize the same thing
+        # although they could be different types of serializers...
+        self.valid = False
+        # TODO we should only allow merge if we are the only reference to this allocation
+        alloc = self.allocation.merge(ptr.allocation)
+        return self._with_alloc(alloc)
 
     def validate(self) -> None:
         if not self.valid:
@@ -858,12 +870,12 @@ class Task(rsyscall.far.Task):
     async def clone(self, flags: CLONE,
                     # these two pointers must be adjacent; the end of the first is the start of the
                     # second. the first is the allocation for stack growth, the second is the data
-                    # we've written on the stack will be popped off for arguments.
-                    child_stack: t.Tuple[Pointer, WrittenPointer[Stack]],
+                    # we've written on the stack that will be popped off for arguments.
+                    child_stack: t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
                     # these are both standard pointers to 8-byte integers
                     ptid: t.Optional[Pointer], ctid: t.Optional[Pointer],
                     # this points to anything, it depends on the thread implementation
-                    newtls: t.Optional[Pointer]) -> Process:
+                    newtls: t.Optional[Pointer]) -> t.Tuple[Process, Pointer[Stack]]:
         async with contextlib.AsyncExitStack() as stack:
             stack_alloc, stack_data = child_stack
             if (int(stack_data.near) % 16) != 0:
@@ -873,14 +885,22 @@ class Task(rsyscall.far.Task):
                 raise Exception("the end of the stack allocation pointer", stack_alloc_end,
                                 "and the beginning of the stack data pointer", stack_data.near,
                                 "must be the same")
-                
             await stack.enter_async_context(stack_alloc.borrow(self))
             await stack.enter_async_context(stack_data.borrow(self))
             ptid_n = await self._borrow_optional(stack, ptid)
             ctid_n = await self._borrow_optional(stack, ctid)
             newtls_n = await self._borrow_optional(stack, newtls)
             process = await rsyscall.near.clone(self.sysif, flags, stack_data.near, ptid_n, ctid_n, newtls_n)
-        return Process(self, process)
+        # TODO the safety of this depends on no-one borrowing/freeing the stack in borrow __aexit__
+        # should try to do this a bit more robustly...
+        # maybe we shouldn't merge it, eh
+        # mmmmmmmmmmmmmmmmmmmmm
+        # yeah we do want to do this, because, we want to be able to reuse buffers after reading from them, I guess.
+        # well... yeah like in an iovec right?
+        # we might want to merge two iovecs...
+        # ok let's do merge
+        merged_stack = stack_alloc.merge(stack_data)
+        return Process(self, process), merged_stack
 
 @dataclass
 class Stack(Serializable, t.Generic[T]):

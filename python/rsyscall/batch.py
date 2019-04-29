@@ -50,6 +50,9 @@ class NullAllocation(AllocationInterface):
     def split(self, size: int) -> t.Tuple[AllocationInterface, AllocationInterface]:
         raise Exception
 
+    def merge(self, other: AllocationInterface) -> AllocationInterface:
+        raise Exception("can't merge")
+
     def free(self) -> None:
         pass
 

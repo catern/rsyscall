@@ -14695,6 +14695,27 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    Since we can't use it...
 ** clean up static allocation
    StaticAllocation, NullGateway, etc
+** make things uniformly return the pointers they were passed in
+   It's convenient for expression-oriented programming.
+** manage keeping stackptr alive
+   So, we could just stick it on the Process.
+   Return an inherited class from clone...
+
+   Well. Does that make sense conceptually?
+   What does clone really do?
+   It consumes the stack and bundles it up,
+   but we have to monitor the process.
+
+   A process is really a self-reference at that point.
+   Maybe we want to represent it as such?
+
+   Like, it's alive because it has a reference to itself.
+   The running program refers to its own stack.
+
+   Although note that we can drop a ref too.
+
+   Hmm it's also interesting to think about, maybe, validity tracking for processes.
+   So that a process can be marked as valid or invalid.
 ** DONE fd.near in serialization
    OK so uh, we are serializing the fds.
 

@@ -23,7 +23,7 @@ class Allocation(AllocationInterface):
     arena: Arena
     start: int
     end: int
-    valid = True
+    valid: bool = True
 
     @property
     def pointer(self) -> Pointer:
@@ -48,11 +48,37 @@ class Allocation(AllocationInterface):
             raise Exception("can't split freed allocation")
         idx = self.arena.allocations.index(self)
         splitpoint = self.start+size
-        first = Allocation(self.arena, self.start, splitpoint)
-        second = Allocation(self.arena, splitpoint, self.end)
-        self.arena.allocations[idx:idx] = [first, second]
+        first = Allocation(self.arena, self.start, splitpoint, valid=False)
+        second = Allocation(self.arena, splitpoint, self.end, valid=False)
         self.free()
+        self.arena.allocations[idx:idx] = [first, second]
+        first.valid = True
+        second.valid = True
         return first, second
+
+    def merge(self, other: AllocationInterface) -> Allocation:
+        if not isinstance(other, Allocation):
+            raise Exception("can't merge", type(self), "with", type(other))
+        if not self.valid:
+            raise Exception("self.merge(other) was called when self is already freed")
+        if not other.valid:
+            raise Exception("self.merge(other) was called when other is already freed")
+        if self.arena != other.arena:
+            # in general, merge is only supported if they started out from the same allocation
+            raise Exception("merging allocations from two different arenas - not supported!")
+        arena = self.arena
+        if self.end != other.start:
+            raise Exception("to merge allocations, our end", self.end, "must equal their start", other.start)
+        a_idx = arena.allocations.index(self)
+        b_idx = arena.allocations.index(other)
+        if a_idx + 1 != b_idx:
+            raise Exception("allocations are unexpected at non-adjacent indices", a_idx, b_idx)
+        new = Allocation(self.arena, self.start, other.end, valid=False)
+        self.free()
+        other.free()
+        arena.allocations.insert(a_idx, new)
+        new.valid = True
+        return new
 
     def __enter__(self) -> 'Pointer':
         return self.pointer
@@ -152,6 +178,9 @@ class PreallocatedAllocation(AllocationInterface):
 
     def split(self, size: int) -> t.Tuple[PreallocatedAllocation, PreallocatedAllocation]:
         raise Exception("can't split preallocated")
+
+    def merge(self, other: AllocationInterface) -> AllocationInterface:
+        raise Exception("can't merge")
 
     def size(self) -> int:
         return self._size
