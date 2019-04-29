@@ -14688,7 +14688,221 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 *** rest of the usage of clone
     childtaskmonitor.
     a tricky one.
+*** are we interfering with the child monitor
+    uhhhh I guess it's fine to create tasks without SIGCHLD and then directly wait on them
 *** remove usage of monitor in unshare_files
+    boom it's done
+*** rework monitor in launch_futex_monitor
+    OK hmmmmmmmmmmmm
+
+    Soooooooo
+
+    OK. So.
+
+    monitor.
+
+    What's the API we want here?
+
+    I guess the problem is, we want to be able to, know when, to wait?
+
+    What if we just waitid on all the individual processes?
+    Instead of one central thing?
+    That's O(n) in the number of processes we manage, which is a drag.
+
+    Maybe we could... do something clever?
+
+    So, with the futex monitor, what are we trying to do?
+    We just want to wait on epoll thing,
+    because we can't wait on multiple thing.
+
+    We could use clone_thread.
+
+    I mean, indeed, why not just have a CLONE_THREAD which is dedicated to watching our children?
+
+    It could, I guess, um. wait for sigchld? or block in waitid?
+
+    then wait on all the individual processes.
+
+    I mean... couldn't we do our current thing in a thread?
+
+    if we just block sigchld? then the thread can wait for sigchld?
+
+    and when it gets a sigchld, it does a waitid on all the individual tasks that are registered?
+
+    and just, sends us all the signal informations?
+
+    well, that's the same as what we currently have.
+
+    the issue is that clone can start returning events before we have a chance to look at the pid.
+
+    so I mean... what if we just, like, have the pid be written to an address?
+
+    and have the thread look at that address?
+
+    then we further send the pid to the thing?
+
+    and we lock the address I guess.
+    or can have a pool of them.
+
+    what does that realy give me?
+
+    well it sends process wait edges to me, I guess.
+*** uggghhhh
+    the process API is so bad :(
+
+    ok so if we suppose that we use ctid in this way, what can we do?
+
+    well I guess the API would be,
+    we allocate a ctid,
+
+    oh hm.
+    if we have this monitoring thread,
+    it would also save us making futex threads each time.
+
+    argh, no it wouldn't, because of this incredibly stupid horrible shit,
+    where ctid futex wakeups don't happen if we are alone in our address space.
+
+    SIGH.
+    also anyway we can't wait on multiple futexes at once.
+
+    ok so anyway, the API is,
+    we allocate a ctid.
+    possibly sending a message to the thread about it?
+    or possibly just taking it from our pool
+
+    and we use that ctid in clone
+    and clone returns and we get the pid
+    and we send that pid and ctid to the thread.
+
+    can we somehow avoid the need for a return handshake?
+
+    so, the thread sees a new pid in a ctid.
+    it looks for these pids when it gets a sigchld
+
+    it caches that pid, and remembers to spin-waitid on it.
+
+    hmm. how do we deregister a pid? argh.
+*** design
+    ok so suppose we had pidfd return values from clone
+
+    ugghhhhghhghgh
+
+    ok so. what about storing pids into bits of memory, then sending them to the thread?
+
+    well. hmm.
+
+    so, okay, we currently can non-concurrently wait for a single child just fine.
+    that's easy.
+
+    so then the thing we want to do is,
+    we want to...
+    wait on multiple. but only some multiple!
+
+    hmm.
+
+    does cleartid happen even in different processes?
+    not the futex wakeup, but the clear?
+
+    damn it, no it doesn't
+
+    and anyone, that's child_cleartid, not parent_ptid, which is what we want.
+
+    le infinite sigh
+*** thread benefits
+    OK so with a thread,
+    we can get a subset of tasks monitored.
+
+    For each one, we'll have a ptid,
+    and we'll have the pid in that ptid,
+    all good.
+
+    And the thread will wait on sigchld,
+    and when it gets sigchld,
+    it will... do a wait NOWAIT on every child,
+    and send that edge to main, I guess.
+
+    And then main can waitid and collect the child at its leisure.
+
+    And, I guess we don't have to deregister, right?
+    Because... suppose we waitid on something that's not there...
+
+    Then we can just remove it.
+    And if we pid loop?
+
+    And when the thread gets a,
+    this child doesn't exist,
+    it just forgets about it. I guess.
+
+    Hm. Wait a second, can't we just do this by,
+    just,
+    waitid(NOWAIT) on every pid we know about,
+    send edges for pids,
+    (only if there's been a down-edge in between)
+    and just forget about children we don't know?
+
+    And we can just send pids to this thread?
+    Which will be blocked waiting for sigchld?
+
+    And it will start waiting on that pid?
+    I guess that, it just...
+    Makes sure to do a wait when it gets a child?
+
+    And, when we get a NOCHILD on a pid,
+    we just deregister it,
+    no big deal.
+
+    Oh argh, no this won't work.
+    We might catch children started by others, right?
+
+    Well, can't we solve that with a handshake?
+    We say, ok stop looking at this process,
+    and it returns to us,
+    okay done, I stopped.
+
+    so I mean, we could achive this on the main thread too.
+    it would just require, iterating through every child,
+    whenever we get a sigchld.
+
+    that's too costly :(
+    but, wouldn't it be correct though?
+
+    What if we just had a thread that we could ask to waitid for us?
+
+    We send it, "waitid on this list of pids",
+    and it does, and it sends us the results.
+
+    Wait wait wait wait wAIT WAIT WAIT.
+
+    Could I just batch the syscalls?!
+
+    Then I could do this without an extra thread!
+    That would be... great!
+*** batch waitids
+    OK ok, this seems interesting and cool.
+    (the idea was obvious as soon as I posed it as, request a batch waitid)
+
+    Will this allow this nice approach?
+
+    Heck... aren't syscalls already batched sufficiently for this?
+    I can just call waitid a bunch on handle...
+
+    So, okay.
+    When I have some active caller trying to collect events for a tid,
+    I issue waitids for that tid,
+    when I get some child event.
+    That's a minor, but real, efficiency improvement.
+
+    So, 
+    where M is number of process events,
+    and N is the number of children we're waiting on,
+    this takes my waits from O(M),
+    to O(MN).
+
+    That's distasteful, but... it's the only non-racy way to do it.
+
+    And, practically, it's still O(M), since we'll batch the syscalls.
+** change child_task_monitor to issue waitids for each process
+   instead of waitid W_ALL
 ** batch do_cloexec_except allocations together with unshare_file
    That would be a nice optimization.
 
@@ -14733,6 +14947,16 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
    We could have handle.ChildProcess,
    and also have waitid automatically update its validity information.
+*** thought
+    hmm we also need to keep alive any references that the thread has inside it.
+
+    could we just keep the stack args alive? all of them?
+
+    because, right, it's not just the pointer, it's also everything used by the thread.
+
+    how would we free them? hm.
+
+    I guess we could just invalidate them bit by bit.
 ** maybe implement borrow interface for all dataclasses? or maybe just Stack[T_borrow]?
    Then they can contain pointers which we can then borrow?
 
