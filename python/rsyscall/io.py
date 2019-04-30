@@ -1537,34 +1537,31 @@ class ChildProcess:
         self.wait_for_signal = False
         self.task = self.monitor.signal_queue.sigfd.underlying.task
         self.death_event: t.Optional[ChildEvent] = None
+        self.waiting = False
+        self.killing = False
 
     async def wait(self) -> t.List[ChildEvent]:
         if self.death_event:
             raise Exception("child is already dead!")
         flags = W.EXITED|W.STOPPED|W.CONTINUED
         while True:
-            print("start", self.process.near, self.process.task.process.near)
             if self.wait_for_signal:
                 await self.monitor.do_wait()
+            if self.killing:
+                raise Exception("trying to wait while we are killing")
+            self.waiting = True
             try:
-                # oh. wrong task.
-                # hah!
-                # it's not always the case that the process that creates,
-                # is the process that owns.
-                # we should have a reference to our ppid...
-                siginfo_buf = await self.process.waitid(flags|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
-            except:
-                print("except", self.process.near)
-                raise
+                siginfo_buf = await self.process.waitid(
+                    flags|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
+            finally:
+                self.waiting = False
             siginfo = await siginfo_buf.read()
             if siginfo.pid == 0:
-                print("no", self.process.near)
                 # we didn't get an event, so we know there's nothing to see for this pid;
                 # we've got to wait for the next SIGCHLD before waitiding again
                 self.wait_for_signal = True
             else:
                 event = ChildEvent.make_from_siginfo(siginfo)
-                print("got", self.process.near, event)
                 if event.died():
                     self.death_event = event
                 return [event]
@@ -1590,10 +1587,6 @@ class ChildProcess:
                 elif event.code == ChildCode.STOPPED:
                     return event
 
-    @property
-    def syscall(self) -> SyscallInterface:
-        return self.monitor.signal_queue.sigfd.underlying.task.syscall
-
     @contextlib.asynccontextmanager
     async def get_pid(self) -> t.AsyncGenerator[t.Optional[handle.Process], None]:
         """Returns the underlying process, or None if it's already dead.
@@ -1602,13 +1595,16 @@ class ChildProcess:
         the process's zombie is not collected while we're using its pid.
 
         """
-        # TODO this could really be a reader-writer lock, with this use as the reader and
-        # wait as the writer.
-        async with self.monitor.wait_lock:
-            if self.death_event:
-                yield None
-            else:
+        if self.death_event:
+            yield None
+        else:
+            if self.waiting:
+                raise Exception("trying to kill while we are waiting")
+            self.killing = True
+            try:
                 yield self.process
+            finally:
+                self.killing = False
 
     async def send_signal(self, sig: signal.Signals) -> None:
         async with self.get_pid() as process:
@@ -1637,7 +1633,6 @@ class ChildProcessMonitorInternal:
         self.waiting_task = waiting_task
         self.signal_queue = signal_queue
         self.is_reaper = is_reaper
-        self.wait_lock = trio.Lock()
         if self.signal_queue.signal_block.mask != set([signal.SIGCHLD]):
             raise Exception("ChildProcessMonitor should get a SignalQueue only for SIGCHLD")
         self.running_wait = OneAtATime()
@@ -2009,7 +2004,7 @@ class ChildConnection(base.SyscallInterface):
         self.activity_fd: near.FileDescriptor
         self.request_lock = trio.Lock()
         self.pending_responses: t.List[SyscallResponse] = []
-        self.running: trio.Event = None
+        self.running_read = OneAtATime()
 
     def store_remote_side_handles(self, infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> None:
         # these are needed so that we don't close them with garbage collection
@@ -2022,7 +2017,7 @@ class ChildConnection(base.SyscallInterface):
         await self.rsyscall_connection.close()
 
     async def _read_syscall_response(self) -> int:
-        response: int
+        response: int = None
         try:
             async with trio.open_nursery() as nursery:
                 async def read_response() -> None:
@@ -2053,15 +2048,20 @@ class ChildConnection(base.SyscallInterface):
                 nursery.start_soon(read_response)
                 nursery.start_soon(server_exit)
                 nursery.start_soon(futex_exit)
-        finally:
-            self.logger.info("out of syscall response nursery")
+        except:
+            # if response is not None, we shouldn't let this exception through;
+            # instead we should process this syscall response, and let the next syscall fail
+            if response is None:
+                raise
+        else:
+            self.logger.info("returning or raising syscall response from nursery %s", response)
         raise_if_error(response)
         return response
 
     async def _process_response_for(self, response: SyscallResponse) -> None:
         try:
             ret = await self._read_syscall_response()
-            self.logger.info("returned syscall response")
+            self.logger.info("returned syscall response %s", ret)
         except Exception as e:
             response.set_exception(e)
         else:
@@ -2075,16 +2075,9 @@ class ChildConnection(base.SyscallInterface):
         self.pending_responses = self.pending_responses[1:]
 
     async def _process_one_response(self) -> None:
-        if self.running is not None:
-            await self.running.wait()
-        else:
-            running = trio.Event()
-            self.running = running
-            try:
+        async with self.running_read.needs_run() as needs_run:
+            if needs_run:
                 await self._process_one_response_direct()
-            finally:
-                self.running = None
-                running.set()
 
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
         async with self.request_lock:
@@ -2476,10 +2469,9 @@ class SocketMemoryTransport(base.MemoryTransport):
             return await self.direct_transport.batch_read(ops)
         else:
             read_ops = [self._start_single_read(src, n) for src, n in ops]
-            await self._do_reads()
-            if not(all(op.done for op in read_ops)):
-                print(len(read_ops))
-                print(read_ops)
+            # TODO this is inefficient
+            while not(all(op.done for op in read_ops)):
+                await self._do_reads()
             return [op.data for op in read_ops]
 
 class EOFException(Exception):

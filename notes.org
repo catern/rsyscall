@@ -14901,6 +14901,17 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     That's distasteful, but... it's the only non-racy way to do it.
 
     And, practically, it's still O(M), since we'll batch the syscalls.
+** mysteriousness
+   Seems I'm sending syscalls but never actually writing them.
+
+   Oh well maybe that's fine actually, could be due to cancellation or whatever
+
+   But actually confusing is that I read three syscall responses worth of bytes (24 bytes)
+   but only process 2 response!
+** syscall connection stuff
+   We should prioritize reading things out of the syscall connection buffer,
+   to running waitids for the futex and child task.
+   After all if there's something in the buffer, we should look at it
 ** change child_task_monitor to issue waitids for each process
    instead of waitid W_ALL
 

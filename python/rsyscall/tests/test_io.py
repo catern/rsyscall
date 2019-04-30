@@ -451,9 +451,15 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
             async with thread as stdtask2:
+                print("start spawn_exec")
                 thread2 = await stdtask2.spawn_exec()
+                print("start with thread2")
                 async with thread2 as stdtask3:
+                    print("start async")
                     await self.do_async_things(stdtask3.epoller, stdtask3.task)
+                    print("done async")
+                print("done thread2")
+            print("done thread3")
         trio.run(self.runner, test)
 
     def test_setns_ownership(self) -> None:
