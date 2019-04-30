@@ -1639,9 +1639,9 @@ class ChildProcessMonitorInternal:
         self.processes: t.List[ChildProcess] = []
 
     def add_task(self, process: handle.Process) -> ChildProcess:
-        process = ChildProcess(process, self)
-        self.processes.append(process)
-        return process
+        proc = ChildProcess(process, self)
+        self.processes.append(proc)
+        return proc
 
     async def clone(self,
                     clone_task: base.Task,
@@ -2017,7 +2017,7 @@ class ChildConnection(base.SyscallInterface):
         await self.rsyscall_connection.close()
 
     async def _read_syscall_response(self) -> int:
-        response: int = None
+        response: t.Optional[int] = None
         try:
             async with trio.open_nursery() as nursery:
                 async def read_response() -> None:
@@ -2055,6 +2055,8 @@ class ChildConnection(base.SyscallInterface):
                 raise
         else:
             self.logger.info("returning or raising syscall response from nursery %s", response)
+        if response is None:
+            raise Exception("somehow made it out of the nursery without either throwing or getting a response")
         raise_if_error(response)
         return response
 
@@ -2402,6 +2404,8 @@ class SocketMemoryTransport(base.MemoryTransport):
             if needs_run:
                 writes = self.pending_writes
                 self.pending_writes = []
+                if len(writes) == 0:
+                    return
                 # TODO we should not use a cancel scope shield, we should use the SyscallResponse API
                 with trio.open_cancel_scope(shield=True):
                     await self._unlocked_batch_write([(write.dest, write.data) for write in writes])

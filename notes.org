@@ -14877,7 +14877,7 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
     Then I could do this without an extra thread!
     That would be... great!
-*** batch waitids
+** DONE batch waitids
     OK ok, this seems interesting and cool.
     (the idea was obvious as soon as I posed it as, request a batch waitid)
 
@@ -14901,7 +14901,7 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     That's distasteful, but... it's the only non-racy way to do it.
 
     And, practically, it's still O(M), since we'll batch the syscalls.
-** mysteriousness
+** DONE mysteriousness
    Seems I'm sending syscalls but never actually writing them.
 
    Oh well maybe that's fine actually, could be due to cancellation or whatever
@@ -14912,6 +14912,91 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    We should prioritize reading things out of the syscall connection buffer,
    to running waitids for the futex and child task.
    After all if there's something in the buffer, we should look at it
+** futex in handle style
+*** need to allocate shared memory
+    Hmm
+
+    OK so I could allow a page?
+
+    OK so. I have this memfd. I can make this memfd, map it, then make an allocator from it.
+
+    Yeah okay I'll just do that. I'll make an allocator which...
+
+    Well hm.
+    Couldn't I expand the mmap space if necessary?
+
+    Hmm that's an interesting idea.
+
+    We can treat it as a heap, I guess. Just a standard, linearly growable heap
+
+    break-style heap
+
+    GrowableMapping
+
+    Actually for that matter couldn't we just use such an allocator by default?
+
+    Instead of having several mappings?
+
+    Well, I guess it would be misleading to the kernel...
+    we want to give it more freedom about establishing mappings.
+
+    Meh okay we call it SingleMappingAllocator.
+
+    Ah and I can reserve space by just creating another mapping... cool.
+
+    I guess I could, uh. Store both the mapping I'm using, and the reserve mapping I'm growing in to.
+
+    The thing we would want to do is move to a new pointer.
+    Hmm! Which we can actually do, using this allocation interface! That's cool!
+
+    So I guess what we would do is,
+    we'd check that each allocation is not pinned,
+    then try to move to a new address.
+
+    If some allocation is pinned, then we try grow-remapping without moving.
+    If that then fails, then we throw.
+
+    Hm. hm hm hm hm.
+
+    I mean really I just want to have a bunch of allocations ahead of time.
+    Hmm.
+
+    Yeah so I guess the creation of additional mappings
+    is how we avoid issues with growing a mapping coliding with another.
+
+    But, we do want to be able to grow mappings, hmm.
+
+    We should be able to move around allocations, really.
+    We should express when some address is pinned by some means.
+
+    Like... when we store the address of something, we should know that we've done that.
+    Currently we do that by borrowing; but what about when we do it persistently?
+    We want to attach the borrow to a pointer... so that when that pointer is freed...
+    then we're freed...
+
+    Or also attach it to a task I guess, when we tell the kernel about some address,
+    and then we need to store that address forever.
+*** SingleMappingAllocator
+    And we'll just not support resizing.
+
+    Resizing is for later. When we have a robust way to relocate mappings.
+*** need to pass around pointer to futex embedded in other structure
+    HmMmMm
+*** need to handle self-reference in robust list
+    I started on this but I'm still not through,
+    since doing a reinterpret and passing the serializer doesn't actually work,
+    since it invalidates the old pointer.
+*** need to store robust list
+    We could attach that to the task.
+    That might be good, sure.
+** split out both spawn_exec and fork task creation
+   There are two task creation things still in io.py!
+** migrate everything to use robust lists
+   Yeah hm, instead of using ctid.
+** DONE maybe store reaper status on the task
+   So that we know whether or not CLONE_PARENT is allowed, I guess.
+
+   Eh, no, it should just fail with an exception. Not a big deal!
 ** change child_task_monitor to issue waitids for each process
    instead of waitid W_ALL
 
