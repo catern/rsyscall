@@ -14980,15 +14980,23 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     And we'll just not support resizing.
 
     Resizing is for later. When we have a robust way to relocate mappings.
-*** need to pass around pointer to futex embedded in other structure
-    HmMmMm
-*** need to handle self-reference in robust list
+*** DONE need to handle self-reference in robust list
     I started on this but I'm still not through,
     since doing a reinterpret and passing the serializer doesn't actually work,
     since it invalidates the old pointer.
+
+    Hah, problem solved! We'll just store a null instead!
+*** DONE need to pass around pointer to futex embedded in other structure
+    HmMmMm
+
+    Hah, problem solved! We'll just pass around a Futex structure,
+    that contain both the futex,
+    and the robust list!
 *** need to store robust list
     We could attach that to the task.
     That might be good, sure.
+
+    Yes we can just attach it to the task, easy!
 *** garbage collection of intrinsic list
     So really the issue is that I need to figure out how to GC something containing an intrinsic list.
     Namely the robust list.
