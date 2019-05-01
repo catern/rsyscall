@@ -2598,20 +2598,23 @@ class AsyncReadBuffer:
 async def set_singleton_robust_futex(task: far.Task, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
                                      futex_value: int,
 ) -> Pointer:
-    futex_offset = ffi.sizeof('struct robust_list')
+    futex_offset = ffi.offsetof('struct my_robust_list', 'futex')
     def op(sem: BatchSemantics) -> t.Tuple[BatchPointer, BatchPointer]:
         def robust_list(self: int) -> bytes:
-            return (bytes(ffi.buffer(ffi.new('struct robust_list*', (ffi.cast('void*', self),))))
-                    + struct.pack('=I', futex_value))
+            return (bytes(ffi.buffer(ffi.new('struct my_robust_list*', {
+                "next": ffi.cast('void*', self),
+                "futex": futex_value,
+            }))))
         # TODO we build the bytes four times; we could get it down to two, if the semantics had support for self-reference;
         # the semantics could take and call this function directly
         robust_list_entry = sem.malloc(len(robust_list(0)))
         sem.write(robust_list_entry, robust_list(int(robust_list_entry.near)))
         robust_list_head = sem.to_pointer(
-            bytes(ffi.buffer(ffi.new('struct robust_list_head*', (
-                (ffi.cast('void*', robust_list_entry.near),),
-                futex_offset,
-                ffi.cast('void*', 0))))))
+            bytes(ffi.buffer(ffi.new('struct my_robust_list_head*', {
+                "first": ffi.cast('void*', robust_list_entry.near),
+                "futex_offset": futex_offset,
+                "list_op_pending": ffi.NULL,
+            }))))
         return robust_list_entry, robust_list_head
     async with contextlib.AsyncExitStack() as stack:
         robust_list_entry, robust_list_head = await perform_batch(transport, allocator, stack, op)

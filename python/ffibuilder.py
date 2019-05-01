@@ -86,6 +86,16 @@ struct fdpair {
     int first;
     int second;
 };
+struct my_robust_list {
+  struct robust_list *next;
+  uint32_t futex;
+};
+
+struct my_robust_list_head {
+  struct robust_list *first;
+  long futex_offset;
+  struct robust_list *list_op_pending;
+};
 """ + "\n".join(f'const char {name}[] = "{value}";' for name, value in stored_paths.items()), **rsyscall)
 for name in stored_paths:
     ffibuilder.cdef(f"const char {name}[];")
@@ -671,12 +681,12 @@ struct cmsghdr {
 // which are maximally vague so they can be embedded;
 // in particular our structs directly contain the futex field,
 // instead of being embedded into something containing it
-struct robust_list {
+struct my_robust_list {
   struct robust_list *next;
-  int32_t futex;
+  uint32_t futex;
 };
 
-struct robust_list_head {
+struct my_robust_list_head {
   struct robust_list *first;
   long futex_offset;
   struct robust_list *list_op_pending;

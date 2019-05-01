@@ -14989,6 +14989,14 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 *** need to store robust list
     We could attach that to the task.
     That might be good, sure.
+*** garbage collection of intrinsic list
+    So really the issue is that I need to figure out how to GC something containing an intrinsic list.
+    Namely the robust list.
+
+    Say I enclosed it in a struct;
+    well then the list would be pointing to invalid memory...
+
+    Well that's just another way to view it.
 ** split out both spawn_exec and fork task creation
    There are two task creation things still in io.py!
 ** support splitting memory mappings
