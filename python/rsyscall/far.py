@@ -45,12 +45,6 @@ class AddressSpace:
         else:
             raise AddressSpaceMismatchError("pointer", pointer, "doesn't match address space", self)
 
-    def to_near_mapping(self, mapping: MemoryMapping) -> rsyscall.near.MemoryMapping:
-        if mapping.address_space == self:
-            return mapping.near
-        else:
-            raise AddressSpaceMismatchError("mapping", mapping, "doesn't match address space", self)
-
 # These are like far pointers.
 @dataclass
 class FileDescriptor:
@@ -82,23 +76,6 @@ class Pointer:
 
     def __int__(self) -> int:
         return int(self.near)
-
-@dataclass
-class MemoryMapping:
-    address_space: AddressSpace
-    near: rsyscall.near.MemoryMapping
-
-    def as_pointer(self) -> Pointer:
-        return Pointer(self.address_space, self.near.as_pointer())
-
-    def __str__(self) -> str:
-        if self.near.page_size == 4096:
-            return f"MMap({self.address_space}, {hex(self.near.address)}, {self.near.length})"
-        else:
-            return f"MMap({self.address_space}, pgsz={self.near.page_size}, {hex(self.near.address)}, {self.near.length})"
-
-    def __repr__(self) -> str:
-        return str(self)
 
 @dataclass(eq=False)
 class PidNamespace:
@@ -164,9 +141,6 @@ class Task:
     def to_near_fd(self, file_descriptor: FileDescriptor) -> rsyscall.near.FileDescriptor:
         return self.fd_table.to_near(file_descriptor)
 
-    def to_near_mapping(self, mapping: MemoryMapping) -> rsyscall.near.MemoryMapping:
-        return self.address_space.to_near_mapping(mapping)
-
     async def prctl(self, option: PrctlOp, arg2: int, arg3: int=0, arg4: int=0, arg5: int=0) -> int:
         return (await rsyscall.near.prctl(self.sysif, option, arg2, arg3, arg4, arg5))
 
@@ -206,18 +180,6 @@ async def memfd_create(task: Task, name: Pointer, flags: int) -> FileDescriptor:
 
 async def ftruncate(task: Task, fd: FileDescriptor, length: int) -> None:
     await rsyscall.near.ftruncate(task.sysif, task.to_near_fd(fd), length)
-
-async def mmap(task: Task, length: int, prot: int, flags: int,
-               addr: t.Optional[Pointer]=None, 
-               fd: t.Optional[FileDescriptor]=None, offset: int=0) -> MemoryMapping:
-    ret = await rsyscall.near.mmap(task.sysif, length, prot, flags,
-                                   task.to_near_pointer(addr) if addr else None,
-                                   task.to_near_fd(fd) if fd else None,
-                                   offset)
-    return MemoryMapping(task.address_space, ret)
-
-async def munmap(task: Task, mapping: MemoryMapping) -> None:
-    await rsyscall.near.munmap(task.sysif, task.to_near_mapping(mapping))
 
 async def set_tid_address(task: Task, ptr: Pointer) -> None:
     await rsyscall.near.set_tid_address(task.sysif, task.to_near_pointer(ptr))

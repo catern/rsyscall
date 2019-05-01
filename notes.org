@@ -14991,6 +14991,10 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     That might be good, sure.
 ** split out both spawn_exec and fork task creation
    There are two task creation things still in io.py!
+** support splitting memory mappings
+** support passing an existing mapping as a target for mmap
+** rename UnshareFlag to UnCLONE
+   Ha ha yes!!
 ** migrate everything to use robust lists
    Yeah hm, instead of using ctid.
 ** DONE maybe store reaper status on the task

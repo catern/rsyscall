@@ -17,7 +17,7 @@ from rsyscall.memory_abstracted_syscalls import BatchSemantics, BatchPointer, pe
 import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.handle
-from rsyscall.handle import T_pointer, Stack, WrittenPointer
+from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_has_serializer, T_fixed_size, Bytes, Int32, Serializer, Struct
@@ -35,6 +35,7 @@ from rsyscall.sys.wait import ChildCode, UncleanExit, ChildEvent, W
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
 from rsyscall.sys.inotify import InotifyFlag
+from rsyscall.sys.mman import PROT, MAP
 from rsyscall.sched import UnshareFlag, CLONE
 from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals, Sigset, Siginfo
 from rsyscall.linux.dirent import Dirent, DirentList
@@ -275,10 +276,6 @@ class Task:
     async def socket_inet(self, type: SOCK, protocol: int=0) -> FileDescriptor[InetSocketFile]:
         sockfd = await self.base.socket(AF.INET, type, protocol)
         return FileDescriptor(self, sockfd, InetSocketFile())
-
-    async def mmap(self, length: int, prot: memory.ProtFlag, flags: memory.MapFlag) -> memory.AnonymousMapping:
-        # currently doesn't support specifying an address, nor specifying a file descriptor
-        return (await memory.AnonymousMapping.make(self.base, length, prot, flags))
 
     async def make_epoll_center(self) -> EpollCenter:
         epfd = await self.base.epoll_create(EpollFlag.CLOEXEC)
@@ -1804,15 +1801,15 @@ class CThread(Thread):
     TODO thread-local-storage.
 
     """
-    stack_mapping: memory.AnonymousMapping
-    def __init__(self, thread: Thread, stack_mapping: memory.AnonymousMapping) -> None:
+    stack_mapping: MemoryMapping
+    def __init__(self, thread: Thread, stack_mapping: MemoryMapping) -> None:
         super().__init__(thread.child_task, thread.futex_task, thread.futex_mapping)
         self.stack_mapping = stack_mapping
 
     async def wait_for_mm_release(self) -> ChildProcess:
         result = await super().wait_for_mm_release()
         # we can free the stack mapping now that the thread has left our address space
-        await self.stack_mapping.unmap()
+        await self.stack_mapping.munmap()
         return result
 
     async def __aenter__(self) -> 'CThread':
@@ -1882,8 +1879,7 @@ class ThreadMaker:
         # the mapping is SHARED rather than PRIVATE so that the futex is shared even if CLONE_VM
         # unshares the address space
         # TODO not sure that actually works
-        mapping = await far.mmap(self.task.base, 4096, memory.ProtFlag.READ|memory.ProtFlag.WRITE,
-                                 memory.MapFlag.SHARED|memory.MapFlag.ANONYMOUS)
+        mapping = await self.task.base.mmap(4096, PROT.READ|PROT.WRITE, MAP.SHARED)
         futex_pointer = mapping.as_pointer()
         futex_task = await launch_futex_monitor(
             self.task.base, self.task.transport, self.task.allocator, self.process_resources, self.monitor,
@@ -1893,15 +1889,15 @@ class ThreadMaker:
         child_task = await self.monitor.clone(
             flags | lib.CLONE_CHILD_CLEARTID, child_stack,
             ctid=futex_pointer, newtls=newtls)
-        return Thread(child_task, futex_task, handle.MemoryMapping(self.task.base, mapping))
+        return Thread(child_task, futex_task, mapping)
 
     async def make_cthread(self, flags: int,
                           function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
     ) -> CThread:
         # allocate memory for the stack
         stack_size = 4096
-        mapping = await self.task.mmap(stack_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.PRIVATE)
-        stack = BufferedStack(mapping.pointer + stack_size)
+        mapping = await self.task.base.mmap(stack_size, PROT.READ|PROT.WRITE, MAP.PRIVATE)
+        stack = BufferedStack(mapping.as_pointer() + stack_size)
         # build stack
         stack.push(self.process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
         # copy the stack over
@@ -2745,13 +2741,11 @@ async def make_robust_futex_task(
     futex_memfd_size = 4096
     await parent_memfd.ftruncate(futex_memfd_size)
     # set up local mapping
-    local_mapping = await parent_memfd.mmap(
-        futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED)
+    local_mapping = await parent_memfd.mmap(futex_memfd_size, PROT.READ|PROT.WRITE, MAP.SHARED)
     await parent_memfd.invalidate()
     local_mapping_pointer = local_mapping.as_pointer()
     # set up remote mapping
-    remote_mapping = await child_memfd.mmap(
-        futex_memfd_size, memory.ProtFlag.READ|memory.ProtFlag.WRITE, memory.MapFlag.SHARED)
+    remote_mapping = await child_memfd.mmap(futex_memfd_size, PROT.READ|PROT.WRITE, MAP.SHARED)
     await child_memfd.invalidate()
     remote_mapping_pointer = remote_mapping.as_pointer()
 
@@ -2767,9 +2761,7 @@ async def make_robust_futex_task(
                                             parent_stdtask.task.allocator,
                                             parent_stdtask.process, parent_stdtask.child_monitor,
                                             local_futex_pointer, futex_value)
-    local_mapping_handle = handle.MemoryMapping(parent_stdtask.task.base, local_mapping)
-    remote_mapping_handle = handle.MemoryMapping(child_stdtask.task.base, remote_mapping)
-    return futex_task, local_mapping_handle, remote_mapping_handle
+    return futex_task, local_mapping, remote_mapping
 
 async def rsyscall_exec(
         parent_stdtask: StandardTask,

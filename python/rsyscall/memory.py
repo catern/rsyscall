@@ -6,7 +6,7 @@ import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.handle import AllocationInterface
+from rsyscall.handle import AllocationInterface, MemoryMapping, Task
 import trio
 import abc
 import enum
@@ -14,9 +14,9 @@ import contextlib
 import typing as t
 import logging
 from dataclasses import dataclass
+from rsyscall.sys.mman import PROT, MAP
 logger = logging.getLogger(__name__)
 
-from rsyscall.sys.mman import ProtFlag, MapFlag
 
 @dataclass
 class Allocation(AllocationInterface):
@@ -29,7 +29,7 @@ class Allocation(AllocationInterface):
     def pointer(self) -> Pointer:
         if not self.valid:
             raise Exception("can't get pointer for freed allocation")
-        return self.arena.mapping.pointer + self.start
+        return self.arena.mapping.as_pointer() + self.start
 
     @property
     def near(self) -> rsyscall.near.Pointer:
@@ -89,38 +89,8 @@ class Allocation(AllocationInterface):
     def __del__(self) -> None:
         self.free()
 
-class AnonymousMapping:
-    @classmethod
-    async def make(self, task: far.Task, length: int, prot: ProtFlag, flags: MapFlag) -> AnonymousMapping:
-        mapping = await far.mmap(task, length, prot, flags|MapFlag.ANONYMOUS)
-        return AnonymousMapping(task, mapping)
-
-    @property
-    def pointer(self) -> far.Pointer:
-        return self.mapping.as_pointer()
-
-    @property
-    def length(self) -> int:
-        return self.mapping.near.length
-
-    def __init__(self, task: far.Task, mapping: far.MemoryMapping) -> None:
-        self.task = task
-        self.mapping = mapping
-        self.mapped = True
-
-    async def unmap(self) -> None:
-        if self.mapped:
-            await far.munmap(self.task, self.mapping)
-            self.mapped = False
-
-    async def __aenter__(self) -> AnonymousMapping:
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.unmap()
-
 class Arena:
-    def __init__(self, mapping: AnonymousMapping) -> None:
+    def __init__(self, mapping: MemoryMapping) -> None:
         self.mapping = mapping
         self.allocations: t.List[Allocation] = []
 
@@ -132,7 +102,7 @@ class Arena:
                 self.allocations.insert(i, newalloc)
                 return newalloc
             newstart = align(alloc.end, alignment)
-        if (newstart+size) <= self.mapping.length:
+        if (newstart+size) <= self.mapping.near.length:
             newalloc = Allocation(self, newstart, newstart+size)
             self.allocations.append(newalloc)
             return newalloc
@@ -141,7 +111,7 @@ class Arena:
     async def close(self) -> None:
         if self.allocations:
             raise Exception
-        await self.mapping.unmap()
+        await self.mapping.munmap()
 
 def align(num: int, alignment: int) -> int:
     # TODO this is ugly, isn't there an easier way to do this?
@@ -212,7 +182,7 @@ class Allocator:
 
     Perfect in its foresight, but not so bright.
     """
-    def __init__(self, task: far.Task) -> None:
+    def __init__(self, task: Task) -> None:
         self.task = task
         self.lock = trio.Lock()
         self.arenas: t.List[Arena] = []
@@ -239,8 +209,7 @@ class Allocator:
                 # TODO this usage of align() overestimates how much memory we need;
                 # it's not a big deal though, because most things have alignment=1
                 remaining_size = sum([align(size, alignment) for size, alignment in rest_sizes])
-                mapping = await AnonymousMapping.make(self.task,
-                                                      align(remaining_size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
+                mapping = await self.task.mmap(align(remaining_size, 4096), PROT.READ|PROT.WRITE, MAP.PRIVATE)
                 arena = Arena(mapping)
                 for size, alignment in rest_sizes:
                     if alignment > 4096:
@@ -262,8 +231,7 @@ class Allocator:
                 alloc = arena.malloc(size, alignment)
                 if alloc:
                     return alloc
-            mapping = await AnonymousMapping.make(self.task,
-                                                  align(size, 4096), ProtFlag.READ|ProtFlag.WRITE, MapFlag.PRIVATE)
+            mapping = await self.task.mmap(align(size, 4096), PROT.READ|PROT.WRITE, MAP.PRIVATE)
             arena = Arena(mapping)
             self.arenas.append(arena)
             result = arena.malloc(size, alignment)
@@ -277,7 +245,7 @@ class Allocator:
             await arena.close()
 
 class AllocatorClient(AllocatorInterface):
-    def __init__(self, task: far.Task, allocator: Allocator) -> None:
+    def __init__(self, task: Task, allocator: Allocator) -> None:
         self.task = task
         self.allocator = allocator
         if self.task.address_space != self.allocator.task.address_space:
@@ -285,10 +253,10 @@ class AllocatorClient(AllocatorInterface):
                             self.task.address_space, self.allocator.task.address_space)
 
     @staticmethod
-    def make_allocator(task: far.Task) -> AllocatorClient:
+    def make_allocator(task: Task) -> AllocatorClient:
         return AllocatorClient(task, Allocator(task))
 
-    def inherit(self, task: far.Task) -> AllocatorClient:
+    def inherit(self, task: Task) -> AllocatorClient:
         return AllocatorClient(task, self.allocator)
 
     async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[AllocationInterface]:

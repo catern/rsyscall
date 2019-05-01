@@ -27,6 +27,7 @@ from rsyscall.linux.dirent import DirentList
 from rsyscall.sys.inotify import InotifyFlag, IN
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.wait import W
+from rsyscall.sys.mman import MAP, PROT
 
 class AllocationInterface:
     @abc.abstractproperty
@@ -440,14 +441,15 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.ftruncate(self.task.sysif, self.near, length)
 
-    async def mmap(self, length: int, prot: int, flags: int,
-                   addr: t.Optional[rsyscall.far.Pointer]=None, offset: int=0,
-    ) -> rsyscall.far.MemoryMapping:
+    async def mmap(self, length: int, prot: PROT, flags: MAP,
+                   offset: int=0,
+                   page_size: int=4096,
+    ) -> MemoryMapping:
         self.validate()
         ret = await rsyscall.near.mmap(self.task.sysif, length, prot, flags,
-                                       self.task.to_near_pointer(addr) if addr else None,
-                                       self.near, offset)
-        return rsyscall.far.MemoryMapping(self.task.address_space, ret)
+                                       fd=self.near, offset=offset,
+                                       page_size=page_size)
+        return MemoryMapping(self.task, ret)
 
     # oldfd has to be a valid file descriptor. newfd is not, technically, required to be
     # open, but that's the best practice for avoiding races, so we require it anyway here.
@@ -907,6 +909,14 @@ class Task(rsyscall.far.Task):
         merged_stack = stack_alloc.merge(stack_data)
         return Process(owning_task, process), merged_stack
 
+    async def mmap(self, length: int, prot: PROT, flags: MAP,
+                   page_size: int=4096,
+    ) -> MemoryMapping:
+        # a mapping without a file descriptor, is an anonymous mapping
+        flags |= MAP.ANONYMOUS
+        ret = await rsyscall.near.mmap(self.sysif, length, prot, flags, page_size=page_size)
+        return MemoryMapping(self, ret)
+
 class Borrowable:
     async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None:
         raise NotImplementedError("borrow_with not implemented on", type(self))
@@ -955,11 +965,15 @@ class Process:
 
 @dataclass
 class MemoryMapping:
-    task: rsyscall.far.Task
-    far: rsyscall.far.MemoryMapping
+    task: Task
+    near: rsyscall.near.MemoryMapping
+
+    # TODO remove this
+    def as_pointer(self) -> rsyscall.far.Pointer:
+        return rsyscall.far.Pointer(self.task.address_space, self.near.as_pointer())
 
     async def munmap(self) -> None:
-        await rsyscall.far.munmap(self.task, self.far)
+        await rsyscall.near.munmap(self.task.sysif, self.near)
 
 T_pipe = t.TypeVar('T_pipe', bound='Pipe')
 @dataclass
