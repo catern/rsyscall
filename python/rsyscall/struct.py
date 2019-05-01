@@ -28,8 +28,8 @@ class Serializable(HasSerializer):
     @abc.abstractmethod
     def to_bytes(self) -> bytes: ...
     @classmethod
-    @abc.abstractmethod
-    def from_bytes(cls: t.Type[T_serializable], data: bytes) -> T_serializable: ...
+    def from_bytes(cls: t.Type[T_serializable], data: bytes) -> T_serializable:
+        raise NotImplementedError("from_bytes not implemented on", cls)
     @classmethod
     def get_serializer(cls: t.Type[T_serializable], task) -> Serializer[T_serializable]:
         return cls # type: ignore

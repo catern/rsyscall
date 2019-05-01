@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SCM, Address, Socklen, SendmsgFlags, RecvmsgFlags, MsghdrFlags
 from rsyscall.sched import UnshareFlag, CLONE
-from rsyscall.struct import Serializer, HasSerializer, FixedSize, Serializable
+from rsyscall.struct import Serializer, HasSerializer, FixedSize, Serializable, Int32, Struct
 from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path
@@ -876,7 +876,7 @@ class Task(rsyscall.far.Task):
                     # second. the first is the allocation for stack growth, the second is the data
                     # we've written on the stack that will be popped off for arguments.
                     child_stack: t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
-                    # these are both standard pointers to 8-byte integers
+                    # these are both standard pointers to 4-byte integers
                     ptid: t.Optional[Pointer], ctid: t.Optional[Pointer],
                     # this points to anything, it depends on the thread implementation
                     newtls: t.Optional[Pointer]) -> t.Tuple[Process, Pointer[Stack]]:
@@ -916,6 +916,52 @@ class Task(rsyscall.far.Task):
         flags |= MAP.ANONYMOUS
         ret = await rsyscall.near.mmap(self.sysif, length, prot, flags, page_size=page_size)
         return MemoryMapping(self, ret)
+
+    async def set_robust_list(self, head: WrittenPointer[RobustListHead]) -> None:
+        async with head.borrow(self):
+            await rsyscall.near.set_robust_list(self.sysif, head.near, head.bytesize())
+
+@dataclass
+class RobustList:
+    # okay so now how do I get this to point at itself?
+    # I could maybe have the serializer take the pointer?
+    # no, we take the serializer when mallocing, hmm.
+    next: t.Optional[Pointer[RobustList]]
+    futex: Int32
+
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('struct robust_list')
+
+class RobustListSerializer(Serializer[RobustList]):
+    def __init__(self, selfptr: Pointer[RobustList]) -> None:
+        self.selfptr = selfptr
+
+    def to_bytes(self, val: RobustList) -> bytes:
+        next = val.next if val.next else self.selfptr
+        struct = ffi.new('struct robust_list*', {
+            'next': ffi.cast('struct robust_list*', int(next.near)),
+            'futex': val.futex,
+        })
+        return bytes(ffi.buffer(struct))
+
+@dataclass
+class RobustListHead(Struct):
+    # we require at least one entry, otherwise we'd have to know our selfptr just like
+    # RobustListSerializer does
+    first: Pointer[RobustList]
+
+    def to_bytes(self) -> bytes:
+        struct = ffi.new('struct robust_list_head*', {
+            'first': ffi.cast('struct robust_list*', int(self.first.near)),
+            'futex_offset': ffi.offsetof('struct robust_list', 'futex'),
+            'list_op_pending': ffi.NULL,
+        })
+        return bytes(ffi.buffer(struct))
+
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('struct robust_list')
 
 class Borrowable:
     async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None:

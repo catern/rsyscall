@@ -1534,8 +1534,7 @@ class ChildProcess:
         self.wait_for_signal = False
         self.task = self.monitor.signal_queue.sigfd.underlying.task
         self.death_event: t.Optional[ChildEvent] = None
-        self.waiting = False
-        self.killing = False
+        self.in_use = False
 
     async def wait(self) -> t.List[ChildEvent]:
         if self.death_event:
@@ -1544,14 +1543,14 @@ class ChildProcess:
         while True:
             if self.wait_for_signal:
                 await self.monitor.do_wait()
-            if self.killing:
-                raise Exception("trying to wait while we are killing")
-            self.waiting = True
+            if self.in_use:
+                raise Exception("trying to wait while we are already waiting or killing")
+            self.in_use = True
             try:
                 siginfo_buf = await self.process.waitid(
                     flags|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
             finally:
-                self.waiting = False
+                self.in_use = False
             siginfo = await siginfo_buf.read()
             if siginfo.pid == 0:
                 # we didn't get an event, so we know there's nothing to see for this pid;
@@ -1595,13 +1594,15 @@ class ChildProcess:
         if self.death_event:
             yield None
         else:
-            if self.waiting:
+            # TODO technically, multiple people could kill at the same time
+            # so this should really be a reader-writer lock
+            if self.in_use:
                 raise Exception("trying to kill while we are waiting")
-            self.killing = True
+            self.in_use = True
             try:
                 yield self.process
             finally:
-                self.killing = False
+                self.in_use = False
 
     async def send_signal(self, sig: signal.Signals) -> None:
         async with self.get_pid() as process:

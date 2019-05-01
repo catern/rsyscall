@@ -666,13 +666,18 @@ struct cmsghdr {
 //// ugh, have to take this over to get notification of thread exec
 #define SYS_set_robust_list ...
 
-// see kernel source for documentation
+// see kernel source for documentation.
+// these are a bit changed from the kernel structs,
+// which are maximally vague so they can be embedded;
+// in particular our structs directly contain the futex field,
+// instead of being embedded into something containing it
 struct robust_list {
   struct robust_list *next;
+  int32_t futex;
 };
 
 struct robust_list_head {
-  struct robust_list list;
+  struct robust_list *first;
   long futex_offset;
   struct robust_list *list_op_pending;
 };
