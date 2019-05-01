@@ -15005,6 +15005,99 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     well then the list would be pointing to invalid memory...
 
     Well that's just another way to view it.
+** notes while waiting for kai
+Okay so....... So....
+
+So the primary difficulty with tracking the stack is that, we can drop the ref to the stack without returning.
+
+Well, that isn't even important! Suppose that that couldn't happen - suppose that the only way to drop it was to exit - what would we do?
+
+Well we could call notification methods on the process when it changes state or something, like exits or mmreleases.
+
+Or just drops the stack.
+
+I mean, sure, we can just stick the stack on the process.
+
+And... Well can we just always have the stack there?
+
+It is some kind of child process from which we can free the stack... Or free the TLS... Or whatever.
+
+And we can mark it as dead... And internally it knows whether it is in use or not...
+
+That all seems fine.
+
+I mean, that is better than a thread.
+
+Oh so hmm. We could have three levels: process, child process (which allows waitid and tracks usage), and threadprocess (which further holds stack and TLS notifications, and can be released to child process).
+
+What about arguments to the process?
+
+Well I guess the stack is alive. Hmm.
+
+Yeah why don't we just save the stack in the process then we can manually free things out of it? That sounds good and fine.
+
+The same would apply for TLS or whatever.
+
+Hmm, free on writtenpointer should drop the value?
+
+Or maybe not? Or something, meh. It isn't that big a problem.
+
+Ok so I like this approach.
+
+How do I deal with futex task then?
+
+Well I guess I can store that along side... Things...
+
+Right so we can have a single child process monitor thing, which allows launching things with both with mm release futex, and without.
+
+And in both scenarios returns a threadprocess.
+
+Seems good.
+
+Er no, in one scenario we return, uh, something containing a threadprocess and a monitor ref,
+
+And in the other scenario we return something containing two of the above.
+
+Yeah I guess a better way is to have some cap thing which is, a multiplexed waiter for sigchild.
+
+Then we can, uh. Use that to spawn children from free functions. Which have a reference to that cap, and to the child.
+
+Hmm. Would be nicer to have some kind of cleaner way. Hm.
+
+I mean, we need to know if a sigchild has been detected by someone else.
+
+Because then we might have an event.
+
+What would be great is if I could just wait on sigchild without worrying if I had an event. Hmm. Couldn't I do that by optimistically waiting, then sigchild waiting if I don't get anything? Hm.
+
+Huh, couldn't I do the same thing for epoll? If I get an eagain, I know all the things that would let me read are not set. Hmm.
+
+Okay so anyway I can have a function like concurrent_waitid, which takes the process and the sigchild waiting cap.
+
+It's kind of nice that I don't have to register processes. Could we achieve the same flexibility with epoll? Hmm yes kind of.
+
+We just need to register the FD with epoll at some point. And then we can dynamically start receiving events from it.
+
+Hmm do we even need to register it for closing?
+
+I mean obviously we can just keep incrementing data numbers. Although.
+
+How do we handle mapping an FD arg passed in, to something registered on epoll? How do we handle that mapping?
+
+We could use object identity maybe...
+
+We could have an underlying file object...
+
+Ok so how would I do check?
+It requires three args:
+
+Process memgate and sigchildfd
+
+Hmm I guess I don't need to track the futex task anywhere outside the actual syscall interface.
+
+An rsyscallthread as I currently have it, can just be a threadprocess plus a task. (Plus memory access and signalfd stuff ofc)
+
+And we can have an exec which is not memory-abstracting, I guess.
 ** split out both spawn_exec and fork task creation
    There are two task creation things still in io.py!
 ** support splitting memory mappings
