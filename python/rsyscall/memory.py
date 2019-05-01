@@ -89,12 +89,30 @@ class Allocation(AllocationInterface):
     def __del__(self) -> None:
         self.free()
 
-class Arena:
+class AllocatorInterface:
+    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[AllocationInterface]:
+        # A naive bulk allocator
+        allocs: t.List[AllocationInterface] = []
+        with contextlib.ExitStack() as stack:
+            for size, alignment in sizes:
+                allocs.append(await self.malloc(size, alignment))
+            return allocs
+
+    @abc.abstractmethod
+    async def malloc(self, size: int, alignment: int) -> AllocationInterface: ...
+
+class Arena(AllocatorInterface):
     def __init__(self, mapping: MemoryMapping) -> None:
         self.mapping = mapping
         self.allocations: t.List[Allocation] = []
 
-    def malloc(self, size: int, alignment: int) -> t.Optional[Allocation]:
+    async def malloc(self, size: int, alignment: int) -> Allocation:
+        alloc_opt = self.maybe_malloc(size, alignment)
+        if alloc_opt is None:
+            raise Exception("out of space!")
+        return alloc_opt
+
+    def maybe_malloc(self, size: int, alignment: int) -> t.Optional[Allocation]:
         newstart = 0
         for i, alloc in enumerate(self.allocations):
             if (newstart+size) <= alloc.start:
@@ -121,18 +139,6 @@ def align(num: int, alignment: int) -> int:
         return num + (alignment - overhang)
     else:
         return num
-
-class AllocatorInterface:
-    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[AllocationInterface]:
-        # A naive bulk allocator
-        allocs: t.List[AllocationInterface] = []
-        with contextlib.ExitStack() as stack:
-            for size, alignment in sizes:
-                allocs.append(await self.malloc(size, alignment))
-            return allocs
-
-    @abc.abstractmethod
-    async def malloc(self, size: int, alignment: int) -> AllocationInterface: ...
 
 class PreallocatedAllocation(AllocationInterface):
     def __init__(self, pointer: Pointer, size: int) -> None:
@@ -195,7 +201,7 @@ class Allocator:
                 size, alignment = sizes[size_index]
                 if alignment > 4096:
                     raise Exception("can't handle alignments of more than 4096 bytes", alignment)
-                alloc = arena.malloc(size, alignment)
+                alloc = arena.maybe_malloc(size, alignment)
                 if alloc:
                     allocations.append(alloc)
                     size_index += 1
@@ -214,7 +220,7 @@ class Allocator:
                 for size, alignment in rest_sizes:
                     if alignment > 4096:
                         raise Exception("can't handle alignments of more than 4096 bytes", alignment)
-                    alloc = arena.malloc(size, alignment)
+                    alloc = arena.maybe_malloc(size, alignment)
                     if alloc is None:
                         raise Exception("some kind of internal error caused a freshly created memory arena",
                                         " to return null for an allocation, size", size, "alignment", alignment)
@@ -228,13 +234,13 @@ class Allocator:
         # TODO should coalesce together multiple pending mallocs waiting on the lock
         async with self.lock:
             for arena in self.arenas:
-                alloc = arena.malloc(size, alignment)
+                alloc = arena.maybe_malloc(size, alignment)
                 if alloc:
                     return alloc
             mapping = await self.task.mmap(align(size, 4096), PROT.READ|PROT.WRITE, MAP.PRIVATE)
             arena = Arena(mapping)
             self.arenas.append(arena)
-            result = arena.malloc(size, alignment)
+            result = arena.maybe_malloc(size, alignment)
             if result is None:
                 raise Exception("some kind of internal error caused a freshly created memory arena to return null for an allocation")
             else:

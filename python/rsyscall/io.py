@@ -2594,7 +2594,7 @@ class AsyncReadBuffer:
             raise Exception("bad netstring delimiter", comma)
         return data
 
-async def set_singleton_robust_futex(task: far.Task, transport: base.MemoryTransport, allocator: memory.PreallocatedAllocator,
+async def set_singleton_robust_futex(task: far.Task, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
                                      futex_value: int,
 ) -> Pointer:
     futex_offset = ffi.sizeof('struct robust_list')
