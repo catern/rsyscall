@@ -211,8 +211,12 @@ class Task:
     async def perform_batch(self, op: t.Callable[[batch.BatchSemantics], T]) -> T:
         return await batch.perform_batch(self.base, self.transport, self.allocator, op)
 
-    async def perform_async_batch(self, op: t.Callable[[batch.BatchSemantics], t.Awaitable[T]]) -> T:
-        return await batch.perform_async_batch(self.base, self.transport, self.allocator, op)
+    async def perform_async_batch(self, op: t.Callable[[batch.BatchSemantics], t.Awaitable[T]],
+                                  allocator: memory.AllocatorInterface=None,
+    ) -> T:
+        if allocator is None:
+            allocator = self.allocator
+        return await batch.perform_async_batch(self.base, self.transport, allocator, op)
 
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: int,
@@ -2595,32 +2599,17 @@ class AsyncReadBuffer:
             raise Exception("bad netstring delimiter", comma)
         return data
 
-async def set_singleton_robust_futex(task: far.Task, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
+async def set_singleton_robust_futex(task: handle.Task, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
                                      futex_value: int,
-) -> Pointer:
-    futex_offset = ffi.offsetof('struct my_robust_list', 'futex')
-    def op(sem: BatchSemantics) -> t.Tuple[BatchPointer, BatchPointer]:
-        def robust_list(self: int) -> bytes:
-            return (bytes(ffi.buffer(ffi.new('struct my_robust_list*', {
-                "next": ffi.cast('void*', self),
-                "futex": futex_value,
-            }))))
-        # TODO we build the bytes four times; we could get it down to two, if the semantics had support for self-reference;
-        # the semantics could take and call this function directly
-        robust_list_entry = sem.malloc(len(robust_list(0)))
-        sem.write(robust_list_entry, robust_list(int(robust_list_entry.near)))
-        robust_list_head = sem.to_pointer(
-            bytes(ffi.buffer(ffi.new('struct my_robust_list_head*', {
-                "first": ffi.cast('void*', robust_list_entry.near),
-                "futex_offset": futex_offset,
-                "list_op_pending": ffi.NULL,
-            }))))
+) -> WrittenPointer[handle.FutexNode]:
+    def op(sem: batch.BatchSemantics) -> t.Tuple[WrittenPointer[handle.FutexNode],
+                                                 WrittenPointer[handle.RobustListHead]]:
+        robust_list_entry = sem.to_pointer(handle.FutexNode(None, Int32(futex_value)))
+        robust_list_head = sem.to_pointer(handle.RobustListHead(robust_list_entry))
         return robust_list_entry, robust_list_head
-    async with contextlib.AsyncExitStack() as stack:
-        robust_list_entry, robust_list_head = await perform_batch(transport, allocator, stack, op)
-        await far.set_robust_list(task, robust_list_head.ptr, robust_list_head.size)
-    futex_pointer = robust_list_entry.ptr + futex_offset
-    return futex_pointer
+    robust_list_entry, robust_list_head = await batch.perform_batch(task, transport, allocator, op)
+    await task.set_robust_list(robust_list_head)
+    return robust_list_entry
 
 async def make_connections(access_task: Task,
                            # regrettably asymmetric...
@@ -2756,9 +2745,10 @@ async def make_robust_futex_task(
     # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
     futex_value = FUTEX_WAITERS|(int(child_stdtask.task.base.process.near) & FUTEX_TID_MASK)
     # this is distasteful and leaky, we're relying on the fact that the PreallocatedAllocator never frees things
-    remote_futex_pointer = await set_singleton_robust_futex(
+    remote_futex_node_pointer = await set_singleton_robust_futex(
         child_stdtask.task.base, child_stdtask.task.transport,
-        memory.PreallocatedAllocator(remote_mapping_pointer, futex_memfd_size), futex_value)
+        memory.Arena(remote_mapping), futex_value)
+    remote_futex_pointer = remote_futex_node_pointer.far + ffi.offsetof('struct futex_node', 'futex')
     local_futex_pointer = local_mapping_pointer + (int(remote_futex_pointer) - int(remote_mapping_pointer))
     # now we start the futex monitor
     futex_task = await launch_futex_monitor(parent_stdtask.task.base, parent_stdtask.task.transport,

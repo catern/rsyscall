@@ -86,15 +86,9 @@ struct fdpair {
     int first;
     int second;
 };
-struct my_robust_list {
-  struct robust_list *next;
+struct futex_node {
+  struct robust_list list;
   uint32_t futex;
-};
-
-struct my_robust_list_head {
-  struct robust_list *first;
-  long futex_offset;
-  struct robust_list *list_op_pending;
 };
 """ + "\n".join(f'const char {name}[] = "{value}";' for name, value in stored_paths.items()), **rsyscall)
 for name in stored_paths:
@@ -676,19 +670,20 @@ struct cmsghdr {
 //// ugh, have to take this over to get notification of thread exec
 #define SYS_set_robust_list ...
 
-// see kernel source for documentation.
-// these are a bit changed from the kernel structs,
-// which are maximally vague so they can be embedded;
-// in particular our structs directly contain the futex field,
-// instead of being embedded into something containing it
-struct my_robust_list {
-  struct robust_list *next;
+// see kernel source for documentation of robust_lists.
+// this is our custom robust_list + futex structure
+struct futex_node {
+  struct robust_list list;
   uint32_t futex;
 };
 
-struct my_robust_list_head {
-  struct robust_list *first;
-  long futex_offset;
+struct robust_list {
+  struct robust_list *next;
+};
+
+struct robust_list_head {
+  struct robust_list list;
+  unsigned long futex_offset;
   struct robust_list *list_op_pending;
 };
 

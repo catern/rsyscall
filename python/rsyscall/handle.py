@@ -922,46 +922,45 @@ class Task(rsyscall.far.Task):
             await rsyscall.near.set_robust_list(self.sysif, head.near, head.bytesize())
 
 @dataclass
-class RobustList:
-    # okay so now how do I get this to point at itself?
-    # I could maybe have the serializer take the pointer?
-    # no, we take the serializer when mallocing, hmm.
-    next: t.Optional[Pointer[RobustList]]
+class FutexNode(Struct):
+    # this is our bundle of struct robust_list with a futex.  since it's tricky to handle the
+    # reference management of taking a reference to just one field in a structure (the futex, in
+    # cases where we don't care about the robust list), we always deal in the entire FutexNode
+    # structure whenever we talk about futexes. that's a bit of overhead but we barely use futexes,
+    # so it's fine.
+    next: t.Optional[Pointer[FutexNode]]
     futex: Int32
 
-    @classmethod
-    def sizeof(cls) -> int:
-        return ffi.sizeof('struct robust_list')
-
-class RobustListSerializer(Serializer[RobustList]):
-    def __init__(self, selfptr: Pointer[RobustList]) -> None:
-        self.selfptr = selfptr
-
-    def to_bytes(self, val: RobustList) -> bytes:
-        next = val.next if val.next else self.selfptr
-        struct = ffi.new('struct robust_list*', {
-            'next': ffi.cast('struct robust_list*', int(next.near)),
-            'futex': val.futex,
+    def to_bytes(self) -> bytes:
+        struct = ffi.new('struct futex_node*', {
+            # technically we're supposed to have a pointer to the first node in the robust list to
+            # indicate the end.  but that's tricky to do. so instead let's just use a NULL pointer;
+            # the kernel will EFAULT when it hits the end. make sure not to map 0, or we'll
+            # break. https://imgflip.com/i/2zwysg
+            'list': (ffi.cast('struct robust_list*', int(self.next.near)) if self.next else ffi.NULL,),
+            'futex': self.futex,
         })
         return bytes(ffi.buffer(struct))
 
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('struct futex_node')
+
 @dataclass
 class RobustListHead(Struct):
-    # we require at least one entry, otherwise we'd have to know our selfptr just like
-    # RobustListSerializer does
-    first: Pointer[RobustList]
+    first: WrittenPointer[FutexNode]
 
     def to_bytes(self) -> bytes:
         struct = ffi.new('struct robust_list_head*', {
-            'first': ffi.cast('struct robust_list*', int(self.first.near)),
-            'futex_offset': ffi.offsetof('struct robust_list', 'futex'),
+            'list': (ffi.cast('struct robust_list*', int(self.first.near)),),
+            'futex_offset': ffi.offsetof('struct futex_node', 'futex'),
             'list_op_pending': ffi.NULL,
         })
         return bytes(ffi.buffer(struct))
 
     @classmethod
     def sizeof(cls) -> int:
-        return ffi.sizeof('struct robust_list')
+        return ffi.sizeof('struct robust_list_head')
 
 class Borrowable:
     async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None:

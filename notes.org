@@ -14992,6 +14992,36 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     Hah, problem solved! We'll just pass around a Futex structure,
     that contain both the futex,
     and the robust list!
+*** sharing a mappingallocator between address spaces
+    We need to return the pointer to the futex,
+    but it'll be at a different address in a different address space,
+    but in the same mapping.
+
+    OK so I guess the notion would be,
+    map the same thing in multiple address spaces,
+    somehow verify it's the same mapping,
+    and ask the mapping allocator to translate.
+
+    And we'll have one address space be the owner, and manage allocation?
+    Well, we could do fallback. Like we're planning with fd tables.
+
+    I could have allocation.near() take the address space,
+    and get back a pointer for that address space.
+
+    But no I think it's better to bake in the address space/mapping a pointer is for.
+
+    The allocator doesn't actually allocate in a mapping;
+    it allocates in a file.
+
+    And so I can pass a pointer to the allocator and get it translated to another mapping?
+
+    Well, okay, so ultimately the allocator needs to know what mappings it is valid in.
+    We can call "add_mapping" to store another mapping that it should regard as valid...
+
+    OK so the tricky.. thing...
+    oh wait we'll never reallocate anyway...
+    And we'll never unmap it...
+    so it would be fine to just use a single arena
 *** need to store robust list
     We could attach that to the task.
     That might be good, sure.
@@ -15098,6 +15128,13 @@ Hmm I guess I don't need to track the futex task anywhere outside the actual sys
 An rsyscallthread as I currently have it, can just be a threadprocess plus a task. (Plus memory access and signalfd stuff ofc)
 
 And we can have an exec which is not memory-abstracting, I guess.
+
+** investigate possible race/block forever in malloc
+   We call .mmap in malloc, under a lock;
+   but if that .mmap call goes out to allocate memory,
+   then we'll block forever.
+
+   But I thought I fixed this.
 ** split out both spawn_exec and fork task creation
    There are two task creation things still in io.py!
 ** support splitting memory mappings
