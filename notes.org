@@ -15022,6 +15022,121 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     oh wait we'll never reallocate anyway...
     And we'll never unmap it...
     so it would be fine to just use a single arena
+
+    hmmmm so. how do we determine two mappings are the same. hm.
+
+    that is, maybe we could do it outside the allocator?
+
+    like... suppose the pointer had a reference to the mapping it's within?
+
+    well, if we did that, we'd have trouble using the regular python allocator for to_pointer.
+    but, we don't strictly need to do that actually.
+
+    well, so, we can do it inside the local allocator.
+    we can copy bytes() into a region we control.
+
+    that reduces our constraints anyway, means we don't depend on the weak Python allocator.
+    which can't even do alignment.
+    so that seems better anyway.
+**** hm
+     so if the pointer contained the mapping it's within,
+     then we could, ourselves, outside the allocator,
+     handle mapping equality.
+
+     that is interesting, yes.
+
+     what if we attached an allocator to a mapping that's already being allocated?
+     well what if we started, um, closing fds of, um, an fd space that's already managed?
+
+     the thing is, the allocator subdivides a space.
+     it's our own multiplexer. um. is that right?
+
+     Yes whatever. OK so how do we get a pointer relative to another space?
+
+     I guess the notion is, I, a pointer, have a mapping, and I resolve that mapping to an allocator,
+     and then that allocator performs the operations necessary to change my allocation.
+**** ok
+     practically speaking, what do I do?
+
+     I want a pointer which is pointing to a different memory mapping, but the same address space.
+
+     *maybe* I could have an AllocationInterface which just returns the offset in a memory mapping???
+
+     actually for that matter, the allocator doesn't even need to hold any memory mapping.
+     hm! that's interesting.
+
+     ok so I like this idea, my allocator just returns an allocationinterface,
+     which gives me an offset in a memory mapping.
+
+     hmm I guess then maybe it should return the memory mapping it used so it can synth new ones?
+
+     or maybe that's a higher-level concept?
+
+     i guess one thing I want is to be able to map the mapping elsewhere um hm hm
+
+     so I like the notion of, an allocator,
+     which can fail...?
+
+     ok so i feel like I missed a thought because I didn't write it down.
+     if malloc returns a mapping, then I lose, um, some abstraction power, don't I?
+     or wait no I don't
+
+     ok so, why don't I just,
+     have the allocator be a struct I can instantiate?
+     which handles allocation?
+
+     and so I can have the pointer reference the memory mapping,
+     and ask the allocationinterface for split/join.
+
+     ok so if I explicitly know the mapping at all times, that's pretty cool isn't it?
+     I can move things between tasks, all that stuff.
+     h m m.
+
+     well the allocationinferface could just tell me what the mapping is I suppose.
+
+     that way it could still move pointers between mappings if necessary.
+     or change the offset or whatever.
+
+     like, relocate things.
+     but wait, it can still change the offset, that's fine.
+
+     it just can't change the mapping.
+
+     hmm also we can't grow mappings.
+
+     ok so I don't see why we would need to move pointers between mappings?
+     well, for compaction.
+
+     well if we're talking about this like files on disk, allocating out of there...
+
+     then, y'know, it's not clear that it's necessary to compact between files?
+
+     I guess that could be an offline step?
+     how would we do this offline?
+
+     we'd need to collect all the pointers and repoint them.
+**** so I like this notion of exposing the mapping
+     but, I'm concerned about the loss of the ability to compact across mappings.
+
+     Should I be concerned?
+     I think no.
+     This is the kind of de-abstraction that I typically like.
+
+     And anyway C works just fine without compaction.
+
+     Compaction is only necessary if we want to return memory.
+     Well, we can still return memory, we just have to move out of it first.
+     We have to, stop having pointers which map it.
+
+     Hey wow can we even just forward all responsibility for keeping mappings alive to the user?
+     Maybe not.
+
+     OK so yeah we just have to get rid of all the pointers in a mapping.
+     Which, because we can't move between mappings, is hard.
+     But... whatever, I think it's fine.
+     It makes pointers more awesomely portable.
+
+     Shared memory as a native functionality! Very cool.
 *** need to store robust list
     We could attach that to the task.
     That might be good, sure.
