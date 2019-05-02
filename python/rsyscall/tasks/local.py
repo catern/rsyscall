@@ -85,9 +85,11 @@ def _make_local_task() -> Task:
 def _make_local_function(cffi_object) -> rsc.FunctionPointer:
     return rsc.FunctionPointer(far.Pointer(task.address_space, near.Pointer(int(ffi.cast('long', cffi_object)))))
 def _make_local_function_handle(cffi_ptr) -> handle.Pointer[handle.NativeFunction]:
-    return handle.Pointer(
-        task, rsc.NullGateway(), handle.NativeFunctionSerializer(),
-        rsc.StaticAllocation(near.Pointer(int(ffi.cast('ssize_t', cffi_ptr)))))
+    pointer_int = int(ffi.cast('ssize_t', cffi_ptr))
+    # TODO we're just making up a memory mapping that this pointer is inside;
+    # we should figure out the actual mapping, and the size for that matter.
+    mapping = handle.MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
+    return handle.Pointer(mapping, rsc.NullGateway(), handle.NativeFunctionSerializer(), rsc.StaticAllocation())
 
 async def _make_local_stdtask() -> StandardTask:
     local_transport = LocalMemoryTransport()

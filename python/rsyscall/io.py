@@ -191,9 +191,9 @@ class Task:
         return await self.malloc_serializer(cls.get_serializer(self.base), size)
 
     async def malloc_serializer(self, serializer: Serializer[T], size: int, alignment: int=1) -> handle.Pointer[T]:
-        allocation = await self.allocator.malloc(size, alignment=alignment)
+        mapping, allocation = await self.allocator.malloc(size, alignment=alignment)
         try:
-            return handle.Pointer(self.base, self.transport, serializer, allocation)
+            return handle.Pointer(mapping, self.transport, serializer, allocation)
         except:
             allocation.free()
             raise
@@ -1107,12 +1107,8 @@ class Trampoline(handle.Serializable, handle.Borrowable):
         raise Exception("not implemented")
 
 class StaticAllocation(handle.AllocationInterface):
-    def __init__(self, ptr: near.Pointer) -> None:
-        self.ptr = ptr
-
-    @property
-    def near(self) -> rsyscall.near.Pointer:
-        return self.ptr
+    def offset(self) -> int:
+        return 0
 
     def size(self) -> int:
         raise Exception
@@ -1147,9 +1143,11 @@ class ProcessResources:
             return FunctionPointer(
                 far.Pointer(task.address_space, near.Pointer(int(ffi.cast('ssize_t', cffi_ptr)))))
         def to_handle(cffi_ptr) -> handle.Pointer[handle.NativeFunction]:
-            return handle.Pointer(
-                task, NullGateway(), handle.NativeFunctionSerializer(),
-                StaticAllocation(near.Pointer(int(ffi.cast('ssize_t', cffi_ptr)))))
+            pointer_int = int(ffi.cast('ssize_t', cffi_ptr))
+            # TODO we're just making up a memory mapping that this pointer is inside;
+            # we should figure out the actual mapping, and the size for that matter.
+            mapping = MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
+            return handle.Pointer(mapping, NullGateway(), handle.NativeFunctionSerializer(), StaticAllocation())
         return ProcessResources(
             server_func=to_pointer(symbols.rsyscall_server),
             persistent_server_func=to_pointer(symbols.rsyscall_persistent_server),
@@ -2744,7 +2742,7 @@ async def make_robust_futex_task(
 
     # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
     futex_value = FUTEX_WAITERS|(int(child_stdtask.task.base.process.near) & FUTEX_TID_MASK)
-    # this is distasteful and leaky, we're relying on the fact that the PreallocatedAllocator never frees things
+    # this is distasteful and leaky, we're relying on the fact that the Arena never frees things
     remote_futex_node_pointer = await set_singleton_robust_futex(
         child_stdtask.task.base, child_stdtask.task.transport,
         memory.Arena(remote_mapping), futex_value)

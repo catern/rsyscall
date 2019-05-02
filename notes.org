@@ -15197,9 +15197,200 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     well then the list would be pointing to invalid memory...
 
     Well that's just another way to view it.
-** revamping memory management for shared memory
-*** stick MemoryMapping directly into all pointers
-*** start managing pointers in file_to_allocation_to_handles
+** DONE stick MemoryMapping directly into all pointers
+*** then start managing pointers in file_to_allocation_to_handles
+*** then we can explicitly pass a file into our mmap and make it clear the mappings are the same
+*** thoughts
+    What about split and merge in the presence of multiple handles?
+
+    So...
+    if we've got a bunch of handles to an allocation, hm hm hm.
+
+    well, splitting or merging will invalidate the old allocation,
+    so the old pointer will break. hm.
+
+    oh glob this is all a lot
+    ok ok we can still do it, it's okay.
+
+    Hmm what if I put this handle tracking behind the AllocatorInterface?
+
+    Instead of having an explicit map...
+
+    I just track which allocator is being used for which file?
+
+    That could allow for more flexibility for allocations, like splitting/merging allocations.
+
+    Well that's gross obviously because instead I should just contain the file and...
+    use it...
+
+    Well then I can't work with multiple mappings.
+
+    HMM. This is too advanced.
+    maybe.
+
+    OK so I'd need some kind of allocation range system, which can overlap.
+    Which is what we were talking about earlier. Hm.
+
+    Argh it's really just too complex.
+*** blah
+    OK ok okay.
+
+    What about byte-level allocation?
+    Basically we somehow know when some allocation has a byte active,
+    and then we don't allocate into that byte?
+
+    Maybe our pointers (spans) are like, lists of bytes or something?
+    Lists of contiguous bytes.
+
+    Which can be summarized into just (start, length).
+
+    HmMmm
+
+    I mean okay, so I could have like, file to offset to handle.
+
+    And it's super huge, because there's one offset for each, y'know, offset.
+
+    And... what exactly is the principle to follow?
+    I mean, split and merge don't require this.
+    Do they?
+    I mean... oh yeah they do require it.
+
+    The thing is that you'll have multiple references to a given allocation,
+    so that means you need some kind of handle list.
+
+    And you want to be able to split/merge allocations,
+    which means your handle tracking needs to be at the level of bytes.
+
+    Or, virtually at that level, anyway.
+    I guess we should provide an interface then. For the things we want to do.
+
+    What... exactly do we want to do?
+    With fds I guess we... want to know when we can close the file descriptor.
+    
+    And also this thing with disable_cloexec, for inheritance...
+    But I guess that's not an issue...
+
+    So, I mean, I guess all we want to do is know when we can free the pointer.
+
+    Which is ultimately the allocator's responsibility?
+
+    I mean... why don't we just support, like...
+    Split and stuff...
+    On the allocator...
+    Without having to worry?
+
+    Well, the question is again, how do we know when we can call free?
+    Once there are no valid pointers for some byte sub-range,
+    then we can call free.
+
+    Well, why can't we just track that with the allocator? Like, one valid pointer per "allocation"?
+
+    That would just be a matter of being able to make multiple "allocations" for the same range.
+
+    OK, that seems good, seems good. Then, okay...
+
+    I guess we don't need the file to allocator mapping because... why?
+    Well we already have our allocation I guess.
+
+    The allocation is already specific to each valid file handle.
+
+    We could extend this technique to fds by having fds be, uh, linear, I guess.
+
+    We'd have some kind of, uh, fdallocation.
+    Which there's one of, per, um, moving-around.
+*** hm
+    okay so yeah, if we have multiple valid pointers to the same allocation,
+    that works.
+
+    but if we introduce split/merge,
+    the valid pointers are to different allocations and the old allocations are invalidated,
+    and it all just doesn't work.
+
+    that's why we need to natively support multiple allocations for the same space!
+
+    that kinda violates my nice linearity guarantees
+    if i can have multiple allocations for same space
+
+    but I was already going to violate those,
+    by having multiple valid pointers for multiple mappings.
+
+    so, whatever
+*** implementation ideas
+    what if we sort the list of allocations by start pointer?
+
+    okay that seems to work.
+    allocation continues to work the same with a minor tweak
+
+    when we split we'll need to insert the second half carefully to maintain sorted order
+
+    also, we can just have the memory mapping, instead of mmap and task.
+*** batch allocator
+    So the batch allocator, it's not clear what we should do.
+
+    A memory mapping.
+
+    So okay, ideally we would have some kind of... maybe an interface?
+
+    I guess, okay, so.
+    We need to support the various to_pointer operations,
+    then also split, and write, and such.
+
+    I suppose I could abuse duck-typing.
+
+    So okay, the alternatives are:
+    - abuse duck-typing
+    - make a pointer interface
+    - make a memory mapping that the pointers are within
+
+    The last seems compelling...
+    Oh hey can't we just make a fake memory mapping like that?
+    Like, something at null? Offset 0 always?
+
+    Hmm. But what if we go about unmapping it?
+    We wouldn't want to do that.
+    How to prevent that?
+
+    OK, so...
+
+    I guess if we just allocated a real mapping and used that for everything?
+*** first class typing
+    Well, I guess higher-order-kinds are required to do, um.
+
+    The semantics are specialized with a type, which is then  passed in to a function.
+
+    ummm so...
+
+    actually doesn't this just work?
+
+    or, wait, how do I write down the type? of the... implementer...
+
+    heck for that matter how does someone write down the type in haskell
+
+    ok wait so... the return type of one of these semantics[T] taking functions is...
+    some expression involving T.
+
+    then... ok yeah it's a higher-order-kind.
+
+    Hmm I think abusing duck-typing might actually be my best bet.
+
+    A pointer interface is way less expressive.
+    Actually making a mapping, or having a valid pointer at all, is too unsafe!
+
+    OK so what if we extend the semantics with all the operations we can do,
+    and we require using those instead of methods?
+
+    Well we still need near...
+
+    And splitting and writing as a method is convenient.
+
+    OK sure let's duck-type it.
+** TODO make allocator support duplicating allocations
+** DONE make batch interface use duck-typing
+   actually no I won't do this after all
+
+   Since, a proper duck-typed pointer can be passed to syscalls just fine.
+
+   We can just assume they don't munmap, that's fine
 ** notes while waiting for kai
 Okay so....... So....
 
@@ -15563,3 +15754,22 @@ And we can have an exec which is not memory-abstracting, I guess.
     in the global environment?
 *** captp-style exports
 ** gc as an effect
+* tags
+find -name '*.py' | etags --language python --regex='{python}/^async def \(.*\)(/' -
+* signal handling
+  hm. the good signal handling API would be,
+  the thread that got the signal is suspended,
+  and someone else is notified.
+
+  how can we do that?
+
+  well, hm. maybe we can sigstop ourselves when we get a signal?
+  sure, sure...
+
+  and how do we notify some other signal handling process?
+
+  well our parent will get a notification of us stopping.
+
+  kind of interesting to consider. hm.
+
+  oh hey how does userfaultfd work here?

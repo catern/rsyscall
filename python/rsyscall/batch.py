@@ -1,6 +1,6 @@
 "Batch pointer reading/writing"
 from __future__ import annotations
-from rsyscall.handle import Task, Pointer, WrittenPointer, AllocationInterface
+from rsyscall.handle import Task, Pointer, WrittenPointer, AllocationInterface, MemoryMapping
 import rsyscall.near
 import contextlib
 import abc
@@ -43,9 +43,8 @@ class NullAllocation(AllocationInterface):
     def __init__(self, n: int) -> None:
         self.n = n
 
-    @property
-    def near(self) -> rsyscall.near.Pointer:
-        return rsyscall.near.Pointer(0)
+    def offset(self) -> int:
+        return 0
 
     def size(self) -> int:
         return self.n
@@ -72,7 +71,8 @@ class NullSemantics(BatchSemantics):
 
     def malloc_serializer(self, serializer: Serializer[T], n: int, alignment: int=1) -> Pointer[T]:
         self.allocations.append((n, alignment))
-        ptr = Pointer(self.task, NoopGateway(), serializer, NullAllocation(n))
+        ptr = Pointer(MemoryMapping(self.task, rsyscall.near.MemoryMapping(0, n, 4096), rsyscall.near.File()),
+                      NoopGateway(), serializer, NullAllocation(n))
         return ptr
 
     def write(self, ptr: Pointer[T], data: T) -> WrittenPointer[T]:
@@ -85,18 +85,19 @@ class NullSemantics(BatchSemantics):
         return sem.allocations
 
 class WriteSemantics(BatchSemantics):
-    def __init__(self, task: Task, transport: base.MemoryTransport, allocations: t.Sequence[AllocationInterface]) -> None:
+    def __init__(self, task: Task, transport: base.MemoryTransport,
+                 allocations: t.Sequence[t.Tuple[MemoryMapping, AllocationInterface]]) -> None:
         super().__init__(task)
         self.transport = transport
         self.allocations = list(allocations)
         self.writes: t.List[WrittenPointer] = []
 
     def malloc_serializer(self, serializer: Serializer[T], n: int, alignment: int=1) -> Pointer[T]:
-        allocation = self.allocations.pop(0)
+        mapping, allocation = self.allocations.pop(0)
         if allocation.size() != n:
             raise Exception("batch operation seems to be non-deterministic, ",
                             "allocating different sizes/in different order on second run")
-        return Pointer(self.task, self.transport, serializer, allocation)
+        return Pointer(mapping, self.transport, serializer, allocation)
 
     def write(self, ptr: Pointer[T], data: T) -> WrittenPointer[T]:
         written = ptr._wrote(data)
@@ -106,7 +107,7 @@ class WriteSemantics(BatchSemantics):
     @staticmethod
     async def run(task: Task, transport: base.MemoryTransport,
                   batch: t.Callable[[BatchSemantics], t.Awaitable[T]],
-                  allocations: t.Sequence[AllocationInterface]
+                  allocations: t.Sequence[t.Tuple[MemoryMapping, AllocationInterface]]
     ) -> t.Tuple[T, t.List[WrittenPointer]]:
         sem = WriteSemantics(task, transport, allocations)
         ret = await batch(sem)

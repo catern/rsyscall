@@ -31,8 +31,8 @@ from rsyscall.sys.wait import W
 from rsyscall.sys.mman import MAP, PROT
 
 class AllocationInterface:
-    @abc.abstractproperty
-    def near(self) -> rsyscall.near.Pointer: ...
+    @abc.abstractmethod
+    def offset(self) -> int: ...
     @abc.abstractmethod
     def size(self) -> int: ...
     @abc.abstractmethod
@@ -56,7 +56,7 @@ U = t.TypeVar('U')
 T_pointer = t.TypeVar('T_pointer', bound='Pointer')
 @dataclass(eq=False)
 class Pointer(t.Generic[T]):
-    task: Task
+    mapping: MemoryMapping
     transport: memint.MemoryGateway
     serializer: Serializer[T]
     allocation: AllocationInterface
@@ -64,7 +64,8 @@ class Pointer(t.Generic[T]):
 
     @property
     def near(self) -> rsyscall.near.Pointer:
-        return self.allocation.near
+        # TODO hmm should maybe validate that this fits in the bounds of the mapping I guess
+        return self.mapping.near.as_pointer() + self.allocation.offset()
 
     def bytesize(self) -> int:
         return self.allocation.size()
@@ -73,13 +74,13 @@ class Pointer(t.Generic[T]):
     def far(self) -> rsyscall.far.Pointer:
         # TODO delete this property
         self.validate()
-        return rsyscall.far.Pointer(self.task.address_space, self.near)
+        return rsyscall.far.Pointer(self.mapping.task.address_space, self.near)
 
     @contextlib.asynccontextmanager
     async def borrow(self, task: Task) -> t.AsyncGenerator[Pointer, None]:
         # TODO actual tracking of pointer references is not yet implemented
         self.validate()
-        if task.address_space != self.task.address_space:
+        if task.address_space != self.mapping.task.address_space:
             raise Exception("pointer is in different address space")
         yield self
 
@@ -87,7 +88,7 @@ class Pointer(t.Generic[T]):
         # TODO how can I do this statically?
         if type(self) is not Pointer:
             raise Exception("subclasses of Pointer must override _with_alloc")
-        return type(self)(self.task, self.transport, self.serializer, allocation)
+        return type(self)(self.mapping, self.transport, self.serializer, allocation)
 
     def split(self: T_pointer, size: int) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
@@ -128,7 +129,7 @@ class Pointer(t.Generic[T]):
 
     def _wrote(self, data: T) -> WrittenPointer[T]:
         self.valid = False
-        return WrittenPointer(self.task, self.transport, data, self.serializer, self.allocation)
+        return WrittenPointer(self.mapping, self.transport, data, self.serializer, self.allocation)
 
     async def write(self, data: T) -> WrittenPointer[T]:
         self.validate()
@@ -167,7 +168,7 @@ class Pointer(t.Generic[T]):
         # so maybe it's a method on the Serializer? cast_to(Type)?
         self.validate()
         self.valid = False
-        return Pointer(self.task, self.transport, serializer, self.allocation)
+        return Pointer(self.mapping, self.transport, serializer, self.allocation)
 
     def __enter__(self) -> Pointer:
         return self
@@ -177,13 +178,13 @@ class Pointer(t.Generic[T]):
 
 class WrittenPointer(Pointer[T]):
     def __init__(self,
-                 task: Task,
+                 mapping: MemoryMapping,
                  transport: memint.MemoryGateway,
                  data: T,
                  serializer: Serializer[T],
                  allocation: AllocationInterface,
     ) -> None:
-        super().__init__(task, transport, serializer, allocation)
+        super().__init__(mapping, transport, serializer, allocation)
         self.data = data
 
     @property
@@ -194,7 +195,7 @@ class WrittenPointer(Pointer[T]):
     def _with_alloc(self, allocation: AllocationInterface) -> WrittenPointer:
         if type(self) is not WrittenPointer:
             raise Exception("subclasses of WrittenPointer must override _with_alloc")
-        return type(self)(self.task, self.transport, self.data, self.serializer, allocation)
+        return type(self)(self.mapping, self.transport, self.data, self.serializer, allocation)
 
 # hmm. so what do we index the second bit with?
 # allocationinterface? does that really make sense?
