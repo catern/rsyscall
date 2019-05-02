@@ -6,6 +6,7 @@ import rsyscall.raw_syscalls as raw_syscall
 import gc
 import rsyscall.far
 import rsyscall.near
+from rsyscall.near import File
 import trio
 import os
 import typing as t
@@ -194,6 +195,10 @@ class WrittenPointer(Pointer[T]):
         if type(self) is not WrittenPointer:
             raise Exception("subclasses of WrittenPointer must override _with_alloc")
         return type(self)(self.task, self.transport, self.data, self.serializer, allocation)
+
+# hmm. so what do we index the second bit with?
+# allocationinterface? does that really make sense?
+file_to_allocation_to_handles: t.Dict[File, t.Dict[AllocationInterface, t.List[Pointer]]] = {}
 
 # This is like a far pointer plus a segment register.
 # It means that, as long as it doesn't throw an exception,
@@ -444,12 +449,15 @@ class FileDescriptor:
     async def mmap(self, length: int, prot: PROT, flags: MAP,
                    offset: int=0,
                    page_size: int=4096,
+                   file: File=None,
     ) -> MemoryMapping:
         self.validate()
+        if file is None:
+            file = File()
         ret = await rsyscall.near.mmap(self.task.sysif, length, prot, flags,
                                        fd=self.near, offset=offset,
                                        page_size=page_size)
-        return MemoryMapping(self.task, ret)
+        return MemoryMapping(self.task, ret, file)
 
     # oldfd has to be a valid file descriptor. newfd is not, technically, required to be
     # open, but that's the best practice for avoiding races, so we require it anyway here.
@@ -915,7 +923,7 @@ class Task(rsyscall.far.Task):
         # a mapping without a file descriptor, is an anonymous mapping
         flags |= MAP.ANONYMOUS
         ret = await rsyscall.near.mmap(self.sysif, length, prot, flags, page_size=page_size)
-        return MemoryMapping(self, ret)
+        return MemoryMapping(self, ret, File())
 
     async def set_robust_list(self, head: WrittenPointer[RobustListHead]) -> None:
         async with head.borrow(self):
@@ -1012,6 +1020,7 @@ class Process:
 class MemoryMapping:
     task: Task
     near: rsyscall.near.MemoryMapping
+    file: File
 
     # TODO remove this
     def as_pointer(self) -> rsyscall.far.Pointer:

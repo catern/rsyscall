@@ -15137,6 +15137,53 @@ including entire tasks - when we drop the task, we drop the process, and it dies
      It makes pointers more awesomely portable.
 
      Shared memory as a native functionality! Very cool.
+**** moving the pointer validity
+     So I guess we need multiple valid pointers for the same allocation now.
+
+     Since they can be in different mappings. Hmm.
+
+     What if validity is just.
+
+     Well validity determines if we free on del.
+
+     We want to release the reference to the allocation when we become invalid I guess.
+
+     We also don't want to allow an explicit free, right?
+
+     Since multiple things might hold references, and we don't know when we can delete it.
+
+     I guess this is the same as the fd problem
+
+     Like right now I'm doing linearity...
+
+     but how does that factor into a shared memory system???
+
+     The issue is, there's multiple owner tasks, not just one owner task, right?
+
+     If one crashes we still want to keep it alive.
+
+     Yeah okay this is really just the same thing as the fds.
+
+     Fds are: fd:fd table (shared between task through inheritance)
+
+     Pointers are: allocation:file (shared between task through memory mapping)
+
+     So I have like... a list of handles, for each allocation, for each file?
+
+     I guess I need a notion of file then.
+     
+     OK so since this means tracking files anyway,
+     that can simplify a lot of the memory mapping convertability closure thing.
+
+     If we're the same file, the pointer can be converted. Easy.
+
+     So I guess we'll have Files in MemoryMappings.
+
+     Let's skip um, putting the Files in FDs.
+
+     I... guess we could just... save the File() used in mmap.
+
+     Yeah huh, that's straightforward and simple.
 *** need to store robust list
     We could attach that to the task.
     That might be good, sure.
@@ -15150,6 +15197,9 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     well then the list would be pointing to invalid memory...
 
     Well that's just another way to view it.
+** revamping memory management for shared memory
+*** stick MemoryMapping directly into all pointers
+*** start managing pointers in file_to_allocation_to_handles
 ** notes while waiting for kai
 Okay so....... So....
 
