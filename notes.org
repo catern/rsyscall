@@ -15974,7 +15974,45 @@ That keeps the allocation alive. It's completely principled and fine.
     Only when I then free do I need to go back into the allocator.
 
     Which is fine and good.
+** child waiting bugs
+ok so I seem to get ECHILD when waitiding on a specific child.
 
+and sometimes I deadlock
+
+both of these point to dropped events.
+which could happen if we complete a waitid but drop the siginfo buf.
+
+oh hmm. this waitid implementation requires me to do excessive reads.
+
+oh but I guess that's not a problem
+
+ok so the echild seems to be gone,
+but the deadlock is still there
+
+also, do I need a lock around this siginfo buf?
+
+oh the deadlock could be the sigfd wait...
+
+let's see!
+
+argh dang it no, it still deadlocked.
+
+though maybe with less frequency?
+
+hmm
+
+i don't think we should deadlock here...
+
+oh! no! this is exactly right, we're waiting for the monitor,
+when we shouldn't be.
+
+ok maybe let's employ my redesign that I thought about?
+
+we, I guess...
+
+just always optimistically wait?
+
+then sigchld wait if we don't get anything?
 ** DONE make batch interface use duck-typing
    actually no I won't do this after all
 
@@ -16044,7 +16082,8 @@ I mean, we need to know if a sigchild has been detected by someone else.
 
 Because then we might have an event.
 
-What would be great is if I could just wait on sigchild without worrying if I had an event. Hmm. Couldn't I do that by optimistically waiting, then sigchild waiting if I don't get anything? Hm.
+What would be great is if I could just wait on sigchild without worrying if I had an event.
+Hmm. Couldn't I do that by optimistically waiting, then sigchild waiting if I don't get anything? Hm.
 
 Huh, couldn't I do the same thing for epoll? If I get an eagain, I know all the things that would let me read are not set. Hmm.
 

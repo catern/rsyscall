@@ -1535,23 +1535,28 @@ class ChildProcess:
         self.task = self.monitor.signal_queue.sigfd.underlying.task
         self.death_event: t.Optional[ChildEvent] = None
         self.in_use = False
+        self.siginfo_buf: t.Optional[handle.Pointer[Siginfo]] = None
 
     async def wait(self) -> t.List[ChildEvent]:
         if self.death_event:
             raise Exception("child is already dead!")
         flags = W.EXITED|W.STOPPED|W.CONTINUED
         while True:
-            if self.wait_for_signal:
-                await self.monitor.do_wait()
-            if self.in_use:
-                raise Exception("trying to wait while we are already waiting or killing")
-            self.in_use = True
-            try:
-                siginfo_buf = await self.process.waitid(
-                    flags|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
-            finally:
-                self.in_use = False
-            siginfo = await siginfo_buf.read()
+            # support cancellation by saving the buffer
+            # could extract this into a helper...
+            if self.siginfo_buf is None:
+                if self.wait_for_signal:
+                    await self.monitor.do_wait()
+                if self.in_use:
+                    raise Exception("trying to wait while we are already waiting or killing")
+                self.in_use = True
+                try:
+                    self.siginfo_buf = await self.process.waitid(
+                        flags|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
+                finally:
+                    self.in_use = False
+            siginfo = await self.siginfo_buf.read()
+            self.siginfo_buf = None
             if siginfo.pid == 0:
                 # we didn't get an event, so we know there's nothing to see for this pid;
                 # we've got to wait for the next SIGCHLD before waitiding again

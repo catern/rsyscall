@@ -1033,11 +1033,14 @@ class Process:
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> Pointer[Siginfo]:
         async with infop.borrow(self.task) as infop_b:
-            if rusage is None:
-                await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, None)
-            else:
-                async with rusage.borrow(self.task) as rusage_b:
-                    await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, rusage_b.near)
+            try:
+                if rusage is None:
+                    await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, None)
+                else:
+                    async with rusage.borrow(self.task) as rusage_b:
+                        await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, rusage_b.near)
+            except ChildProcessError as e:
+                raise ChildProcessError(e.errno, e.strerror, self.near) from None
         return infop
 
     async def kill(self, sig: Signals) -> None:
