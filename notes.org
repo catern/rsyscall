@@ -15316,13 +15316,6 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
     so, whatever
 *** implementation ideas
-    what if we sort the list of allocations by start pointer?
-
-    okay that seems to work.
-    allocation continues to work the same with a minor tweak
-
-    when we split we'll need to insert the second half carefully to maintain sorted order
-
     also, we can just have the memory mapping, instead of mmap and task.
 *** batch allocator
     So the batch allocator, it's not clear what we should do.
@@ -15385,6 +15378,603 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
     OK sure let's duck-type it.
 ** TODO make allocator support duplicating allocations
+   what if we sort the list of allocations by start pointer?
+
+   okay that seems to work.
+   allocation continues to work the same with a minor tweak
+
+   when we split we'll need to insert the second half carefully to maintain sorted order
+
+   OK seems fine.
+
+   We should have a test that does some splitting and stuff.
+*** datastructure
+    it would be nice to have a clean datastructure that takes an initial "size", then supports:
+
+    maybe_alloc(size: int) -> Optional[interval]
+    which returns an interval of the given size that doesn't overlap with any other intervals,
+    or an error if none can be found
+
+    remove(interval) -> Foo
+    removes the interval.
+
+    split(interval)
+    merge(interval, interval)
+
+    hm.
+    what if we stored lists of allocations, maybe?
+    that would solve split, sure...
+
+    what about merge?
+
+    oh, merge would just be storing lists of allocations as well;
+    we'd just store two allocations.
+
+    ok so if we store lists of allocations then...
+
+    and those lists can overlap then...
+
+    the question is, how do we know when to free something?
+
+    hm curious. well. we could continue to maintain lists of handles to allocations?
+*** two alternatives
+    directly have multiple overlapping intervals in our datastructure,
+    and be able to remove them
+
+    have only a single interval at each point,
+    and store lists of intervals outside.
+*** storing lists of handles
+    So how can we do this performantly?
+
+    I guess the API is, um.
+
+    I have some list of handles that I own.
+
+    And when I delete myself, I tell that to the handle-list-monitor.
+
+    And once no-one owns a handle anymore...
+
+    Then we free it.
+
+    I mean it's just a refcount really.
+
+    So okay, the choices are refcounts, or directly representing the intervals in the datastructure.
+
+    SO saying it again:
+*** two alternatives
+    directly have multiple overlapping intervals in our datastructure,
+    and be able to remove them.
+
+    have only a single interval at each point,
+    and store lists of intervals outside, and refcounts for each interval
+*** hm
+    so directly storing overlapping intervals seems like it will be much more performant.
+    since repeated splits/merges won't cause gross fragmentation.
+
+    hmm
+    but what exactly is the API then?
+
+    well basically, when we have a range,
+    we can dup it.
+
+    so. we can insert ranges, basically.
+
+    yeah so how about the generic API is just,
+
+    find_space(size) -> (begin, end)
+    mark(begin, end) -> None
+    unmark(begin, end) -> None
+
+    oh but that doesn't really work since we want to be able to support multiple marks on a given byte.
+    hmm but if we support that, that's basically refcounting for each byte, heh.
+
+    the real API is, I guess, more like:
+
+    find_space(size) -> allocation
+    split(allocation) -> hm
+    free(allocation) -> None
+
+    is what we're doing just, recursive allocation?
+    in some sense? splitting like this?
+    so what if we had a split for the entire range?
+    and what if allocations allowed alloc?
+
+    so basically, when I alloc...
+    I could get, like...
+
+    well I can alloc within that alloc in a sense with split,
+    but that's not super useful - I want it to be visible to the top level!
+
+    so say I alloc something,
+    then I sub-alloc (aka, split) something in it.
+
+    well no I do want to make sure that I'm starting from the start of the range.
+
+    well I guess that can be a guarantee - after all the top-level API gives me that.
+
+    so like. if I alloc something, what if it gave me the rest of the allocator?
+
+    like, allocation without mutation? basically?
+
+    so I alloc, which is essentially splitting;
+
+    and then i get the rest of the range;
+
+    and i go on to alloc more things out of that range;
+
+    and then, I free the first thing. how do I handle that?
+
+    I guess I can put it back into the list of free space.
+
+    which starts out with one big block.
+
+    so okay, sure, I store my free space explicitly, let's say I do that.
+
+    (oh hm is storing free space explicitly the key? since that's not multi-reference like the other thing is)
+
+    ok so yeah I store my free space,
+    I split off some memory,
+    I use it,
+    I split it further and return part of it.
+
+    Now I can just immediately merge, I suppose, to reduce fragmentation.
+
+    So the API here is essentially just, splitting and merging ranges.
+
+    And I can perform allocation by just looking through a list that I designate "free".
+
+    So sure, suppose I do this. Then how do I model, um,
+    the multiple references to a single range, thing?
+*** splitting
+    *Is* splitting good?
+
+    I think it's good.
+
+    It clearly indicates "this range is good, and this range is bad".
+
+    Which is nice.
+
+    like, I consume some range.
+
+    And I return back a buffer that's ready for reading and parsing and all that.
+
+    Plus also some letover chaff.
+
+    Which I want to free separately.
+
+    I mean, yes, I think it's good. It's a nice API.
+*** hmm
+    how does this map to what i get from mmap hmmmmmm
+
+    well obviously with mmap I can, at any time, free any individual page in a memory mapping!
+
+    well hey if that's possible, then how do I store overlapping ranges?
+
+    well... if mmap had some kind of notion of,
+    here is the mapping for this range...
+
+    and they're, um, layered? or... maybe just refcounted...
+
+    and you can say, hey unmap this range,
+    but it stays mapped because there's still something underneath providing a mapping...
+
+    i mean... refcounting at the layer of individual page mappings works because it's not that inefficient.
+
+    hummm
+
+    blah hm blargh.
+
+hey #osdev, do you know of any systems where you can allocate some memory, as normal, and then free part of it?
+
+ok so that's not critically the thing I want to do.
+
+like. okay. so.
+
+the issue is what I do if I have multiple valid pointers for a single allocation,
+and I split one of them.
+
+maybe I just shouldn't support that.
+what if I just ummmm only have a single pointer for an allocation,
+
+and just have multiple views of it?
+
+like, when I have some allocation in some file...
+
+i could store that as primary
+and just reify it as being in some memory mapping.
+at... what point?
+
+ok so um what about realloc? just support that?
+well no I like the generalization here...
+
+ok what about truly just nesting allocation?
+like when it gives me a buffer,
+I then allocate n out of that memory,
+without invalidating the original pointer;
+instead, I keep a reference to the entire original allocation.
+
+so, that's a more arbitrarily-nestable solution,
+instead of trying to flatten the whole thing. hm.
+
+does that in some sense mirror how we relate to the system allocator?
+
+we say, give us some memory mmap,
+then we allocate within it.
+
+then we say, give us some memory malloc,
+then we allocate (by calling syscalls) within it.
+
+so, being flat over the entire system would be cool.
+but how does it compare to mmap?
+well, mmap lets me free whatever pages I want in whatever order I want.
+so it's kind of the same level of power, hm...
+
+so, one place where you can kind of see an API like this is in mmap.
+mmap allows you to allocate a range of pages,
+and then unmap any individual page in that range, in whatever order and combination you want.
+
+so, unlike what I'm looking for,
+the mmap API is completely "raw";
+there's no way to say, "I have "
+
+um well actually with mmap you can kind of view it as linear.
+
+right so if I own a memory mapping, um.
+I can just um, split it and um, free any sub-range of it.
+
+file systems
+hmm
+
+maybe should look at them
+
+hmm mmap has hugepages
+
+with mmap, when I allocate something, I might start with a hugepage.
+and then I unmap something in the middle and it's no problem,
+because it falls back to smaller pages.
+
+which are slower, sure...
+
+okay so what if I just go with a list of allocations,
+and I make sure to merge them? 
+
+and then I just refcount allocations?
+well, hmm.
+
+what about the scenario where I have a fragmented allocation from the start?
+
+and it stays fragmented.
+
+like, um.
+
+well yeah what the heck about that.
+how do I, if I have some allocation,
+split that allocation?
+
+I guess I need to, like... go and...
+find everyone who has this allocation and...
+
+split it?
+
+So yeah basically, I'd change the original allocation to... hold a list.
+
+And when it gets freed it, decrements the refcount on the allocations in that list.
+
+So basically every allocation interface holds a list,
+and decrements a refcount on the allocations in that list on __del__.
+
+Then those primitive allocations will just...
+um...
+
+well...
+
+so, we've got the list,
+and so when we call split, we,
+find the split point in the list,
+then split that primitive allocation,
+then return two listallocs containing those allocations.
+
+ok so that's split, and that's fine.
+
+what about merge?
+
+well, we can do merge in the same way right?
+
+hmm...
+
+if we have two allocations,
+and... we have the only references to those allocations...
+
+then we can merge them.
+
+well ok sure but how do we merge them even when we don't have the only references?
+
+like say we have two pointers...
+
+to the same byte range...
+
+and then we split one of them...
+
+and then we merge it again...
+
+then we have two allocations of the same byte range,
+but which are different.
+
+so how do we deal with that?
+
+we need, I guess, to identify allocations with the byte range that they represent.
+
+also wait a second, how do we even go and split an allocation?
+so that it, um, splits?
+
+I guess we have some allocation, pointing to a primalloc, which we split, ok, sure.
+
+but yeah, suppose we merge those guys again.
+
+and then we.. split again?
+
+um anyway, right so how do we find an allocation to split it?
+
+what if it's arbitrary nesting?
+like, I have my allocation, which might contain either a direct allocation, or a pair of allocations.
+
+when I split, I switch that allocation to containing a pair of allocations,
+and I return each of those allocations.
+
+when I *merge*...
+
+well, why do I ever even need to merge?
+
+couldn't I, shouldn't I, just keep around the original merged allocation?
+
+that's a better certificate of adjacency anyway.
+
+ok so I haven't even used the merge API...
+
+so let's assume merge isn't present.
+
+instead, we need to merge implicitly when we drop the split allocation references.
+
+so, we have our old allocation, which references each of the leaves below it.
+
+when it becomes the only reference to those leaves,
+then we can merge them back into a single leaf.
+
+oh, that sounds really familiar.
+
+ok yeah so we just maintain a tree of allocations,
+which... maybe each allocation has a reference to its parent?
+
+and when an allocation gets freed,
+then...
+
+we look at our parent, and if the other allocation is also freed,
+we merge?
+
+hm something like that.
+
+i'm thinking it would be really cool if the allocation API is just the same as the split API,
+and this tree is what we allocate from.
+
+ok so, so so.
+
+we have allocations. and allocations can be referenced, or freed.
+
+(we can just maintain a reference count to have multiple references to an allocation?)
+
+when we split, we split an allocation into two sub-allocations.
+
+those are just a split in the tree. those can also be referenced or freed.
+
+when we free one, then we check if our sibling is also freed,
+and then we merge them into the parent.
+
+uhhh well okay, before we do that I guess we check that we are a single atomic node.
+
+er, a leaf.
+
+if we're a leaf,
+then when we're freed we check if our sibling is also freed,
+then we delete ourselves and our sibling and reduce our parent to a leaf.
+
+if we're an internal node,
+then when we're freed we do nothing.
+
+if we're freed, then when we become a leaf we do the merge-up.
+
+and so, basically...
+
+I guess with this API, when we're not linearly consuming the buffer passed in,
+we can go ahead and only return the valid portion of the buffer. which is much nicer.
+
+yeah so and, we can walk the tree looking for freed nodes to allocate from?
+
+a node is only allocatable when it is a leaf and it's freed.
+
+(if it's not a leaf, and it's freed, then it means some of its children are still active)
+*** wording
+I think I've figured out an implementation that will give me the split semantics I want.
+it's strangely familiar, but I can't quite place it, maybe someone else recognizes it.
+
+We structure memory as a binary tree, with internal nodes and leaves, 
+with every node having a used bit U, a starting address A, a size Z,
+and a pointer to its parent.
+We maintain the invariant that the used bit U is true iff the user has a reference to this node.
+We start out with the single root node as a leaf.
+
+The split operation takes a leaf node L(U, A, Z), a number of bytes N, and new used bits U1 and U2.
+split(L, N, U1, U2) turns the leaf node L into an internal node,
+creating two leaf children, L1(U1, A, N) and L2(U2, A+N, Z-N).
+
+So then our allocation process is:
+To allocate N bytes, we search the tree for leaves with the used bit U==false and size Z>=N.
+When we find such a leaf node L,
+we perform split(L, N, true, false) to turn it into an internal node,
+and return the address of the resulting first child L1.
+We don't change the used bit on L.
+(If we don't find an appropriately sized node, allocation fails, and we allocate a new arena or grow memory or something).
+
+The free operation takes an arbitrary node D, not necessarily a leaf, necessarily with used bit U==true.
+Free sets the used bit U to false.
+Then we perform the housekeeping operation on D.
+
+The housekeeping operation takes a node D, which necessarily has used bit U==false.
+If D is a leaf node,
+we check the used bit of D's sibling.
+If D's sibling is also unused,
+then we delete D and its sibling,
+turn the parent node back into a leaf,
+and perform the housekeeping operation on the parent node.
+
+Then the user split operation for D simply performs:
+split(D, N, true, true)
+and returns the two created child nodes.
+If D is already an internal node, split just sets its children to used.
+
+lol no that requires linearity.
+*** think about eliminating free bit
+Hmm one nice thing about this API though,
+I don't know if we even need the free bit.
+
+We could just maintain a list of references or something, hm.
+So if, hmm.
+
+If the user free,
+is just giving us back that node...
+
+Well, okay, suppose it's just giving us back that node.
+
+Then we can just want to be able to perform the merge operation.
+
+I guess we can just maintain a free list, and try to merge it with things next to it.
+Easy-peasy.
+
+Ugh no there's also fragmentation from this tree structure.
+Gosh dang it!!!
+
+Blargh! Argh! Fragmentation from this tree structure! Blargh!
+
+ok this is just a buddy allocator.
+right.
+
+people aren't concerned about its fragmentation, so no big deal.
+*** argh
+Oh wait. Argh.
+This doesn't work because of,
+what if we split an allocation in one way,
+then split it again in another way?
+Dang it.
+
+Well, okay, one notion is to require the splits to be merged again.
+Linearity, y'know.
+
+But that doesn't help because then we lose the ability to,
+have one allocation split and still have a reference to the container.
+
+Ok so...
+
+I guess we could maybe have like, some kind of alternate tree?
+
+Basically, to split D which is an internal node,
+we need to find the leaf node where we need to split it.
+
+Then we split that leaf node.
+
+Then we group together the rest?
+
+Maybe, like, a direct list?
+
+Well, no, so, we have the leaf node that is split,
+and then we have the rest of the stuff.
+
+Um, right, no, we do need a list up, uh...
+
+We need a node which skips the split leaf node.
+
+It points to the new left child and parent of the leaf;
+and the new right child and the other child of the toplevel node D.
+
+So then we have two nodes which are equivalent.
+
+I guess the node can be a list of nodes or something?
+
+Like, it has N pairs of children.
+
+Hm.
+
+OK so suppose this is the case, does this let us avoid fragmentation perfectly?
+
+Hmm.
+
+Seems kind of like we need three children, not two.
+
+This is some kind of fancy tree.
+
+I guess it's a dag.
+
+Hmm so what if we always maintained a tree which covers exactly the contiguous free space?
+
+Or... rather...
+
+A tree which has, um, a node which is all free, and a node which is all allocated?
+No opportunities for merging left un-done? Um.
+
+Ok sure so we need three children.
+
+Umm what's the definition?
+
+Fug
+
+Fug!!!!
+
+This is too hard and too advanced.
+
+maybe I should just have shortening buffers?
+
+no, that doesn't support, um...
+
+a nice API for, um...
+
+returning the number of bytes read.
+*** ughhhhh
+UGGGHHH
+
+people on IRC have supremely LIMITED VISION
+
+ok, so. I guess we need to focus seriously on memory allocation to solve this problem.
+
+Can we hack around it instead, and delay this problem to later?
+
+Yes of course we can.
+
+We can just... hmm...
+
+Fabricate two valid pointers I guess.
+
+Oh yeah actually since we'll never reuse the mapping used for the robust futexes,
+
+we actually don't have a problem.
+
+OK! yeah! Let's just skip it!
+
+Oh also we can always take the alternative approach of making a linear pointer API
+that can be viewed through multiple mappings.
+
+That might be more fruitful.
+
+oh. I don't need this anyway. I can just linearly move the pointer.
+That keeps the allocation alive. It's completely principled and fine.
+*** think about free list implementation
+    OK so!!!
+
+    if I store free spaces.
+
+    Then a split doesn't require looking at the allocator at all.
+
+    Only when I then free do I need to go back into the allocator.
+
+    Which is fine and good.
+
 ** DONE make batch interface use duck-typing
    actually no I won't do this after all
 

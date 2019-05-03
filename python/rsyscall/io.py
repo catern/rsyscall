@@ -1130,18 +1130,15 @@ class NullGateway(memint.MemoryGateway):
 
 @dataclass
 class ProcessResources:
-    server_func: FunctionPointer
-    persistent_server_func: FunctionPointer
+    server_func: handle.Pointer[handle.NativeFunction]
+    persistent_server_func: handle.Pointer[handle.NativeFunction]
     do_cloexec_func: handle.Pointer[handle.NativeFunction]
     stop_then_close_func: handle.Pointer[handle.NativeFunction]
     trampoline_func: handle.Pointer[handle.NativeFunction]
-    futex_helper_func: FunctionPointer
+    futex_helper_func: handle.Pointer[handle.NativeFunction]
 
     @staticmethod
     def make_from_symbols(task: handle.Task, symbols: t.Any) -> ProcessResources:
-        def to_pointer(cffi_ptr) -> FunctionPointer:
-            return FunctionPointer(
-                far.Pointer(task.address_space, near.Pointer(int(ffi.cast('ssize_t', cffi_ptr)))))
         def to_handle(cffi_ptr) -> handle.Pointer[handle.NativeFunction]:
             pointer_int = int(ffi.cast('ssize_t', cffi_ptr))
             # TODO we're just making up a memory mapping that this pointer is inside;
@@ -1149,15 +1146,16 @@ class ProcessResources:
             mapping = MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
             return handle.Pointer(mapping, NullGateway(), handle.NativeFunctionSerializer(), StaticAllocation())
         return ProcessResources(
-            server_func=to_pointer(symbols.rsyscall_server),
-            persistent_server_func=to_pointer(symbols.rsyscall_persistent_server),
+            server_func=to_handle(symbols.rsyscall_server),
+            persistent_server_func=to_handle(symbols.rsyscall_persistent_server),
             do_cloexec_func=to_handle(symbols.rsyscall_do_cloexec),
             stop_then_close_func=to_handle(symbols.rsyscall_stop_then_close),
             trampoline_func=to_handle(symbols.rsyscall_trampoline),
-            futex_helper_func=to_pointer(symbols.rsyscall_futex_helper),
+            futex_helper_func=to_handle(symbols.rsyscall_futex_helper),
         )
 
-    def build_trampoline_stack(self, function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> bytes:
+    def build_trampoline_stack(self, function: handle.Pointer[handle.NativeFunction],
+                               arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> bytes:
         # TODO clean this up with dicts or tuples or something
         stack_struct = ffi.new('struct rsyscall_trampoline_stack*')
         stack_struct.rdi = int(arg1)
@@ -1166,7 +1164,7 @@ class ProcessResources:
         stack_struct.rcx = int(arg4)
         stack_struct.r8  = int(arg5)
         stack_struct.r9  = int(arg6)
-        stack_struct.function = ffi.cast('void*', int(function.pointer.near))
+        stack_struct.function = ffi.cast('void*', int(function.near))
         logger.info("trampoline_func %s", self.trampoline_func.near)
         packed_trampoline_addr = struct.pack('Q', int(self.trampoline_func.near))
         stack = packed_trampoline_addr + bytes(ffi.buffer(stack_struct))
@@ -1895,7 +1893,8 @@ class ThreadMaker:
         return Thread(child_task, futex_task, mapping)
 
     async def make_cthread(self, flags: int,
-                          function: FunctionPointer, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
+                           function: handle.Pointer[handle.NativeFunction],
+                           arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
     ) -> CThread:
         # allocate memory for the stack
         stack_size = 4096
@@ -2677,7 +2676,8 @@ async def make_connections(access_task: Task,
 async def spawn_rsyscall_thread(
         access_sock: AsyncFileDescriptor,
         remote_sock: handle.FileDescriptor,
-        parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
+        parent_task: Task, thread_maker: ThreadMaker,
+        function: handle.Pointer[handle.NativeFunction],
         newuser: bool, newpid: bool, fs: bool, sighand: bool,
     ) -> t.Tuple[Task, CThread]:
     flags = lib.CLONE_VM|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SYSVSEM|signal.SIGCHLD

@@ -244,7 +244,7 @@ async def spawn_rsyscall_persistent_server(
         access_sock: AsyncFileDescriptor,
         remote_sock: handle.FileDescriptor,
         listening_sock: handle.FileDescriptor,
-        parent_task: Task, thread_maker: ThreadMaker, function: FunctionPointer,
+        parent_task: Task, thread_maker: ThreadMaker, function: handle.Pointer[handle.NativeFunction],
     ) -> t.Tuple[Task, CThread, RsyscallInterface, handle.FileDescriptor]:
     cthread = await thread_maker.make_cthread(
         (CLONE.VM|CLONE.FS|CLONE.FILES|CLONE.IO|
