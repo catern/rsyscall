@@ -16019,6 +16019,29 @@ still happening.
 OK hmm.
 
 next let's do the redesign.
+
+ok so we're going to first strace it and see how exactly it is hanging, because it's not clear...
+
+lol okay so strace I guess slows it down too much for it to hit the race, sigh.
+** DONE strace with local ssh
+   ok soooo strace with local ssh blocks forever, because the.... remote forwarding process stays alive.
+
+   why are we doing this sleep again?
+
+   ugh to keep the tunnel alive.
+
+   hmm.
+   the tunnel will stay alive as long as there are connections through it.
+
+   could I just establish a connection through it?
+
+   hmm.
+
+   basically.
+
+   ok let's think about it, how can I do this...
+
+   oh I'll just sleep 1 instead of inf, that's fine.
 ** DONE make borrowing not async
    We can't run async code on exiting.
    Because we might drop a syscall result.
