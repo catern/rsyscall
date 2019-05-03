@@ -15974,7 +15974,7 @@ That keeps the allocation alive. It's completely principled and fine.
     Only when I then free do I need to go back into the allocator.
 
     Which is fine and good.
-** child waiting bugs
+** DONE child waiting bugs
 ok so I seem to get ECHILD when waitiding on a specific child.
 
 and sometimes I deadlock
@@ -16046,6 +16046,12 @@ sure.
 whaaat the heeckkk
 
 so the subprocess is stuck in read, and the main process is... in "x32 mode"????
+** TODO memory batching issue
+   Lol okay so my batching is completely broken
+
+   Ummm yeah
+
+   So let's maybe just put this off until we fix
 ** DONE strace with local ssh
    ok soooo strace with local ssh blocks forever, because the.... remote forwarding process stays alive.
 

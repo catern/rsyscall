@@ -178,7 +178,7 @@ async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
     # TODO I optimistically assume that I'll have established a
     # connection through the tunnel before 1 second has passed;
     # that connection will then keep the tunnel open.
-    ).args("-n", "echo forwarded; sleep 1").exec(thread)
+    ).args("-n", "echo forwarded; exec sleep 1").exec(thread)
     lines_buf = AsyncReadBuffer(async_stdout)
     forwarded = await lines_buf.read_line()
     if forwarded != b"forwarded":
@@ -205,7 +205,7 @@ async def ssh_bootstrap(
     # start bootstrap
     bootstrap_thread = await parent_task.fork()
     bootstrap_child_task = await ssh_command.args(
-        "-n", f"cd {tmp_path_bytes.decode()}; ./bootstrap rsyscall"
+        "-n", f"cd {tmp_path_bytes.decode()}; exec ./bootstrap rsyscall"
     ).exec(bootstrap_thread)
     # TODO should unlink the bootstrap after I'm done execing.
     # it would be better if sh supported fexecve, then I could unlink it before I exec...

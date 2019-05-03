@@ -2366,6 +2366,12 @@ class SocketMemoryTransport(base.MemoryTransport):
     @staticmethod
     def merge_adjacent_reads(read_ops: t.List[ReadOp]) -> t.List[t.Tuple[ReadOp, t.List[ReadOp]]]:
         "Note that this is only effective inasmuch as the list is sorted."
+        # TODO BUG HACK
+        # This stuff is colossally broken!!
+        # We are mutating the operations that were passed in to create the aggregate operation!
+        # That means the aggregate operation (last_op) is one of the orig_ops!
+        # That's totally broke!!!!
+        # we'll fix this when we rewrite the transport stuff.
         if len(read_ops) == 0:
             return []
         read_ops = sorted(read_ops, key=lambda op: int(op.src))
@@ -2503,6 +2509,8 @@ class SocketMemoryTransport(base.MemoryTransport):
                 for op, orig_ops in merged_ops:
                     data = op.data
                     for orig_op in orig_ops:
+                        if len(data) < orig_op.n:
+                            raise Exception("insufficient data for original operation", len(data), orig_op.n)
                         orig_op.done, data = data[:orig_op.n], data[orig_op.n:]
 
     async def batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
@@ -2511,7 +2519,7 @@ class SocketMemoryTransport(base.MemoryTransport):
         else:
             read_ops = [self._start_single_read(src, n) for src, n in ops]
             # TODO this is inefficient
-            while not(all(op.done for op in read_ops)):
+            while not(all(op.done is not None for op in read_ops)):
                 await self._do_reads()
             return [op.data for op in read_ops]
 
