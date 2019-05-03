@@ -11,7 +11,6 @@ from rsyscall.base import SyscallInterface
 
 import rsyscall.base as base
 import rsyscall.memint as memint
-from rsyscall.memory_abstracted_syscalls import BatchSemantics, BatchPointer, perform_batch
 import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.handle
