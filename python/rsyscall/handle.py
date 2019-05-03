@@ -29,6 +29,7 @@ from rsyscall.sys.memfd import MFD
 from rsyscall.sys.wait import W
 from rsyscall.sys.mman import MAP, PROT
 from rsyscall.sys.prctl import PrctlOp
+from rsyscall.sys.mount import MS
 
 class AllocationInterface:
     @abc.abstractmethod
@@ -980,6 +981,25 @@ class Task(rsyscall.far.Task):
     async def prctl(self, option: PrctlOp, arg2: int,
                     arg3: int=None, arg4: int=None, arg5: int=None) -> int:
         return (await rsyscall.near.prctl(self.sysif, option, arg2, arg3, arg4, arg5))
+
+    async def mount(self,
+                    source: WrittenPointer[Arg], target: WrittenPointer[Arg],
+                    filesystemtype: WrittenPointer[Arg], mountflags: MS,
+                    data: WrittenPointer[Arg]) -> None:
+        with source.borrow(self):
+            with target.borrow(self):
+                with filesystemtype.borrow(self):
+                    with data.borrow(self):
+                        return (await rsyscall.near.mount(
+                            self.sysif,
+                            source.near, target.near, filesystemtype.near,
+                            mountflags, data.near))
+
+    async def getuid(self) -> int:
+        return (await rsyscall.near.getuid(self.sysif))
+
+    async def getgid(self) -> int:
+        return (await rsyscall.near.getgid(self.sysif))
 
 @dataclass
 class FutexNode(Struct):

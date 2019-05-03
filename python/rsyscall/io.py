@@ -216,7 +216,7 @@ class Task:
         return await batch.perform_async_batch(self.base, self.transport, allocator, op)
 
     async def mount(self, source: bytes, target: bytes,
-                    filesystemtype: bytes, mountflags: int,
+                    filesystemtype: bytes, mountflags: MS,
                     data: bytes) -> None:
         def op(sem: batch.BatchSemantics) -> t.Tuple[
                 WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg]]:
@@ -227,9 +227,7 @@ class Task:
                 sem.to_pointer(Arg(data)),
             )
         source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.perform_batch(op)
-        await near.mount(self.base.sysif,
-                         source_ptr.near, target_ptr.near, filesystemtype_ptr.near,
-                         mountflags, data_ptr.near)
+        await self.base.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
 
     async def exit(self, status: int) -> None:
         await self.base.exit(status)
@@ -294,11 +292,10 @@ class Task:
         return epoll_center
 
     async def getuid(self) -> int:
-        return (await near.getuid(self.base.sysif))
+        return (await self.base.getuid())
 
     async def getgid(self) -> int:
-        return (await near.getgid(self.base.sysif))
-
+        return (await self.base.getgid())
 
 class ReadableFile(File):
     pass
