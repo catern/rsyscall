@@ -1677,21 +1677,6 @@ class ChildProcessMonitorInternal:
         self.waiters.remove(waiter)
 
     async def clone(self,
-                    clone_task: base.Task,
-                    flags: int,
-                    child_stack: Pointer, ctid: Pointer=None, newtls: Pointer=None) -> ChildProcess:
-        clone_parent = bool(flags & CLONE.PARENT)
-        if clone_parent:
-            if clone_task.parent_task is None:
-                raise Exception("using CLONE.PARENT, but we don't know our parent task")
-            owning_task = clone_task.parent_task
-        else:
-            owning_task = clone_task
-        tid = await raw_syscall.clone(clone_task.sysif, flags|signal.SIGCHLD, child_stack,
-                                      ptid=None, ctid=ctid, newtls=newtls)
-        return self.add_task(handle.Process(owning_task, near.Process(tid)))
-
-    async def new_clone(self,
                         clone_task: base.Task,
                         flags: CLONE,
                         child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
@@ -1750,17 +1735,12 @@ class ChildProcessMonitor:
         # cloning task starts will also be waitable-on by the waiting task.
         return ChildProcessMonitor(self.internal, cloning_task, use_clone_parent=False, is_reaper=self.is_reaper)
 
-    async def clone(self, flags: int, child_stack: Pointer, ctid: Pointer=None, newtls: Pointer=None) -> ChildProcess:
-        if self.use_clone_parent:
-            flags |= CLONE.PARENT
-        return (await self.internal.clone(self.cloning_task, flags, child_stack, ctid, newtls))
-
-    async def new_clone(self, flags: CLONE,
+    async def clone(self, flags: CLONE,
                         child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
                         ctid: t.Optional[handle.Pointer[FutexNode]]=None) -> t.Tuple[ChildProcess, handle.Pointer[Stack]]:
         if self.use_clone_parent:
             flags |= CLONE.PARENT
-        return (await self.internal.new_clone(self.cloning_task, flags, child_stack, ctid=ctid))
+        return (await self.internal.clone(self.cloning_task, flags, child_stack, ctid=ctid))
 
 class Thread:
     """A thread is a child task currently running in the address space of its parent.
@@ -1894,7 +1874,7 @@ async def launch_futex_monitor(task: Task,
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         return stack
     stack = await task.perform_async_batch(op)
-    futex_task, usedstack = await monitor.new_clone(CLONE.VM|CLONE.FILES, stack)
+    futex_task, usedstack = await monitor.clone(CLONE.VM|CLONE.FILES, stack)
     # wait for futex helper to SIGSTOP itself,
     # which indicates the trampoline is done and we can deallocate the stack.
     event = await futex_task.wait_for_stop_or_exit()
@@ -1915,7 +1895,7 @@ class ThreadMaker:
         # TODO pull this function out of somewhere sensible
         self.process_resources = process_resources
 
-    async def make_cthread(self, flags: int,
+    async def make_cthread(self, flags: CLONE,
                            function: handle.Pointer[handle.NativeFunction],
                            arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
     ) -> CThread:
@@ -1935,7 +1915,7 @@ class ThreadMaker:
         # stack, futex_pointer = await self.task.perform_async_batch(op)
         stack, futex_pointer = await batch.perform_async_batch(self.task.base, self.task.transport, arena, op)
         futex_task = await launch_futex_monitor(self.task, self.process_resources, self.monitor, futex_pointer)
-        child_task, usedstack = await self.monitor.new_clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
+        child_task, usedstack = await self.monitor.clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
         thread = Thread(child_task, futex_task, futex_pointer)
         return CThread(thread, usedstack)
 
@@ -2720,16 +2700,16 @@ async def spawn_rsyscall_thread(
         function: handle.Pointer[handle.NativeFunction],
         newuser: bool, newpid: bool, fs: bool, sighand: bool,
     ) -> t.Tuple[Task, CThread]:
-    flags = lib.CLONE_VM|lib.CLONE_FILES|lib.CLONE_IO|lib.CLONE_SYSVSEM|signal.SIGCHLD
+    flags = CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM|signal.SIGCHLD
     # TODO correctly track the namespaces we're in for all these things
     if newuser:
-        flags |= lib.CLONE_NEWUSER
+        flags |= CLONE.NEWUSER
     if newpid:
-        flags |= lib.CLONE_NEWPID
+        flags |= CLONE.NEWPID
     if fs:
-        flags |= lib.CLONE_FS
+        flags |= CLONE.FS
     if sighand:
-        flags |= lib.CLONE_SIGHAND
+        flags |= CLONE.SIGHAND
     cthread = await thread_maker.make_cthread(flags, function, remote_sock.near, remote_sock.near)
     syscall = ChildConnection(
         RsyscallConnection(access_sock, access_sock),
