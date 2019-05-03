@@ -7,15 +7,14 @@ import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
 from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, EpollWaiter, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ThreadMaker, FunctionPointer, CThread, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect, Command, ChildProcess, AsyncReadBuffer, SignalMask, ProcessResources, FilesystemResources, UnixSocketFile, spit, FileDescriptor, ReadableFile, WritableFile
-import rsyscall.memory_abstracted_syscalls as memsys
 import trio
-import struct
 from dataclasses import dataclass
 import logging
 import rsyscall.memory as memory
 
 import rsyscall.batch as batch
 from rsyscall.struct import Bytes
+import rsyscall.struct
 
 from rsyscall.sched import CLONE
 from rsyscall.sys.socket import SOCK, AF, SendmsgFlags
@@ -110,7 +109,7 @@ async def setup_stub(
                 SocketMemoryTransport(access_data_sock,
                                       base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd)), None),
                 memory.AllocatorClient.make_allocator(base_task),
-                SignalMask({Signals(bit) for bit in memsys.bits(describe_struct.sigmask)}),
+                SignalMask({Signals(bit) for bit in rsyscall.struct.bits(describe_struct.sigmask)}),
     )
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     # I guess I need to write out the set too in describe

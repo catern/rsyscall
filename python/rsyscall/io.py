@@ -11,12 +11,11 @@ from rsyscall.base import SyscallInterface
 
 import rsyscall.base as base
 import rsyscall.memint as memint
-import rsyscall.memory_abstracted_syscalls as memsys
 from rsyscall.memory_abstracted_syscalls import BatchSemantics, BatchPointer, perform_batch
 import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.handle
-from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode
+from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_has_serializer, T_fixed_size, Bytes, Int32, Serializer, Struct
@@ -220,19 +219,18 @@ class Task:
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: int,
                     data: bytes) -> None:
-        def op(sem: BatchSemantics) -> t.Tuple[BatchPointer, BatchPointer, BatchPointer, BatchPointer]:
+        def op(sem: batch.BatchSemantics) -> t.Tuple[
+                WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg]]:
             return (
-                sem.to_pointer(source + b"\0"),
-                sem.to_pointer(target + b"\0"),
-                sem.to_pointer(filesystemtype + b"\0"),
-                sem.to_pointer(data + b"\0"),
+                sem.to_pointer(Arg(source)),
+                sem.to_pointer(Arg(target)),
+                sem.to_pointer(Arg(filesystemtype)),
+                sem.to_pointer(Arg(data)),
             )
-        async with contextlib.AsyncExitStack() as stack:
-            source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await perform_batch(
-                self.transport, self.allocator, stack, op)
-            await near.mount(self.base.sysif,
-                             source_ptr.near, target_ptr.near, filesystemtype_ptr.near,
-                             mountflags, data_ptr.near)
+        source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.perform_batch(op)
+        await near.mount(self.base.sysif,
+                         source_ptr.near, target_ptr.near, filesystemtype_ptr.near,
+                         mountflags, data_ptr.near)
 
     async def exit(self, status: int) -> None:
         await self.base.exit(status)

@@ -5,7 +5,6 @@ import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
 from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, EpollWaiter, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ThreadMaker, FunctionPointer, CThread, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect, Command, ChildProcess, AsyncReadBuffer, SignalMask, ProcessResources, FilesystemResources, ReadableFile, WritableFile
-import rsyscall.memory_abstracted_syscalls as memsys
 import trio
 import struct
 from dataclasses import dataclass

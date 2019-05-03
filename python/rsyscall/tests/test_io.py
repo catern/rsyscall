@@ -8,7 +8,6 @@ import shutil
 import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
-import rsyscall.memory_abstracted_syscalls as memsys
 import socket
 import struct
 import time
