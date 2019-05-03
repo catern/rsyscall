@@ -90,6 +90,22 @@ class Pointer(t.Generic[T]):
             raise Exception("subclasses of Pointer must override _with_alloc")
         return type(self)(self.mapping, self.transport, self.serializer, allocation)
 
+    def _with_mapping(self: T_pointer, mapping: MemoryMapping) -> T_pointer:
+        if type(self) is not Pointer:
+            raise Exception("subclasses of Pointer must override _with_mapping")
+        if mapping.file is not self.mapping.file:
+            raise Exception("can only move pointer between two mappings of the same file")
+        # we don't have a clean model for referring to the same object through multiple mappings.
+        # this is a major TODO.
+        # at least two ways to achieve it:
+        # - have Pointers become multi-mapping super-pointers, which can be valid in multiple address spaces
+        # - break our linearity constraint on pointers, allowing multiple pointers for the same allocation;
+        #   this is difficult because split() is only easy due to linearity.
+        # right here, we just linearly move the pointer to a new mapping
+        self.validate()
+        self.valid = False
+        return type(self)(mapping, self.transport, self.serializer, self.allocation)
+
     def split(self: T_pointer, size: int) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
         # TODO uhhhh if split throws an exception... don't we need to free... or something...
@@ -196,6 +212,16 @@ class WrittenPointer(Pointer[T]):
         if type(self) is not WrittenPointer:
             raise Exception("subclasses of WrittenPointer must override _with_alloc")
         return type(self)(self.mapping, self.transport, self.data, self.serializer, allocation)
+
+    def _with_mapping(self, mapping: MemoryMapping) -> WrittenPointer:
+        if type(self) is not WrittenPointer:
+            raise Exception("subclasses of WrittenPointer must override _with_mapping")
+        if mapping.file is not self.mapping.file:
+            raise Exception("can only move pointer between two mappings of the same file")
+        # see notes in Pointer
+        self.validate()
+        self.valid = False
+        return type(self)(mapping, self.transport, self.data, self.serializer, self.allocation)
 
 # hmm. so what do we index the second bit with?
 # allocationinterface? does that really make sense?
