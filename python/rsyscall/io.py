@@ -402,7 +402,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         return written.bytesize()
 
     async def write_all(self, data: bytes) -> None:
-        remaining = await self.task.to_pointer(Bytes(data))
+        remaining: handle.Pointer = await self.task.to_pointer(Bytes(data))
         while remaining.bytesize() > 0:
             written, remaining = await self.handle.write(remaining)
 
@@ -730,7 +730,7 @@ class AsyncFileDescriptor:
             if data is not None:
                 return data
 
-    async def read_handle(self, ptr: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
+    async def read_handle(self, ptr: rsyscall.handle.Pointer) -> t.Tuple[rsyscall.handle.Pointer, rsyscall.handle.Pointer]:
         while True:
             while not self.could_read():
                 await self._wait_once()
@@ -1495,7 +1495,7 @@ class SignalQueue:
         async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd, is_nonblock=True)
         return cls(signal_block, async_sigfd)
 
-    async def read(self, buf: T_pointer) -> T_pointer:
+    async def read(self, buf: handle.Pointer) -> handle.Pointer:
         validp, _ = await self.sigfd.read_handle(buf)
         return validp
 

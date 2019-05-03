@@ -14425,6 +14425,8 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    ok yeah it now drops the writtenness.
 
    but I'm still confuzzled about what should happen.
+
+   meh it just degrades
 ** Major TODOs
    implement garbage collection
 
@@ -14683,7 +14685,7 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     Uhhh
 *** convert the rest
     done!
-** clone in handle style
+** DONE clone in handle style
    I guess we can have a Serializable for the stack???
 
    ok lol I don't need this bufferedstack thing,
@@ -14919,7 +14921,7 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    We should prioritize reading things out of the syscall connection buffer,
    to running waitids for the futex and child task.
    After all if there's something in the buffer, we should look at it
-** futex in handle style
+** DONE futex in handle style
 *** need to allocate shared memory
     Hmm
 
@@ -16058,7 +16060,7 @@ so the subprocess is stuck in read, and the main process is... in "x32 mode"????
 
    Ummm yeah
 
-   So let's maybe just put this off until we fix
+   So let's maybe just put this off until we revamp memory
 ** DONE strace with local ssh
    ok soooo strace with local ssh blocks forever, because the.... remote forwarding process stays alive.
 
@@ -16194,6 +16196,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    There are two task creation things still in io.py!
 ** support splitting memory mappings
 ** support passing an existing mapping as a target for mmap
+   For the address argument, so that we split the mapping and replace part or all of it with a new mapping.
 ** rename UnshareFlag to UnCLONE
    Ha ha yes!!
 ** migrate everything to use robust lists
@@ -16202,7 +16205,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    So that we know whether or not CLONE_PARENT is allowed, I guess.
 
    Eh, no, it should just fail with an exception. Not a big deal!
-** change child_task_monitor to issue waitids for each process
+** DONE change child_task_monitor to issue waitids for each process
    instead of waitid W_ALL
 
    wait hm
@@ -16231,9 +16234,9 @@ And we can have an exec which is not memory-abstracting, I guess.
    Although... we don't actually need both of them at once.
 
    So that will over-allocate memory. Hmm.
-** remove usage of far for syscalls
+** DONE remove usage of far for syscalls
    I notice immediately, set_robust_list
-** re-optimize do_cloexec_except
+** DONE re-optimize do_cloexec_except
    We added an additional memory write when we removed BufferedStack.
 
    We could re-optimize it by making a Serializable for the stack, maybe.

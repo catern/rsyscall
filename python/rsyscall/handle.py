@@ -20,7 +20,7 @@ from rsyscall.sched import UnshareFlag, CLONE
 from rsyscall.struct import Serializer, HasSerializer, FixedSize, Serializable, Int32, Struct
 from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
 from rsyscall.fcntl import AT, F, O
-from rsyscall.path import Path
+from rsyscall.path import Path, EmptyPath
 from rsyscall.unistd import SEEK
 from rsyscall.sys.epoll import EpollFlag, EpollCtlOp, EpollEvent, EpollEventList
 from rsyscall.linux.dirent import DirentList
@@ -86,7 +86,7 @@ class Pointer(t.Generic[T]):
             raise Exception("pointer is in different address space")
         yield self
 
-    def _with_alloc(self: T_pointer, allocation: AllocationInterface) -> T_pointer:
+    def _with_alloc(self: T_pointer, allocation: AllocationInterface) -> Pointer:
         # TODO how can I do this statically?
         if type(self) is not Pointer:
             raise Exception("subclasses of Pointer must override _with_alloc")
@@ -108,7 +108,7 @@ class Pointer(t.Generic[T]):
         self.valid = False
         return type(self)(mapping, self.transport, self.serializer, self.allocation)
 
-    def split(self: T_pointer, size: int) -> t.Tuple[T_pointer, T_pointer]:
+    def split(self: T_pointer, size: int) -> t.Tuple[Pointer, Pointer]:
         self.validate()
         # TODO uhhhh if split throws an exception... don't we need to free... or something...
         self.valid = False
@@ -119,7 +119,7 @@ class Pointer(t.Generic[T]):
         second = self._with_alloc(alloc2)
         return first, second
 
-    def merge(self: T_pointer, ptr: T_pointer) -> T_pointer:
+    def merge(self, ptr: Pointer) -> Pointer:
         self.validate()
         ptr.validate()
         # TODO should assert that these two pointers both serialize the same thing
@@ -158,7 +158,7 @@ class Pointer(t.Generic[T]):
         await self.transport.write(self.far, data_bytes)
         return self._wrote(data)
 
-    def split_from_end(self: T_pointer, size: int, alignment: int) -> t.Tuple[T_pointer, T_pointer]:
+    def split_from_end(self, size: int, alignment: int) -> t.Tuple[Pointer, Pointer]:
         extra_to_remove = (int(self.near) + size) % alignment
         return self.split(self.bytesize() - size - extra_to_remove)
 
@@ -433,13 +433,13 @@ class FileDescriptor:
         await self.disable_cloexec()
         return int(self.near)
 
-    async def read(self, buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
+    async def read(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self.validate()
         with buf.borrow(self.task) as buf_b:
             ret = await rsyscall.near.read(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
             return buf.split(ret)
 
-    async def write(self, buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
+    async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self.validate()
         with buf.borrow(self.task) as buf_b:
             ret = await rsyscall.near.write(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
@@ -475,7 +475,7 @@ class FileDescriptor:
         valid, invalid = msg.value.iov.value.split(ret)
         return valid, invalid, msg.value.to_out(msg)
 
-    async def recv(self, buf: T_pointer, flags: int) -> t.Tuple[T_pointer, T_pointer]:
+    async def recv(self, buf: Pointer, flags: int) -> t.Tuple[Pointer, Pointer]:
         self.validate()
         with buf.borrow(self.task) as buf_b:
             ret = await rsyscall.near.recv(self.task.sysif, self.near, buf_b.near, buf_b.bytesize(), flags)
@@ -527,8 +527,7 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.setns(self.task.sysif, self.near, nstype)
 
-    T_pointer_eel = t.TypeVar('T_pointer_eel', bound='Pointer[EpollEventList]')
-    async def epoll_wait(self, events: T_pointer_eel, timeout: int) -> t.Tuple[T_pointer_eel, T_pointer_eel]:
+    async def epoll_wait(self, events: Pointer[EpollEventList], timeout: int) -> t.Tuple[Pointer[EpollEventList], Pointer]:
         self.validate()
         with events.borrow(self.task) as events_b:
             num = await rsyscall.near.epoll_wait(
@@ -624,15 +623,15 @@ class FileDescriptor:
                     fd = await rsyscall.near.accept4(self.task.sysif, self.near, addr_b.near, addrlen_b.near, flags)
                     return self.task.make_fd_handle(fd)
 
-    async def readlinkat(self, path: Pointer, buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
+    async def readlinkat(self, path: t.Union[WrittenPointer[Path], WrittenPointer[EmptyPath]],
+                         buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self.validate()
-        with path.borrow(self.task) as path:
-            with buf.borrow(self.task) as buf_b:
-                ret = await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, buf_b.near, buf_b.bytesize())
+        with path.borrow(self.task):
+            with buf.borrow(self.task):
+                ret = await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, buf.near, buf.bytesize())
                 return buf.split(ret)
 
-    T_pointer_dl = t.TypeVar('T_pointer_dl', bound='Pointer[DirentList]')
-    async def getdents(self, dirp: T_pointer_dl) -> t.Tuple[T_pointer_dl, T_pointer_dl]:
+    async def getdents(self, dirp: Pointer[DirentList]) -> t.Tuple[Pointer[DirentList], Pointer]:
         self.validate()
         with dirp.borrow(self.task) as dirp_b:
             ret = await rsyscall.near.getdents64(self.task.sysif, self.near, dirp_b.near, dirp_b.bytesize())
@@ -841,7 +840,7 @@ class Task(rsyscall.far.Task):
         with fd.borrow(self) as fd:
             await rsyscall.near.fchdir(self.sysif, fd.near)
 
-    async def readlink(self, path: WrittenPointer[Path], buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
+    async def readlink(self, path: WrittenPointer[Path], buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         with path.borrow(self) as path_b:
             with buf.borrow(self) as buf_b:
                 ret = await rsyscall.near.readlinkat(self.sysif, None, path_b.near, buf_b.near, buf_b.bytesize())
@@ -889,14 +888,12 @@ class Task(rsyscall.far.Task):
                 oldset_b = None
             await rsyscall.near.rt_sigprocmask(self.sysif, newset_b, oldset_b, Sigset.sizeof())
 
-    T_pointer_pipe = t.TypeVar('T_pointer_pipe', bound='Pointer[Pipe]')
-    async def pipe(self, buf: T_pointer_pipe, flags: O) -> T_pointer_pipe:
+    async def pipe(self, buf: Pointer[Pipe], flags: O) -> Pointer[Pipe]:
         with buf.borrow(self) as buf_b:
             await rsyscall.near.pipe2(self.sysif, buf_b.near, flags)
             return buf
 
-    T_pointer_fdpair = t.TypeVar('T_pointer_fdpair', bound='Pointer[FDPair]')
-    async def socketpair(self, domain: AF, type: SOCK, protocol: int, sv: T_pointer_fdpair) -> T_pointer_fdpair:
+    async def socketpair(self, domain: AF, type: SOCK, protocol: int, sv: Pointer[FDPair]) -> Pointer[FDPair]:
         with sv.borrow(self) as sv_b:
             await rsyscall.near.socketpair(self.sysif, domain, type, protocol, sv_b.near)
             return sv
