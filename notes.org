@@ -14331,8 +14331,11 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 *** TODO to_pointer can have pointer cache in it
     like a page cache kinda
 *** TODO can do epoll on remotte side?
-*** preparation
+*** DONE preparation
     before doing this, let's get rid of the remaining calls in memory_abstracted_syscalls.
+
+    preparation is FINALLY DONE!!! woo!!!
+*** finally start
 ** turn SignalMask/SignalBlock into a handle
     I guess? Or at least re-evaluate this design
 ** DONE convert socketpair and pipe to handle style
