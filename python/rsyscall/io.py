@@ -1720,6 +1720,13 @@ class ChildProcessMonitor:
             flags |= CLONE.PARENT
         return (await self.internal.clone(self.cloning_task, flags, child_stack, ctid, newtls))
 
+    async def new_clone(self, flags: CLONE,
+                        child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
+                        ctid: t.Optional[handle.Pointer]=None) -> t.Tuple[ChildProcess, handle.Pointer[Stack]]:
+        if self.use_clone_parent:
+            flags |= CLONE.PARENT
+        return (await self.internal.new_clone(self.cloning_task, flags, child_stack, ctid=ctid))
+
 class Thread:
     """A thread is a child task currently running in the address space of its parent.
 
@@ -1839,25 +1846,24 @@ class BufferedStack:
         self.buffer = b""
         return self.allocation_pointer
 
-async def launch_futex_monitor(task: base.Task, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
+async def launch_futex_monitor(task: Task,
                                process_resources: ProcessResources, monitor: ChildProcessMonitor,
                                futex_pointer: Pointer, futex_value: int) -> ChildProcess:
-    def op(sem: BatchSemantics) -> BatchPointer:
-        # TODO we need appropriate alignment here, we're just lucky because the alignment works fine by accident right now
-        return sem.to_pointer(
-            process_resources.build_trampoline_stack(process_resources.futex_helper_func, futex_pointer, futex_value))
-    logger.info("about to serialize")
-    async with contextlib.AsyncExitStack() as stack:
-        stack_pointer = await perform_batch(transport, allocator, stack, op)
-        logger.info("did serialize")
-        futex_task = await monitor.clone(lib.CLONE_VM|lib.CLONE_FILES|signal.SIGCHLD, stack_pointer.ptr)
-        # wait for futex helper to SIGSTOP itself,
-        # which indicates the trampoline is done and we can deallocate the stack.
-        event = await futex_task.wait_for_stop_or_exit()
-        if event.died():
-            raise Exception("thread internal futex-waiting task died unexpectedly", event)
-        # resume the futex_task so it can start waiting on the futex
-        await futex_task.send_signal(signal.SIGCONT)
+    async def op(sem: batch.BatchSemantics) -> t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]]:
+        stack_value = process_resources.make_trampoline_stack(Trampoline(
+            process_resources.futex_helper_func, [int(futex_pointer), futex_value]))
+        stack_buf = sem.malloc_type(handle.Stack, 4096)
+        stack = await stack_buf.write_to_end(stack_value, alignment=16)
+        return stack
+    stack = await task.perform_async_batch(op)
+    futex_task, usedstack = await monitor.new_clone(CLONE.VM|CLONE.FILES, stack)
+    # wait for futex helper to SIGSTOP itself,
+    # which indicates the trampoline is done and we can deallocate the stack.
+    event = await futex_task.wait_for_stop_or_exit()
+    if event.died():
+        raise Exception("thread internal futex-waiting task died unexpectedly", event)
+    # resume the futex_task so it can start waiting on the futex
+    await futex_task.send_signal(signal.SIGCONT)
     # the stack will be freed as it is no longer needed, but the futex pointer will live on
     return futex_task
 
@@ -1882,9 +1888,7 @@ class ThreadMaker:
         # TODO not sure that actually works
         mapping = await self.task.base.mmap(4096, PROT.READ|PROT.WRITE, MAP.SHARED)
         futex_pointer = mapping.as_pointer()
-        futex_task = await launch_futex_monitor(
-            self.task.base, self.task.transport, self.task.allocator, self.process_resources, self.monitor,
-            futex_pointer, 0)
+        futex_task = await launch_futex_monitor(self.task, self.process_resources, self.monitor, futex_pointer, 0)
         # the only part of the memory mapping that's being used now is the futex address, which is a
         # huge waste. oh well, later on we can allocate futex addresses out of a shared mapping.
         child_task = await self.monitor.clone(
@@ -2749,8 +2753,7 @@ async def make_robust_futex_task(
     remote_futex_pointer = remote_futex_node_pointer.far + ffi.offsetof('struct futex_node', 'futex')
     local_futex_pointer = local_mapping_pointer + (int(remote_futex_pointer) - int(remote_mapping_pointer))
     # now we start the futex monitor
-    futex_task = await launch_futex_monitor(parent_stdtask.task.base, parent_stdtask.task.transport,
-                                            parent_stdtask.task.allocator,
+    futex_task = await launch_futex_monitor(parent_stdtask.task,
                                             parent_stdtask.process, parent_stdtask.child_monitor,
                                             local_futex_pointer, futex_value)
     return futex_task, local_mapping, remote_mapping
