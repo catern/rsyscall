@@ -172,22 +172,8 @@ class Allocator:
         return allocations
 
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, Allocation]:
-        if alignment > 4096:
-            raise Exception("can't handle alignments of more than 4096 bytes", alignment)
-        # TODO should coalesce together multiple pending mallocs waiting on the lock
-        async with self.lock:
-            for arena in self.arenas:
-                alloc = arena.maybe_malloc(size, alignment)
-                if alloc:
-                    return arena.mapping, alloc
-            mapping = await self.task.mmap(align(size, 4096), PROT.READ|PROT.WRITE, MAP.SHARED)
-            arena = Arena(mapping)
-            self.arenas.append(arena)
-            result = arena.maybe_malloc(size, alignment)
-            if result is None:
-                raise Exception("some kind of internal error caused a freshly created memory arena to return null for an allocation")
-            else:
-                return arena.mapping, result
+        [ret] = await self.bulk_malloc([(size, alignment)])
+        return ret
 
     async def close(self) -> None:
         for arena in self.arenas:
