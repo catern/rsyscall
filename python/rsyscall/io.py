@@ -17,7 +17,7 @@ from rsyscall.memory_abstracted_syscalls import BatchSemantics, BatchPointer, pe
 import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.handle
-from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping
+from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_has_serializer, T_fixed_size, Bytes, Int32, Serializer, Struct
@@ -1757,7 +1757,7 @@ class ChildProcessMonitor:
 
     async def new_clone(self, flags: CLONE,
                         child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
-                        ctid: t.Optional[handle.Pointer]=None) -> t.Tuple[ChildProcess, handle.Pointer[Stack]]:
+                        ctid: t.Optional[handle.Pointer[FutexNode]]=None) -> t.Tuple[ChildProcess, handle.Pointer[Stack]]:
         if self.use_clone_parent:
             flags |= CLONE.PARENT
         return (await self.internal.new_clone(self.cloning_task, flags, child_stack, ctid=ctid))
@@ -1788,11 +1788,12 @@ class Thread:
     """
     child_task: ChildProcess
     futex_task: ChildProcess
-    futex_mapping: handle.MemoryMapping
-    def __init__(self, child_task: ChildProcess, futex_task: ChildProcess, futex_mapping: handle.MemoryMapping) -> None:
+    # TODO we can get rid of this handle.Pointer by putting it into the child_task handle.Process
+    futex_pointer: handle.Pointer[handle.FutexNode]
+    def __init__(self, child_task: ChildProcess, futex_task: ChildProcess, futex_pointer: handle.Pointer) -> None:
         self.child_task = child_task
         self.futex_task = futex_task
-        self.futex_mapping = futex_mapping
+        self.futex_pointer = futex_pointer
         self.released = False
 
     async def execveat(self, task: Task, path: handle.Path,
@@ -1820,7 +1821,7 @@ class Thread:
         if not result.clean():
             raise Exception("the futex task", self.futex_task, "for child task", self.child_task,
                             "unexpectedly exited non-zero", result, "maybe it was SIGKILL'd?")
-        await self.futex_mapping.munmap()
+        self.futex_pointer.free()
         self.released = True
         return self.child_task
 
@@ -1844,15 +1845,15 @@ class CThread(Thread):
     TODO thread-local-storage.
 
     """
-    stack_mapping: MemoryMapping
-    def __init__(self, thread: Thread, stack_mapping: MemoryMapping) -> None:
-        super().__init__(thread.child_task, thread.futex_task, thread.futex_mapping)
-        self.stack_mapping = stack_mapping
+    stack_pointer: handle.Pointer
+    def __init__(self, thread: Thread, stack_pointer: handle.Pointer) -> None:
+        super().__init__(thread.child_task, thread.futex_task, thread.futex_pointer)
+        self.stack_pointer = stack_pointer
 
     async def wait_for_mm_release(self) -> ChildProcess:
         result = await super().wait_for_mm_release()
         # we can free the stack mapping now that the thread has left our address space
-        await self.stack_mapping.munmap()
+        self.stack_pointer.free()
         return result
 
     async def __aenter__(self) -> 'CThread':
@@ -1912,41 +1913,31 @@ class ThreadMaker:
         # TODO pull this function out of somewhere sensible
         self.process_resources = process_resources
 
-    async def clone(self, flags: int, child_stack: Pointer, newtls: Pointer) -> Thread:
-        """Provides an asynchronous interface to the CLONE_CHILD_CLEARTID functionality
-
-        Executes the instruction "ret" immediately after cloning.
-
-        """
-        # the mapping is SHARED rather than PRIVATE so that the futex is shared even if CLONE_VM
-        # unshares the address space
-        # TODO not sure that actually works
-        mapping = await self.task.base.mmap(4096, PROT.READ|PROT.WRITE, MAP.SHARED)
-        futex_pointer = mapping.as_pointer()
-        futex_task = await launch_futex_monitor(self.task, self.process_resources, self.monitor, futex_pointer, 0)
-        # the only part of the memory mapping that's being used now is the futex address, which is a
-        # huge waste. oh well, later on we can allocate futex addresses out of a shared mapping.
-        child_task = await self.monitor.clone(
-            flags | lib.CLONE_CHILD_CLEARTID, child_stack,
-            ctid=futex_pointer, newtls=newtls)
-        return Thread(child_task, futex_task, mapping)
-
     async def make_cthread(self, flags: int,
                            function: handle.Pointer[handle.NativeFunction],
                            arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
     ) -> CThread:
-        # allocate memory for the stack
-        stack_size = 4096
-        mapping = await self.task.base.mmap(stack_size, PROT.READ|PROT.WRITE, MAP.PRIVATE)
-        stack = BufferedStack(mapping.as_pointer() + stack_size)
-        # build stack
-        stack.push(self.process_resources.build_trampoline_stack(function, arg1, arg2, arg3, arg4, arg5, arg6))
-        # copy the stack over
-        stack_pointer = await stack.flush(self.task.transport)
-        # TODO actually allocate TLS
-        tls = self.task.address_space.null()
-        thread = await self.clone(flags|signal.SIGCHLD, stack_pointer, tls)
-        return CThread(thread, mapping)
+        # TODO it is unclear why we sometimes need to make a new mapping here, instead of allocating with our normal
+        # allocator; all our memory is already MAP.SHARED, I think.
+        # We should resolve this so we can use the stock allocator.
+        mapping = await self.task.base.mmap(4096*2, PROT.READ|PROT.WRITE, MAP.SHARED)
+        arena = memory.Arena(mapping)
+        async def op(sem: batch.BatchSemantics) -> t.Tuple[t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
+                                                           WrittenPointer[FutexNode]]:
+            stack_value = self.process_resources.make_trampoline_stack(Trampoline(
+                function, [arg1, arg2, arg3, arg4, arg5, arg6]))
+            stack_buf = sem.malloc_type(handle.Stack, 4096)
+            stack = await stack_buf.write_to_end(stack_value, alignment=16)
+            futex_pointer = sem.to_pointer(handle.FutexNode(None, Int32(0)))
+            return stack, futex_pointer
+        # stack, futex_pointer = await self.task.perform_async_batch(op)
+        stack, futex_pointer = await batch.perform_async_batch(self.task.base, self.task.transport, arena, op)
+        futex_task = await launch_futex_monitor(self.task, self.process_resources, self.monitor,
+                                                futex_pointer.near + ffi.offsetof('struct futex_node', 'futex'),
+                                                futex_pointer.value.futex)
+        child_task, usedstack = await self.monitor.new_clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
+        thread = Thread(child_task, futex_task, futex_pointer)
+        return CThread(thread, usedstack)
 
 class RsyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
@@ -2776,7 +2767,7 @@ async def make_robust_futex_task(
         parent_memfd: handle.FileDescriptor,
         child_stdtask: StandardTask,
         child_memfd: handle.FileDescriptor,
-) -> t.Tuple[ChildProcess, handle.MemoryMapping, handle.MemoryMapping]:
+) -> t.Tuple[ChildProcess, handle.Pointer[FutexNode], handle.MemoryMapping]:
     # resize memfd appropriately
     futex_memfd_size = 4096
     await parent_memfd.ftruncate(futex_memfd_size)
@@ -2795,7 +2786,7 @@ async def make_robust_futex_task(
     futex_task = await launch_futex_monitor(
         parent_stdtask.task, parent_stdtask.process, parent_stdtask.child_monitor,
         local_futex_node.near + ffi.offsetof('struct futex_node', 'futex'), local_futex_node.value.futex)
-    return futex_task, local_mapping, remote_mapping
+    return futex_task, local_futex_node, remote_mapping
 
 async def rsyscall_exec(
         parent_stdtask: StandardTask,
@@ -2841,11 +2832,11 @@ async def rsyscall_exec(
     await stdtask.task.base.unshare_files(do_unshare)
 
     #### make new futex task
-    futex_task, local_mapping, remote_mapping = await make_robust_futex_task(parent_stdtask, parent_futex_memfd,
-                                                                             stdtask, child_futex_memfd)
+    futex_task, local_futex_node, remote_mapping = await make_robust_futex_task(
+        parent_stdtask, parent_futex_memfd, stdtask, child_futex_memfd)
     syscall.futex_task = futex_task
     # TODO how do we unmap the remote mapping?
-    rsyscall_thread.thread = Thread(rsyscall_thread.thread.child_task, futex_task, local_mapping)
+    rsyscall_thread.thread = Thread(rsyscall_thread.thread.child_task, futex_task, local_futex_node)
 
 class RsyscallThread:
     def __init__(self,

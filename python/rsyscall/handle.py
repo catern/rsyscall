@@ -925,8 +925,8 @@ class Task(rsyscall.far.Task):
                     # second. the first is the allocation for stack growth, the second is the data
                     # we've written on the stack that will be popped off for arguments.
                     child_stack: t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
-                    # these are both standard pointers to 4-byte integers
-                    ptid: t.Optional[Pointer], ctid: t.Optional[Pointer],
+                    ptid: t.Optional[Pointer],
+                    ctid: t.Optional[Pointer[FutexNode]],
                     # this points to anything, it depends on the thread implementation
                     newtls: t.Optional[Pointer]) -> t.Tuple[Process, Pointer[Stack]]:
         clone_parent = bool(flags & CLONE.PARENT)
@@ -952,10 +952,13 @@ class Task(rsyscall.far.Task):
             ptid_n = await self._borrow_optional(stack, ptid)
             ctid_n = await self._borrow_optional(stack, ctid)
             newtls_n = await self._borrow_optional(stack, newtls)
-            process = await rsyscall.near.clone(self.sysif, flags, stack_data.near, ptid_n, ctid_n, newtls_n)
+            process = await rsyscall.near.clone(self.sysif, flags, stack_data.near, ptid_n,
+                                                ctid_n + ffi.offsetof('struct futex_node', 'futex') if ctid_n else None,
+                                                newtls_n)
         # TODO the safety of this depends on no-one borrowing/freeing the stack in borrow __aexit__
         # should try to do this a bit more robustly...
         merged_stack = stack_alloc.merge(stack_data)
+        # TODO should save ctid in Process
         return Process(owning_task, process), merged_stack
 
     async def mmap(self, length: int, prot: PROT, flags: MAP,

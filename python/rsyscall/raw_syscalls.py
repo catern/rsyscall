@@ -28,7 +28,6 @@ class SYS(enum.IntEnum):
     renameat2 = lib.SYS_renameat2
     lseek = lib.SYS_lseek
     mkdirat = lib.SYS_mkdirat
-    mmap = lib.SYS_mmap
     munmap = lib.SYS_munmap
     openat = lib.SYS_openat
     pipe2 = lib.SYS_pipe2
@@ -51,16 +50,6 @@ async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
 async def dup3(sysif: SyscallInterface, oldfd: FileDescriptor, newfd: FileDescriptor, flags: int) -> int:
     logger.debug("dup3(%s, %s, %d)", oldfd, newfd, flags)
     return (await sysif.syscall(SYS.dup3, oldfd, newfd, flags))
-
-async def mmap(sysif: SyscallInterface, length: int, prot: int, flags: int,
-               addr: t.Optional[Pointer]=None, 
-               fd: t.Optional[FileDescriptor]=None, offset: int=0) -> int:
-    logger.debug("mmap(%s, %s, %s, %s, %s, %s)", addr, length, prot, flags, fd, offset)
-    if addr is None:
-        addr = 0 # type: ignore
-    if fd is None:
-        fd = -1 # type: ignore
-    return (await sysif.syscall(SYS.mmap, addr, length, prot, flags, -1, offset))
 
 async def munmap(sysif: SyscallInterface, addr: Pointer, length: int) -> None:
     logger.debug("munmap(%s, %s)", addr, length)

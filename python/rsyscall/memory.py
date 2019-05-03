@@ -159,7 +159,7 @@ class Allocator:
                 # TODO this usage of align() overestimates how much memory we need;
                 # it's not a big deal though, because most things have alignment=1
                 remaining_size = sum([align(size, alignment) for size, alignment in rest_sizes])
-                mapping = await self.task.mmap(align(remaining_size, 4096), PROT.READ|PROT.WRITE, MAP.PRIVATE)
+                mapping = await self.task.mmap(align(remaining_size, 4096), PROT.READ|PROT.WRITE, MAP.SHARED)
                 arena = Arena(mapping)
                 for size, alignment in rest_sizes:
                     if alignment > 4096:
@@ -181,7 +181,7 @@ class Allocator:
                 alloc = arena.maybe_malloc(size, alignment)
                 if alloc:
                     return arena.mapping, alloc
-            mapping = await self.task.mmap(align(size, 4096), PROT.READ|PROT.WRITE, MAP.PRIVATE)
+            mapping = await self.task.mmap(align(size, 4096), PROT.READ|PROT.WRITE, MAP.SHARED)
             arena = Arena(mapping)
             self.arenas.append(arena)
             result = arena.maybe_malloc(size, alignment)
