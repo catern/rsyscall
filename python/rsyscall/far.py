@@ -6,7 +6,6 @@ import signal
 import rsyscall.near
 
 from rsyscall.sys.epoll import EpollCtlOp
-from rsyscall.sys.prctl import PrctlOp
 
 # These are like segment ids.
 # They set eq=False because they are identified by their Python object identity,
@@ -141,9 +140,6 @@ class Task:
     def to_near_fd(self, file_descriptor: FileDescriptor) -> rsyscall.near.FileDescriptor:
         return self.fd_table.to_near(file_descriptor)
 
-    async def prctl(self, option: PrctlOp, arg2: int, arg3: int=0, arg4: int=0, arg5: int=0) -> int:
-        return (await rsyscall.near.prctl(self.sysif, option, arg2, arg3, arg4, arg5))
-
 
 # These are like the instructions in near, but they also do the appropriate dynamic check.
 async def read(task: Task, fd: FileDescriptor, buf: Pointer, count: int) -> int:
@@ -181,12 +177,6 @@ async def memfd_create(task: Task, name: Pointer, flags: int) -> FileDescriptor:
 async def ftruncate(task: Task, fd: FileDescriptor, length: int) -> None:
     await rsyscall.near.ftruncate(task.sysif, task.to_near_fd(fd), length)
 
-async def set_tid_address(task: Task, ptr: Pointer) -> None:
-    await rsyscall.near.set_tid_address(task.sysif, task.to_near_pointer(ptr))
-
-async def set_robust_list(task: Task, head: Pointer, len: int) -> None:
-    await rsyscall.near.set_robust_list(task.sysif, task.to_near_pointer(head), len)
-
 async def getdents64(task: Task, fd: FileDescriptor, dirp: Pointer, count: int) -> int:
     return (await rsyscall.near.getdents64(task.sysif, task.to_near_fd(fd), task.to_near_pointer(dirp), count))
 
@@ -194,12 +184,3 @@ async def epoll_ctl(task: Task, epfd: FileDescriptor, op: EpollCtlOp,
                     fd: FileDescriptor, event: t.Optional[Pointer]=None) -> None:
     await rsyscall.near.epoll_ctl(task.sysif, task.to_near_fd(epfd), op, task.to_near_fd(fd),
                                   task.to_near_pointer(event) if event else None)
-
-async def prctl_set_pdeathsig(task: Task, signal: t.Optional[signal.Signals]) -> None:
-    if signal is not None:
-        await rsyscall.near.prctl(task.sysif, PrctlOp.SET_PDEATHSIG, signal)
-    else:
-        await rsyscall.near.prctl(task.sysif, PrctlOp.SET_PDEATHSIG, 0)
-
-async def setsid(task: Task) -> int:
-    return (await rsyscall.near.setsid(task.sysif))

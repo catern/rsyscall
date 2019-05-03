@@ -284,7 +284,14 @@ async def mount(sysif: SyscallInterface, source: Pointer, target: Pointer,
 async def setns(sysif: SyscallInterface, fd: FileDescriptor, nstype: int) -> None:
     await sysif.syscall(SYS.setns, fd, nstype)
 
-async def prctl(sysif: SyscallInterface, option: PrctlOp, arg2: int, arg3: int=0, arg4: int=0, arg5: int=0) -> int:
+async def prctl(sysif: SyscallInterface, option: PrctlOp, arg2: int,
+                arg3: t.Optional[int], arg4: t.Optional[int], arg5: t.Optional[int]) -> int:
+    if arg3 is None:
+        arg3 = 0
+    if arg4 is None:
+        arg4 = 0
+    if arg5 is None:
+        arg5 = 0
     return (await sysif.syscall(SYS.prctl, option, arg2, arg3, arg4, arg5))
 
 async def setsid(sysif: SyscallInterface) -> int:

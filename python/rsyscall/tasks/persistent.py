@@ -17,6 +17,7 @@ from rsyscall.struct import Bytes
 from rsyscall.sched import CLONE
 from rsyscall.sys.socket import SOCK, SendmsgFlags
 from rsyscall.signal import Signals
+from rsyscall.sys.prctl import PrctlOp
 
 class PersistentConnection(base.SyscallInterface):
     """An reconnectable rsyscall connection; the task won't be our child on resume.
@@ -194,8 +195,8 @@ class PersistentServer:
         return remote_fds
 
     async def make_persistent(self) -> None:
-        await far.setsid(self.task.base)
-        await far.prctl_set_pdeathsig(self.task.base, None)
+        await self.task.base.setsid()
+        await self.task.base.prctl(PrctlOp.SET_PDEATHSIG, 0)
 
     async def reconnect(self, stdtask: StandardTask) -> None:
         if self.syscall.pending_responses:

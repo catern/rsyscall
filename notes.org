@@ -14425,6 +14425,13 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    ok yeah it now drops the writtenness.
 
    but I'm still confuzzled about what should happen.
+** Major TODOs
+   implement garbage collection
+
+   implement a memory model that handles the futex sub-reference problem
+   (and possibly the problem of multiple references through multiple
+
+   find a good model for typed extensibility of handle.Task (for new syscalls), and implement it
 ** DONE convert serializer to tagless final style
    we'll encapsulate the code-to-optimize in a function,
    and we'll run it twice:
