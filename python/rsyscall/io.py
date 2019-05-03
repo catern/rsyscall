@@ -1884,10 +1884,12 @@ class BufferedStack:
 
 async def launch_futex_monitor(task: Task,
                                process_resources: ProcessResources, monitor: ChildProcessMonitor,
-                               futex_pointer: Pointer, futex_value: int) -> ChildProcess:
+                               futex_pointer: WrittenPointer[FutexNode]) -> ChildProcess:
     async def op(sem: batch.BatchSemantics) -> t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]]:
         stack_value = process_resources.make_trampoline_stack(Trampoline(
-            process_resources.futex_helper_func, [int(futex_pointer), futex_value]))
+            process_resources.futex_helper_func, [
+                int(futex_pointer.near + ffi.offsetof('struct futex_node', 'futex')),
+                futex_pointer.value.futex]))
         stack_buf = sem.malloc_type(handle.Stack, 4096)
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         return stack
@@ -1932,9 +1934,7 @@ class ThreadMaker:
             return stack, futex_pointer
         # stack, futex_pointer = await self.task.perform_async_batch(op)
         stack, futex_pointer = await batch.perform_async_batch(self.task.base, self.task.transport, arena, op)
-        futex_task = await launch_futex_monitor(self.task, self.process_resources, self.monitor,
-                                                futex_pointer.near + ffi.offsetof('struct futex_node', 'futex'),
-                                                futex_pointer.value.futex)
+        futex_task = await launch_futex_monitor(self.task, self.process_resources, self.monitor, futex_pointer)
         child_task, usedstack = await self.monitor.new_clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
         thread = Thread(child_task, futex_task, futex_pointer)
         return CThread(thread, usedstack)
@@ -2784,8 +2784,7 @@ async def make_robust_futex_task(
     local_futex_node = remote_futex_node._with_mapping(local_mapping)
     # now we start the futex monitor
     futex_task = await launch_futex_monitor(
-        parent_stdtask.task, parent_stdtask.process, parent_stdtask.child_monitor,
-        local_futex_node.near + ffi.offsetof('struct futex_node', 'futex'), local_futex_node.value.futex)
+        parent_stdtask.task, parent_stdtask.process, parent_stdtask.child_monitor, local_futex_node)
     return futex_task, local_futex_node, remote_mapping
 
 async def rsyscall_exec(
