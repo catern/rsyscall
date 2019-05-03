@@ -3,7 +3,6 @@ from rsyscall._raw import ffi, lib # type: ignore
 import trio
 import os
 import socket
-import rsyscall.raw_syscalls as raw_syscall
 from rsyscall.base import SyscallInterface, MemoryTransport, MemoryWriter, MemoryReader
 from dataclasses import dataclass
 import rsyscall.base as base

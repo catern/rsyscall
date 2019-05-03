@@ -2,7 +2,6 @@ from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.far import AddressSpace, Pointer
 from rsyscall.near import SyscallInterface
-import rsyscall.raw_syscalls as raw_syscall
 import rsyscall.near
 import rsyscall.far as far
 import rsyscall.handle as handle

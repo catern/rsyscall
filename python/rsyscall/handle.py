@@ -2,7 +2,6 @@ from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass, field
 import copy
-import rsyscall.raw_syscalls as raw_syscall
 import gc
 import rsyscall.far
 import rsyscall.near
