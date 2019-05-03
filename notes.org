@@ -16023,6 +16023,29 @@ next let's do the redesign.
 ok so we're going to first strace it and see how exactly it is hanging, because it's not clear...
 
 lol okay so strace I guess slows it down too much for it to hit the race, sigh.
+
+so, redesign.
+
+ok I did the redesign. now let's see how it shapes up.
+
+argh! it didn't fix it
+
+argh argh.
+
+so what's causing this?
+
+it *seems* like it's getting stuck in memory reads??
+which doesn't make sense though
+
+argh I wish I could trigger it reliably
+
+maybe I should attach strace to it?
+
+sure.
+
+whaaat the heeckkk
+
+so the subprocess is stuck in read, and the main process is... in "x32 mode"????
 ** DONE strace with local ssh
    ok soooo strace with local ssh blocks forever, because the.... remote forwarding process stays alive.
 

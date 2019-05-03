@@ -1542,35 +1542,44 @@ class ChildProcess:
         self.in_use = False
         self.siginfo_buf: t.Optional[handle.Pointer[Siginfo]] = None
 
-    async def wait(self) -> t.List[ChildEvent]:
+    async def try_waitid(self) -> t.Optional[ChildEvent]:
         if self.death_event:
             raise Exception("child is already dead!")
         flags = W.EXITED|W.STOPPED|W.CONTINUED
+        if self.siginfo_buf is None:
+            if self.in_use:
+                raise Exception("trying to wait while we are already waiting or killing")
+            self.in_use = True
+            try:
+                self.siginfo_buf = await self.process.waitid(
+                    flags|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
+            finally:
+                self.in_use = False
+        siginfo = await self.siginfo_buf.read()
+        self.siginfo_buf = None
+        if siginfo.pid == 0:
+            return None
+        else:
+            event = ChildEvent.make_from_siginfo(siginfo)
+            if event.died():
+                self.death_event = event
+            return event
+
+    async def wait(self) -> t.List[ChildEvent]:
         while True:
-            # support cancellation by saving the buffer
-            # could extract this into a helper...
-            if self.siginfo_buf is None:
-                if self.wait_for_signal:
-                    await self.monitor.do_wait()
-                if self.in_use:
-                    raise Exception("trying to wait while we are already waiting or killing")
-                self.in_use = True
-                try:
-                    self.siginfo_buf = await self.process.waitid(
-                        flags|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
-                finally:
-                    self.in_use = False
-            siginfo = await self.siginfo_buf.read()
-            self.siginfo_buf = None
-            if siginfo.pid == 0:
-                # we didn't get an event, so we know there's nothing to see for this pid;
-                # we've got to wait for the next SIGCHLD before waitiding again
-                self.wait_for_signal = True
-            else:
-                event = ChildEvent.make_from_siginfo(siginfo)
-                if event.died():
-                    self.death_event = event
-                return [event]
+            # ok so we need to temporarily register ourselves on the monitor before,
+            # then check it after.
+            # right? otherwise we have a race where we can get a signal while reading the buffer, etc.
+            # ok well why don't we just do them in parallel and cancel the wait?
+            # well that doesn't make sense right,
+            # we basically, want to start the sigchld wait early,
+            # then only start waitiding once we know we'll catch sigchlds signals
+            with self.monitor.sigchld_waiter() as waiter:
+                event = await self.try_waitid()
+                if event is None:
+                    await waiter.wait_for_sigchld()
+                else:
+                    return [event]
 
     async def wait_for_exit(self) -> ChildEvent:
         if self.death_event:
@@ -1636,6 +1645,15 @@ class ChildProcess:
             await self.kill()
             await self.wait_for_exit()
 
+@dataclass(eq=False)
+class SigchldWaiter:
+    monitor: ChildProcessMonitorInternal
+    got_sigchld: bool = False
+
+    async def wait_for_sigchld(self) -> None:
+        if not self.got_sigchld:
+            await self.monitor.do_wait()
+
 class ChildProcessMonitorInternal:
     def __init__(self, waiting_task: Task, signal_queue: SignalQueue, is_reaper: bool) -> None:
         self.waiting_task = waiting_task
@@ -1644,12 +1662,19 @@ class ChildProcessMonitorInternal:
         if self.signal_queue.signal_block.mask != set([signal.SIGCHLD]):
             raise Exception("ChildProcessMonitor should get a SignalQueue only for SIGCHLD")
         self.running_wait = OneAtATime()
-        self.processes: t.List[ChildProcess] = []
+        self.waiters: t.List[SigchldWaiter] = []
 
     def add_task(self, process: handle.Process) -> ChildProcess:
         proc = ChildProcess(process, self)
-        self.processes.append(proc)
+        # self.processes.append(proc)
         return proc
+
+    @contextlib.contextmanager
+    def sigchld_waiter(self) -> t.Iterator[SigchldWaiter]:
+        waiter = SigchldWaiter(self)
+        self.waiters.append(waiter)
+        yield waiter
+        self.waiters.remove(waiter)
 
     async def clone(self,
                     clone_task: base.Task,
@@ -1681,8 +1706,8 @@ class ChildProcessMonitorInternal:
                 # we don't care what information we get from the signal, we just want to
                 # sleep until a SIGCHLD happens
                 await self.signal_queue.read(buf)
-                for process in self.processes:
-                    process.wait_for_signal = False
+                for waiter in self.waiters:
+                    waiter.got_sigchld = True
 
     async def close(self) -> None:
         await self.signal_queue.close()
