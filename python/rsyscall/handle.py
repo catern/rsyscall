@@ -65,6 +65,7 @@ class Pointer(t.Generic[T]):
     @property
     def near(self) -> rsyscall.near.Pointer:
         # TODO hmm should maybe validate that this fits in the bounds of the mapping I guess
+        self.validate()
         return self.mapping.near.as_pointer() + self.allocation.offset()
 
     def bytesize(self) -> int:
