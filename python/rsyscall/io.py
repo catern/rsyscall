@@ -2643,9 +2643,11 @@ class AsyncReadBuffer:
             raise Exception("bad netstring delimiter", comma)
         return data
 
-async def set_singleton_robust_futex(task: handle.Task, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
-                                     futex_value: int,
+async def set_singleton_robust_futex(
+        task: handle.Task, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
 ) -> WrittenPointer[handle.FutexNode]:
+    # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
+    futex_value = FUTEX_WAITERS|(int(task.process.near) & FUTEX_TID_MASK)
     def op(sem: batch.BatchSemantics) -> t.Tuple[WrittenPointer[handle.FutexNode],
                                                  WrittenPointer[handle.RobustListHead]]:
         robust_list_entry = sem.to_pointer(handle.FutexNode(None, Int32(futex_value)))
@@ -2778,27 +2780,21 @@ async def make_robust_futex_task(
     # resize memfd appropriately
     futex_memfd_size = 4096
     await parent_memfd.ftruncate(futex_memfd_size)
+    file = near.File()
     # set up local mapping
-    local_mapping = await parent_memfd.mmap(futex_memfd_size, PROT.READ|PROT.WRITE, MAP.SHARED)
+    local_mapping = await parent_memfd.mmap(futex_memfd_size, PROT.READ|PROT.WRITE, MAP.SHARED, file=file)
     await parent_memfd.invalidate()
-    local_mapping_pointer = local_mapping.as_pointer()
     # set up remote mapping
-    remote_mapping = await child_memfd.mmap(futex_memfd_size, PROT.READ|PROT.WRITE, MAP.SHARED)
+    remote_mapping = await child_memfd.mmap(futex_memfd_size, PROT.READ|PROT.WRITE, MAP.SHARED, file=file)
     await child_memfd.invalidate()
-    remote_mapping_pointer = remote_mapping.as_pointer()
 
-    # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
-    futex_value = FUTEX_WAITERS|(int(child_stdtask.task.base.process.near) & FUTEX_TID_MASK)
-    # this is distasteful and leaky, we're relying on the fact that the Arena never frees things
-    remote_futex_node_pointer = await set_singleton_robust_futex(
-        child_stdtask.task.base, child_stdtask.task.transport,
-        memory.Arena(remote_mapping), futex_value)
-    remote_futex_pointer = remote_futex_node_pointer.far + ffi.offsetof('struct futex_node', 'futex')
-    local_futex_pointer = local_mapping_pointer + (int(remote_futex_pointer) - int(remote_mapping_pointer))
+    remote_futex_node = await set_singleton_robust_futex(
+        child_stdtask.task.base, child_stdtask.task.transport, memory.Arena(remote_mapping))
+    local_futex_node = remote_futex_node._with_mapping(local_mapping)
     # now we start the futex monitor
-    futex_task = await launch_futex_monitor(parent_stdtask.task,
-                                            parent_stdtask.process, parent_stdtask.child_monitor,
-                                            local_futex_pointer, futex_value)
+    futex_task = await launch_futex_monitor(
+        parent_stdtask.task, parent_stdtask.process, parent_stdtask.child_monitor,
+        local_futex_node.near + ffi.offsetof('struct futex_node', 'futex'), local_futex_node.value.futex)
     return futex_task, local_mapping, remote_mapping
 
 async def rsyscall_exec(
