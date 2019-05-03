@@ -16013,6 +16013,17 @@ we, I guess...
 just always optimistically wait?
 
 then sigchld wait if we don't get anything?
+
+still happening.
+
+OK hmm.
+
+next let's do the redesign.
+** DONE make borrowing not async
+   We can't run async code on exiting.
+   Because we might drop a syscall result.
+
+   And we don't need to on entering.
 ** DONE make batch interface use duck-typing
    actually no I won't do this after all
 

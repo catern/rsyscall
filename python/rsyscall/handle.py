@@ -76,8 +76,8 @@ class Pointer(t.Generic[T]):
         self.validate()
         return rsyscall.far.Pointer(self.mapping.task.address_space, self.near)
 
-    @contextlib.asynccontextmanager
-    async def borrow(self, task: Task) -> t.AsyncGenerator[Pointer, None]:
+    @contextlib.contextmanager
+    def borrow(self, task: Task) -> t.Iterator[Pointer]:
         # TODO actual tracking of pointer references is not yet implemented
         self.validate()
         if task.address_space != self.mapping.task.address_space:
@@ -324,8 +324,8 @@ class FileDescriptor:
     def for_task(self, task: Task) -> FileDescriptor:
         return task.make_fd_handle(self)
 
-    @contextlib.asynccontextmanager
-    async def borrow(self, task: Task) -> t.AsyncGenerator[FileDescriptor, None]:
+    @contextlib.contextmanager
+    def borrow(self, task: Task) -> t.Iterator[FileDescriptor]:
         if self.task == task:
             yield self
         else:
@@ -333,7 +333,21 @@ class FileDescriptor:
             try:
                 yield borrowed
             finally:
-                await borrowed.invalidate()
+                # we can't call invalidate since we can't actually close this fd since that would
+                # require more syscalls. we should really make it so that if the user tries to
+                # invalidate the fd they passed into a syscall, they get an exception when they call
+                # invalidate. but in lieu of that, we'll throw here. this will cause us to drop
+                # events from syscalls, which would break a system that wants to handle exceptions
+                # and resume, so we should fix this later. TODO
+                # hmm actually I think it might be fine to borrow an fd and free its original?
+                # that will happen if we borrow an expression... which should be fine...
+                # maybe borrow is a bad design.
+                # maybe borrow should just mean, you can't invalidate this fd right now.
+                # though we do want to also check that it's the right address space...
+                if borrowed.valid:
+                    borrowed.valid = False
+                    if len(borrowed._remove_from_tracking()) == 0:
+                        raise Exception("borrowed fd must have been freed from under us, %s", borrowed)
 
     def maybe_copy(self, task: Task) -> FileDescriptor:
         """Copy this file descriptor into this task, if it isn't already in there.
@@ -419,49 +433,49 @@ class FileDescriptor:
 
     async def read(self, buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
-        async with buf.borrow(self.task) as buf_b:
+        with buf.borrow(self.task) as buf_b:
             ret = await rsyscall.near.read(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
             return buf.split(ret)
 
     async def write(self, buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
-        async with buf.borrow(self.task) as buf_b:
+        with buf.borrow(self.task) as buf_b:
             ret = await rsyscall.near.write(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
             return buf.split(ret)
 
     async def sendmsg(self, msg: WrittenPointer[SendMsghdr], flags: SendmsgFlags
     ) -> t.Tuple[IovecList, IovecList]:
-        async with contextlib.AsyncExitStack() as stack:
-            await stack.enter_async_context(msg.borrow(self.task))
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(msg.borrow(self.task))
             if msg.value.name:
-                await stack.enter_async_context(msg.value.name.borrow(self.task))
+                stack.enter_context(msg.value.name.borrow(self.task))
             if msg.value.control:
-                await stack.enter_async_context(msg.value.control.borrow(self.task))
-                await msg.value.control.value.borrow_with(stack, self.task)
-            await stack.enter_async_context(msg.value.iov.borrow(self.task))
+                stack.enter_context(msg.value.control.borrow(self.task))
+                msg.value.control.value.borrow_with(stack, self.task)
+            stack.enter_context(msg.value.iov.borrow(self.task))
             for iovec_elem in msg.value.iov.value:
-                await stack.enter_async_context(iovec_elem.borrow(self.task))
+                stack.enter_context(iovec_elem.borrow(self.task))
             ret = await rsyscall.near.sendmsg(self.task.sysif, self.near, msg.near, flags)
         return msg.value.iov.value.split(ret)
 
     async def recvmsg(self, msg: WrittenPointer[RecvMsghdr], flags: RecvmsgFlags
     ) -> t.Tuple[IovecList, IovecList, Pointer[RecvMsghdrOut]]:
-        async with contextlib.AsyncExitStack() as stack:
-            await stack.enter_async_context(msg.borrow(self.task))
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(msg.borrow(self.task))
             if msg.value.name:
-                await stack.enter_async_context(msg.value.name.borrow(self.task))
+                stack.enter_context(msg.value.name.borrow(self.task))
             if msg.value.control:
-                await stack.enter_async_context(msg.value.control.borrow(self.task))
-            await stack.enter_async_context(msg.value.iov.borrow(self.task))
+                stack.enter_context(msg.value.control.borrow(self.task))
+            stack.enter_context(msg.value.iov.borrow(self.task))
             for iovec_elem in msg.value.iov.value:
-                await stack.enter_async_context(iovec_elem.borrow(self.task))
+                stack.enter_context(iovec_elem.borrow(self.task))
             ret = await rsyscall.near.recvmsg(self.task.sysif, self.near, msg.near, flags)
         valid, invalid = msg.value.iov.value.split(ret)
         return valid, invalid, msg.value.to_out(msg)
 
     async def recv(self, buf: T_pointer, flags: int) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
-        async with buf.borrow(self.task) as buf_b:
+        with buf.borrow(self.task) as buf_b:
             ret = await rsyscall.near.recv(self.task.sysif, self.near, buf_b.near, buf_b.bytesize(), flags)
             return buf.split(ret)
 
@@ -514,7 +528,7 @@ class FileDescriptor:
     T_pointer_eel = t.TypeVar('T_pointer_eel', bound='Pointer[EpollEventList]')
     async def epoll_wait(self, events: T_pointer_eel, timeout: int) -> t.Tuple[T_pointer_eel, T_pointer_eel]:
         self.validate()
-        async with events.borrow(self.task) as events_b:
+        with events.borrow(self.task) as events_b:
             num = await rsyscall.near.epoll_wait(
                 self.task.sysif, self.near, events_b.near, events_b.bytesize()//EpollEvent.sizeof(), timeout)
             valid_size = num * EpollEvent.sizeof()
@@ -522,18 +536,18 @@ class FileDescriptor:
 
     async def epoll_ctl(self, op: EpollCtlOp, fd: FileDescriptor, event: t.Optional[Pointer[EpollEvent]]=None) -> None:
         self.validate()
-        async with fd.borrow(self.task) as fd:
+        with fd.borrow(self.task) as fd:
             if event is not None:
                 if event.bytesize() < EpollEvent.sizeof():
                     raise Exception("pointer is too small", event.bytesize(), "to be an EpollEvent", EpollEvent.sizeof())
-                async with event.borrow(self.task) as eventp:
+                with event.borrow(self.task) as eventp:
                     return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near, eventp.near))
             else:
                 return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near))
 
     async def inotify_add_watch(self, pathname: WrittenPointer[Path], mask: IN) -> rsyscall.near.WatchDescriptor:
         self.validate()
-        async with pathname.borrow(self.task) as pathname_b:
+        with pathname.borrow(self.task) as pathname_b:
             return (await rsyscall.near.inotify_add_watch(self.task.sysif, self.near, pathname_b.near, mask))
 
     async def inotify_rm_watch(self, wd: rsyscall.near.WatchDescriptor) -> None:
@@ -542,12 +556,12 @@ class FileDescriptor:
 
     async def bind(self, addr: Pointer[Address]) -> None:
         self.validate()
-        async with addr.borrow(self.task) as addr:
+        with addr.borrow(self.task) as addr:
             await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addr.bytesize())
 
     async def connect(self, addr: Pointer[Address]) -> None:
         self.validate()
-        async with addr.borrow(self.task) as addr:
+        with addr.borrow(self.task) as addr:
             await rsyscall.near.connect(self.task.sysif, self.near, addr.near, addr.bytesize())
 
     async def listen(self, backlog: int) -> None:
@@ -559,13 +573,13 @@ class FileDescriptor:
         if optlen.data > optval.bytesize():
             raise ValueError("optlen contains", optlen.data,
                              "should contain the length of the opt buf", optval.bytesize())
-        async with optval.borrow(self.task) as optval_b:
-            async with optlen.borrow(self.task) as optlen_b:
+        with optval.borrow(self.task) as optval_b:
+            with optlen.borrow(self.task) as optlen_b:
                 await rsyscall.near.getsockopt(self.task.sysif, self.near, level, optname, optval_b.near, optlen_b.near)
 
     async def setsockopt(self, level: int, optname: int, optval: Pointer) -> None:
         self.validate()
-        async with optval.borrow(self.task) as optval_b:
+        with optval.borrow(self.task) as optval_b:
             await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval_b.near, optval_b.bytesize())
 
     async def getsockname(self, addr: Pointer, addrlen: WrittenPointer[Socklen]) -> None:
@@ -573,8 +587,8 @@ class FileDescriptor:
         if addrlen.data > addr.bytesize():
             raise ValueError("addrlen contains", addrlen.data,
                              "should contain the length of the addr buf", addr.bytesize())
-        async with addr.borrow(self.task) as addr_b:
-            async with addrlen.borrow(self.task) as addrlen_b:
+        with addr.borrow(self.task) as addr_b:
+            with addrlen.borrow(self.task) as addrlen_b:
                 await rsyscall.near.getsockname(self.task.sysif, self.near, addr_b.near, addrlen_b.near)
 
     async def getpeername(self, addr: Pointer, addrlen: WrittenPointer[Socklen]) -> None:
@@ -582,8 +596,8 @@ class FileDescriptor:
         if addrlen.data > addr.bytesize():
             raise ValueError("addrlen contains", addrlen.data,
                              "should contain the length of the addr buf", addr.bytesize())
-        async with addr.borrow(self.task) as addr_b:
-            async with addrlen.borrow(self.task) as addrlen_b:
+        with addr.borrow(self.task) as addr_b:
+            with addrlen.borrow(self.task) as addrlen_b:
                 await rsyscall.near.getpeername(self.task.sysif, self.near, addr_b.near, addrlen_b.near)
 
     @t.overload
@@ -603,28 +617,28 @@ class FileDescriptor:
             if addrlen.data > addr.bytesize():
                 raise ValueError("addrlen contains", addrlen.data,
                                  "should contain the length of the addr buf", addr.bytesize())
-            async with addrlen.borrow(self.task) as addrlen_b:
-                async with addr.borrow(self.task) as addr_b:
+            with addrlen.borrow(self.task) as addrlen_b:
+                with addr.borrow(self.task) as addr_b:
                     fd = await rsyscall.near.accept4(self.task.sysif, self.near, addr_b.near, addrlen_b.near, flags)
                     return self.task.make_fd_handle(fd)
 
     async def readlinkat(self, path: Pointer, buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
         self.validate()
-        async with path.borrow(self.task) as path:
-            async with buf.borrow(self.task) as buf_b:
+        with path.borrow(self.task) as path:
+            with buf.borrow(self.task) as buf_b:
                 ret = await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, buf_b.near, buf_b.bytesize())
                 return buf.split(ret)
 
     T_pointer_dl = t.TypeVar('T_pointer_dl', bound='Pointer[DirentList]')
     async def getdents(self, dirp: T_pointer_dl) -> t.Tuple[T_pointer_dl, T_pointer_dl]:
         self.validate()
-        async with dirp.borrow(self.task) as dirp_b:
+        with dirp.borrow(self.task) as dirp_b:
             ret = await rsyscall.near.getdents64(self.task.sysif, self.near, dirp_b.near, dirp_b.bytesize())
             return dirp.split(ret)
 
     async def signalfd(self, mask: Pointer[Sigset], flags: int) -> None:
         self.validate()
-        async with mask.borrow(self.task) as mask:
+        with mask.borrow(self.task) as mask:
             await rsyscall.near.signalfd4(self.task.sysif, self.near, mask.near, mask.bytesize(), flags)
 
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
@@ -741,13 +755,13 @@ class Task(rsyscall.far.Task):
         await rsyscall.near.unshare(self.sysif, UnshareFlag.NEWNET)
 
     async def setns_user(self, fd: FileDescriptor) -> None:
-        async with fd.borrow(self) as fd:
+        with fd.borrow(self) as fd:
             # can't setns to a user namespace while sharing CLONE_FS
             await self.unshare_fs()
             await fd.setns(UnshareFlag.NEWUSER)
 
     async def setns_net(self, fd: FileDescriptor) -> None:
-        async with fd.borrow(self) as fd:
+        with fd.borrow(self) as fd:
             await fd.setns(UnshareFlag.NEWNET)
 
     async def socket(self, family: AF, type: SOCK, protocol: int=0, cloexec=True) -> FileDescriptor:
@@ -757,23 +771,23 @@ class Task(rsyscall.far.Task):
         return self.make_fd_handle(sockfd)
 
     async def capset(self, hdrp: Pointer, datap: Pointer) -> None:
-        async with hdrp.borrow(self) as hdrp:
-            async with datap.borrow(self) as datap:
+        with hdrp.borrow(self) as hdrp:
+            with datap.borrow(self) as datap:
                 await rsyscall.near.capset(self.sysif, hdrp.near, datap.near)
 
     async def capget(self, hdrp: Pointer, datap: Pointer) -> None:
-        async with hdrp.borrow(self) as hdrp:
-            async with datap.borrow(self) as datap:
+        with hdrp.borrow(self) as hdrp:
+            with datap.borrow(self) as datap:
                 await rsyscall.near.capget(self.sysif, hdrp.near, datap.near)
 
     async def sigaction(self, signum: Signals,
                         act: t.Optional[Pointer[Sigaction]],
                         oldact: t.Optional[Pointer[Sigaction]]) -> None:
-        async with contextlib.AsyncExitStack() as stack:
+        with contextlib.ExitStack() as stack:
             if act:
-                act = await stack.enter_async_context(act.borrow(self))
+                act = stack.enter_context(act.borrow(self))
             if oldact:
-                oldact = await stack.enter_async_context(oldact.borrow(self))
+                oldact = stack.enter_context(oldact.borrow(self))
             # rt_sigaction takes the size of the sigset, not the size of the sigaction;
             # and sigset is a fixed size.
             await rsyscall.near.rt_sigaction(self.sysif, signum,
@@ -782,57 +796,57 @@ class Task(rsyscall.far.Task):
                                              Sigset.sizeof())
 
     async def open(self, ptr: WrittenPointer[Path], flags: int, mode=0o644) -> FileDescriptor:
-        async with ptr.borrow(self) as ptr_b:
+        with ptr.borrow(self) as ptr_b:
             fd = await rsyscall.near.openat(self.sysif, None, ptr_b.near, flags, mode)
             return self.make_fd_handle(fd)
 
     async def mkdir(self, ptr: WrittenPointer[Path], mode=0o644) -> None:
-        async with ptr.borrow(self) as ptr_b:
+        with ptr.borrow(self) as ptr_b:
             await rsyscall.near.mkdirat(self.sysif, None, ptr_b.near, mode)
 
     async def access(self, ptr: WrittenPointer[Path], mode: int, flags: int=0) -> None:
-        async with ptr.borrow(self) as ptr_b:
+        with ptr.borrow(self) as ptr_b:
             await rsyscall.near.faccessat(self.sysif, None, ptr_b.near, mode, flags)
 
     async def unlink(self, ptr: WrittenPointer[Path]) -> None:
-        async with ptr.borrow(self) as ptr_b:
+        with ptr.borrow(self) as ptr_b:
             await rsyscall.near.unlinkat(self.sysif, None, ptr_b.near, 0)
 
     async def rmdir(self, ptr: WrittenPointer[Path]) -> None:
-        async with ptr.borrow(self) as ptr_b:
+        with ptr.borrow(self) as ptr_b:
             await rsyscall.near.unlinkat(self.sysif, None, ptr_b.near, AT.REMOVEDIR)
 
     async def link(self, oldpath: WrittenPointer[Path], newpath: WrittenPointer[Path]) -> None:
-        async with oldpath.borrow(self) as oldpath_b:
-            async with newpath.borrow(self) as newpath_b:
+        with oldpath.borrow(self) as oldpath_b:
+            with newpath.borrow(self) as newpath_b:
                 await rsyscall.near.linkat(self.sysif, None, oldpath_b.near, None, newpath_b.near, 0)
 
     async def rename(self, oldpath: WrittenPointer[Path], newpath: WrittenPointer[Path]) -> None:
-        async with oldpath.borrow(self) as oldpath_b:
-            async with newpath.borrow(self) as newpath_b:
+        with oldpath.borrow(self) as oldpath_b:
+            with newpath.borrow(self) as newpath_b:
                 await rsyscall.near.renameat2(self.sysif, None, oldpath_b.near, None, newpath_b.near, 0)
 
     async def symlink(self, target: WrittenPointer, linkpath: WrittenPointer[Path]) -> None:
-        async with target.borrow(self) as target_b:
-            async with linkpath.borrow(self) as linkpath_b:
+        with target.borrow(self) as target_b:
+            with linkpath.borrow(self) as linkpath_b:
                 await rsyscall.near.symlinkat(self.sysif, target_b.near, None, linkpath_b.near)
 
     async def chdir(self, path: WrittenPointer[Path]) -> None:
-        async with path.borrow(self) as path_b:
+        with path.borrow(self) as path_b:
             await rsyscall.near.chdir(self.sysif, path_b.near)
 
     async def fchdir(self, fd: FileDescriptor) -> None:
-        async with fd.borrow(self) as fd:
+        with fd.borrow(self) as fd:
             await rsyscall.near.fchdir(self.sysif, fd.near)
 
     async def readlink(self, path: WrittenPointer[Path], buf: T_pointer) -> t.Tuple[T_pointer, T_pointer]:
-        async with path.borrow(self) as path_b:
-            async with buf.borrow(self) as buf_b:
+        with path.borrow(self) as path_b:
+            with buf.borrow(self) as buf_b:
                 ret = await rsyscall.near.readlinkat(self.sysif, None, path_b.near, buf_b.near, buf_b.bytesize())
                 return buf.split(ret)
 
     async def signalfd(self, mask: Pointer[Sigset], flags: int) -> FileDescriptor:
-        async with mask.borrow(self) as mask:
+        with mask.borrow(self) as mask:
             fd = await rsyscall.near.signalfd4(self.sysif, None, mask.near, mask.bytesize(), flags)
             return self.make_fd_handle(fd)
 
@@ -845,43 +859,43 @@ class Task(rsyscall.far.Task):
         return self.make_fd_handle(fd)
 
     async def memfd_create(self, name: WrittenPointer[Path], flags: MFD) -> FileDescriptor:
-        async with name.borrow(self) as name_b:
+        with name.borrow(self) as name_b:
             fd = await rsyscall.near.memfd_create(self.sysif, name_b.near, flags)
             return self.make_fd_handle(fd)
 
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:
-        async with infop.borrow(self) as infop_b:
+        with infop.borrow(self) as infop_b:
             if rusage is None:
                 await rsyscall.near.waitid(self.sysif, None, infop_b.near, options, None)
             else:
-                async with rusage.borrow(self) as rusage_b:
+                with rusage.borrow(self) as rusage_b:
                     await rsyscall.near.waitid(self.sysif, None, infop_b.near, options, rusage_b.near)
 
     async def sigprocmask(self, newset: t.Optional[t.Tuple[SigprocmaskHow, WrittenPointer[Sigset]]],
                           oldset: t.Optional[Pointer[Sigset]]=None) -> None:
-        async with contextlib.AsyncExitStack() as stack:
+        with contextlib.ExitStack() as stack:
             newset_b: t.Optional[t.Tuple[SigprocmaskHow, rsyscall.near.Pointer]]
             if newset:
-                newset_b = newset[0], (await stack.enter_async_context(newset[1].borrow(self))).near
+                newset_b = newset[0], (stack.enter_context(newset[1].borrow(self))).near
             else:
                 newset_b = None
             oldset_b: t.Optional[rsyscall.near.Pointer]
             if oldset:
-                oldset_b = (await stack.enter_async_context(oldset.borrow(self))).near
+                oldset_b = (stack.enter_context(oldset.borrow(self))).near
             else:
                 oldset_b = None
             await rsyscall.near.rt_sigprocmask(self.sysif, newset_b, oldset_b, Sigset.sizeof())
 
     T_pointer_pipe = t.TypeVar('T_pointer_pipe', bound='Pointer[Pipe]')
     async def pipe(self, buf: T_pointer_pipe, flags: O) -> T_pointer_pipe:
-        async with buf.borrow(self) as buf_b:
+        with buf.borrow(self) as buf_b:
             await rsyscall.near.pipe2(self.sysif, buf_b.near, flags)
             return buf
 
     T_pointer_fdpair = t.TypeVar('T_pointer_fdpair', bound='Pointer[FDPair]')
     async def socketpair(self, domain: AF, type: SOCK, protocol: int, sv: T_pointer_fdpair) -> T_pointer_fdpair:
-        async with sv.borrow(self) as sv_b:
+        with sv.borrow(self) as sv_b:
             await rsyscall.near.socketpair(self.sysif, domain, type, protocol, sv_b.near)
             return sv
 
@@ -889,21 +903,21 @@ class Task(rsyscall.far.Task):
                      argv: WrittenPointer[ArgList],
                      envp: WrittenPointer[ArgList],
                      flags: AT) -> None:
-        async with contextlib.AsyncExitStack() as stack:
-            await stack.enter_async_context(filename.borrow(self))
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(filename.borrow(self))
             for arg in [*argv.data, *envp.data]:
-                await stack.enter_async_context(arg.borrow(self))
+                stack.enter_context(arg.borrow(self))
             await rsyscall.near.execveat(self.sysif, None, filename.near, argv.near, envp.near, flags)
 
     async def exit(self, status: int) -> None:
         await rsyscall.near.exit(self.sysif, status)
 
-    async def _borrow_optional(self, stack: contextlib.AsyncExitStack, ptr: t.Optional[Pointer]
+    async def _borrow_optional(self, stack: contextlib.ExitStack, ptr: t.Optional[Pointer]
     ) -> t.Optional[rsyscall.near.Pointer]:
         if ptr is None:
             return None
         else:
-            await stack.enter_async_context(ptr.borrow(self))
+            stack.enter_context(ptr.borrow(self))
             return ptr.near
 
     async def clone(self, flags: CLONE,
@@ -924,7 +938,7 @@ class Task(rsyscall.far.Task):
             owning_task = self.parent_task
         else:
             owning_task = self
-        async with contextlib.AsyncExitStack() as stack:
+        with contextlib.ExitStack() as stack:
             stack_alloc, stack_data = child_stack
             if (int(stack_data.near) % 16) != 0:
                 raise Exception("child stack must have 16-byte alignment, so says Intel")
@@ -933,8 +947,8 @@ class Task(rsyscall.far.Task):
                 raise Exception("the end of the stack allocation pointer", stack_alloc_end,
                                 "and the beginning of the stack data pointer", stack_data.near,
                                 "must be the same")
-            await stack.enter_async_context(stack_alloc.borrow(self))
-            await stack.enter_async_context(stack_data.borrow(self))
+            stack.enter_context(stack_alloc.borrow(self))
+            stack.enter_context(stack_data.borrow(self))
             ptid_n = await self._borrow_optional(stack, ptid)
             ctid_n = await self._borrow_optional(stack, ctid)
             newtls_n = await self._borrow_optional(stack, newtls)
@@ -953,7 +967,7 @@ class Task(rsyscall.far.Task):
         return MemoryMapping(self, ret, File())
 
     async def set_robust_list(self, head: WrittenPointer[RobustListHead]) -> None:
-        async with head.borrow(self):
+        with head.borrow(self):
             await rsyscall.near.set_robust_list(self.sysif, head.near, head.bytesize())
 
 @dataclass
@@ -998,7 +1012,7 @@ class RobustListHead(Struct):
         return ffi.sizeof('struct robust_list_head')
 
 class Borrowable:
-    async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None:
+    def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
         raise NotImplementedError("borrow_with not implemented on", type(self))
 
 T_borrowable = t.TypeVar('T_borrowable', bound=Borrowable)
@@ -1008,9 +1022,9 @@ class Stack(Serializable, t.Generic[T_borrowable]):
     data: T_borrowable
     serializer: Serializer[T_borrowable]
 
-    async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None:
-        await stack.enter_async_context(self.function.borrow(task))
-        await self.data.borrow_with(stack, task)
+    def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
+        stack.enter_context(self.function.borrow(task))
+        self.data.borrow_with(stack, task)
 
     def to_bytes(self) -> bytes:
         return struct.Struct("Q").pack(int(self.function.near)) + self.serializer.to_bytes(self.data)
@@ -1032,12 +1046,12 @@ class Process:
 
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> Pointer[Siginfo]:
-        async with infop.borrow(self.task) as infop_b:
+        with infop.borrow(self.task) as infop_b:
             try:
                 if rusage is None:
                     await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, None)
                 else:
-                    async with rusage.borrow(self.task) as rusage_b:
+                    with rusage.borrow(self.task) as rusage_b:
                         await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, rusage_b.near)
             except ChildProcessError as e:
                 raise ChildProcessError(e.errno, e.strerror, self.near) from None
@@ -1189,7 +1203,7 @@ class Cmsg(HasSerializer):
     @abc.abstractmethod
     def to_data(self) -> bytes: ...
     @abc.abstractmethod
-    async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None: ...
+    def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None: ...
     @classmethod
     @abc.abstractmethod
     def from_data(cls: t.Type[T], task: Task, data: bytes) -> T: ...
@@ -1235,9 +1249,9 @@ import array
 class CmsgSCMRights(Cmsg, t.List[FileDescriptor]):
     def to_data(self) -> bytes:
         return array.array('i', (int(fd.near) for fd in self)).tobytes()
-    async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None:
+    def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
         for fd in self:
-            await stack.enter_async_context(fd.borrow(task))
+            stack.enter_context(fd.borrow(task))
 
     T = t.TypeVar('T', bound='CmsgSCMRights')
     @classmethod
@@ -1258,9 +1272,9 @@ class CmsgList(t.List[Cmsg], HasSerializer):
     def get_serializer(cls: t.Type[T_cmsglist], task: Task) -> Serializer[T_cmsglist]:
         return CmsgListSerializer(cls, task)
 
-    async def borrow_with(self, stack: contextlib.AsyncExitStack, task: Task) -> None:
+    def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
         for cmsg in self:
-            await cmsg.borrow_with(stack, task)
+            cmsg.borrow_with(stack, task)
 
 class CmsgListSerializer(Serializer[T_cmsglist]):
     def __init__(self, cls: t.Type[T_cmsglist], task: Task) -> None:

@@ -133,7 +133,7 @@ async def run_socket_binder(
     thread = await task.fork()
     stdout = thread.stdtask.task.base.make_fd_handle(stdout_pipe.wfd.handle)
     await stdout_pipe.wfd.handle.invalidate()
-    async with bootstrap_executable.borrow(thread.stdtask.task.base) as bootstrap_executable:
+    with bootstrap_executable.borrow(thread.stdtask.task.base) as bootstrap_executable:
         await thread.stdtask.unshare_files()
         # TODO we are relying here on the fact that replace_with doesn't set cloexec on the new fd.
         # maybe we should explicitly list what we want to pass down...

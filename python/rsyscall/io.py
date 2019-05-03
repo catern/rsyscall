@@ -1091,15 +1091,15 @@ class Trampoline(handle.Serializable, handle.Borrowable):
         })
         return bytes(ffi.buffer(struct))
 
-    async def borrow_with(self, stack: contextlib.AsyncExitStack, task: handle.Task) -> None:
-        await stack.enter_async_context(self.function.borrow(task))
+    def borrow_with(self, stack: contextlib.ExitStack, task: handle.Task) -> None:
+        stack.enter_context(self.function.borrow(task))
         for arg in self.args:
             if isinstance(arg, int):
                 pass
             elif isinstance(arg, handle.WrittenPointer):
-                await arg.value.borrow_with(stack, task)
+                arg.value.borrow_with(stack, task)
             else:
-                await stack.enter_async_context(arg.borrow(task))
+                stack.enter_context(arg.borrow(task))
 
     T = t.TypeVar('T', bound='Trampoline')
     @classmethod
@@ -1381,14 +1381,19 @@ class StandardTask:
 
     async def unshare_files_and_replace(self, mapping: t.Dict[handle.FileDescriptor, handle.FileDescriptor],
                                         going_to_exec=False) -> None:
-        async with contextlib.AsyncExitStack() as stack:
-            mapping = {await stack.enter_async_context(key.borrow(self.task.base)):
-                       await stack.enter_async_context(val.borrow(self.task.base))
-                       for key, val in mapping.items()}
-            await self.unshare_files(going_to_exec=going_to_exec)
-            for dest, source in mapping.items():
-                await source.dup3(dest, 0)
-                await source.invalidate()
+        mapping = {
+            # we maybe_copy the key because we need to have the only handle to it in the task,
+            # which we'll then consume through dup3.
+            key.maybe_copy(self.task.base):
+            # we for_task the value so that we get a copy of it, which we then explicitly invalidate;
+            # this means if we had the only reference to the fd passed into us as an expression,
+            # we will close that fd - nice.
+            val.for_task(self.task.base)
+            for key, val in mapping.items()}
+        await self.unshare_files(going_to_exec=going_to_exec)
+        for dest, source in mapping.items():
+            await source.dup3(dest, 0)
+            await source.invalidate()
 
     async def unshare_user(self,
                            in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
