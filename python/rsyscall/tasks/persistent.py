@@ -4,7 +4,11 @@ import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, EpollWaiter, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ThreadMaker, FunctionPointer, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, EpollWaiter, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, FunctionPointer, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect
+
+from rsyscall.io import ProcessResources, Trampoline
+from rsyscall.handle import Stack, WrittenPointer
+
 import trio
 import struct
 from dataclasses import dataclass
@@ -244,15 +248,22 @@ async def spawn_rsyscall_persistent_server(
         access_sock: AsyncFileDescriptor,
         remote_sock: handle.FileDescriptor,
         listening_sock: handle.FileDescriptor,
-        parent_task: Task, thread_maker: ThreadMaker, function: handle.Pointer[handle.NativeFunction],
+        parent_task: Task, process_resources: ProcessResources,
     ) -> t.Tuple[Task, RsyscallInterface, handle.FileDescriptor]:
-    child_process, futex_process = await thread_maker.make_cthread(
+    async def op(sem: batch.BatchSemantics) -> t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]]:
+        stack_value = process_resources.make_trampoline_stack(Trampoline(
+            process_resources.persistent_server_func, [remote_sock, remote_sock, listening_sock]))
+        stack_buf = sem.malloc_type(handle.Stack, 4096)
+        stack = await stack_buf.write_to_end(stack_value, alignment=16)
+        return stack
+    stack = await parent_task.perform_async_batch(op)
+    child_process = await parent_task.base.clone(
         (CLONE.VM|CLONE.FS|CLONE.FILES|CLONE.IO|
          CLONE.SIGHAND|CLONE.SYSVSEM|Signals.SIGCHLD),
-        function, remote_sock.near, remote_sock.near, listening_sock.near)
+        stack, None, None, None)
     syscall = RsyscallInterface(RsyscallConnection(access_sock, access_sock),
-                                child_process.process.near, remote_sock.near)
-    new_base_task = base.Task(syscall, child_process.process.near, None,
+                                child_process.near, remote_sock.near)
+    new_base_task = base.Task(syscall, child_process.near, None,
                               parent_task.fd_table, parent_task.address_space, parent_task.base.fs,
                               parent_task.base.pidns,
                               parent_task.base.netns)
@@ -274,10 +285,9 @@ async def fork_persistent(
     await robust_unix_bind(path, listening_sock)
     await listening_sock.listen(1)
     [(access_sock, remote_sock)] = await self.make_async_connections(1)
-    thread_maker = ThreadMaker(self.task, self.child_monitor, self.process)
     task, syscall, listening_sock_handle = await spawn_rsyscall_persistent_server(
         access_sock, remote_sock, listening_sock.handle,
-        self.task, thread_maker, self.process.persistent_server_func)
+        self.task, self.process)
     await remote_sock.invalidate()
     await listening_sock.handle.invalidate()
 
