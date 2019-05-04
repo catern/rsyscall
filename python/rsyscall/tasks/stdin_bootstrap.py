@@ -79,7 +79,7 @@ async def rsyscall_stdin_bootstrap(
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     task = Task(base_task,
                 SocketMemoryTransport(access_data_sock,
-                                      base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd)), None),
+                                      base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd))),
                 memory.AllocatorClient.make_allocator(base_task),
                 SignalMask(set()),
     )

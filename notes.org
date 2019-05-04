@@ -14365,9 +14365,16 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
     yeah instead of trying to inherit I can just always, um..
     moving the pipe to local and create the access from there.
+*** ok re-eval
+    Let's determine whether we can just create the connection on-demand when unsharing memory,
+    instead of up-front.
+
+    ummmm okaaaaay soooo
+
+    I guess we won't need to pre-create the socket memory transport lol.
 ** turn SignalMask/SignalBlock into a handle
     I guess? Or at least re-evaluate this design
-** hmm what if
+** DONE have handle.exec return a child process, move child management into handle
    what if I just have handle.exec return a childprocess?
 
    and y'know, it just throws if it's not possible to do that.
@@ -14389,12 +14396,31 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    should I store the death event too?
    I guess...
 
-   and store the buffers and stuff...
-** hmm
+   and store the buffers and stuff...*
+** DONE should we get rid of childprocessmonitor? we can't
    the childprocessmonitor stuff... is actually a pretty low-level detail.
 
    maybe we shouldn't do this inheritance stuff?
    instead just explicitly clone_parent when necessary?
+
+   we can decide to clone_parent if the parent_task is set on our task
+
+   oh arghy blarghy
+
+   we can't clone_parent if we're pid 1, in a process namespace.
+
+   how are we gonna know that???
+
+   ugh it looks like i'm not properly setting the self-view of process;
+   i'm seeing the pid in the outside namespace, instead of inside.
+
+   ok ok let's pass it down, fine fine
+** unshare CLONE_NEWPID to make children die on death
+   We just start an init process, then all our other children will die when that one does.
+
+   And we can use PDEATHSIG to kill the init process.
+
+   We can even put them in several groups.
 ** DONE convert socketpair and pipe to handle style
    OK so what will we return?
 

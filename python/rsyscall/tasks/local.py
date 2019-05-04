@@ -121,9 +121,6 @@ async def _make_local_stdtask() -> StandardTask:
         stdout=mem_task._make_fd(1, rsc.WritableFile()),
         stderr=mem_task._make_fd(2, rsc.WritableFile()),
     )
-    # We don't need this ourselves, but we keep it around so others can inherit it.
-    [(access_sock, remote_sock)] = await stdtask.make_async_connections(1)
-    mem_task.transport = rsc.SocketMemoryTransport(access_sock, remote_sock, local_transport)
     return stdtask
 
 stdtask: StandardTask

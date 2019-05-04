@@ -107,7 +107,7 @@ async def setup_stub(
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     task = Task(base_task,
                 SocketMemoryTransport(access_data_sock,
-                                      base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd)), None),
+                                      base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd))),
                 memory.AllocatorClient.make_allocator(base_task),
                 SignalMask({Signals(bit) for bit in rsyscall.struct.bits(describe_struct.sigmask)}),
     )
