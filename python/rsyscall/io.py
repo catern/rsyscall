@@ -1532,6 +1532,7 @@ class ChildProcess:
         self.wait_for_signal = False
         self.task = self.monitor.signal_queue.sigfd.underlying.task
         self.in_use = False
+        self.death_event: t.Optional[ChildEvent] = None
         self.siginfo_buf: t.Optional[handle.Pointer[Siginfo]] = None
 
     async def try_waitid(self) -> t.Optional[ChildEvent]:
@@ -1545,6 +1546,7 @@ class ChildProcess:
         else:
             event = ChildEvent.make_from_siginfo(siginfo)
             if event.died():
+                self.death_event = event
                 self.process.mark_dead()
             return event
 
@@ -1565,8 +1567,8 @@ class ChildProcess:
                     return [event]
 
     async def wait_for_exit(self) -> ChildEvent:
-        if not self.process.alive:
-            raise Exception("process is already dead")
+        if self.death_event:
+            return self.death_event
         while True:
             for event in (await self.wait()):
                 if event.died():
@@ -1763,7 +1765,8 @@ class Thread:
 
     async def close(self) -> None:
         if not self.released:
-            await self.child_task.kill()
+            if self.child_task.process.alive:
+                await self.child_task.kill()
             await self.wait_for_mm_release()
 
     async def __aenter__(self) -> 'Thread':

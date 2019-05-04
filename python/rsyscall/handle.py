@@ -1063,19 +1063,28 @@ class ChildProcess(Process):
             raise Exception("handle to child process", self.near, "already marked dead")
         self.alive = False
 
+    def did_exec(self) -> ChildProcess:
+        return self
+
 class ThreadProcess(ChildProcess):
     def __init__(self, task: Task, near: rsyscall.near.Process,
                  used_stack: Pointer[Stack],
                  ctid: t.Optional[Pointer[FutexNode]],
-                 newtls: t.Optional[Pointer],
+                 tls: t.Optional[Pointer],
     ) -> None:
         super().__init__(task, near)
         self.used_stack = used_stack
         self.ctid = ctid
-        self.newtls = newtls
+        self.tls = tls
 
     def did_exec(self) -> ChildProcess:
-        return ChildProcess(self.task, self.near, self.alive)
+        if self.used_stack.valid:
+            self.used_stack.free()
+        if self.ctid is not None and self.ctid.valid:
+            self.ctid.free()
+        if self.tls is not None and self.tls.valid:
+            self.tls.free()
+        return self
 
 
 ################################################################################

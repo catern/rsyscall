@@ -14381,6 +14381,15 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    mebbe should just do that
 
    ok so we'll have process, childprocess (with valid flag), and threadprocess.
+
+   and yeah we'll just um, make thread just directly contain the child process and stuff
+
+   hmm.
+
+   should I store the death event too?
+   I guess...
+
+   and store the buffers and stuff...
 ** DONE convert socketpair and pipe to handle style
    OK so what will we return?
 
