@@ -1050,16 +1050,16 @@ class ChildProcess(Process):
         # which... again, we could do in this class.
         if not self.alive:
             raise Exception("child process", self.near, "is no longer alive, so can't be waited on")
-        with infop.borrow(self.task):
-            with self.borrow():
-                try:
-                    if rusage is None:
-                        await rsyscall.near.waitid(self.task.sysif, self.near, infop.near, options, None)
-                    else:
-                        with rusage.borrow(self.task):
-                            await rsyscall.near.waitid(self.task.sysif, self.near, infop.near, options, rusage.near)
-                except ChildProcessError as e:
-                    raise ChildProcessError(e.errno, e.strerror, self.near) from None
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(infop.borrow(self.task))
+            stack.enter_context(self.borrow())
+            if rusage is not None:
+                stack.enter_context(rusage.borrow(self.task))
+            try:
+                await rsyscall.near.waitid(self.task.sysif, self.near, infop.near, options,
+                                           rusage.near if rusage else None)
+            except ChildProcessError as e:
+                raise ChildProcessError(e.errno, e.strerror, self.near) from None
         return infop
 
     async def kill(self, sig: Signals) -> None:
