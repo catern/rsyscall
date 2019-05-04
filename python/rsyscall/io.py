@@ -1303,10 +1303,9 @@ class StandardTask:
 
     async def fork(self, newuser=False, newpid=False, fs=True, sighand=True) -> RsyscallThread:
         [(access_sock, remote_sock)] = await self.make_async_connections(1)
-        thread_maker = ThreadMaker(self.task, self.child_monitor, self.process)
         task = await spawn_rsyscall_thread(
             access_sock, remote_sock,
-            self.task, thread_maker, self.process.server_func,
+            self.task, self.child_monitor, self.process,
             newuser=newuser, newpid=newpid, fs=fs, sighand=sighand,
         )
         await remote_sock.invalidate()
@@ -1714,40 +1713,6 @@ async def launch_futex_monitor(task: Task,
     await futex_task.send_signal(signal.SIGCONT)
     # the stack will be freed as it is no longer needed, but the futex pointer will live on
     return futex_task
-
-class ThreadMaker:
-    def __init__(self,
-                 task: Task,
-                 monitor: ChildProcessMonitor,
-                 process_resources: ProcessResources) -> None:
-        self.task = task
-        self.monitor = monitor
-        # TODO pull this function out of somewhere sensible
-        self.process_resources = process_resources
-
-    async def make_cthread(self, flags: CLONE,
-                           function: handle.Pointer[handle.NativeFunction],
-                           arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
-    ) -> t.Tuple[ChildProcess, ChildProcess]:
-        # TODO it is unclear why we sometimes need to make a new mapping here, instead of allocating with our normal
-        # allocator; all our memory is already MAP.SHARED, I think.
-        # We should resolve this so we can use the stock allocator.
-        mapping = await self.task.base.mmap(4096*2, PROT.READ|PROT.WRITE, MAP.SHARED)
-        arena = memory.Arena(mapping)
-        async def op(sem: batch.BatchSemantics) -> t.Tuple[t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
-                                                           WrittenPointer[FutexNode]]:
-            stack_value = self.process_resources.make_trampoline_stack(Trampoline(
-                function, [arg1, arg2, arg3, arg4, arg5, arg6]))
-            stack_buf = sem.malloc_type(handle.Stack, 4096)
-            stack = await stack_buf.write_to_end(stack_value, alignment=16)
-            futex_pointer = sem.to_pointer(handle.FutexNode(None, Int32(0)))
-            return stack, futex_pointer
-        # stack, futex_pointer = await self.task.perform_async_batch(op)
-        stack, futex_pointer = await batch.perform_async_batch(self.task.base, self.task.transport, arena, op)
-        futex_process = await launch_futex_monitor(self.task, self.process_resources, self.monitor, futex_pointer)
-        child_process = await self.monitor.clone(
-            flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
-        return child_process, futex_process
 
 class RsyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
@@ -2515,8 +2480,9 @@ async def make_connections(access_task: Task,
 async def spawn_rsyscall_thread(
         access_sock: AsyncFileDescriptor,
         remote_sock: handle.FileDescriptor,
-        parent_task: Task, thread_maker: ThreadMaker,
-        function: handle.Pointer[handle.NativeFunction],
+        parent_task: Task,
+        monitor: ChildProcessMonitor,
+        process_resources: ProcessResources,
         newuser: bool, newpid: bool, fs: bool, sighand: bool,
 ) -> Task:
     flags = CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM|signal.SIGCHLD
@@ -2529,7 +2495,22 @@ async def spawn_rsyscall_thread(
         flags |= CLONE.FS
     if sighand:
         flags |= CLONE.SIGHAND
-    child_process, futex_process = await thread_maker.make_cthread(flags, function, remote_sock.near, remote_sock.near)
+    # TODO it is unclear why we sometimes need to make a new mapping here, instead of allocating with our normal
+    # allocator; all our memory is already MAP.SHARED, I think.
+    # We should resolve this so we can use the stock allocator.
+    arena = memory.Arena(await parent_task.base.mmap(4096*2, PROT.READ|PROT.WRITE, MAP.SHARED))
+    async def op(sem: batch.BatchSemantics) -> t.Tuple[t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
+                                                       WrittenPointer[FutexNode]]:
+        stack_value = process_resources.make_trampoline_stack(Trampoline(
+            process_resources.server_func, [remote_sock, remote_sock]))
+        stack_buf = sem.malloc_type(handle.Stack, 4096)
+        stack = await stack_buf.write_to_end(stack_value, alignment=16)
+        futex_pointer = sem.to_pointer(handle.FutexNode(None, Int32(0)))
+        return stack, futex_pointer
+    stack, futex_pointer = await batch.perform_async_batch(parent_task.base, parent_task.transport, arena, op)
+    futex_process = await launch_futex_monitor(parent_task, process_resources, monitor, futex_pointer)
+    child_process = await monitor.clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
+
     syscall = ChildConnection(RsyscallConnection(access_sock, access_sock), child_process, futex_process)
     if fs:
         fs_information = parent_task.base.fs
@@ -2540,7 +2521,7 @@ async def spawn_rsyscall_thread(
     else:
         pidns = parent_task.base.pidns
     netns = parent_task.base.netns
-    real_parent_task = parent_task.base.parent_task if thread_maker.monitor.use_clone_parent else parent_task.base
+    real_parent_task = parent_task.base.parent_task if monitor.use_clone_parent else parent_task.base
     new_base_task = base.Task(syscall, child_process.process, real_parent_task,
                               parent_task.fd_table, parent_task.address_space, fs_information, pidns, netns)
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
