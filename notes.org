@@ -16135,6 +16135,14 @@ so the subprocess is stuck in read, and the main process is... in "x32 mode"????
    ok let's think about it, how can I do this...
 
    oh I'll just sleep 1 instead of inf, that's fine.
+** issues
+so we can do the epoll lazy register thing,
+we just need to not deregister when done.
+we can rely on weak refs, or maybe just the autoclose on close of open-file-description
+
+supporting both "async" and non-async modes of operation
+
+supporting cancellation so we don't drop events, but are still able to be cancelled.
 ** DONE make borrowing not async
    We can't run async code on exiting.
    Because we might drop a syscall result.

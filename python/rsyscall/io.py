@@ -1536,29 +1536,16 @@ class ChildProcess:
         self.siginfo_buf: t.Optional[handle.Pointer[Siginfo]] = None
 
     async def try_waitid(self) -> t.Optional[ChildEvent]:
-        flags = W.EXITED|W.STOPPED|W.CONTINUED
-        if self.siginfo_buf is None:
-            self.siginfo_buf = await self.process.waitid(flags|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
-        siginfo = await self.siginfo_buf.read()
-        self.siginfo_buf = None
-        if siginfo.pid == 0:
-            return None
-        else:
-            event = ChildEvent.make_from_siginfo(siginfo)
-            if event.died():
-                self.death_event = event
-                self.process.mark_dead()
-            return event
+        event_opt = await self.process.read_event()
+        if event_opt is not None:
+            return event_opt
+        await self.process.waitid(
+            W.EXITED|W.STOPPED|W.CONTINUED|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
+        event = await self.process.read_event()
+        return event
 
     async def wait(self) -> t.List[ChildEvent]:
         while True:
-            # ok so we need to temporarily register ourselves on the monitor before,
-            # then check it after.
-            # right? otherwise we have a race where we can get a signal while reading the buffer, etc.
-            # ok well why don't we just do them in parallel and cancel the wait?
-            # well that doesn't make sense right,
-            # we basically, want to start the sigchld wait early,
-            # then only start waitiding once we know we'll catch sigchlds signals
             with self.monitor.sigchld_waiter() as waiter:
                 event = await self.try_waitid()
                 if event is None:
@@ -2130,8 +2117,7 @@ async def do_cloexec_except(task: Task, process_resources: ProcessResources,
     stack, siginfo_buf = await task.perform_async_batch(op)
     process = await task.base.clone(CLONE.VM|CLONE.FILES, stack, ptid=None, ctid=None, newtls=None)
     await process.waitid(W.ALL|W.EXITED, siginfo_buf)
-    child_event = ChildEvent.make_from_siginfo(await siginfo_buf.read())
-    process.mark_dead()
+    child_event = await.process.read_event()
     if not child_event.clean():
         raise Exception("cloexec function child died!", child_event)
 
