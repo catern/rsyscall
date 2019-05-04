@@ -1524,30 +1524,20 @@ class Multiplexer:
     pass
 
 class ChildProcess:
-    def __init__(self, process: handle.Process,
+    def __init__(self, process: handle.ChildProcess,
                  monitor: ChildProcessMonitorInternal) -> None:
         self.process = process
         self.monitor = monitor
         # we might have already gotten events for this process and ignored the signal
         self.wait_for_signal = False
         self.task = self.monitor.signal_queue.sigfd.underlying.task
-        self.death_event: t.Optional[ChildEvent] = None
         self.in_use = False
         self.siginfo_buf: t.Optional[handle.Pointer[Siginfo]] = None
 
     async def try_waitid(self) -> t.Optional[ChildEvent]:
-        if self.death_event:
-            raise Exception("child is already dead!")
         flags = W.EXITED|W.STOPPED|W.CONTINUED
         if self.siginfo_buf is None:
-            if self.in_use:
-                raise Exception("trying to wait while we are already waiting or killing")
-            self.in_use = True
-            try:
-                self.siginfo_buf = await self.process.waitid(
-                    flags|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
-            finally:
-                self.in_use = False
+            self.siginfo_buf = await self.process.waitid(flags|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
         siginfo = await self.siginfo_buf.read()
         self.siginfo_buf = None
         if siginfo.pid == 0:
@@ -1555,7 +1545,7 @@ class ChildProcess:
         else:
             event = ChildEvent.make_from_siginfo(siginfo)
             if event.died():
-                self.death_event = event
+                self.process.mark_dead()
             return event
 
     async def wait(self) -> t.List[ChildEvent]:
@@ -1575,8 +1565,8 @@ class ChildProcess:
                     return [event]
 
     async def wait_for_exit(self) -> ChildEvent:
-        if self.death_event:
-            return self.death_event
+        if not self.process.alive:
+            raise Exception("process is already dead")
         while True:
             for event in (await self.wait()):
                 if event.died():
@@ -1595,44 +1585,17 @@ class ChildProcess:
                 elif event.code == ChildCode.STOPPED:
                     return event
 
-    @contextlib.asynccontextmanager
-    async def get_pid(self) -> t.AsyncGenerator[t.Optional[handle.Process], None]:
-        """Returns the underlying process, or None if it's already dead.
-
-        Operating on the pid of a child process requires taking the wait_lock to make sure
-        the process's zombie is not collected while we're using its pid.
-
-        """
-        if self.death_event:
-            yield None
-        else:
-            # TODO technically, multiple people could kill at the same time
-            # so this should really be a reader-writer lock
-            if self.in_use:
-                raise Exception("trying to kill while we are waiting")
-            self.in_use = True
-            try:
-                yield self.process
-            finally:
-                self.in_use = False
-
     async def send_signal(self, sig: signal.Signals) -> None:
-        async with self.get_pid() as process:
-            if process:
-                await process.kill(sig)
-            else:
-                raise Exception("child is already dead!")
+        await self.process.kill(sig)
 
     async def kill(self) -> None:
-        async with self.get_pid() as process:
-            if process:
-                await process.kill(Signals.SIGKILL)
+        await self.process.kill(Signals.SIGKILL)
 
     async def __aenter__(self) -> None:
         pass
 
     async def __aexit__(self, *args, **kwargs) -> None:
-        if self.death_event:
+        if not self.process.alive:
             pass
         else:
             await self.kill()
@@ -1657,7 +1620,7 @@ class ChildProcessMonitorInternal:
         self.running_wait = OneAtATime()
         self.waiters: t.List[SigchldWaiter] = []
 
-    def add_task(self, process: handle.Process) -> ChildProcess:
+    def add_task(self, process: handle.ChildProcess) -> ChildProcess:
         proc = ChildProcess(process, self)
         # self.processes.append(proc)
         return proc

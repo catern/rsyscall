@@ -998,6 +998,90 @@ class Task(rsyscall.far.Task):
         return (await rsyscall.near.getgid(self.sysif))
 
 @dataclass
+class Process:
+    task: Task
+    near: rsyscall.near.Process
+
+    @property
+    def far(self) -> rsyscall.far.Process:
+        # TODO delete this property
+        return rsyscall.far.Process(self.task.pidns, self.near)
+
+    async def kill(self, sig: Signals) -> None:
+        await rsyscall.near.kill(self.task.sysif, self.near, sig)
+
+class ChildProcess(Process):
+    def __init__(self, task: Task, near: rsyscall.near.Process, alive=True) -> None:
+        self.task = task
+        self.near = near
+        self.alive = alive
+        self.in_use = False
+
+    @contextlib.contextmanager
+    def borrow(self) -> t.Iterator[None]:
+        if not self.alive:
+            raise Exception("child process", self.near, "is no longer alive, so we can't wait on it or kill it")
+        if self.in_use:
+            # TODO technically we could have multiple kills happening simultaneously.
+            # but indeed, we can't have a kill happen while a wait is happening, nor multiple waits at a time.
+            # that would be racy - we might kill the wrong process or wait on the wrong process
+            raise Exception("child process", self.near, "is already being waited on or killed,"
+                            " can't use it a second time")
+        self.in_use = True
+        try:
+            yield
+        finally:
+            self.in_use = False
+
+    async def waitid(self, options: W, infop: Pointer[Siginfo],
+                     *, rusage: t.Optional[Pointer[Siginfo]]=None) -> Pointer[Siginfo]:
+        # TODO it's important that the Siginfo buffer passed to waitid is stored carefully if waitid returns;
+        # otherwise we could drop events if we're cancelled while trying to read the buffer.
+        # maybe... we should store it ourselves? hm.
+        # Likewise, it's important that this class be informed when the process dies.
+        # which... again, we could do in this class.
+        if not self.alive:
+            raise Exception("child process", self.near, "is no longer alive, so can't be waited on")
+        with infop.borrow(self.task):
+            with self.borrow():
+                try:
+                    if rusage is None:
+                        await rsyscall.near.waitid(self.task.sysif, self.near, infop.near, options, None)
+                    else:
+                        with rusage.borrow(self.task):
+                            await rsyscall.near.waitid(self.task.sysif, self.near, infop.near, options, rusage.near)
+                except ChildProcessError as e:
+                    raise ChildProcessError(e.errno, e.strerror, self.near) from None
+        return infop
+
+    async def kill(self, sig: Signals) -> None:
+        with self.borrow():
+            await super().kill(sig)
+
+    def mark_dead(self) -> None:
+        if not self.alive:
+            raise Exception("handle to child process", self.near, "already marked dead")
+        self.alive = False
+
+class ThreadProcess(ChildProcess):
+    def __init__(self, task: Task, near: rsyscall.near.Process,
+                 used_stack: Pointer[Stack],
+                 ctid: t.Optional[Pointer[FutexNode]],
+                 newtls: t.Optional[Pointer],
+    ) -> None:
+        super().__init__(task, near)
+        self.used_stack = used_stack
+        self.ctid = ctid
+        self.newtls = newtls
+
+    def did_exec(self) -> ChildProcess:
+        return ChildProcess(self.task, self.near, self.alive)
+
+
+################################################################################
+# various structs which need to be moved out
+
+@dataclass
 class FutexNode(Struct):
     # this is our bundle of struct robust_list with a futex.  since it's tricky to handle the
     # reference management of taking a reference to just one field in a structure (the futex, in
@@ -1060,55 +1144,6 @@ class Stack(Serializable, t.Generic[T_borrowable]):
     @classmethod
     def from_bytes(cls: t.Type[T_stack], data: bytes) -> T_stack:
         raise Exception("nay")
-
-@dataclass
-class Process:
-    task: Task
-    near: rsyscall.near.Process
-
-    @property
-    def far(self) -> rsyscall.far.Process:
-        # TODO delete this property
-        return rsyscall.far.Process(self.task.pidns, self.near)
-
-    async def waitid(self, options: W, infop: Pointer[Siginfo],
-                     *, rusage: t.Optional[Pointer[Siginfo]]=None) -> Pointer[Siginfo]:
-        with infop.borrow(self.task) as infop_b:
-            try:
-                if rusage is None:
-                    await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, None)
-                else:
-                    with rusage.borrow(self.task) as rusage_b:
-                        await rsyscall.near.waitid(self.task.sysif, self.near, infop_b.near, options, rusage_b.near)
-            except ChildProcessError as e:
-                raise ChildProcessError(e.errno, e.strerror, self.near) from None
-        return infop
-
-    async def kill(self, sig: Signals) -> None:
-        await rsyscall.near.kill(self.task.sysif, self.near, sig)
-
-class ChildProcess(Process):
-    def __init__(self, task: Task, near: rsyscall.near.Process, valid=True) -> None:
-        self.task = task
-        self.near = near
-        self.valid = valid
-
-    def mark_invalid(self) -> None:
-        self.valid = False
-
-class ThreadProcess(ChildProcess):
-    def __init__(self, task: Task, near: rsyscall.near.Process,
-                 used_stack: Pointer[Stack],
-                 ctid: t.Optional[Pointer[FutexNode]],
-                 newtls: t.Optional[Pointer],
-    ) -> None:
-        super().__init__(task, near)
-        self.used_stack = used_stack
-        self.ctid = ctid
-        self.newtls = newtls
-
-    def did_exec(self) -> ChildProcess:
-        return ChildProcess(self.task, self.near, self.valid)
 
 @dataclass
 class MemoryMapping:

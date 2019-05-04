@@ -896,10 +896,8 @@ class TestIO(unittest.TestCase):
 
             shell_thread = await stdtask.fork()
             dest_nix_bin = shell_thread.stdtask.task.base.make_path_handle(dest_nix_bin)
-            async with child_task.get_pid() as proc:
-                if proc is None:
-                    raise Exception("nix daemon died?")
-                container_ns_dir = shell_thread.stdtask.task.root()/"proc"/str(proc.near.id)/"ns"
+            with child_task.process.borrow():
+                container_ns_dir = shell_thread.stdtask.task.root()/"proc"/str(child_task.process.near.id)/"ns"
                 usernsfd = await (container_ns_dir/"user").open(os.O_RDONLY)
             await shell_thread.stdtask.setns_user(usernsfd.handle)
             await shell_thread.stdtask.unshare_mount()
