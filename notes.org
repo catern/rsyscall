@@ -14336,8 +14336,51 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
     preparation is FINALLY DONE!!! woo!!!
 *** finally start
+
+    hmm okay what if I just have a small cap,
+    for to_pointer?
+
+    yeah that would be a smaller change and more expandable later,
+    let's do it.
+
+    or maybe not.
+    the nice thing is, all we need is an access,
+    and a pipe,
+    and a task,
+    and we can make a new access on the other side!
+
+    how do we do the fallback tho
+
+    like, the issue is, we want to have the pipe already existing,
+    so we can unshare later.
+
+    wait a second though, we already have the ability to make pipes on the fly when we need them.
+    so do we really need the pipe from the start?
+
+    hm mebbe not
+
+    actually maybe I can just go ahead and pull out fork and execing tasks.
+
+    let's pull out exec at first at least
+
+    yeah instead of trying to inherit I can just always, um..
+    moving the pipe to local and create the access from there.
 ** turn SignalMask/SignalBlock into a handle
     I guess? Or at least re-evaluate this design
+** hmm what if
+   what if I just have handle.exec return a childprocess?
+
+   and y'know, it just throws if it's not possible to do that.
+
+   it can return the process it embeds
+
+   let's also incorporate all the pointers into Process again
+
+   I just like the notion of getting rid of rsyscallthread. hm.
+
+   mebbe should just do that
+
+   ok so we'll have process, childprocess (with valid flag), and threadprocess.
 ** DONE convert socketpair and pipe to handle style
    OK so what will we return?
 
@@ -16117,7 +16160,8 @@ That all seems fine.
 
 I mean, that is better than a thread.
 
-Oh so hmm. We could have three levels: process, child process (which allows waitid and tracks usage), and threadprocess (which further holds stack and TLS notifications, and can be released to child process).
+Oh so hmm. We could have three levels: process, child process (which allows waitid and tracks usage),
+and threadprocess (which further holds stack and TLS notifications, and can be released to child process).
 
 What about arguments to the process?
 

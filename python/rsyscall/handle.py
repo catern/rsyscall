@@ -927,7 +927,7 @@ class Task(rsyscall.far.Task):
                     ptid: t.Optional[Pointer],
                     ctid: t.Optional[Pointer[FutexNode]],
                     # this points to anything, it depends on the thread implementation
-                    newtls: t.Optional[Pointer]) -> t.Tuple[Process, Pointer[Stack]]:
+                    newtls: t.Optional[Pointer]) -> t.Tuple[ThreadProcess, Pointer[Stack]]:
         clone_parent = bool(flags & CLONE.PARENT)
         if clone_parent:
             print("clone parenting in HANDLE")
@@ -957,8 +957,7 @@ class Task(rsyscall.far.Task):
         # TODO the safety of this depends on no-one borrowing/freeing the stack in borrow __aexit__
         # should try to do this a bit more robustly...
         merged_stack = stack_alloc.merge(stack_data)
-        # TODO should save ctid in Process
-        return Process(owning_task, process), merged_stack
+        return ThreadProcess(owning_task, process, merged_stack, ctid, newtls), merged_stack
 
     async def mmap(self, length: int, prot: PROT, flags: MAP,
                    page_size: int=4096,
@@ -1087,6 +1086,29 @@ class Process:
 
     async def kill(self, sig: Signals) -> None:
         await rsyscall.near.kill(self.task.sysif, self.near, sig)
+
+class ChildProcess(Process):
+    def __init__(self, task: Task, near: rsyscall.near.Process, valid=True) -> None:
+        self.task = task
+        self.near = near
+        self.valid = valid
+
+    def mark_invalid(self) -> None:
+        self.valid = False
+
+class ThreadProcess(ChildProcess):
+    def __init__(self, task: Task, near: rsyscall.near.Process,
+                 used_stack: Pointer[Stack],
+                 ctid: t.Optional[Pointer[FutexNode]],
+                 newtls: t.Optional[Pointer],
+    ) -> None:
+        super().__init__(task, near)
+        self.used_stack = used_stack
+        self.ctid = ctid
+        self.newtls = newtls
+
+    def did_exec(self) -> ChildProcess:
+        return ChildProcess(self.task, self.near, self.valid)
 
 @dataclass
 class MemoryMapping:

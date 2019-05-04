@@ -138,6 +138,7 @@ class Allocator:
 
     async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, Allocation]]:
         allocations: t.List[t.Tuple[MemoryMapping, Allocation]] = []
+        # TODO should coalesce together multiple pending mallocs waiting on the lock
         async with self.lock:
             size_index = 0
             for arena in self.arenas:
