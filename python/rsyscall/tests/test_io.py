@@ -711,7 +711,7 @@ class TestIO(unittest.TestCase):
     def test_persistent_thread_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as tmpdir:
-                per_stdtask, thread, connection = await fork_persistent(stdtask, tmpdir/"persist.sock")
+                per_stdtask, connection = await fork_persistent(stdtask, tmpdir/"persist.sock")
                 await connection.reconnect(stdtask)
                 await per_stdtask.unshare_files()
                 await per_stdtask.exit(0)
@@ -720,7 +720,7 @@ class TestIO(unittest.TestCase):
     def test_persistent_thread_nest_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as tmpdir:
-                per_stdtask, thread2, connection = await fork_persistent(stdtask, tmpdir/"persist.sock")
+                per_stdtask, connection = await fork_persistent(stdtask, tmpdir/"persist.sock")
                 thread3 = await per_stdtask.fork()
                 async with thread3 as stdtask3:
                     stdtask3 = thread3.stdtask
@@ -734,7 +734,7 @@ class TestIO(unittest.TestCase):
             host = await make_local_ssh(stdtask, rsyscall.nix.local_store)
             local_child, remote_stdtask = await host.ssh(stdtask)
             logger.info("about to fork")
-            per_stdtask, thread, connection = await fork_persistent(remote_stdtask,
+            per_stdtask, connection = await fork_persistent(remote_stdtask,
                 remote_stdtask.task.cwd()/"persist.sock")
             await per_stdtask.unshare_files()
             await connection.reconnect(remote_stdtask)
@@ -755,8 +755,8 @@ class TestIO(unittest.TestCase):
                 # probably.
                 # so, okay. SSHHost perhaps?
                 logger.info("about to fork")
-                per_stdtask, thread, server = await fork_persistent(remote_stdtask, path/"persist.sock")
-                logger.info("forked persistent, %s", thread.child_task.process.near)
+                per_stdtask, server = await fork_persistent(remote_stdtask, path/"persist.sock")
+                logger.info("forked persistent, %s", per_stdtask.task.base.process.near)
                 await server.make_persistent()
                 await local_child.kill()
                 local_child, remote_stdtask = await host.ssh(stdtask)

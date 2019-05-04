@@ -245,14 +245,14 @@ async def spawn_rsyscall_persistent_server(
         remote_sock: handle.FileDescriptor,
         listening_sock: handle.FileDescriptor,
         parent_task: Task, thread_maker: ThreadMaker, function: handle.Pointer[handle.NativeFunction],
-    ) -> t.Tuple[Task, Thread, RsyscallInterface, handle.FileDescriptor]:
-    cthread = await thread_maker.make_cthread(
+    ) -> t.Tuple[Task, RsyscallInterface, handle.FileDescriptor]:
+    child_process, futex_process = await thread_maker.make_cthread(
         (CLONE.VM|CLONE.FS|CLONE.FILES|CLONE.IO|
          CLONE.SIGHAND|CLONE.SYSVSEM|Signals.SIGCHLD),
         function, remote_sock.near, remote_sock.near, listening_sock.near)
     syscall = RsyscallInterface(RsyscallConnection(access_sock, access_sock),
-                                cthread.child_task.process.near, remote_sock.near)
-    new_base_task = base.Task(syscall, cthread.child_task.process.near, None,
+                                child_process.process.near, remote_sock.near)
+    new_base_task = base.Task(syscall, child_process.process.near, None,
                               parent_task.fd_table, parent_task.address_space, parent_task.base.fs,
                               parent_task.base.pidns,
                               parent_task.base.netns)
@@ -264,18 +264,18 @@ async def spawn_rsyscall_persistent_server(
                     parent_task.allocator.inherit(new_base_task),
                     parent_task.sigmask.inherit(),
     )
-    return new_task, cthread, syscall, remote_listening_handle
+    return new_task, syscall, remote_listening_handle
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def fork_persistent(
         self: StandardTask, path: Path,
-) -> t.Tuple[StandardTask, Thread, PersistentServer]:
+) -> t.Tuple[StandardTask, PersistentServer]:
     listening_sock = await self.task.socket_unix(SOCK.STREAM)
     await robust_unix_bind(path, listening_sock)
     await listening_sock.listen(1)
     [(access_sock, remote_sock)] = await self.make_async_connections(1)
     thread_maker = ThreadMaker(self.task, self.child_monitor, self.process)
-    task, thread, syscall, listening_sock_handle = await spawn_rsyscall_persistent_server(
+    task, syscall, listening_sock_handle = await spawn_rsyscall_persistent_server(
         access_sock, remote_sock, listening_sock.handle,
         self.task, thread_maker, self.process.persistent_server_func)
     await remote_sock.invalidate()
@@ -301,4 +301,4 @@ async def fork_persistent(
     )
     persistent_server = PersistentServer(path, task, epoller.epoller, syscall,
                                          listening_sock_handle)
-    return stdtask, thread, persistent_server
+    return stdtask, persistent_server

@@ -14390,6 +14390,11 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    I guess...
 
    and store the buffers and stuff...
+** hmm
+   the childprocessmonitor stuff... is actually a pretty low-level detail.
+
+   maybe we shouldn't do this inheritance stuff?
+   instead just explicitly clone_parent when necessary?
 ** DONE convert socketpair and pipe to handle style
    OK so what will we return?
 

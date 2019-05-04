@@ -1310,7 +1310,7 @@ class StandardTask:
     async def fork(self, newuser=False, newpid=False, fs=True, sighand=True) -> RsyscallThread:
         [(access_sock, remote_sock)] = await self.make_async_connections(1)
         thread_maker = ThreadMaker(self.task, self.child_monitor, self.process)
-        task, thread = await spawn_rsyscall_thread(
+        task = await spawn_rsyscall_thread(
             access_sock, remote_sock,
             self.task, thread_maker, self.process.server_func,
             newuser=newuser, newpid=newpid, fs=fs, sighand=sighand,
@@ -1333,7 +1333,7 @@ class StandardTask:
             child_monitor = await ChildProcessMonitor.make(task, epoller, signal_block=signal_block, is_reaper=newpid)
         else:
             epoller = self.epoller.inherit(task)
-            child_monitor = self.child_monitor.inherit_to_child(thread.child_task, task.base)
+            child_monitor = self.child_monitor.inherit_to_child(task.base)
         stdtask = StandardTask(
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task,
@@ -1650,19 +1650,18 @@ class ChildProcessMonitor:
         monitor = ChildProcessMonitorInternal(task, signal_queue, is_reaper=is_reaper)
         return ChildProcessMonitor(monitor, task.base, use_clone_parent=False, is_reaper=is_reaper)
 
-    def inherit_to_child(self, child: ChildProcess, cloning_task: base.Task) -> ChildProcessMonitor:
+    def inherit_to_child(self, child_task: base.Task) -> ChildProcessMonitor:
         if self.is_reaper:
             # TODO we should actually look at something on the Task, I suppose, to determine if we're a reaper
             raise Exception("we're a ChildProcessMonitor for a reaper task, "
                             "we can't be inherited because we can't use CLONE_PARENT")
-        if child.monitor is not self.internal:
-            raise Exception("child", child, "is not from our monitor", self.internal)
-        if child.process != cloning_task.process:
-            raise Exception("child process", child.process, "is not the same as cloning task process", cloning_task.process)
+        if child_task.parent_task is not self.internal.waiting_task.base:
+            raise Exception("task", child_task, "with parent_task", child_task.parent_task,
+                            "is not our child; we're", self.internal.waiting_task.base)
         # we now know that the cloning task is in a process which is a child process of the waiting task.  so
         # we know that if use CLONE_PARENT while cloning in the cloning task, the resulting tasks will be
         # children of the waiting task, so we can use the waiting task to wait on them.
-        return ChildProcessMonitor(self.internal, cloning_task, use_clone_parent=True, is_reaper=self.is_reaper)
+        return ChildProcessMonitor(self.internal, child_task, use_clone_parent=True, is_reaper=self.is_reaper)
 
     def inherit_to_thread(self, cloning_task: base.Task) -> ChildProcessMonitor:
         if self.internal.waiting_task.base.process is not cloning_task.process:
@@ -1776,7 +1775,7 @@ class ThreadMaker:
     async def make_cthread(self, flags: CLONE,
                            function: handle.Pointer[handle.NativeFunction],
                            arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
-    ) -> Thread:
+    ) -> t.Tuple[ChildProcess, ChildProcess]:
         # TODO it is unclear why we sometimes need to make a new mapping here, instead of allocating with our normal
         # allocator; all our memory is already MAP.SHARED, I think.
         # We should resolve this so we can use the stock allocator.
@@ -1792,10 +1791,10 @@ class ThreadMaker:
             return stack, futex_pointer
         # stack, futex_pointer = await self.task.perform_async_batch(op)
         stack, futex_pointer = await batch.perform_async_batch(self.task.base, self.task.transport, arena, op)
-        futex_task = await launch_futex_monitor(self.task, self.process_resources, self.monitor, futex_pointer)
+        futex_process = await launch_futex_monitor(self.task, self.process_resources, self.monitor, futex_pointer)
         child_process = await self.monitor.clone(
             flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
-        return Thread(child_process, futex_task)
+        return child_process, futex_process
 
 class RsyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
@@ -2580,7 +2579,7 @@ async def spawn_rsyscall_thread(
         parent_task: Task, thread_maker: ThreadMaker,
         function: handle.Pointer[handle.NativeFunction],
         newuser: bool, newpid: bool, fs: bool, sighand: bool,
-    ) -> t.Tuple[Task, Thread]:
+) -> Task:
     flags = CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM|signal.SIGCHLD
     # TODO correctly track the namespaces we're in for all these things
     if newuser:
@@ -2591,21 +2590,19 @@ async def spawn_rsyscall_thread(
         flags |= CLONE.FS
     if sighand:
         flags |= CLONE.SIGHAND
-    cthread = await thread_maker.make_cthread(flags, function, remote_sock.near, remote_sock.near)
-    syscall = ChildConnection(
-        RsyscallConnection(access_sock, access_sock),
-        cthread.child_task,
-        cthread.futex_task)
+    child_process, futex_process = await thread_maker.make_cthread(flags, function, remote_sock.near, remote_sock.near)
+    syscall = ChildConnection(RsyscallConnection(access_sock, access_sock), child_process, futex_process)
     if fs:
         fs_information = parent_task.base.fs
     else:
-        fs_information = far.FSInformation(cthread.child_task.process.near.id)
+        fs_information = far.FSInformation(child_process.process.near.id)
     if newpid:
-        pidns = far.PidNamespace(cthread.child_task.process.near.id)
+        pidns = far.PidNamespace(child_process.process.near.id)
     else:
         pidns = parent_task.base.pidns
     netns = parent_task.base.netns
-    new_base_task = base.Task(syscall, cthread.child_task.process, parent_task.base,
+    real_parent_task = parent_task.base.parent_task if thread_maker.monitor.use_clone_parent else parent_task.base
+    new_base_task = base.Task(syscall, child_process.process, real_parent_task,
                               parent_task.fd_table, parent_task.address_space, fs_information, pidns, netns)
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
@@ -2621,7 +2618,7 @@ async def spawn_rsyscall_thread(
                     parent_task.allocator.inherit(new_base_task),
                     parent_task.sigmask.inherit(),
     )
-    return new_task, cthread
+    return new_task
 
 async def make_robust_futex_task(
         parent_stdtask: StandardTask,
