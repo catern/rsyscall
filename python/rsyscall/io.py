@@ -23,7 +23,6 @@ import rsyscall.batch as batch
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr, SendmsgFlags, RecvmsgFlags
 from rsyscall.fcntl import AT, O, F
 from rsyscall.sys.socket import T_addr
-from rsyscall.linux.futex import FUTEX_WAITERS, FUTEX_TID_MASK
 from rsyscall.sys.mount import MS
 from rsyscall.sys.un import SockaddrUn, PathTooLongError
 from rsyscall.netinet.in_ import SockaddrIn
@@ -1286,11 +1285,6 @@ class StandardTask:
         await (parent/name).mkdir(mode=0o700)
         return TemporaryDirectory(self, parent, name)
 
-    async def spawn_exec(self) -> RsyscallThread:
-        rsyscall_thread = await self.fork()
-        await rsyscall_exec(self, rsyscall_thread, self.filesystem.rsyscall_server_path)
-        return rsyscall_thread
-
     async def make_async_connections(self, count: int) -> t.List[
             t.Tuple[AsyncFileDescriptor, handle.FileDescriptor]
     ]:
@@ -1368,7 +1362,7 @@ class StandardTask:
         """
         async def do_unshare(close_in_old_space: t.List[near.FileDescriptor],
                              copy_to_new_space: t.List[near.FileDescriptor]) -> None:
-            await unshare_files(self.task, self.child_monitor, self.process,
+            await unshare_files(self.task, self.process,
                                 close_in_old_space, copy_to_new_space, going_to_exec)
         await self.task.base.unshare_files(do_unshare)
 
@@ -1677,47 +1671,6 @@ class ChildProcessMonitor:
         if self.use_clone_parent:
             flags |= CLONE.PARENT
         return (await self.internal.clone(self.cloning_task, flags, child_stack, ctid=ctid))
-
-class Thread:
-    """A thread is a child task currently running in the address space of its parent.
-
-    This means:
-    1. We have probably allocated memory for it, including a stack and thread-local storage.
-    2. We need to free that memory when the task stops existing (by calling exit or receiving a signal)
-    3. We need to free that memory when the task calls exec (and leaves our address space)
-
-    We can straightforwardly achieve 2 by monitoring SIGCHLD/waitid for the task.
-
-    To achieve 3, we need some reliable way to know when the task has successfully called
-    exec. Since a thread can exec an arbitrary executable, we can't rely on the task notifying us
-    when it has finished execing.
-
-    We effectively want to be notified on mm_release. To achieve this, we use CLONE_CHILD_CLEARTID,
-    which causes the task to do a futex wakeup on a specified address when it calls mm_release, and
-    dedicate another task to waiting on that futex address.
-
-    The purpose of this class, then, is to hold the resources necessary to be notified of
-    mm_release. Namely, the futex.
-
-    It would better if we could just get notified of mm_release through SIGCHLD/waitid.
-
-    """
-    def __init__(self, child_task: ChildProcess, futex_task: ChildProcess) -> None:
-        self.child_task = child_task
-        self.futex_task = futex_task
-        self.released = False
-
-    async def close(self) -> None:
-        if not self.released:
-            if not self.child_task.process.death_event:
-                await self.child_task.kill()
-                await self.child_task.wait_for_exit()
-
-    async def __aenter__(self) -> 'Thread':
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.close()
 
 class BufferedStack:
     def __init__(self, base: Pointer) -> None:
@@ -2099,7 +2052,7 @@ async def do_cloexec_except(task: Task, process_resources: ProcessResources,
         raise Exception("cloexec function child died!", child_event)
 
 async def unshare_files(
-        task: Task, monitor: ChildProcessMonitor, process_resources: ProcessResources,
+        task: Task, process_resources: ProcessResources,
         close_in_old_space: t.List[near.FileDescriptor],
         copy_to_new_space: t.List[near.FileDescriptor],
         going_to_exec: bool,
@@ -2494,20 +2447,6 @@ class AsyncReadBuffer:
             raise Exception("bad netstring delimiter", comma)
         return data
 
-async def set_singleton_robust_futex(
-        task: handle.Task, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
-) -> WrittenPointer[handle.FutexNode]:
-    # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
-    futex_value = FUTEX_WAITERS|(int(task.process.near) & FUTEX_TID_MASK)
-    def op(sem: batch.BatchSemantics) -> t.Tuple[WrittenPointer[handle.FutexNode],
-                                                 WrittenPointer[handle.RobustListHead]]:
-        robust_list_entry = sem.to_pointer(handle.FutexNode(None, Int32(futex_value)))
-        robust_list_head = sem.to_pointer(handle.RobustListHead(robust_list_entry))
-        return robust_list_entry, robust_list_head
-    robust_list_entry, robust_list_head = await batch.perform_batch(task, transport, allocator, op)
-    await task.set_robust_list(robust_list_head)
-    return robust_list_entry
-
 async def make_connections(access_task: Task,
                            # regrettably asymmetric...
                            # it would be nice to unify connect/accept with passing file descriptors somehow.
@@ -2619,80 +2558,6 @@ async def spawn_rsyscall_thread(
                     parent_task.sigmask.inherit(),
     )
     return new_task
-
-async def make_robust_futex_task(
-        parent_stdtask: StandardTask,
-        parent_memfd: handle.FileDescriptor,
-        child_stdtask: StandardTask,
-        child_memfd: handle.FileDescriptor,
-) -> t.Tuple[ChildProcess, handle.Pointer[FutexNode], handle.MemoryMapping]:
-    # resize memfd appropriately
-    futex_memfd_size = 4096
-    await parent_memfd.ftruncate(futex_memfd_size)
-    file = near.File()
-    # set up local mapping
-    local_mapping = await parent_memfd.mmap(futex_memfd_size, PROT.READ|PROT.WRITE, MAP.SHARED, file=file)
-    await parent_memfd.invalidate()
-    # set up remote mapping
-    remote_mapping = await child_memfd.mmap(futex_memfd_size, PROT.READ|PROT.WRITE, MAP.SHARED, file=file)
-    await child_memfd.invalidate()
-
-    remote_futex_node = await set_singleton_robust_futex(
-        child_stdtask.task.base, child_stdtask.task.transport, memory.Arena(remote_mapping))
-    local_futex_node = remote_futex_node._with_mapping(local_mapping)
-    # now we start the futex monitor
-    futex_task = await launch_futex_monitor(
-        parent_stdtask.task, parent_stdtask.process, parent_stdtask.child_monitor, local_futex_node)
-    return futex_task, local_futex_node, remote_mapping
-
-async def rsyscall_exec(
-        parent_stdtask: StandardTask,
-        rsyscall_thread: RsyscallThread,
-        rsyscall_server_path: handle.Path,
-    ) -> None:
-    "Exec into the standalone rsyscall_server executable"
-    stdtask = rsyscall_thread.stdtask
-    [(access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(1)
-    # create this guy and pass him down to the new thread
-    child_futex_memfd = await stdtask.task.base.memfd_create(
-        await stdtask.task.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
-    parent_futex_memfd = parent_stdtask.task.base.make_fd_handle(child_futex_memfd)
-    syscall: ChildConnection = stdtask.task.base.sysif # type: ignore
-    def encode(fd: near.FileDescriptor) -> bytes:
-        return str(int(fd)).encode()
-    async def do_unshare(close_in_old_space: t.List[near.FileDescriptor],
-                         copy_to_new_space: t.List[near.FileDescriptor]) -> None:
-        # unset cloexec on all the fds we want to copy to the new space
-        for copying_fd in copy_to_new_space:
-            await near.fcntl(syscall, copying_fd, fcntl.F_SETFD, 0)
-        child_task = await rsyscall_thread.execve(
-            rsyscall_server_path, [
-                b"rsyscall_server",
-                encode(passed_data_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
-                *[encode(fd) for fd in copy_to_new_space],
-            ], {}, [stdtask.child_monitor.internal.signal_queue.signal_block])
-        #### read symbols from describe fd
-        describe_buf = AsyncReadBuffer(access_data_sock)
-        symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')
-        stdtask.process = ProcessResources.make_from_symbols(stdtask.task.base, symbol_struct)
-        # the futex task we used before is dead now that we've exec'd, have
-        # to null it out
-        syscall.futex_task = None
-        # TODO maybe remove dependence on parent task for closing?
-        for fd in close_in_old_space:
-            await near.close(parent_stdtask.task.base.sysif, fd)
-        stdtask.task.base.address_space = base.AddressSpace(rsyscall_thread.stdtask.task.base.process.near.id)
-        # we mutate the allocator instead of replacing to so that anything that
-        # has stored the allocator continues to work
-        stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)
-        stdtask.task.transport = SocketMemoryTransport(access_data_sock, passed_data_sock, None)
-    await stdtask.task.base.unshare_files(do_unshare)
-
-    #### make new futex task
-    futex_task, local_futex_node, remote_mapping = await make_robust_futex_task(
-        parent_stdtask, parent_futex_memfd, stdtask, child_futex_memfd)
-    # TODO how do we unmap the remote mapping?
-    syscall.futex_task = futex_task
 
 class RsyscallThread:
     def __init__(self,
