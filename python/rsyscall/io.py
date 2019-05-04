@@ -1346,7 +1346,7 @@ class StandardTask:
             stdout=self.stdout.for_task(task.base),
             stderr=self.stderr.for_task(task.base),
         )
-        return RsyscallThread(stdtask, thread)
+        return RsyscallThread(stdtask, self.child_monitor)
 
     async def run(self, command: Command, check=True,
                   *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
@@ -1707,20 +1707,6 @@ class Thread:
         self.child_task = child_task
         self.futex_task = futex_task
         self.released = False
-
-    async def execveat(self, task: Task, path: handle.Path,
-                       argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> ChildProcess:
-        def op(sem: batch.BatchSemantics) -> t.Tuple[handle.WrittenPointer[handle.Path],
-                                                     handle.WrittenPointer[handle.ArgList],
-                                                     handle.WrittenPointer[handle.ArgList]]:
-            argv_ptrs = handle.ArgList([sem.to_pointer(handle.Arg(arg)) for arg in argv])
-            envp_ptrs = handle.ArgList([sem.to_pointer(handle.Arg(arg)) for arg in envp])
-            return (sem.to_pointer(path),
-                    sem.to_pointer(argv_ptrs),
-                    sem.to_pointer(envp_ptrs))
-        filename, argv_ptr, envp_ptr = await batch.perform_batch(task.base, task.transport, task.allocator, op)
-        await task.base.execve(filename, argv_ptr, envp_ptr, flags)
-        return self.child_task
 
     async def close(self) -> None:
         if not self.released:
@@ -2698,7 +2684,7 @@ async def rsyscall_exec(
         # TODO maybe remove dependence on parent task for closing?
         for fd in close_in_old_space:
             await near.close(parent_stdtask.task.base.sysif, fd)
-        stdtask.task.base.address_space = base.AddressSpace(rsyscall_thread.thread.child_task.process.near.id)
+        stdtask.task.base.address_space = base.AddressSpace(rsyscall_thread.stdtask.task.base.process.near.id)
         # we mutate the allocator instead of replacing to so that anything that
         # has stored the allocator continues to work
         stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)
@@ -2708,20 +2694,33 @@ async def rsyscall_exec(
     #### make new futex task
     futex_task, local_futex_node, remote_mapping = await make_robust_futex_task(
         parent_stdtask, parent_futex_memfd, stdtask, child_futex_memfd)
-    syscall.futex_task = futex_task
     # TODO how do we unmap the remote mapping?
-    rsyscall_thread.thread = Thread(rsyscall_thread.thread.child_task, futex_task)
+    syscall.futex_task = futex_task
 
 class RsyscallThread:
     def __init__(self,
                  stdtask: StandardTask,
-                 thread: Thread,
+                 parent_monitor: ChildProcessMonitor,
     ) -> None:
         self.stdtask = stdtask
-        self.thread = thread
+        self.parent_monitor = parent_monitor
 
     async def exec(self, command: Command) -> ChildProcess:
         return (await command.exec(self))
+
+    async def execveat(self, path: handle.Path,
+                       argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> ChildProcess:
+        def op(sem: batch.BatchSemantics) -> t.Tuple[handle.WrittenPointer[handle.Path],
+                                                     handle.WrittenPointer[handle.ArgList],
+                                                     handle.WrittenPointer[handle.ArgList]]:
+            argv_ptrs = handle.ArgList([sem.to_pointer(handle.Arg(arg)) for arg in argv])
+            envp_ptrs = handle.ArgList([sem.to_pointer(handle.Arg(arg)) for arg in envp])
+            return (sem.to_pointer(path),
+                    sem.to_pointer(argv_ptrs),
+                    sem.to_pointer(envp_ptrs))
+        filename, argv_ptr, envp_ptr = await self.stdtask.task.perform_batch(op)
+        child_process = await self.stdtask.task.base.execve(filename, argv_ptr, envp_ptr, flags)
+        return ChildProcess(child_process, self.parent_monitor.internal)
 
     async def execve(self, path: handle.Path, argv: t.Sequence[t.Union[str, bytes, os.PathLike]],
                      env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]={},
@@ -2755,9 +2754,7 @@ class RsyscallThread:
             raw_envp.append(b''.join([key_bytes, b'=', value]))
         task = self.stdtask.task
         logger.info("execveat(%s, %s, %s)", path, argv, env_updates)
-        return (await self.thread.execveat(task,
-                                           path, [os.fsencode(arg) for arg in argv],
-                                           raw_envp, AT.NONE))
+        return await self.execveat(path, [os.fsencode(arg) for arg in argv], raw_envp, AT.NONE)
 
     async def run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
         child = await command.exec(self)
@@ -2768,7 +2765,6 @@ class RsyscallThread:
         return exit_event
 
     async def close(self) -> None:
-        await self.thread.close()
         await self.stdtask.task.close()
 
     async def __aenter__(self) -> StandardTask:
