@@ -145,18 +145,59 @@ class File:
 T_file = t.TypeVar('T_file', bound=File)
 T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
-class Task:
+class RAM:
+    def __init__(self, 
+                 task: base.Task,
+                 transport: base.MemoryTransport,
+                 allocator: memory.AllocatorClient,
+    ) -> None:
+        self.task = task
+        self.transport = transport
+        self.allocator = allocator
+
+    async def malloc_struct(self, cls: t.Type[T_fixed_size]) -> handle.Pointer[T_fixed_size]:
+        return await self.malloc_type(cls, cls.sizeof())
+
+    async def malloc_type(self, cls: t.Type[T_has_serializer], size: int, alignment: int=1) -> handle.Pointer[T_has_serializer]:
+        return await self.malloc_serializer(cls.get_serializer(self.task), size)
+
+    async def malloc_serializer(self, serializer: Serializer[T], size: int, alignment: int=1) -> handle.Pointer[T]:
+        mapping, allocation = await self.allocator.malloc(size, alignment=alignment)
+        try:
+            return handle.Pointer(mapping, self.transport, serializer, allocation)
+        except:
+            allocation.free()
+            raise
+
+    async def to_pointer(self, data: T_has_serializer, alignment: int=1) -> handle.WrittenPointer[T_has_serializer]:
+        serializer = data.get_serializer(self.task)
+        data_bytes = serializer.to_bytes(data)
+        ptr = await self.malloc_serializer(serializer, len(data_bytes), alignment=alignment)
+        try:
+            return await ptr.write(data)
+        except:
+            ptr.free()
+            raise
+
+    async def perform_batch(self, op: t.Callable[[batch.BatchSemantics], T]) -> T:
+        return await batch.perform_batch(self.task, self.transport, self.allocator, op)
+
+    async def perform_async_batch(self, op: t.Callable[[batch.BatchSemantics], t.Awaitable[T]],
+                                  allocator: memory.AllocatorInterface=None,
+    ) -> T:
+        if allocator is None:
+            allocator = self.allocator
+        return await batch.perform_async_batch(self.task, self.transport, allocator, op)
+
+class Task(RAM):
     def __init__(self,
                  base_: base.Task,
                  transport: base.MemoryTransport,
                  allocator: memory.AllocatorClient,
                  sigmask: SignalMask,
     ) -> None:
+        super().__init__(base_, transport, allocator)
         self.base = base_
-        self.transport = transport
-        # Being able to allocate memory is like having a stack.
-        # we really need to be able to allocate memory to get anything done - namely, to call syscalls.
-        self.allocator = allocator
         self.sigmask = sigmask
 
     @property
@@ -179,40 +220,6 @@ class Task:
 
     async def close(self):
         await self.syscall.close_interface()
-
-    async def malloc_struct(self, cls: t.Type[T_fixed_size]) -> handle.Pointer[T_fixed_size]:
-        return await self.malloc_type(cls, cls.sizeof())
-
-    async def malloc_type(self, cls: t.Type[T_has_serializer], size: int, alignment: int=1) -> handle.Pointer[T_has_serializer]:
-        return await self.malloc_serializer(cls.get_serializer(self.base), size)
-
-    async def malloc_serializer(self, serializer: Serializer[T], size: int, alignment: int=1) -> handle.Pointer[T]:
-        mapping, allocation = await self.allocator.malloc(size, alignment=alignment)
-        try:
-            return handle.Pointer(mapping, self.transport, serializer, allocation)
-        except:
-            allocation.free()
-            raise
-
-    async def to_pointer(self, data: T_has_serializer, alignment: int=1) -> handle.WrittenPointer[T_has_serializer]:
-        serializer = data.get_serializer(self.base)
-        data_bytes = serializer.to_bytes(data)
-        ptr = await self.malloc_serializer(serializer, len(data_bytes), alignment=alignment)
-        try:
-            return await ptr.write(data)
-        except:
-            ptr.free()
-            raise
-
-    async def perform_batch(self, op: t.Callable[[batch.BatchSemantics], T]) -> T:
-        return await batch.perform_batch(self.base, self.transport, self.allocator, op)
-
-    async def perform_async_batch(self, op: t.Callable[[batch.BatchSemantics], t.Awaitable[T]],
-                                  allocator: memory.AllocatorInterface=None,
-    ) -> T:
-        if allocator is None:
-            allocator = self.allocator
-        return await batch.perform_async_batch(self.base, self.transport, allocator, op)
 
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: MS,
@@ -2123,6 +2130,7 @@ class SocketMemoryTransport(base.MemoryTransport):
 
     """
     local: AsyncFileDescriptor
+    local_ram: RAM
     remote: handle.FileDescriptor
     pending_writes: t.List[WriteOp] = field(default_factory=list)
     running_write: OneAtATime = field(default_factory=OneAtATime)
@@ -2158,7 +2166,7 @@ class SocketMemoryTransport(base.MemoryTransport):
         return outputs
 
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
-        return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote))
+        return SocketMemoryTransport(self.local, self.local_ram, task.make_fd_handle(self.remote))
 
     async def _unlocked_single_write(self, dest: Pointer, data: bytes) -> None:
         # need an additional cap: to turn bytes to a pointer.

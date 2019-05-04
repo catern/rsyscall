@@ -14371,7 +14371,48 @@ including entire tasks - when we drop the task, we drop the process, and it dies
 
     ummmm okaaaaay soooo
 
+    i just deleted it and it works fine
+
     I guess we won't need to pre-create the socket memory transport lol.
+
+    ok so that's good, that's good.
+*** rethink
+    wait, uh...
+    if I'm going to be doing this, allocating and then writing in it,
+    why don't I just use read/write?
+    just have two separate interfaces, as planned originally...
+
+    yeah and we can just use the old Task interface, whatever.
+    and, we can call the new memory operator, RAM. or something.
+    cool.
+    heck for that matter let's just have the io.Task inherit from RAM
+
+    ok seems good
+*** hm
+    for RAM to create pointers, it requires a task to create them for,
+    because the serializer-getter needs a task.
+
+    HmMmMmMMMMMMMMM
+
+    that's basically only for reading, sure...
+
+    when I read and get FDs, I need the task to make 'em real.
+
+    ok fine fine we'll pass in the task too
+
+
+    ok hmmmmmmmm now how do I get tha RAM from da FAM
+
+    liiiiiiiiiike
+
+    I want the ram from local stdtask...
+
+    not the RAM from my parent stdtask...
+
+    hm. maybe I just reference local???
+
+    hm. hm. hm. hm.
+    no that is gross.
 ** turn SignalMask/SignalBlock into a handle
     I guess? Or at least re-evaluate this design
 ** DONE have handle.exec return a child process, move child management into handle
