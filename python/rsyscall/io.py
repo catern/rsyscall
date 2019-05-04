@@ -28,7 +28,7 @@ from rsyscall.sys.mount import MS
 from rsyscall.sys.un import SockaddrUn, PathTooLongError
 from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.sys.epoll import EpollEvent, EpollEventList, EpollEventMask, EpollCtlOp, EpollFlag
-from rsyscall.sys.wait import ChildCode, UncleanExit, ChildEvent, W
+from rsyscall.sys.wait import CLD, UncleanExit, ChildEvent, W
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
 from rsyscall.sys.inotify import InotifyFlag
@@ -1528,34 +1528,26 @@ class ChildProcess:
                  monitor: ChildProcessMonitorInternal) -> None:
         self.process = process
         self.monitor = monitor
-        # we might have already gotten events for this process and ignored the signal
-        self.wait_for_signal = False
         self.task = self.monitor.signal_queue.sigfd.underlying.task
-        self.in_use = False
-        self.death_event: t.Optional[ChildEvent] = None
-        self.siginfo_buf: t.Optional[handle.Pointer[Siginfo]] = None
 
-    async def try_waitid(self) -> t.Optional[ChildEvent]:
-        event_opt = await self.process.read_event()
-        if event_opt is not None:
-            return event_opt
-        await self.process.waitid(
-            W.EXITED|W.STOPPED|W.CONTINUED|W.ALL|W.NOHANG, await self.task.malloc_struct(Siginfo))
-        event = await self.process.read_event()
-        return event
+    async def waitid_nohang(self) -> t.Optional[ChildEvent]:
+        if self.process.unread_siginfo is None:
+            await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.ALL|W.NOHANG,
+                                      await self.task.malloc_struct(Siginfo))
+        return await self.process.read_siginfo()
 
     async def wait(self) -> t.List[ChildEvent]:
-        while True:
-            with self.monitor.sigchld_waiter() as waiter:
-                event = await self.try_waitid()
+        with self.monitor.sigchld_waiter() as waiter:
+            while True:
+                event = await self.waitid_nohang()
                 if event is None:
                     await waiter.wait_for_sigchld()
                 else:
                     return [event]
 
     async def wait_for_exit(self) -> ChildEvent:
-        if self.death_event:
-            return self.death_event
+        if self.process.death_event:
+            return self.process.death_event
         while True:
             for event in (await self.wait()):
                 if event.died():
@@ -1571,7 +1563,7 @@ class ChildProcess:
             for event in (await self.wait()):
                 if event.died():
                     return event
-                elif event.code == ChildCode.STOPPED:
+                elif event.code == CLD.STOPPED:
                     return event
 
     async def send_signal(self, sig: signal.Signals) -> None:
@@ -1584,7 +1576,7 @@ class ChildProcess:
         pass
 
     async def __aexit__(self, *args, **kwargs) -> None:
-        if not self.process.alive:
+        if self.process.death_event:
             pass
         else:
             await self.kill()
@@ -1732,7 +1724,7 @@ class Thread:
 
     async def close(self) -> None:
         if not self.released:
-            if self.child_task.process.alive:
+            if not self.child_task.process.death_event:
                 await self.child_task.kill()
                 await self.child_task.wait_for_exit()
 
@@ -2117,7 +2109,7 @@ async def do_cloexec_except(task: Task, process_resources: ProcessResources,
     stack, siginfo_buf = await task.perform_async_batch(op)
     process = await task.base.clone(CLONE.VM|CLONE.FILES, stack, ptid=None, ctid=None, newtls=None)
     await process.waitid(W.ALL|W.EXITED, siginfo_buf)
-    child_event = await.process.read_event()
+    child_event = await process.read_event()
     if not child_event.clean():
         raise Exception("cloexec function child died!", child_event)
 
@@ -2141,14 +2133,16 @@ async def unshare_files(
     process = await task.base.clone(CLONE.VM|CLONE.FILES|CLONE.FS|CLONE.IO|CLONE.SIGHAND|CLONE.SYSVSEM,
                                     stack, ptid=None, ctid=None, newtls=None)
     await process.waitid(W.ALL|W.STOPPED|W.EXITED, siginfo_buf)
-    event = ChildEvent.make_from_siginfo(await siginfo_buf.read())
+    event = await process.read_event()
     if event.died():
         raise Exception("stop_then_close task died unexpectedly", event)
     # perform the actual unshare
     await near.unshare(task.base.sysif, near.UnshareFlag.FILES)
     await process.kill(Signals.SIGCONT)
     await process.waitid(W.ALL|W.EXITED, siginfo_buf)
-    process.mark_dead()
+    event = await process.read_event()
+    if not event.clean():
+        raise Exception("unshare function child died uncleanly", event)
     # perform a cloexec
     if not going_to_exec:
         await do_cloexec_except(task, process_resources, copy_to_new_space)

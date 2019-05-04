@@ -10,7 +10,7 @@ class IdType(enum.IntEnum):
     PGID = lib.P_PGID # Wait for any child whose process group ID matches id.
     ALL = lib.P_ALL # Wait for any child; id is ignored.
 
-class ChildCode(enum.IntEnum):
+class CLD(enum.IntEnum):
     EXITED = lib.CLD_EXITED # child called _exit(2)
     KILLED = lib.CLD_KILLED # child killed by signal
     DUMPED = lib.CLD_DUMPED # child killed by signal, and dumped core
@@ -36,29 +36,29 @@ class UncleanExit(Exception):
 
 @dataclass
 class ChildEvent:
-    code: ChildCode
+    code: CLD
     pid: int
     uid: int
     exit_status: t.Optional[int]
     sig: t.Optional[Signals]
 
     @staticmethod
-    def make(code: ChildCode, pid: int, uid: int, status: int) -> ChildEvent:
-        if code is ChildCode.EXITED:
+    def make(code: CLD, pid: int, uid: int, status: int) -> ChildEvent:
+        if code is CLD.EXITED:
             return ChildEvent(code, pid, uid, status, None)
         else:
             return ChildEvent(code, pid, uid, None, Signals(status))
 
     @staticmethod
     def make_from_siginfo(siginfo: Siginfo) -> ChildEvent:
-        return ChildEvent.make(ChildCode(siginfo.code),
+        return ChildEvent.make(CLD(siginfo.code),
                                pid=siginfo.pid, uid=siginfo.uid,
                                status=siginfo.status)
 
     def died(self) -> bool:
-        return self.code in [ChildCode.EXITED, ChildCode.KILLED, ChildCode.DUMPED]
+        return self.code in [CLD.EXITED, CLD.KILLED, CLD.DUMPED]
     def clean(self) -> bool:
-        return self.code == ChildCode.EXITED and self.exit_status == 0
+        return self.code == CLD.EXITED and self.exit_status == 0
 
     def check(self) -> None:
         if self.clean():
@@ -84,5 +84,5 @@ from unittest import TestCase
 
 class TestWait(TestCase):
     def test_child_event(self) -> None:
-        event = ChildEvent.make_from_siginfo(Siginfo(code=ChildCode.EXITED, pid=1, uid=13, status=1))
+        event = ChildEvent.make_from_siginfo(Siginfo(code=CLD.EXITED, pid=1, uid=13, status=1))
         self.assertFalse(event.clean())

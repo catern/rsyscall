@@ -1022,26 +1022,38 @@ class ChildProcess(Process):
     def __init__(self, task: Task, near: rsyscall.near.Process, alive=True) -> None:
         self.task = task
         self.near = near
-        self.alive = alive
         self.death_event: t.Optional[ChildEvent] = None
-        self.unread_event_buffers: t.List[Pointer[Siginfo]] = []
+        self.unread_siginfo: t.Optional[Pointer[Siginfo]] = None
         self.in_use = False
+
+    def mark_dead(self, event: ChildEvent) -> None:
+        self.death_event = event
+
+    def did_exec(self) -> ChildProcess:
+        return self
 
     @contextlib.contextmanager
     def borrow(self) -> t.Iterator[None]:
         if self.death_event:
             raise Exception("child process", self.near, "is no longer alive, so we can't wait on it or kill it")
+        if self.unread_siginfo:
+            raise Exception("for child process", self.near, "waitid or kill was call "
+                            "before processing the siginfo buffer from an earlier waitid")
         if self.in_use:
             # TODO technically we could have multiple kills happening simultaneously.
             # but indeed, we can't have a kill happen while a wait is happening, nor multiple waits at a time.
             # that would be racy - we might kill the wrong process or wait on the wrong process
-            raise Exception("child process", self.near, "is already being waited on or killed,"
+            raise Exception("child process", self.near, "is currently being waited on or killed,"
                             " can't use it a second time")
         self.in_use = True
         try:
             yield
         finally:
             self.in_use = False
+
+    async def kill(self, sig: Signals) -> None:
+        with self.borrow():
+            await super().kill(sig)
 
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:
@@ -1050,8 +1062,6 @@ class ChildProcess(Process):
         # maybe... we should store it ourselves? hm.
         # Likewise, it's important that this class be informed when the process dies.
         # which... again, we could do in this class.
-        if self.death_event:
-            raise Exception("child process", self.near, "is no longer alive, so can't be waited on")
         with contextlib.ExitStack() as stack:
             stack.enter_context(self.borrow())
             stack.enter_context(infop.borrow(self.task))
@@ -1062,49 +1072,31 @@ class ChildProcess(Process):
                                            rusage.near if rusage else None)
             except ChildProcessError as e:
                 raise ChildProcessError(e.errno, e.strerror, self.near) from None
-        self.unread_event_buffers.insert(0, infop)
+        self.unread_siginfo = infop
 
-    async def read_event(self) -> t.Optional[ChildEvent]:
-        if self.unread_event_buffers:
-            next = self.unread_event_buffers.pop()
-            try:
-                siginfo = await next.read()
-            except:
-                self.unread_event_buffers.append(next)
-            if siginfo.pid == 0:
-                return None
-            else:
-                # hmmm what do we do if we want to mark a child dead,
-                # but don't want to read from the siginfo buf?
-                # as in unshare_files
-                # relevant type system?
-                # how to emulate?
-                # hmm this isn't even right, we need to read the siginfo buf before we waitid again.
-                # we could feed in the Siginfo object and return the child event it maybe has?
-                # and we could flip a bit when we call waitid, and unflip it when feeding the event
-                # and I guess we store the pointer that we need to read from,
-                # so that no state is in the external child thing...
-                # ok so we don't even need to feed in events hmm.
-                # because we need to hold the buffer. hmm...
-                # so okay maybe we support feeding in events,
-                # but we have a helper which pulls the stored buffer, reads it,
-                # and feeds in the event, and returns the result.
-                event = ChildEvent.make_from_siginfo(siginfo)
-                if event.died():
-                    self.mark_dead(event)
-                return event
-        else:
+    def parse_waitid_siginfo(self, siginfo: Siginfo) -> t.Optional[ChildEvent]:
+        self.unread_siginfo = None
+        if siginfo.pid == 0:
             return None
+        else:
+            event = ChildEvent.make_from_siginfo(siginfo)
+            if event.died():
+                self.mark_dead(event)
+            return event
 
-    async def kill(self, sig: Signals) -> None:
-        with self.borrow():
-            await super().kill(sig)
+    # helpers
+    async def read_siginfo(self) -> t.Optional[ChildEvent]:
+        if self.unread_siginfo is None:
+            raise Exception("no siginfo buf to read")
+        else:
+            siginfo = await self.unread_siginfo.read()
+            return self.parse_waitid_siginfo(siginfo)
 
-    def mark_dead(self, event: ChildEvent) -> None:
-        self.death_event = event
-
-    def did_exec(self) -> ChildProcess:
-        return self
+    async def read_event(self) -> ChildEvent:
+        event = await self.read_siginfo()
+        if event is None:
+            raise Exception("expected an event, but siginfo buf didn't contain one")
+        return event
 
 class ThreadProcess(ChildProcess):
     def __init__(self, task: Task, near: rsyscall.near.Process,
