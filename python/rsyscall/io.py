@@ -14,7 +14,7 @@ import rsyscall.memint as memint
 import rsyscall.memory as memory
 import rsyscall.handle as handle
 import rsyscall.handle
-from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg
+from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_has_serializer, T_fixed_size, Bytes, Int32, Serializer, Struct
@@ -1635,12 +1635,12 @@ class ChildProcessMonitorInternal:
         self.waiters.remove(waiter)
 
     async def clone(self,
-                        clone_task: base.Task,
-                        flags: CLONE,
-                        child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
-                        ctid: t.Optional[handle.Pointer]=None) -> t.Tuple[ChildProcess, handle.Pointer[Stack]]:
-        process, usedstack = await clone_task.clone(flags|Signals.SIGCHLD, child_stack, None, ctid, None)
-        return self.add_task(process), usedstack
+                    clone_task: base.Task,
+                    flags: CLONE,
+                    child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
+                    ctid: t.Optional[handle.Pointer]=None) -> ChildProcess:
+        process = await clone_task.clone(flags|Signals.SIGCHLD, child_stack, None, ctid, None)
+        return self.add_task(process)
 
     async def do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
@@ -1694,8 +1694,8 @@ class ChildProcessMonitor:
         return ChildProcessMonitor(self.internal, cloning_task, use_clone_parent=False, is_reaper=self.is_reaper)
 
     async def clone(self, flags: CLONE,
-                        child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
-                        ctid: t.Optional[handle.Pointer[FutexNode]]=None) -> t.Tuple[ChildProcess, handle.Pointer[Stack]]:
+                    child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
+                    ctid: t.Optional[handle.Pointer[FutexNode]]=None) -> ChildProcess:
         if self.use_clone_parent:
             flags |= CLONE.PARENT
         return (await self.internal.clone(self.cloning_task, flags, child_stack, ctid=ctid))
@@ -1724,14 +1724,9 @@ class Thread:
     It would better if we could just get notified of mm_release through SIGCHLD/waitid.
 
     """
-    child_task: ChildProcess
-    futex_task: ChildProcess
-    # TODO we can get rid of this handle.Pointer by putting it into the child_task handle.Process
-    futex_pointer: handle.Pointer[handle.FutexNode]
-    def __init__(self, child_task: ChildProcess, futex_task: ChildProcess, futex_pointer: handle.Pointer) -> None:
+    def __init__(self, child_task: ChildProcess, futex_task: ChildProcess) -> None:
         self.child_task = child_task
         self.futex_task = futex_task
-        self.futex_pointer = futex_pointer
         self.released = False
 
     async def execveat(self, task: Task, path: handle.Path,
@@ -1748,54 +1743,13 @@ class Thread:
         await task.base.execve(filename, argv_ptr, envp_ptr, flags)
         return self.child_task
 
-    async def wait_for_mm_release(self) -> ChildProcess:
-        """Wait for the task to leave the parent's address space, and return the ChildProcess.
-
-        The task can leave the parent's address space either by exiting or execing.
-
-        """
-        # once the futex task has exited, the child task has left the parent's address space.
-        result = await self.futex_task.wait_for_exit()
-        if not result.clean():
-            raise Exception("the futex task", self.futex_task, "for child task", self.child_task,
-                            "unexpectedly exited non-zero", result, "maybe it was SIGKILL'd?")
-        self.futex_pointer.free()
-        self.released = True
-        return self.child_task
-
     async def close(self) -> None:
         if not self.released:
             if self.child_task.process.alive:
                 await self.child_task.kill()
-            await self.wait_for_mm_release()
+                await self.child_task.wait_for_exit()
 
     async def __aenter__(self) -> 'Thread':
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.close()
-
-class CThread(Thread):
-    """A thread running the C runtime and some C function.
-
-    At the moment, that means it has a stack. 
-    The considerations for the Thread class all therefore apply.
-
-    TODO thread-local-storage.
-
-    """
-    stack_pointer: handle.Pointer
-    def __init__(self, thread: Thread, stack_pointer: handle.Pointer) -> None:
-        super().__init__(thread.child_task, thread.futex_task, thread.futex_pointer)
-        self.stack_pointer = stack_pointer
-
-    async def wait_for_mm_release(self) -> ChildProcess:
-        result = await super().wait_for_mm_release()
-        # we can free the stack mapping now that the thread has left our address space
-        self.stack_pointer.free()
-        return result
-
-    async def __aenter__(self) -> 'CThread':
         return self
 
     async def __aexit__(self, *args, **kwargs):
@@ -1833,7 +1787,7 @@ async def launch_futex_monitor(task: Task,
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         return stack
     stack = await task.perform_async_batch(op)
-    futex_task, usedstack = await monitor.clone(CLONE.VM|CLONE.FILES, stack)
+    futex_task = await monitor.clone(CLONE.VM|CLONE.FILES, stack)
     # wait for futex helper to SIGSTOP itself,
     # which indicates the trampoline is done and we can deallocate the stack.
     event = await futex_task.wait_for_stop_or_exit()
@@ -1857,7 +1811,7 @@ class ThreadMaker:
     async def make_cthread(self, flags: CLONE,
                            function: handle.Pointer[handle.NativeFunction],
                            arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0,
-    ) -> CThread:
+    ) -> Thread:
         # TODO it is unclear why we sometimes need to make a new mapping here, instead of allocating with our normal
         # allocator; all our memory is already MAP.SHARED, I think.
         # We should resolve this so we can use the stock allocator.
@@ -1874,9 +1828,9 @@ class ThreadMaker:
         # stack, futex_pointer = await self.task.perform_async_batch(op)
         stack, futex_pointer = await batch.perform_async_batch(self.task.base, self.task.transport, arena, op)
         futex_task = await launch_futex_monitor(self.task, self.process_resources, self.monitor, futex_pointer)
-        child_task, usedstack = await self.monitor.clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
-        thread = Thread(child_task, futex_task, futex_pointer)
-        return CThread(thread, usedstack)
+        child_process = await self.monitor.clone(
+            flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
+        return Thread(child_process, futex_task)
 
 class RsyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
@@ -2174,9 +2128,10 @@ async def do_cloexec_except(task: Task, process_resources: ProcessResources,
         siginfo_buf = sem.malloc_struct(Siginfo)
         return stack, siginfo_buf
     stack, siginfo_buf = await task.perform_async_batch(op)
-    process, used_stack = await task.base.clone(CLONE.VM|CLONE.FILES, stack, ptid=None, ctid=None, newtls=None)
+    process = await task.base.clone(CLONE.VM|CLONE.FILES, stack, ptid=None, ctid=None, newtls=None)
     await process.waitid(W.ALL|W.EXITED, siginfo_buf)
     child_event = ChildEvent.make_from_siginfo(await siginfo_buf.read())
+    process.mark_dead()
     if not child_event.clean():
         raise Exception("cloexec function child died!", child_event)
 
@@ -2197,8 +2152,8 @@ async def unshare_files(
         siginfo_buf = sem.malloc_struct(Siginfo)
         return stack, siginfo_buf
     stack, siginfo_buf = await task.perform_async_batch(op)
-    process, used_stack = await task.base.clone(CLONE.VM|CLONE.FILES|CLONE.FS|CLONE.IO|CLONE.SIGHAND|CLONE.SYSVSEM,
-                                                stack, ptid=None, ctid=None, newtls=None)
+    process = await task.base.clone(CLONE.VM|CLONE.FILES|CLONE.FS|CLONE.IO|CLONE.SIGHAND|CLONE.SYSVSEM,
+                                    stack, ptid=None, ctid=None, newtls=None)
     await process.waitid(W.ALL|W.STOPPED|W.EXITED, siginfo_buf)
     event = ChildEvent.make_from_siginfo(await siginfo_buf.read())
     if event.died():
@@ -2207,6 +2162,7 @@ async def unshare_files(
     await near.unshare(task.base.sysif, near.UnshareFlag.FILES)
     await process.kill(Signals.SIGCONT)
     await process.waitid(W.ALL|W.EXITED, siginfo_buf)
+    process.mark_dead()
     # perform a cloexec
     if not going_to_exec:
         await do_cloexec_except(task, process_resources, copy_to_new_space)
@@ -2658,7 +2614,7 @@ async def spawn_rsyscall_thread(
         parent_task: Task, thread_maker: ThreadMaker,
         function: handle.Pointer[handle.NativeFunction],
         newuser: bool, newpid: bool, fs: bool, sighand: bool,
-    ) -> t.Tuple[Task, CThread]:
+    ) -> t.Tuple[Task, Thread]:
     flags = CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM|signal.SIGCHLD
     # TODO correctly track the namespaces we're in for all these things
     if newuser:
@@ -2774,7 +2730,7 @@ async def rsyscall_exec(
         parent_stdtask, parent_futex_memfd, stdtask, child_futex_memfd)
     syscall.futex_task = futex_task
     # TODO how do we unmap the remote mapping?
-    rsyscall_thread.thread = Thread(rsyscall_thread.thread.child_task, futex_task, local_futex_node)
+    rsyscall_thread.thread = Thread(rsyscall_thread.thread.child_task, futex_task)
 
 class RsyscallThread:
     def __init__(self,

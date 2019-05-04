@@ -644,6 +644,9 @@ class FileDescriptor:
 
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
 
+class RootExecError(Exception):
+    pass
+
 class Task(rsyscall.far.Task):
     # work around breakage in mypy - it doesn't understand dataclass inheritance
     # TODO delete this
@@ -901,12 +904,17 @@ class Task(rsyscall.far.Task):
     async def execve(self, filename: WrittenPointer[Path],
                      argv: WrittenPointer[ArgList],
                      envp: WrittenPointer[ArgList],
-                     flags: AT) -> None:
+                     flags: AT) -> ChildProcess:
         with contextlib.ExitStack() as stack:
             stack.enter_context(filename.borrow(self))
             for arg in [*argv.data, *envp.data]:
                 stack.enter_context(arg.borrow(self))
             await rsyscall.near.execveat(self.sysif, None, filename.near, argv.near, envp.near, flags)
+            if isinstance(self.process, ChildProcess):
+                return self.process.did_exec()
+            else:
+                raise RootExecError("A task that isn't a ChildProcess called exec, "
+                                    "and now we can't monitor it.")
 
     async def exit(self, status: int) -> None:
         await rsyscall.near.exit(self.sysif, status)
@@ -927,7 +935,7 @@ class Task(rsyscall.far.Task):
                     ptid: t.Optional[Pointer],
                     ctid: t.Optional[Pointer[FutexNode]],
                     # this points to anything, it depends on the thread implementation
-                    newtls: t.Optional[Pointer]) -> t.Tuple[ThreadProcess, Pointer[Stack]]:
+                    newtls: t.Optional[Pointer]) -> ThreadProcess:
         clone_parent = bool(flags & CLONE.PARENT)
         if clone_parent:
             print("clone parenting in HANDLE")
@@ -957,7 +965,7 @@ class Task(rsyscall.far.Task):
         # TODO the safety of this depends on no-one borrowing/freeing the stack in borrow __aexit__
         # should try to do this a bit more robustly...
         merged_stack = stack_alloc.merge(stack_data)
-        return ThreadProcess(owning_task, process, merged_stack, ctid, newtls), merged_stack
+        return ThreadProcess(owning_task, process, merged_stack, ctid, newtls)
 
     async def mmap(self, length: int, prot: PROT, flags: MAP,
                    page_size: int=4096,
@@ -1077,14 +1085,21 @@ class ThreadProcess(ChildProcess):
         self.ctid = ctid
         self.tls = tls
 
-    def did_exec(self) -> ChildProcess:
+    def free_everything(self) -> None:
         if self.used_stack.valid:
             self.used_stack.free()
         if self.ctid is not None and self.ctid.valid:
             self.ctid.free()
         if self.tls is not None and self.tls.valid:
             self.tls.free()
-        return self
+
+    def mark_dead(self) -> None:
+        self.free_everything()
+        return super().mark_dead()
+
+    def did_exec(self) -> ChildProcess:
+        self.free_everything()
+        return super().did_exec()
 
 
 ################################################################################

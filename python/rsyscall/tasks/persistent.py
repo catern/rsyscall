@@ -4,7 +4,7 @@ import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, EpollWaiter, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ThreadMaker, FunctionPointer, CThread, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, EpollWaiter, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ThreadMaker, FunctionPointer, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect, Thread
 import trio
 import struct
 from dataclasses import dataclass
@@ -245,7 +245,7 @@ async def spawn_rsyscall_persistent_server(
         remote_sock: handle.FileDescriptor,
         listening_sock: handle.FileDescriptor,
         parent_task: Task, thread_maker: ThreadMaker, function: handle.Pointer[handle.NativeFunction],
-    ) -> t.Tuple[Task, CThread, RsyscallInterface, handle.FileDescriptor]:
+    ) -> t.Tuple[Task, Thread, RsyscallInterface, handle.FileDescriptor]:
     cthread = await thread_maker.make_cthread(
         (CLONE.VM|CLONE.FS|CLONE.FILES|CLONE.IO|
          CLONE.SIGHAND|CLONE.SYSVSEM|Signals.SIGCHLD),
@@ -269,7 +269,7 @@ async def spawn_rsyscall_persistent_server(
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def fork_persistent(
         self: StandardTask, path: Path,
-) -> t.Tuple[StandardTask, CThread, PersistentServer]:
+) -> t.Tuple[StandardTask, Thread, PersistentServer]:
     listening_sock = await self.task.socket_unix(SOCK.STREAM)
     await robust_unix_bind(path, listening_sock)
     await listening_sock.listen(1)
