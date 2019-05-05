@@ -3,7 +3,7 @@ import rsyscall.handle as handle
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.memory as memory
-from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, ChildProcess, SignalMask, UnixSocketFile, ProcessResources, FilesystemResources, ReadableFile, WritableFile, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, Task, ChildProcessMonitor, which, robust_unix_connect
+from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, ChildProcess, SignalMask, UnixSocketFile, ProcessResources, ReadableFile, WritableFile, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, Task, ChildProcessMonitor, which, robust_unix_connect
 from dataclasses import dataclass
 import importlib.resources
 import logging
@@ -261,7 +261,6 @@ async def ssh_bootstrap(
         connecting_task=new_task, connecting_connection=connecting_connection,
         task=new_task,
         process_resources=ProcessResources.make_from_symbols(new_base_task, describe_struct.symbols),
-        filesystem_resources=FilesystemResources.make_from_environ(new_base_task, environ),
         epoller=epoller,
         child_monitor=child_monitor,
         environment=environ,

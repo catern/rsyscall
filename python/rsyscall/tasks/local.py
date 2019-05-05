@@ -105,7 +105,6 @@ async def _make_local_stdtask() -> StandardTask:
         trampoline_func=_make_local_function_handle(lib.rsyscall_trampoline),
         futex_helper_func=_make_local_function_handle(lib.rsyscall_futex_helper),
     )
-    filesystem_resources = rsc.FilesystemResources.make_from_environ(task, environ)
     epoller = await mem_task.make_epoll_center()
     child_monitor = await rsc.ChildProcessMonitor.make(mem_task, epoller)
     access_connection = None
@@ -114,7 +113,7 @@ async def _make_local_stdtask() -> StandardTask:
     stdtask = StandardTask(
         mem_task, epoller, access_connection,
         mem_task, connecting_connection,
-        mem_task, process_resources, filesystem_resources,
+        mem_task, process_resources,
         epoller, child_monitor,
         {**environ},
         stdin=mem_task._make_fd(0, rsc.ReadableFile()),

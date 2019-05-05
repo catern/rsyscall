@@ -4,7 +4,7 @@ import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, EpollWaiter, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, FunctionPointer, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect, Command, ChildProcess, AsyncReadBuffer, SignalMask, ProcessResources, FilesystemResources, ReadableFile, WritableFile
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, EpollWaiter, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, FunctionPointer, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect, Command, ChildProcess, AsyncReadBuffer, SignalMask, ProcessResources, ReadableFile, WritableFile
 import trio
 import struct
 from dataclasses import dataclass
@@ -105,7 +105,6 @@ async def rsyscall_stdin_bootstrap(
                                base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd))),
         task=task,
         process_resources=ProcessResources.make_from_symbols(base_task, describe_struct.symbols),
-        filesystem_resources=FilesystemResources.make_from_environ(base_task, environ),
         epoller=epoller,
         child_monitor=child_monitor,
         environment=environ,

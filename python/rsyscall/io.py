@@ -1171,14 +1171,6 @@ class ProcessResources:
 
 trampoline_stack_size = ffi.sizeof('struct rsyscall_trampoline_stack') + 8
 
-@dataclass
-class FilesystemResources:
-
-    @staticmethod
-    def make_from_environ(task: handle.Task, environ: t.Mapping[bytes, bytes]) -> FilesystemResources:
-        return FilesystemResources(
-        )
-
 async def lookup_executable(paths: t.List[Path], name: bytes) -> Path:
     "Find an executable by this name in this list of paths"
     if b"/" in name:
@@ -1229,7 +1221,6 @@ class StandardTask:
                  connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
                  task: Task,
                  process_resources: ProcessResources,
-                 filesystem_resources: FilesystemResources,
                  epoller: EpollCenter,
                  child_monitor: ChildProcessMonitor,
                  environment: t.Dict[bytes, bytes],
@@ -1244,7 +1235,6 @@ class StandardTask:
         self.connecting_connection = connecting_connection
         self.task = task
         self.process = process_resources
-        self.filesystem = filesystem_resources
         self.epoller = epoller
         self.child_monitor = child_monitor
         self.environment = environment
@@ -1308,7 +1298,7 @@ class StandardTask:
             self.connecting_task,
             (self.connecting_connection[0], task.base.make_fd_handle(self.connecting_connection[1])),
             task, 
-            self.process, self.filesystem,
+            self.process,
             epoller, child_monitor,
             {**self.environment},
             stdin=self.stdin.for_task(task.base),

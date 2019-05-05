@@ -301,7 +301,7 @@ async def fork_persistent(
         self.connecting_task,
         (self.connecting_connection[0], task.base.make_fd_handle(self.connecting_connection[1])),
         task, 
-        self.process, self.filesystem,
+        self.process,
         epoller,
         child_monitor,
         {**self.environment},
