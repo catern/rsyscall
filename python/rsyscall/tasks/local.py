@@ -14,7 +14,7 @@ import logging
 import os
 import typing as t
 from dataclasses import dataclass
-import rsyscall.memory as memory
+import rsyscall.memory.allocator as memory
 from rsyscall.signal import Signals, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
 import rsyscall.batch as batch

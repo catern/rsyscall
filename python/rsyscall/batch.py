@@ -5,10 +5,10 @@ import rsyscall.near
 import contextlib
 import abc
 from rsyscall.struct import T_has_serializer, T_fixed_size, Serializer
-import rsyscall.memory as memory
+import rsyscall.memory.allocator as memory
+import rsyscall.memory.memint as memint
 import rsyscall.base as base
 import rsyscall.far as far
-import rsyscall.memint as memint
 import typing as t
 
 T = t.TypeVar('T')

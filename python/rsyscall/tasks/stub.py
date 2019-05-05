@@ -10,7 +10,7 @@ from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Pat
 import trio
 from dataclasses import dataclass
 import logging
-import rsyscall.memory as memory
+import rsyscall.memory.allocator as memory
 import rsyscall.nix as nix
 
 import rsyscall.batch as batch

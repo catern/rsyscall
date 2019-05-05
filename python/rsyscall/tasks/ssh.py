@@ -2,7 +2,7 @@ from __future__ import annotations
 import rsyscall.handle as handle
 import rsyscall.near as near
 import rsyscall.far as far
-import rsyscall.memory as memory
+import rsyscall.memory.allocator as memory
 from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, ChildProcess, SignalMask, UnixSocketFile, ProcessResources, ReadableFile, WritableFile, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, Task, ChildProcessMonitor, which, robust_unix_connect
 from dataclasses import dataclass
 import importlib.resources

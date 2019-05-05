@@ -19,7 +19,7 @@ import rsyscall.far
 import rsyscall.near
 
 # re-exported
-from rsyscall.memint import MemoryWriter, MemoryReader, MemoryGateway
+from rsyscall.memory.memint import MemoryWriter, MemoryReader, MemoryGateway
 
 class MemoryTransport(MemoryGateway):
     @abc.abstractmethod

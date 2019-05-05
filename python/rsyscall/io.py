@@ -10,8 +10,8 @@ from rsyscall.base import Pointer, RsyscallException, RsyscallHangup
 from rsyscall.base import SyscallInterface
 
 import rsyscall.base as base
-import rsyscall.memint as memint
-import rsyscall.memory as memory
+import rsyscall.memory.memint as memint
+import rsyscall.memory.allocator as memory
 import rsyscall.handle as handle
 import rsyscall.handle
 from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess

@@ -2,7 +2,7 @@ from __future__ import annotations
 import rsyscall.handle as handle
 import rsyscall.base as base
 import rsyscall.near as near
-import rsyscall.memory as memory
+import rsyscall.memory.allocator as memory
 from rsyscall.io import RsyscallThread, AsyncReadBuffer, ChildProcess, launch_futex_monitor, ProcessResources, StandardTask, SocketMemoryTransport, Command
 import typing as t
 from rsyscall.handle import WrittenPointer

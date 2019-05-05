@@ -12,7 +12,7 @@ import typing as t
 import logging
 import contextlib
 import abc
-import rsyscall.memint as memint
+import rsyscall.memory.memint as memint
 logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SCM, Address, Socklen, SendmsgFlags, RecvmsgFlags, MsghdrFlags
