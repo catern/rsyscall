@@ -1183,8 +1183,6 @@ class FilesystemResources:
     # locale?
     # home directory?
     rsyscall_server_path: handle.Path
-    socket_binder_path: handle.Path
-    rsyscall_bootstrap_path: handle.Path
     rsyscall_stdin_bootstrap_path: handle.Path
     rsyscall_unix_stub_path: handle.Path
 
@@ -1199,15 +1197,11 @@ class FilesystemResources:
         )
         rsyscall_pkglibexecdir = cffi_to_path(lib.pkglibexecdir)
         rsyscall_server_path = rsyscall_pkglibexecdir/"rsyscall-server"
-        socket_binder_path = rsyscall_pkglibexecdir/"socket-binder"
-        rsyscall_bootstrap_path = rsyscall_pkglibexecdir/"rsyscall-bootstrap"
         rsyscall_stdin_bootstrap_path = rsyscall_pkglibexecdir/"rsyscall-stdin-bootstrap"
         return FilesystemResources(
             tmpdir=tmpdir,
             utilities=utilities,
             rsyscall_server_path=rsyscall_server_path,
-            socket_binder_path=socket_binder_path,
-            rsyscall_bootstrap_path=rsyscall_bootstrap_path,
             rsyscall_stdin_bootstrap_path=rsyscall_stdin_bootstrap_path,
             rsyscall_unix_stub_path=rsyscall_pkglibexecdir/"rsyscall-unix-stub",
         )

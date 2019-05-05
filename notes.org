@@ -14083,7 +14083,7 @@ there's too many methods here to override
     what about non-adjacent pointers?
 
     like, what if I actually have to allocate two buffers to hold a single object?
-** pointers with data attached
+** DONE pointers with data attached
 so I could have a WrittenPointer
 which inherits from Pointer
 and holds a value
