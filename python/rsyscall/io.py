@@ -1173,17 +1173,10 @@ trampoline_stack_size = ffi.sizeof('struct rsyscall_trampoline_stack') + 8
 
 @dataclass
 class FilesystemResources:
-    tmpdir: handle.Path
-    # locale?
-    # home directory?
 
     @staticmethod
     def make_from_environ(task: handle.Task, environ: t.Mapping[bytes, bytes]) -> FilesystemResources:
-        tmpdir = task.make_path_from_bytes(environ.get(b"TMPDIR", b"/tmp"))
-        def cffi_to_path(cffi_char_array) -> handle.Path:
-            return task.make_path_from_bytes(ffi.string(cffi_char_array))
         return FilesystemResources(
-            tmpdir=tmpdir,
         )
 
 async def lookup_executable(paths: t.List[Path], name: bytes) -> Path:
@@ -1259,9 +1252,10 @@ class StandardTask:
         self.stdout = stdout
         self.stderr = stderr
         self.sh = Command(handle.Path("/bin/sh"), ['sh'], {})
+        self.tmpdir = handle.Path(os.fsdecode(self.environment.get(b"TMPDIR", b"/tmp")))
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
-        parent = Path(self.task, self.filesystem.tmpdir)
+        parent = Path(self.task, self.tmpdir)
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (prefix+"."+random_suffix).encode()
         await (parent/name).mkdir(mode=0o700)

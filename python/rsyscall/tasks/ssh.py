@@ -117,7 +117,7 @@ class SSHHost:
         hostname = os.fsdecode(ssh_to_host.arguments[-1])
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (hostname+random_suffix+".sock")
-        local_socket_path: handle.Path = task.filesystem.tmpdir/name
+        local_socket_path: handle.Path = task.tmpdir/name
         # TODO let's check up front that the bootstrap_executable is in this task's fd space?
         async with run_socket_binder(task, ssh_to_host, self.executables.bootstrap_executable) as tmp_path_bytes:
             return (await ssh_bootstrap(task, ssh_to_host, local_socket_path, tmp_path_bytes))
