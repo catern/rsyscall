@@ -1182,7 +1182,6 @@ class FilesystemResources:
     utilities: UnixUtilities
     # locale?
     # home directory?
-    rsyscall_server_path: handle.Path
     rsyscall_stdin_bootstrap_path: handle.Path
     rsyscall_unix_stub_path: handle.Path
 
@@ -1196,12 +1195,10 @@ class FilesystemResources:
             sh=cffi_to_path(lib.sh_path),
         )
         rsyscall_pkglibexecdir = cffi_to_path(lib.pkglibexecdir)
-        rsyscall_server_path = rsyscall_pkglibexecdir/"rsyscall-server"
         rsyscall_stdin_bootstrap_path = rsyscall_pkglibexecdir/"rsyscall-stdin-bootstrap"
         return FilesystemResources(
             tmpdir=tmpdir,
             utilities=utilities,
-            rsyscall_server_path=rsyscall_server_path,
             rsyscall_stdin_bootstrap_path=rsyscall_stdin_bootstrap_path,
             rsyscall_unix_stub_path=rsyscall_pkglibexecdir/"rsyscall-unix-stub",
         )
@@ -2538,8 +2535,11 @@ class RsyscallThread:
         self.stdtask = stdtask
         self.parent_monitor = parent_monitor
 
-    async def exec(self, command: Command) -> ChildProcess:
-        return (await command.exec(self))
+    async def exec(self, command: Command,
+                   inherited_signal_blocks: t.List[SignalBlock]=[],
+    ) -> ChildProcess:
+        return (await self.execve(command.executable_path, command.arguments, command.env_updates,
+                                  inherited_signal_blocks=inherited_signal_blocks))
 
     async def execveat(self, path: handle.Path,
                        argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> ChildProcess:

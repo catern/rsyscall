@@ -1,12 +1,15 @@
+from __future__ import annotations
 import rsyscall.handle as handle
 import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.memory as memory
-from rsyscall.io import RsyscallThread, AsyncReadBuffer, ChildProcess, launch_futex_monitor, ProcessResources, StandardTask, SocketMemoryTransport
+from rsyscall.io import RsyscallThread, AsyncReadBuffer, ChildProcess, launch_futex_monitor, ProcessResources, StandardTask, SocketMemoryTransport, Command
 import typing as t
 from rsyscall.handle import WrittenPointer
 from rsyscall.handle import FutexNode
 import rsyscall.batch as batch
+import rsyscall.nix as nix
+from dataclasses import dataclass
 
 from rsyscall.fcntl import F
 from rsyscall.struct import Int32
@@ -53,10 +56,20 @@ async def make_robust_futex_task(
         parent_stdtask.task, parent_stdtask.process, parent_stdtask.child_monitor, local_futex_node)
     return futex_task, local_futex_node, remote_mapping
 
+@dataclass
+class RsyscallServerExecutable:
+    command: Command
+
+    @classmethod
+    async def from_store(cls, store: nix.Store) -> RsyscallServerExecutable:
+        rsyscall_path = await store.realise(nix.rsyscall)
+        server = Command(rsyscall_path.handle/"libexec"/"rsyscall"/"rsyscall-server", ['rsyscall-server'], {})
+        return cls(server)
+
 async def rsyscall_exec(
         parent_stdtask: StandardTask,
         rsyscall_thread: RsyscallThread,
-        rsyscall_server_path: handle.Path,
+        executable: RsyscallServerExecutable,
     ) -> None:
     "Exec into the standalone rsyscall_server executable"
     stdtask = rsyscall_thread.stdtask
@@ -73,12 +86,10 @@ async def rsyscall_exec(
         # unset cloexec on all the fds we want to copy to the new space
         for copying_fd in copy_to_new_space:
             await near.fcntl(syscall, copying_fd, F.SETFD, 0)
-        child_task = await rsyscall_thread.execve(
-            rsyscall_server_path, [
-                b"rsyscall_server",
+        child_task = await rsyscall_thread.exec(executable.command.args(
                 encode(passed_data_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
                 *[encode(fd) for fd in copy_to_new_space],
-            ], {}, [stdtask.child_monitor.internal.signal_queue.signal_block])
+            ), [stdtask.child_monitor.internal.signal_queue.signal_block])
         #### read symbols from describe fd
         describe_buf = AsyncReadBuffer(access_data_sock)
         symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')
@@ -103,7 +114,8 @@ async def rsyscall_exec(
     # TODO how do we unmap the remote mapping?
     syscall.futex_task = futex_task
 
-async def spawn_exec(self: StandardTask) -> RsyscallThread:
+async def spawn_exec(self: StandardTask, store: nix.Store) -> RsyscallThread:
+    executable = await RsyscallServerExecutable.from_store(store)
     rsyscall_thread = await self.fork()
-    await rsyscall_exec(self, rsyscall_thread, self.filesystem.rsyscall_server_path)
+    await rsyscall_exec(self, rsyscall_thread, executable)
     return rsyscall_thread

@@ -450,7 +450,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
             async with thread as stdtask2:
-                thread2 = await spawn_exec(stdtask2)
+                thread2 = await spawn_exec(stdtask2, rsyscall.nix.local_store)
                 async with thread2 as stdtask3:
                     await self.do_async_things(stdtask3.epoller, stdtask3.task)
         trio.run(self.runner, test)
@@ -542,7 +542,7 @@ class TestIO(unittest.TestCase):
 
     def test_spawn_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            thread = await spawn_exec(stdtask)
+            thread = await spawn_exec(stdtask, rsyscall.nix.local_store)
             async with thread as stdtask2:
                 await stdtask2.exit(0)
         trio.run(self.runner, test)
@@ -566,16 +566,16 @@ class TestIO(unittest.TestCase):
 
     def test_spawn_basic(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            thread = await spawn_exec(stdtask)
+            thread = await spawn_exec(stdtask, rsyscall.nix.local_store)
             async with thread as stdtask2:
                 await self.do_async_things(stdtask2.epoller, stdtask2.task)
         trio.run(self.runner, test)
 
     def test_spawn_nest(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            thread1 = await spawn_exec(stdtask)
+            thread1 = await spawn_exec(stdtask, rsyscall.nix.local_store)
             async with thread1 as stdtask2:
-                thread2 = await spawn_exec(stdtask2)
+                thread2 = await spawn_exec(stdtask2, rsyscall.nix.local_store)
                 async with thread2 as stdtask3:
                     await self.do_async_things(stdtask3.epoller, stdtask3.task)
         trio.run(self.runner, test)
