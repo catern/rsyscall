@@ -23,6 +23,10 @@ from rsyscall.sys.un import SockaddrUn
 from rsyscall.signal import Signals
 from rsyscall.fcntl import O
 
+__all__ = [
+    "StubServer",
+]
+
 @dataclass
 class StubServer:
     listening_sock: AsyncFileDescriptor
@@ -45,8 +49,8 @@ class StubServer:
         # there's no POSIX sh way to set $0, so we'll pass $0 as $1, $1 as $2, etc.
         # $0 will be the stub executable, so we'll need to drop $0 in StubServer.
         wrapper = """#!/bin/sh
-    RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
-    """.format(sock=os.fsdecode(sock_path), bin=os.fsdecode(stdtask.filesystem.rsyscall_unix_stub_path))
+RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
+""".format(sock=os.fsdecode(sock_path), bin=os.fsdecode(stdtask.filesystem.rsyscall_unix_stub_path))
         await spit(dir/name, wrapper, mode=0o755)
         return server
 
@@ -56,11 +60,11 @@ class StubServer:
         conn: FileDescriptor[UnixSocketFile]
         addr: SockaddrUn
         conn, addr = await self.listening_sock.accept(O.CLOEXEC) # type: ignore
-        argv, new_stdtask = await setup_stub(stdtask, conn)
+        argv, new_stdtask = await _setup_stub(stdtask, conn)
         # have to drop first argument, which is the unix_stub executable; see make_stub
         return argv[1:], new_stdtask
 
-async def setup_stub(
+async def _setup_stub(
         stdtask: StandardTask,
         bootstrap_sock: FileDescriptor[UnixSocketFile],
 ) -> t.Tuple[t.List[str], StandardTask]:
