@@ -11,6 +11,7 @@ import trio
 from dataclasses import dataclass
 import logging
 import rsyscall.memory as memory
+import rsyscall.nix as nix
 
 import rsyscall.batch as batch
 from rsyscall.struct import Bytes
@@ -42,15 +43,17 @@ class StubServer:
         return StubServer(asyncfd, stdtask)
 
     @classmethod
-    async def make(cls, stdtask: StandardTask, dir: Path, name: str) -> StubServer:
+    async def make(cls, stdtask: StandardTask, store: nix.Store, dir: Path, name: str) -> StubServer:
         "In the passed-in dir, make a listening stub server and an executable to connect to it."
+        rsyscall_path = await store.realise(nix.rsyscall)
+        stub_path = rsyscall_path/"libexec"/"rsyscall"/"rsyscall-unix-stub"
         sock_path = dir/f'{name}.sock'
         server = await StubServer.listen_on(stdtask, sock_path)
         # there's no POSIX sh way to set $0, so we'll pass $0 as $1, $1 as $2, etc.
         # $0 will be the stub executable, so we'll need to drop $0 in StubServer.
         wrapper = """#!/bin/sh
 RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
-""".format(sock=os.fsdecode(sock_path), bin=os.fsdecode(stdtask.filesystem.rsyscall_unix_stub_path))
+""".format(sock=os.fsdecode(sock_path), bin=os.fsdecode(stub_path))
         await spit(dir/name, wrapper, mode=0o755)
         return server
 

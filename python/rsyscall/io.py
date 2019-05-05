@@ -1182,7 +1182,6 @@ class FilesystemResources:
     utilities: UnixUtilities
     # locale?
     # home directory?
-    rsyscall_unix_stub_path: handle.Path
 
     @staticmethod
     def make_from_environ(task: handle.Task, environ: t.Mapping[bytes, bytes]) -> FilesystemResources:
@@ -1193,11 +1192,9 @@ class FilesystemResources:
             rm=cffi_to_path(lib.rm_path),
             sh=cffi_to_path(lib.sh_path),
         )
-        rsyscall_pkglibexecdir = cffi_to_path(lib.pkglibexecdir)
         return FilesystemResources(
             tmpdir=tmpdir,
             utilities=utilities,
-            rsyscall_unix_stub_path=rsyscall_pkglibexecdir/"rsyscall-unix-stub",
         )
 
 async def lookup_executable(paths: t.List[Path], name: bytes) -> Path:
