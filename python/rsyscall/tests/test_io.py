@@ -29,7 +29,7 @@ import rsyscall.tasks.local as local
 from rsyscall.tasks.exec import spawn_exec
 
 import rsyscall.inotify_watch as inotify
-from rsyscall.sys.epoll import EpollEvent, EpollEventMask
+from rsyscall.sys.epoll import EpollEvent, EPOLL
 from rsyscall.sys.capability import CAP, CapHeader, CapData
 from rsyscall.sys.prctl import PrctlOp, CapAmbient
 from rsyscall.sys.socket import SOCK, AF
@@ -120,7 +120,7 @@ class TestIO(unittest.TestCase):
 
     def test_to_pointer(self):
         async def test(stdtask: StandardTask) -> None:
-            event = EpollEvent(42, EpollEventMask.make())
+            event = EpollEvent(42, EPOLL.NONE)
             ptr = await stdtask.task.to_pointer(event)
             read_event = await ptr.read()
             self.assertEqual(event.data, read_event.data)

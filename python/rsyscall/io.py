@@ -30,7 +30,7 @@ from rsyscall.sys.socket import T_addr
 from rsyscall.sys.mount import MS
 from rsyscall.sys.un import SockaddrUn, PathTooLongError
 from rsyscall.netinet.in_ import SockaddrIn
-from rsyscall.sys.epoll import EpollEvent, EpollEventList, EpollEventMask, EpollCtlOp, EpollFlag
+from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EpollCtlOp, EpollFlag
 from rsyscall.sys.wait import CLD, UncleanExit, ChildEvent, W
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
@@ -439,10 +439,10 @@ class EpolledFileDescriptor:
         self.number = number
         self.in_epollfd = True
 
-    async def modify(self, events: EpollEventMask) -> None:
+    async def modify(self, events: EPOLL) -> None:
         await self.epoll_center.modify(self.fd, EpollEvent(self.number, events))
 
-    async def wait(self) -> t.List[EpollEvent]:
+    async def wait(self) -> t.List[EPOLL]:
         while True:
             try:
                 return [self.queue.receive_nowait()]
@@ -469,9 +469,9 @@ class EpollCenter:
                            task.base.make_fd_handle(self.epfd),
                            task)
 
-    async def register(self, fd: handle.FileDescriptor, events: EpollEventMask=None) -> EpolledFileDescriptor:
+    async def register(self, fd: handle.FileDescriptor, events: EPOLL=None) -> EpolledFileDescriptor:
         if events is None:
-            events = EpollEventMask.make()
+            events = EPOLL.NONE
         send, receive = trio.open_memory_channel(math.inf)
         number = self.epoller.add_and_allocate_number(send)
         await self.add(fd, EpollEvent(number, events))
@@ -516,7 +516,7 @@ class EpollWaiter:
             await self.epfd.epoll_ctl(EpollCtlOp.DEL, fd)
         # add new activity fd
         await self.epfd.epoll_ctl(EpollCtlOp.ADD, fd, await self.waiting_task.to_pointer(
-            EpollEvent(data=self.activity_fd_data, events=EpollEventMask.make(in_=True))))
+            EpollEvent(data=self.activity_fd_data, events=EPOLL.IN)))
 
     async def do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
@@ -552,8 +552,8 @@ class AsyncFileDescriptor:
     async def make(epoller: EpollCenter, fd: FileDescriptor, is_nonblock=False) -> 'AsyncFileDescriptor':
         if not is_nonblock:
             await fd.set_nonblock()
-        epolled = await epoller.register(fd.handle, EpollEventMask.make(
-            in_=True, out=True, rdhup=True, pri=True, err=True, hup=True, et=True))
+        epolled = await epoller.register(fd.handle,
+                                         EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET)
         return AsyncFileDescriptor(epolled, fd)
 
     @property
@@ -576,12 +576,12 @@ class AsyncFileDescriptor:
             if needs_run:
                 events = await self.epolled.wait()
                 for event in events:
-                    if event.in_:   self.is_readable = True
-                    if event.out:   self.is_writable = True
-                    if event.rdhup: self.read_hangup = True
-                    if event.pri:   self.priority = True
-                    if event.err:   self.error = True
-                    if event.hup:   self.hangup = True
+                    if event & EPOLL.IN:    self.is_readable = True
+                    if event & EPOLL.OUT:   self.is_writable = True
+                    if event & EPOLL.RDHUP: self.read_hangup = True
+                    if event & EPOLL.PRI:   self.priority = True
+                    if event & EPOLL.ERR:   self.error = True
+                    if event & EPOLL.HUP:   self.hangup = True
 
     def could_read(self) -> bool:
         return self.is_readable or self.read_hangup or self.hangup or self.error
