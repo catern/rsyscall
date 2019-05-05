@@ -16261,6 +16261,35 @@ oh I need that anyway to write/read the iovecs
     asyncfd.
 
     let's, I guess, break asyncfd's dep on memory...?
+
+    so, right, we want to be able to use asyncfd from transport. hm.
+
+    this will require... making epoll work just in terms of handles.
+** lazily registered epoll
+   Let's do it!
+
+   ok so two tricky ones
+
+   connect and wait_for_rdhup
+
+   hmMmMMmMm
+
+   wait_for_rdhup isn't an issue. . .
+
+   we'll just start waiting on readhup up front,
+   so that way we will get notified nicely, all fine, works good.
+*** connect issue
+   we want something that will error nicely if it's not connected.
+
+   getpeername works...
+
+   mmmm I'm curious whether SO_ERROR will work.
+
+   mmm maybe won't
+
+   I think I can just use read/write then.
+   or, recv/send?
+   either way, connect is fine
 ** DONE make borrowing not async
    We can't run async code on exiting.
    Because we might drop a syscall result.
@@ -16657,3 +16686,56 @@ find -name '*.py' | etags --language python --regex='{python}/^async def \(.*\)(
   kind of interesting to consider. hm.
 
   oh hey how does userfaultfd work here?
+* epoll notes
+# We are only guaranteed to receive events from the following line because
+# we are careful in our usage of epoll.  Some background: Given that we are
+# using EPOLLET, we can view epoll_wait as providing us a stream of posedges
+# for readability, writability, etc. We receive negedges in the form of
+# EAGAINs when we try to read, write, etc.
+
+# We could try to optimistically read or write without first receiving a
+# posedge from epoll. If the read/write succeeds, that serves as a
+# posedge. Importantly, that posedge might not then be delivered through
+# epoll.  The posedge is definitely not delivered through epoll if the fd is
+# read to EAGAIN before the next epoll call, and may also not be delivered
+# in other scenarios as well.
+
+# This can cause deadlocks.  If a thread is blocked in epoll waiting for
+# some file to become readable, and some other thread goes ahead and reads
+# off the posedge from the file itself, then the first thread will never get
+# woken up since epoll will never have an event for readability.
+
+# Also, epoll will be indicated as readable to poll when a posedge is ready
+# for reading; but if we consume that posedge through reading the fd
+# directly instead, we won't actually get anything when we call epoll_wait.
+
+# Therefore, we must make sure to receive all posedges exclusively through
+# epoll. We can't optimistically read the file descriptor before we have
+# actually received an initial posedge. (This doesn't hurt performance that
+# much because we can still optimistically read the fd if we haven't yet
+# seen an EAGAIN since the last epoll_wait posedge.)
+
+# Given that we follow that behavior, we are guaranteed here to get some
+# event, since wait_readable returning has informed us that there is a
+# posedge to be read, and all posedges are consumed exclusively through
+# epoll.
+received_events = await self.wait(maxevents=32, timeout=0)
+# We might not receive events even after all that! The reason is as follows:
+# epoll can generate multiple posedges for a single fd before we consume the
+# negedge for that fd. One place this can definitely happen is when we get a
+# partial read from a pipe - we're supposed to know that that's a negedge,
+# but we don't. It also can happen in an unavoidable way with signalfd:
+# signalfd seems to negedge as soon as we read the last signal, but we can't
+# actually tell we read the last signal. er wait. hm. ah! it's a partial
+# read... since we're doing a large read on the signalfd...
+# it's weird. okay. whatever.
+# signalfd sure is weirdly designed.
+
+# So, if we're woken up to read from epoll after seeing that it's readable
+# due to a second posedge for the same fd, and then we consume the negedge
+# for that fd, and then we actually do the epoll_wait, we won't get the
+# second posedge - we won't get anything at all.
+
+# TODO maybe we can rearrange how we do epoll, now that we know that we
+# can't guarantee receiving events on each wait. We might be able to improve
+# performance. Or maybe we can just start specially handling streams.

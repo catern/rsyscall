@@ -25,6 +25,14 @@ async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0)
                                     ffi.cast('long', arg4), ffi.cast('long', arg5), ffi.cast('long', arg6),
                                     number)
 
+@dataclass
+class LocalSyscallResponse(near.SyscallResponse):
+    value: int
+    async def receive(self) -> int:
+        rsc.raise_if_error(self.value)
+        return self.value
+
+
 @dataclass(eq=False)
 class LocalSyscall(base.SyscallInterface):
     identifier_process: near.Process
@@ -34,26 +42,27 @@ class LocalSyscall(base.SyscallInterface):
         pass
 
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> near.SyscallResponse:
-        raise Exception("not supported for local syscaller")
+        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+        result = await direct_syscall(
+            number,
+            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        return LocalSyscallResponse(result)
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         try:
-            result = await self._syscall(
+            result = await direct_syscall(
                 number,
                 arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
                 arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+            rsc.raise_if_error(result)
         except Exception as exn:
             self.logger.debug("%s -> %s", number, exn)
             raise
         else:
             self.logger.debug("%s -> %s", number, result)
             return result
-
-    async def _syscall(self, number: int, arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> int:
-        ret = await direct_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        rsc.raise_if_error(ret)
-        return ret
 
 class LocalMemoryTransport(base.MemoryTransport):
     "This is a memory transport that only works on local pointers."
