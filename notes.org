@@ -16255,6 +16255,12 @@ but, if I want to fall back to just using near,
 then I should first revamp the epoll stuff so I can async with into it.
 
 oh I need that anyway to write/read the iovecs
+*** memory stuff
+    ok moving the memory stuff out into another file requires,
+    as its last dep,
+    asyncfd.
+
+    let's, I guess, break asyncfd's dep on memory...?
 ** DONE make borrowing not async
    We can't run async code on exiting.
    Because we might drop a syscall result.
