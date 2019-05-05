@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import logging
 import rsyscall.memory as memory
 
+import rsyscall.nix as nix
 import rsyscall.batch as batch
 from rsyscall.struct import Bytes
 
@@ -18,6 +19,15 @@ from rsyscall.sched import CLONE
 from rsyscall.sys.socket import SOCK, AF, SendmsgFlags
 from rsyscall.sys.memfd import MFD
 from rsyscall.signal import Signals
+
+__all__ = [
+    "stdin_bootstrap_path_from_store",
+    "rsyscall_stdin_bootstrap",
+]
+
+async def stdin_bootstrap_path_from_store(store: nix.Store) -> Path:
+    rsyscall_path = await store.realise(nix.rsyscall)
+    return rsyscall_path/"libexec"/"rsyscall"/"rsyscall-stdin-bootstrap"
 
 async def rsyscall_stdin_bootstrap(
         stdtask: StandardTask,

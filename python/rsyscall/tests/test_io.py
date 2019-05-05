@@ -50,24 +50,26 @@ logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.DEBUG)
 
 nix_bin_bytes = b"/nix/store/wpbag7vnmr4pr9p8a3003s68907w9bxq-nix-2.2pre6600_85488a93/bin"
+async def do_async_things(self: unittest.TestCase, epoller, task: rsyscall.io.Task) -> None:
+    async with (await task.pipe()) as pipe:
+        async_pipe_rfd = await AsyncFileDescriptor.make(epoller, pipe.rfd)
+        async_pipe_wfd = await AsyncFileDescriptor.make(epoller, pipe.wfd)
+        data = b"hello world"
+        async def stuff():
+            logger.info("performing read")
+            result = await async_pipe_rfd.read()
+            self.assertEqual(result, data)
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(stuff)
+            await trio.sleep(0.01)
+            logger.info("performing write")
+            # hmmm MMM MMMmmmm MMM mmm MMm mm MM mmm MM mm MM
+            # does this make sense?
+            await async_pipe_wfd.write(data)
 
 class TestIO(unittest.TestCase):
     async def do_async_things(self, epoller, task: rsyscall.io.Task) -> None:
-        async with (await task.pipe()) as pipe:
-            async_pipe_rfd = await AsyncFileDescriptor.make(epoller, pipe.rfd)
-            async_pipe_wfd = await AsyncFileDescriptor.make(epoller, pipe.wfd)
-            data = b"hello world"
-            async def stuff():
-                logger.info("performing read")
-                result = await async_pipe_rfd.read()
-                self.assertEqual(result, data)
-            async with trio.open_nursery() as nursery:
-                nursery.start_soon(stuff)
-                await trio.sleep(0.01)
-                logger.info("performing write")
-                # hmmm MMM MMMmmmm MMM mmm MMm mm MM mmm MM mm MM
-                # does this make sense?
-                await async_pipe_wfd.write(data)
+        await do_async_things(self, epoller, task)
 
     async def runner(self, test: t.Callable[[StandardTask], t.Awaitable[None]]) -> None:
         async with trio.open_nursery() as nursery:
@@ -674,40 +676,6 @@ class TestIO(unittest.TestCase):
             fd = await (path/"foo").creat()
             await watch.wait_until_event(inotify.IN.CREATE, "foo")
         trio.run(self.runner_with_tempdir, test)
-
-    def test_stdinboot_exit(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            command = rsc.Command(stdtask.filesystem.rsyscall_stdin_bootstrap_path, ['rsyscall-stdin-bootstrap'], {})
-            child, new_stdtask = await rsyscall_stdin_bootstrap(stdtask, command)
-            await new_stdtask.exit(0)
-        trio.run(self.runner, test)
-
-    def test_stdinboot_async(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            command = rsc.Command(stdtask.filesystem.rsyscall_stdin_bootstrap_path, ['rsyscall-stdin-bootstrap'], {})
-            child, new_stdtask = await rsyscall_stdin_bootstrap(stdtask, command)
-            await self.do_async_things(new_stdtask.epoller, new_stdtask.task)
-        trio.run(self.runner, test)
-
-    def test_stdinboot_nest(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            command = rsc.Command(stdtask.filesystem.rsyscall_stdin_bootstrap_path, ['rsyscall-stdin-bootstrap'], {})
-            child, new_stdtask = await rsyscall_stdin_bootstrap(stdtask, command)
-            async with child:
-                child2, new_stdtask2 = await rsyscall_stdin_bootstrap(new_stdtask, command)
-                async with child2:
-                    await self.do_async_things(new_stdtask2.epoller, new_stdtask2.task)
-        trio.run(self.runner, test)
-
-    def test_stdinboot_fork_exec(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            command = rsc.Command(stdtask.filesystem.rsyscall_stdin_bootstrap_path, ['rsyscall-stdin-bootstrap'], {})
-            child, new_stdtask = await rsyscall_stdin_bootstrap(stdtask, command)
-            async with child:
-                child2, new_stdtask2 = await rsyscall_stdin_bootstrap(new_stdtask, command)
-                async with child2:
-                    await self.do_async_things(new_stdtask2.epoller, new_stdtask2.task)
-        trio.run(self.runner, test)
 
     def test_persistent_thread_exit(self) -> None:
         async def test(stdtask: StandardTask) -> None:

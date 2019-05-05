@@ -1182,7 +1182,6 @@ class FilesystemResources:
     utilities: UnixUtilities
     # locale?
     # home directory?
-    rsyscall_stdin_bootstrap_path: handle.Path
     rsyscall_unix_stub_path: handle.Path
 
     @staticmethod
@@ -1195,11 +1194,9 @@ class FilesystemResources:
             sh=cffi_to_path(lib.sh_path),
         )
         rsyscall_pkglibexecdir = cffi_to_path(lib.pkglibexecdir)
-        rsyscall_stdin_bootstrap_path = rsyscall_pkglibexecdir/"rsyscall-stdin-bootstrap"
         return FilesystemResources(
             tmpdir=tmpdir,
             utilities=utilities,
-            rsyscall_stdin_bootstrap_path=rsyscall_stdin_bootstrap_path,
             rsyscall_unix_stub_path=rsyscall_pkglibexecdir/"rsyscall-unix-stub",
         )
 
