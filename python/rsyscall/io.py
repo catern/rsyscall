@@ -1042,7 +1042,6 @@ async def connectat(sock: FileDescriptor[UnixSocketFile], fd: handle.FileDescrip
 
 @dataclass
 class UnixUtilities:
-    rm: handle.Path
     sh: handle.Path
 
 async def spit(path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
@@ -1189,7 +1188,6 @@ class FilesystemResources:
         def cffi_to_path(cffi_char_array) -> handle.Path:
             return task.make_path_from_bytes(ffi.string(cffi_char_array))
         utilities = UnixUtilities(
-            rm=cffi_to_path(lib.rm_path),
             sh=cffi_to_path(lib.sh_path),
         )
         return FilesystemResources(
@@ -1269,6 +1267,7 @@ class StandardTask:
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
+        self.sh = Command(handle.Path("/bin/sh"), ['sh'], {})
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
         parent = Path(self.task, self.filesystem.tmpdir)
@@ -1420,8 +1419,8 @@ class TemporaryDirectory:
         async with cleanup_thread:
             await cleanup_thread.stdtask.task.chdir(self.parent)
             name = os.fsdecode(self.name)
-            child = await cleanup_thread.execve(self.stdtask.filesystem.utilities.sh, [
-                "sh", "-c", f"chmod -R +w -- {name} && rm -rf -- {name}"])
+            child = await cleanup_thread.exec(self.stdtask.sh.args(
+                '-c', f"chmod -R +w -- {name} && rm -rf -- {name}"))
             await child.check()
 
     async def __aenter__(self) -> 'Path':
