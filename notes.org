@@ -16215,6 +16215,33 @@ we can rely on weak refs, or maybe just the autoclose on close of open-file-desc
 supporting both "async" and non-async modes of operation
 
 supporting cancellation so we don't drop events, but are still able to be cancelled.
+** getting rid of processresources
+   We can have it basically be a dynamic linking API,
+   so that you can load a library into your process,
+   even on a remote host.
+
+   We don't actually need to dynlink though, we can initialize it with the symbols from bootstrap.
+   Boom! problem solved.
+
+   And we can break down stdtask so it has nixstore, and dynamiclinker, um...
+
+   remaining things:
+   stdstreams, environment, child monitor, ability to make a connection back to access task.
+
+   and, mkdtemp can just use sh.
+
+   and these remaining things, we can just put them all in one task together.
+   they aren't really different from memory access!
+
+   and then we can have fork() be a free function....
+
+   oh and we should encapsulate this back-conn stuff!
+
+   (and maybe I can make this extensible somehow?)
+
+   (I guess one could just inherit from the omnibus)
+
+   we can move all the memory stuff into a memory subdir
 ** DONE make borrowing not async
    We can't run async code on exiting.
    Because we might drop a syscall result.
