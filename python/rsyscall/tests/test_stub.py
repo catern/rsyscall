@@ -41,8 +41,7 @@ class TestStub(TrioTestCase):
 
     async def test_read_stdin(self) -> None:
         data_in = "hello"
-        sh_command = Command(self.stdtask.filesystem.utilities.sh, ["sh"], {})
-        command = sh_command.args("-c", f"printf {data_in} | {self.stub_name}").env(PATH=os.fsdecode(self.path))
+        command = self.stdtask.sh.args("-c", f"printf {data_in} | {self.stub_name}").env(PATH=os.fsdecode(self.path))
         child = await self.thread.exec(command)
         argv, new_stdtask = await self.server.accept()
         data_out = await new_stdtask.stdin.read()

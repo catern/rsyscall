@@ -1040,10 +1040,6 @@ async def connectat(sock: FileDescriptor[UnixSocketFile], fd: handle.FileDescrip
     addr = SockaddrUn.from_path(path)
     await sock.connect(addr)
 
-@dataclass
-class UnixUtilities:
-    sh: handle.Path
-
 async def spit(path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
     """Open a file, creating and truncating it, and write the passed text to it
 
@@ -1178,7 +1174,6 @@ trampoline_stack_size = ffi.sizeof('struct rsyscall_trampoline_stack') + 8
 @dataclass
 class FilesystemResources:
     tmpdir: handle.Path
-    utilities: UnixUtilities
     # locale?
     # home directory?
 
@@ -1187,12 +1182,8 @@ class FilesystemResources:
         tmpdir = task.make_path_from_bytes(environ.get(b"TMPDIR", b"/tmp"))
         def cffi_to_path(cffi_char_array) -> handle.Path:
             return task.make_path_from_bytes(ffi.string(cffi_char_array))
-        utilities = UnixUtilities(
-            sh=cffi_to_path(lib.sh_path),
-        )
         return FilesystemResources(
             tmpdir=tmpdir,
-            utilities=utilities,
         )
 
 async def lookup_executable(paths: t.List[Path], name: bytes) -> Path:

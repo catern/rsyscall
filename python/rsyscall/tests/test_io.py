@@ -705,7 +705,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
             async with thread as stdtask2:
-                child_task = await thread.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'sleep .01'])
+                child_task = await thread.exec(stdtask.sh.args('-c', 'sleep .01'))
                 await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
@@ -973,8 +973,7 @@ class TestIO(unittest.TestCase):
     def test_fork_exec(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             child_thread = await stdtask.fork()
-            sh = Command(stdtask.filesystem.utilities.sh, [b'sh'], {})
-            child_task = await sh.args('-c', 'true').exec(child_thread)
+            child_task = await stdtask.sh.args('-c', 'true').exec(child_thread)
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
