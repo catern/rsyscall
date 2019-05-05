@@ -11,7 +11,7 @@ import signal
 from rsyscall.ctypes import Pointer
 logger = logging.getLogger(__name__)
 
-from rsyscall.sys.epoll import EpollCtlOp
+from rsyscall.sys.epoll import EPOLL_CTL
 from rsyscall.sys.prctl import PrctlOp
 from rsyscall.sys.wait import IdType
 from rsyscall.fcntl import AT
@@ -255,7 +255,7 @@ async def getdents64(sysif: SyscallInterface, fd: FileDescriptor, dirp: Pointer,
 async def unshare(sysif: SyscallInterface, flags: UnshareFlag) -> None:
     await sysif.syscall(SYS.unshare, flags)
 
-async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: EpollCtlOp,
+async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: EPOLL_CTL,
                     fd: FileDescriptor, event: t.Optional[Pointer]=None) -> None:
     if event is None:
         event = 0 # type: ignore

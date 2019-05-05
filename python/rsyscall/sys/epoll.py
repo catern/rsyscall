@@ -10,7 +10,7 @@ from dataclasses import dataclass
 class EpollFlag(enum.IntFlag):
     CLOEXEC = lib.EPOLL_CLOEXEC
 
-class EpollCtlOp(enum.IntEnum):
+class EPOLL_CTL(enum.IntEnum):
     ADD = lib.EPOLL_CTL_ADD
     MOD = lib.EPOLL_CTL_MOD
     DEL = lib.EPOLL_CTL_DEL

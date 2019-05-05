@@ -5,8 +5,6 @@ import os
 import signal
 import rsyscall.near
 
-from rsyscall.sys.epoll import EpollCtlOp
-
 # These are like segment ids.
 # They set eq=False because they are identified by their Python object identity,
 # in lieu of a real identifier.

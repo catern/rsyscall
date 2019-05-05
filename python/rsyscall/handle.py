@@ -22,7 +22,7 @@ from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
 from rsyscall.unistd import SEEK
-from rsyscall.sys.epoll import EpollFlag, EpollCtlOp, EpollEvent, EpollEventList
+from rsyscall.sys.epoll import EpollFlag, EPOLL_CTL, EpollEvent, EpollEventList
 from rsyscall.linux.dirent import DirentList
 from rsyscall.sys.inotify import InotifyFlag, IN
 from rsyscall.sys.memfd import MFD
@@ -535,7 +535,7 @@ class FileDescriptor:
             valid_size = num * EpollEvent.sizeof()
             return events.split(valid_size)
 
-    async def epoll_ctl(self, op: EpollCtlOp, fd: FileDescriptor, event: t.Optional[Pointer[EpollEvent]]=None) -> None:
+    async def epoll_ctl(self, op: EPOLL_CTL, fd: FileDescriptor, event: t.Optional[Pointer[EpollEvent]]=None) -> None:
         self.validate()
         with fd.borrow(self.task) as fd:
             if event is not None:

@@ -30,7 +30,7 @@ from rsyscall.sys.socket import T_addr
 from rsyscall.sys.mount import MS
 from rsyscall.sys.un import SockaddrUn, PathTooLongError
 from rsyscall.netinet.in_ import SockaddrIn
-from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EpollCtlOp, EpollFlag
+from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EPOLL_CTL, EpollFlag
 from rsyscall.sys.wait import CLD, UncleanExit, ChildEvent, W
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
@@ -478,13 +478,13 @@ class EpollCenter:
         return EpolledFileDescriptor(self, fd, receive, number)
 
     async def add(self, fd: handle.FileDescriptor, event: EpollEvent) -> None:
-        await self.epfd.epoll_ctl(EpollCtlOp.ADD, fd, await self.task.to_pointer(event))
+        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.task.to_pointer(event))
 
     async def modify(self, fd: handle.FileDescriptor, event: EpollEvent) -> None:
-        await self.epfd.epoll_ctl(EpollCtlOp.MOD, fd, await self.task.to_pointer(event))
+        await self.epfd.epoll_ctl(EPOLL_CTL.MOD, fd, await self.task.to_pointer(event))
 
     async def delete(self, fd: handle.FileDescriptor) -> None:
-        await self.epfd.epoll_ctl(EpollCtlOp.DEL, fd)
+        await self.epfd.epoll_ctl(EPOLL_CTL.DEL, fd)
 
 class EpollWaiter:
     def __init__(self, task: Task, epfd: handle.FileDescriptor,
@@ -513,9 +513,9 @@ class EpollWaiter:
     async def update_activity_fd(self, fd: handle.FileDescriptor) -> None:
         if self.activity_fd is not None:
             # del old activity fd 
-            await self.epfd.epoll_ctl(EpollCtlOp.DEL, fd)
+            await self.epfd.epoll_ctl(EPOLL_CTL.DEL, fd)
         # add new activity fd
-        await self.epfd.epoll_ctl(EpollCtlOp.ADD, fd, await self.waiting_task.to_pointer(
+        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.waiting_task.to_pointer(
             EpollEvent(data=self.activity_fd_data, events=EPOLL.IN)))
 
     async def do_wait(self) -> None:
