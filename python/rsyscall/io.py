@@ -533,13 +533,11 @@ class AsyncFileDescriptor:
                                          EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET)
         return AsyncFileDescriptor(epolled, fd)
 
-    @property
-    def handle(self) -> rsyscall.handle.FileDescriptor:
-        return self.underlying.handle
-
     def __init__(self, epolled: EpolledFileDescriptor, underlying: FileDescriptor[T_file_co]) -> None:
         self.epolled = epolled
         self.underlying = underlying
+        self.ram: RAM = underlying.task
+        self.handle: handle.FileDescriptor = underlying.handle
         self.running_wait = OneAtATime()
         self.is_readable = False
         self.is_writable = False
@@ -621,13 +619,12 @@ class AsyncFileDescriptor:
                 else:
                     raise
 
-    async def write(self, buf: bytes) -> None:
-        while len(buf) > 0:
+    async def write_handle(self, to_write: handle.Pointer) -> None:
+        while to_write.bytesize() > 0:
             while not (self.is_writable or self.error):
                 await self._wait_once()
             try:
-                written = await self.underlying.write(buf)
-                buf = buf[written:]
+                written, to_write = await self.handle.write(to_write)
             except OSError as e:
                 if e.errno == errno.EAGAIN:
                     # TODO this is not really quite right if it's possible to concurrently call methods on this object.
@@ -635,6 +632,10 @@ class AsyncFileDescriptor:
                     self.is_writable = False
                 else:
                     raise
+
+    async def write(self, buf: bytes) -> None:
+        ptr = await self.ram.to_pointer(Bytes(buf))
+        await self.write_handle(ptr)
 
     async def write_raw(self, sysif: near.SyscallInterface, fd: near.FileDescriptor, pointer: near.Pointer, count: int) -> int:
         while True:
@@ -1537,6 +1538,67 @@ async def launch_futex_monitor(task: Task,
     # the stack will be freed as it is no longer needed, but the futex pointer will live on
     return futex_task
 
+@dataclass
+class RsyscallSyscall(Struct):
+    number: int
+    arg1: int
+    arg2: int
+    arg3: int
+    arg4: int
+    arg5: int
+    arg6: int
+
+    def to_bytes(self) -> bytes:
+        return bytes(ffi.buffer(ffi.new('struct rsyscall_syscall const*', {
+            "sys": self.number,
+            "args": (self.arg1, self.arg2, self.arg3, self.arg4, self.arg5, self.arg6),
+        })))
+
+    T = t.TypeVar('T', bound='RsyscallSyscall')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        struct = ffi.cast('struct rsyscall_syscall*', ffi.from_buffer(data))
+        return cls(struct.sys,
+                   struct.args[0], struct.args[1], struct.args[2],
+                   struct.args[3], struct.args[4], struct.args[5])
+
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('struct rsyscall_syscall')
+
+@dataclass
+class RsyscallResponse(Struct):
+    value: int
+
+    def to_bytes(self) -> bytes:
+        return bytes(ffi.buffer(ffi.new('long const*', self.value)))
+
+    T = t.TypeVar('T', bound='RsyscallResponse')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        struct = ffi.cast('long*', ffi.from_buffer(data))
+        return cls(struct[0])
+
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('long')
+
+class ReadBuffer:
+    def __init__(self) -> None:
+        self.buf = b""
+
+    def feed_bytes(self, data: bytes) -> None:
+        self.buf += data
+
+    def read_struct(self, cls: t.Type[T_struct]) -> t.Optional[T_struct]:
+        length = cls.sizeof()
+        if length <= len(self.buf):
+            section = self.buf[:length]
+            self.buf = self.buf[length:]
+            return cls.from_bytes(section)
+        else:
+            return None
+
 class RsyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
@@ -1545,7 +1607,7 @@ class RsyscallConnection:
     ) -> None:
         self.tofd = tofd
         self.fromfd = fromfd
-        self.buffer = AsyncReadBuffer(self.fromfd)
+        self.buffer = ReadBuffer()
 
     async def close(self) -> None:
         await self.tofd.aclose()
@@ -1553,20 +1615,26 @@ class RsyscallConnection:
 
     async def write_request(self, number: int,
                             arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> None:
-        request = ffi.new('struct rsyscall_syscall*',
-                          (number, (arg1, arg2, arg3, arg4, arg5, arg6)))
+        request = RsyscallSyscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
+        ptr = await self.tofd.ram.to_pointer(request)
         try:
-            await self.tofd.write(bytes(ffi.buffer(request)))
+            await self.tofd.write_handle(ptr)
         except OSError as e:
             # we raise a different exception so that users can distinguish syscall errors from
             # transport errors
             raise RsyscallException() from e
 
     async def read_response(self) -> int:
-        try:
-            return await self.buffer.read_cffi('long')
-        except EOFException:
-            raise RsyscallHangup()
+        val = self.buffer.read_struct(RsyscallResponse)
+        buf = await self.fromfd.ram.malloc_type(Bytes, 256)
+        while val is None:
+            valid, rest = await self.fromfd.read_handle(buf)
+            if valid.bytesize() == 0:
+                raise RsyscallHangup()
+            self.buffer.feed_bytes(await valid.read())
+            val = self.buffer.read_struct(RsyscallResponse)
+            buf = valid.merge(rest)
+        return val.value
 
 class ChildExit(RsyscallHangup):
     pass
@@ -1597,21 +1665,6 @@ class SyscallResponse(near.SyscallResponse):
         if self.result is not None:
             raise Exception("trying to set result on SyscallResponse twice")
         self.result = result
-
-class ReadBuffer:
-    def __init__(self) -> None:
-        self.buf = b""
-
-    def feed_bytes(self, data: bytes) -> None:
-        self.buf += data
-
-    def read_length(self, length: int) -> t.Optional[bytes]:
-        if length <= len(self.buf):
-            section = self.buf[:length]
-            self.buf = self.buf[length:]
-            return section
-        else:
-            return None
 
 class ChildConnection(base.SyscallInterface):
     "A connection to some rsyscall server where we can make syscalls"

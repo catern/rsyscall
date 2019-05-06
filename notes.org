@@ -16425,6 +16425,34 @@ but that doesn't scale as well as passing the epfd down.
     which I think is kinda cute, kinda fine.
 
     blaaaah okay so I need to revert these migration changes, and switch to afd as the center for waiting.
+*** lol
+    ok so I deleted the asyncfd stuff lol
+
+    the question now is....
+
+    if asyncfd has a handle, and a ram, and is async.
+
+    then what doesn't it do???
+
+    ok so things are still orthogonal,
+    but AFD is my tuple which holds the orthogonal privs.
+
+    ummm and how do we handle the whole, register on epoll thing?
+
+    yeah having afd be my mem-abstracted fd is actually really sensible
+
+    hmm and I can have it only optionally have the epoller?
+    so that I can use the same interface for regular files and non-regular?
+    if it doesn't have the epoller, it can just fall back to blocking?
+
+    heck we can even support buffering.
+
+    lol what happened to orthogonality, friend?
+
+    ok, so maybe we won't support buffering.
+    but, we can support the rest of this stuff!
+
+    and, having it be my omnibus makes sense.
 ** fix memory allocator to save arenas!!
    I was not saving my arenas before, but now i'm getting random segfaults :<
 
