@@ -32,7 +32,7 @@ async def bootstrap_nix(
     [(access_side, dest_tar_stdin)] = await dest_tar_thread.stdtask.make_connections(1)
     src_tar_stdout = access_side.handle.move(src_tar_thread.stdtask.task.base)
 
-    await dest_tar_thread.stdtask.task.unshare_fs()
+    await dest_tar_thread.stdtask.task.base.unshare_fs()
     await dest_tar_thread.stdtask.task.base.fchdir(dest_dir.handle)
     await dest_tar_thread.stdtask.unshare_files(going_to_exec=True)
     await dest_tar_thread.stdtask.stdin.replace_with(dest_tar_stdin)

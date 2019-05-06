@@ -43,7 +43,7 @@ class AddressSpace:
             raise AddressSpaceMismatchError("pointer", pointer, "doesn't match address space", self)
 
 # These are like far pointers.
-@dataclass
+@dataclass(frozen=True)
 class FileDescriptor:
     fd_table: FDTable
     near: rsyscall.near.FileDescriptor

@@ -34,6 +34,7 @@ class Serializable(HasSerializer):
     def get_serializer(cls: t.Type[T_serializable], task) -> Serializer[T_serializable]:
         return cls # type: ignore
 
+T_struct = t.TypeVar('T_struct', bound='Struct')
 class Struct(Serializable, FixedSize):
     pass
 

@@ -482,8 +482,8 @@ class TestIO(unittest.TestCase):
             tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
             ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
             await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
-            sock = await stdtask.task.socket_inet(SOCK.STREAM)
-            await sock.handle.ioctl(net.SIOCGIFINDEX, ptr)
+            sock = await stdtask.task.base.socket(AF.INET, SOCK.STREAM)
+            await sock.ioctl(net.SIOCGIFINDEX, ptr)
             # this is the second interface in an empty netns
             self.assertEqual((await ptr.read()).ifindex, 2)
         trio.run(self.runner, test)
@@ -502,8 +502,8 @@ class TestIO(unittest.TestCase):
             tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
             ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
             await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
-            sock = await stdtask.task.socket_inet(SOCK.STREAM)
-            await sock.handle.ioctl(net.SIOCGIFINDEX, ptr)
+            sock = await stdtask.task.base.socket(AF.INET, SOCK.STREAM)
+            await sock.ioctl(net.SIOCGIFINDEX, ptr)
             # this is the second interface in an empty netns
             self.assertEqual((await ptr.read()).ifindex, 2)
 

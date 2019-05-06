@@ -29,7 +29,7 @@ class WriteOp:
     done: bool = False
 
     def assert_done(self) -> None:
-        if not self.done:
+        if self.done is None:
             raise Exception("not done yet")
 
 def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[t.Tuple[Pointer, bytes]]:
@@ -111,8 +111,8 @@ class SocketMemoryTransport(MemoryTransport):
         rtask = self.remote.task
         near_read_fd = self.remote.near
         near_dest = rtask.to_near_pointer(dest)
-        wtask = self.local.underlying.task.base
-        near_write_fd = self.local.underlying.handle.near
+        wtask = self.local.handle.task
+        near_write_fd = self.local.handle.near
         near_src = wtask.to_near_pointer(src)
         async def read() -> None:
             i = 0
@@ -171,9 +171,9 @@ class SocketMemoryTransport(MemoryTransport):
     async def _unlocked_single_read(self, src: Pointer, n: int) -> bytes:
         buf = bytearray(n)
         dest = base.to_local_pointer(buf)
-        rtask = self.local.underlying.task.base
+        rtask = self.local.handle.task
         near_dest = rtask.to_near_pointer(dest)
-        near_read_fd = self.local.underlying.handle.near
+        near_read_fd = self.local.handle.near
         wtask = self.remote.task
         near_src = wtask.to_near_pointer(src)
         near_write_fd = self.remote.near

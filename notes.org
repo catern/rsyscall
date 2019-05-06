@@ -16265,6 +16265,13 @@ oh I need that anyway to write/read the iovecs
     so, right, we want to be able to use asyncfd from transport. hm.
 
     this will require... making epoll work just in terms of handles.
+*** merging
+    merging is obvious in retrospect!
+
+    i'll just make a new AggregateAllocation thing,
+    which holds and pins arbitrary allocations below it.
+
+    then I just have a pointer on top of that.
 ** lazily registered epoll
    Let's do it!
 
@@ -16290,6 +16297,148 @@ oh I need that anyway to write/read the iovecs
    I think I can just use read/write then.
    or, recv/send?
    either way, connect is fine
+*** overall design
+    so I guess I'm very much moving towards a design where,
+    you have to do everything yourself at the top-level.
+
+    like, there are three things you might want:
+    1. retry on partial write/read
+    2. async operation
+    3. abstraction of memory
+
+    Our basic interface provides none of those;
+    instead you can somewhat-straightforwardly do them yourself.
+
+    It's very compositional.
+*** EEXIST
+    this is actually very cool - when we add an fd a second time we get eexist
+
+    but, oh, wait, we don't learn what fd it's registered as, dang.
+
+    hmm. so, handle is probably not the right granularity, but what is, then?
+
+    well, let's try far fd I guess. or...
+
+    maybe it's just a matter of registering the handles on both mechanisms.
+
+    hm. i don't see 
+*** design thoughts
+hmm. ok so with our new API we can't register ahead of time...
+ah but we do still get centralization of waiting.
+it's just that it's not possible for a task to register on an epoller,
+then not inherit it.
+
+oh, but that makes sense: if that was possible then we could get in a situation where,
+we can't delete an fd manually.
+
+though, we could solve that by keeping a ref to each fd in the waiter;
+but that doesn't scale as well as passing the epfd down.
+*** misc problems
+    I think this problem with the repl is just because I 
+    add before adding waiters
+
+    Nice indeed it was
+*** problem
+    So it seems to be that the problem is cancellation support on epoll.
+
+    We are epoll_waiting forever, 
+    when we should be returning from the epoll_wait due to activity on the activity_fd
+
+    Hm.
+
+    But, uh, that is not what is actually happening.
+
+    We do seem to be returning from epoll_wait just fine.
+    So maybe it's not cancellation support that's the problem?
+
+    Hm. So why aren't we reading the response?
+
+    Are we...
+
+    Argh! Circular dep!
+
+    To register ourselves on the epollfd, *in* the child task,
+    requires that. um.
+    requires that we...
+
+    We have to make a syscall in the task to register ourselves.
+
+    Um... Wait a second though, that's not right.
+
+    Yeah no that doesn't make any sense, the connection handles are only in the parent.
+
+    And we're not even adding um... the right fd?
+    actually this does look a lot like the right fd...
+
+    ok no it's not the right fd.
+
+    ok so what's going on here then?
+
+    we get an eagain from our read.
+
+    hmm. the question is, why aren't we reading from 10 again, once we got this eagain?
+
+    hmm, is the epoll_wait hanging???
+*** hmm
+    do i really even like this approach
+
+    ugggghhhhhhhhhhhhhhh
+
+    ok so things i like, partial list:
+    1. the orthogonality approach where you don't have to use some asyncfd structure to read/write/operate,
+       instead you just use that structure to do waiting
+    2. explicitly having a thing that says you are registered on the epollfd.
+       it would be nice if... we could... delete something via data number,
+       but we can't, we need the handle.
+
+    hmm argh.
+
+    maybe this waiter approach is not good,
+    maybe instead I should register, once, explicitly.
+
+    instead of this super-dynamic approach.
+
+    yeah and, and...
+
+    and the asyncfd way is fine anyway.
+    we can call it asyncfd,
+    and it has the waiter methods.
+    ugh. yes. this is fine.
+
+    and it's far more explicit,
+    and it doesn't have the concerns about deletion,
+    or about mapping keys to waiters...
+
+    blah blah BLAH okay.
+    ok ok ok
+
+    ok so how will I detect the negedges?
+
+    well if I just assume at the start that it's positive,
+    then I don't need to detect negedges centrally,
+    which is fine.
+
+    ok so i'll still have this waiter API,
+    it'll just not add on enter.
+
+    and, I guess, I can still have this wait_on_eagain thing,
+    which I think is kinda cute, kinda fine.
+
+    blaaaah okay so I need to revert these migration changes, and switch to afd as the center for waiting.
+** fix memory allocator to save arenas!!
+   I was not saving my arenas before, but now i'm getting random segfaults :<
+
+   I probably have a bug :<
+
+   ugghhh
+
+   and it's hanging even without these allocator changes
+** switch everything over to the new epoll style
+** remove all the helpers on io.Task
+   and then delete io.Task
+
+   hm to remove socket_inet/socket_unix I should first remove asyncfd,
+   so that I don't need io.FDs
 ** DONE make borrowing not async
    We can't run async code on exiting.
    Because we might drop a syscall result.
@@ -16301,6 +16450,12 @@ oh I need that anyway to write/read the iovecs
    Since, a proper duck-typed pointer can be passed to syscalls just fine.
 
    We can just assume they don't munmap, that's fine
+** use WrittenPointer[Sockbuf[Address]] to make accept/getname/etc calls nicer
+   Basically I pass in a WPointer[Sockbuf[Address]],
+   and a Sockbuf[Address] contains a Pointer[Address].
+
+   And I return back the same thing too.
+
 ** notes while waiting for kai
 Okay so....... So....
 
@@ -16739,3 +16894,59 @@ received_events = await self.wait(maxevents=32, timeout=0)
 # TODO maybe we can rearrange how we do epoll, now that we know that we
 # can't guarantee receiving events on each wait. We might be able to improve
 # performance. Or maybe we can just start specially handling streams.
+* hm
+
+interesting question.
+
+do-notation with no possibility of runtime overhead.
+
+(do notation is delimited continuations, etc, whatever)
+
+how would you do this?
+
+basically you want the continuation operator to happen only at compile time.
+
+you could have some kind of macro-level operator that does this...
+
+it's also kind of like what I was thinking about like,
+a module which can compile itself differently.
+
+hmm, hmm, staged compilation
+
+ok so the notion would be explicit manipulation of function blocks, that would be one way.
+
+instead of closures, we just have jumps.
+
+then we could do it all at the value-level.
+
+hm. but we want to be able to close over function pointers.
+
+(and have the linker resolve those)
+
+it's interesting.
+
+I think it boils down to having nicer approaches for staged computation;
+you want to be able to manipulate function blocks and ban them from being closures,
+but you want those function blocks to be able to close over other functions because it's a hassle to manage that manually.
+
+well what if you just have an ~effect~ for this?
+you manipulate these function blocks,
+and you get a closure...
+well hm.
+
+and you could explicitly model your program as a script which gets run to generate an executable which does what you actually want, and optimizations are just pluggable libraries.
+
+
+
+so you would explicitly model your program as a script which gets run to generate an executable which does what you actually want once it's passed all its arguments.
+IMO, such an approach is the future anyway, it's just a matter of making it ergonomic enough...
+
+
+ooh, and then essentially your program becomes  you would essentially model your program as,
+it's 
+
+to me it seems to have a clear correspondence to the vision I described earlier - 
+a staged language where using runtime values and doing computation on them is an effect (more probably, a range of effects) -
+the effects correspond to the extensible "symantics" that oleg describes
+
+in some sense the dynamic linker is the symantics for things...
