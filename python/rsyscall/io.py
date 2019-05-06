@@ -615,17 +615,24 @@ class AsyncFileDescriptor:
                 else:
                     raise
 
-    async def accept(self, flags: SOCK=SOCK.CLOEXEC) -> t.Tuple[FileDescriptor, Address]:
+    async def accept_handle(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
+    ) -> t.Tuple[handle.FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]:
         while True:
             while not (self.is_readable or self.hangup):
                 await self._wait_once()
             try:
-                return (await self.underlying.accept(flags))
+                return (await self.handle.accept(flags, addr))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
                     self.is_readable = False
                 else:
                     raise
+
+    async def accept(self, flags: SOCK=SOCK.CLOEXEC) -> t.Tuple[FileDescriptor, Address]:
+        written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(GenericSockaddr)))
+        fd, sockbuf = await self.accept_handle(flags, written_sockbuf)
+        addr = (await (await sockbuf.read()).buf.read()).parse()
+        return FileDescriptor(self.underlying.task, fd, File()), addr
 
     async def accept_as_async(self) -> t.Tuple[AsyncFileDescriptor, Address]:
         connfd, addr = await self.accept(flags=SOCK.CLOEXEC|SOCK.NONBLOCK)
@@ -639,13 +646,14 @@ class AsyncFileDescriptor:
 
     async def connect(self, addr: T_addr) -> None:
         try:
-            await self.underlying.connect(addr)
+            await self.handle.connect(await self.ram.to_pointer(addr))
         except OSError as e:
             if e.errno == errno.EINPROGRESS:
                 while not self.is_writable:
                     await self._wait_once()
-                retbuf = await self.underlying.getsockopt(SOL.SOCKET, SO.ERROR, ffi.sizeof('int'))
-                err = ffi.cast('int*', ffi.from_buffer(retbuf))[0]
+                sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(Int32)))
+                retbuf = await self.handle.getsockopt(SOL.SOCKET, SO.ERROR, sockbuf)
+                err = await (await retbuf.read()).buf.read()
                 if err != 0:
                     raise OSError(err, os.strerror(err))
             else:
