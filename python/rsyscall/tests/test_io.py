@@ -283,7 +283,7 @@ class TestIO(unittest.TestCase):
                     await sockfd.listen(10)
                     async with (await stdtask.task.socket_unix(SOCK.STREAM)) as clientfd:
                         await clientfd.connect(addr)
-                        connfd, client_addr = await sockfd.accept(0) # type: ignore
+                        connfd, client_addr = await sockfd.accept(SOCK.CLOEXEC)
                         async with connfd:
                             logger.info("%s, %s", addr, client_addr)
         trio.run(self.runner, test)
@@ -299,9 +299,9 @@ class TestIO(unittest.TestCase):
                 clientfd = await stdtask.task.socket_unix(SOCK.STREAM)
                 async_clientfd = await AsyncFileDescriptor.make(stdtask.epoller, clientfd)
                 await async_clientfd.connect(addr)
-                connfd, client_addr = await async_sockfd.accept(0) # type: ignore
-                async with connfd:
-                    logger.info("%s, %s", addr, client_addr)
+                connfd, client_addr = await async_sockfd.accept()
+                logger.info("%s, %s", addr, client_addr)
+                await connfd.close()
                 await async_sockfd.aclose()
                 await async_clientfd.aclose()
         trio.run(self.runner, test)
@@ -317,7 +317,7 @@ class TestIO(unittest.TestCase):
                 clientfd = await stdtask.task.socket_unix(SOCK.STREAM)
                 async_clientfd = await AsyncFileDescriptor.make(stdtask.epoller, clientfd)
                 await async_clientfd.connect(addr)
-                async_connfd, client_addr = await async_sockfd.accept_as_async() # type: ignore
+                async_connfd, client_addr = await async_sockfd.accept_as_async()
                 logger.info("%s, %s", addr, client_addr)
                 data = b"hello"
                 await async_connfd.write(data)

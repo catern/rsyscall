@@ -60,16 +60,14 @@ RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
     async def accept(self, stdtask: StandardTask=None) -> t.Tuple[t.List[str], StandardTask]:
         if stdtask is None:
             stdtask = self.stdtask
-        conn: FileDescriptor[UnixSocketFile]
-        addr: SockaddrUn
-        conn, addr = await self.listening_sock.accept(O.CLOEXEC) # type: ignore
+        conn, addr = await self.listening_sock.accept(SOCK.CLOEXEC)
         argv, new_stdtask = await _setup_stub(stdtask, conn)
         # have to drop first argument, which is the unix_stub executable; see make_stub
         return argv[1:], new_stdtask
 
 async def _setup_stub(
         stdtask: StandardTask,
-        bootstrap_sock: FileDescriptor[UnixSocketFile],
+        bootstrap_sock: handle.FileDescriptor,
 ) -> t.Tuple[t.List[str], StandardTask]:
     [(access_syscall_sock, passed_syscall_sock),
      (access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(2)
@@ -82,7 +80,7 @@ async def _setup_stub(
         cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([
             passed_syscall_sock, passed_data_sock, futex_memfd, stdtask.connecting_connection[1]])]))
         return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
-    _, [] = await bootstrap_sock.handle.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
+    _, [] = await bootstrap_sock.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
     # close our reference to fds that only the new process needs
     await passed_syscall_sock.invalidate()
     await passed_data_sock.invalidate()

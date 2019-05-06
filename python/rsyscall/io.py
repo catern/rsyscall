@@ -515,18 +515,21 @@ class AsyncFileDescriptor:
     epolled: EpolledFileDescriptor
 
     @staticmethod
-    async def make(epoller: EpollCenter, fd: FileDescriptor, is_nonblock=False) -> 'AsyncFileDescriptor':
-        if not is_nonblock:
-            await fd.set_nonblock()
-        epolled = await epoller.register(fd.handle,
-                                         EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET)
-        return AsyncFileDescriptor(epolled, fd)
+    async def make(epoller: EpollCenter, fd: FileDescriptor, is_nonblock=False) -> AsyncFileDescriptor:
+        return await AsyncFileDescriptor.make_handle(epoller, fd.task, fd.handle, is_nonblock=is_nonblock)
 
-    def __init__(self, epolled: EpolledFileDescriptor, underlying: FileDescriptor[T_file_co]) -> None:
+    @staticmethod
+    async def make_handle(epoller: EpollCenter, ram: RAM, fd: handle.FileDescriptor, is_nonblock=False
+    ) -> AsyncFileDescriptor:
+        if not is_nonblock:
+            await fd.fcntl(F.SETFL, O.NONBLOCK)
+        epolled = await epoller.register(fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET)
+        return AsyncFileDescriptor(epolled, ram, fd)
+
+    def __init__(self, epolled: EpolledFileDescriptor, ram: RAM, handle: handle.FileDescriptor) -> None:
         self.epolled = epolled
-        self.underlying = underlying
-        self.ram: RAM = underlying.task
-        self.handle: handle.FileDescriptor = underlying.handle
+        self.ram = ram
+        self.handle = handle
         self.running_wait = OneAtATime()
         self.is_readable = False
         self.is_writable = False
@@ -628,20 +631,20 @@ class AsyncFileDescriptor:
                 else:
                     raise
 
-    async def accept(self, flags: SOCK=SOCK.CLOEXEC) -> t.Tuple[FileDescriptor, Address]:
+    async def accept(self, flags: SOCK=SOCK.CLOEXEC) -> t.Tuple[handle.FileDescriptor, Address]:
         written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(GenericSockaddr)))
         fd, sockbuf = await self.accept_handle(flags, written_sockbuf)
         addr = (await (await sockbuf.read()).buf.read()).parse()
-        return FileDescriptor(self.underlying.task, fd, File()), addr
+        return fd, addr
 
     async def accept_as_async(self) -> t.Tuple[AsyncFileDescriptor, Address]:
         connfd, addr = await self.accept(flags=SOCK.CLOEXEC|SOCK.NONBLOCK)
         try:
-            aconnfd = await AsyncFileDescriptor.make(
-                self.epolled.epoll_center, connfd, is_nonblock=True)
+            aconnfd = await AsyncFileDescriptor.make_handle(
+                self.epolled.epoll_center, self.ram, connfd, is_nonblock=True)
             return aconnfd, addr
         except Exception:
-            await connfd.aclose()
+            await connfd.close()
             raise
 
     async def connect(self, addr: T_addr) -> None:
@@ -1317,7 +1320,7 @@ class ChildProcess:
                  monitor: ChildProcessMonitorInternal) -> None:
         self.process = process
         self.monitor = monitor
-        self.task = self.monitor.signal_queue.sigfd.underlying.task
+        self.task = self.monitor.waiting_task
 
     async def waitid_nohang(self) -> t.Optional[ChildEvent]:
         if self.process.unread_siginfo is None:
@@ -2045,8 +2048,7 @@ async def make_connections(access_task: Task,
         async def make_conn() -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
             left_sock = await access_task.socket_unix(SOCK.STREAM)
             await robust_unix_connect(access_connection_path, left_sock)
-            right_sock: FileDescriptor[UnixSocketFile]
-            right_sock, _ = await access_connection_socket.accept(O.CLOEXEC) # type: ignore
+            right_sock, _ = await access_connection_socket.accept(SOCK.CLOEXEC)
             return left_sock, right_sock
     for _ in range(count):
         access_sock, connecting_sock = await make_conn()

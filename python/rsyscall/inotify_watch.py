@@ -97,7 +97,7 @@ class Inotify:
                     self.wd_to_channel[event.wd].send_nowait(event)
 
     async def remove(self, wd: WatchDescriptor) -> None:
-        await self.asyncfd.underlying.handle.inotify_rm_watch(wd)
+        await self.asyncfd.handle.inotify_rm_watch(wd)
 
     async def aclose(self) -> None:
         await self.asyncfd.aclose()
