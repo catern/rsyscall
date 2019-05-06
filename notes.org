@@ -16453,6 +16453,16 @@ but that doesn't scale as well as passing the epfd down.
     but, we can support the rest of this stuff!
 
     and, having it be my omnibus makes sense.
+
+    ok, so let's recap.
+    we want to explicitly register things on the epollcenter.
+
+    so...
+
+    we have some representation of that I guess.
+
+    ok so, ok, we need to do this without, um.
+    depending on things in io so we can use it from transport.
 ** fix memory allocator to save arenas!!
    I was not saving my arenas before, but now i'm getting random segfaults :<
 
@@ -16461,7 +16471,6 @@ but that doesn't scale as well as passing the epfd down.
    ugghhh
 
    and it's hanging even without these allocator changes
-** switch everything over to the new epoll style
 ** remove all the helpers on io.Task
    and then delete io.Task
 

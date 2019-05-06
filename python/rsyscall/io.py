@@ -561,47 +561,22 @@ class AsyncFileDescriptor:
     def could_read(self) -> bool:
         return self.is_readable or self.read_hangup or self.hangup or self.error
 
-    # OK. so now how do I make this API good?
-    # basically, we need to... not run read until we get an edge saying we're readable,
-    # and then if we get an EAGAIN from read, we go back to not being readable.
-    # we need to be able to do it in an arbitrary task,
-    # and against a pointer.
-    # hmm...
-    # arbitrary task, let's relax, I guess.
-    # so let's just make read_handle the main API?
-    # oh but how do we do this read_nonblock?
-    # delete it lol
-    async def _read_nonblock(self, count: int=4096) -> t.Optional[bytes]:
-        if not self.could_read():
-            return None
-        try:
-            return (await self.underlying.read(count))
-        except OSError as e:
-            if e.errno == errno.EAGAIN:
-                self.is_readable = False
-                return None
-            else:
-                raise
-
-    async def read(self, count: int=4096) -> bytes:
-        while True:
-            while not self.could_read():
-                await self._wait_once()
-            data = await self._read_nonblock()
-            if data is not None:
-                return data
-
     async def read_handle(self, ptr: rsyscall.handle.Pointer) -> t.Tuple[rsyscall.handle.Pointer, rsyscall.handle.Pointer]:
         while True:
             while not self.could_read():
                 await self._wait_once()
             try:
-                return (await self.underlying.handle.read(ptr))
+                return (await self.handle.read(ptr))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
                     self.is_readable = False
                 else:
                     raise
+
+    async def read(self, count: int=4096) -> bytes:
+        ptr = await self.ram.malloc_type(Bytes, count)
+        valid, _ = await self.read_handle(ptr)
+        return await valid.read()
 
     async def wait_for_rdhup(self) -> None:
         while not (self.read_hangup or self.hangup):
