@@ -4,7 +4,7 @@ import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, EpollWaiter, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, FunctionPointer, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, FunctionPointer, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect
 
 from rsyscall.io import ProcessResources, Trampoline
 from rsyscall.handle import Stack, WrittenPointer
@@ -177,7 +177,6 @@ class PersistentServer:
     """
     path: Path
     task: Task
-    epoll_waiter: EpollWaiter
     syscall: RsyscallInterface
     listening_sock: handle.FileDescriptor
     transport: t.Optional[SocketMemoryTransport] = None
@@ -309,6 +308,5 @@ async def fork_persistent(
         stdout=self.stdout.for_task(task.base),
         stderr=self.stderr.for_task(task.base),
     )
-    persistent_server = PersistentServer(path, task, epoller.epoller, syscall,
-                                         listening_sock_handle)
+    persistent_server = PersistentServer(path, task, syscall, listening_sock_handle)
     return stdtask, persistent_server
