@@ -47,8 +47,8 @@ class ConsoleGenie(WishGranter):
 
             term_stdin, repl_stdout = await self.stdtask.task.pipe()
             repl_stdin, term_stdout = await self.stdtask.task.pipe()
-            async_stdin = await AsyncFileDescriptor.make(self.stdtask.epoller, repl_stdin)
-            async_stdout = await AsyncFileDescriptor.make(self.stdtask.epoller, repl_stdout)
+            async_stdin = await self.stdtask.make_afd(repl_stdin.handle)
+            async_stdout = await self.stdtask.make_afd(repl_stdout.handle)
             try:
                 cat_stdin_thread = await self.stdtask.fork()
                 cat_stdin = cat_stdin_thread.stdtask.task.base.make_fd_handle(term_stdin.handle)
@@ -105,7 +105,7 @@ class ConsoleServerGenie(WishGranter):
         sockfd = await self.stdtask.task.socket_unix(SOCK.STREAM)
         await robust_unix_bind(sock_path, sockfd)
         await sockfd.listen(10)
-        async_sockfd = await AsyncFileDescriptor.make(self.stdtask.epoller, sockfd)
+        async_sockfd = await self.stdtask.make_afd(sockfd.handle)
         async with trio.open_nursery() as nursery:
             @nursery.start_soon
             async def do_socat():

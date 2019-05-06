@@ -129,7 +129,7 @@ async def run_socket_binder(
         bootstrap_executable: handle.FileDescriptor,
 ) -> t.AsyncGenerator[bytes, None]:
     stdout_pipe = await task.task.pipe()
-    async_stdout = await AsyncFileDescriptor.make(task.epoller, stdout_pipe.rfd)
+    async_stdout = await task.make_afd(stdout_pipe.rfd.handle)
     thread = await task.fork()
     stdout = thread.stdtask.task.base.make_fd_handle(stdout_pipe.wfd.handle)
     await stdout_pipe.wfd.handle.invalidate()
@@ -167,7 +167,7 @@ async def run_socket_binder(
 async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
                       local_path: handle.Path, remote_path: str) -> ChildProcess:
     stdout_pipe = await stdtask.task.pipe()
-    async_stdout = await AsyncFileDescriptor.make(stdtask.epoller, stdout_pipe.rfd)
+    async_stdout = await stdtask.make_afd(stdout_pipe.rfd.handle)
     thread = await stdtask.fork()
     stdout = thread.stdtask.task.base.make_fd_handle(stdout_pipe.wfd.handle)
     await stdout_pipe.wfd.invalidate()
@@ -213,7 +213,7 @@ async def ssh_bootstrap(
     async def make_async_connection() -> AsyncFileDescriptor:
         sock = await task.socket_unix(SOCK.STREAM)
         await robust_unix_connect(local_data_path, sock)
-        return (await AsyncFileDescriptor.make(parent_task.epoller, sock))
+        return (await parent_task.make_afd(sock.handle))
     async_local_syscall_sock = await make_async_connection()
     async_local_data_sock = await make_async_connection()
     # Read description off of the data sock

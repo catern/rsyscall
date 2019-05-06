@@ -39,7 +39,7 @@ class StubServer:
         sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
         await sockfd.bind(SockaddrUn.from_path(path))
         await sockfd.listen(10)
-        asyncfd = await AsyncFileDescriptor.make(stdtask.epoller, sockfd)
+        asyncfd = await stdtask.make_afd(sockfd.handle)
         return StubServer(asyncfd, stdtask)
 
     @classmethod

@@ -16497,6 +16497,9 @@ but that doesn't scale as well as passing the epfd down.
 
    cool cool i did it
 ** remove FileDescriptor from asyncfd
+   ok so we have a bunch of users
+
+   ah! we can have a method on stdtask to create asyncfd from handle.
 ** notes while waiting for kai
 Okay so....... So....
 

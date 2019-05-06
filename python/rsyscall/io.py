@@ -511,10 +511,6 @@ class AsyncFileDescriptor:
     epolled: EpolledFileDescriptor
 
     @staticmethod
-    async def make(epoller: EpollCenter, fd: FileDescriptor, is_nonblock=False) -> AsyncFileDescriptor:
-        return await AsyncFileDescriptor.make_handle(epoller, fd.task, fd.handle, is_nonblock=is_nonblock)
-
-    @staticmethod
     async def make_handle(epoller: EpollCenter, ram: RAM, fd: handle.FileDescriptor, is_nonblock=False
     ) -> AsyncFileDescriptor:
         if not is_nonblock:
@@ -1079,6 +1075,9 @@ class StandardTask:
         name = (prefix+"."+random_suffix).encode()
         await (parent/name).mkdir(mode=0o700)
         return TemporaryDirectory(self, parent, name)
+
+    async def make_afd(self, fd: handle.FileDescriptor) -> AsyncFileDescriptor:
+        return await AsyncFileDescriptor.make_handle(self.epoller, self.task, fd)
 
     async def make_async_connections(self, count: int) -> t.List[
             t.Tuple[AsyncFileDescriptor, handle.FileDescriptor]
