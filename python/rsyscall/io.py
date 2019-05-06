@@ -421,16 +421,13 @@ class EpolledFileDescriptor:
 
 class EpollCenter:
     "Terribly named class that allows registering fds on epoll, and waiting on them"
-    def __init__(self, epoller: EpollWaiter, epfd: handle.FileDescriptor,
-                 task: Task) -> None:
+    def __init__(self, epoller: EpollWaiter, epfd: handle.FileDescriptor, ram: RAM) -> None:
         self.epoller = epoller
         self.epfd = epfd
-        self.task = task
+        self.ram = ram
 
-    def inherit(self, task: Task) -> EpollCenter:
-        return EpollCenter(self.epoller,
-                           task.base.make_fd_handle(self.epfd),
-                           task)
+    def inherit(self, ram: RAM) -> EpollCenter:
+        return EpollCenter(self.epoller, ram.task.make_fd_handle(self.epfd), ram)
 
     async def register(self, fd: handle.FileDescriptor, events: EPOLL=None) -> EpolledFileDescriptor:
         if events is None:
@@ -441,18 +438,18 @@ class EpollCenter:
         return EpolledFileDescriptor(self, fd, receive, number)
 
     async def add(self, fd: handle.FileDescriptor, event: EpollEvent) -> None:
-        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.task.to_pointer(event))
+        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.to_pointer(event))
 
     async def modify(self, fd: handle.FileDescriptor, event: EpollEvent) -> None:
-        await self.epfd.epoll_ctl(EPOLL_CTL.MOD, fd, await self.task.to_pointer(event))
+        await self.epfd.epoll_ctl(EPOLL_CTL.MOD, fd, await self.ram.to_pointer(event))
 
     async def delete(self, fd: handle.FileDescriptor) -> None:
         await self.epfd.epoll_ctl(EPOLL_CTL.DEL, fd)
 
 class EpollWaiter:
-    def __init__(self, task: Task, epfd: handle.FileDescriptor,
+    def __init__(self, ram: RAM, epfd: handle.FileDescriptor,
                  wait_readable: t.Optional[t.Callable[[], t.Awaitable[None]]]) -> None:
-        self.waiting_task = task
+        self.ram = ram
         self.epfd = epfd
         self.wait_readable = wait_readable
         self.activity_fd: t.Optional[handle.FileDescriptor] = None
@@ -477,7 +474,7 @@ class EpollWaiter:
         if self.activity_fd is not None:
             raise Exception("activity fd already set", self.activity_fd, fd)
         logger.info("setting activity fd for %s to %s", self.epfd, fd)
-        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.waiting_task.to_pointer(
+        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.to_pointer(
             EpollEvent(data=self.activity_fd_data, events=EPOLL.IN)))
 
     async def do_wait(self) -> None:
@@ -485,7 +482,7 @@ class EpollWaiter:
             if needs_run:
                 maxevents = 32
                 if self.input_buf is None:
-                    self.input_buf = await self.waiting_task.malloc_type(EpollEventList, maxevents * EpollEvent.sizeof())
+                    self.input_buf = await self.ram.malloc_type(EpollEventList, maxevents * EpollEvent.sizeof())
                 if self.syscall_response is None:
                     if self.wait_readable is None:
                         timeout = -1
