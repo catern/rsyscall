@@ -9,15 +9,18 @@ import os
 import requests
 import trio
 import rsyscall.io as rsc
-import rsyscall.sys.inotify as inotify
 import rsyscall.handle as handle
 import typing as t
 from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import StandardTask, RsyscallThread, Path, Command
 from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
 from dataclasses import dataclass
-from rsyscall.netinet.in_ import SockaddrIn
 import rsyscall.tasks.local as local
+
+from rsyscall.inotify_watch import Inotify
+
+from rsyscall.netinet.in_ import SockaddrIn
+from rsyscall.sys.inotify import IN
 
 class JobsetInput:
     @abc.abstractmethod
@@ -208,15 +211,15 @@ async def start_postgres(nursery, stdtask: StandardTask, path: Path) -> Postgres
         "full_page_writes": "off",
     }
     await rsc.spit(data/"postgresql.auto.conf", "\n".join([f"{key} = {value}" for key, value in config.items()]))
-    inty = await inotify.Inotify.make(stdtask)
-    watch = await inty.add(data.handle, inotify.Mask.CLOSE_WRITE)
+    inty = await Inotify.make(stdtask)
+    watch = await inty.add(data.handle, IN.CLOSE_WRITE)
 
     await nursery.start(stdtask.run, postgres.args('-D', data))
     # pg_ctl uses the pid file to determine when postgres is up, so we do the same.
     pid_file_name = "postmaster.pid"
     pid_file = None
     while True:
-        await watch.wait_until_event(inotify.Mask.CLOSE_WRITE, pid_file_name)
+        await watch.wait_until_event(IN.CLOSE_WRITE, pid_file_name)
         if pid_file is None:
             pid_file = await (data/pid_file_name).open(os.O_RDWR)
         pid_file_data = await read_completely(stdtask.task, pid_file.handle)

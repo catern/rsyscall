@@ -15,7 +15,7 @@ import rsyscall.handle
 from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess
 import rsyscall.far as far
 import rsyscall.near as near
-from rsyscall.struct import T_has_serializer, T_fixed_size, Bytes, Int32, Serializer, Struct
+from rsyscall.struct import T_struct, T_has_serializer, T_fixed_size, Bytes, Int32, Serializer, Struct
 import rsyscall.batch as batch
 
 import rsyscall.memory.memint as memint
@@ -160,18 +160,6 @@ class Task(RAM):
         self.base = base_
         self.sigmask = sigmask
 
-    @property
-    def syscall(self) -> base.SyscallInterface:
-        return self.base.sysif
-
-    @property
-    def address_space(self) -> base.AddressSpace:
-        return self.base.address_space
-
-    @property
-    def fd_table(self) -> base.FDTable:
-        return self.base.fd_table
-
     def root(self) -> Path:
         return Path(self, handle.Path("/"))
 
@@ -179,7 +167,7 @@ class Task(RAM):
         return Path(self, handle.Path("."))
 
     async def close(self):
-        await self.syscall.close_interface()
+        await self.base.sysif.close_interface()
 
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: MS,
@@ -201,10 +189,6 @@ class Task(RAM):
 
     async def chdir(self, path: 'Path') -> None:
         await self.base.chdir(await path.to_pointer())
-
-    async def unshare_fs(self) -> None:
-        # TODO we want this to return something that we can use to chdir
-        await self.base.unshare_fs()
 
     def _make_fd(self, num: int, file: T_file) -> FileDescriptor[T_file]:
         return self.make_fd(near.FileDescriptor(num), file)
@@ -243,10 +227,10 @@ class Task(RAM):
 
     async def make_epoll_center(self) -> EpollCenter:
         epfd = await self.base.epoll_create(EpollFlag.CLOEXEC)
-        if self.syscall.activity_fd is not None:
+        if self.base.sysif.activity_fd is not None:
             epoll_waiter = EpollWaiter(self, epfd, None)
             epoll_center = EpollCenter(epoll_waiter, epfd, self)
-            activity_fd = self.base.make_fd_handle(self.syscall.activity_fd)
+            activity_fd = self.base.make_fd_handle(self.base.sysif.activity_fd)
             await epoll_waiter.update_activity_fd(activity_fd)
         else:
             # TODO this is a pretty low-level detail, not sure where is the right place to do this
@@ -256,12 +240,6 @@ class Task(RAM):
             epoll_waiter = EpollWaiter(self, epfd, wait_readable)
             epoll_center = EpollCenter(epoll_waiter, epfd, self)
         return epoll_center
-
-    async def getuid(self) -> int:
-        return (await self.base.getuid())
-
-    async def getgid(self) -> int:
-        return (await self.base.getgid())
 
 class ReadableFile(File):
     pass
@@ -512,9 +490,8 @@ class EpollWaiter:
 
     async def update_activity_fd(self, fd: handle.FileDescriptor) -> None:
         if self.activity_fd is not None:
-            # del old activity fd 
-            await self.epfd.epoll_ctl(EPOLL_CTL.DEL, fd)
-        # add new activity fd
+            raise Exception("activity fd already set", self.activity_fd, fd)
+        logger.info("setting activity fd for %s to %s", self.epfd, fd)
         await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.waiting_task.to_pointer(
             EpollEvent(data=self.activity_fd_data, events=EPOLL.IN)))
 
@@ -1158,8 +1135,8 @@ class StandardTask:
         if newuser:
             # hack, we should really track the [ug]id ahead of this so we don't have to get it
             # we have to get the [ug]id from the parent because it will fail in the child
-            uid = await near.getuid(self.task.base.sysif)
-            gid = await near.getgid(self.task.base.sysif)
+            uid = await self.task.base.getuid()
+            gid = await self.task.base.getgid()
             await write_user_mappings(task, uid, gid)
         if newpid or self.child_monitor.is_reaper:
             # if the new process is pid 1, then CLONE_PARENT isn't allowed so we can't use inherit_to_child.
@@ -1229,8 +1206,8 @@ class StandardTask:
 
     async def unshare_user(self,
                            in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
-        uid = await self.task.getuid()
-        gid = await self.task.getgid()
+        uid = await self.task.base.getuid()
+        gid = await self.task.base.getgid()
         await self.task.base.unshare_user()
         await write_user_mappings(self.task, uid, gid,
                                   in_namespace_uid=in_namespace_uid, in_namespace_gid=in_namespace_gid)
@@ -2127,7 +2104,7 @@ async def spawn_rsyscall_thread(
     netns = parent_task.base.netns
     real_parent_task = parent_task.base.parent_task if monitor.use_clone_parent else parent_task.base
     new_base_task = base.Task(syscall, child_process.process, real_parent_task,
-                              parent_task.fd_table, parent_task.address_space, fs_information, pidns, netns)
+                              parent_task.base.fd_table, parent_task.base.address_space, fs_information, pidns, netns)
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
@@ -2170,7 +2147,7 @@ class RsyscallThread:
                     sem.to_pointer(envp_ptrs))
         filename, argv_ptr, envp_ptr = await self.stdtask.task.perform_batch(op)
         child_process = await self.stdtask.task.base.execve(filename, argv_ptr, envp_ptr, flags)
-        return ChildProcess(child_process, self.parent_monitor.internal)
+        return self.parent_monitor.internal.add_task(child_process)
 
     async def execve(self, path: handle.Path, argv: t.Sequence[t.Union[str, bytes, os.PathLike]],
                      env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]={},
