@@ -90,11 +90,6 @@ def log_syscall(logger, number, arg1, arg2, arg3, arg4, arg5, arg6) -> None:
     else:
         logger.debug("%s(%s, %s, %s, %s, %s, %s)", number, arg1, arg2, arg3, arg4, arg5, arg6)
 
-class FunctionPointer:
-    "A function pointer."
-    def __init__(self, pointer: far.Pointer) -> None:
-        self.pointer = pointer
-
 class SignalMask:
     def __init__(self, mask: t.Set[Signals]) -> None:
         self.mask = mask
