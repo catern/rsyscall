@@ -72,8 +72,8 @@ class Inotify:
     # and we can only have a single watch for an inode.
     @staticmethod
     async def make(stdtask: StandardTask) -> Inotify:
-        fd = await stdtask.task.inotify_init(InotifyFlag.CLOEXEC|InotifyFlag.NONBLOCK)
-        asyncfd = await AsyncFileDescriptor.make(stdtask.epoller, fd, is_nonblock=True)
+        fd = await stdtask.task.base.inotify_init(InotifyFlag.CLOEXEC|InotifyFlag.NONBLOCK)
+        asyncfd = await AsyncFileDescriptor.make_handle(stdtask.epoller, stdtask.task, fd, is_nonblock=True)
         return Inotify(asyncfd, stdtask.task)
 
     async def add(self, path: handle.Path, mask: IN) -> Watch:

@@ -213,10 +213,6 @@ class Task(RAM):
         return (FileDescriptor(self, pair.first, File()),
                 FileDescriptor(self, pair.second, File()))
 
-    async def inotify_init(self, flags: InotifyFlag) -> FileDescriptor[InotifyFile]:
-        fd = await self.base.inotify_init(flags)
-        return FileDescriptor(self, fd, InotifyFile())
-
     async def socket_unix(self, type: SOCK, protocol: int=0, cloexec=True) -> FileDescriptor[UnixSocketFile]:
         sockfd = await self.base.socket(AF.UNIX, type, protocol, cloexec=cloexec)
         return FileDescriptor(self, sockfd, UnixSocketFile())
@@ -1089,7 +1085,8 @@ class StandardTask:
     ]:
         conns = await self.make_connections(count)
         access_socks, local_socks = zip(*conns)
-        async_access_socks = [await AsyncFileDescriptor.make(self.access_epoller, sock) for sock in access_socks]
+        async_access_socks = [await AsyncFileDescriptor.make_handle(self.access_epoller, self.access_task, sock.handle)
+                              for sock in access_socks]
         return list(zip(async_access_socks, local_socks))
 
     async def make_connections(self, count: int) -> t.List[
@@ -1282,9 +1279,8 @@ class SignalQueue:
             if signal_block.mask != mask:
                 raise Exception("passed-in SignalBlock", signal_block, "has mask", signal_block.mask,
                                 "which does not match the mask for the SignalQueue we're making", mask)
-        sigfd_handle = await task.base.signalfd(await task.to_pointer(Sigset(mask)), SFD.NONBLOCK|SFD.CLOEXEC)
-        sigfd = FileDescriptor(task, sigfd_handle, SignalFile())
-        async_sigfd = await AsyncFileDescriptor.make(epoller, sigfd, is_nonblock=True)
+        sigfd = await task.base.signalfd(await task.to_pointer(Sigset(mask)), SFD.NONBLOCK|SFD.CLOEXEC)
+        async_sigfd = await AsyncFileDescriptor.make_handle(epoller, task, sigfd, is_nonblock=True)
         return cls(signal_block, async_sigfd)
 
     async def read(self, buf: handle.Pointer) -> handle.Pointer:
