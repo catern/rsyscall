@@ -3,6 +3,7 @@ from rsyscall.far import Pointer
 from dataclasses import dataclass, field
 from rsyscall.concurrency import OneAtATime
 from rsyscall.memory.ram import RAM
+from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.base import MemoryTransport
 import rsyscall.base as base
 import rsyscall.near as near
@@ -50,7 +51,6 @@ def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[
     outputs.append((last_pointer, last_data))
     return outputs
 
-AsyncFileDescriptor = t.Any
 @dataclass
 class SocketMemoryTransport(MemoryTransport):
     """This class wraps a pair of connected file descriptors, one of which is in the local address space.
