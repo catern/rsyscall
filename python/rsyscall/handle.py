@@ -15,9 +15,9 @@ import abc
 import rsyscall.memory.memint as memint
 logger = logging.getLogger(__name__)
 
-from rsyscall.sys.socket import AF, SOCK, SOL, SCM, Address, Socklen, SendmsgFlags, RecvmsgFlags, MsghdrFlags
+from rsyscall.sys.socket import AF, SOCK, SOL, SCM, Address, Socklen, SendmsgFlags, RecvmsgFlags, MsghdrFlags, T_addr
 from rsyscall.sched import UnshareFlag, CLONE
-from rsyscall.struct import Serializer, HasSerializer, FixedSize, Serializable, Int32, Struct
+from rsyscall.struct import Serializer, HasSerializer, FixedSerializer, FixedSize, Serializable, Int32, Struct
 from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
@@ -569,59 +569,50 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.listen(self.task.sysif, self.near, backlog)
 
-    async def getsockopt(self, level: int, optname: int, optval: Pointer, optlen: WrittenPointer[Socklen]) -> None:
+    async def getsockopt(self, level: int, optname: int, optval: WrittenPointer[Sockbuf[T]]) -> Pointer[Sockbuf[T]]:
         self.validate()
-        if optlen.data > optval.bytesize():
-            raise ValueError("optlen contains", optlen.data,
-                             "should contain the length of the opt buf", optval.bytesize())
-        with optval.borrow(self.task) as optval_b:
-            with optlen.borrow(self.task) as optlen_b:
-                await rsyscall.near.getsockopt(self.task.sysif, self.near, level, optname, optval_b.near, optlen_b.near)
+        with optval.borrow(self.task):
+            with optval.value.buf.borrow(self.task):
+                await rsyscall.near.getsockopt(self.task.sysif, self.near,
+                                               level, optname, optval.value.buf.near, optval.near)
+        return optval
 
     async def setsockopt(self, level: int, optname: int, optval: Pointer) -> None:
         self.validate()
         with optval.borrow(self.task) as optval_b:
             await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval_b.near, optval_b.bytesize())
 
-    async def getsockname(self, addr: Pointer, addrlen: WrittenPointer[Socklen]) -> None:
+    async def getsockname(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
         self.validate()
-        if addrlen.data > addr.bytesize():
-            raise ValueError("addrlen contains", addrlen.data,
-                             "should contain the length of the addr buf", addr.bytesize())
-        with addr.borrow(self.task) as addr_b:
-            with addrlen.borrow(self.task) as addrlen_b:
-                await rsyscall.near.getsockname(self.task.sysif, self.near, addr_b.near, addrlen_b.near)
+        with addr.borrow(self.task):
+            with addr.value.buf.borrow(self.task):
+                await rsyscall.near.getsockname(self.task.sysif, self.near, addr.value.buf.near, addr.near)
+        return addr
 
-    async def getpeername(self, addr: Pointer, addrlen: WrittenPointer[Socklen]) -> None:
+    async def getpeername(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
         self.validate()
-        if addrlen.data > addr.bytesize():
-            raise ValueError("addrlen contains", addrlen.data,
-                             "should contain the length of the addr buf", addr.bytesize())
-        with addr.borrow(self.task) as addr_b:
-            with addrlen.borrow(self.task) as addrlen_b:
-                await rsyscall.near.getpeername(self.task.sysif, self.near, addr_b.near, addrlen_b.near)
+        with addr.borrow(self.task):
+            with addr.value.buf.borrow(self.task):
+                await rsyscall.near.getpeername(self.task.sysif, self.near, addr.value.buf.near, addr.near)
+        return addr
 
     @t.overload
     async def accept(self, flags: SOCK) -> FileDescriptor: ...
     @t.overload
-    async def accept(self, flags: SOCK, addr: Pointer, addrlen: WrittenPointer[Socklen]) -> FileDescriptor: ...
+    async def accept(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
+    ) -> t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]: ...
 
-    async def accept(self, flags: SOCK,
-                     addr: t.Optional[Pointer]=None, addrlen: t.Optional[WrittenPointer[Socklen]]=None) -> FileDescriptor:
+    async def accept(self, flags: SOCK, addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
+    ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]]:
         self.validate()
         if addr is None:
             fd = await rsyscall.near.accept4(self.task.sysif, self.near, None, None, flags)
             return self.task.make_fd_handle(fd)
         else:
-            if addrlen is None:
-                raise ValueError("if you pass addr, you must also pass addrlen")
-            if addrlen.data > addr.bytesize():
-                raise ValueError("addrlen contains", addrlen.data,
-                                 "should contain the length of the addr buf", addr.bytesize())
-            with addrlen.borrow(self.task) as addrlen_b:
-                with addr.borrow(self.task) as addr_b:
-                    fd = await rsyscall.near.accept4(self.task.sysif, self.near, addr_b.near, addrlen_b.near, flags)
-                    return self.task.make_fd_handle(fd)
+            with addr.borrow(self.task):
+                with addr.value.buf.borrow(self.task):
+                    fd = await rsyscall.near.accept4(self.task.sysif, self.near, addr.value.buf.near, addr.near, flags)
+                    return self.task.make_fd_handle(fd), addr
 
     async def readlinkat(self, path: t.Union[WrittenPointer[Path], WrittenPointer[EmptyPath]],
                          buf: Pointer) -> t.Tuple[Pointer, Pointer]:
@@ -1279,7 +1270,7 @@ class Arg(bytes, Serializable):
             return cls(data[0:nullidx])
 
 T_arglist = t.TypeVar('T_arglist', bound='ArgList')
-class ArgList(t.List[Pointer[Arg]], HasSerializer):
+class ArgList(t.List[Pointer[Arg]], FixedSerializer):
     @classmethod
     def get_serializer(cls, task: Task) -> Serializer[T_arglist]:
         return ArgListSerializer()
@@ -1332,7 +1323,7 @@ class IovecList(t.List[Pointer], Serializable):
         raise Exception("can't get pointer handles from raw bytes")
 
 T_cmsg = t.TypeVar('T_cmsg', bound='Cmsg')
-class Cmsg(HasSerializer):
+class Cmsg(FixedSerializer):
     @abc.abstractmethod
     def to_data(self) -> bytes: ...
     @abc.abstractmethod
@@ -1400,7 +1391,7 @@ class CmsgSCMRights(Cmsg, t.List[FileDescriptor]):
         return SCM.RIGHTS
 
 T_cmsglist = t.TypeVar('T_cmsglist', bound='CmsgList')
-class CmsgList(t.List[Cmsg], HasSerializer):
+class CmsgList(t.List[Cmsg], FixedSerializer):
     @classmethod
     def get_serializer(cls: t.Type[T_cmsglist], task: Task) -> Serializer[T_cmsglist]:
         return CmsgListSerializer(cls, task)
@@ -1522,3 +1513,26 @@ class NativeFunction:
 
 class NativeFunctionSerializer(Serializer[NativeFunction]):
     pass
+
+@dataclass
+class Sockbuf(t.Generic[T], HasSerializer):
+    buf: Pointer[T]
+    buf_rest: t.Optional[Pointer[T]] = None
+
+    def get_self_serializer(self, task: Task) -> SockbufSerializer[T]:
+        return SockbufSerializer(self.buf)
+
+class SockbufSerializer(t.Generic[T], Serializer[Sockbuf[T]]):
+    def __init__(self, buf: Pointer[T]) -> None:
+        self.buf = buf
+
+    def to_bytes(self, val: Sockbuf) -> bytes:
+        return bytes(ffi.buffer(ffi.new('socklen_t*', val.buf.bytesize())))
+
+    def from_bytes(self, data: bytes) -> Sockbuf[T]:
+        struct = ffi.cast('socklen_t*', ffi.from_buffer(data))
+        socklen = struct[0]
+        if socklen > self.buf.bytesize():
+            raise Exception("not enough buffer space to read socket, need", socklen)
+        valid, rest = self.buf.split(socklen)
+        return Sockbuf(valid, rest)

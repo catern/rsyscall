@@ -14,24 +14,33 @@ class Serializer(t.Generic[T]):
 
 T_has_serializer = t.TypeVar('T_has_serializer', bound='HasSerializer')
 class HasSerializer:
+    @abc.abstractmethod
+    def get_self_serializer(self: T_has_serializer, task) -> Serializer[T_has_serializer]: ...
+
+T_fixed_serializer = t.TypeVar('T_fixed_serializer', bound='FixedSerializer')
+class FixedSerializer(HasSerializer):
     @classmethod
-    def get_serializer(cls: t.Type[T_has_serializer], task) -> Serializer[T_has_serializer]: ...
+    @abc.abstractmethod
+    def get_serializer(cls: t.Type[T_fixed_serializer], task) -> Serializer[T_fixed_serializer]: ... # type: ignore
+
+    def get_self_serializer(self: T_fixed_serializer, task) -> Serializer[T_fixed_serializer]:
+        return type(self).get_serializer(task)
 
 T_fixed_size = t.TypeVar('T_fixed_size', bound='FixedSize')
-class FixedSize(HasSerializer):
+class FixedSize(FixedSerializer):
     @classmethod
     @abc.abstractmethod
     def sizeof(cls) -> int: ...
 
 T_serializable = t.TypeVar('T_serializable', bound='Serializable')
-class Serializable(HasSerializer):
+class Serializable(FixedSerializer):
     @abc.abstractmethod
     def to_bytes(self) -> bytes: ...
     @classmethod
     def from_bytes(cls: t.Type[T_serializable], data: bytes) -> T_serializable:
         raise NotImplementedError("from_bytes not implemented on", cls)
     @classmethod
-    def get_serializer(cls: t.Type[T_serializable], task) -> Serializer[T_serializable]:
+    def get_serializer(cls: t.Type[T_serializable], task) -> Serializer[T_serializable]: # type: ignore
         return cls # type: ignore
 
 T_struct = t.TypeVar('T_struct', bound='Struct')

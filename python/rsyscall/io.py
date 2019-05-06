@@ -12,10 +12,10 @@ from rsyscall.base import SyscallInterface
 import rsyscall.base as base
 import rsyscall.handle as handle
 import rsyscall.handle
-from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess
+from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess, Sockbuf
 import rsyscall.far as far
 import rsyscall.near as near
-from rsyscall.struct import T_struct, T_has_serializer, T_fixed_size, Bytes, Int32, Serializer, Struct
+from rsyscall.struct import T_struct, T_fixed_size, Bytes, Int32, Serializer, Struct
 import rsyscall.batch as batch
 
 import rsyscall.memory.memint as memint
@@ -371,36 +371,25 @@ class FileDescriptor(t.Generic[T_file_co]):
         await self.handle.setsockopt(level, optname, ptr)
 
     async def getsockname(self) -> Address:
-        buf = await self.task.malloc_struct(GenericSockaddr)
-        socklen = await self.task.to_pointer(Socklen(buf.bytesize()))
-        await self.handle.getsockname(buf, socklen)
-        real_len = await socklen.read()
-        valid, _ = buf.split(real_len)
-        return (await valid.read()).parse()
+        written_sockbuf = await self.task.to_pointer(Sockbuf(await self.task.malloc_struct(GenericSockaddr)))
+        sockbuf = await self.handle.getsockname(written_sockbuf)
+        return (await (await sockbuf.read()).buf.read()).parse()
 
     async def getpeername(self) -> Address:
-        buf = await self.task.malloc_struct(GenericSockaddr)
-        socklen = await self.task.to_pointer(Socklen(buf.bytesize()))
-        await self.handle.getpeername(buf, socklen)
-        real_len = await socklen.read()
-        valid, _ = buf.split(real_len)
-        return (await valid.read()).parse()
+        written_sockbuf = await self.task.to_pointer(Sockbuf(await self.task.malloc_struct(GenericSockaddr)))
+        sockbuf = await self.handle.getpeername(written_sockbuf)
+        return (await (await sockbuf.read()).buf.read()).parse()
 
     async def getsockopt(self, level: int, optname: int, optlen: int) -> bytes:
-        buf = await self.task.malloc_type(Bytes, optlen)
-        socklen = await self.task.to_pointer(Socklen(buf.bytesize()))
-        await self.handle.getsockopt(level, optname, buf, socklen)
-        real_len = await socklen.read()
-        valid, _ = buf.split(real_len)
-        return await valid.read()
+        written_sockbuf = await self.task.to_pointer(Sockbuf(await self.task.malloc_type(Bytes, optlen)))
+        sockbuf = await self.handle.getsockopt(level, optname, written_sockbuf)
+        return (await (await sockbuf.read()).buf.read())
 
     async def accept(self, flags: SOCK) -> t.Tuple[FileDescriptor, Address]:
-        buf = await self.task.malloc_struct(GenericSockaddr)
-        socklen = await self.task.to_pointer(Socklen(buf.bytesize()))
-        fd = await self.handle.accept(flags, buf, socklen)
-        real_len = await socklen.read()
-        valid, _ = buf.split(real_len)
-        return FileDescriptor(self.task, fd, type(self.file)()), (await valid.read()).parse()
+        written_sockbuf = await self.task.to_pointer(Sockbuf(await self.task.malloc_struct(GenericSockaddr)))
+        fd, sockbuf = await self.handle.accept(flags, written_sockbuf)
+        addr = (await (await sockbuf.read()).buf.read()).parse()
+        return FileDescriptor(self.task, fd, type(self.file)()), addr
 
 class EpollFile(File):
     pass

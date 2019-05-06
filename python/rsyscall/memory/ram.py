@@ -1,7 +1,7 @@
 from rsyscall.handle import Task, Pointer, WrittenPointer
 from rsyscall.memory.allocator import AllocatorClient, AllocatorInterface
 from rsyscall.base import MemoryTransport
-from rsyscall.struct import T_fixed_size, T_has_serializer, Serializer
+from rsyscall.struct import T_fixed_size, T_has_serializer, T_fixed_serializer, Serializer
 
 import typing as t
 import rsyscall.batch as batch
@@ -25,7 +25,7 @@ class RAM:
     async def malloc_struct(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]:
         return await self.malloc_type(cls, cls.sizeof())
 
-    async def malloc_type(self, cls: t.Type[T_has_serializer], size: int, alignment: int=1) -> Pointer[T_has_serializer]:
+    async def malloc_type(self, cls: t.Type[T_fixed_serializer], size: int, alignment: int=1) -> Pointer[T_fixed_serializer]:
         return await self.malloc_serializer(cls.get_serializer(self.task), size)
 
     async def malloc_serializer(self, serializer: Serializer[T], size: int, alignment: int=1) -> Pointer[T]:
@@ -37,7 +37,7 @@ class RAM:
             raise
 
     async def to_pointer(self, data: T_has_serializer, alignment: int=1) -> WrittenPointer[T_has_serializer]:
-        serializer = data.get_serializer(self.task)
+        serializer = data.get_self_serializer(self.task)
         data_bytes = serializer.to_bytes(data)
         ptr = await self.malloc_serializer(serializer, len(data_bytes), alignment=alignment)
         try:

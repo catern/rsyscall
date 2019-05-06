@@ -4,7 +4,7 @@ from rsyscall.handle import Task, Pointer, WrittenPointer, AllocationInterface, 
 import rsyscall.near
 import contextlib
 import abc
-from rsyscall.struct import T_has_serializer, T_fixed_size, Serializer
+from rsyscall.struct import T_has_serializer, T_fixed_serializer, T_fixed_size, Serializer
 import rsyscall.memory.allocator as memory
 import rsyscall.memory.memint as memint
 import rsyscall.base as base
@@ -17,7 +17,7 @@ class BatchSemantics:
         self.task = task
 
     def to_pointer(self, data: T_has_serializer, alignment: int=1) -> WrittenPointer[T_has_serializer]:
-        serializer = data.get_serializer(self.task)
+        serializer = data.get_self_serializer(self.task)
         data_bytes = serializer.to_bytes(data)
         ptr = self.malloc_serializer(serializer, len(data_bytes))
         try:
@@ -26,7 +26,7 @@ class BatchSemantics:
             ptr.free()
             raise
 
-    def malloc_type(self, cls: t.Type[T_has_serializer], size: int) -> Pointer[T_has_serializer]:
+    def malloc_type(self, cls: t.Type[T_fixed_serializer], size: int) -> Pointer[T_fixed_serializer]:
         return self.malloc_serializer(cls.get_serializer(self.task), size)
 
     def malloc_struct(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]:

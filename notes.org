@@ -16487,12 +16487,15 @@ but that doesn't scale as well as passing the epfd down.
    Since, a proper duck-typed pointer can be passed to syscalls just fine.
 
    We can just assume they don't munmap, that's fine
-** use WrittenPointer[Sockbuf[Address]] to make accept/getname/etc calls nicer
+** DONE use WrittenPointer[Sockbuf[Address]] to make accept/getname/etc calls nicer
    Basically I pass in a WPointer[Sockbuf[Address]],
    and a Sockbuf[Address] contains a Pointer[Address].
 
    And I return back the same thing too.
 
+   let's go ahead and do this, yuck.
+
+   cool cool i did it
 ** notes while waiting for kai
 Okay so....... So....
 
