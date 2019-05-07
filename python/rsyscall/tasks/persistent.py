@@ -7,7 +7,7 @@ import rsyscall.handle as handle
 from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect
 
 from rsyscall.io import ProcessResources, Trampoline
-from rsyscall.handle import Stack, WrittenPointer
+from rsyscall.handle import Stack, WrittenPointer, ThreadProcess
 
 import trio
 import struct
@@ -179,6 +179,8 @@ class PersistentServer:
     task: Task
     syscall: RsyscallInterface
     listening_sock: handle.FileDescriptor
+    # saved to keep the reference to the stack pointer etc alive
+    thread_process: ThreadProcess
     transport: t.Optional[SocketMemoryTransport] = None
 
     async def _connect_and_send(self, stdtask: StandardTask, fds: t.List[handle.FileDescriptor]) -> t.List[near.FileDescriptor]:
@@ -248,7 +250,7 @@ async def spawn_rsyscall_persistent_server(
         remote_sock: handle.FileDescriptor,
         listening_sock: handle.FileDescriptor,
         parent_task: Task, process_resources: ProcessResources,
-    ) -> t.Tuple[Task, RsyscallInterface, handle.FileDescriptor]:
+    ) -> t.Tuple[Task, RsyscallInterface, handle.FileDescriptor, ThreadProcess]:
     async def op(sem: batch.BatchSemantics) -> t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]]:
         stack_value = process_resources.make_trampoline_stack(Trampoline(
             process_resources.persistent_server_func, [remote_sock, remote_sock, listening_sock]))
@@ -256,14 +258,13 @@ async def spawn_rsyscall_persistent_server(
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         return stack
     stack = await parent_task.perform_async_batch(op)
-    raise Exception("ok so we're leaking this process, which leaks the stack, which kills the persistent process")
-    child_process = await parent_task.base.clone(
+    thread_process = await parent_task.base.clone(
         (CLONE.VM|CLONE.FS|CLONE.FILES|CLONE.IO|
          CLONE.SIGHAND|CLONE.SYSVSEM|Signals.SIGCHLD),
         stack, None, None, None)
     syscall = RsyscallInterface(RsyscallConnection(access_sock, access_sock),
-                                child_process.near, remote_sock.near)
-    new_base_task = base.Task(syscall, child_process.near, None,
+                                thread_process.near, remote_sock.near)
+    new_base_task = base.Task(syscall, thread_process.near, None,
                               parent_task.base.fd_table, parent_task.base.address_space, parent_task.base.fs,
                               parent_task.base.pidns,
                               parent_task.base.netns)
@@ -275,7 +276,7 @@ async def spawn_rsyscall_persistent_server(
                     parent_task.allocator.inherit(new_base_task),
                     parent_task.sigmask.inherit(),
     )
-    return new_task, syscall, remote_listening_handle
+    return new_task, syscall, remote_listening_handle, thread_process
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def fork_persistent(
@@ -285,7 +286,7 @@ async def fork_persistent(
     await robust_unix_bind(path, listening_sock)
     await listening_sock.listen(1)
     [(access_sock, remote_sock)] = await self.make_async_connections(1)
-    task, syscall, listening_sock_handle = await spawn_rsyscall_persistent_server(
+    task, syscall, listening_sock_handle, thread_process = await spawn_rsyscall_persistent_server(
         access_sock, remote_sock, listening_sock.handle,
         self.task, self.process)
     await remote_sock.invalidate()
@@ -309,5 +310,5 @@ async def fork_persistent(
         stdout=self.stdout.for_task(task.base),
         stderr=self.stderr.for_task(task.base),
     )
-    persistent_server = PersistentServer(path, task, syscall, listening_sock_handle)
+    persistent_server = PersistentServer(path, task, syscall, listening_sock_handle, thread_process)
     return stdtask, persistent_server

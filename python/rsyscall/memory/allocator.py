@@ -161,6 +161,7 @@ class Allocator:
                 remaining_size = sum([align(size, alignment) for size, alignment in rest_sizes])
                 mapping = await self.task.mmap(align(remaining_size, 4096), PROT.READ|PROT.WRITE, MAP.SHARED)
                 arena = Arena(mapping)
+                self.arenas.append(arena)
                 for size, alignment in rest_sizes:
                     if alignment > 4096:
                         raise Exception("can't handle alignments of more than 4096 bytes", alignment)
