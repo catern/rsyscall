@@ -114,6 +114,9 @@ class MergedAllocation(AllocationInterface):
         # right...
         # well... if we have an assurance that all our offsets are contiguous then...
         # well when we go to another mapping our offset has to be 0.
+        # ah. merge.
+        # oh wait this does work UMMM
+        # also we aren't using merge cuz we only use this for write stuff
         return MergedAllocation(first), MergedAllocation(second)
 
     def merge(self, other: AllocationInterface) -> AllocationInterface:
