@@ -1280,6 +1280,7 @@ class RsyscallConnection:
         self.tofd = tofd
         self.fromfd = fromfd
         self.buffer = ReadBuffer()
+        self.valid: t.Optional[handle.Pointer[Bytes]] = None
 
     async def close(self) -> None:
         await self.tofd.aclose()
@@ -1298,14 +1299,20 @@ class RsyscallConnection:
 
     async def read_response(self) -> int:
         val = self.buffer.read_struct(RsyscallResponse)
+        if val:
+            return val.value
         buf = await self.fromfd.ram.malloc_type(Bytes, 256)
         while val is None:
-            valid, rest = await self.fromfd.read_handle(buf)
-            if valid.bytesize() == 0:
-                raise RsyscallHangup()
-            self.buffer.feed_bytes(await valid.read())
-            val = self.buffer.read_struct(RsyscallResponse)
+            if self.valid is None:
+                valid, rest = await self.fromfd.read_handle(buf)
+                if valid.bytesize() == 0:
+                    raise RsyscallHangup()
+                self.valid = valid
+            data = await self.valid.read()
+            self.valid = None
+            self.buffer.feed_bytes(data)
             buf = valid.merge(rest)
+            val = self.buffer.read_struct(RsyscallResponse)
         return val.value
 
 class ChildExit(RsyscallHangup):
