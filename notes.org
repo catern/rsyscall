@@ -16286,6 +16286,8 @@ oh I need that anyway to write/read the iovecs
     OK first I need to rearrange things so that I'm imported from the right place;
 
     I will just go ahead and make the transport interface use handles
+
+    cool I did that.
 ** DONE lazily registered epoll
    Let's do it!
 
@@ -16479,7 +16481,7 @@ but that doesn't scale as well as passing the epfd down.
     depending on things in io so we can use it from transport.
 
     yes we can use it in transport now, finally
-** fix memory allocator to save arenas!!
+** DONE fix memory allocator to save arenas!!
    I was not saving my arenas before, but now i'm getting random segfaults :<
 
    I probably have a bug :<

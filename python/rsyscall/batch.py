@@ -6,8 +6,6 @@ import contextlib
 import abc
 from rsyscall.struct import T_has_serializer, T_fixed_serializer, T_fixed_size, Serializer
 import rsyscall.memory.allocator as memory
-import rsyscall.base as base
-import rsyscall.far as far
 import typing as t
 
 T = t.TypeVar('T')
@@ -84,7 +82,7 @@ class NullSemantics(BatchSemantics):
         return sem.allocations
 
 class WriteSemantics(BatchSemantics):
-    def __init__(self, task: Task, transport: base.MemoryTransport,
+    def __init__(self, task: Task, transport: MemoryGateway,
                  allocations: t.Sequence[t.Tuple[MemoryMapping, AllocationInterface]]) -> None:
         super().__init__(task)
         self.transport = transport
@@ -104,7 +102,7 @@ class WriteSemantics(BatchSemantics):
         return written
 
     @staticmethod
-    async def run(task: Task, transport: base.MemoryTransport,
+    async def run(task: Task, transport: MemoryGateway,
                   batch: t.Callable[[BatchSemantics], t.Awaitable[T]],
                   allocations: t.Sequence[t.Tuple[MemoryMapping, AllocationInterface]]
     ) -> t.Tuple[T, t.List[WrittenPointer]]:
@@ -114,7 +112,7 @@ class WriteSemantics(BatchSemantics):
 
 async def perform_async_batch(
         task: Task,
-        transport: base.MemoryTransport,
+        transport: MemoryGateway,
         allocator: memory.AllocatorInterface,
         batch: t.Callable[[BatchSemantics], t.Awaitable[T]],
 ) -> T:
@@ -127,7 +125,7 @@ async def perform_async_batch(
 
 async def perform_batch(
         task: Task,
-        transport: base.MemoryTransport,
+        transport: MemoryGateway,
         allocator: memory.AllocatorInterface,
         batch: t.Callable[[BatchSemantics], T],
 ) -> T:
