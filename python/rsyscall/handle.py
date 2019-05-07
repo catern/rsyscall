@@ -969,7 +969,7 @@ class Task(rsyscall.far.Task):
         # TODO the safety of this depends on no-one borrowing/freeing the stack in borrow __aexit__
         # should try to do this a bit more robustly...
         merged_stack = stack_alloc.merge(stack_data)
-        return ThreadProcess(owning_task, process, merged_stack, ctid, newtls)
+        return ThreadProcess(owning_task, process, merged_stack, stack_data.value, ctid, newtls)
 
     async def mmap(self, length: int, prot: PROT, flags: MAP,
                    page_size: int=4096,
@@ -1105,15 +1105,18 @@ class ChildProcess(Process):
 class ThreadProcess(ChildProcess):
     def __init__(self, task: Task, near: rsyscall.near.Process,
                  used_stack: Pointer[Stack],
+                 stack_data: Stack,
                  ctid: t.Optional[Pointer[FutexNode]],
                  tls: t.Optional[Pointer],
     ) -> None:
         super().__init__(task, near)
         self.used_stack = used_stack
+        self.stack_data = stack_data
         self.ctid = ctid
         self.tls = tls
 
     def free_everything(self) -> None:
+        # TODO don't know how to free the stack data...
         if self.used_stack.valid:
             self.used_stack.free()
         if self.ctid is not None and self.ctid.valid:

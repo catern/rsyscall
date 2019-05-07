@@ -16487,6 +16487,9 @@ but that doesn't scale as well as passing the epfd down.
    ugghhh
 
    and it's hanging even without these allocator changes
+
+   aha, it's just a problem with the persistent task!
+   let's fix it.
 ** remove all the helpers on io.Task
    and then delete io.Task
 

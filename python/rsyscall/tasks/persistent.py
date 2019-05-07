@@ -256,6 +256,7 @@ async def spawn_rsyscall_persistent_server(
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         return stack
     stack = await parent_task.perform_async_batch(op)
+    raise Exception("ok so we're leaking this process, which leaks the stack, which kills the persistent process")
     child_process = await parent_task.base.clone(
         (CLONE.VM|CLONE.FS|CLONE.FILES|CLONE.IO|
          CLONE.SIGHAND|CLONE.SYSVSEM|Signals.SIGCHLD),
