@@ -16288,6 +16288,45 @@ oh I need that anyway to write/read the iovecs
     I will just go ahead and make the transport interface use handles
 
     cool I did that.
+
+    ok so there's a mysterious hang in ssh test_exec
+
+    Hmm I think this might be unrelated.
+*** weird hang in wait_readable
+    ok so, weirdly, the waitid...
+
+    umm, it seems likely that this waitid did return,
+    but for some reason we aren't using the data returned by this read.
+
+    hm m m
+
+    oh hm this is in the, rsyscallconnection, not the child.
+
+    hm, what response is this for actually?
+
+    aha! i'm dropping responses again.
+
+    I got back 16-bytes-worth of responses, and am not properly using both.
+
+    very interesting.
+
+    thought, it's especially interesting that, I don't seem to be um,
+    returning the response for the epoll_wait at all.
+
+    It appears the cancellation *is* working, but I'm just processing wrong.
+
+    Hmmm...
+
+    HMMM interesting,
+    Ok, so the rate of buffer being longer than a single message is, relatively high.
+
+    Ok, what if the issue is getting cancelled during an mmap? Uhh... I don't think I saw any mmaps, hm.
+
+    Oh also mmap is local, not cancellable.
+
+    OK well... not sure.
+
+    aha okay so I was getting cancelled and dropping syscall responses
 ** DONE lazily registered epoll
    Let's do it!
 

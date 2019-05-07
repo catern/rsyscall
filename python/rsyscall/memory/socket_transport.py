@@ -11,10 +11,12 @@ import rsyscall.handle as handle
 import typing as t
 import trio
 
+from rsyscall.struct import Bytes
+from rsyscall.handle import AllocationInterface
+
 @dataclass
 class ReadOp:
-    src: Pointer
-    n: int
+    src: handle.Pointer
     done: t.Optional[bytes] = None
 
     @property
@@ -32,6 +34,34 @@ class WriteOp:
     def assert_done(self) -> None:
         if self.done is None:
             raise Exception("not done yet")
+
+@dataclass
+class MergedAllocation(AllocationInterface):
+    allocs: t.List[AllocationInterface]
+
+    def offset(self) -> int:
+        return self.allocs[0].offset()
+
+    def size(self) -> int:
+        return sum(alloc.size() for alloc in self.allocs)
+
+    def split(self, size: int) -> t.Tuple[AllocationInterface, AllocationInterface]:
+        raise Exception
+
+    def merge(self, other: AllocationInterface) -> AllocationInterface:
+        raise Exception
+
+    def free(self) -> None:
+        pass
+
+def merge_adjacent_pointers(ptrs: t.List[handle.Pointer]) -> handle.Pointer:
+    if len(ptrs) > 1:
+        print("big merge!")
+    return handle.Pointer(
+        ptrs[0].mapping,
+        ptrs[0].transport,
+        ptrs[0].serializer,
+        MergedAllocation([ptr.allocation for ptr in ptrs]))
 
 def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[t.Tuple[Pointer, bytes]]:
     "Note that this is only effective inasmuch as the list is sorted."
@@ -76,29 +106,29 @@ class SocketMemoryTransport(MemoryTransport):
     @staticmethod
     def merge_adjacent_reads(read_ops: t.List[ReadOp]) -> t.List[t.Tuple[ReadOp, t.List[ReadOp]]]:
         "Note that this is only effective inasmuch as the list is sorted."
-        # TODO BUG HACK
-        # This stuff is colossally broken!!
-        # We are mutating the operations that were passed in to create the aggregate operation!
-        # That means the aggregate operation (last_op) is one of the orig_ops!
-        # That's totally broke!!!!
-        # we'll fix this when we rewrite the transport stuff.
         if len(read_ops) == 0:
             return []
-        read_ops = sorted(read_ops, key=lambda op: int(op.src))
-        last_op = read_ops[0]
-        last_orig_ops = [last_op]
-        outputs: t.List[t.Tuple[ReadOp, t.List[ReadOp]]] = []
-        for op in read_ops[1:]:
-            if int(last_op.src + last_op.n) == int(op.src):
-                last_op.n += op.n
-                last_orig_ops.append(op)
-            elif int(last_op.src + last_op.n) == int(op.src):
+        read_ops = sorted(read_ops, key=lambda op: int(op.src.near))
+
+        groupings: t.List[t.List[ReadOp]] = []
+        ops_to_merge = [read_ops[0]]
+        for prev_op, op in zip(read_ops, read_ops[1:]):
+            if int(prev_op.src.near + prev_op.src.bytesize()) == int(op.src.near):
+                # the current op is adjacent to the previous op, append it to
+                # the list of pending ops to merge together.
+                ops_to_merge.append(op)
+            elif int(prev_op.src.near + prev_op.src.bytesize()) > int(op.src.near):
                 raise Exception("pointers passed to memcpy are overlapping!")
             else:
-                outputs.append((last_op, last_orig_ops))
-                last_op = op
-                last_orig_ops = [op]
-        outputs.append((last_op, last_orig_ops))
+                # the current op isn't adjacent to the previous op, so
+                # flush the list of ops_to_merge and start a new one.
+                groupings.append(ops_to_merge)
+                ops_to_merge = [op]
+        groupings.append(ops_to_merge)
+        outputs: t.List[t.Tuple[ReadOp, t.List[ReadOp]]] = []
+        for group in groupings:
+            merged_ptr = merge_adjacent_pointers([op.src for op in group])
+            outputs.append((ReadOp(merged_ptr), group))
         return outputs
 
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
@@ -168,7 +198,9 @@ class SocketMemoryTransport(MemoryTransport):
         for op in write_ops:
             op.assert_done()
 
-    async def _unlocked_single_read(self, src: Pointer, n: int) -> bytes:
+    async def _unlocked_single_read(self, src_handle: handle.Pointer) -> bytes:
+        src = src_handle.far
+        n = src_handle.bytesize()
         buf = bytearray(n)
         dest = base.to_local_pointer(buf)
         rtask = self.local.handle.task
@@ -194,10 +226,10 @@ class SocketMemoryTransport(MemoryTransport):
 
     async def _unlocked_batch_read(self, ops: t.List[ReadOp]) -> None:
         for op in ops:
-            op.done = await self._unlocked_single_read(op.src, op.n)
+            op.done = await self._unlocked_single_read(op.src)
 
-    def _start_single_read(self, dest: Pointer, n: int) -> ReadOp:
-        op = ReadOp(dest, n)
+    def _start_single_read(self, dest: handle.Pointer) -> ReadOp:
+        op = ReadOp(dest)
         self.pending_reads.append(op)
         return op
 
@@ -213,12 +245,13 @@ class SocketMemoryTransport(MemoryTransport):
                 for op, orig_ops in merged_ops:
                     data = op.data
                     for orig_op in orig_ops:
-                        if len(data) < orig_op.n:
-                            raise Exception("insufficient data for original operation", len(data), orig_op.n)
-                        orig_op.done, data = data[:orig_op.n], data[orig_op.n:]
+                        orig_size = orig_op.src.bytesize()
+                        if len(data) < orig_size:
+                            raise Exception("insufficient data for original operation", len(data), orig_size)
+                        orig_op.done, data = data[:orig_size], data[orig_size:]
 
     async def batch_read(self, ops: t.List[handle.Pointer]) -> t.List[bytes]:
-        read_ops = [self._start_single_read(src.far, src.bytesize()) for src in ops]
+        read_ops = [self._start_single_read(src) for src in ops]
         # TODO this is inefficient
         while not(all(op.done is not None for op in read_ops)):
             await self._do_reads()
