@@ -942,7 +942,6 @@ class Task(rsyscall.far.Task):
                     newtls: t.Optional[Pointer]) -> ThreadProcess:
         clone_parent = bool(flags & CLONE.PARENT)
         if clone_parent:
-            print("clone parenting in HANDLE")
             if self.parent_task is None:
                 raise Exception("using CLONE.PARENT, but we don't know our parent task")
             # TODO also check that the parent_task hasn't shut down... not sure how to do that

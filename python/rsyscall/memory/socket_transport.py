@@ -11,7 +11,7 @@ import typing as t
 import trio
 
 from rsyscall.struct import Bytes
-from rsyscall.handle import AllocationInterface
+from rsyscall.handle import AllocationInterface, Pointer
 
 @dataclass
 class ReadOp:
@@ -35,27 +35,94 @@ class WriteOp:
             raise Exception("not done yet")
 
 @dataclass
+class SpanAllocation(AllocationInterface):
+    alloc: AllocationInterface
+    _offset: int
+    _size: int
+
+    def __post_init__(self) -> None:
+        if self._offset + self._size > self.size():
+            raise Exception("span falls off the end of the underlying allocation")
+
+    def offset(self) -> int:
+        return self.alloc.offset() + self._offset
+
+    def size(self) -> int:
+        return self._size
+
+    def split(self, size: int) -> t.Tuple[AllocationInterface, AllocationInterface]:
+        if size > self.size():
+            raise Exception("called split with size", size, "greater than this allocation's total size", self.size())
+        return (SpanAllocation(self.alloc, self._offset, size),
+                SpanAllocation(self.alloc, self._offset + size, self._size - size))
+
+    def merge(self, other: AllocationInterface) -> AllocationInterface:
+        if not isinstance(other, SpanAllocation):
+            raise Exception("can only merge SpanAllocation with SpanAllocation, not", other)
+        if self.alloc == other.alloc:
+            if self._offset + self._size == other._offset:
+                return SpanAllocation(self.alloc, self._offset, self._size + other._size)
+            else:
+                raise Exception("spans are not adjacent")
+        else:
+            raise Exception("can't merge spans over two different allocations")
+
+    def free(self) -> None:
+        pass
+
+@dataclass
 class MergedAllocation(AllocationInterface):
     allocs: t.List[AllocationInterface]
 
+    def __post_init__(self) -> None:
+        if len(self.allocs) == 0:
+            return
+        cur = self.allocs[0].offset()
+        for alloc in self.allocs:
+            if alloc.offset() != cur:
+                raise Exception("allocation is not contiguous with previous allocation")
+            cur += alloc.size()
+
     def offset(self) -> int:
+        if len(self.allocs) == 0:
+            return 0
         return self.allocs[0].offset()
 
     def size(self) -> int:
         return sum(alloc.size() for alloc in self.allocs)
 
     def split(self, size: int) -> t.Tuple[AllocationInterface, AllocationInterface]:
-        raise Exception
+        reached = 0
+        for i, alloc in enumerate(self.allocs):
+            reached += alloc.size()
+            if reached >= size:
+                break
+        else:
+            raise Exception("called split with size", size, "greater than this allocation's total size", reached)
+        split_idx = i
+        first, second = self.allocs[:split_idx], self.allocs[split_idx+1:]
+        if reached == size:
+            first = first + [self.allocs[split_idx]]
+        else:
+            overhang = reached - size
+            first_part, second_part = alloc.split(alloc.size() - overhang)
+            first = first + [first_part]
+            second = [second_part] + second
+        # hm. splitting like this.... doesn't work. because... our offset needs to be...
+        # adjusted?
+        # um...
+        # right...
+        # well... if we have an assurance that all our offsets are contiguous then...
+        # well when we go to another mapping our offset has to be 0.
+        return MergedAllocation(first), MergedAllocation(second)
 
     def merge(self, other: AllocationInterface) -> AllocationInterface:
-        raise Exception
+        raise Exception("doesn't support merge")
 
     def free(self) -> None:
         pass
 
 def merge_adjacent_pointers(ptrs: t.List[handle.Pointer]) -> handle.Pointer:
-    if len(ptrs) > 1:
-        print("big merge!", len(ptrs))
     return handle.Pointer(
         ptrs[0].mapping,
         ptrs[0].transport,
@@ -70,17 +137,18 @@ def merge_adjacent_writes(write_ops: t.List[t.Tuple[handle.Pointer, bytes]]) -> 
     groupings: t.List[t.List[t.Tuple[handle.Pointer, bytes]]] = []
     ops_to_merge = [write_ops[0]]
     for (prev_op, prev_data), (op, data) in zip(write_ops, write_ops[1:]):
-        if int(prev_op.near + len(prev_data)) == int(op.near):
-            # the current op is adjacent to the previous op, append it to
-            # the list of pending ops to merge together.
-            ops_to_merge.append((op, data))
-        elif int(prev_op.near + len(prev_data)) > int(op.near):
-            raise Exception("pointers passed to memcpy are overlapping!")
-        else:
-            # the current op isn't adjacent to the previous op, so
-            # flush the list of ops_to_merge and start a new one.
-            groupings.append(ops_to_merge)
-            ops_to_merge = [(op, data)]
+        if prev_op.mapping is op.mapping:
+            if int(prev_op.near + len(prev_data)) == int(op.near):
+                # the current op is adjacent to the previous op, append it to
+                # the list of pending ops to merge together.
+                ops_to_merge.append((op, data))
+                continue
+            elif int(prev_op.near + len(prev_data)) > int(op.near):
+                raise Exception("pointers passed to memcpy are overlapping!")
+        # the current op isn't adjacent to the previous op, so
+        # flush the list of ops_to_merge and start a new one.
+        groupings.append(ops_to_merge)
+        ops_to_merge = [(op, data)]
     groupings.append(ops_to_merge)
 
     outputs: t.List[t.Tuple[handle.Pointer, bytes]] = []
@@ -209,31 +277,26 @@ class SocketMemoryTransport(MemoryTransport):
         for op in write_ops:
             op.assert_done()
 
-    async def _unlocked_single_read(self, src_handle: handle.Pointer) -> bytes:
-        src = src_handle.far
-        n = src_handle.bytesize()
-        buf = bytearray(n)
-        dest = base.to_local_pointer(buf)
-        rtask = self.local.handle.task
-        near_dest = rtask.to_near_pointer(dest)
-        near_read_fd = self.local.handle.near
-        wtask = self.remote.task
-        near_src = wtask.to_near_pointer(src)
-        near_write_fd = self.remote.near
-        async def read() -> None:
-            i = 0
-            while (n - i) > 0:
-                ret = await self.local.read_raw(rtask.sysif, near_read_fd, near_dest+i, n-i)
-                i += ret
+    async def _unlocked_single_read(self, src: handle.Pointer) -> bytes:
+        dest = await self.local_ram.malloc_type(Bytes, src.bytesize())
         async def write() -> None:
-            i = 0
-            while (n - i) > 0:
-                ret = await near.write(wtask.sysif, near_write_fd, near_src+i, n-i)
-                i += ret
+            rest = src
+            while rest.bytesize() > 0:
+                written, rest = await self.remote.write(rest)
         async with trio.open_nursery() as nursery:
-            nursery.start_soon(read)
             nursery.start_soon(write)
-        return bytes(buf)
+            read: t.Optional[Pointer[Bytes]] = None
+            rest = dest
+            while rest.bytesize() > 0:
+                more_read, rest = await self.local.read_handle(rest)
+                if read is None:
+                    read = more_read
+                else:
+                    read = read.merge(more_read)
+        if read is None:
+            return b''
+        else:
+            return await read.read()
 
     async def _unlocked_batch_read(self, ops: t.List[ReadOp]) -> None:
         for op in ops:
