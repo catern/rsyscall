@@ -1,5 +1,4 @@
 from __future__ import annotations
-from rsyscall.far import Pointer
 from dataclasses import dataclass, field
 from rsyscall.concurrency import OneAtATime
 from rsyscall.memory.ram import RAM
@@ -27,7 +26,7 @@ class ReadOp:
 
 @dataclass
 class WriteOp:
-    dest: Pointer
+    dest: handle.Pointer
     data: bytes
     done: bool = False
 
@@ -56,29 +55,39 @@ class MergedAllocation(AllocationInterface):
 
 def merge_adjacent_pointers(ptrs: t.List[handle.Pointer]) -> handle.Pointer:
     if len(ptrs) > 1:
-        print("big merge!")
+        print("big merge!", len(ptrs))
     return handle.Pointer(
         ptrs[0].mapping,
         ptrs[0].transport,
         ptrs[0].serializer,
         MergedAllocation([ptr.allocation for ptr in ptrs]))
 
-def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[t.Tuple[Pointer, bytes]]:
+def merge_adjacent_writes(write_ops: t.List[t.Tuple[handle.Pointer, bytes]]) -> t.List[t.Tuple[handle.Pointer, bytes]]:
     "Note that this is only effective inasmuch as the list is sorted."
     if len(write_ops) == 0:
         return []
-    write_ops = sorted(write_ops, key=lambda op: int(op[0]))
-    outputs: t.List[t.Tuple[Pointer, bytes]] = []
-    last_pointer, last_data = write_ops[0]
-    for pointer, data in write_ops[1:]:
-        if int(last_pointer + len(last_data)) == int(pointer):
-            last_data += data
-        elif int(last_pointer + len(last_data)) > int(pointer):
+    write_ops = sorted(write_ops, key=lambda op: int(op[0].near))
+    groupings: t.List[t.List[t.Tuple[handle.Pointer, bytes]]] = []
+    ops_to_merge = [write_ops[0]]
+    for (prev_op, prev_data), (op, data) in zip(write_ops, write_ops[1:]):
+        if int(prev_op.near + len(prev_data)) == int(op.near):
+            # the current op is adjacent to the previous op, append it to
+            # the list of pending ops to merge together.
+            ops_to_merge.append((op, data))
+        elif int(prev_op.near + len(prev_data)) > int(op.near):
             raise Exception("pointers passed to memcpy are overlapping!")
         else:
-            outputs.append((last_pointer, last_data))
-            last_pointer, last_data = pointer, data
-    outputs.append((last_pointer, last_data))
+            # the current op isn't adjacent to the previous op, so
+            # flush the list of ops_to_merge and start a new one.
+            groupings.append(ops_to_merge)
+            ops_to_merge = [(op, data)]
+    groupings.append(ops_to_merge)
+
+    outputs: t.List[t.Tuple[handle.Pointer, bytes]] = []
+    for group in groupings:
+        merged_data = b''.join([op[1] for op in group])
+        merged_ptr = merge_adjacent_pointers([op[0] for op in group])
+        outputs.append((merged_ptr, merged_data))
     return outputs
 
 @dataclass
@@ -106,6 +115,7 @@ class SocketMemoryTransport(MemoryTransport):
     @staticmethod
     def merge_adjacent_reads(read_ops: t.List[ReadOp]) -> t.List[t.Tuple[ReadOp, t.List[ReadOp]]]:
         "Note that this is only effective inasmuch as the list is sorted."
+        # also note that this is not really useful
         if len(read_ops) == 0:
             return []
         read_ops = sorted(read_ops, key=lambda op: int(op.src.near))
@@ -134,12 +144,13 @@ class SocketMemoryTransport(MemoryTransport):
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
         return SocketMemoryTransport(self.local, self.local_ram, task.make_fd_handle(self.remote))
 
-    async def _unlocked_single_write(self, dest: Pointer, data: bytes) -> None:
+    async def _unlocked_single_write(self, dest_handle: handle.Pointer, data: bytes) -> None:
         # need an additional cap: to turn bytes to a pointer.
         src = base.to_local_pointer(data)
         n = len(data)
         rtask = self.remote.task
         near_read_fd = self.remote.near
+        dest = dest_handle.far
         near_dest = rtask.to_near_pointer(dest)
         wtask = self.local.handle.task
         near_write_fd = self.local.handle.near
@@ -158,8 +169,8 @@ class SocketMemoryTransport(MemoryTransport):
             nursery.start_soon(read)
             nursery.start_soon(write)
 
-    async def _unlocked_batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
-        ops = sorted(ops, key=lambda op: int(op[0]))
+    async def _unlocked_batch_write(self, ops: t.List[t.Tuple[handle.Pointer, bytes]]) -> None:
+        ops = sorted(ops, key=lambda op: int(op[0].near))
         ops = merge_adjacent_writes(ops)
         if len(ops) <= 1:
             [(dest, data)] = ops
@@ -174,7 +185,7 @@ class SocketMemoryTransport(MemoryTransport):
             for dest, data in ops:
                 await self._unlocked_single_write(dest, data)
 
-    def _start_single_write(self, dest: Pointer, data: bytes) -> WriteOp:
+    def _start_single_write(self, dest: handle.Pointer, data: bytes) -> WriteOp:
         write = WriteOp(dest, data)
         self.pending_writes.append(write)
         return write
@@ -193,7 +204,7 @@ class SocketMemoryTransport(MemoryTransport):
                     write.done = True
 
     async def batch_write(self, ops: t.List[t.Tuple[handle.Pointer, bytes]]) -> None:
-        write_ops = [self._start_single_write(dest.far, data) for (dest, data) in ops]
+        write_ops = [self._start_single_write(dest, data) for (dest, data) in ops]
         await self._do_writes()
         for op in write_ops:
             op.assert_done()
