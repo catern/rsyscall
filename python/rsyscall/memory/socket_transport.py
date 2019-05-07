@@ -162,8 +162,8 @@ class SocketMemoryTransport(MemoryTransport):
                 for write in writes:
                     write.done = True
 
-    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
-        write_ops = [self._start_single_write(dest, data) for (dest, data) in ops]
+    async def batch_write(self, ops: t.List[t.Tuple[handle.Pointer, bytes]]) -> None:
+        write_ops = [self._start_single_write(dest.far, data) for (dest, data) in ops]
         await self._do_writes()
         for op in write_ops:
             op.assert_done()
@@ -217,8 +217,8 @@ class SocketMemoryTransport(MemoryTransport):
                             raise Exception("insufficient data for original operation", len(data), orig_op.n)
                         orig_op.done, data = data[:orig_op.n], data[orig_op.n:]
 
-    async def batch_read(self, ops: t.List[t.Tuple[Pointer, int]]) -> t.List[bytes]:
-        read_ops = [self._start_single_read(src, n) for src, n in ops]
+    async def batch_read(self, ops: t.List[handle.Pointer]) -> t.List[bytes]:
+        read_ops = [self._start_single_read(src.far, src.bytesize()) for src in ops]
         # TODO this is inefficient
         while not(all(op.done is not None for op in read_ops)):
             await self._do_reads()

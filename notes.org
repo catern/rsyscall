@@ -16272,7 +16272,21 @@ oh I need that anyway to write/read the iovecs
     which holds and pins arbitrary allocations below it.
 
     then I just have a pointer on top of that.
-** lazily registered epoll
+*** handling
+    ah, cool!
+
+    so now I can make the transport work in terms of handle pointers.
+
+    so um...
+
+    I guess reads don't need sizes associated with them.
+
+    They can just be, um, directly based on, um, the bytesize.
+
+    OK first I need to rearrange things so that I'm imported from the right place;
+
+    I will just go ahead and make the transport interface use handles
+** DONE lazily registered epoll
    Let's do it!
 
    ok so two tricky ones
@@ -16463,6 +16477,8 @@ but that doesn't scale as well as passing the epfd down.
 
     ok so, ok, we need to do this without, um.
     depending on things in io so we can use it from transport.
+
+    yes we can use it in transport now, finally
 ** fix memory allocator to save arenas!!
    I was not saving my arenas before, but now i'm getting random segfaults :<
 
@@ -16496,7 +16512,7 @@ but that doesn't scale as well as passing the epfd down.
    let's go ahead and do this, yuck.
 
    cool cool i did it
-** remove FileDescriptor from asyncfd
+** DONE remove FileDescriptor from asyncfd
    ok so we have a bunch of users
 
    ah! we can have a method on stdtask to create asyncfd from handle.

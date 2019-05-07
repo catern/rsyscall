@@ -12,13 +12,12 @@ from rsyscall.base import SyscallInterface
 import rsyscall.base as base
 import rsyscall.handle as handle
 import rsyscall.handle
-from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess, Sockbuf
+from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess, Sockbuf, MemoryGateway
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_struct, T_fixed_size, Bytes, Int32, Serializer, Struct
 import rsyscall.batch as batch
 
-import rsyscall.memory.memint as memint
 import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM
 from rsyscall.memory.socket_transport import SocketMemoryTransport
@@ -664,10 +663,10 @@ class StaticAllocation(handle.AllocationInterface):
     def free(self) -> None:
         pass
 
-class NullGateway(memint.MemoryGateway):
-    async def batch_read(self, ops: t.List[t.Tuple[far.Pointer, int]]) -> t.List[bytes]:
+class NullGateway(MemoryGateway):
+    async def batch_read(self, ops: t.List[handle.Pointer]) -> t.List[bytes]:
         raise Exception("shouldn't try to read")
-    async def batch_write(self, ops: t.List[t.Tuple[far.Pointer, bytes]]) -> None:
+    async def batch_write(self, ops: t.List[t.Tuple[handle.Pointer, bytes]]) -> None:
         raise Exception("shouldn't try to write")
 
 @dataclass
@@ -1187,26 +1186,6 @@ class ChildProcessMonitor:
         if self.use_clone_parent:
             flags |= CLONE.PARENT
         return (await self.internal.clone(self.cloning_task, flags, child_stack, ctid=ctid))
-
-class BufferedStack:
-    def __init__(self, base: Pointer) -> None:
-        self.base = base
-        self.allocation_pointer = self.base
-        self.buffer = b""
-
-    def push(self, data: bytes) -> Pointer:
-        self.allocation_pointer -= len(data)
-        self.buffer = data + self.buffer
-        return self.allocation_pointer
-
-    def align(self, alignment=16) -> None:
-        offset = int(self.allocation_pointer.near) % alignment
-        self.push(bytes(offset))
-
-    async def flush(self, transport: base.MemoryWriter) -> Pointer:
-        await transport.write(self.allocation_pointer, self.buffer)
-        self.buffer = b""
-        return self.allocation_pointer
 
 async def launch_futex_monitor(task: Task,
                                process_resources: ProcessResources, monitor: ChildProcessMonitor,

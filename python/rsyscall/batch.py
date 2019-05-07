@@ -1,12 +1,11 @@
 "Batch pointer reading/writing"
 from __future__ import annotations
-from rsyscall.handle import Task, Pointer, WrittenPointer, AllocationInterface, MemoryMapping
+from rsyscall.handle import Task, Pointer, WrittenPointer, AllocationInterface, MemoryMapping, MemoryGateway
 import rsyscall.near
 import contextlib
 import abc
 from rsyscall.struct import T_has_serializer, T_fixed_serializer, T_fixed_size, Serializer
 import rsyscall.memory.allocator as memory
-import rsyscall.memory.memint as memint
 import rsyscall.base as base
 import rsyscall.far as far
 import typing as t
@@ -58,10 +57,10 @@ class NullAllocation(AllocationInterface):
     def free(self) -> None:
         pass
 
-class NoopGateway(memint.MemoryGateway):
-    async def batch_read(self, ops: t.List[t.Tuple[far.Pointer, int]]) -> t.List[bytes]:
+class NoopGateway(MemoryGateway):
+    async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
         raise Exception("shouldn't try to read")
-    async def batch_write(self, ops: t.List[t.Tuple[far.Pointer, bytes]]) -> None:
+    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         pass
         
 class NullSemantics(BatchSemantics):
@@ -122,7 +121,7 @@ async def perform_async_batch(
     sizes = await NullSemantics.run(task, batch)
     allocations = await allocator.bulk_malloc([(size, alignment) for size, alignment in sizes])
     ret, desired_writes = await WriteSemantics.run(task, transport, batch, allocations)
-    await transport.batch_write([(ptr.far, ptr.serializer.to_bytes(ptr.data))
+    await transport.batch_write([(ptr, ptr.serializer.to_bytes(ptr.data))
                                  for ptr in desired_writes])
     return ret
 

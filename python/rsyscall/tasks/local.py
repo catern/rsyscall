@@ -15,6 +15,7 @@ import os
 import typing as t
 from dataclasses import dataclass
 import rsyscall.memory.allocator as memory
+from rsyscall.handle import Pointer
 from rsyscall.signal import Signals, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
 import rsyscall.batch as batch
@@ -64,19 +65,24 @@ class LocalSyscall(base.SyscallInterface):
             self.logger.debug("%s -> %s", number, result)
             return result
 
+task: Task
 class LocalMemoryTransport(base.MemoryTransport):
     "This is a memory transport that only works on local pointers."
     def inherit(self, task: handle.Task) -> LocalMemoryTransport:
         return self
 
-    async def batch_write(self, ops: t.List[t.Tuple[far.Pointer, bytes]]) -> None:
+    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         for dest, data in ops:
+            if dest.mapping.task.address_space != task.address_space:
+                raise Exception("trying to write to pointer", dest, "not in local address space")
             ffi.memmove(ffi.cast('void*', int(dest.near)), data, len(data))
 
-    async def batch_read(self, ops: t.List[t.Tuple[far.Pointer, int]]) -> t.List[bytes]:
+    async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
         ret: t.List[bytes] = []
-        for src, n in ops:
-            buf = ffi.buffer(ffi.cast('void*', int(src.near)), n)
+        for src in ops:
+            if src.mapping.task.address_space != task.address_space:
+                raise Exception("trying to read from pointer", src, "not in local address space")
+            buf = ffi.buffer(ffi.cast('void*', int(src.near)), src.bytesize())
             ret.append(bytes(buf))
         return ret
 
@@ -91,12 +97,12 @@ def _make_local_task() -> Task:
         far.NetNamespace(pid),
     )
     return base_task
-def _make_local_function_handle(cffi_ptr) -> handle.Pointer[handle.NativeFunction]:
+def _make_local_function_handle(cffi_ptr) -> Pointer[handle.NativeFunction]:
     pointer_int = int(ffi.cast('ssize_t', cffi_ptr))
     # TODO we're just making up a memory mapping that this pointer is inside;
     # we should figure out the actual mapping, and the size for that matter.
     mapping = handle.MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
-    return handle.Pointer(mapping, rsc.NullGateway(), handle.NativeFunctionSerializer(), rsc.StaticAllocation())
+    return Pointer(mapping, rsc.NullGateway(), handle.NativeFunctionSerializer(), rsc.StaticAllocation())
 
 async def _make_local_stdtask() -> StandardTask:
     local_transport = LocalMemoryTransport()

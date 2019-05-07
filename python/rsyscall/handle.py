@@ -12,7 +12,6 @@ import typing as t
 import logging
 import contextlib
 import abc
-import rsyscall.memory.memint as memint
 logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SCM, Address, Socklen, SendmsgFlags, RecvmsgFlags, MsghdrFlags, T_addr
@@ -43,6 +42,20 @@ class AllocationInterface:
     @abc.abstractmethod
     def free(self) -> None: ...
 
+class MemoryGateway:
+    @abc.abstractmethod
+    async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]: ...
+
+    async def read(self, src: Pointer) -> bytes:
+        [data] = await self.batch_read([src])
+        return data
+
+    @abc.abstractmethod
+    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None: ...
+
+    async def write(self, dest: Pointer, data: bytes) -> None:
+        await self.batch_write([(dest, data)])
+
 # With handle.Pointer, we know the length of the region of memory
 # we're pointing to.  If we didn't know that, then this pointer
 # wouldn't make any sense as an owning handle that can be passed
@@ -58,7 +71,7 @@ T_pointer = t.TypeVar('T_pointer', bound='Pointer')
 @dataclass(eq=False)
 class Pointer(t.Generic[T]):
     mapping: MemoryMapping
-    transport: memint.MemoryGateway
+    transport: MemoryGateway
     serializer: Serializer[T]
     allocation: AllocationInterface
     valid: bool = True
@@ -155,7 +168,7 @@ class Pointer(t.Generic[T]):
         if len(data_bytes) > self.bytesize():
             raise Exception("data is too long", len(data_bytes),
                             "for this typed pointer of size", self.bytesize())
-        await self.transport.write(self.far, data_bytes)
+        await self.transport.write(self, data_bytes)
         return self._wrote(data)
 
     def split_from_end(self, size: int, alignment: int) -> t.Tuple[Pointer, Pointer]:
@@ -177,7 +190,7 @@ class Pointer(t.Generic[T]):
 
     async def read(self) -> T:
         self.validate()
-        data = await self.transport.read(self.far, self.bytesize())
+        data = await self.transport.read(self)
         return self.serializer.from_bytes(data)
 
     def _reinterpret(self, serializer: Serializer[U]) -> Pointer[U]:
@@ -197,7 +210,7 @@ class Pointer(t.Generic[T]):
 class WrittenPointer(Pointer[T]):
     def __init__(self,
                  mapping: MemoryMapping,
-                 transport: memint.MemoryGateway,
+                 transport: MemoryGateway,
                  data: T,
                  serializer: Serializer[T],
                  allocation: AllocationInterface,
