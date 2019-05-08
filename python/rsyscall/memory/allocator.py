@@ -25,6 +25,8 @@ class Allocation(AllocationInterface):
     valid: bool = True
 
     def offset(self) -> int:
+        if not self.valid:
+            raise Exception("can't get offset for freed allocation")
         return self.start
 
     def free(self) -> None:

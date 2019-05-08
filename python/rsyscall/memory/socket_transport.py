@@ -42,8 +42,9 @@ class SpanAllocation(AllocationInterface):
     _size: int
 
     def __post_init__(self) -> None:
-        if self._offset + self._size > self.size():
-            raise Exception("span falls off the end of the underlying allocation")
+        if self._offset + self._size > self.alloc.size():
+            raise Exception("span falls off the end of the underlying allocation",
+                            self._offset, self._size, self.alloc.size())
 
     def offset(self) -> int:
         return self.alloc.offset() + self._offset
@@ -70,6 +71,13 @@ class SpanAllocation(AllocationInterface):
 
     def free(self) -> None:
         pass
+
+def to_span(ptr: Pointer) -> Pointer:
+    return Pointer(
+        ptr.mapping,
+        ptr.transport,
+        ptr.serializer,
+        SpanAllocation(ptr.allocation, 0, ptr.allocation.size()))
 
 @dataclass
 class MergedAllocation(AllocationInterface):
@@ -163,6 +171,7 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
         return PrimitiveSocketMemoryTransport(self.local, self.local_ram, task.make_fd_handle(self.remote))
 
     async def write(self, dest: Pointer, data: bytes) -> None:
+        dest = to_span(dest)
         src = await self.local_ram.to_pointer(Bytes(data))
         async def write() -> None:
             await self.local.write_handle(src)
@@ -178,6 +187,7 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
         raise Exception("batch write not supported")
 
     async def read(self, src: Pointer) -> bytes:
+        src = to_span(src)
         dest = await self.local_ram.malloc_type(Bytes, src.bytesize())
         async def write() -> None:
             rest = src
@@ -271,14 +281,19 @@ class SocketMemoryTransport(MemoryTransport):
             [(dest, data)] = ops
             await self.primitive.write(dest, data)
         else:
-            # TODO use an iovec
-            # build the full iovec at the start
-            # write it over with unlocked_single_write
-            # call readv
-            # on partial read, fall back to unlocked_single_write for the rest of that section,
-            # then go back to an incremented iovec
-            for dest, data in ops:
-                await self.primitive.write(dest, data)
+            iovp = await self.primitive_remote_ram.to_pointer(IovecList([ptr for ptr, _ in ops]))
+            datap = await self.local_ram.to_pointer(Bytes(b"".join([data for _, data in ops])))
+            async with trio.open_nursery() as nursery:
+                @nursery.start_soon
+                async def write() -> None:
+                    await self.local.write_handle(datap)
+                rest = iovp
+                while rest.bytesize() > 0:
+                    _, split, rest = await self.remote.readv(rest)
+                    if split:
+                        _, split_rest = split
+                        while split_rest.bytesize() > 0:
+                            _, split_rest = await self.remote.read(split_rest)
 
     def _start_single_write(self, dest: Pointer, data: bytes) -> WriteOp:
         write = WriteOp(dest, data)
