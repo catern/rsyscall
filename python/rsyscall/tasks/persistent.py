@@ -237,7 +237,7 @@ class PersistentServer:
         # TODO technically this could still be in the same address space - that's the case in our tests.
         # we should figure out a way to use a LocalMemoryTransport here so it can copy efficiently
         transport = SocketMemoryTransport(access_data_sock, stdtask.access_task,
-                                          self.task.base.make_fd_handle(remote_data_sock))
+                                          self.task.base.make_fd_handle(remote_data_sock), self.task.allocator)
         self.task.transport = transport
         self.transport = transport
         # close remote fds we are no longer using - can only do this here because we've

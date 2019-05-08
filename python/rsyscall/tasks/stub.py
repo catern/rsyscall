@@ -110,10 +110,12 @@ async def _setup_stub(
     base_task = base.Task(syscall, process.near, None, fd_table, address_space, fs_information, pidns, netns)
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
+    allocator = memory.AllocatorClient.make_allocator(base_task)
     task = Task(base_task,
                 SocketMemoryTransport(access_data_sock, stdtask.access_task,
-                                      base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd))),
-                memory.AllocatorClient.make_allocator(base_task),
+                                      base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd)),
+                                      allocator),
+                allocator,
                 SignalMask({Signals(bit) for bit in rsyscall.struct.bits(describe_struct.sigmask)}),
     )
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?

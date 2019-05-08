@@ -105,7 +105,7 @@ async def rsyscall_exec(
         # has stored the allocator continues to work
         stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)
         stdtask.task.transport = SocketMemoryTransport(access_data_sock, stdtask.access_task,
-                                                       passed_data_sock)
+                                                       passed_data_sock, stdtask.task.allocator)
     await stdtask.task.base.unshare_files(do_unshare)
 
     #### make new futex task

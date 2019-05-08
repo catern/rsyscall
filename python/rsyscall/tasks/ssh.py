@@ -243,10 +243,10 @@ async def ssh_bootstrap(
     handle_remote_syscall_fd = new_base_task.make_fd_handle(remote_syscall_fd)
     new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
+    new_allocator = memory.AllocatorClient.make_allocator(new_base_task)
     new_transport = SocketMemoryTransport(async_local_data_sock, parent_task.access_task,
-                                          handle_remote_data_fd)
-    new_task = Task(new_base_task, new_transport,
-                    memory.AllocatorClient.make_allocator(new_base_task),
+                                          handle_remote_data_fd, new_allocator)
+    new_task = Task(new_base_task, new_transport, new_allocator,
                     # we assume ssh zeroes the sigmask before starting us
                     SignalMask(set()),
     )

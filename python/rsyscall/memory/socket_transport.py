@@ -11,7 +11,8 @@ import typing as t
 import trio
 
 from rsyscall.struct import Bytes
-from rsyscall.handle import AllocationInterface, Pointer, IovecList
+from rsyscall.handle import AllocationInterface, Pointer, IovecList, FileDescriptor
+from rsyscall.memory.allocator import AllocatorClient
 
 @dataclass
 class ReadOp:
@@ -156,7 +157,7 @@ def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[
 class PrimitiveSocketMemoryTransport(MemoryTransport):
     local: AsyncFileDescriptor
     local_ram: RAM
-    remote: handle.FileDescriptor
+    remote: FileDescriptor
 
     def inherit(self, task: handle.Task) -> PrimitiveSocketMemoryTransport:
         return PrimitiveSocketMemoryTransport(self.local, self.local_ram, task.make_fd_handle(self.remote))
@@ -216,12 +217,15 @@ class SocketMemoryTransport(MemoryTransport):
     def __init__(self,
                  local: AsyncFileDescriptor,
                  local_ram: RAM,
-                 remote: handle.FileDescriptor,
+                 remote: FileDescriptor,
+                 remote_allocator: AllocatorClient,
     ) -> None:
         self.local = local
         self.local_ram = local_ram
         self.remote = remote
+        self.remote_allocator = remote_allocator
         self.primitive = PrimitiveSocketMemoryTransport(local, local_ram, remote)
+        self.primitive_remote_ram = RAM(self.remote.task, self.primitive, self.remote_allocator)
         self.pending_writes: t.List[WriteOp] = []
         self.running_write = OneAtATime()
         self.pending_reads: t.List[ReadOp] = []
@@ -257,7 +261,8 @@ class SocketMemoryTransport(MemoryTransport):
         return outputs
 
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
-        return SocketMemoryTransport(self.local, self.local_ram, task.make_fd_handle(self.remote))
+        return SocketMemoryTransport(self.local, self.local_ram, task.make_fd_handle(self.remote),
+                                     self.remote_allocator.inherit(task))
 
     async def _unlocked_batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         ops = sorted(ops, key=lambda op: int(op[0].near))
