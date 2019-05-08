@@ -11,7 +11,7 @@ import typing as t
 import trio
 
 from rsyscall.struct import Bytes
-from rsyscall.handle import AllocationInterface, Pointer
+from rsyscall.handle import AllocationInterface, Pointer, IovecList
 
 @dataclass
 class ReadOp:
@@ -153,6 +153,53 @@ def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[
     return outputs
 
 @dataclass
+class PrimitiveSocketMemoryTransport(MemoryTransport):
+    local: AsyncFileDescriptor
+    local_ram: RAM
+    remote: handle.FileDescriptor
+
+    def inherit(self, task: handle.Task) -> PrimitiveSocketMemoryTransport:
+        return PrimitiveSocketMemoryTransport(self.local, self.local_ram, task.make_fd_handle(self.remote))
+
+    async def write(self, dest: Pointer, data: bytes) -> None:
+        src = await self.local_ram.to_pointer(Bytes(data))
+        async def write() -> None:
+            await self.local.write_handle(src)
+        async def read() -> None:
+            rest = dest
+            while rest.bytesize() > 0:
+                read, rest = await self.remote.read(rest)
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(read)
+            nursery.start_soon(write)
+
+    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
+        raise Exception("batch write not supported")
+
+    async def read(self, src: Pointer) -> bytes:
+        dest = await self.local_ram.malloc_type(Bytes, src.bytesize())
+        async def write() -> None:
+            rest = src
+            while rest.bytesize() > 0:
+                written, rest = await self.remote.write(rest)
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(write)
+            read: t.Optional[Pointer[Bytes]] = None
+            rest = dest
+            while rest.bytesize() > 0:
+                more_read, rest = await self.local.read_handle(rest)
+                if read is None:
+                    read = more_read
+                else:
+                    read = read.merge(more_read)
+        if read is None:
+            return b''
+        else:
+            return await read.read()
+
+    async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
+        raise Exception("batch read not supported")
+
 class SocketMemoryTransport(MemoryTransport):
     """This class wraps a pair of connected file descriptors, one of which is in the local address space.
 
@@ -166,13 +213,19 @@ class SocketMemoryTransport(MemoryTransport):
     is empty; otherwise later users will get that stray leftover data when they try to use it.
 
     """
-    local: AsyncFileDescriptor
-    local_ram: RAM
-    remote: handle.FileDescriptor
-    pending_writes: t.List[WriteOp] = field(default_factory=list)
-    running_write: OneAtATime = field(default_factory=OneAtATime)
-    pending_reads: t.List[ReadOp] = field(default_factory=list)
-    running_read: OneAtATime = field(default_factory=OneAtATime)
+    def __init__(self,
+                 local: AsyncFileDescriptor,
+                 local_ram: RAM,
+                 remote: handle.FileDescriptor,
+    ) -> None:
+        self.local = local
+        self.local_ram = local_ram
+        self.remote = remote
+        self.primitive = PrimitiveSocketMemoryTransport(local, local_ram, remote)
+        self.pending_writes: t.List[WriteOp] = []
+        self.running_write = OneAtATime()
+        self.pending_reads: t.List[ReadOp] = []
+        self.running_read = OneAtATime()
 
     @staticmethod
     def merge_adjacent_reads(read_ops: t.List[ReadOp]) -> t.List[t.Tuple[ReadOp, t.List[ReadOp]]]:
@@ -206,24 +259,12 @@ class SocketMemoryTransport(MemoryTransport):
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
         return SocketMemoryTransport(self.local, self.local_ram, task.make_fd_handle(self.remote))
 
-    async def _unlocked_single_write(self, dest: Pointer, data: bytes) -> None:
-        src = await self.local_ram.to_pointer(Bytes(data))
-        async def write() -> None:
-            await self.local.write_handle(src)
-        async def read() -> None:
-            rest = dest
-            while rest.bytesize() > 0:
-                read, rest = await self.remote.read(rest)
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(read)
-            nursery.start_soon(write)
-
     async def _unlocked_batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         ops = sorted(ops, key=lambda op: int(op[0].near))
         ops = merge_adjacent_writes(ops)
         if len(ops) <= 1:
             [(dest, data)] = ops
-            await self._unlocked_single_write(dest, data)
+            await self.primitive.write(dest, data)
         else:
             # TODO use an iovec
             # build the full iovec at the start
@@ -232,7 +273,7 @@ class SocketMemoryTransport(MemoryTransport):
             # on partial read, fall back to unlocked_single_write for the rest of that section,
             # then go back to an incremented iovec
             for dest, data in ops:
-                await self._unlocked_single_write(dest, data)
+                await self.primitive.write(dest, data)
 
     def _start_single_write(self, dest: Pointer, data: bytes) -> WriteOp:
         write = WriteOp(dest, data)
@@ -258,30 +299,9 @@ class SocketMemoryTransport(MemoryTransport):
         for op in write_ops:
             op.assert_done()
 
-    async def _unlocked_single_read(self, src: Pointer) -> bytes:
-        dest = await self.local_ram.malloc_type(Bytes, src.bytesize())
-        async def write() -> None:
-            rest = src
-            while rest.bytesize() > 0:
-                written, rest = await self.remote.write(rest)
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(write)
-            read: t.Optional[Pointer[Bytes]] = None
-            rest = dest
-            while rest.bytesize() > 0:
-                more_read, rest = await self.local.read_handle(rest)
-                if read is None:
-                    read = more_read
-                else:
-                    read = read.merge(more_read)
-        if read is None:
-            return b''
-        else:
-            return await read.read()
-
     async def _unlocked_batch_read(self, ops: t.List[ReadOp]) -> None:
         for op in ops:
-            op.done = await self._unlocked_single_read(op.src)
+            op.done = await self.primitive.read(op.src)
 
     def _start_single_read(self, dest: Pointer) -> ReadOp:
         op = ReadOp(dest)
