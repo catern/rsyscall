@@ -308,7 +308,7 @@ class SocketMemoryTransport(MemoryTransport):
                 if len(writes) == 0:
                     return
                 # TODO we should not use a cancel scope shield, we should use the SyscallResponse API
-                with trio.open_cancel_scope(shield=True):
+                with trio.CancelScope(shield=True):
                     await self._unlocked_batch_write([(write.dest, write.data) for write in writes])
                 for write in writes:
                     write.done = True
@@ -335,7 +335,7 @@ class SocketMemoryTransport(MemoryTransport):
                 self.pending_reads = []
                 merged_ops = self.merge_adjacent_reads(ops)
                 # TODO we should not use a cancel scope shield, we should use the SyscallResponse API
-                with trio.open_cancel_scope(shield=True):
+                with trio.CancelScope(shield=True):
                     await self._unlocked_batch_read([op for op, _ in merged_ops])
                 for op, orig_ops in merged_ops:
                     data = op.data

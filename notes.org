@@ -13615,7 +13615,7 @@ but also, principled.
    Let's just GC freely.
 
    Although, I can't really figure out how to check if something's leaking.
-** TODO don't actually read the memory when we read signalfd in childtaskmonitor
+** DONE don't actually read the memory when we read signalfd in childtaskmonitor
    because we don't actually care about it, we just want to wait until there's a signal
 
    hmm okay so how do we clean up asyncfd to have a nice, handlish interface
@@ -13651,7 +13651,7 @@ but also, principled.
    Eh, methods are convenient for the user.
 
    Maybe I should just have both.
-** TODO remove binaries from standardtask
+** DONE remove binaries from standardtask
    And therefore all associated uses from them from io.py
 
    We shouldn't have to depend on any binaries in the main thing.
@@ -13663,7 +13663,7 @@ but also, principled.
 
    oh. blah. rm is useful though.
    blaaah we're using sh to 
-*** TODO figure out temporary directory cleanup
+*** DONE figure out temporary directory cleanup
     blah blah argh blah
 
     we're currently using sh to do it, hmm.
@@ -14120,7 +14120,7 @@ wait how does writtentypedpointer work
 does it inherit from two things?
 
 yes I guess we'll just do that
-** deal with sockbufs
+** DONE deal with sockbufs
 *** thoughts
    oh, argh, I have to write the length beforehand.
 
@@ -14278,7 +14278,7 @@ yeah okay.
    so uniform!!!
 ** remove casts from rsyscall.tasks.local direct_syscall
    These seem pointless
-** make far.Process into a handle
+** DONE make far.Process into a handle
 hmm so far.Process really should be made a handle, innit?
 because when we unshare pid namespace, it's only for our children...
 hmm...

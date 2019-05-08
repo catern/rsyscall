@@ -1,25 +1,11 @@
 from cffi import FFI
 import os
-import pkgconfig
 import pathlib
 import shutil
 
-# We store paths at build time
-stored_paths = {
-    "pkglibexecdir": pkgconfig.variables('rsyscall')['pkglibexecdir'],
-    "rm_path": shutil.which("rm"),
-    "sh_path": shutil.which("sh"),
-    "ssh_path": shutil.which("ssh"),
-    "miredo_path": os.environ['miredo'],
-}
-import sys
-print("miredo", stored_paths['miredo_path'])
-
 ffibuilder = FFI()
-# include the rsyscall header
-rsyscall = {key: list(value) for key, value in pkgconfig.parse('rsyscall').items()}
-ffibuilder.set_source(
-    "rsyscall._raw", """
+ffibuilder.set_source_pkgconfig(
+    "rsyscall._raw", ["rsyscall"], """
 #include <asm/types.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -91,9 +77,7 @@ struct futex_node {
   struct robust_list list;
   uint32_t futex;
 };
-""" + "\n".join(f'const char {name}[] = "{value}";' for name, value in stored_paths.items()), **rsyscall)
-for name in stored_paths:
-    ffibuilder.cdef(f"const char {name}[];")
+""")
 ffibuilder.cdef("""
 typedef union epoll_data {
     uint64_t u64;

@@ -23,19 +23,10 @@ let
     preConfigure = "cp ${pkgs.gettext}/share/gettext/gettext.h include/gettext.h";
     buildInputs = oldAttrs.buildInputs ++ [ pkgs.autoreconfHook ];
   });
-  dnspython = pkgs.python37Packages.dnspython.overrideAttrs (oldAttrs: rec {
-    version = "1.16.0";
-    src = pkgs.python37Packages.fetchPypi {
-      pname = oldAttrs.pname;
-      inherit version;
-      extension = "zip";
-      sha256 = "00cfamn97w2vhq3id87f10mjna8ag5yz5dw0cy5s0sa3ipiyii9n";
-    };
-  });
   rsyscall = (import ../c);
 in
-with pkgs.python37Packages;
 
+with pkgs.python37Packages;
 buildPythonPackage {
   name = "rsyscall";
   src = ./.;
@@ -44,19 +35,34 @@ buildPythonPackage {
   (mypy.overrideAttrs (_: { src = /home/sbaugh/.local/src/mypy; }))
   typing-extensions
 pytest ];
-  buildInputs = [ pkgs.openssh nix ];
-  propagatedBuildInputs = [ rsyscall
-      trio cffi pkgconfig python-prctl pkgs.nginx typeguard
-      dnspython
-      requests h11 pkgs.pkgconfig hydra
+  nativeBuildInputs = [
+      pkgs.pkg-config pkgs.openssh nix
+      rsyscall
+  ];
+  # not sure how to set up the deps. we use binaries and libraries from C
+  # rsyscall at build time to run tests; and we also use them at runtime for our
+  # actual functionality. so should rsyscall be in nativeBuildInputs or
+  # buildInputs? strictDeps fails if it's in nativeBuildInputs...
+  strictDeps = false;
+  nativePropagatedBuildInputs = [
+      pkgs.s6
+      miredo
       pkgs.postgresql_11
       opensmtpd
       pkgs.dovecot
-      pkgs.s6
-      miredo
-      pyroute2
+      hydra
       pkgs.powerdns
       pkgs.bubblewrap
+      pkgs.nginx
+  ];
+  buildInputs = [
+      cffi
+  ];
+  propagatedBuildInputs = [
+      trio python-prctl typeguard
+      dnspython
+      requests h11
+      pyroute2
   ];
   miredo = miredo;
   nix = nix;

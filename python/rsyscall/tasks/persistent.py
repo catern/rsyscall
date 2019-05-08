@@ -133,7 +133,7 @@ class PersistentConnection(base.SyscallInterface):
         try:
             # we must not be interrupted while reading the response - we need to return
             # the response so that our parent can deal with the state change we created.
-            with trio.open_cancel_scope(shield=True):
+            with trio.CancelScope(shield=True):
                 result = await response.receive()
         except Exception as exn:
             self.logger.debug("%s -> %s", number, exn)
