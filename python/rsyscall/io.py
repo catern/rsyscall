@@ -1297,6 +1297,13 @@ class RsyscallConnection:
             # transport errors
             raise RsyscallException() from e
 
+    def poll_response(self) -> t.Optional[int]:
+        val = self.buffer.read_struct(RsyscallResponse)
+        if val:
+            return val.value
+        else:
+            return None
+
     async def read_response(self) -> int:
         val = self.buffer.read_struct(RsyscallResponse)
         if val:
@@ -1375,7 +1382,12 @@ class ChildConnection(base.SyscallInterface):
         await self.rsyscall_connection.close()
 
     async def _read_syscall_response(self) -> int:
-        response: t.Optional[int] = None
+        # we poll first so that we don't unnecessarily issue waitids if we've
+        # already got a response in our buffer
+        response: t.Optional[int] = self.rsyscall_connection.poll_response()
+        if response is not None:
+            raise_if_error(response)
+            return response
         try:
             async with trio.open_nursery() as nursery:
                 async def read_response() -> None:
