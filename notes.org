@@ -14558,7 +14558,8 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    implement garbage collection
 
    implement a memory model that handles the futex sub-reference problem
-   (and possibly the problem of multiple references through multiple
+   (and possibly the problem of multiple references through multiple mappings?)
+   (and allows a holistic way for me to use .split even on pointers I don't own, but am merely borrowing...)
 
    find a good model for typed extensibility of handle.Task (for new syscalls), and implement it
 ** DONE convert serializer to tagless final style
@@ -16110,6 +16111,14 @@ That keeps the allocation alive. It's completely principled and fine.
     Only when I then free do I need to go back into the allocator.
 
     Which is fine and good.
+** maybe integrate span/split/merge APIs directly into allocator
+   Not sure this is actually a good idea.
+
+   Having span be on top of the other thing is nice...
+
+   Though it's not workable for syscalls, which do want to split so we can do separate freeing...
+
+   Although maybe separate freeing is totally unnecessary, and we should just focus on spans which hold refs...
 ** DONE child waiting bugs
 ok so I seem to get ECHILD when waitiding on a specific child.
 
@@ -16182,12 +16191,14 @@ sure.
 whaaat the heeckkk
 
 so the subprocess is stuck in read, and the main process is... in "x32 mode"????
-** TODO memory batching issue
+** DONE memory batching issue
    Lol okay so my batching is completely broken
 
    Ummm yeah
 
    So let's maybe just put this off until we revamp memory
+
+   woo it's fixed
 ** DONE strace with local ssh
    ok soooo strace with local ssh blocks forever, because the.... remote forwarding process stays alive.
 
@@ -16207,14 +16218,6 @@ so the subprocess is stuck in read, and the main process is... in "x32 mode"????
    ok let's think about it, how can I do this...
 
    oh I'll just sleep 1 instead of inf, that's fine.
-** issues
-so we can do the epoll lazy register thing,
-we just need to not deregister when done.
-we can rely on weak refs, or maybe just the autoclose on close of open-file-description
-
-supporting both "async" and non-async modes of operation
-
-supporting cancellation so we don't drop events, but are still able to be cancelled.
 ** getting rid of processresources
    We can have it basically be a dynamic linking API,
    so that you can load a library into your process,
@@ -16240,8 +16243,7 @@ supporting cancellation so we don't drop events, but are still able to be cancel
    (and maybe I can make this extensible somehow?)
 
    (I guess one could just inherit from the omnibus)
-
-   we can move all the memory stuff into a memory subdir
+** DONE move all the memory stuff into a memory subdir
 *** memory rework
 hmm this doesn't make any sense
 how do I merge these pointers hm mhm hmmhmhm
@@ -16327,7 +16329,7 @@ oh I need that anyway to write/read the iovecs
     OK well... not sure.
 
     aha okay so I was getting cancelled and dropping syscall responses
-** memory rework
+** DONE memory rework
    Hm I guess the reason we don't have any nicer APIs for memory is,
    all the languages with nicer APIs abstract over memory.
 
@@ -16351,6 +16353,8 @@ oh I need that anyway to write/read the iovecs
 
    I guess that's the abstraction, sure.
    We can copy that out as a helper so we can use it for other iovec things.
+
+   boom! iovec done!!
 ** DONE lazily registered epoll
    Let's do it!
 
@@ -16364,6 +16368,14 @@ oh I need that anyway to write/read the iovecs
 
    we'll just start waiting on readhup up front,
    so that way we will get notified nicely, all fine, works good.
+*** issues
+ so we can do the epoll lazy register thing,
+ we just need to not deregister when done.
+ we can rely on weak refs, or maybe just the autoclose on close of open-file-description
+
+ supporting both "async" and non-async modes of operation
+
+ supporting cancellation so we don't drop events, but are still able to be cancelled.
 *** connect issue
    we want something that will error nicely if it's not connected.
 
