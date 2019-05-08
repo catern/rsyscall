@@ -15,7 +15,7 @@ from rsyscall.handle import AllocationInterface, Pointer
 
 @dataclass
 class ReadOp:
-    src: handle.Pointer
+    src: Pointer
     done: t.Optional[bytes] = None
 
     @property
@@ -26,7 +26,7 @@ class ReadOp:
 
 @dataclass
 class WriteOp:
-    dest: handle.Pointer
+    dest: Pointer
     data: bytes
     done: bool = False
 
@@ -116,19 +116,19 @@ class MergedAllocation(AllocationInterface):
     def free(self) -> None:
         pass
 
-def merge_adjacent_pointers(ptrs: t.List[handle.Pointer]) -> handle.Pointer:
-    return handle.Pointer(
+def merge_adjacent_pointers(ptrs: t.List[Pointer]) -> Pointer:
+    return Pointer(
         ptrs[0].mapping,
         ptrs[0].transport,
         ptrs[0].serializer,
         MergedAllocation([ptr.allocation for ptr in ptrs]))
 
-def merge_adjacent_writes(write_ops: t.List[t.Tuple[handle.Pointer, bytes]]) -> t.List[t.Tuple[handle.Pointer, bytes]]:
+def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[t.Tuple[Pointer, bytes]]:
     "Note that this is only effective inasmuch as the list is sorted."
     if len(write_ops) == 0:
         return []
     write_ops = sorted(write_ops, key=lambda op: int(op[0].near))
-    groupings: t.List[t.List[t.Tuple[handle.Pointer, bytes]]] = []
+    groupings: t.List[t.List[t.Tuple[Pointer, bytes]]] = []
     ops_to_merge = [write_ops[0]]
     for (prev_op, prev_data), (op, data) in zip(write_ops, write_ops[1:]):
         if prev_op.mapping is op.mapping:
@@ -145,7 +145,7 @@ def merge_adjacent_writes(write_ops: t.List[t.Tuple[handle.Pointer, bytes]]) -> 
         ops_to_merge = [(op, data)]
     groupings.append(ops_to_merge)
 
-    outputs: t.List[t.Tuple[handle.Pointer, bytes]] = []
+    outputs: t.List[t.Tuple[Pointer, bytes]] = []
     for group in groupings:
         merged_data = b''.join([op[1] for op in group])
         merged_ptr = merge_adjacent_pointers([op[0] for op in group])
@@ -206,7 +206,7 @@ class SocketMemoryTransport(MemoryTransport):
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
         return SocketMemoryTransport(self.local, self.local_ram, task.make_fd_handle(self.remote))
 
-    async def _unlocked_single_write(self, dest: handle.Pointer, data: bytes) -> None:
+    async def _unlocked_single_write(self, dest: Pointer, data: bytes) -> None:
         src = await self.local_ram.to_pointer(Bytes(data))
         async def write() -> None:
             await self.local.write_handle(src)
@@ -218,7 +218,7 @@ class SocketMemoryTransport(MemoryTransport):
             nursery.start_soon(read)
             nursery.start_soon(write)
 
-    async def _unlocked_batch_write(self, ops: t.List[t.Tuple[handle.Pointer, bytes]]) -> None:
+    async def _unlocked_batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         ops = sorted(ops, key=lambda op: int(op[0].near))
         ops = merge_adjacent_writes(ops)
         if len(ops) <= 1:
@@ -234,7 +234,7 @@ class SocketMemoryTransport(MemoryTransport):
             for dest, data in ops:
                 await self._unlocked_single_write(dest, data)
 
-    def _start_single_write(self, dest: handle.Pointer, data: bytes) -> WriteOp:
+    def _start_single_write(self, dest: Pointer, data: bytes) -> WriteOp:
         write = WriteOp(dest, data)
         self.pending_writes.append(write)
         return write
@@ -252,13 +252,13 @@ class SocketMemoryTransport(MemoryTransport):
                 for write in writes:
                     write.done = True
 
-    async def batch_write(self, ops: t.List[t.Tuple[handle.Pointer, bytes]]) -> None:
+    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         write_ops = [self._start_single_write(dest, data) for (dest, data) in ops]
         await self._do_writes()
         for op in write_ops:
             op.assert_done()
 
-    async def _unlocked_single_read(self, src: handle.Pointer) -> bytes:
+    async def _unlocked_single_read(self, src: Pointer) -> bytes:
         dest = await self.local_ram.malloc_type(Bytes, src.bytesize())
         async def write() -> None:
             rest = src
@@ -283,7 +283,7 @@ class SocketMemoryTransport(MemoryTransport):
         for op in ops:
             op.done = await self._unlocked_single_read(op.src)
 
-    def _start_single_read(self, dest: handle.Pointer) -> ReadOp:
+    def _start_single_read(self, dest: Pointer) -> ReadOp:
         op = ReadOp(dest)
         self.pending_reads.append(op)
         return op
@@ -305,7 +305,7 @@ class SocketMemoryTransport(MemoryTransport):
                             raise Exception("insufficient data for original operation", len(data), orig_size)
                         orig_op.done, data = data[:orig_size], data[orig_size:]
 
-    async def batch_read(self, ops: t.List[handle.Pointer]) -> t.List[bytes]:
+    async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
         read_ops = [self._start_single_read(src) for src in ops]
         # TODO this is inefficient
         while not(all(op.done is not None for op in read_ops)):
