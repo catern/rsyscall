@@ -108,15 +108,6 @@ class MergedAllocation(AllocationInterface):
             first_part, second_part = alloc.split(alloc.size() - overhang)
             first = first + [first_part]
             second = [second_part] + second
-        # hm. splitting like this.... doesn't work. because... our offset needs to be...
-        # adjusted?
-        # um...
-        # right...
-        # well... if we have an assurance that all our offsets are contiguous then...
-        # well when we go to another mapping our offset has to be 0.
-        # ah. merge.
-        # oh wait this does work UMMM
-        # also we aren't using merge cuz we only use this for write stuff
         return MergedAllocation(first), MergedAllocation(second)
 
     def merge(self, other: AllocationInterface) -> AllocationInterface:
@@ -215,27 +206,14 @@ class SocketMemoryTransport(MemoryTransport):
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
         return SocketMemoryTransport(self.local, self.local_ram, task.make_fd_handle(self.remote))
 
-    async def _unlocked_single_write(self, dest_handle: handle.Pointer, data: bytes) -> None:
-        # need an additional cap: to turn bytes to a pointer.
-        src = base.to_local_pointer(data)
-        n = len(data)
-        rtask = self.remote.task
-        near_read_fd = self.remote.near
-        dest = dest_handle.far
-        near_dest = rtask.to_near_pointer(dest)
-        wtask = self.local.handle.task
-        near_write_fd = self.local.handle.near
-        near_src = wtask.to_near_pointer(src)
-        async def read() -> None:
-            i = 0
-            while (n - i) > 0:
-                ret = await near.read(rtask.sysif, near_read_fd, near_dest+i, n-i)
-                i += ret
+    async def _unlocked_single_write(self, dest: handle.Pointer, data: bytes) -> None:
+        src = await self.local_ram.to_pointer(Bytes(data))
         async def write() -> None:
-            i = 0
-            while (n - i) > 0:
-                ret = await self.local.write_raw(wtask.sysif, near_write_fd, near_src+i, n-i)
-                i += ret
+            await self.local.write_handle(src)
+        async def read() -> None:
+            rest = dest
+            while rest.bytesize() > 0:
+                read, rest = await self.remote.read(rest)
         async with trio.open_nursery() as nursery:
             nursery.start_soon(read)
             nursery.start_soon(write)
