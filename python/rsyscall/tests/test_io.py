@@ -34,6 +34,7 @@ from rsyscall.sys.capability import CAP, CapHeader, CapData
 from rsyscall.sys.prctl import PrctlOp, CapAmbient
 from rsyscall.sys.socket import SOCK, AF
 from rsyscall.sys.un import SockaddrUn
+from rsyscall.sys.uio import RWF
 from rsyscall.linux.netlink import NETLINK
 from rsyscall.signal import Signals
 from rsyscall.sys.signalfd import SignalfdSiginfo
@@ -42,6 +43,8 @@ from rsyscall.unistd import SEEK
 from rsyscall.fcntl import O
 
 from rsyscall.struct import Bytes
+
+from rsyscall.handle import Pipe, IovecList
 
 
 import logging
@@ -101,6 +104,22 @@ class TestIO(unittest.TestCase):
             written, _ = await pipe.write.write(await stdtask.task.to_pointer(Bytes(in_data)))
             valid, _ = await pipe.read.read(written)
             self.assertEqual(in_data, await valid.read())
+        trio.run(self.runner, test)
+
+    def test_readv(self):
+        async def test(stdtask: StandardTask) -> None:
+            task = stdtask.task.base
+            ram = stdtask.task
+            pipe = await (await task.pipe(await ram.malloc_struct(Pipe), O.CLOEXEC)).read()
+            in_data = [b"hello", b"world"]
+            iov = await ram.to_pointer(IovecList([await ram.to_pointer(Bytes(data)) for data in in_data]))
+            written, partial, rest = await pipe.write.writev(iov)
+            self.assertEqual(partial, None, msg="got unexpected partial write")
+            self.assertEqual(rest.bytesize(), 0, msg="got unexpected partial write")
+            read, partial, rest = await pipe.read.readv(written)
+            self.assertEqual(partial, None, msg="got unexpected partial read")
+            self.assertEqual(rest.bytesize(), 0, msg="got unexpected partial read")
+            self.assertEqual(in_data, [await ptr.read() for ptr in read.value])
         trio.run(self.runner, test)
 
     def test_recv_pipe(self) -> None:

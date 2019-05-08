@@ -16327,6 +16327,30 @@ oh I need that anyway to write/read the iovecs
     OK well... not sure.
 
     aha okay so I was getting cancelled and dropping syscall responses
+** memory rework
+   Hm I guess the reason we don't have any nicer APIs for memory is,
+   all the languages with nicer APIs abstract over memory.
+
+   You only care about memory if you care about language performance;
+   I care about memory, but not language performance.
+
+   Hmm that seems lame.
+
+   I like the notion of a scripting language which can set up DMAs,
+   etc, all kinds of transfers like that.
+
+   Basically just an orchestrator for the rest of the system.
+
+   Anyway, how do we handle splitting these iovecs?
+   We want to, I guess, split them at a single point?
+
+   Well okay, here's the thing:
+   We have a WrittenPointer[IovecList],
+   and we want to pass it a number which is the amount we read,
+   and we want to get back, this other stuff.
+
+   I guess that's the abstraction, sure.
+   We can copy that out as a helper so we can use it for other iovec things.
 ** DONE lazily registered epoll
    Let's do it!
 

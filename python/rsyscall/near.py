@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 from rsyscall.sys.epoll import EPOLL_CTL
 from rsyscall.sys.prctl import PrctlOp
 from rsyscall.sys.wait import IdType
+from rsyscall.sys.uio import RWF
 from rsyscall.fcntl import AT
 from rsyscall.sched import UnshareFlag
 from rsyscall.signal import SigprocmaskHow
@@ -81,6 +82,8 @@ class SYS(enum.IntEnum):
     kill = lib.SYS_kill
     exit = lib.SYS_exit
     clone = lib.SYS_clone
+    preadv2 = lib.SYS_preadv2
+    pwritev2 = lib.SYS_pwritev2
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -187,6 +190,12 @@ async def write(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count
 
 async def pread(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int, offset: int) -> int:
     return (await sysif.syscall(SYS.pread64, fd, buf, count, offset))
+
+async def preadv2(sysif: SyscallInterface, fd: FileDescriptor, iov: Pointer, iovcnt: int, offset: int, flags: RWF) -> int:
+    return (await sysif.syscall(SYS.preadv2, fd, iov, iovcnt, offset, flags))
+
+async def pwritev2(sysif: SyscallInterface, fd: FileDescriptor, iov: Pointer, iovcnt: int, offset: int, flags: RWF) -> int:
+    return (await sysif.syscall(SYS.pwritev2, fd, iov, iovcnt, offset, flags))
 
 async def recv(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int, flags: int) -> int:
     return (await sysif.syscall(SYS.recvfrom, fd, buf, count, flags))

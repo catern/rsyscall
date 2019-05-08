@@ -29,6 +29,7 @@ from rsyscall.sys.wait import W, ChildEvent
 from rsyscall.sys.mman import MAP, PROT
 from rsyscall.sys.prctl import PrctlOp
 from rsyscall.sys.mount import MS
+from rsyscall.sys.uio import RWF
 
 class AllocationInterface:
     @abc.abstractmethod
@@ -99,11 +100,8 @@ class Pointer(t.Generic[T]):
             raise Exception("pointer is in different address space")
         yield self
 
-    def _with_alloc(self: T_pointer, allocation: AllocationInterface) -> Pointer:
-        # TODO how can I do this statically?
-        if type(self) is not Pointer:
-            raise Exception("subclasses of Pointer must override _with_alloc")
-        return type(self)(self.mapping, self.transport, self.serializer, allocation)
+    def _with_alloc(self, allocation: AllocationInterface) -> Pointer:
+        return Pointer(self.mapping, self.transport, self.serializer, allocation)
 
     def _with_mapping(self: T_pointer, mapping: MemoryMapping) -> T_pointer:
         if type(self) is not Pointer:
@@ -121,7 +119,7 @@ class Pointer(t.Generic[T]):
         self.valid = False
         return type(self)(mapping, self.transport, self.serializer, self.allocation)
 
-    def split(self: T_pointer, size: int) -> t.Tuple[Pointer, Pointer]:
+    def split(self, size: int) -> t.Tuple[Pointer, Pointer]:
         self.validate()
         # TODO uhhhh if split throws an exception... don't we need to free... or something...
         self.valid = False
@@ -222,11 +220,6 @@ class WrittenPointer(Pointer[T]):
     def value(self) -> T:
         # can't decide what to call this field
         return self.data
-
-    def _with_alloc(self, allocation: AllocationInterface) -> WrittenPointer:
-        if type(self) is not WrittenPointer:
-            raise Exception("subclasses of WrittenPointer must override _with_alloc")
-        return type(self)(self.mapping, self.transport, self.data, self.serializer, allocation)
 
     def _with_mapping(self, mapping: MemoryMapping) -> WrittenPointer:
         if type(self) is not WrittenPointer:
@@ -451,6 +444,23 @@ class FileDescriptor:
         with buf.borrow(self.task) as buf_b:
             ret = await rsyscall.near.read(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
             return buf.split(ret)
+
+    async def readv(self, iov: WrittenPointer[IovecList], flags: RWF=RWF.NONE
+    ) -> t.Tuple[WrittenPointer[IovecList], t.Optional[t.Tuple[Pointer, Pointer]], WrittenPointer[IovecList]]:
+        # TODO should check that the WrittenPointer's value and size correspond...
+        # maybe we should check that at construction time?
+        # otherwise one could make a WrittenPointer that is short, but has a long iovec, and we'd read off the end.
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(iov.borrow(self.task))
+            ret = await rsyscall.near.preadv2(self.task.sysif, self.near, iov.near, len(iov.value), -1, flags)
+            return split_iovec(iov, ret)
+
+    async def writev(self, iov: WrittenPointer[IovecList], flags: RWF=RWF.NONE
+    ) -> t.Tuple[WrittenPointer[IovecList], t.Optional[t.Tuple[Pointer, Pointer]], WrittenPointer[IovecList]]:
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(iov.borrow(self.task))
+            ret = await rsyscall.near.pwritev2(self.task.sysif, self.near, iov.near, len(iov.value), -1, flags)
+            return split_iovec(iov, ret)
 
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self.validate()
@@ -1306,22 +1316,28 @@ class ArgListSerializer(Serializer[T_arglist]):
 # sendmsg/recvmsg
 class IovecList(t.List[Pointer], Serializable):
     def split(self, n: int) -> t.Tuple[IovecList, IovecList]:
+        first, middle, second = self.split_with_middle(n)
+        if middle is None:
+            return first, second
+        else:
+            first_mid, second_mid = middle
+            return IovecList(first + [first_mid]), IovecList([second_mid] + second)
+
+    def split_with_middle(self, n: int) -> t.Tuple[IovecList, t.Optional[t.Tuple[Pointer, Pointer]], IovecList]:
         valid: t.List[Pointer] = []
+        middle: t.Optional[t.Tuple[Pointer, Pointer]] = None
         invalid: t.List[Pointer] = []
         for ptr in self:
             size = ptr.bytesize()
-            if size >= n:
+            if n >= size:
                 valid.append(ptr)
                 n -= size
             elif n > 0:
-                validp, invalidp = ptr.split(n)
-                valid.append(validp)
-                assert len(invalid) == 0
-                invalid.append(invalidp)
+                middle = ptr.split(n)
                 n = 0
             else:
                 invalid.append(ptr)
-        return IovecList(valid), IovecList(invalid)
+        return IovecList(valid), middle, IovecList(invalid)
 
     def to_bytes(self) -> bytes:
         ret = b""
@@ -1336,6 +1352,22 @@ class IovecList(t.List[Pointer], Serializable):
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         raise Exception("can't get pointer handles from raw bytes")
+
+def split_iovec(iov: WrittenPointer[IovecList], ret: int
+) -> t.Tuple[WrittenPointer[IovecList], t.Optional[t.Tuple[Pointer, Pointer]], WrittenPointer[IovecList]]:
+    first, middle, last = iov.value.split_with_middle(ret)
+    if middle is None:
+        first_count = len(first)
+    else:
+        # we include the partially-consumed middle pointer in the first WP[IovecList] returned;
+        # I think this is the most ergonomic choice, since in the normal case, I'll want to
+        # operate on middle separately, then on second.
+        first_count = len(first) + 1
+    # TODO this is fairly ad-hoc, splitting on a WrittenPointer should really call into the
+    # Serializer to determine validity. (And then I suppose we would have .degrade to degrade a
+    # WrittenPointer back into a Pointer so we can split it??? Hmm, seems awkward...)
+    first_ptr, last_ptr = iov.split(first_count * ffi.sizeof('struct iovec'))
+    return first_ptr._wrote(first), middle, last_ptr._wrote(last)
 
 T_cmsg = t.TypeVar('T_cmsg', bound='Cmsg')
 class Cmsg(FixedSerializer):
