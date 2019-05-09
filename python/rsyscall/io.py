@@ -1009,20 +1009,6 @@ class SignalQueue:
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
-class MultiplexerQueue:
-    "This will be some kinda abstracted queue thing that can be used for epoll and for ChildProcessMonitor etc"
-    # TODO
-    # maybe we should, uhh
-    # oh, we can't just check if someone is running and if they are, starting waiting on the queue
-    # because, we need to get woken up to do the run if we're waiting
-    # maybe that should be the thing, hmm
-    # run this waiting function as long as someone is waiting on the queue
-    # run in their time slice
-    pass
-
-class Multiplexer:
-    pass
-
 class ChildProcess:
     def __init__(self, process: handle.ChildProcess,
                  monitor: ChildProcessMonitorInternal) -> None:

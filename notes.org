@@ -16736,8 +16736,6 @@ but that doesn't scale as well as passing the epfd down.
 
    I dunno, can we just make this more implicit?
    I already have close-by things, in the form of the SocketMemoryTransport.
-
-
 ** DONE make borrowing not async
    We can't run async code on exiting.
    Because we might drop a syscall result.
@@ -16864,8 +16862,26 @@ And we can have an exec which is not memory-abstracting, I guess.
    then we'll block forever.
 
    But I thought I fixed this.
-** split out both spawn_exec and fork task creation
+** DONE split out both spawn_exec
    There are two task creation things still in io.py!
+** split out fork task creation
+   okaaaay soooo
+
+   the issue is that I dep on things from stdtask.
+
+   oh let's just split out the thread thing.
+
+   we need, let's see.
+
+   CPM, ProcessResources, we can replace Task with RAM.
+
+   Oh, we return a Task though.
+
+   So... yeah we need to, I guess... clean this up.
+
+   We should probably return a handle.Task instead.
+
+   And let's go ahead and move sigmask into handle.Task.
 ** support splitting memory mappings
 ** support passing an existing mapping as a target for mmap
    For the address argument, so that we split the mapping and replace part or all of it with a new mapping.
