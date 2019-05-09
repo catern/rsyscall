@@ -111,7 +111,7 @@ async def _setup_stub(
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     allocator = memory.AllocatorClient.make_allocator(base_task)
     task = Task(base_task,
-                SocketMemoryTransport(access_data_sock, stdtask.access_task,
+                SocketMemoryTransport(access_data_sock,
                                       base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd)),
                                       allocator),
                 allocator,

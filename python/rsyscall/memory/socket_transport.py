@@ -163,15 +163,14 @@ def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[
 @dataclass
 class PrimitiveSocketMemoryTransport(MemoryTransport):
     local: AsyncFileDescriptor
-    local_ram: RAM
     remote: FileDescriptor
 
     def inherit(self, task: handle.Task) -> PrimitiveSocketMemoryTransport:
-        return PrimitiveSocketMemoryTransport(self.local, self.local_ram, task.make_fd_handle(self.remote))
+        return PrimitiveSocketMemoryTransport(self.local, task.make_fd_handle(self.remote))
 
     async def write(self, dest: Pointer, data: bytes) -> None:
         dest = to_span(dest)
-        src = await self.local_ram.to_pointer(Bytes(data))
+        src = await self.local.ram.to_pointer(Bytes(data))
         async def write() -> None:
             await self.local.write_handle(src)
         async def read() -> None:
@@ -187,7 +186,7 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
 
     async def read(self, src: Pointer) -> bytes:
         src = to_span(src)
-        dest = await self.local_ram.malloc_type(Bytes, src.bytesize())
+        dest = await self.local.ram.malloc_type(Bytes, src.bytesize())
         async def write() -> None:
             rest = src
             while rest.bytesize() > 0:
@@ -225,15 +224,13 @@ class SocketMemoryTransport(MemoryTransport):
     """
     def __init__(self,
                  local: AsyncFileDescriptor,
-                 local_ram: RAM,
                  remote: FileDescriptor,
                  remote_allocator: AllocatorClient,
     ) -> None:
         self.local = local
-        self.local_ram = local_ram
         self.remote = remote
         self.remote_allocator = remote_allocator
-        self.primitive = PrimitiveSocketMemoryTransport(local, local_ram, remote)
+        self.primitive = PrimitiveSocketMemoryTransport(local, remote)
         self.primitive_remote_ram = RAM(self.remote.task, self.primitive, self.remote_allocator)
         self.pending_writes: t.List[WriteOp] = []
         self.running_write = OneAtATime()
@@ -270,7 +267,7 @@ class SocketMemoryTransport(MemoryTransport):
         return outputs
 
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
-        return SocketMemoryTransport(self.local, self.local_ram, task.make_fd_handle(self.remote),
+        return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote),
                                      self.remote_allocator.inherit(task))
 
     async def _unlocked_batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
@@ -281,7 +278,7 @@ class SocketMemoryTransport(MemoryTransport):
             await self.primitive.write(dest, data)
         else:
             iovp = await self.primitive_remote_ram.to_pointer(IovecList([ptr for ptr, _ in ops]))
-            datap = await self.local_ram.to_pointer(Bytes(b"".join([data for _, data in ops])))
+            datap = await self.local.ram.to_pointer(Bytes(b"".join([data for _, data in ops])))
             async with trio.open_nursery() as nursery:
                 @nursery.start_soon
                 async def write() -> None:
