@@ -1,6 +1,6 @@
 from __future__ import annotations
 import rsyscall.handle as handle
-import rsyscall.base as base
+import rsyscall.far as far
 import rsyscall.near as near
 import rsyscall.memory.allocator as memory
 from rsyscall.io import RsyscallThread, AsyncReadBuffer, ChildProcess, launch_futex_monitor, ProcessResources, StandardTask, SocketMemoryTransport, Command
@@ -100,7 +100,7 @@ async def rsyscall_exec(
         # TODO maybe remove dependence on parent task for closing?
         for fd in close_in_old_space:
             await near.close(parent_stdtask.task.base.sysif, fd)
-        stdtask.task.base.address_space = base.AddressSpace(rsyscall_thread.stdtask.task.base.process.near.id)
+        stdtask.task.base.address_space = far.AddressSpace(rsyscall_thread.stdtask.task.base.process.near.id)
         # we mutate the allocator instead of replacing to so that anything that
         # has stored the allocator continues to work
         stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)

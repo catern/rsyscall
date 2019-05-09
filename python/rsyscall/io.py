@@ -6,10 +6,8 @@ import pathlib
 
 import math
 
-from rsyscall.base import Pointer, RsyscallException, RsyscallHangup
-from rsyscall.base import SyscallInterface
+from rsyscall.exceptions import RsyscallException, RsyscallHangup
 
-import rsyscall.base as base
 import rsyscall.handle as handle
 import rsyscall.handle
 from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess, Sockbuf, MemoryGateway
@@ -1352,7 +1350,7 @@ class SyscallResponse(near.SyscallResponse):
             raise Exception("trying to set result on SyscallResponse twice")
         self.result = result
 
-class ChildConnection(base.SyscallInterface):
+class ChildConnection(near.SyscallInterface):
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
                  rsyscall_connection: RsyscallConnection,
@@ -1477,7 +1475,7 @@ class ChildConnection(base.SyscallInterface):
             return result
 
 
-class RsyscallInterface(base.SyscallInterface):
+class RsyscallInterface(near.SyscallInterface):
     """An rsyscall connection to a task that is not our child.
 
     For correctness, we should ensure that we'll get HUP/EOF if the task has

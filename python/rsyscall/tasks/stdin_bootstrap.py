@@ -1,6 +1,5 @@
 import typing as t
 import rsyscall.io as rsc
-import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle

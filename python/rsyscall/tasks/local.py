@@ -8,7 +8,6 @@ import trio
 from rsyscall.handle import Task
 import rsyscall.far as far
 import rsyscall.near as near
-import rsyscall.base as base
 import rsyscall.handle as handle
 import logging
 import os
@@ -35,7 +34,7 @@ class LocalSyscallResponse(near.SyscallResponse):
 
 
 @dataclass(eq=False)
-class LocalSyscall(base.SyscallInterface):
+class LocalSyscall(near.SyscallInterface):
     identifier_process: near.Process
     activity_fd = None
     logger = logging.getLogger("rsyscall.LocalSyscall")

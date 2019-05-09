@@ -1,6 +1,5 @@
 import typing as t
 import rsyscall.io as rsc
-import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
@@ -22,7 +21,7 @@ from rsyscall.sys.socket import SOCK, SendmsgFlags
 from rsyscall.signal import Signals
 from rsyscall.sys.prctl import PrctlOp
 
-class PersistentConnection(base.SyscallInterface):
+class PersistentConnection(near.SyscallInterface):
     """An reconnectable rsyscall connection; the task won't be our child on resume.
 
     For correctness, we should ensure that we'll get HUP/EOF if the task has

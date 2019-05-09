@@ -5,7 +5,6 @@ from rsyscall.io import StandardTask, Path
 from rsyscall.io import Command
 import rsyscall.io as rsc
 import shutil
-import rsyscall.base as base
 import rsyscall.near as near
 import rsyscall.far as far
 import socket
