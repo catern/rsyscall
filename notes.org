@@ -16329,6 +16329,9 @@ oh I need that anyway to write/read the iovecs
     OK well... not sure.
 
     aha okay so I was getting cancelled and dropping syscall responses
+** move syscalls into individual header modules and register them on handle.FD
+** begin the separation of stdtask into inheriting classes
+beginning with getting rid of io.FD!
 ** DONE memory rework
    Hm I guess the reason we don't have any nicer APIs for memory is,
    all the languages with nicer APIs abstract over memory.
