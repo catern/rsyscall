@@ -90,12 +90,6 @@ class Pointer(t.Generic[T]):
     def bytesize(self) -> int:
         return self.allocation.size()
 
-    @property
-    def far(self) -> rsyscall.far.Pointer:
-        # TODO delete this property
-        self.validate()
-        return rsyscall.far.Pointer(self.mapping.task.address_space, self.near)
-
     @contextlib.contextmanager
     def borrow(self, task: Task) -> t.Iterator[Pointer]:
         # TODO actual tracking of pointer references is not yet implemented
