@@ -3751,6 +3751,16 @@ so we don't have to be generic.
 ** first-class processes
    Treating operating system processes as a first-class object to be manipulated.
    The methods of this object? System calls in that process.
+** escape the process monad
+   normally we run our programs inside a single instance of the process monad,
+   but monads have a major limitation:
+   you can't manipulate multiple monads of the same type at once.
+
+   to do that, we need to escape the process monad.
+   that's what rsyscall does.
+
+   our programs are no longer forced to run as DSLs in the process monad.
+   instead they can manipulate the process monad and run their own DSLs.
 * explicitly modeling memory
 how would I do this?
 
@@ -16644,6 +16654,70 @@ but that doesn't scale as well as passing the epfd down.
 
     like, we definitely do want to memabstract at some levels.
     ehh ok, we'll still have two classes.
+** make make_connection object into an interface
+   Then I can remove this annoying conditionality from the implementation.
+
+   Instead I just have a single class for each possible configuration.
+
+   And furthermore, when it's an interface, I could use TCP to do the connections too.
+
+   Yes that seems like a good idea.
+
+   OK so it's kind of like, we have this reference to our "Access" task,
+   which is essentially locally.
+
+   Oh, it can just be, um, like, AccessTask!
+   That can be the name.
+
+   And we have the ability to make a connection back to it.
+
+   Or, no, we just need handle FDs, and the ability to write to them.
+
+   We don't need to know that there's a task there.
+
+   It's just an efficiently-accessible FD space.
+
+   Basically it gives us an efficient-connection.
+
+   A closer connection to our runtime.
+
+   Better locality.
+
+   Also it can return AFDs I guess on both sides?
+
+   Er wait.
+
+   We're already using an AFD in socket transport!
+
+   Hmm
+
+   And obviously it can't return an AFD on the remote side.
+
+   OK sure so the question is, how do we handle returning a non-AFD that is RAM-accessible?
+
+   We could just return a RAM with it?
+
+   Ummmm.
+
+   Oh hey also what the heck's this all about?
+   We're using it to make things we can pass down to local stdtasks?
+
+   Hmm that's distasteful, since that's not purely for locality.
+
+   In fact that's what all these uses are,
+   they're passing it down to other tasks.
+
+   Hmmmmm.
+
+   I suppose the question is, how do we know it's right task?
+   Well, I guess it doesn't matter?
+
+   Oh wait, hey, if we're passing it down,
+   then we don't need a RAM anyway!
+
+   OK so this is fine then! We'll keep the current interface - not returning a RAM if you just ask for a handle.
+
+   If you want that handle you must know the access task some other way, I gues.
 ** DONE make borrowing not async
    We can't run async code on exiting.
    Because we might drop a syscall result.
@@ -17162,3 +17236,67 @@ a staged language where using runtime values and doing computation on them is an
 the effects correspond to the extensible "symantics" that oleg describes
 
 in some sense the dynamic linker is the symantics for things...
+* hmm
+  not sure how you'd do type inference for this,
+  but if the k was an implicit parameter,
+  then you could win.
+
+  if you were doing
+
+  fn k { unify(k, l, r) }
+
+  then you could maybe just have k be an implicit parameter/dynamic variable
+
+  so, unify(l, r) would pull k from what's available in the current scope by type,
+  or pull it from the current value of a dynamically scoped variable
+
+
+  that requires that "unify" on its own identify what the function you want is.
+
+  but when calling it as a method that doesn't work
+
+  how does this lambda work?
+
+  does it get passed to another function?
+
+  you could maybe have $.unify(l, r) where $ is dynamically bound,
+  as a syntax for doing that
+
+  the point is, where do I get the unify function from?
+  answer: I need to get it from "self".
+
+  self could be dynamically bound?
+
+  ok, yeah, that would make sense, you could have a dynvar self, that you can bind whenever,
+  and then the function lookup happens on "self" first
+
+  and then... well, the question is, how do you keep the method call/message send from happening immediately?
+
+  well, do you need some syntax for that?
+
+  well, if the function doesn't apply, then you could just wait to apply it.
+
+  try to apply it, but if you fail, wait.
+
+  that's not very type-safe though.
+
+  like, if we just wait to apply it,
+  then we just never apply it, if it's broken!
+
+  we would want to not resolve the function based on that.
+
+  maybe if we knew the type in advance?
+
+  oh, some clever helper class could take a message call and return a function making that call
+
+  that's a dynamic way to handle it.
+
+  but it would be nicer if we were typed?
+
+  right so if we knew the type in advance...
+
+  then we would know whether we can apply the function or not.
+
+  oh, you could dynbind one of these function maker things as self,
+  so that all method calls become delayed.
+
