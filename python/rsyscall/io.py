@@ -780,10 +780,21 @@ class StandardTask:
 
     async def fork(self, newuser=False, newpid=False, fs=True, sighand=True) -> RsyscallThread:
         [(access_sock, remote_sock)] = await self.make_async_connections(1)
-        task = await spawn_rsyscall_thread(
+        base_task = await spawn_rsyscall_thread(
             access_sock, remote_sock,
             self.task, self.child_monitor, self.process,
             newuser=newuser, newpid=newpid, fs=fs, sighand=sighand,
+        )
+        task = Task(base_task,
+                    # We don't inherit the transport because it leads to a deadlock:
+                    # If when a child task calls transport.read, it performs a syscall in the child task,
+                    # then the parent task will need to call waitid to monitor the child task during the syscall,
+                    # which will in turn need to also call transport.read.
+                    # But the child is already using the transport and holding the lock,
+                    # so the parent will block forever on taking the lock,
+                    # and child's read syscall will never complete.
+                    self.task.transport,
+                    self.task.allocator.inherit(base_task),
         )
         await remote_sock.invalidate()
         if newuser:
@@ -1718,7 +1729,7 @@ async def spawn_rsyscall_thread(
         monitor: ChildProcessMonitor,
         process_resources: ProcessResources,
         newuser: bool, newpid: bool, fs: bool, sighand: bool,
-) -> Task:
+) -> handle.Task:
     flags = CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM|signal.SIGCHLD
     # TODO correctly track the namespaces we're in for all these things
     if newuser:
@@ -1761,18 +1772,7 @@ async def spawn_rsyscall_thread(
     new_base_task.sigmask = parent_task.base.sigmask
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
-    new_task = Task(new_base_task,
-                    # We don't inherit the transport because it leads to a deadlock:
-                    # If when a child task calls transport.read, it performs a syscall in the child task,
-                    # then the parent task will need to call waitid to monitor the child task during the syscall,
-                    # which will in turn need to also call transport.read.
-                    # But the child is already using the transport and holding the lock,
-                    # so the parent will block forever on taking the lock,
-                    # and child's read syscall will never complete.
-                    parent_task.transport,
-                    parent_task.allocator.inherit(new_base_task),
-    )
-    return new_task
+    return new_base_task
 
 class RsyscallThread:
     def __init__(self,
