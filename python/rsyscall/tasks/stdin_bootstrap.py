@@ -18,6 +18,7 @@ from rsyscall.sched import CLONE
 from rsyscall.sys.socket import SOCK, AF, SendmsgFlags
 from rsyscall.sys.memfd import MFD
 from rsyscall.signal import Signals
+from rsyscall.handle import FDPair
 
 __all__ = [
     "stdin_bootstrap_path_from_store",
@@ -36,11 +37,13 @@ async def rsyscall_stdin_bootstrap(
     #### fork and exec into the bootstrap command
     thread = await stdtask.fork()
     # create the socketpair that will be used as stdin
-    parent_sock, child_sock_parent = await stdtask.task.socketpair(AF.UNIX, SOCK.STREAM, 0)
-    child_sock = child_sock_parent.move(thread.stdtask.task.base)
+    stdin_pair = await (await stdtask.task.base.socketpair(
+        AF.UNIX, SOCK.STREAM, 0, await stdtask.task.malloc_struct(FDPair))).read()
+    parent_sock = stdin_pair.first
+    child_sock = stdin_pair.second.move(thread.stdtask.task.base)
     # set up stdin with socketpair
     await thread.stdtask.unshare_files(going_to_exec=True)
-    await thread.stdtask.stdin.replace_with(child_sock.handle)
+    await thread.stdtask.stdin.replace_with(child_sock)
     # exec
     child_task = await bootstrap_command.exec(thread)
     #### set up all the fds we'll want to pass over
@@ -56,12 +59,12 @@ async def rsyscall_stdin_bootstrap(
         cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([
             passed_syscall_sock, passed_data_sock, futex_memfd, stdtask.connecting_connection[1]])]))
         return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
-    _, [] = await parent_sock.handle.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
+    _, [] = await parent_sock.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
     # close our reference to fds that only the new process needs
-    await passed_syscall_sock.invalidate()
-    await passed_data_sock.invalidate()
+    await passed_syscall_sock.close()
+    await passed_data_sock.close()
     # close the socketpair
-    await parent_sock.invalidate()
+    await parent_sock.close()
     #### read describe to get all the information we need from the new process
     describe_buf = AsyncReadBuffer(access_data_sock)
     describe_struct = await describe_buf.read_cffi('struct rsyscall_stdin_bootstrap')
