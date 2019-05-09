@@ -24,6 +24,7 @@ from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.netinet.ip import IP, IPPROTO
 from rsyscall.linux.netlink import SockaddrNl, NETLINK
 from rsyscall.linux.rtnetlink import RTMGRP
+from rsyscall.handle import FDPair
 import rsyscall.net.if_ as netif
 
 import rsyscall.nix as nix
@@ -121,11 +122,12 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, stdtask: Standar
     tun_index = (await ptr.read()).ifindex
     ptr.free()
     # create socketpair for communication between privileged process and teredo client
-    privproc_side, client_side = await ns_thread.stdtask.task.socketpair(AF.UNIX, SOCK.STREAM, 0)
+    privproc_pair = await (await ns_thread.stdtask.task.base.socketpair(
+        AF.UNIX, SOCK.STREAM, 0, await ns_thread.stdtask.task.malloc_struct(FDPair))).read()
 
     privproc_thread = await ns_thread.stdtask.fork()
     await add_to_ambient(privproc_thread.stdtask.task, {CAP.NET_ADMIN})
-    privproc_child = await exec_miredo_privproc(miredo_exec, privproc_thread, privproc_side.handle, tun_index)
+    privproc_child = await exec_miredo_privproc(miredo_exec, privproc_thread, privproc_pair.first, tun_index)
     nursery.start_soon(privproc_child.check)
 
     # TODO lock down the client thread, it's talking on the network and isn't audited...
@@ -138,7 +140,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, stdtask: Standar
     await client_thread.stdtask.unshare_mount()
     await client_thread.stdtask.unshare_user()
     client_child = await exec_miredo_run_client(
-        miredo_exec, client_thread, inet_sock, tun_fd.handle, reqsock, icmp6_fd, client_side.handle, "teredo.remlab.net")
+        miredo_exec, client_thread, inet_sock, tun_fd.handle, reqsock, icmp6_fd, privproc_pair.second, "teredo.remlab.net")
     nursery.start_soon(client_child.check)
 
     # we keep the ns thread around so we don't have to mess with setns
