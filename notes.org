@@ -16718,6 +16718,26 @@ but that doesn't scale as well as passing the epfd down.
    OK so this is fine then! We'll keep the current interface - not returning a RAM if you just ask for a handle.
 
    If you want that handle you must know the access task some other way, I gues.
+
+   AccessNetwork
+
+   what's a good word for,
+   "a thing which allows me to make a connection between two places",
+   which isn't "Network" because I don't want to privilege networking as a way to do that.
+
+   it's actually, um.
+
+   something that allows me to get two fds,
+   one in some arbitrary task, one in my task.
+
+   and also give me the necessary RAM and stuff to use the one in the arbitrary task.
+
+   and the arbitrary task is close to me, so access is efficient.
+
+   I dunno, can we just make this more implicit?
+   I already have close-by things, in the form of the SocketMemoryTransport.
+
+
 ** DONE make borrowing not async
    We can't run async code on exiting.
    Because we might drop a syscall result.
