@@ -66,7 +66,7 @@ class LocalSyscall(base.SyscallInterface):
             return result
 
 task: Task
-class LocalMemoryTransport(base.MemoryTransport):
+class LocalMemoryTransport(handle.MemoryTransport):
     "This is a memory transport that only works on local pointers."
     def inherit(self, task: handle.Task) -> LocalMemoryTransport:
         return self
@@ -91,7 +91,8 @@ def _make_local_task() -> Task:
     pid_namespace = far.PidNamespace(pid)
     process = far.Process(pid_namespace, near.Process(pid))
     base_task = handle.Task(
-        LocalSyscall(process.near), process.near, None, base.FDTable(pid), base.local_address_space,
+        LocalSyscall(process.near), process.near, None, far.FDTable(pid),
+        far.AddressSpace(os.getpid()),
         far.FSInformation(pid),
         pid_namespace,
         far.NetNamespace(pid),

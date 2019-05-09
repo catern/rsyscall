@@ -1,6 +1,5 @@
-from rsyscall.handle import Task, Pointer, WrittenPointer
+from rsyscall.handle import Task, Pointer, WrittenPointer, MemoryTransport
 from rsyscall.memory.allocator import AllocatorClient, AllocatorInterface
-from rsyscall.base import MemoryTransport
 from rsyscall.struct import T_fixed_size, T_has_serializer, T_fixed_serializer, Serializer
 
 import typing as t

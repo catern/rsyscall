@@ -18,7 +18,7 @@ from rsyscall.sys.mman import PROT, MAP
 from rsyscall.sys.memfd import MFD
 
 async def set_singleton_robust_futex(
-        task: handle.Task, transport: base.MemoryTransport, allocator: memory.AllocatorInterface,
+        task: handle.Task, transport: handle.MemoryTransport, allocator: memory.AllocatorInterface,
 ) -> WrittenPointer[handle.FutexNode]:
     # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
     futex_value = FUTEX_WAITERS|(int(task.process.near) & FUTEX_TID_MASK)

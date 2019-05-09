@@ -146,8 +146,8 @@ T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
 
 class Task(RAM):
     def __init__(self,
-                 base_: base.Task,
-                 transport: base.MemoryTransport,
+                 base_: handle.Task,
+                 transport: handle.MemoryTransport,
                  allocator: memory.AllocatorClient,
                  sigmask: SignalMask,
     ) -> None:
@@ -296,13 +296,13 @@ class FileDescriptor(t.Generic[T_file_co]):
         await self.handle.close()
         self.open = False
 
-    def for_task(self, task: base.Task) -> 'FileDescriptor[T_file_co]':
+    def for_task(self, task: handle.Task) -> 'FileDescriptor[T_file_co]':
         if self.open:
             return self.__class__(self.task, task.make_fd_handle(self.handle), self.file)
         else:
             raise Exception("file descriptor already closed")
 
-    def move(self, task: base.Task) -> 'FileDescriptor[T_file_co]':
+    def move(self, task: handle.Task) -> 'FileDescriptor[T_file_co]':
         if self.open:
             return self.__class__(self.task, self.handle.move(task), self.file)
         else:
@@ -1123,7 +1123,7 @@ class ChildProcessMonitorInternal:
         self.waiters.remove(waiter)
 
     async def clone(self,
-                    clone_task: base.Task,
+                    clone_task: handle.Task,
                     flags: CLONE,
                     child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
                     ctid: t.Optional[handle.Pointer]=None) -> ChildProcess:
@@ -1146,7 +1146,7 @@ class ChildProcessMonitorInternal:
 @dataclass
 class ChildProcessMonitor:
     internal: ChildProcessMonitorInternal
-    cloning_task: base.Task
+    cloning_task: handle.Task
     use_clone_parent: bool
     is_reaper: bool
 
@@ -1159,7 +1159,7 @@ class ChildProcessMonitor:
         monitor = ChildProcessMonitorInternal(task, signal_queue, is_reaper=is_reaper)
         return ChildProcessMonitor(monitor, task.base, use_clone_parent=False, is_reaper=is_reaper)
 
-    def inherit_to_child(self, child_task: base.Task) -> ChildProcessMonitor:
+    def inherit_to_child(self, child_task: handle.Task) -> ChildProcessMonitor:
         if self.is_reaper:
             # TODO we should actually look at something on the Task, I suppose, to determine if we're a reaper
             raise Exception("we're a ChildProcessMonitor for a reaper task, "
@@ -1172,7 +1172,7 @@ class ChildProcessMonitor:
         # children of the waiting task, so we can use the waiting task to wait on them.
         return ChildProcessMonitor(self.internal, child_task, use_clone_parent=True, is_reaper=self.is_reaper)
 
-    def inherit_to_thread(self, cloning_task: base.Task) -> ChildProcessMonitor:
+    def inherit_to_thread(self, cloning_task: handle.Task) -> ChildProcessMonitor:
         if self.internal.waiting_task.base.process is not cloning_task.process:
             raise Exception("waiting task process", self.internal.waiting_task.base.process,
                             "is not the same as cloning task process", cloning_task.process)
@@ -1846,7 +1846,7 @@ async def spawn_rsyscall_thread(
         pidns = parent_task.base.pidns
     netns = parent_task.base.netns
     real_parent_task = parent_task.base.parent_task if monitor.use_clone_parent else parent_task.base
-    new_base_task = base.Task(syscall, child_process.process, real_parent_task,
+    new_base_task = handle.Task(syscall, child_process.process, real_parent_task,
                               parent_task.base.fd_table, parent_task.base.address_space, fs_information, pidns, netns)
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)

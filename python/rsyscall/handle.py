@@ -57,6 +57,10 @@ class MemoryGateway:
     async def write(self, dest: Pointer, data: bytes) -> None:
         await self.batch_write([(dest, data)])
 
+class MemoryTransport(MemoryGateway):
+    @abc.abstractmethod
+    def inherit(self, task: Task) -> MemoryTransport: ...
+
 # With handle.Pointer, we know the length of the region of memory
 # we're pointing to.  If we didn't know that, then this pointer
 # wouldn't make any sense as an owning handle that can be passed
