@@ -32,8 +32,8 @@ class TestSSH(TrioTestCase):
 
     async def test_read(self) -> None:
         [(local_sock, remote_sock)] = await self.remote_stdtask.make_connections(1)
-        data = b"hello world"
-        await local_sock.write(data)
+        data = Bytes(b"hello world")
+        await local_sock.write(await self.stdtask.task.to_pointer(data))
         valid, _ = await remote_sock.read(await self.remote_stdtask.task.malloc_type(Bytes, len(data)))
         self.assertEqual(len(data), valid.bytesize())
         self.assertEqual(data, await valid.read())
@@ -54,8 +54,8 @@ class TestSSH(TrioTestCase):
 
         [(local_sock, remote_sock)] = await self.remote_stdtask.make_connections(1)
 
-        local_child = await start_cat(self.stdtask, cat, local_file.handle, local_sock.handle)
-        await local_sock.handle.close()
+        local_child = await start_cat(self.stdtask, cat, local_file.handle, local_sock)
+        await local_sock.close()
 
         remote_child = await start_cat(self.remote_stdtask, cat, remote_sock, remote_file.handle)
         await remote_sock.close()

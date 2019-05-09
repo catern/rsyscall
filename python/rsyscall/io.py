@@ -210,10 +210,6 @@ class Task(RAM):
         sockfd = await self.base.socket(AF.UNIX, type, protocol, cloexec=cloexec)
         return FileDescriptor(self, sockfd, UnixSocketFile())
 
-    async def socket_inet(self, type: SOCK, protocol: int=0) -> MemFileDescriptor:
-        sockfd = await self.base.socket(AF.INET, type, protocol)
-        return FileDescriptor(self, sockfd, InetSocketFile())
-
     async def make_epoll_center(self) -> EpollCenter:
         epfd = await self.base.epoll_create(EpollFlag.CLOEXEC)
         if self.base.sysif.activity_fd is not None:
@@ -498,6 +494,21 @@ class Path(rsyscall.path.PathLike):
         async with (await self.open_path()) as f:
             return (await Path(self.task, f.handle.as_proc_path()).readlink())
 
+    @contextlib.asynccontextmanager
+    async def as_sockaddr_un(self) -> t.AsyncGenerator[SockaddrUn, None]:
+        """Turn this path into a SockaddrUn, hacking around the 108 byte limit on socket addresses.
+
+        If the passed path is too long to fit in an address, this function will open that path with
+        O_PATH and return SockaddrUn("/proc/self/fd/n").
+
+        """
+        try:
+            yield SockaddrUn.from_path(self)
+        except PathTooLongError:
+            async with (await self.open_path()) as fd:
+                path = handle.Path("/proc/self/fd")/str(int(fd.handle.near))
+                yield SockaddrUn.from_path(path)
+
     # to_bytes and from_bytes, kinda sketchy, hmm....
     # from_bytes will fail at runtime... whatever
 
@@ -571,19 +582,8 @@ async def robust_unix_connect(path: Path, sock: MemFileDescriptor) -> None:
     with O_PATH yourself rather than call into this function.
 
     """
-    try:
-        addr = SockaddrUn.from_path(path)
-    except PathTooLongError:
-        async with (await path.open_path()) as fd:
-            await connectat(sock, fd.handle)
-    else:
+    async with path.as_sockaddr_un() as addr:
         await sock.connect(addr)
-
-async def connectat(sock: MemFileDescriptor, fd: handle.FileDescriptor) -> None:
-    "connect() a Unix socket to the passed-in fd"
-    path = handle.Path("/proc/self/fd")/str(int(fd.near))
-    addr = SockaddrUn.from_path(path)
-    await sock.connect(addr)
 
 async def spit(path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
     """Open a file, creating and truncating it, and write the passed text to it
@@ -804,12 +804,12 @@ class StandardTask:
     ]:
         conns = await self.make_connections(count)
         access_socks, local_socks = zip(*conns)
-        async_access_socks = [await AsyncFileDescriptor.make_handle(self.access_epoller, self.access_task, sock.handle)
+        async_access_socks = [await AsyncFileDescriptor.make_handle(self.access_epoller, self.access_task, sock)
                               for sock in access_socks]
         return list(zip(async_access_socks, local_socks))
 
     async def make_connections(self, count: int) -> t.List[
-            t.Tuple[MemFileDescriptor, handle.FileDescriptor]
+            t.Tuple[handle.FileDescriptor, handle.FileDescriptor]
     ]:
         return (await make_connections(
             self.access_task, self.access_connection,
@@ -1742,27 +1742,30 @@ async def make_connections(access_task: Task,
                            connecting_task: Task,
                            connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
                            parent_task: Task,
-                           count: int) -> t.List[t.Tuple[MemFileDescriptor, handle.FileDescriptor]]:
+                           count: int) -> t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]]:
     # so there's 1. the access task, through which we access the syscall and data fds,
     # 2. the parent task, and
     # 3. the connection between the access and parent task, so that we can have the parent task pass down the fds,
     # while the access task uses them.
     # okay but this is a slight simplification, because there may also be,
     # 4. the connection task, which is a task that actually gets the fds and passes them down to the parent task
-    access_socks: t.List[MemFileDescriptor] = []
-    connecting_socks: t.List[MemFileDescriptor] = []
+    access_socks: t.List[handle.FileDescriptor] = []
+    connecting_socks: t.List[handle.FileDescriptor] = []
     if access_task.base.fd_table == connecting_task.base.fd_table:
-        async def make_conn() -> t.Tuple[MemFileDescriptor, MemFileDescriptor]:
-            return (await access_task.socketpair(AF.UNIX, SOCK.STREAM, 0))
+        async def make_conn() -> t.Tuple[handle.FileDescriptor, handle.FileDescriptor]:
+            pair = await (await access_task.base.socketpair(
+                AF.UNIX, SOCK.STREAM, 0, await access_task.malloc_struct(handle.FDPair))).read()
+            return (pair.first, pair.second)
     else:
         if access_connection is not None:
             access_connection_path, access_connection_socket = access_connection
         else:
             raise Exception("must pass access connection when access task and connecting task are different")
-        async def make_conn() -> t.Tuple[MemFileDescriptor, MemFileDescriptor]:
-            left_sock = await access_task.socket_unix(SOCK.STREAM)
-            await robust_unix_connect(access_connection_path, left_sock)
-            right_sock, _ = await access_connection_socket.accept(SOCK.CLOEXEC)
+        async def make_conn() -> t.Tuple[handle.FileDescriptor, handle.FileDescriptor]:
+            left_sock = await access_task.base.socket(AF.UNIX, SOCK.STREAM)
+            async with access_connection_path.as_sockaddr_un() as addr:
+                await left_sock.connect(await access_task.to_pointer(addr))
+            right_sock = await access_connection_socket.handle.accept(SOCK.CLOEXEC)
             return left_sock, right_sock
     for _ in range(count):
         access_sock, connecting_sock = await make_conn()
@@ -1772,18 +1775,17 @@ async def make_connections(access_task: Task,
     if connecting_task.base.fd_table == parent_task.base.fd_table:
         passed_socks = []
         for sock in connecting_socks:
-            passed_socks.append(parent_task.base.make_fd_handle(sock.handle))
-            await sock.handle.invalidate()
+            passed_socks.append(sock.move(parent_task.base))
     else:
         assert connecting_connection is not None
         def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.SendMsghdr]:
             iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
-            cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([sock.handle for sock in connecting_socks])]))
+            cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([sock for sock in connecting_socks])]))
             return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
         _, [] = await connecting_connection[0].sendmsg(await connecting_task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
         def recvmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.RecvMsghdr]:
             iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
-            cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([sock.handle for sock in connecting_socks])]))
+            cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([sock for sock in connecting_socks])]))
             return sem.to_pointer(handle.RecvMsghdr(None, iovec, cmsgs))
         _, [], hdr = await connecting_connection[1].recvmsg(await parent_task.perform_batch(recvmsg_op), RecvmsgFlags.NONE)
         cmsgs_ptr = (await hdr.read()).control
@@ -1795,7 +1797,7 @@ async def make_connections(access_task: Task,
         passed_socks = cmsg
         # don't need these in the connecting task anymore
         for sock in connecting_socks:
-            await sock.aclose()
+            await sock.close()
     ret = list(zip(access_socks, passed_socks))
     return ret
 

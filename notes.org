@@ -16330,6 +16330,49 @@ oh I need that anyway to write/read the iovecs
 
     aha okay so I was getting cancelled and dropping syscall responses
 ** move syscalls into individual header modules and register them on handle.FD
+can't use mixins.
+using a mixin requires defining a new class inheriting from it,
+I don't want to do that because this class is ubiquitously passed around
+
+although.
+to what extent could I actually use mixins?
+
+well, so the class needs to have all the things attached to it.
+
+we need to know the class that we should instantiate in all the sub-classes.
+
+well heck we could just use mixins couldn't we?
+if we have some kind of base class,
+then mixin all the things to it.
+
+then handle just inherits a bunch of mixins.
+hm.
+
+then if the user wants to extend further, what do they do?
+I guess they just inherit more, adding more mixins?
+
+and override the original class?
+
+yeah I kind of like the mixins idea, that's nice and type safe and all that.
+
+so let's do that.
+
+oh, hm. we need mixins for FD too don't we?
+
+oh... this doesn't help us.
+we want the structs to be able to say the type of FD,
+but have that type of FD be able to mention the structs in its method types
+
+hm! tricky.
+
+oh hey, can I just use if TYPE_CHECKING?
+and import handle to use the handle.FD?
+
+actually I think that solves it nicely.
+
+then I can use mixins for my runtime semantics?
+
+ok sure.
 ** begin the separation of stdtask into inheriting classes
 beginning with getting rid of io.FD!
 ** DONE memory rework
