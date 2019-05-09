@@ -3,7 +3,7 @@ import rsyscall.handle as handle
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, ChildProcess, SignalMask, UnixSocketFile, ProcessResources, ReadableFile, WritableFile, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, Task, ChildProcessMonitor, which, robust_unix_connect
+from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, ChildProcess, UnixSocketFile, ProcessResources, ReadableFile, WritableFile, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, Task, ChildProcessMonitor, which, robust_unix_connect
 from dataclasses import dataclass
 import importlib.resources
 import logging
@@ -247,10 +247,8 @@ async def ssh_bootstrap(
     new_allocator = memory.AllocatorClient.make_allocator(new_base_task)
     new_transport = SocketMemoryTransport(async_local_data_sock,
                                           handle_remote_data_fd, new_allocator)
-    new_task = Task(new_base_task, new_transport, new_allocator,
-                    # we assume ssh zeroes the sigmask before starting us
-                    SignalMask(set()),
-    )
+    # we don't inherit SignalMask; we assume ssh zeroes the sigmask before starting us
+    new_task = Task(new_base_task, new_transport, new_allocator)
     left_connecting_connection, right_connecting_connection = await new_task.socketpair(AF.UNIX, SOCK.STREAM, 0)
     connecting_connection = (left_connecting_connection.handle, right_connecting_connection.handle)
     epoller = await new_task.make_epoll_center()

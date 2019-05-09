@@ -10,11 +10,12 @@ from rsyscall.exceptions import RsyscallException, RsyscallHangup
 
 import rsyscall.handle as handle
 import rsyscall.handle
-from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess, Sockbuf, MemoryGateway
+from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess, Sockbuf, MemoryGateway, Pointer
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_struct, T_fixed_size, Bytes, Int32, Serializer, Struct
 import rsyscall.batch as batch
+from rsyscall.batch import BatchSemantics
 
 import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM
@@ -35,7 +36,8 @@ from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
 from rsyscall.sys.inotify import InotifyFlag
 from rsyscall.sys.mman import PROT, MAP
 from rsyscall.sched import UnshareFlag, CLONE
-from rsyscall.signal import SigprocmaskHow, Sigaction, Sighandler, Signals, Sigset, Siginfo
+from rsyscall.signal import MaskSIG, Sigaction, Sighandler, Signals, Sigset, Siginfo
+from rsyscall.signal import SignalBlock
 from rsyscall.linux.dirent import Dirent, DirentList
 from rsyscall.unistd import SEEK
 
@@ -87,37 +89,6 @@ def log_syscall(logger, number, arg1, arg2, arg3, arg4, arg5, arg6) -> None:
     else:
         logger.debug("%s(%s, %s, %s, %s, %s, %s)", number, arg1, arg2, arg3, arg4, arg5, arg6)
 
-class SignalMask:
-    def __init__(self, mask: t.Set[Signals]) -> None:
-        self.mask = mask
-
-    def inherit(self) -> 'SignalMask':
-        return SignalMask(self.mask)
-
-    async def _sigprocmask(self, task: Task, how: SigprocmaskHow, mask: Sigset) -> None:
-        if task.sigmask != self:
-            raise Exception("SignalMask", self, "running for task", task,
-                            "which contains a different SignalMask", task.sigmask)
-        newset = await task.to_pointer(Sigset(mask))
-        oldset = await task.malloc_struct(Sigset)
-        await task.base.sigprocmask((how, newset), oldset)
-        old_mask = await oldset.read()
-        if self.mask != old_mask:
-            raise Exception("SignalMask tracking got out of sync, thought mask was",
-                            self.mask, "but was actually", old_mask)
-
-    async def block(self, task: 'Task', mask: Sigset) -> None:
-        await self._sigprocmask(task, SigprocmaskHow.BLOCK, mask)
-        self.mask = self.mask.union(mask)
-
-    async def unblock(self, task: 'Task', mask: Sigset) -> None:
-        await self._sigprocmask(task, SigprocmaskHow.UNBLOCK, mask)
-        self.mask = self.mask - mask
-
-    async def setmask(self, task: 'Task', mask: Sigset) -> None:
-        await self._sigprocmask(task, SigprocmaskHow.SETMASK, mask)
-        self.mask = mask
-
 T = t.TypeVar('T')
 class File:
     """This is the underlying file object referred to by a file descriptor.
@@ -147,11 +118,9 @@ class Task(RAM):
                  base_: handle.Task,
                  transport: handle.MemoryTransport,
                  allocator: memory.AllocatorClient,
-                 sigmask: SignalMask,
     ) -> None:
         super().__init__(base_, transport, allocator)
         self.base = base_
-        self.sigmask = sigmask
 
     def root(self) -> Path:
         return Path(self, handle.Path("/"))
@@ -830,7 +799,7 @@ class StandardTask:
             epoller = await task.make_epoll_center()
             # this signal is already blocked, we inherited the block, um... I guess...
             # TODO handle this more formally
-            signal_block = SignalBlock(task, {signal.SIGCHLD})
+            signal_block = SignalBlock(task.base, await task.to_pointer(Sigset({signal.SIGCHLD})))
             child_monitor = await ChildProcessMonitor.make(task, epoller, signal_block=signal_block, is_reaper=newpid)
         else:
             epoller = self.epoller.inherit(task)
@@ -946,68 +915,33 @@ class TemporaryDirectory:
     async def __aexit__(self, *args, **kwargs):
         await self.cleanup()
 
-class SignalBlock:
-    """This represents some signals being blocked from normal handling
-
-    We need this around to use alternative signal handling mechanisms
-    such as signalfd.
-
-    """
-    task: Task
-    mask: t.Set[signal.Signals]
-    @staticmethod
-    async def make(task: Task, mask: t.Set[signal.Signals]) -> 'SignalBlock':
-        if len(mask.intersection(task.sigmask.mask)) != 0:
-            raise Exception("can't allocate a SignalBlock for a signal that was already blocked",
-                            mask, task.sigmask.mask)
-        await task.sigmask.block(task, Sigset(mask))
-        return SignalBlock(task, mask)
-
-    def __init__(self, task: Task, mask: t.Set[signal.Signals]) -> None:
-        self.task = task
-        self.mask = mask
-
-    async def close(self) -> None:
-        await self.task.sigmask.unblock(self.task, Sigset(self.mask))
-
-    async def __aenter__(self) -> 'SignalBlock':
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.close()
-
 class SignalQueue:
     def __init__(self, signal_block: SignalBlock, sigfd: AsyncFileDescriptor) -> None:
         self.signal_block = signal_block
         self.sigfd = sigfd
 
     @classmethod
-    async def make(cls, task: Task, epoller: EpollCenter, mask: t.Set[signal.Signals],
+    async def make(cls, task: Task, epoller: EpollCenter, mask: Sigset,
                    *, signal_block: SignalBlock=None,
     ) -> SignalQueue:
         if signal_block is None:
-            signal_block = await SignalBlock.make(task, mask)
+            def op(sem: BatchSemantics) -> t.Tuple[WrittenPointer[Sigset], Pointer[Sigset]]:
+                return sem.to_pointer(mask), sem.malloc_struct(Sigset)
+            sigset_ptr, oldset_ptr = await task.perform_batch(op)
+            signal_block = await task.base.sigmask_block(sigset_ptr, oldset_ptr)
+            await task.base.read_oldset_and_check()
         else:
+            sigset_ptr = await task.to_pointer(mask)
             if signal_block.mask != mask:
                 raise Exception("passed-in SignalBlock", signal_block, "has mask", signal_block.mask,
                                 "which does not match the mask for the SignalQueue we're making", mask)
-        sigfd = await task.base.signalfd(await task.to_pointer(Sigset(mask)), SFD.NONBLOCK|SFD.CLOEXEC)
+        sigfd = await task.base.signalfd(sigset_ptr, SFD.NONBLOCK|SFD.CLOEXEC)
         async_sigfd = await AsyncFileDescriptor.make_handle(epoller, task, sigfd, is_nonblock=True)
         return cls(signal_block, async_sigfd)
 
     async def read(self, buf: handle.Pointer) -> handle.Pointer:
         validp, _ = await self.sigfd.read_handle(buf)
         return validp
-
-    async def close(self) -> None:
-        await self.signal_block.close()
-        await self.sigfd.aclose()
-
-    async def __aenter__(self) -> 'SignalQueue':
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.close()
 
 class ChildProcess:
     def __init__(self, process: handle.ChildProcess,
@@ -1117,9 +1051,6 @@ class ChildProcessMonitorInternal:
                 for waiter in self.waiters:
                     waiter.got_sigchld = True
 
-    async def close(self) -> None:
-        await self.signal_queue.close()
-
 @dataclass
 class ChildProcessMonitor:
     internal: ChildProcessMonitorInternal
@@ -1132,7 +1063,7 @@ class ChildProcessMonitor:
                    *, signal_block: SignalBlock=None,
                    is_reaper: bool=False,
     ) -> ChildProcessMonitor:
-        signal_queue = await SignalQueue.make(task, epoller, {signal.SIGCHLD}, signal_block=signal_block)
+        signal_queue = await SignalQueue.make(task, epoller, Sigset({signal.SIGCHLD}), signal_block=signal_block)
         monitor = ChildProcessMonitorInternal(task, signal_queue, is_reaper=is_reaper)
         return ChildProcessMonitor(monitor, task.base, use_clone_parent=False, is_reaper=is_reaper)
 
@@ -1826,7 +1757,8 @@ async def spawn_rsyscall_thread(
     netns = parent_task.base.netns
     real_parent_task = parent_task.base.parent_task if monitor.use_clone_parent else parent_task.base
     new_base_task = handle.Task(syscall, child_process.process, real_parent_task,
-                              parent_task.base.fd_table, parent_task.base.address_space, fs_information, pidns, netns)
+                                parent_task.base.fd_table, parent_task.base.address_space, fs_information, pidns, netns)
+    new_base_task.sigmask = parent_task.base.sigmask
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
@@ -1839,7 +1771,6 @@ async def spawn_rsyscall_thread(
                     # and child's read syscall will never complete.
                     parent_task.transport,
                     parent_task.allocator.inherit(new_base_task),
-                    parent_task.sigmask.inherit(),
     )
     return new_task
 
@@ -1894,7 +1825,7 @@ class RsyscallThread:
         sigmask: t.Set[signal.Signals] = set()
         for block in inherited_signal_blocks:
             sigmask = sigmask.union(block.mask)
-        await self.stdtask.task.sigmask.setmask(self.stdtask.task, Sigset(sigmask))
+        await self.stdtask.task.base.sigprocmask((MaskSIG.SETMASK, await self.stdtask.task.to_pointer(Sigset(sigmask))))
         envp: t.Dict[bytes, bytes] = {**self.stdtask.environment}
         for key in env_updates:
             envp[os.fsencode(key)] = os.fsencode(env_updates[key])

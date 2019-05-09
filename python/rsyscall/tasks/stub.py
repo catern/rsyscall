@@ -5,7 +5,7 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect, Command, ChildProcess, AsyncReadBuffer, SignalMask, ProcessResources, UnixSocketFile, spit, FileDescriptor, ReadableFile, WritableFile
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect, Command, ChildProcess, AsyncReadBuffer, ProcessResources, UnixSocketFile, spit, FileDescriptor, ReadableFile, WritableFile
 import trio
 from dataclasses import dataclass
 import logging
@@ -20,7 +20,7 @@ from rsyscall.sched import CLONE
 from rsyscall.sys.socket import SOCK, AF, SendmsgFlags
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.un import SockaddrUn
-from rsyscall.signal import Signals
+from rsyscall.signal import Signals, Sigset
 from rsyscall.fcntl import O
 
 __all__ = [
@@ -110,13 +110,12 @@ async def _setup_stub(
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     allocator = memory.AllocatorClient.make_allocator(base_task)
+    base_task.sigmask = Sigset({Signals(bit) for bit in rsyscall.struct.bits(describe_struct.sigmask)})
     task = Task(base_task,
                 SocketMemoryTransport(access_data_sock,
                                       base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd)),
                                       allocator),
-                allocator,
-                SignalMask({Signals(bit) for bit in rsyscall.struct.bits(describe_struct.sigmask)}),
-    )
+                allocator)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     # I guess I need to write out the set too in describe
     epoller = await task.make_epoll_center()

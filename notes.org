@@ -16882,8 +16882,26 @@ And we can have an exec which is not memory-abstracting, I guess.
    We should probably return a handle.Task instead.
 
    And let's go ahead and move sigmask into handle.Task.
-** move out sigmask
+** DONE move out sigmask
    oh, hey, I can do this with a mixin, too, for nice modularity!
+** TODO properly handle inheritance with handle
+*** sigmask
+    ok so how do we handle inheriting this signalblock?
+
+    or, really, in general, inheriting things??
+
+    the issue is that so far we have only handle inheritance across an unshare.
+
+    inheriting across a clone is harder, hmm.
+
+    well, when we clone we get a snapshot of what we believe the initial state of the process is, right?
+    could we use that? and move the inheritance into handle?
+
+    suppose we do that; then how do we handle inheritance with extensibility?
+
+    we could have an inherit_into method, maybe.
+
+    seems complex, let's give up for now.
 ** support splitting memory mappings
 ** support passing an existing mapping as a target for mmap
    For the address argument, so that we split the mapping and replace part or all of it with a new mapping.

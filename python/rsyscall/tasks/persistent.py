@@ -3,7 +3,7 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect
 
 from rsyscall.io import ProcessResources, Trampoline
 from rsyscall.handle import Stack, WrittenPointer, ThreadProcess
@@ -18,7 +18,7 @@ from rsyscall.struct import Bytes
 
 from rsyscall.sched import CLONE
 from rsyscall.sys.socket import SOCK, SendmsgFlags
-from rsyscall.signal import Signals
+from rsyscall.signal import Signals, Sigset, SignalBlock
 from rsyscall.sys.prctl import PrctlOp
 
 class PersistentConnection(near.SyscallInterface):
@@ -267,13 +267,13 @@ async def spawn_rsyscall_persistent_server(
                               parent_task.base.fd_table, parent_task.base.address_space, parent_task.base.fs,
                               parent_task.base.pidns,
                               parent_task.base.netns)
+    new_base_task.sigmask = parent_task.base.sigmask
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     remote_listening_handle = new_base_task.make_fd_handle(listening_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
                     parent_task.transport.inherit(new_base_task),
                     parent_task.allocator.inherit(new_base_task),
-                    parent_task.sigmask.inherit(),
     )
     return new_task, syscall, remote_listening_handle, thread_process
 
@@ -293,7 +293,7 @@ async def fork_persistent(
 
     ## create the new persistent task
     epoller = await task.make_epoll_center()
-    signal_block = SignalBlock(task, {Signals.SIGCHLD})
+    signal_block = SignalBlock(task.base, await task.to_pointer(Sigset({Signals.SIGCHLD})))
     # TODO use an inherited signalfd instead
     child_monitor = await ChildProcessMonitor.make(task, epoller, signal_block=signal_block)
     stdtask = StandardTask(

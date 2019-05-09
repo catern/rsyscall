@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 from rsyscall.sys.socket import AF, SOCK, SOL, SCM, Address, Socklen, SendmsgFlags, RecvmsgFlags, MsghdrFlags, T_addr
 from rsyscall.sched import UnshareFlag, CLONE
 from rsyscall.struct import Serializer, HasSerializer, FixedSerializer, FixedSize, Serializable, Int32, Struct
-from rsyscall.signal import Sigaction, Sigset, Signals, SigprocmaskHow, Siginfo
+from rsyscall.signal import Sigaction, Sigset, Signals, MaskSIG, Siginfo, SignalMaskTask
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
 from rsyscall.unistd import SEEK
@@ -91,7 +91,7 @@ class Pointer(t.Generic[T]):
         return self.allocation.size()
 
     @contextlib.contextmanager
-    def borrow(self, task: Task) -> t.Iterator[Pointer]:
+    def borrow(self, task: rsyscall.far.Task) -> t.Iterator[Pointer]:
         # TODO actual tracking of pointer references is not yet implemented
         self.validate()
         if task.address_space != self.mapping.task.address_space:
@@ -659,7 +659,7 @@ fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.F
 class RootExecError(Exception):
     pass
 
-class Task(rsyscall.far.Task):
+class Task(SignalMaskTask, rsyscall.far.Task):
     # work around breakage in mypy - it doesn't understand dataclass inheritance
     # TODO delete this
     def __init__(self,
@@ -685,6 +685,10 @@ class Task(rsyscall.far.Task):
         self.netns = netns
         self.fd_handles: t.List[FileDescriptor] = []
         fd_table_to_near_to_handles.setdefault(self.fd_table, {})
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
 
     @property
     def root(self) -> Path:
@@ -888,21 +892,6 @@ class Task(rsyscall.far.Task):
                 with rusage.borrow(self) as rusage_b:
                     await rsyscall.near.waitid(self.sysif, None, infop_b.near, options, rusage_b.near)
 
-    async def sigprocmask(self, newset: t.Optional[t.Tuple[SigprocmaskHow, WrittenPointer[Sigset]]],
-                          oldset: t.Optional[Pointer[Sigset]]=None) -> None:
-        with contextlib.ExitStack() as stack:
-            newset_b: t.Optional[t.Tuple[SigprocmaskHow, rsyscall.near.Pointer]]
-            if newset:
-                newset_b = newset[0], (stack.enter_context(newset[1].borrow(self))).near
-            else:
-                newset_b = None
-            oldset_b: t.Optional[rsyscall.near.Pointer]
-            if oldset:
-                oldset_b = (stack.enter_context(oldset.borrow(self))).near
-            else:
-                oldset_b = None
-            await rsyscall.near.rt_sigprocmask(self.sysif, newset_b, oldset_b, Sigset.sizeof())
-
     async def pipe(self, buf: Pointer[Pipe], flags: O) -> Pointer[Pipe]:
         with buf.borrow(self) as buf_b:
             await rsyscall.near.pipe2(self.sysif, buf_b.near, flags)
@@ -930,14 +919,6 @@ class Task(rsyscall.far.Task):
 
     async def exit(self, status: int) -> None:
         await rsyscall.near.exit(self.sysif, status)
-
-    async def _borrow_optional(self, stack: contextlib.ExitStack, ptr: t.Optional[Pointer]
-    ) -> t.Optional[rsyscall.near.Pointer]:
-        if ptr is None:
-            return None
-        else:
-            stack.enter_context(ptr.borrow(self))
-            return ptr.near
 
     async def clone(self, flags: CLONE,
                     # these two pointers must be adjacent; the end of the first is the start of the
@@ -1212,10 +1193,6 @@ class MemoryMapping:
     task: Task
     near: rsyscall.near.MemoryMapping
     file: File
-
-    # TODO remove this
-    def as_pointer(self) -> rsyscall.far.Pointer:
-        return rsyscall.far.Pointer(self.task.address_space, self.near.as_pointer())
 
     async def munmap(self) -> None:
         await rsyscall.near.munmap(self.task.sysif, self.near)

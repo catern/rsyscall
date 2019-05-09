@@ -4,6 +4,9 @@ import typing as t
 import os
 import signal
 import rsyscall.near
+import contextlib
+if t.TYPE_CHECKING:
+    from rsyscall.handle import Pointer
 
 # These are like segment ids.
 # They set eq=False because they are identified by their Python object identity,
@@ -30,17 +33,8 @@ class AddressSpace:
     # pid wraps. since we want to be robust to pid wraps, don't use the pid
     # field to track this address space, instead compare the objects with "is".
     creator_pid: int
-    def null(self) -> Pointer:
-        return Pointer(self, rsyscall.near.Pointer(0))
-
     def __str__(self) -> str:
         return f"AddressSpace({self.creator_pid})"
-
-    def to_near(self, pointer: Pointer) -> rsyscall.near.Pointer:
-        if pointer.address_space == self:
-            return pointer.near
-        else:
-            raise AddressSpaceMismatchError("pointer", pointer, "doesn't match address space", self)
 
 # These are like far pointers.
 @dataclass(frozen=True)
@@ -50,26 +44,6 @@ class FileDescriptor:
 
     def __str__(self) -> str:
         return f"FD({self.fd_table}, {self.near.number})"
-
-    def __int__(self) -> int:
-        return int(self.near)
-
-@dataclass
-class Pointer:
-    address_space: AddressSpace
-    near: rsyscall.near.Pointer
-
-    def __add__(self, other: int) -> 'Pointer':
-        return Pointer(self.address_space, self.near + other)
-
-    def __sub__(self, other: int) -> 'Pointer':
-        return Pointer(self.address_space, self.near - other)
-
-    def __str__(self) -> str:
-        return f"Pointer({self.address_space}, {hex(self.near.address)})"
-
-    def __repr__(self) -> str:
-        return f"Pointer({self.address_space}, {hex(self.near.address)})"
 
     def __int__(self) -> int:
         return int(self.near)
@@ -132,8 +106,16 @@ class Task:
     pidns: PidNamespace
     netns: NetNamespace
 
-    def to_near_pointer(self, pointer: Pointer) -> rsyscall.near.Pointer:
-        return self.address_space.to_near(pointer)
-
     def to_near_fd(self, file_descriptor: FileDescriptor) -> rsyscall.near.FileDescriptor:
         return self.fd_table.to_near(file_descriptor)
+
+    async def _borrow_optional(self, stack: contextlib.ExitStack, ptr: t.Optional[Pointer]
+    ) -> t.Optional[rsyscall.near.Pointer]:
+        if ptr is None:
+            return None
+        else:
+            stack.enter_context(ptr.borrow(self))
+            return ptr.near
+
+    def __post_init__(self) -> None:
+        pass

@@ -3,7 +3,7 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect, Command, ChildProcess, AsyncReadBuffer, SignalMask, ProcessResources, ReadableFile, WritableFile
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect, Command, ChildProcess, AsyncReadBuffer, ProcessResources, ReadableFile, WritableFile
 import trio
 import struct
 from dataclasses import dataclass
@@ -90,13 +90,12 @@ async def rsyscall_stdin_bootstrap(
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     allocator = memory.AllocatorClient.make_allocator(base_task)
+    # we assume our SignalMask is zero'd before being started, so we don't inherit it
     task = Task(base_task,
                 SocketMemoryTransport(access_data_sock,
                                       base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd)),
                                       allocator),
-                allocator,
-                SignalMask(set()),
-    )
+                allocator)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     epoller = await task.make_epoll_center()
     child_monitor = await ChildProcessMonitor.make(task, epoller)

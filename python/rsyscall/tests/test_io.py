@@ -35,7 +35,7 @@ from rsyscall.sys.socket import SOCK, AF
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.uio import RWF
 from rsyscall.linux.netlink import NETLINK
-from rsyscall.signal import Signals
+from rsyscall.signal import Signals, Sigset
 from rsyscall.sys.signalfd import SignalfdSiginfo
 from rsyscall.net.if_ import Ifreq
 from rsyscall.unistd import SEEK
@@ -734,9 +734,8 @@ class TestIO(unittest.TestCase):
             async with thread as stdtask2:
                 # have to use an epoller for that specific task
                 epoller = await stdtask2.task.make_epoll_center()
-                sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, epoller, {Signals.SIGINT})
+                sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, epoller, Sigset({Signals.SIGINT}))
                 await stdtask2.task.base.process.kill(Signals.SIGINT)
-                orig_mask = await rsyscall.io.SignalBlock.make(stdtask.task, {Signals.SIGINT})
                 buf = await stdtask2.task.malloc_struct(SignalfdSiginfo)
                 sigdata = await sigqueue.read(buf)
                 self.assertEqual((await sigdata.read()).signo, Signals.SIGINT)

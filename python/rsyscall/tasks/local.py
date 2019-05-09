@@ -108,8 +108,7 @@ async def _make_local_stdtask() -> StandardTask:
     local_transport = LocalMemoryTransport()
     mem_task = rsc.Task(task,
                         local_transport,
-                        memory.AllocatorClient.make_allocator(task),
-                        rsc.SignalMask(set()))
+                        memory.AllocatorClient.make_allocator(task))
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
 
     process_resources = rsc.ProcessResources(

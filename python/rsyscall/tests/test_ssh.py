@@ -9,7 +9,7 @@ from rsyscall.tasks.ssh import *
 import rsyscall.tasks.local as local
 
 from rsyscall.unistd import SEEK
-from rsyscall.signal import Sigset
+from rsyscall.signal import Sigset, MaskSIG
 from rsyscall.sys.memfd import MFD
 
 import rsyscall.handle as handle
@@ -80,4 +80,7 @@ class TestSSH(TrioTestCase):
         await rsyscall.io.do_cloexec_except(
             thread.stdtask.task, thread.stdtask.process,
             [fd.near for fd in thread.stdtask.task.base.fd_handles])
-        await thread.stdtask.task.sigmask.setmask(thread.stdtask.task, Sigset())
+        await self.remote_task.sigprocmask((MaskSIG.SETMASK,
+                                            await self.remote_ram.to_pointer(Sigset())),
+                                           await self.remote_ram.malloc_struct(Sigset))
+        await self.remote_task.read_oldset_and_check()
