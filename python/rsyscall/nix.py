@@ -140,8 +140,8 @@ class NixPath(handle.Path):
     async def make(cls, task: Task, path: handle.Path) -> NixPath:
         return cls((await canonicalize(task, path)).handle)
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
         root, nix, store = self.parts[:3]
         if root != b"/" or nix != b"nix" or store != b"store":
             raise Exception("path doesn't start with /nix/store")

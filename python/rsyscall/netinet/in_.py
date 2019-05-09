@@ -69,7 +69,7 @@ class SockaddrIn6(Address):
         return ffi.sizeof('struct sockaddr_in6')
 
     def __str__(self) -> str:
-        return f"SockaddrIn6({self.addr_as_string()}:{self.port})"
+        return f"SockaddrIn6({self.addr}:{self.port})"
 _register_sockaddr(SockaddrIn6)
 
 

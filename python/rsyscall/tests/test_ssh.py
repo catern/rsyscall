@@ -9,6 +9,7 @@ from rsyscall.tasks.ssh import *
 import rsyscall.tasks.local as local
 
 from rsyscall.unistd import SEEK
+from rsyscall.signal import Sigset
 
 import rsyscall.handle as handle
 from rsyscall.io import StandardTask, Command, ChildProcess
@@ -72,4 +73,4 @@ class TestSSH(TrioTestCase):
         await rsyscall.io.do_cloexec_except(
             thread.stdtask.task, thread.stdtask.process,
             [fd.near for fd in thread.stdtask.task.base.fd_handles])
-        await thread.stdtask.task.sigmask.setmask(thread.stdtask.task, set())
+        await thread.stdtask.task.sigmask.setmask(thread.stdtask.task, Sigset())
