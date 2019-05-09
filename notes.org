@@ -16618,6 +16618,12 @@ but that doesn't scale as well as passing the epfd down.
 
    hm to remove socket_inet/socket_unix I should first remove asyncfd,
    so that I don't need io.FDs
+
+   ok I did that. now I can start removing them.
+
+   Hmm, removing memfd_create, and directly manipulating memory... seems a bit awkward.
+   Meh, I think it's fine.
+   Abstraction bad! Direct access good!
 ** DONE make borrowing not async
    We can't run async code on exiting.
    Because we might drop a syscall result.

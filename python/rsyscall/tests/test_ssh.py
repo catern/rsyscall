@@ -10,8 +10,10 @@ import rsyscall.tasks.local as local
 
 from rsyscall.unistd import SEEK
 from rsyscall.signal import Sigset
+from rsyscall.sys.memfd import MFD
 
 import rsyscall.handle as handle
+from rsyscall.path import Path
 from rsyscall.io import StandardTask, Command, ChildProcess
 
 async def start_cat(stdtask: StandardTask, cat: Command,
@@ -27,9 +29,13 @@ async def start_cat(stdtask: StandardTask, cat: Command,
 class TestSSH(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.stdtask = local.stdtask
+        self.task = self.stdtask.task.base
+        self.ram = self.stdtask.task
         self.store = local_store
         self.host = await make_local_ssh(self.stdtask, self.store)
         self.local_child, self.remote_stdtask = await self.host.ssh(self.stdtask)
+        self.remote_task = self.remote_stdtask.task.base
+        self.remote_ram = self.remote_stdtask.task
 
     async def test_read(self) -> None:
         [(local_sock, remote_sock)] = await self.remote_stdtask.make_connections(1)
@@ -46,26 +52,27 @@ class TestSSH(TrioTestCase):
     async def test_copy(self) -> None:
         cat = await self.store.bin(coreutils_nixdep, "cat")
 
-        local_file = await self.stdtask.task.memfd_create("source")
-        remote_file = await self.remote_stdtask.task.memfd_create("dest")
+        local_file = await self.task.memfd_create(await self.ram.to_pointer(Path("source")), MFD.CLOEXEC)
+        remote_file = await self.remote_task.memfd_create(await self.remote_ram.to_pointer(Path("dest")), MFD.CLOEXEC)
 
         data = b'hello world'
-        await local_file.write(data)
-        await local_file.handle.lseek(0, SEEK.SET)
+        await local_file.write(await self.ram.to_pointer(Bytes(data)))
+        await local_file.lseek(0, SEEK.SET)
 
         [(local_sock, remote_sock)] = await self.remote_stdtask.make_connections(1)
 
-        local_child = await start_cat(self.stdtask, cat, local_file.handle, local_sock)
+        local_child = await start_cat(self.stdtask, cat, local_file, local_sock)
         await local_sock.close()
 
-        remote_child = await start_cat(self.remote_stdtask, cat, remote_sock, remote_file.handle)
+        remote_child = await start_cat(self.remote_stdtask, cat, remote_sock, remote_file)
         await remote_sock.close()
 
         await local_child.check()
         await remote_child.check()
 
-        await remote_file.handle.lseek(0, SEEK.SET)
-        self.assertEqual(await remote_file.read(), data)
+        await remote_file.lseek(0, SEEK.SET)
+        read, _ = await remote_file.read(await self.remote_ram.malloc_type(Bytes, len(data)))
+        self.assertEqual(await read.read(), data)
 
     async def test_sigmask_bug(self) -> None:
         thread = await self.remote_stdtask.fork()

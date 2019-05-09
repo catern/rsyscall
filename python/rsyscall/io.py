@@ -189,10 +189,6 @@ class Task(RAM):
     def make_fd(self, fd: near.FileDescriptor, file: T_file) -> MemFileDescriptor:
         return FileDescriptor(self, self.base.make_fd_handle(fd), file)
 
-    async def memfd_create(self, name: t.Union[bytes, str]) -> FileDescriptor:
-        fd = await self.base.memfd_create(await self.to_pointer(handle.Path(os.fsdecode(name))), MFD.CLOEXEC)
-        return FileDescriptor(self, fd, MemoryFile())
-
     # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
     # and they'll take an handle.FileDescriptor.
     # then we'll directly have StandardTask contain both Task and MemoryAbstractor?
