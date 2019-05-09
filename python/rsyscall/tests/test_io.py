@@ -40,6 +40,7 @@ from rsyscall.sys.signalfd import SignalfdSiginfo
 from rsyscall.net.if_ import Ifreq
 from rsyscall.unistd import SEEK
 from rsyscall.fcntl import O
+from rsyscall.sys.mount import MS
 
 from rsyscall.struct import Bytes
 
@@ -817,10 +818,10 @@ class TestIO(unittest.TestCase):
                 usernsfd = await (container_ns_dir/"user").open(os.O_RDONLY)
             await shell_thread.stdtask.setns_user(usernsfd.handle)
             await shell_thread.stdtask.unshare_mount()
-            await shell_thread.stdtask.task.mount(b"nix", b"/nix", b"none", lib.MS_BIND|lib.MS_RDONLY, b"")
+            await shell_thread.stdtask.task.mount(b"nix", b"/nix", b"none", MS.BIND|MS.RDONLY, b"")
             # making a readonly bind mount is weird, you have to mount it first then remount it rdonly
             await shell_thread.stdtask.task.mount(b"none", b"/nix", b"none",
-                                                  lib.MS_BIND|lib.MS_REMOUNT|lib.MS_RDONLY, b"")
+                                                  MS.BIND|MS.REMOUNT|MS.RDONLY, b"")
             bash = await rsyscall.io.which(stdtask, b"bash")
             dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, shell_thread.stdtask)
             mount = await rsyscall.io.which(stdtask, b"mount")

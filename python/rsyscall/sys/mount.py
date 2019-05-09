@@ -4,3 +4,5 @@ import enum
 
 class MS(enum.IntFlag):
     BIND = lib.MS_BIND
+    RDONLY = lib.MS_RDONLY
+    REMOUNT = lib.MS_REMOUNT

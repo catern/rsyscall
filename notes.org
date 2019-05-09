@@ -16624,6 +16624,26 @@ but that doesn't scale as well as passing the epfd down.
    Hmm, removing memfd_create, and directly manipulating memory... seems a bit awkward.
    Meh, I think it's fine.
    Abstraction bad! Direct access good!
+*** mount
+   hmm, hmm. mount is really annoying to do directly.
+   maybe... maybe I shouldn't force memory-doing this...
+
+   the thing is, it's going to be string constants most of the time.
+
+   so, y'know.
+
+   also, the target is usually a path, which we should probably use instead of passing bytes.
+*** mmm
+    what if we did just inherit straight through, the whole thing in one class?
+
+    we decided not to do that before because of naming conflicts.
+
+    but what if we just disregard that?
+
+    hmm there are still tricky name conflicts, like execve.
+
+    like, we definitely do want to memabstract at some levels.
+    ehh ok, we'll still have two classes.
 ** DONE make borrowing not async
    We can't run async code on exiting.
    Because we might drop a syscall result.
