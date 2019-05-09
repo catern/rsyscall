@@ -180,9 +180,6 @@ class Task(RAM):
         await self.base.exit(status)
         await self.close()
 
-    async def chdir(self, path: 'Path') -> None:
-        await self.base.chdir(await path.to_pointer())
-
     def _make_fd(self, num: int, file: T_file) -> MemFileDescriptor:
         return self.make_fd(near.FileDescriptor(num), file)
 
@@ -937,7 +934,7 @@ class TemporaryDirectory:
         # TODO would be nice if not sharing the fs information gave us a cap to chdir
         cleanup_thread = await self.stdtask.fork(fs=False)
         async with cleanup_thread:
-            await cleanup_thread.stdtask.task.chdir(self.parent)
+            await cleanup_thread.stdtask.task.base.chdir(await self.parent.to_pointer())
             name = os.fsdecode(self.name)
             child = await cleanup_thread.exec(self.stdtask.sh.args(
                 '-c', f"chmod -R +w -- {name} && rm -rf -- {name}"))

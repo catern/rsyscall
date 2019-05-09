@@ -749,7 +749,7 @@ class TestIO(unittest.TestCase):
             async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
                 thread = await remote_stdtask.fork()
                 bash = await rsyscall.io.which(remote_stdtask, b"bash")
-                await thread.stdtask.task.chdir(remote_tmpdir)
+                await thread.stdtask.task.base.chdir(await remote_tmpdir.to_pointer())
                 await ((await (remote_tmpdir/"var").mkdir())/"stuff").mkdir()
                 child_task = await bash.exec(thread)
                 await child_task.wait_for_exit()
