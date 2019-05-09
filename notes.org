@@ -16882,6 +16882,8 @@ And we can have an exec which is not memory-abstracting, I guess.
    We should probably return a handle.Task instead.
 
    And let's go ahead and move sigmask into handle.Task.
+** move out sigmask
+   oh, hey, I can do this with a mixin, too, for nice modularity!
 ** support splitting memory mappings
 ** support passing an existing mapping as a target for mmap
    For the address argument, so that we split the mapping and replace part or all of it with a new mapping.
