@@ -183,10 +183,10 @@ class Task(RAM):
     async def chdir(self, path: 'Path') -> None:
         await self.base.chdir(await path.to_pointer())
 
-    def _make_fd(self, num: int, file: T_file) -> FileDescriptor[T_file]:
+    def _make_fd(self, num: int, file: T_file) -> MemFileDescriptor:
         return self.make_fd(near.FileDescriptor(num), file)
 
-    def make_fd(self, fd: near.FileDescriptor, file: T_file) -> FileDescriptor[T_file]:
+    def make_fd(self, fd: near.FileDescriptor, file: T_file) -> MemFileDescriptor:
         return FileDescriptor(self, self.base.make_fd_handle(fd), file)
 
     async def memfd_create(self, name: t.Union[bytes, str]) -> FileDescriptor:
@@ -206,11 +206,11 @@ class Task(RAM):
         return (FileDescriptor(self, pair.first, File()),
                 FileDescriptor(self, pair.second, File()))
 
-    async def socket_unix(self, type: SOCK, protocol: int=0, cloexec=True) -> FileDescriptor[UnixSocketFile]:
+    async def socket_unix(self, type: SOCK, protocol: int=0, cloexec=True) -> MemFileDescriptor:
         sockfd = await self.base.socket(AF.UNIX, type, protocol, cloexec=cloexec)
         return FileDescriptor(self, sockfd, UnixSocketFile())
 
-    async def socket_inet(self, type: SOCK, protocol: int=0) -> FileDescriptor[InetSocketFile]:
+    async def socket_inet(self, type: SOCK, protocol: int=0) -> MemFileDescriptor:
         sockfd = await self.base.socket(AF.INET, type, protocol)
         return FileDescriptor(self, sockfd, InetSocketFile())
 
@@ -260,7 +260,7 @@ class InetSocketFile(SocketFile[SockaddrIn]):
 class InotifyFile(ReadableFile):
     pass
 
-class FileDescriptor(t.Generic[T_file_co]):
+class MemFileDescriptor(t.Generic[T_file_co]):
     "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."
     task: Task
     file: T_file_co
@@ -268,7 +268,6 @@ class FileDescriptor(t.Generic[T_file_co]):
         self.task = task
         self.handle = handle
         self.file = file
-        self.pure = handle.far
         self.open = True
 
     async def aclose(self):
@@ -278,9 +277,9 @@ class FileDescriptor(t.Generic[T_file_co]):
             pass
 
     def __str__(self) -> str:
-        return f'FD({self.task}, {self.pure}, {self.file})'
+        return f'FD({self.task}, {self.handle})'
 
-    async def __aenter__(self) -> 'FileDescriptor[T_file_co]':
+    async def __aenter__(self) -> 'MemFileDescriptor':
         return self
 
     async def __aexit__(self, *args, **kwargs):
@@ -294,13 +293,13 @@ class FileDescriptor(t.Generic[T_file_co]):
         await self.handle.close()
         self.open = False
 
-    def for_task(self, task: handle.Task) -> 'FileDescriptor[T_file_co]':
+    def for_task(self, task: handle.Task) -> 'MemFileDescriptor':
         if self.open:
             return self.__class__(self.task, task.make_fd_handle(self.handle), self.file)
         else:
             raise Exception("file descriptor already closed")
 
-    def move(self, task: handle.Task) -> 'FileDescriptor[T_file_co]':
+    def move(self, task: handle.Task) -> 'MemFileDescriptor':
         if self.open:
             return self.__class__(self.task, self.handle.move(task), self.file)
         else:
@@ -376,6 +375,7 @@ class FileDescriptor(t.Generic[T_file_co]):
         fd, sockbuf = await self.handle.accept(flags, written_sockbuf)
         addr = (await (await sockbuf.read()).buf.read()).parse()
         return FileDescriptor(self.task, fd, type(self.file)()), addr
+FileDescriptor = MemFileDescriptor
 
 class Path(rsyscall.path.PathLike):
     "This is a convenient combination of a Path and a Task to perform serialization."
@@ -429,13 +429,13 @@ class Path(rsyscall.path.PathLike):
         fd = await self.task.base.open(await self.to_pointer(), flags, mode)
         return FileDescriptor(self.task, fd, file)
 
-    async def open_directory(self) -> FileDescriptor[DirectoryFile]:
+    async def open_directory(self) -> MemFileDescriptor:
         return (await self.open(O.DIRECTORY))
 
-    async def open_path(self) -> FileDescriptor[File]:
+    async def open_path(self) -> MemFileDescriptor:
         return (await self.open(O.PATH))
 
-    async def creat(self, mode=0o644) -> FileDescriptor[WritableFile]:
+    async def creat(self, mode=0o644) -> MemFileDescriptor:
         return await self.open(O.WRONLY|O.CREAT|O.TRUNC, mode)
 
     async def access(self, *, read=False, write=False, execute=False) -> bool:
@@ -519,7 +519,7 @@ async def update_symlink(parent: Path, name: str, target: str) -> None:
     await tmppath.symlink(target)
     await (parent/name).rename(tmppath)
 
-async def robust_unix_bind(path: Path, sock: FileDescriptor[UnixSocketFile]) -> None:
+async def robust_unix_bind(path: Path, sock: MemFileDescriptor) -> None:
     """Perform a Unix socket bind, hacking around the 108 byte limit on socket addresses.
 
     If the passed path is too long to fit in an address, this function will open the path's
@@ -541,7 +541,7 @@ async def robust_unix_bind(path: Path, sock: FileDescriptor[UnixSocketFile]) -> 
     else:
         await sock.bind(addr)
 
-async def bindat(sock: FileDescriptor[UnixSocketFile], dirfd: handle.FileDescriptor, name: str) -> None:
+async def bindat(sock: MemFileDescriptor, dirfd: handle.FileDescriptor, name: str) -> None:
     """Perform a Unix socket bind to dirfd/name
 
     TODO: This hack is actually semantically different from a normal direct bind: it's not
@@ -561,7 +561,7 @@ async def bindat(sock: FileDescriptor[UnixSocketFile], dirfd: handle.FileDescrip
     else:
         await sock.bind(addr)
 
-async def robust_unix_connect(path: Path, sock: FileDescriptor[UnixSocketFile]) -> None:
+async def robust_unix_connect(path: Path, sock: MemFileDescriptor) -> None:
     """Perform a Unix socket connect, hacking around the 108 byte limit on socket addresses.
 
     If the passed path is too long to fit in an address, this function will open that path with
@@ -579,7 +579,7 @@ async def robust_unix_connect(path: Path, sock: FileDescriptor[UnixSocketFile]) 
     else:
         await sock.connect(addr)
 
-async def connectat(sock: FileDescriptor[UnixSocketFile], fd: handle.FileDescriptor) -> None:
+async def connectat(sock: MemFileDescriptor, fd: handle.FileDescriptor) -> None:
     "connect() a Unix socket to the passed-in fd"
     path = handle.Path("/proc/self/fd")/str(int(fd.near))
     addr = SockaddrUn.from_path(path)
@@ -759,7 +759,7 @@ class StandardTask:
     def __init__(self,
                  access_task: Task,
                  access_epoller: EpollCenter,
-                 access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
+                 access_connection: t.Optional[t.Tuple[Path, MemFileDescriptor]],
                  connecting_task: Task,
                  # TODO we need to lock this, and the access_connection also.
                  # they are shared between processes...
@@ -769,9 +769,9 @@ class StandardTask:
                  epoller: EpollCenter,
                  child_monitor: ChildProcessMonitor,
                  environment: t.Dict[bytes, bytes],
-                 stdin: FileDescriptor[ReadableFile],
-                 stdout: FileDescriptor[WritableFile],
-                 stderr: FileDescriptor[WritableFile],
+                 stdin: MemFileDescriptor,
+                 stdout: MemFileDescriptor,
+                 stderr: MemFileDescriptor,
     ) -> None:
         self.access_task = access_task
         self.access_epoller = access_epoller
@@ -809,7 +809,7 @@ class StandardTask:
         return list(zip(async_access_socks, local_socks))
 
     async def make_connections(self, count: int) -> t.List[
-            t.Tuple[FileDescriptor[ReadableWritableFile], handle.FileDescriptor]
+            t.Tuple[MemFileDescriptor, handle.FileDescriptor]
     ]:
         return (await make_connections(
             self.access_task, self.access_connection,
@@ -1738,28 +1738,28 @@ class AsyncReadBuffer:
 async def make_connections(access_task: Task,
                            # regrettably asymmetric...
                            # it would be nice to unify connect/accept with passing file descriptors somehow.
-                           access_connection: t.Optional[t.Tuple[Path, FileDescriptor[UnixSocketFile]]],
+                           access_connection: t.Optional[t.Tuple[Path, MemFileDescriptor]],
                            connecting_task: Task,
                            connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
                            parent_task: Task,
-                           count: int) -> t.List[t.Tuple[FileDescriptor[ReadableWritableFile], handle.FileDescriptor]]:
+                           count: int) -> t.List[t.Tuple[MemFileDescriptor, handle.FileDescriptor]]:
     # so there's 1. the access task, through which we access the syscall and data fds,
     # 2. the parent task, and
     # 3. the connection between the access and parent task, so that we can have the parent task pass down the fds,
     # while the access task uses them.
     # okay but this is a slight simplification, because there may also be,
     # 4. the connection task, which is a task that actually gets the fds and passes them down to the parent task
-    access_socks: t.List[FileDescriptor[ReadableWritableFile]] = []
-    connecting_socks: t.List[FileDescriptor[ReadableWritableFile]] = []
+    access_socks: t.List[MemFileDescriptor] = []
+    connecting_socks: t.List[MemFileDescriptor] = []
     if access_task.base.fd_table == connecting_task.base.fd_table:
-        async def make_conn() -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
+        async def make_conn() -> t.Tuple[MemFileDescriptor, MemFileDescriptor]:
             return (await access_task.socketpair(AF.UNIX, SOCK.STREAM, 0))
     else:
         if access_connection is not None:
             access_connection_path, access_connection_socket = access_connection
         else:
             raise Exception("must pass access connection when access task and connecting task are different")
-        async def make_conn() -> t.Tuple[FileDescriptor[ReadableWritableFile], FileDescriptor[ReadableWritableFile]]:
+        async def make_conn() -> t.Tuple[MemFileDescriptor, MemFileDescriptor]:
             left_sock = await access_task.socket_unix(SOCK.STREAM)
             await robust_unix_connect(access_connection_path, left_sock)
             right_sock, _ = await access_connection_socket.accept(SOCK.CLOEXEC)
@@ -1942,8 +1942,8 @@ class RsyscallThread:
         await self.close()
 
 class Pipe(t.NamedTuple):
-    rfd: FileDescriptor[ReadableFile]
-    wfd: FileDescriptor[WritableFile]
+    rfd: MemFileDescriptor
+    wfd: MemFileDescriptor
 
     async def aclose(self):
         await self.rfd.aclose()
@@ -2012,7 +2012,7 @@ async def exec_cat(thread: RsyscallThread, cat: Command,
     child_task = await cat.exec(thread)
     return child_task
 
-async def read_all(fd: FileDescriptor[ReadableFile]) -> bytes:
+async def read_all(fd: MemFileDescriptor) -> bytes:
     buf = b""
     while True:
         data = await fd.read()
