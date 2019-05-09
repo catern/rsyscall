@@ -296,5 +296,7 @@ class AsyncFileDescriptor:
                 raise
 
     async def aclose(self) -> None:
-        await self.epolled.aclose()
+        await self.close()
 
+    async def close(self) -> None:
+        await self.epolled.aclose()

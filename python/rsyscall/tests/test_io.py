@@ -309,19 +309,19 @@ class TestIO(unittest.TestCase):
     def test_listen_async(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
-                sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
+                sockfd = await stdtask.make_afd(
+                    await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
                 addr = SockaddrUn.from_path(path/"sock")
-                await sockfd.bind(addr)
-                await sockfd.listen(10)
-                async_sockfd = await stdtask.make_afd(sockfd.handle)
-                clientfd = await stdtask.task.socket_unix(SOCK.STREAM)
-                async_clientfd = await stdtask.make_afd(clientfd.handle)
-                await async_clientfd.connect(addr)
-                connfd, client_addr = await async_sockfd.accept()
+                await sockfd.handle.bind(await sockfd.ram.to_pointer(addr))
+                await sockfd.handle.listen(10)
+                clientfd = await stdtask.make_afd(
+                    await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+                await clientfd.connect(addr)
+                connfd, client_addr = await sockfd.accept()
                 logger.info("%s, %s", addr, client_addr)
                 await connfd.close()
-                await async_sockfd.aclose()
-                await async_clientfd.aclose()
+                await sockfd.close()
+                await clientfd.close()
         trio.run(self.runner, test)
 
     def test_listen_async_accept(self) -> None:

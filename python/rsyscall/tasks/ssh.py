@@ -211,9 +211,10 @@ async def ssh_bootstrap(
     # it would be better if sh supported fexecve, then I could unlink it before I exec...
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor:
-        sock = await task.socket_unix(SOCK.STREAM)
-        await robust_unix_connect(local_data_path, sock)
-        return (await parent_task.make_afd(sock.handle))
+        sock = await parent_task.make_afd(await task.base.socket(AF.UNIX, SOCK.STREAM))
+        async with local_data_path.as_sockaddr_un() as addr:
+            await sock.connect(addr)
+        return sock
     async_local_syscall_sock = await make_async_connection()
     async_local_data_sock = await make_async_connection()
     # Read description off of the data sock

@@ -796,8 +796,8 @@ class StandardTask:
         await (parent/name).mkdir(mode=0o700)
         return TemporaryDirectory(self, parent, name)
 
-    async def make_afd(self, fd: handle.FileDescriptor) -> AsyncFileDescriptor:
-        return await AsyncFileDescriptor.make_handle(self.epoller, self.task, fd)
+    async def make_afd(self, fd: handle.FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
+        return await AsyncFileDescriptor.make_handle(self.epoller, self.task, fd, is_nonblock=nonblock)
 
     async def make_async_connections(self, count: int) -> t.List[
             t.Tuple[AsyncFileDescriptor, handle.FileDescriptor]
