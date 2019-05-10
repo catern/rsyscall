@@ -120,13 +120,16 @@ async def _setup_stub(
     # I guess I need to write out the set too in describe
     epoller = await task.make_epoll_center()
     child_monitor = await ChildProcessMonitor.make(task, task.base, epoller)
+    connection = stdtask.connection.for_task_with_fd(
+        base_task, task,
+        base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
     new_stdtask = StandardTask(
+        connection=connection,
         access_task=stdtask.access_task,
         access_epoller=stdtask.access_epoller,
         access_connection=stdtask.access_connection,
         connecting_task=stdtask.connecting_task,
-        connecting_connection=(stdtask.connecting_connection[0],
-                               base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd))),
+        connecting_connection=connection.connecting_connection,
         task=task,
         process_resources=ProcessResources.make_from_symbols(base_task, describe_struct.symbols),
         epoller=epoller,

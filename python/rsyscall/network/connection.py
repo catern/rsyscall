@@ -1,3 +1,4 @@
+from __future__ import annotations
 import abc
 import typing as t
 from rsyscall.epoller import AsyncFileDescriptor, EpollCenter
@@ -40,6 +41,20 @@ class Connection:
 
     async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
         return await make_connections(self, count)
+
+    def for_task_with_fd(self, task: Task, ram: RAM, fd: FileDescriptor) -> Connection:
+        return Connection(
+            self.access_task,
+            self.access_ram,
+            self.access_epoller,
+            self.access_connection,
+            self.connecting_task, self.connecting_ram,
+            (self.connecting_connection[0], fd),
+            task, ram,
+        )
+
+    def for_task(self, task: Task, ram: RAM) -> Connection:
+        return self.for_task_with_fd(task, ram, self.connecting_connection[1].for_task(task))
 
 from rsyscall.sys.socket import AF, SOCK, SendmsgFlags, RecvmsgFlags
 from rsyscall.struct import Bytes

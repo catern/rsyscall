@@ -42,7 +42,7 @@ from rsyscall.signal import HowSIG, Sigaction, Sighandler, Signals, Sigset, Sigi
 from rsyscall.signal import SignalBlock
 from rsyscall.linux.dirent import Dirent, DirentList
 from rsyscall.unistd import SEEK
-from rsyscall.network.connection import Connection, make_connections
+from rsyscall.network.connection import Connection
 
 import random
 import string
@@ -509,6 +509,7 @@ async def write_user_mappings(task: Task, uid: int, gid: int,
 
 class StandardTask:
     def __init__(self,
+                 connection: Connection,
                  access_task: Task,
                  access_epoller: EpollCenter,
                  access_connection: t.Optional[t.Tuple[WrittenPointer[Address], handle.FileDescriptor]],
@@ -525,15 +526,7 @@ class StandardTask:
                  stdout: MemFileDescriptor,
                  stderr: MemFileDescriptor,
     ) -> None:
-        self.connection = Connection(
-            access_task.task,
-            access_task,
-            access_epoller,
-            access_connection,
-            connecting_task.task, connecting_task,
-            connecting_connection,
-            task.task, task,
-        )
+        self.connection = connection
         self.access_task = access_task
         self.access_epoller = access_epoller
         self.access_connection = access_connection
@@ -610,6 +603,7 @@ class StandardTask:
             epoller = self.epoller.inherit(task)
             child_monitor = self.child_monitor.inherit_to_child(task.base)
         stdtask = StandardTask(
+            self.connection.for_task(task.base, task),
             self.access_task, self.access_epoller, self.access_connection,
             self.connecting_task,
             (self.connecting_connection[0], task.base.make_fd_handle(self.connecting_connection[1])),
