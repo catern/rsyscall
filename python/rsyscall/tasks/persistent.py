@@ -295,7 +295,7 @@ async def fork_persistent(
     epoller = await task.make_epoll_center()
     signal_block = SignalBlock(task.base, await task.to_pointer(Sigset({Signals.SIGCHLD})))
     # TODO use an inherited signalfd instead
-    child_monitor = await ChildProcessMonitor.make(task, epoller, signal_block=signal_block)
+    child_monitor = await ChildProcessMonitor.make(task, task.base, epoller, signal_block=signal_block)
     stdtask = StandardTask(
         self.access_task, self.access_epoller, self.access_connection,
         self.connecting_task,

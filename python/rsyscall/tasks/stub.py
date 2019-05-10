@@ -119,7 +119,7 @@ async def _setup_stub(
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     # I guess I need to write out the set too in describe
     epoller = await task.make_epoll_center()
-    child_monitor = await ChildProcessMonitor.make(task, epoller)
+    child_monitor = await ChildProcessMonitor.make(task, task.base, epoller)
     new_stdtask = StandardTask(
         access_task=stdtask.access_task,
         access_epoller=stdtask.access_epoller,

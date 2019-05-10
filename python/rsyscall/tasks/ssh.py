@@ -252,7 +252,7 @@ async def ssh_bootstrap(
     left_connecting_connection, right_connecting_connection = await new_task.socketpair(AF.UNIX, SOCK.STREAM, 0)
     connecting_connection = (left_connecting_connection.handle, right_connecting_connection.handle)
     epoller = await new_task.make_epoll_center()
-    child_monitor = await ChildProcessMonitor.make(new_task, epoller)
+    child_monitor = await ChildProcessMonitor.make(new_task, new_task.base, epoller)
     new_stdtask = StandardTask(
         access_task=parent_task.task,
         access_epoller=parent_task.epoller,

@@ -121,7 +121,7 @@ async def _make_local_stdtask() -> StandardTask:
         futex_helper_func=_make_local_function_handle(lib.rsyscall_futex_helper),
     )
     epoller = await mem_task.make_epoll_center()
-    child_monitor = await rsc.ChildProcessMonitor.make(mem_task, epoller)
+    child_monitor = await rsc.ChildProcessMonitor.make(mem_task, task, epoller)
     access_connection = None
     left_fd, right_fd = await mem_task.socketpair(AF.UNIX, SOCK.STREAM, 0)
     connecting_connection = (left_fd.handle, right_fd.handle)
