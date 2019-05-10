@@ -27,7 +27,7 @@ class SA(enum.IntFlag):
     SIGINFO = lib.SA_SIGINFO
     RESTORER = lib.SA_RESTORER
 
-class MaskSIG(enum.IntEnum):
+class HowSIG(enum.IntEnum):
     BLOCK = lib.SIG_BLOCK
     UNBLOCK = lib.SIG_UNBLOCK
     SETMASK = lib.SIG_SETMASK
@@ -141,12 +141,12 @@ class SignalMaskTask(Task):
         self.sigprocmask_running = False
 
     @t.overload
-    async def sigprocmask(self, newset: t.Tuple[MaskSIG, WrittenPointer[Sigset]]) -> None: ...
+    async def sigprocmask(self, newset: t.Tuple[HowSIG, WrittenPointer[Sigset]]) -> None: ...
     @t.overload
-    async def sigprocmask(self, newset: t.Optional[t.Tuple[MaskSIG, WrittenPointer[Sigset]]],
+    async def sigprocmask(self, newset: t.Optional[t.Tuple[HowSIG, WrittenPointer[Sigset]]],
                           oldset: Pointer[Sigset]) -> Pointer[Sigset]: ...
 
-    async def sigprocmask(self, newset: t.Optional[t.Tuple[MaskSIG, WrittenPointer[Sigset]]],
+    async def sigprocmask(self, newset: t.Optional[t.Tuple[HowSIG, WrittenPointer[Sigset]]],
                           oldset: t.Optional[Pointer[Sigset]]=None) -> t.Optional[Pointer[Sigset]]:
         if self.sigprocmask_running:
             # this isn't really true. we know exactly the result of multiple sigprocmask calls,
@@ -165,11 +165,11 @@ class SignalMaskTask(Task):
             return ret
         else:
             how, set = newset
-            if how == MaskSIG.BLOCK:
+            if how == HowSIG.BLOCK:
                 new_sigmask = Sigset(self.sigmask.union(set.value))
-            elif how == MaskSIG.UNBLOCK:
+            elif how == HowSIG.UNBLOCK:
                 new_sigmask = Sigset(self.sigmask - set.value)
-            elif how == MaskSIG.SETMASK:
+            elif how == HowSIG.SETMASK:
                 new_sigmask = Sigset(set.value)
             ret = await self._sigprocmask(newset, oldset)
             self.sigprocmask_running = False
@@ -184,15 +184,15 @@ class SignalMaskTask(Task):
             raise Exception("can't allocate a SignalBlock for a signal that was already blocked",
                             newset.value, self.sigmask)
         if oldset:
-            await self.sigprocmask((MaskSIG.BLOCK, newset), oldset)
+            await self.sigprocmask((HowSIG.BLOCK, newset), oldset)
         else:
-            await self.sigprocmask((MaskSIG.BLOCK, newset))
+            await self.sigprocmask((HowSIG.BLOCK, newset))
         return SignalBlock(self, newset)
 
-    async def _sigprocmask(self, newset: t.Optional[t.Tuple[MaskSIG, WrittenPointer[Sigset]]],
+    async def _sigprocmask(self, newset: t.Optional[t.Tuple[HowSIG, WrittenPointer[Sigset]]],
                           oldset: t.Optional[Pointer[Sigset]]=None) -> t.Optional[Pointer[Sigset]]:
         with contextlib.ExitStack() as stack:
-            newset_n: t.Optional[t.Tuple[MaskSIG, near.Pointer]]
+            newset_n: t.Optional[t.Tuple[HowSIG, near.Pointer]]
             if newset:
                 stack.enter_context(newset[1].borrow(self))
                 newset_n = newset[0], newset[1].near
@@ -231,9 +231,9 @@ class SignalBlock:
 
     async def unblock(self, oldset: t.Optional[Pointer[Sigset]]=None) -> None:
         if oldset:
-            await self.task.sigprocmask((MaskSIG.UNBLOCK, self.newset), oldset)
+            await self.task.sigprocmask((HowSIG.UNBLOCK, self.newset), oldset)
         else:
-            await self.task.sigprocmask((MaskSIG.UNBLOCK, self.newset))
+            await self.task.sigprocmask((HowSIG.UNBLOCK, self.newset))
 
 
 #### Tests ####

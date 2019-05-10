@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 from rsyscall.sys.socket import AF, SOCK, SOL, SCM, Address, Socklen, SendmsgFlags, RecvmsgFlags, MsghdrFlags, T_addr
 from rsyscall.sched import UnshareFlag, CLONE
 from rsyscall.struct import Serializer, HasSerializer, FixedSerializer, FixedSize, Serializable, Int32, Struct
-from rsyscall.signal import Sigaction, Sigset, Signals, MaskSIG, Siginfo, SignalMaskTask
+from rsyscall.signal import Sigaction, Sigset, Signals, Siginfo, SignalMaskTask
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
 from rsyscall.unistd import SEEK

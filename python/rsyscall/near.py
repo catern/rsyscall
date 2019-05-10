@@ -16,7 +16,7 @@ if t.TYPE_CHECKING:
     from rsyscall.sys.prctl import PrctlOp
     from rsyscall.sys.uio import RWF
     from rsyscall.sched import UnshareFlag
-    from rsyscall.signal import MaskSIG, Signals
+    from rsyscall.signal import HowSIG, Signals
 
 class SYS(enum.IntEnum):
     read = lib.SYS_read
@@ -378,7 +378,7 @@ async def rt_sigaction(sysif: SyscallInterface, signum: Signals,
     await sysif.syscall(SYS.rt_sigaction, signum, act, oldact, size)
 
 async def rt_sigprocmask(sysif: SyscallInterface,
-                         newset: t.Optional[t.Tuple[MaskSIG, Pointer]],
+                         newset: t.Optional[t.Tuple[HowSIG, Pointer]],
                          oldset: t.Optional[Pointer],
                          sigsetsize: int) -> None:
     if newset is not None:

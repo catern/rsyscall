@@ -38,7 +38,7 @@ from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
 from rsyscall.sys.inotify import InotifyFlag
 from rsyscall.sys.mman import PROT, MAP
 from rsyscall.sched import UnshareFlag, CLONE
-from rsyscall.signal import MaskSIG, Sigaction, Sighandler, Signals, Sigset, Siginfo
+from rsyscall.signal import HowSIG, Sigaction, Sighandler, Signals, Sigset, Siginfo
 from rsyscall.signal import SignalBlock
 from rsyscall.linux.dirent import Dirent, DirentList
 from rsyscall.unistd import SEEK
@@ -1165,7 +1165,7 @@ class RsyscallThread:
         sigmask: t.Set[signal.Signals] = set()
         for block in inherited_signal_blocks:
             sigmask = sigmask.union(block.mask)
-        await self.stdtask.task.base.sigprocmask((MaskSIG.SETMASK, await self.stdtask.task.to_pointer(Sigset(sigmask))))
+        await self.stdtask.task.base.sigprocmask((HowSIG.SETMASK, await self.stdtask.task.to_pointer(Sigset(sigmask))))
         envp: t.Dict[bytes, bytes] = {**self.stdtask.environment}
         for key in env_updates:
             envp[os.fsencode(key)] = os.fsencode(env_updates[key])
