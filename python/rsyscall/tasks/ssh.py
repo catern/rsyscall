@@ -268,10 +268,6 @@ async def ssh_bootstrap(
     )
     new_stdtask = StandardTask(
         connection=connection,
-        access_task=parent_task.task,
-        access_epoller=parent_task.epoller,
-        access_connection=connection.access_connection,
-        connecting_task=new_task, connecting_connection=connecting_connection,
         task=new_task,
         process_resources=ProcessResources.make_from_symbols(new_base_task, describe_struct.symbols),
         epoller=epoller,

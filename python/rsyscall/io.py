@@ -510,13 +510,6 @@ async def write_user_mappings(task: Task, uid: int, gid: int,
 class StandardTask:
     def __init__(self,
                  connection: Connection,
-                 access_task: Task,
-                 access_epoller: EpollCenter,
-                 access_connection: t.Optional[t.Tuple[WrittenPointer[Address], handle.FileDescriptor]],
-                 connecting_task: Task,
-                 # TODO we need to lock this, and the access_connection also.
-                 # they are shared between processes...
-                 connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
                  task: Task,
                  process_resources: ProcessResources,
                  epoller: EpollCenter,
@@ -527,11 +520,6 @@ class StandardTask:
                  stderr: MemFileDescriptor,
     ) -> None:
         self.connection = connection
-        self.access_task = access_task
-        self.access_epoller = access_epoller
-        self.access_connection = access_connection
-        self.connecting_task = connecting_task
-        self.connecting_connection = connecting_connection
         self.task = task
         self.process = process_resources
         self.epoller = epoller
@@ -604,9 +592,6 @@ class StandardTask:
             child_monitor = self.child_monitor.inherit_to_child(task.base)
         stdtask = StandardTask(
             self.connection.for_task(task.base, task),
-            self.access_task, self.access_epoller, self.access_connection,
-            self.connecting_task,
-            (self.connecting_connection[0], task.base.make_fd_handle(self.connecting_connection[1])),
             task, 
             self.process,
             epoller, child_monitor,

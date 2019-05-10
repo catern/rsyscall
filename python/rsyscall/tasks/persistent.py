@@ -298,9 +298,6 @@ async def fork_persistent(
     child_monitor = await ChildProcessMonitor.make(task, task.base, epoller, signal_block=signal_block)
     stdtask = StandardTask(
         self.connection.for_task(task.base, task),
-        self.access_task, self.access_epoller, self.access_connection,
-        self.connecting_task,
-        (self.connecting_connection[0], task.base.make_fd_handle(self.connecting_connection[1])),
         task, 
         self.process,
         epoller,

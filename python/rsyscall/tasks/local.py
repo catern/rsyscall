@@ -136,8 +136,6 @@ async def _make_local_stdtask() -> StandardTask:
     )
     stdtask = StandardTask(
         connection,
-        mem_task, epoller, access_connection,
-        mem_task, connecting_connection,
         mem_task, process_resources,
         epoller, child_monitor,
         {**environ},

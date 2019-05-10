@@ -58,7 +58,7 @@ async def rsyscall_stdin_bootstrap(
     def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.SendMsghdr]:
         iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
         cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([
-            passed_syscall_sock, passed_data_sock, futex_memfd, stdtask.connecting_connection[1]])]))
+            passed_syscall_sock, passed_data_sock, futex_memfd, stdtask.connection.connecting_connection[1]])]))
         return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
     _, [] = await parent_sock.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
     # close our reference to fds that only the new process needs
@@ -105,11 +105,6 @@ async def rsyscall_stdin_bootstrap(
         base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
     new_stdtask = StandardTask(
         connection=connection,
-        access_task=stdtask.access_task,
-        access_epoller=stdtask.access_epoller,
-        access_connection=stdtask.access_connection,
-        connecting_task=stdtask.connecting_task,
-        connecting_connection=connection.connecting_connection,
         task=task,
         process_resources=ProcessResources.make_from_symbols(base_task, describe_struct.symbols),
         epoller=epoller,
