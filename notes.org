@@ -16662,7 +16662,7 @@ but that doesn't scale as well as passing the epfd down.
 
     like, we definitely do want to memabstract at some levels.
     ehh ok, we'll still have two classes.
-** make make_connection object into an interface
+** DONE make make_connection object into an interface
    Then I can remove this annoying conditionality from the implementation.
 
    Instead I just have a single class for each possible configuration.
@@ -16912,11 +16912,9 @@ And we can have an exec which is not memory-abstracting, I guess.
    handle is now my largest file! awesome!
 ** DONE remove circular dep between near and signal
 ** more mixingification of handle.Task
-** TODO move application scripts out of rsyscall module
-   what should I call that directory?
 ** DONE move out sigmask
    oh, hey, I can do this with a mixin, too, for nice modularity!
-** figure out good name for thing containing lots of resources, below thread
+** DONE figure out good name for thing containing lots of resources, below thread
    context?
    process?
 
@@ -17033,7 +17031,12 @@ And we can have an exec which is not memory-abstracting, I guess.
     The thing with the RAM and the task, is what people will usually want and use.
 
     ok, I like these names!
-** make connection interface with open_channels
+** TODO move application scripts out of rsyscall module
+   what should I call that directory?
+** TODO rename StandardTask/RsyscallThread to Thread/ChildThread
+   Possibly with a further MemThread below Thread,
+   containing just handle.Task, RAM, and EpollCenter.
+** DONE make connection interface with open_channels
    OK one difficulty is inheritance.
 
    How do we inherit this object into a new task without opening it up?
@@ -17104,6 +17107,238 @@ And we can have an exec which is not memory-abstracting, I guess.
     Maybe we can register callbacks on the task to be called as part of unshare?
 
     Oh, for that matter, we should clean up how we currently handle unshare. Hm.
+** clean up do_unshare implementation
+   It's spread across io and handle in a not-very-clean way.
+
+   So, okay, let's first get an understanding of what's going on.
+
+   First first let's think a little about what we'd want to happen.
+
+   What we'd want to happen is that, maybe, um.
+
+   Well, I have a bunch of things attached to the task,
+   and when I mutate the task, they all get updated.
+
+   I mean, sure, it's as simple as that.
+
+   Well, so, one thing is that to preserve the functionality of some things,
+   I need to run some code to update them before and after the unshare.
+
+   I dunno, we could just go ahead and do some hook-based thing, would that be easiest?
+
+   Currently we have this function do_unshare,
+   and we build a list of fds to close and fds to copy,
+   and we delegate doing that to do_unshare.
+   Which seems fine, I suppose.
+
+   Hmmmm.
+
+   do_unshare seems distasteful;
+   what if we fully delegated it to garbage collection?
+
+   well we don't have gc at the moment so.
+
+   but, what if we did, would we have some API for this?
+   hm mm.
+*** hm
+   okay anyway let's think.
+
+   So right now we're...
+
+   Wait a second. We don't need either of these functions.
+
+   I am so dumb.
+
+   We already have syscall batching! These functions are unnecessary!
+
+   Yeah so, the batch close, we don't need... except we do need it, because we can't just start a thread.
+
+   And the do_cloexec_except?
+   Well... we want to cloexec. Ugh.
+
+   Ugh, ok, okay. We can work around this though.
+
+   The do_cloexec_except we can get rid of,
+   by assuming we are actually tracking all fds?
+
+   Well, what about ones in our space...
+   which are marked cloexec...
+   which are controlled by libraries we don't own?
+
+   Mmmmmmmmmm. MMMMMMMMMMMMMMMMMMMMM.
+*** hm
+   OK, so as we were thinking long ago,
+   what we'd really like is a way to call unshare_files,
+   with an explicit list of fds to copy.
+
+   Or, possibly, make an empty fd space then call a syscall to attach fds to it.
+
+   But, as that is not what we have...
+
+   Hum hum hum.
+
+   Well, we could do the do_cloexec_except in userspace anyway.
+   Like, just open the list of open files, read it all, and then close things?
+
+   Argh, but no, we need to call fcntl on every FD...
+
+   but again, we have batching, so that isn't actually an issue.
+
+   That is very interesting.
+*** do_cloexec_except in userspace
+    We'd do the unshare,
+    then stream dirents from /proc/self/fd,
+    then start fcntling on them,
+    then close the ones that are cloexec and not in our list.
+
+    Currently we do:
+    write/block,
+    clone/block,
+    waitid/block,
+    read/block.
+
+    Instead we'd do:
+    write/block,
+    open/block,
+    getdents/block, (keep getdents in background)
+    read/block,
+    fcntl/block,
+    close/block.
+
+    It's not... *that* much bad.
+
+    And we can save the write by storing the pointer.
+
+    Also, it's not actually hurting our fastpath.
+    Since we don't do this when going_to_exec is set.
+*** stop_then_close in userspace
+    Well, so, if we already had a task around, then we could use that to do the closing.
+
+    We do have a task around, the existing one;
+    maybe we should create a new task with an unshared space instead of unsharing?
+
+    No, we shouldn't do that, that would defeat the point of this whole enterprise.
+    We want to be able to use our existing tasks, and exec in them.
+    So ok, we need to unshare in the current task;
+    then, how do we close fds in our old namespace?
+
+    Well, yeah, we can just use the GC system.
+    If we track tasks that are in the old space,
+    and we use one of them to close fds,
+    then we don't need this hack to unshare files.
+*** combined
+    So we don't need close_in_old_space,
+    because the GC system will handle that.
+
+    We can just remove that argument to do_unshare,
+    and have handle.Task handle pinging the GC system.
+
+    What about copy_to_new_space?
+
+    Well.
+    The thing is that with exec, we auto-close everything with cloexec set.
+
+    And we want to do the same with regular unshare, I suppose?
+
+    Well, why not just de-abstract it?
+
+    So, ok, with exec, we need to grab the list of fds we're going to keep,
+    mark them all not cloexec,
+    then exec out of the space.
+
+    Actually... isn't this unsafe?
+
+    Huh! rsyscall_exec is not safe, yeah.
+    We are persistently keeping those old fds un-cloexec!
+
+    OK, so. Hm.
+
+    With exec, we need to unshare first,
+    then unset cloexec on some things,
+    then just call an exec,
+    and reclaim the fds.
+    We don't need this integration with unshare_files.
+
+    Okay...
+
+    So then with the real unshare_files, how do we handle closing fds in the new space?
+
+    The problem is, and remains, that if there is some other library around,
+    we'll have copied their fds into the new space.
+
+    And so, therefore, we need to close them.
+    Meh, maybe we just shouldn't care, and should only close the fds we track...
+    Or, don't close any files at all.
+
+    In any case, can't that closing be done after and outside the unshare_files in handle?
+    They are merely stray references, not actual problems.
+
+    We could do it in the background, as part of GC, maybe, even.
+*** neat
+    OK so I think we can get rid of the do_unshare thing.
+
+    But, we still have another issue.
+    Should allow registering callbacks to update objects before we unshare?
+
+    What, conceptually, is happening?
+    We have this thing, which is the old fd space;
+    and we're moving to a new one.
+
+    So, properly, we'd pass the things to be updated in,
+    and update them all,
+    and then come out.
+
+    I'm being vague but I feel like I remember some other things like this.
+
+    OK, what if we just special-case it for now?
+    It's in the thread anyway, so we can just do that.
+
+    Well... I'd want to be able to call unshare_files on handle.Task and not break things.
+    Hm.
+
+    oops i distracted myself.
+
+    anyway I want to call unshare_files on handle.Task and not break things,
+    how can I achieve that?
+
+    well, so. if I have handle.FDs, then those will keep working after I unshare_files.
+
+    If I want to do other stuff, then.
+
+    OK, meh, let's just be runtime.
+    For now anyway.
+    We'll clean up the thread creates and then come back to it.
+*** start cleanup
+    We'll start cleaning up the thread creation done by unshare.
+
+    The first one we should start with is the fd table thing.
+
+    I guess when we create a task, we need to add it to a list of tasks in that fd table.
+
+    Then, at unshare time, we'll run a GC on the old fd table,
+    right after unsharing:
+    We'll look at the fd table;
+    if there's no tasks, then we'll just delete it.
+    If there's at least one task, then...
+
+    Should we switch arbitrarily between tasks?
+    Or, we should just use the first one in the list;
+    that seems wise.
+** clean up handling of unshare for connection
+** clean creation and inheritance for connection
+   The connection interface is actually very nice.
+   We'll be able to very flexibly use it with TCP,
+   or some other tunneling thing,
+   or whatever.
+
+   It makes it clear that what we have is a point to point connection,
+   not a network.
+
+   Though the fact that we have an implicit reference to the task on one side of the connection is somewhat weird.
+** DONE batch creation of channels in connection
+   We can do them async-like.
+
+   Nice, done.
 ** make rsyscall_exec return RsyscallThread or whatever
    The thread is now generic enough that it can work for things that have called exec.
 
@@ -17132,8 +17367,10 @@ And we can have an exec which is not memory-abstracting, I guess.
    For the address argument, so that we split the mapping and replace part or all of it with a new mapping.
 ** rename UnshareFlag to UnCLONE
    Ha ha yes!!
-** migrate everything to use robust lists
+** DONE migrate everything to use robust lists, or not
    Yeah hm, instead of using ctid.
+
+   No, we won't do this.
 ** DONE maybe store reaper status on the task
    So that we know whether or not CLONE_PARENT is allowed, I guess.
 
