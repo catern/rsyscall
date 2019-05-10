@@ -10,38 +10,42 @@ class Connection:
                  access_task: Task,
                  access_ram: RAM,
                  access_epoller: EpollCenter,
+                 # regrettably asymmetric...
+                 # it would be nice to unify connect/accept with passing file descriptors somehow.
                  access_connection: t.Optional[t.Tuple[WrittenPointer[Address], FileDescriptor]],
+                 connecting_task: Task,
                  connecting_ram: RAM,
                  # TODO we need to lock this, and the access_connection also.
                  # they are shared between processes...
                  connecting_connection: t.Tuple[FileDescriptor, FileDescriptor],
+                 task: Task,
+                 ram: RAM,
     ) -> None:
-        self._access_task = access_task
-        self._access_ram = access_ram
-        self._access_epoller = access_epoller
-        self._access_connection = access_connection
-        self._connecting_ram = connecting_ram
-        self._connecting_connection = connecting_connection
+        self.access_task = access_task
+        self.access_ram = access_ram
+        self.access_epoller = access_epoller
+        self.access_connection = access_connection
+        self.connecting_task = connecting_task
+        self.connecting_ram = connecting_ram
+        self.connecting_connection = connecting_connection
+        self.task = task
+        self.ram = ram
 
-    async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]: ...
+    async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
+        chans = await self.open_channels(count)
+        access_socks, local_socks = zip(*chans)
+        async_access_socks = [await AsyncFileDescriptor.make_handle(self.access_epoller, self.access_ram, sock)
+                              for sock in access_socks]
+        return list(zip(async_access_socks, local_socks))
 
-    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]: ...
+    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
+        return await make_connections(self, count)
 
 from rsyscall.sys.socket import AF, SOCK, SendmsgFlags, RecvmsgFlags
 from rsyscall.struct import Bytes
 import rsyscall.handle as handle
 import rsyscall.batch as batch
-async def make_connections(access_task: Task,
-                           access_ram: RAM,
-                           # regrettably asymmetric...
-                           # it would be nice to unify connect/accept with passing file descriptors somehow.
-                           access_connection: t.Optional[t.Tuple[WrittenPointer[Address], handle.FileDescriptor]],
-                           connecting_task: Task,
-                           connecting_ram: RAM,
-                           connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
-                           parent_task: Task,
-                           parent_ram: RAM,
-                           count: int) -> t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]]:
+async def make_connections(self: Connection, count: int) -> t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]]:
     # so there's 1. the access task, through which we access the syscall and data fds,
     # 2. the parent task, and
     # 3. the connection between the access and parent task, so that we can have the parent task pass down the fds,
@@ -50,18 +54,18 @@ async def make_connections(access_task: Task,
     # 4. the connection task, which is a task that actually gets the fds and passes them down to the parent task
     access_socks: t.List[handle.FileDescriptor] = []
     connecting_socks: t.List[handle.FileDescriptor] = []
-    if access_task.fd_table == connecting_task.fd_table:
+    if self.access_task.fd_table == self.connecting_task.fd_table:
         async def make_conn() -> t.Tuple[handle.FileDescriptor, handle.FileDescriptor]:
-            pair = await (await access_task.socketpair(
-                AF.UNIX, SOCK.STREAM, 0, await access_ram.malloc_struct(handle.FDPair))).read()
+            pair = await (await self.access_task.socketpair(
+                AF.UNIX, SOCK.STREAM, 0, await self.access_ram.malloc_struct(handle.FDPair))).read()
             return (pair.first, pair.second)
     else:
-        if access_connection is not None:
-            access_connection_addr, access_connection_socket = access_connection
+        if self.access_connection is not None:
+            access_connection_addr, access_connection_socket = self.access_connection
         else:
             raise Exception("must pass access connection when access task and connecting task are different")
         async def make_conn() -> t.Tuple[handle.FileDescriptor, handle.FileDescriptor]:
-            left_sock = await access_task.socket(access_connection_addr.value.family, SOCK.STREAM)
+            left_sock = await self.access_task.socket(access_connection_addr.value.family, SOCK.STREAM)
             # TODO this connect should really be async
             # but, since we're just connecting to a unix socket, it's fine I guess.
             await left_sock.connect(access_connection_addr)
@@ -73,22 +77,22 @@ async def make_connections(access_task: Task,
         access_socks.append(access_sock)
         connecting_socks.append(connecting_sock)
     passed_socks: t.List[handle.FileDescriptor]
-    if connecting_task.fd_table == parent_task.fd_table:
+    if self.connecting_task.fd_table == self.task.fd_table:
         passed_socks = []
         for sock in connecting_socks:
-            passed_socks.append(sock.move(parent_task))
+            passed_socks.append(sock.move(self.task))
     else:
-        assert connecting_connection is not None
+        assert self.connecting_connection is not None
         def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.SendMsghdr]:
             iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
             cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([sock for sock in connecting_socks])]))
             return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
-        _, [] = await connecting_connection[0].sendmsg(await connecting_ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
+        _, [] = await self.connecting_connection[0].sendmsg(await self.connecting_ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
         def recvmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.RecvMsghdr]:
             iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
             cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([sock for sock in connecting_socks])]))
             return sem.to_pointer(handle.RecvMsghdr(None, iovec, cmsgs))
-        _, [], hdr = await connecting_connection[1].recvmsg(await parent_ram.perform_batch(recvmsg_op), RecvmsgFlags.NONE)
+        _, [], hdr = await self.connecting_connection[1].recvmsg(await self.ram.perform_batch(recvmsg_op), RecvmsgFlags.NONE)
         cmsgs_ptr = (await hdr.read()).control
         if cmsgs_ptr is None:
             raise Exception("cmsgs field of header is, impossibly, None")

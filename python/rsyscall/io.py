@@ -525,6 +525,15 @@ class StandardTask:
                  stdout: MemFileDescriptor,
                  stderr: MemFileDescriptor,
     ) -> None:
+        self.connection = Connection(
+            access_task.task,
+            access_task,
+            access_epoller,
+            access_connection,
+            connecting_task.task, connecting_task,
+            connecting_connection,
+            task.task, task,
+        )
         self.access_task = access_task
         self.access_epoller = access_epoller
         self.access_connection = access_connection
@@ -554,22 +563,12 @@ class StandardTask:
     async def make_async_connections(self, count: int) -> t.List[
             t.Tuple[AsyncFileDescriptor, handle.FileDescriptor]
     ]:
-        conns = await self.make_connections(count)
-        access_socks, local_socks = zip(*conns)
-        async_access_socks = [await AsyncFileDescriptor.make_handle(self.access_epoller, self.access_task, sock)
-                              for sock in access_socks]
-        return list(zip(async_access_socks, local_socks))
+        return (await self.connection.open_async_channels(count))
 
     async def make_connections(self, count: int) -> t.List[
             t.Tuple[handle.FileDescriptor, handle.FileDescriptor]
     ]:
-        return (await make_connections(
-            self.access_task.task, self.access_task,
-            self.access_connection,
-            self.connecting_task.task, self.connecting_task,
-            self.connecting_connection,
-            self.task.task, self.task,
-            count))
+        return (await self.connection.open_channels(count))
 
     async def fork(self, newuser=False, newpid=False, fs=True, sighand=True) -> RsyscallThread:
         [(access_sock, remote_sock)] = await self.make_async_connections(1)
