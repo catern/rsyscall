@@ -14,7 +14,16 @@ from rsyscall.handle import FDPair
 
 class ConnectionInterface:
     @abc.abstractmethod
-    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]: ...
+    async def open_channel(self) -> t.Tuple[FileDescriptor, FileDescriptor]: ...
+
+    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
+        pairs: t.List[t.Any] = [None]*count
+        async with trio.open_nursery() as nursery:
+            async def open_nth(n: int) -> None:
+                pairs[n] = await self.open_channel()
+            for i in range(count):
+                nursery.start_soon(open_nth, i)
+        return pairs
 
 class ListeningConnection(ConnectionInterface):
     def __init__(self,
@@ -35,17 +44,6 @@ class ListeningConnection(ConnectionInterface):
         listener_sock = await self.listener_fd.accept(SOCK.CLOEXEC)
         return address_sock, listener_sock
 
-    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
-        # pairs: t.List[t.Any] = [None]*count
-        # async with trio.open_nursery() as nursery:
-        #     async def open_nth(n: int) -> None:
-        #         pairs[n] = await self.open_channel()
-        #     for i in range(count):
-        #         nursery.start_soon(open_nth, i)
-        # return pairs
-        # TODO batching
-        return [await self.open_channel() for _ in range(count)]
-
 class SocketpairConnection(ConnectionInterface):
     def __init__(self, task: Task, ram: RAM, dest_task: Task) -> None:
         if task.fd_table != dest_task.fd_table:
@@ -59,10 +57,6 @@ class SocketpairConnection(ConnectionInterface):
         pair = await (await self.task.socketpair(
             AF.UNIX, SOCK.STREAM, 0, await self.ram.malloc_struct(FDPair))).read()
         return (pair.first, pair.second.move(self.dest_task))
-
-    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
-        # TODO batching
-        return [await self.open_channel() for _ in range(count)]
 
 class MoverInterface:
     @abc.abstractmethod
