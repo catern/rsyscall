@@ -16253,6 +16253,12 @@ so the subprocess is stuck in read, and the main process is... in "x32 mode"????
    (and maybe I can make this extensible somehow?)
 
    (I guess one could just inherit from the omnibus)
+
+   ok so what do we call this?
+
+   native? code? linking? dynlibs? loader?
+
+   loader sounds good actually.
 ** DONE move all the memory stuff into a memory subdir
 *** memory rework
 hmm this doesn't make any sense
@@ -16882,6 +16888,16 @@ And we can have an exec which is not memory-abstracting, I guess.
    We should probably return a handle.Task instead.
 
    And let's go ahead and move sigmask into handle.Task.
+
+   ok so now is CPM and PR.
+
+   wat do
+
+   ok so we need to separate PR out into another module.
+
+   and, I guess the same with CPM . . .
+
+   since we use CPM to monitor the children.
 ** DONE move out sigmask
    oh, hey, I can do this with a mixin, too, for nice modularity!
 ** TODO properly handle inheritance with handle

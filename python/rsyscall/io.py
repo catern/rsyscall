@@ -22,6 +22,7 @@ from rsyscall.memory.ram import RAM
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import EpollCenter, AsyncFileDescriptor
+from rsyscall.loader import Trampoline, ProcessResources
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr, SendmsgFlags, RecvmsgFlags
 from rsyscall.fcntl import AT, O, F
@@ -561,122 +562,6 @@ async def spit(path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
             ret = await fd.write(data)
             data = data[ret:]
     return path
-
-@dataclass
-class Trampoline(handle.Serializable, handle.Borrowable):
-    function: handle.Pointer[handle.NativeFunction]
-    args: t.List[t.Union[handle.FileDescriptor, handle.WrittenPointer[handle.Borrowable], handle.Pointer, int]]
-
-    def __post_init__(self) -> None:
-        if len(self.args) > 6:
-            raise Exception("only six arguments can be passed via trampoline")
-
-    def to_bytes(self) -> bytes:
-        args: t.List[int] = []
-        for arg in self.args:
-            if isinstance(arg, handle.FileDescriptor):
-                args.append(int(arg.near))
-            elif isinstance(arg, handle.Pointer):
-                args.append(int(arg.near))
-            else:
-                args.append(int(arg))
-        arg1, arg2, arg3, arg4, arg5, arg6 = args + [0]*(6 - len(args))
-        struct = ffi.new('struct rsyscall_trampoline_stack*', {
-            'function': ffi.cast('void*', int(self.function.near)),
-            'rdi': int(arg1),
-            'rsi': int(arg2),
-            'rdx': int(arg3),
-            'rcx': int(arg4),
-            'r8':  int(arg5),
-            'r9':  int(arg6),
-        })
-        return bytes(ffi.buffer(struct))
-
-    def borrow_with(self, stack: contextlib.ExitStack, task: handle.Task) -> None:
-        stack.enter_context(self.function.borrow(task))
-        for arg in self.args:
-            if isinstance(arg, int):
-                pass
-            elif isinstance(arg, handle.WrittenPointer):
-                arg.value.borrow_with(stack, task)
-            else:
-                stack.enter_context(arg.borrow(task))
-
-    T = t.TypeVar('T', bound='Trampoline')
-    @classmethod
-    def from_bytes(cls: t.Type[T], data: bytes) -> T:
-        raise Exception("not implemented")
-
-class StaticAllocation(handle.AllocationInterface):
-    def offset(self) -> int:
-        return 0
-
-    def size(self) -> int:
-        raise Exception
-
-    def split(self, size: int) -> t.Tuple[handle.AllocationInterface, handle.AllocationInterface]:
-        raise Exception
-
-    def merge(self, other: handle.AllocationInterface) -> handle.AllocationInterface:
-        raise Exception("can't merge")
-
-    def free(self) -> None:
-        pass
-
-class NullGateway(MemoryGateway):
-    async def batch_read(self, ops: t.List[handle.Pointer]) -> t.List[bytes]:
-        raise Exception("shouldn't try to read")
-    async def batch_write(self, ops: t.List[t.Tuple[handle.Pointer, bytes]]) -> None:
-        raise Exception("shouldn't try to write")
-
-@dataclass
-class ProcessResources:
-    server_func: handle.Pointer[handle.NativeFunction]
-    persistent_server_func: handle.Pointer[handle.NativeFunction]
-    do_cloexec_func: handle.Pointer[handle.NativeFunction]
-    stop_then_close_func: handle.Pointer[handle.NativeFunction]
-    trampoline_func: handle.Pointer[handle.NativeFunction]
-    futex_helper_func: handle.Pointer[handle.NativeFunction]
-
-    @staticmethod
-    def make_from_symbols(task: handle.Task, symbols: t.Any) -> ProcessResources:
-        def to_handle(cffi_ptr) -> handle.Pointer[handle.NativeFunction]:
-            pointer_int = int(ffi.cast('ssize_t', cffi_ptr))
-            # TODO we're just making up a memory mapping that this pointer is inside;
-            # we should figure out the actual mapping, and the size for that matter.
-            mapping = MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
-            return handle.Pointer(mapping, NullGateway(), handle.NativeFunctionSerializer(), StaticAllocation())
-        return ProcessResources(
-            server_func=to_handle(symbols.rsyscall_server),
-            persistent_server_func=to_handle(symbols.rsyscall_persistent_server),
-            do_cloexec_func=to_handle(symbols.rsyscall_do_cloexec),
-            stop_then_close_func=to_handle(symbols.rsyscall_stop_then_close),
-            trampoline_func=to_handle(symbols.rsyscall_trampoline),
-            futex_helper_func=to_handle(symbols.rsyscall_futex_helper),
-        )
-
-    def build_trampoline_stack(self, function: handle.Pointer[handle.NativeFunction],
-                               arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> bytes:
-        # TODO clean this up with dicts or tuples or something
-        stack_struct = ffi.new('struct rsyscall_trampoline_stack*')
-        stack_struct.rdi = int(arg1)
-        stack_struct.rsi = int(arg2)
-        stack_struct.rdx = int(arg3)
-        stack_struct.rcx = int(arg4)
-        stack_struct.r8  = int(arg5)
-        stack_struct.r9  = int(arg6)
-        stack_struct.function = ffi.cast('void*', int(function.near))
-        logger.info("trampoline_func %s", self.trampoline_func.near)
-        packed_trampoline_addr = struct.pack('Q', int(self.trampoline_func.near))
-        stack = packed_trampoline_addr + bytes(ffi.buffer(stack_struct))
-        return stack
-
-    def make_trampoline_stack(self, trampoline: Trampoline) -> handle.Stack[Trampoline]:
-        # ugh okaaaaaaaaaaaaay
-        # need to figure out how to handle these function pointers. hMmMmM
-        return handle.Stack(self.trampoline_func, trampoline, trampoline.get_serializer(None))
-
-trampoline_stack_size = ffi.sizeof('struct rsyscall_trampoline_stack') + 8
 
 async def lookup_executable(paths: t.List[Path], name: bytes) -> Path:
     "Find an executable by this name in this list of paths"

@@ -9,6 +9,7 @@ from rsyscall.handle import Task
 import rsyscall.far as far
 import rsyscall.near as near
 import rsyscall.handle as handle
+import rsyscall.loader as loader
 import logging
 import os
 import typing as t
@@ -102,7 +103,7 @@ def _make_local_function_handle(cffi_ptr) -> Pointer[handle.NativeFunction]:
     # TODO we're just making up a memory mapping that this pointer is inside;
     # we should figure out the actual mapping, and the size for that matter.
     mapping = handle.MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
-    return Pointer(mapping, rsc.NullGateway(), handle.NativeFunctionSerializer(), rsc.StaticAllocation())
+    return Pointer(mapping, loader.NullGateway(), handle.NativeFunctionSerializer(), loader.StaticAllocation())
 
 async def _make_local_stdtask() -> StandardTask:
     local_transport = LocalMemoryTransport()
