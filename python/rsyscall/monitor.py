@@ -1,18 +1,18 @@
 from __future__ import annotations
-import rsyscall.handle as handle
-from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode
-from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
+from dataclasses import dataclass
+from rsyscall.batch import BatchSemantics
+from rsyscall.concurrency import OneAtATime
+from rsyscall.epoller import EpollCenter, AsyncFileDescriptor
+from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Pointer, ChildProcess
+from rsyscall.memory.ram import RAM
+from rsyscall.sched import CLONE
 from rsyscall.signal import Signals, Sigset, Siginfo
 import contextlib
-from rsyscall.signal import SignalBlock
-from rsyscall.epoller import EpollCenter, AsyncFileDescriptor
-from rsyscall.concurrency import OneAtATime
-from rsyscall.sched import CLONE
-from rsyscall.memory.ram import RAM
-from rsyscall.sys.wait import CLD, ChildEvent, W
-from rsyscall.batch import BatchSemantics
-from dataclasses import dataclass
 import typing as t
+
+from rsyscall.signal import SignalBlock
+from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
+from rsyscall.sys.wait import CLD, ChildEvent, W
 
 class SignalQueue:
     def __init__(self, signal_block: SignalBlock, sigfd: AsyncFileDescriptor) -> None:
@@ -20,7 +20,7 @@ class SignalQueue:
         self.sigfd = sigfd
 
     @classmethod
-    async def make(cls, ram: RAM, task: handle.Task, epoller: EpollCenter, mask: Sigset,
+    async def make(cls, ram: RAM, task: Task, epoller: EpollCenter, mask: Sigset,
                    *, signal_block: SignalBlock=None,
     ) -> SignalQueue:
         if signal_block is None:
@@ -38,12 +38,12 @@ class SignalQueue:
         async_sigfd = await AsyncFileDescriptor.make_handle(epoller, ram, sigfd, is_nonblock=True)
         return cls(signal_block, async_sigfd)
 
-    async def read(self, buf: handle.Pointer) -> handle.Pointer:
+    async def read(self, buf: Pointer) -> Pointer:
         validp, _ = await self.sigfd.read_handle(buf)
         return validp
 
 class AsyncChildProcess:
-    def __init__(self, process: handle.ChildProcess,
+    def __init__(self, process: ChildProcess,
                  monitor: ChildProcessMonitorInternal) -> None:
         self.process = process
         self.monitor = monitor
@@ -119,7 +119,7 @@ class ChildProcessMonitorInternal:
         self.running_wait = OneAtATime()
         self.waiters: t.List[SigchldWaiter] = []
 
-    def add_task(self, process: handle.ChildProcess) -> AsyncChildProcess:
+    def add_task(self, process: ChildProcess) -> AsyncChildProcess:
         proc = AsyncChildProcess(process, self)
         # self.processes.append(proc)
         return proc
@@ -132,10 +132,10 @@ class ChildProcessMonitorInternal:
         self.waiters.remove(waiter)
 
     async def clone(self,
-                    clone_task: handle.Task,
+                    clone_task: Task,
                     flags: CLONE,
-                    child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
-                    ctid: t.Optional[handle.Pointer]=None) -> AsyncChildProcess:
+                    child_stack: t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
+                    ctid: t.Optional[Pointer]=None) -> AsyncChildProcess:
         process = await clone_task.clone(flags|Signals.SIGCHLD, child_stack, None, ctid, None)
         return self.add_task(process)
 
@@ -152,12 +152,12 @@ class ChildProcessMonitorInternal:
 @dataclass
 class ChildProcessMonitor:
     internal: ChildProcessMonitorInternal
-    cloning_task: handle.Task
+    cloning_task: Task
     use_clone_parent: bool
     is_reaper: bool
 
     @staticmethod
-    async def make(ram: RAM, task: handle.Task, epoller: EpollCenter,
+    async def make(ram: RAM, task: Task, epoller: EpollCenter,
                    *, signal_block: SignalBlock=None,
                    is_reaper: bool=False,
     ) -> ChildProcessMonitor:
@@ -165,7 +165,7 @@ class ChildProcessMonitor:
         monitor = ChildProcessMonitorInternal(ram, signal_queue, is_reaper=is_reaper)
         return ChildProcessMonitor(monitor, task, use_clone_parent=False, is_reaper=is_reaper)
 
-    def inherit_to_child(self, child_task: handle.Task) -> ChildProcessMonitor:
+    def inherit_to_child(self, child_task: Task) -> ChildProcessMonitor:
         if self.is_reaper:
             # TODO we should actually look at something on the Task, I suppose, to determine if we're a reaper
             raise Exception("we're a ChildProcessMonitor for a reaper task, "
@@ -178,7 +178,7 @@ class ChildProcessMonitor:
         # children of the waiting task, so we can use the waiting task to wait on them.
         return ChildProcessMonitor(self.internal, child_task, use_clone_parent=True, is_reaper=self.is_reaper)
 
-    def inherit_to_thread(self, cloning_task: handle.Task) -> ChildProcessMonitor:
+    def inherit_to_thread(self, cloning_task: Task) -> ChildProcessMonitor:
         if self.internal.signal_queue.sigfd.handle.task.process is not cloning_task.process:
             raise Exception("waiting task process", self.internal.signal_queue.sigfd.handle.task.process,
                             "is not the same as cloning task process", cloning_task.process)
@@ -187,8 +187,8 @@ class ChildProcessMonitor:
         return ChildProcessMonitor(self.internal, cloning_task, use_clone_parent=False, is_reaper=self.is_reaper)
 
     async def clone(self, flags: CLONE,
-                    child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
-                    ctid: t.Optional[handle.Pointer[FutexNode]]=None) -> AsyncChildProcess:
+                    child_stack: t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
+                    ctid: t.Optional[Pointer[FutexNode]]=None) -> AsyncChildProcess:
         if self.use_clone_parent:
             flags |= CLONE.PARENT
         return (await self.internal.clone(self.cloning_task, flags, child_stack, ctid=ctid))
