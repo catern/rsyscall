@@ -19,7 +19,7 @@ from rsyscall.batch import BatchSemantics
 import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM
 from rsyscall.memory.socket_transport import SocketMemoryTransport
-from rsyscall.epoller import EpollCenter, AsyncFileDescriptor
+from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.loader import Trampoline, ProcessResources
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.tasks.fork import spawn_rsyscall_thread, RsyscallConnection, SyscallResponse
@@ -857,126 +857,6 @@ async def unshare_files(
     # perform a cloexec
     if not going_to_exec:
         await do_cloexec_except(task, process_resources, copy_to_new_space)
-
-class EOFException(Exception):
-    pass
-
-class AsyncReadBuffer:
-    def __init__(self, fd: AsyncFileDescriptor) -> None:
-        self.fd = fd
-        self.buf = b""
-
-    async def _read(self) -> t.Optional[bytes]:
-        data = await self.fd.read()
-        if len(data) == 0:
-            if len(self.buf) != 0:
-                raise EOFException("got EOF while we still hold unhandled buffered data")
-            else:
-                return None
-        else:
-            return data
-
-    async def read_length(self, length: int) -> t.Optional[bytes]:
-        while len(self.buf) < length:
-            data = await self._read()
-            if data is None:
-                return None
-            self.buf += data
-        section = self.buf[:length]
-        self.buf = self.buf[length:]
-        return section
-
-    async def read_cffi(self, name: str) -> t.Any:
-        size = ffi.sizeof(name)
-        data = await self.read_length(size)
-        if data is None:
-            raise EOFException("got EOF while expecting to read a", name)
-        nameptr = name + '*'
-        dest = ffi.new(nameptr)
-        # ffi.cast drops the reference to the backing buffer, so we have to copy it
-        src = ffi.cast(nameptr, ffi.from_buffer(data))
-        ffi.memmove(dest, src, size)
-        return dest[0]
-
-    async def read_length_prefixed_string(self) -> bytes:
-        elem_size = await self.read_cffi('size_t')
-        elem = await self.read_length(elem_size)
-        if elem is None:
-            raise EOFException("got EOF while expecting to read environment element of length", elem_size)
-        return elem
-
-    async def read_length_prefixed_array(self, length: int) -> t.List[bytes]:
-        ret: t.List[bytes] = []
-        for _ in range(length):
-            ret.append(await self.read_length_prefixed_string())
-        return ret
-
-    async def read_envp(self, length: int) -> t.Dict[bytes, bytes]:
-        raw = await self.read_length_prefixed_array(length)
-        environ: t.Dict[bytes, bytes] = {}
-        for elem in raw:
-            # if someone passes us a malformed environment element without =,
-            # we'll just break, whatever
-            key, val = elem.split(b"=", 1)
-            environ[key] = val
-        return environ
-
-    async def read_until_delimiter(self, delim: bytes) -> t.Optional[bytes]:
-        while True:
-            try:
-                i = self.buf.index(delim)
-            except ValueError:
-                pass
-            else:
-                section = self.buf[:i]
-                # skip the delimiter
-                self.buf = self.buf[i+1:]
-                return section
-            # buf contains no copies of "delim", gotta read some more data
-            data = await self._read()
-            if data is None:
-                return None
-            self.buf += data
-
-    async def read_line(self) -> t.Optional[bytes]:
-        return (await self.read_until_delimiter(b"\n"))
-
-    async def read_keyval(self) -> t.Optional[t.Tuple[bytes, bytes]]:
-        keyval = await self.read_line()
-        if keyval is None:
-            return None
-        key, val = keyval.split(b"=", 1)
-        return key, val
-
-    async def read_known_keyval(self, expected_key: bytes) -> bytes:
-        keyval = await self.read_keyval()
-        if keyval is None:
-            raise EOFException("expected key value pair with key", expected_key, "but got EOF instead")
-        key, val = keyval
-        if key != expected_key:
-            raise EOFException("expected key", expected_key, "but got", key)
-        return val
-
-    async def read_known_int(self, expected_key: bytes) -> int:
-        return int(await self.read_known_keyval(expected_key))
-
-    async def read_known_fd(self, expected_key: bytes) -> near.FileDescriptor:
-        return near.FileDescriptor(await self.read_known_int(expected_key))
-
-    async def read_netstring(self) -> t.Optional[bytes]:
-        length_bytes = await self.read_until_delimiter(b':')
-        if length_bytes is None:
-            return None
-        length = int(length_bytes)
-        data = await self.read_length(length)
-        if data is None:
-            raise EOFException("hangup before netstring data")
-        comma = await self.read_length(1)        
-        if comma is None:
-            raise EOFException("hangup before comma at end of netstring")
-        if comma != b",":
-            raise Exception("bad netstring delimiter", comma)
-        return data
 
 async def make_connections(access_task: Task,
                            # regrettably asymmetric...

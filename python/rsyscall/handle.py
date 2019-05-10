@@ -24,9 +24,10 @@ from rsyscall.struct import Serializer, HasSerializer, FixedSerializer, FixedSiz
 from rsyscall.signal import Sigaction, Sigset, Signals, Siginfo, SignalMaskTask
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
-from rsyscall.unistd import SEEK
+from rsyscall.unistd import SEEK, Arg, ArgList
 from rsyscall.sys.epoll import EpollFlag, EPOLL_CTL, EpollEvent, EpollEventList
 from rsyscall.linux.dirent import DirentList
+from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.inotify import InotifyFlag, IN
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.wait import W, ChildEvent
@@ -1128,51 +1129,11 @@ class ThreadProcess(ChildProcess):
 ################################################################################
 # various structs which need to be moved out
 
-@dataclass
-class FutexNode(Struct):
-    # this is our bundle of struct robust_list with a futex.  since it's tricky to handle the
-    # reference management of taking a reference to just one field in a structure (the futex, in
-    # cases where we don't care about the robust list), we always deal in the entire FutexNode
-    # structure whenever we talk about futexes. that's a bit of overhead but we barely use futexes,
-    # so it's fine.
-    next: t.Optional[Pointer[FutexNode]]
-    futex: Int32
-
-    def to_bytes(self) -> bytes:
-        struct = ffi.new('struct futex_node*', {
-            # technically we're supposed to have a pointer to the first node in the robust list to
-            # indicate the end.  but that's tricky to do. so instead let's just use a NULL pointer;
-            # the kernel will EFAULT when it hits the end. make sure not to map 0, or we'll
-            # break. https://imgflip.com/i/2zwysg
-            'list': (ffi.cast('struct robust_list*', int(self.next.near)) if self.next else ffi.NULL,),
-            'futex': self.futex,
-        })
-        return bytes(ffi.buffer(struct))
-
-    @classmethod
-    def sizeof(cls) -> int:
-        return ffi.sizeof('struct futex_node')
-
-@dataclass
-class RobustListHead(Struct):
-    first: WrittenPointer[FutexNode]
-
-    def to_bytes(self) -> bytes:
-        struct = ffi.new('struct robust_list_head*', {
-            'list': (ffi.cast('struct robust_list*', int(self.first.near)),),
-            'futex_offset': ffi.offsetof('struct futex_node', 'futex'),
-            'list_op_pending': ffi.NULL,
-        })
-        return bytes(ffi.buffer(struct))
-
-    @classmethod
-    def sizeof(cls) -> int:
-        return ffi.sizeof('struct robust_list_head')
-
 class Borrowable:
     def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
         raise NotImplementedError("borrow_with not implemented on", type(self))
 
+import struct
 T_borrowable = t.TypeVar('T_borrowable', bound=Borrowable)
 @dataclass
 class Stack(Serializable, t.Generic[T_borrowable]):
@@ -1258,35 +1219,3 @@ class FDPairSerializer(Serializer[T_fdpair]):
         def make(n: int) -> FileDescriptor:
             return self.task.make_fd_handle(rsyscall.near.FileDescriptor(int(n)))
         return self.cls(make(struct.first), make(struct.second))
-
-class Arg(bytes, Serializable):
-    def to_bytes(self) -> bytes:
-        return self + b'\0'
-
-    T = t.TypeVar('T', bound='Arg')
-    @classmethod
-    def from_bytes(cls: t.Type[T], data: bytes) -> T:
-        try:
-            nullidx = data.index(b'\0')
-        except ValueError:
-            return cls(data)
-        else:
-            return cls(data[0:nullidx])
-
-T_arglist = t.TypeVar('T_arglist', bound='ArgList')
-class ArgList(t.List[Pointer[Arg]], FixedSerializer):
-    @classmethod
-    def get_serializer(cls, task: Task) -> Serializer[T_arglist]:
-        return ArgListSerializer()
-
-import struct
-class ArgListSerializer(Serializer[T_arglist]):
-    def to_bytes(self, arglist: T_arglist) -> bytes:
-        ret = b""
-        for ptr in arglist:
-            ret += struct.Struct("Q").pack(int(ptr.near))
-        ret += struct.Struct("Q").pack(0)
-        return ret
-
-    def from_bytes(self, data: bytes) -> T_arglist:
-        raise Exception("can't get pointer handles from raw bytes")
