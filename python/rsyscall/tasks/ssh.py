@@ -18,6 +18,7 @@ from rsyscall.monitor import AsyncChildProcess
 import rsyscall.nix as nix
 from rsyscall.fcntl import O
 from rsyscall.sys.socket import SOCK, AF
+from rsyscall.handle import Pipe
 
 __all__ = [
     "SSHCommand",
@@ -129,11 +130,11 @@ async def run_socket_binder(
         ssh_command: SSHCommand,
         bootstrap_executable: handle.FileDescriptor,
 ) -> t.AsyncGenerator[bytes, None]:
-    stdout_pipe = await task.task.pipe()
-    async_stdout = await task.make_afd(stdout_pipe.rfd.handle)
+    stdout_pipe = await (await task.task.base.pipe(
+        await task.task.malloc_struct(Pipe), O.CLOEXEC)).read()
+    async_stdout = await task.make_afd(stdout_pipe.read)
     thread = await task.fork()
-    stdout = thread.stdtask.task.base.make_fd_handle(stdout_pipe.wfd.handle)
-    await stdout_pipe.wfd.handle.invalidate()
+    stdout = stdout_pipe.write.move(thread.stdtask.task.base)
     with bootstrap_executable.borrow(thread.stdtask.task.base) as bootstrap_executable:
         await thread.stdtask.unshare_files()
         # TODO we are relying here on the fact that replace_with doesn't set cloexec on the new fd.
@@ -167,11 +168,11 @@ async def run_socket_binder(
 
 async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
                       local_path: handle.Path, remote_path: str) -> AsyncChildProcess:
-    stdout_pipe = await stdtask.task.pipe()
-    async_stdout = await stdtask.make_afd(stdout_pipe.rfd.handle)
+    stdout_pipe = await (await stdtask.task.base.pipe(
+        await stdtask.task.malloc_struct(Pipe), O.CLOEXEC)).read()
+    async_stdout = await stdtask.make_afd(stdout_pipe.read)
     thread = await stdtask.fork()
-    stdout = thread.stdtask.task.base.make_fd_handle(stdout_pipe.wfd.handle)
-    await stdout_pipe.wfd.invalidate()
+    stdout = stdout_pipe.write.move(thread.stdtask.task.base)
     await thread.stdtask.unshare_files()
     await thread.stdtask.stdout.replace_with(stdout)
     child_task = await ssh_command.local_forward(

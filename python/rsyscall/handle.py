@@ -898,8 +898,8 @@ class Task(SignalMaskTask, rsyscall.far.Task):
                     await rsyscall.near.waitid(self.sysif, None, infop_b.near, options, rusage_b.near)
 
     async def pipe(self, buf: Pointer[Pipe], flags: O) -> Pointer[Pipe]:
-        with buf.borrow(self) as buf_b:
-            await rsyscall.near.pipe2(self.sysif, buf_b.near, flags)
+        with buf.borrow(self):
+            await rsyscall.near.pipe2(self.sysif, buf.near, flags)
             return buf
 
     async def socketpair(self, domain: AF, type: SOCK, protocol: int, sv: Pointer[FDPair]) -> Pointer[FDPair]:
