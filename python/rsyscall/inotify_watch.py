@@ -1,6 +1,6 @@
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.io import StandardTask, AsyncFileDescriptor, InotifyFile, Task
+from rsyscall.io import StandardTask, AsyncFileDescriptor, Task
 from rsyscall.io import AsyncReadBuffer
 from rsyscall.concurrency import OneAtATime
 from rsyscall.near import WatchDescriptor

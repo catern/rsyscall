@@ -5,7 +5,7 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect, Command, AsyncReadBuffer, ProcessResources, UnixSocketFile, spit, FileDescriptor, ReadableFile, WritableFile
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, robust_unix_bind, robust_unix_connect, Command, AsyncReadBuffer, ProcessResources, spit, FileDescriptor
 import trio
 from dataclasses import dataclass
 import logging
@@ -132,9 +132,9 @@ async def _setup_stub(
         epoller=epoller,
         child_monitor=child_monitor,
         environment=environ,
-        stdin=task._make_fd(0, ReadableFile(shared=True)),
-        stdout=task._make_fd(1, WritableFile(shared=True)),
-        stderr=task._make_fd(2, WritableFile(shared=True)),
+        stdin=task._make_fd(0),
+        stdout=task._make_fd(1),
+        stderr=task._make_fd(2),
     )
     #### TODO set up futex I guess
     remote_futex_memfd = near.FileDescriptor(describe_struct.futex_memfd)

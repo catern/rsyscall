@@ -66,29 +66,6 @@ import inspect
 logger = logging.getLogger(__name__)
 
 T = t.TypeVar('T')
-class File:
-    """This is the underlying file object referred to by a file descriptor.
-
-    Often, multiple file descriptors in multiple processes can refer
-    to the same file object. For example, the stdin/stdout/stderr file
-    descriptors will typically all refer to the same file object
-    across several processes started by the same shell.
-
-    This is unfortunate, because there are some useful mutations (in
-    particular, setting O_NONBLOCK) which we'd like to perform to
-    Files, but which might break other users.
-
-    We store whether the File is shared with others with
-    "shared". If it is, we can't mutate it.
-
-    """
-    shared: bool
-    def __init__(self, shared: bool=False, flags: int=None) -> None:
-        self.shared = shared
-
-T_file = t.TypeVar('T_file', bound=File)
-T_file_co = t.TypeVar('T_file_co', bound=File, covariant=True)
-
 class Task(RAM):
     def __init__(self,
                  base_: handle.Task,
@@ -125,28 +102,28 @@ class Task(RAM):
         await self.base.exit(status)
         await self.close()
 
-    def _make_fd(self, num: int, file: T_file) -> MemFileDescriptor:
-        return self.make_fd(near.FileDescriptor(num), file)
+    def _make_fd(self, num: int) -> MemFileDescriptor:
+        return self.make_fd(near.FileDescriptor(num))
 
-    def make_fd(self, fd: near.FileDescriptor, file: T_file) -> MemFileDescriptor:
-        return FileDescriptor(self, self.base.make_fd_handle(fd), file)
+    def make_fd(self, fd: near.FileDescriptor) -> MemFileDescriptor:
+        return FileDescriptor(self, self.base.make_fd_handle(fd))
 
     # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
     # and they'll take an handle.FileDescriptor.
     # then we'll directly have StandardTask contain both Task and MemoryAbstractor?
     async def pipe(self, flags=O.CLOEXEC) -> Pipe:
         pipe = await (await self.base.pipe(await self.malloc_struct(handle.Pipe), O.CLOEXEC)).read()
-        return Pipe(FileDescriptor(self, pipe.read, File()),
-                    FileDescriptor(self, pipe.write, File()))
+        return Pipe(FileDescriptor(self, pipe.read),
+                    FileDescriptor(self, pipe.write))
 
     async def socketpair(self, domain: AF, type: SOCK, protocol: int) -> t.Tuple[FileDescriptor, FileDescriptor]:
         pair = await (await self.base.socketpair(domain, type, protocol, await self.malloc_struct(handle.FDPair))).read()
-        return (FileDescriptor(self, pair.first, File()),
-                FileDescriptor(self, pair.second, File()))
+        return (FileDescriptor(self, pair.first),
+                FileDescriptor(self, pair.second))
 
     async def socket_unix(self, type: SOCK, protocol: int=0, cloexec=True) -> MemFileDescriptor:
         sockfd = await self.base.socket(AF.UNIX, type, protocol, cloexec=cloexec)
-        return FileDescriptor(self, sockfd, UnixSocketFile())
+        return FileDescriptor(self, sockfd)
 
     async def make_epoll_center(self) -> EpollCenter:
         epfd = await self.base.epoll_create(EpollFlag.CLOEXEC)
@@ -161,47 +138,12 @@ class Task(RAM):
             epoll_center = await EpollCenter.make(self, epfd, wait_readable, None)
         return epoll_center
 
-class ReadableFile(File):
-    pass
-
-class WritableFile(File):
-    pass
-
-class SeekableFile(File):
-    pass
-
-class ReadableWritableFile(ReadableFile, WritableFile):
-    pass
-
-class SignalFile(ReadableFile):
-    pass
-
-class MemoryFile(ReadableWritableFile, SeekableFile):
-    pass
-
-class DirectoryFile(SeekableFile):
-    pass
-
-class SocketFile(t.Generic[T_addr], ReadableWritableFile):
-    address_type: t.Type[T_addr]
-
-class UnixSocketFile(SocketFile[SockaddrUn]):
-    address_type = SockaddrUn
-
-class InetSocketFile(SocketFile[SockaddrIn]):
-    address_type = SockaddrIn
-
-class InotifyFile(ReadableFile):
-    pass
-
-class MemFileDescriptor(t.Generic[T_file_co]):
+class MemFileDescriptor:
     "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."
     task: Task
-    file: T_file_co
-    def __init__(self, task: Task, handle: handle.FileDescriptor, file: T_file_co) -> None:
+    def __init__(self, task: Task, handle: handle.FileDescriptor) -> None:
         self.task = task
         self.handle = handle
-        self.file = file
         self.open = True
 
     async def aclose(self):
@@ -229,13 +171,13 @@ class MemFileDescriptor(t.Generic[T_file_co]):
 
     def for_task(self, task: handle.Task) -> 'MemFileDescriptor':
         if self.open:
-            return self.__class__(self.task, task.make_fd_handle(self.handle), self.file)
+            return self.__class__(self.task, task.make_fd_handle(self.handle))
         else:
             raise Exception("file descriptor already closed")
 
     def move(self, task: handle.Task) -> 'MemFileDescriptor':
         if self.open:
-            return self.__class__(self.task, self.handle.move(task), self.file)
+            return self.__class__(self.task, self.handle.move(task))
         else:
             raise Exception("file descriptor already closed")
 
@@ -251,7 +193,6 @@ class MemFileDescriptor(t.Generic[T_file_co]):
         await self.copy_from(source)
         await source.invalidate()
 
-    # These are just helper methods which forward to the method on the underlying file object.
     async def set_nonblock(self) -> None:
         "Set the O_NONBLOCK flag on the underlying file object"
         await self.handle.fcntl(F.SETFL, O.NONBLOCK)
@@ -308,7 +249,8 @@ class MemFileDescriptor(t.Generic[T_file_co]):
         written_sockbuf = await self.task.to_pointer(Sockbuf(await self.task.malloc_struct(GenericSockaddr)))
         fd, sockbuf = await self.handle.accept(flags, written_sockbuf)
         addr = (await (await sockbuf.read()).buf.read()).parse()
-        return FileDescriptor(self.task, fd, type(self.file)()), addr
+        return FileDescriptor(self.task, fd), addr
+
 FileDescriptor = MemFileDescriptor
 
 class Path(rsyscall.path.PathLike):
@@ -348,20 +290,8 @@ class Path(rsyscall.path.PathLike):
         Note that this can block forever if we're opening a FIFO
 
         """
-        file: File
-        if flags & O.PATH:
-            file = File()
-        elif flags & O.WRONLY:
-            file = WritableFile()
-        elif flags & O.RDWR:
-            file = ReadableWritableFile()
-        elif flags & O.DIRECTORY:
-            file = DirectoryFile()
-        else:
-            # O.RDONLY is 0, so if we don't have any of the rest, then...
-            file = ReadableFile()
         fd = await self.task.base.open(await self.to_pointer(), flags, mode)
-        return FileDescriptor(self.task, fd, file)
+        return FileDescriptor(self.task, fd)
 
     async def open_directory(self) -> MemFileDescriptor:
         return (await self.open(O.DIRECTORY))

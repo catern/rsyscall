@@ -3,7 +3,7 @@ import rsyscall.handle as handle
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, UnixSocketFile, ProcessResources, ReadableFile, WritableFile, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, Task, ChildProcessMonitor, which, robust_unix_connect
+from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, ProcessResources, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, Task, ChildProcessMonitor, which, robust_unix_connect
 from dataclasses import dataclass
 import importlib.resources
 import logging
@@ -257,16 +257,16 @@ async def ssh_bootstrap(
     new_stdtask = StandardTask(
         access_task=parent_task.task,
         access_epoller=parent_task.epoller,
-        access_connection=(local_data_path, new_task.make_fd(listening_fd.near, UnixSocketFile())),
+        access_connection=(local_data_path, new_task.make_fd(listening_fd.near)),
         connecting_task=new_task, connecting_connection=connecting_connection,
         task=new_task,
         process_resources=ProcessResources.make_from_symbols(new_base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,
         environment=environ,
-        stdin=new_task._make_fd(0, ReadableFile(shared=True)),
-        stdout=new_task._make_fd(1, WritableFile(shared=True)),
-        stderr=new_task._make_fd(2, WritableFile(shared=True)),
+        stdin=new_task._make_fd(0),
+        stdout=new_task._make_fd(1),
+        stderr=new_task._make_fd(2),
     )
     return bootstrap_child_task, new_stdtask
 

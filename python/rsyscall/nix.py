@@ -2,7 +2,7 @@ from __future__ import annotations
 import typing as t
 import os
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask, DirectoryFile, read_all, which, Command, FileDescriptor, Task, Path
+from rsyscall.io import StandardTask, read_all, which, Command, MemFileDescriptor, Task, Path
 import rsyscall.tasks.local as local
 import trio
 import struct
@@ -14,7 +14,7 @@ from rsyscall.sys.mount import MS
 
 async def bootstrap_nix(
         src_nix_store: Command, src_tar: Command, src_task: StandardTask,
-        dest_tar: Command, dest_task: StandardTask, dest_dir: FileDescriptor[DirectoryFile],
+        dest_tar: Command, dest_task: StandardTask, dest_dir: MemFileDescriptor,
 ) -> t.List[bytes]:
     "Copies the Nix binaries into dest task's CWD. Returns the list of paths in the closure."
     query_thread = await src_task.fork()

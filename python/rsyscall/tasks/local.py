@@ -131,9 +131,9 @@ async def _make_local_stdtask() -> StandardTask:
         mem_task, process_resources,
         epoller, child_monitor,
         {**environ},
-        stdin=mem_task._make_fd(0, rsc.ReadableFile()),
-        stdout=mem_task._make_fd(1, rsc.WritableFile()),
-        stderr=mem_task._make_fd(2, rsc.WritableFile()),
+        stdin=mem_task._make_fd(0),
+        stdout=mem_task._make_fd(1),
+        stderr=mem_task._make_fd(2),
     )
     return stdtask
 
