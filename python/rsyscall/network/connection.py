@@ -1,6 +1,7 @@
 from __future__ import annotations
 import abc
 import typing as t
+import trio
 from rsyscall.epoller import AsyncFileDescriptor, EpollCenter
 from rsyscall.handle import FileDescriptor, WrittenPointer, Task
 from rsyscall.memory.ram import RAM
@@ -10,6 +11,58 @@ from rsyscall.batch import BatchSemantics
 from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, RecvmsgFlags, SendMsghdr, RecvMsghdr, CmsgList, CmsgSCMRights
 from rsyscall.sys.uio import IovecList
 from rsyscall.handle import FDPair
+
+class ConnectionInterface:
+    @abc.abstractmethod
+    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]: ...
+
+class ListeningConnection(ConnectionInterface):
+    def __init__(self,
+                 address_task: Task,
+                 address: WrittenPointer[Address],
+                 listener_fd: FileDescriptor,
+    ) -> None:
+        self.address_task = address_task
+        self.address = address
+        self.listener_fd = listener_fd
+
+    async def open_channel(self) -> t.Tuple[FileDescriptor, FileDescriptor]:
+        address_sock = await self.address_task.socket(self.address.value.family, SOCK.STREAM)
+        # TODO this connect should really be async
+        # but, since we're just connecting to a unix socket, it's fine I guess.
+        await address_sock.connect(self.address)
+        # TODO this accept should really be async
+        listener_sock = await self.listener_fd.accept(SOCK.CLOEXEC)
+        return address_sock, listener_sock
+
+    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
+        # pairs: t.List[t.Any] = [None]*count
+        # async with trio.open_nursery() as nursery:
+        #     async def open_nth(n: int) -> None:
+        #         pairs[n] = await self.open_channel()
+        #     for i in range(count):
+        #         nursery.start_soon(open_nth, i)
+        # return pairs
+        # TODO batching
+        return [await self.open_channel() for _ in range(count)]
+
+class SocketpairConnection(ConnectionInterface):
+    def __init__(self, task: Task, ram: RAM, dest_task: Task) -> None:
+        if task.fd_table != dest_task.fd_table:
+            raise Exception("task and dest_task are in separate fd tables; "
+                            "we can't use a SocketpairConnection between them.")
+        self.task = task
+        self.ram = ram
+        self.dest_task = dest_task
+
+    async def open_channel(self) -> t.Tuple[FileDescriptor, FileDescriptor]:
+        pair = await (await self.task.socketpair(
+            AF.UNIX, SOCK.STREAM, 0, await self.ram.malloc_struct(FDPair))).read()
+        return (pair.first, pair.second.move(self.dest_task))
+
+    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
+        # TODO batching
+        return [await self.open_channel() for _ in range(count)]
 
 class Connection:
     def __init__(self,
@@ -27,6 +80,11 @@ class Connection:
                  task: Task,
                  ram: RAM,
     ) -> None:
+        if access_connection:
+            address, listening_fd = access_connection
+            self.first_conn: ConnectionInterface = ListeningConnection(access_task, address, listening_fd)
+        else:
+            self.first_conn = SocketpairConnection(access_task, access_ram, connecting_task)
         self.access_task = access_task
         self.access_ram = access_ram
         self.access_epoller = access_epoller
