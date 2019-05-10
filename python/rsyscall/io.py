@@ -9,7 +9,7 @@ import math
 
 import rsyscall.handle as handle
 import rsyscall.handle
-from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess, Sockbuf, MemoryGateway, Pointer
+from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess, MemoryGateway, Pointer
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_struct, T_fixed_size, Bytes, Int32, Serializer, Struct
@@ -25,7 +25,7 @@ from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.tasks.fork import spawn_rsyscall_thread, RsyscallConnection, SyscallResponse
 from rsyscall.tasks.common import raise_if_error, log_syscall
 
-from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr, SendmsgFlags, RecvmsgFlags
+from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, GenericSockaddr, SendmsgFlags, RecvmsgFlags, Sockbuf
 from rsyscall.fcntl import AT, O, F
 from rsyscall.sys.socket import T_addr
 from rsyscall.sys.mount import MS

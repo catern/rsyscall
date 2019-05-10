@@ -16912,6 +16912,8 @@ And we can have an exec which is not memory-abstracting, I guess.
    handle is now my largest file! awesome!
 ** DONE remove circular dep between near and signal
 ** more mixingification of handle.Task
+** TODO move application scripts out of rsyscall module
+   what should I call that directory?
 ** DONE move out sigmask
    oh, hey, I can do this with a mixin, too, for nice modularity!
 ** TODO properly handle inheritance with handle
