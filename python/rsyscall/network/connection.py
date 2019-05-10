@@ -61,9 +61,11 @@ async def make_connections(access_task: Task,
         else:
             raise Exception("must pass access connection when access task and connecting task are different")
         async def make_conn() -> t.Tuple[handle.FileDescriptor, handle.FileDescriptor]:
-            left_sock = await access_task.socket(AF.UNIX, SOCK.STREAM)
-            async with access_connection_path.as_sockaddr_un() as addr:
-                await left_sock.connect(await access_ram.to_pointer(addr))
+            addr = await access_connection_path.as_sockaddr_un()
+            addrptr = await access_ram.to_pointer(addr)
+            left_sock = await access_task.socket(addrptr.value.family, SOCK.STREAM)
+            await left_sock.connect(addrptr)
+            await addr.close()
             right_sock = await access_connection_socket.accept(SOCK.CLOEXEC)
             return left_sock, right_sock
     for _ in range(count):

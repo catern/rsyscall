@@ -5,6 +5,8 @@ from rsyscall.sys.socket import AF, Address, _register_sockaddr
 from rsyscall.path import PathLike
 from dataclasses import dataclass
 import os
+if t.TYPE_CHECKING:
+    from rsyscall.handle import FileDescriptor
 
 class PathTooLongError(ValueError):
     pass
@@ -57,7 +59,18 @@ class SockaddrUn(Address):
 
     def __str__(self) -> str:
         return f"SockaddrUn({self.path})"
+
+    async def close(self) -> None:
+        pass
 _register_sockaddr(SockaddrUn)
+
+class SockaddrUnProcFd(SockaddrUn):
+    def __init__(self, fd: FileDescriptor) -> None:
+        super().__init__(os.fsencode(f"/proc/self/fd/{int(fd.near)}"))
+        self.fd = fd
+
+    async def close(self) -> None:
+        await self.fd.close()
 
 
 #### Tests ####

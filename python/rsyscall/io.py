@@ -29,7 +29,7 @@ from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, GenericSockaddr, Sen
 from rsyscall.fcntl import AT, O, F
 from rsyscall.sys.socket import T_addr
 from rsyscall.sys.mount import MS
-from rsyscall.sys.un import SockaddrUn, PathTooLongError
+from rsyscall.sys.un import SockaddrUn, PathTooLongError, SockaddrUnProcFd
 from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EPOLL_CTL, EpollFlag
 from rsyscall.sys.wait import W, ChildEvent
@@ -363,8 +363,7 @@ class Path(rsyscall.path.PathLike):
         async with (await self.open_path()) as f:
             return (await Path(self.task, f.handle.as_proc_path()).readlink())
 
-    @contextlib.asynccontextmanager
-    async def as_sockaddr_un(self) -> t.AsyncGenerator[SockaddrUn, None]:
+    async def as_sockaddr_un(self) -> SockaddrUn:
         """Turn this path into a SockaddrUn, hacking around the 108 byte limit on socket addresses.
 
         If the passed path is too long to fit in an address, this function will open that path with
@@ -372,11 +371,10 @@ class Path(rsyscall.path.PathLike):
 
         """
         try:
-            yield SockaddrUn.from_path(self)
+            return SockaddrUn.from_path(self)
         except PathTooLongError:
-            async with (await self.open_path()) as fd:
-                path = handle.Path("/proc/self/fd")/str(int(fd.handle.near))
-                yield SockaddrUn.from_path(path)
+            fd = await self.open_path()
+            return SockaddrUnProcFd(fd.handle)
 
     # to_bytes and from_bytes, kinda sketchy, hmm....
     # from_bytes will fail at runtime... whatever
@@ -451,8 +449,9 @@ async def robust_unix_connect(path: Path, sock: MemFileDescriptor) -> None:
     with O_PATH yourself rather than call into this function.
 
     """
-    async with path.as_sockaddr_un() as addr:
-        await sock.connect(addr)
+    addr = await path.as_sockaddr_un()
+    await sock.connect(addr)
+    await addr.close()
 
 async def spit(path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
     """Open a file, creating and truncating it, and write the passed text to it
