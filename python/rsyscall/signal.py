@@ -5,7 +5,7 @@ from rsyscall.struct import Struct, bits
 from dataclasses import dataclass, field
 import enum
 import contextlib
-from rsyscall.ctypes import Pointer as CPointer
+import rsyscall.near as near
 if t.TYPE_CHECKING:
     from rsyscall.far import Task
     from rsyscall.handle import Pointer, WrittenPointer
@@ -93,10 +93,10 @@ class Sigset(t.Set[Signals], Struct):
 
 @dataclass
 class Sigaction(Struct):
-    handler: t.Union[Sighandler, CPointer]
+    handler: t.Union[Sighandler, near.Pointer]
     flags: SA = SA(0)
     mask: Sigset = field(default_factory=Sigset)
-    restorer: t.Optional[CPointer] = None
+    restorer: t.Optional[near.Pointer] = None
 
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct kernel_sigaction const*', {
@@ -110,18 +110,18 @@ class Sigaction(Struct):
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct kernel_sigaction const*', ffi.from_buffer(data))
-        handler: t.Union[Sighandler, CPointer]
+        handler: t.Union[Sighandler, near.Pointer]
         int_handler = int(ffi.cast('long int', struct.ksa_handler))
         try:
             handler = Sighandler(int_handler)
         except ValueError:
-            handler = CPointer(int_handler)
+            handler = near.Pointer(int_handler)
         int_restorer = int(ffi.cast('long int', struct.ksa_restorer))
         return cls(
             handler=handler,
             flags=SA(struct.ksa_flags),
             mask=Sigset.from_cffi(struct.ksa_mask),
-            restorer=CPointer(int_restorer) if int_restorer else None,
+            restorer=near.Pointer(int_restorer) if int_restorer else None,
         )
 
     @classmethod
@@ -191,16 +191,15 @@ class SignalMaskTask(Task):
 
     async def _sigprocmask(self, newset: t.Optional[t.Tuple[MaskSIG, WrittenPointer[Sigset]]],
                           oldset: t.Optional[Pointer[Sigset]]=None) -> t.Optional[Pointer[Sigset]]:
-        import rsyscall.near
         with contextlib.ExitStack() as stack:
-            newset_n: t.Optional[t.Tuple[MaskSIG, rsyscall.near.Pointer]]
+            newset_n: t.Optional[t.Tuple[MaskSIG, near.Pointer]]
             if newset:
                 stack.enter_context(newset[1].borrow(self))
                 newset_n = newset[0], newset[1].near
             else:
                 newset_n = None
             oldset_n = await self._borrow_optional(stack, oldset)
-            await rsyscall.near.rt_sigprocmask(self.sysif, newset_n, oldset_n, Sigset.sizeof())
+            await near.rt_sigprocmask(self.sysif, newset_n, oldset_n, Sigset.sizeof())
         if oldset:
             return oldset
         else:
@@ -247,7 +246,7 @@ class TestSignal(TestCase):
         self.assertEqual(initial, output)
 
     def test_sigaction(self) -> None:
-        sa = Sigaction(Sighandler.IGN, SA(0), Sigset(), CPointer(0x42))
+        sa = Sigaction(Sighandler.IGN, SA(0), Sigset(), near.Pointer(0x42))
         out_sa = Sigaction.from_bytes(sa.to_bytes())
         self.assertEqual(sa.handler, out_sa.handler)
         self.assertEqual(sa.flags, out_sa.flags)
@@ -256,7 +255,7 @@ class TestSignal(TestCase):
 
         sa = Sigaction(Sighandler.DFL, SA.RESTART|SA.RESETHAND,
                        Sigset({Signals.SIGINT, Signals.SIGTERM}),
-                       CPointer(0))
+                       near.Pointer(0))
         out_sa = Sigaction.from_bytes(sa.to_bytes())
         self.assertEqual(sa.handler, out_sa.handler)
         self.assertEqual(sa.flags, out_sa.flags)

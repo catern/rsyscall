@@ -918,7 +918,7 @@ async def unshare_files(
     if event.died():
         raise Exception("stop_then_close task died unexpectedly", event)
     # perform the actual unshare
-    await near.unshare(task.base.sysif, near.UnshareFlag.FILES)
+    await near.unshare(task.base.sysif, UnshareFlag.FILES)
     await process.kill(Signals.SIGCONT)
     await process.waitid(W.ALL|W.EXITED, siginfo_buf)
     event = await process.read_event()

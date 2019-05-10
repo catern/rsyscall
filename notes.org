@@ -16872,7 +16872,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    But I thought I fixed this.
 ** DONE split out both spawn_exec
    There are two task creation things still in io.py!
-** split out fork task creation
+** DONE split out fork task creation
    okaaaay soooo
 
    the issue is that I dep on things from stdtask.
@@ -16902,6 +16902,16 @@ And we can have an exec which is not memory-abstracting, I guess.
    since we use CPM to monitor the children.
 
    ok! both are split out to different files!
+
+   wooo!!!
+
+   I did it!
+
+   next is more mixinification of Task I guess?
+
+   handle is now my largest file! awesome!
+** DONE remove circular dep between near and signal
+** more mixingification of handle.Task
 ** DONE move out sigmask
    oh, hey, I can do this with a mixin, too, for nice modularity!
 ** TODO properly handle inheritance with handle

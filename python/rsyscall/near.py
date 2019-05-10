@@ -7,17 +7,16 @@ import enum
 import abc
 import logging
 import typing as t
-import signal
-from rsyscall.ctypes import Pointer
 logger = logging.getLogger(__name__)
 
-from rsyscall.sys.epoll import EPOLL_CTL
-from rsyscall.sys.prctl import PrctlOp
-from rsyscall.sys.wait import IdType
-from rsyscall.sys.uio import RWF
 from rsyscall.fcntl import AT
-from rsyscall.sched import UnshareFlag
-from rsyscall.signal import MaskSIG
+from rsyscall.sys.wait import IdType
+if t.TYPE_CHECKING:
+    from rsyscall.sys.epoll import EPOLL_CTL
+    from rsyscall.sys.prctl import PrctlOp
+    from rsyscall.sys.uio import RWF
+    from rsyscall.sched import UnshareFlag
+    from rsyscall.signal import MaskSIG, Signals
 
 class SYS(enum.IntEnum):
     read = lib.SYS_read
@@ -135,6 +134,25 @@ class WatchDescriptor:
 
     def __int__(self) -> int:
         return self.number
+
+@dataclass
+class Pointer:
+    address: int
+
+    def __add__(self, other: int) -> 'Pointer':
+        return Pointer(self.address + other)
+
+    def __sub__(self, other: int) -> 'Pointer':
+        return Pointer(self.address - other)
+
+    def __str__(self) -> str:
+        return f"Pointer({hex(self.address)})"
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __int__(self) -> int:
+        return self.address
 
 # This is like the actual memory. Not sure what to think of this.
 @dataclass(eq=False)
@@ -349,7 +367,7 @@ async def getsockname(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Poi
 async def getpeername(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: Pointer) -> None:
     await sysif.syscall(SYS.getpeername, sockfd, addr, addrlen)
 
-async def rt_sigaction(sysif: SyscallInterface, signum: signal.Signals,
+async def rt_sigaction(sysif: SyscallInterface, signum: Signals,
                        act: t.Optional[Pointer],
                        oldact: t.Optional[Pointer],
                        size: int) -> None:
@@ -494,7 +512,7 @@ async def exit(sysif: SyscallInterface, status: int) -> None:
     with trio.MultiError.catch(handle):
         await sysif.syscall(SYS.exit, status)
 
-async def kill(sysif: SyscallInterface, pid: Process, sig: signal.Signals) -> None:
+async def kill(sysif: SyscallInterface, pid: Process, sig: Signals) -> None:
     await sysif.syscall(SYS.kill, pid, sig)
 
 async def clone(sysif: SyscallInterface, flags: int, child_stack: Pointer,
