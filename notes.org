@@ -16228,7 +16228,7 @@ so the subprocess is stuck in read, and the main process is... in "x32 mode"????
    ok let's think about it, how can I do this...
 
    oh I'll just sleep 1 instead of inf, that's fine.
-** getting rid of processresources
+** TODO getting rid of processresources
    We can have it basically be a dynamic linking API,
    so that you can load a library into your process,
    even on a remote host.
@@ -16259,6 +16259,8 @@ so the subprocess is stuck in read, and the main process is... in "x32 mode"????
    native? code? linking? dynlibs? loader?
 
    loader sounds good actually.
+
+   ok I moved the stuff to loader
 ** DONE move all the memory stuff into a memory subdir
 *** memory rework
 hmm this doesn't make any sense
@@ -16898,6 +16900,8 @@ And we can have an exec which is not memory-abstracting, I guess.
    and, I guess the same with CPM . . .
 
    since we use CPM to monitor the children.
+
+   ok! both are split out to different files!
 ** DONE move out sigmask
    oh, hey, I can do this with a mixin, too, for nice modularity!
 ** TODO properly handle inheritance with handle
