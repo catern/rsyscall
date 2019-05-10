@@ -1530,12 +1530,6 @@ class RecvMsghdrOutSerializer(Serializer[RecvMsghdrOut]):
         flags = MsghdrFlags(struct.msg_flags)
         return RecvMsghdrOut(name, control, flags, name_rest, control_rest)
 
-class NativeFunction:
-    pass
-
-class NativeFunctionSerializer(Serializer[NativeFunction]):
-    pass
-
 @dataclass
 class Sockbuf(t.Generic[T], HasSerializer):
     buf: Pointer[T]

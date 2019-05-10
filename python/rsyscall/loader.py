@@ -4,12 +4,17 @@ import contextlib
 from dataclasses import dataclass
 import typing as t
 from rsyscall.handle import (
-    NativeFunction, Borrowable, Pointer, WrittenPointer, FileDescriptor, Task, AllocationInterface,
-    NativeFunctionSerializer, Stack,
-    MemoryGateway, MemoryMapping,
+    Borrowable, Pointer, WrittenPointer, FileDescriptor, Task, AllocationInterface,
+    Stack, MemoryGateway, MemoryMapping,
 )
 import rsyscall.near as near
-from rsyscall.struct import Serializable
+from rsyscall.struct import Serializable, Serializer
+
+class NativeFunction:
+    pass
+
+class NativeFunctionSerializer(Serializer[NativeFunction]):
+    pass
 
 @dataclass
 class Trampoline(Serializable, Borrowable):

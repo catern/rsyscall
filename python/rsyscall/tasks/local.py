@@ -98,12 +98,12 @@ def _make_local_task() -> Task:
         far.NetNamespace(pid),
     )
     return base_task
-def _make_local_function_handle(cffi_ptr) -> Pointer[handle.NativeFunction]:
+def _make_local_function_handle(cffi_ptr) -> Pointer[loader.NativeFunction]:
     pointer_int = int(ffi.cast('ssize_t', cffi_ptr))
     # TODO we're just making up a memory mapping that this pointer is inside;
     # we should figure out the actual mapping, and the size for that matter.
     mapping = handle.MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
-    return Pointer(mapping, loader.NullGateway(), handle.NativeFunctionSerializer(), loader.StaticAllocation())
+    return Pointer(mapping, loader.NullGateway(), loader.NativeFunctionSerializer(), loader.StaticAllocation())
 
 async def _make_local_stdtask() -> StandardTask:
     local_transport = LocalMemoryTransport()
