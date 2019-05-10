@@ -660,6 +660,7 @@ class FileDescriptor:
             await rsyscall.near.signalfd4(self.task.sysif, self.near, mask.near, mask.bytesize(), flags)
 
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
+fd_table_to_task: t.Dict[rsyscall.far.FDTable, t.List[Task]] = {}
 
 class RootExecError(Exception):
     pass
@@ -690,7 +691,10 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         self.netns = netns
         self.fd_handles: t.List[FileDescriptor] = []
         fd_table_to_near_to_handles.setdefault(self.fd_table, {})
+        fd_table_to_task.setdefault(self.fd_table, []).append(self)
         self.__post_init__()
+
+        self.manipulating_fd_table = False
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -712,6 +716,8 @@ class Task(SignalMaskTask, rsyscall.far.Task):
     def make_fd_handle(self, fd: t.Union[rsyscall.near.FileDescriptor,
                                          rsyscall.far.FileDescriptor,
                                          FileDescriptor]) -> FileDescriptor:
+        if self.manipulating_fd_table:
+            raise Exception("can't make a new FD handle while manipulating_fd_table==True")
         if isinstance(fd, rsyscall.near.FileDescriptor):
             near = fd
         elif isinstance(fd, rsyscall.far.FileDescriptor):
@@ -732,6 +738,8 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             # fds to copy into the new space
             t.List[rsyscall.near.FileDescriptor]
     ], t.Awaitable[None]]) -> None:
+        if self.manipulating_fd_table:
+            raise Exception("can't unshare_files while manipulating_fd_table==True")
         old_fd_table = self.fd_table
         new_fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
         # force a garbage collection to improve efficiency
@@ -756,7 +764,9 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             # changed our Task.fd_table to point to a new fd table.
             if len(snapshot_old_near_to_handles[near]) == 0:
                 needs_close.append(near)
+        self.manipulating_fd_table = True
         await do_unshare(needs_close, [fd.near for fd in self.fd_handles])
+        self.manipulating_fd_table = False
         # We can only remove our handles from the handle lists after the unshare is done
         # and the fds are safely copied, because otherwise someone else running GC on the
         # old fd table would close our fds when they notice there are no more handles.

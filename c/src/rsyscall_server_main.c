@@ -20,7 +20,7 @@ struct options parse_options(int argc, char** argv)
 {
     if (argc < 3) {
         errx(1, "Usage: %s <describefd> <infd> <outfd> [passedfd [passedfd [passedfd...]]]",
-             argc ? argv[0] : "rsyscall_server");
+             argc ? argv[0] : "rsyscall-server");
     }
     errno = 0;
     const int describefd = strtol(argv[1], NULL, 0);

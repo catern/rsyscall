@@ -81,34 +81,33 @@ async def rsyscall_exec(
         await stdtask.task.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
     parent_futex_memfd = parent_stdtask.task.base.make_fd_handle(child_futex_memfd)
     syscall: ChildConnection = stdtask.task.base.sysif # type: ignore
+    # unshare files so we can unset cloexec on fds to inherit
+    await rsyscall_thread.stdtask.unshare_files(going_to_exec=True)
+    base_task = rsyscall_thread.stdtask.task.base
+    base_task.manipulating_fd_table = True
+    # unset cloexec on all the fds we want to copy to the new space
+    for fd in base_task.fd_handles:
+        await fd.fcntl(F.SETFD, 0)
     def encode(fd: near.FileDescriptor) -> bytes:
         return str(int(fd)).encode()
-    async def do_unshare(close_in_old_space: t.List[near.FileDescriptor],
-                         copy_to_new_space: t.List[near.FileDescriptor]) -> None:
-        # unset cloexec on all the fds we want to copy to the new space
-        for copying_fd in copy_to_new_space:
-            await near.fcntl(syscall, copying_fd, F.SETFD, 0)
-        child_task = await rsyscall_thread.exec(executable.command.args(
-                encode(passed_data_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
-                *[encode(fd) for fd in copy_to_new_space],
-            ), [stdtask.child_monitor.internal.signal_queue.signal_block])
-        #### read symbols from describe fd
-        describe_buf = AsyncReadBuffer(access_data_sock)
-        symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')
-        stdtask.process = ProcessResources.make_from_symbols(stdtask.task.base, symbol_struct)
-        # the futex task we used before is dead now that we've exec'd, have
-        # to null it out
-        syscall.futex_task = None
-        # TODO maybe remove dependence on parent task for closing?
-        for fd in close_in_old_space:
-            await near.close(parent_stdtask.task.base.sysif, fd)
-        stdtask.task.base.address_space = far.AddressSpace(rsyscall_thread.stdtask.task.base.process.near.id)
-        # we mutate the allocator instead of replacing to so that anything that
-        # has stored the allocator continues to work
-        stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)
-        stdtask.task.transport = SocketMemoryTransport(access_data_sock,
-                                                       passed_data_sock, stdtask.task.allocator)
-    await stdtask.task.base.unshare_files(do_unshare)
+    child_task = await rsyscall_thread.exec(executable.command.args(
+            encode(passed_data_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
+            *[encode(fd.near) for fd in base_task.fd_handles],
+    ), [stdtask.child_monitor.internal.signal_queue.signal_block])
+    #### read symbols from describe fd
+    describe_buf = AsyncReadBuffer(access_data_sock)
+    symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')
+    stdtask.process = ProcessResources.make_from_symbols(stdtask.task.base, symbol_struct)
+    # the futex task we used before is dead now that we've exec'd, have
+    # to null it out
+    syscall.futex_task = None
+    stdtask.task.base.address_space = far.AddressSpace(rsyscall_thread.stdtask.task.base.process.near.id)
+    # we mutate the allocator instead of replacing to so that anything that
+    # has stored the allocator continues to work
+    stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)
+    stdtask.task.transport = SocketMemoryTransport(access_data_sock,
+                                                   passed_data_sock, stdtask.task.allocator)
+    base_task.manipulating_fd_table = False
 
     #### make new futex task
     futex_task, local_futex_node, remote_mapping = await make_robust_futex_task(
