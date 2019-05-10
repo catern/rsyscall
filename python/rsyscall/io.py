@@ -512,7 +512,7 @@ class StandardTask:
     def __init__(self,
                  access_task: Task,
                  access_epoller: EpollCenter,
-                 access_connection: t.Optional[t.Tuple[Path, MemFileDescriptor]],
+                 access_connection: t.Optional[t.Tuple[Path, handle.FileDescriptor]],
                  connecting_task: Task,
                  # TODO we need to lock this, and the access_connection also.
                  # they are shared between processes...
@@ -862,7 +862,7 @@ async def unshare_files(
 async def make_connections(access_task: Task,
                            # regrettably asymmetric...
                            # it would be nice to unify connect/accept with passing file descriptors somehow.
-                           access_connection: t.Optional[t.Tuple[Path, MemFileDescriptor]],
+                           access_connection: t.Optional[t.Tuple[Path, handle.FileDescriptor]],
                            connecting_task: Task,
                            connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
                            parent_task: Task,
@@ -889,7 +889,7 @@ async def make_connections(access_task: Task,
             left_sock = await access_task.base.socket(AF.UNIX, SOCK.STREAM)
             async with access_connection_path.as_sockaddr_un() as addr:
                 await left_sock.connect(await access_task.to_pointer(addr))
-            right_sock = await access_connection_socket.handle.accept(SOCK.CLOEXEC)
+            right_sock = await access_connection_socket.accept(SOCK.CLOEXEC)
             return left_sock, right_sock
     for _ in range(count):
         access_sock, connecting_sock = await make_conn()
