@@ -1,0 +1,1 @@
+These are C programs, shell scripts, and notes which were written while researching or demonstrating some functionality.
