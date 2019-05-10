@@ -35,7 +35,7 @@ async def make_connections(access_task: Task,
                            access_ram: RAM,
                            # regrettably asymmetric...
                            # it would be nice to unify connect/accept with passing file descriptors somehow.
-                           access_connection: t.Optional[t.Tuple[t.Any, handle.FileDescriptor]],
+                           access_connection: t.Optional[t.Tuple[WrittenPointer[Address], handle.FileDescriptor]],
                            connecting_task: Task,
                            connecting_ram: RAM,
                            connecting_connection: t.Tuple[handle.FileDescriptor, handle.FileDescriptor],
@@ -57,15 +57,15 @@ async def make_connections(access_task: Task,
             return (pair.first, pair.second)
     else:
         if access_connection is not None:
-            access_connection_path, access_connection_socket = access_connection
+            access_connection_addr, access_connection_socket = access_connection
         else:
             raise Exception("must pass access connection when access task and connecting task are different")
         async def make_conn() -> t.Tuple[handle.FileDescriptor, handle.FileDescriptor]:
-            addr = await access_connection_path.as_sockaddr_un()
-            addrptr = await access_ram.to_pointer(addr)
-            left_sock = await access_task.socket(addrptr.value.family, SOCK.STREAM)
-            await left_sock.connect(addrptr)
-            await addr.close()
+            left_sock = await access_task.socket(access_connection_addr.value.family, SOCK.STREAM)
+            # TODO this connect should really be async
+            # but, since we're just connecting to a unix socket, it's fine I guess.
+            await left_sock.connect(access_connection_addr)
+            # TODO this accept should really be async
             right_sock = await access_connection_socket.accept(SOCK.CLOEXEC)
             return left_sock, right_sock
     for _ in range(count):

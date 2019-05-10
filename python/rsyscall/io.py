@@ -511,7 +511,7 @@ class StandardTask:
     def __init__(self,
                  access_task: Task,
                  access_epoller: EpollCenter,
-                 access_connection: t.Optional[t.Tuple[Path, handle.FileDescriptor]],
+                 access_connection: t.Optional[t.Tuple[WrittenPointer[Address], handle.FileDescriptor]],
                  connecting_task: Task,
                  # TODO we need to lock this, and the access_connection also.
                  # they are shared between processes...

@@ -259,7 +259,8 @@ async def ssh_bootstrap(
     new_stdtask = StandardTask(
         access_task=parent_task.task,
         access_epoller=parent_task.epoller,
-        access_connection=(local_data_path, new_base_task.make_fd_handle(listening_fd)),
+        access_connection=(await parent_task.task.to_pointer(await local_data_path.as_sockaddr_un()),
+                           new_base_task.make_fd_handle(listening_fd)),
         connecting_task=new_task, connecting_connection=connecting_connection,
         task=new_task,
         process_resources=ProcessResources.make_from_symbols(new_base_task, describe_struct.symbols),
