@@ -45,6 +45,7 @@ from rsyscall.sys.mount import MS
 from rsyscall.struct import Bytes
 
 from rsyscall.handle import Pipe, IovecList
+from rsyscall.monitor import SignalQueue
 
 
 import logging
@@ -734,8 +735,8 @@ class TestIO(unittest.TestCase):
             async with thread as stdtask2:
                 # have to use an epoller for that specific task
                 epoller = await stdtask2.task.make_epoll_center()
-                sigqueue = await rsyscall.io.SignalQueue.make(stdtask2.task, stdtask2.task.base,
-                                                              epoller, Sigset({Signals.SIGINT}))
+                sigqueue = await SignalQueue.make(stdtask2.task, stdtask2.task.base,
+                                                  epoller, Sigset({Signals.SIGINT}))
                 await stdtask2.task.base.process.kill(Signals.SIGINT)
                 buf = await stdtask2.task.malloc_struct(SignalfdSiginfo)
                 sigdata = await sigqueue.read(buf)
