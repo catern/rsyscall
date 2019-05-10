@@ -42,7 +42,7 @@ class SignalQueue:
         validp, _ = await self.sigfd.read_handle(buf)
         return validp
 
-class ChildProcess:
+class AsyncChildProcess:
     def __init__(self, process: handle.ChildProcess,
                  monitor: ChildProcessMonitorInternal) -> None:
         self.process = process
@@ -119,8 +119,8 @@ class ChildProcessMonitorInternal:
         self.running_wait = OneAtATime()
         self.waiters: t.List[SigchldWaiter] = []
 
-    def add_task(self, process: handle.ChildProcess) -> ChildProcess:
-        proc = ChildProcess(process, self)
+    def add_task(self, process: handle.ChildProcess) -> AsyncChildProcess:
+        proc = AsyncChildProcess(process, self)
         # self.processes.append(proc)
         return proc
 
@@ -135,7 +135,7 @@ class ChildProcessMonitorInternal:
                     clone_task: handle.Task,
                     flags: CLONE,
                     child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
-                    ctid: t.Optional[handle.Pointer]=None) -> ChildProcess:
+                    ctid: t.Optional[handle.Pointer]=None) -> AsyncChildProcess:
         process = await clone_task.clone(flags|Signals.SIGCHLD, child_stack, None, ctid, None)
         return self.add_task(process)
 
@@ -188,7 +188,7 @@ class ChildProcessMonitor:
 
     async def clone(self, flags: CLONE,
                     child_stack: t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
-                    ctid: t.Optional[handle.Pointer[FutexNode]]=None) -> ChildProcess:
+                    ctid: t.Optional[handle.Pointer[FutexNode]]=None) -> AsyncChildProcess:
         if self.use_clone_parent:
             flags |= CLONE.PARENT
         return (await self.internal.clone(self.cloning_task, flags, child_stack, ctid=ctid))

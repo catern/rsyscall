@@ -3,10 +3,11 @@ import rsyscall.handle as handle
 import rsyscall.far as far
 import rsyscall.near as near
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, AsyncReadBuffer, ChildProcess, launch_futex_monitor, ProcessResources, StandardTask, SocketMemoryTransport, Command
+from rsyscall.io import RsyscallThread, AsyncReadBuffer, launch_futex_monitor, ProcessResources, StandardTask, SocketMemoryTransport, Command
 import typing as t
 from rsyscall.handle import WrittenPointer
 from rsyscall.handle import FutexNode
+from rsyscall.monitor import AsyncChildProcess
 import rsyscall.batch as batch
 import rsyscall.nix as nix
 from dataclasses import dataclass
@@ -36,7 +37,7 @@ async def make_robust_futex_task(
         parent_memfd: handle.FileDescriptor,
         child_stdtask: StandardTask,
         child_memfd: handle.FileDescriptor,
-) -> t.Tuple[ChildProcess, handle.Pointer[FutexNode], handle.MemoryMapping]:
+) -> t.Tuple[AsyncChildProcess, handle.Pointer[FutexNode], handle.MemoryMapping]:
     # resize memfd appropriately
     futex_memfd_size = 4096
     await parent_memfd.ftruncate(futex_memfd_size)

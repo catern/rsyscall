@@ -14,10 +14,11 @@ from rsyscall.sys.memfd import MFD
 
 import rsyscall.handle as handle
 from rsyscall.path import Path
-from rsyscall.io import StandardTask, Command, ChildProcess
+from rsyscall.io import StandardTask, Command
+from rsyscall.monitor import AsyncChildProcess
 
 async def start_cat(stdtask: StandardTask, cat: Command,
-                    stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> ChildProcess:
+                    stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> AsyncChildProcess:
     thread = await stdtask.fork()
     await thread.stdtask.unshare_files_and_replace({
         thread.stdtask.stdin.handle: stdin,

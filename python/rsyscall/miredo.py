@@ -11,10 +11,10 @@ import rsyscall.handle as handle
 import rsyscall.near
 from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import StandardTask, RsyscallThread, Path, Command
-from rsyscall.io import ChildProcess
 from rsyscall.handle import FileDescriptor
 from dataclasses import dataclass
 from rsyscall.struct import Int32, Bytes
+from rsyscall.monitor import AsyncChildProcess
 
 import rsyscall.tasks.local as local
 from rsyscall.sys.capability import CAP, CapHeader, CapData
@@ -59,7 +59,7 @@ class Miredo:
 async def exec_miredo_privproc(
         miredo_exec: MiredoExecutables,
         thread: RsyscallThread,
-        privproc_side: FileDescriptor, tun_index: int) -> ChildProcess:
+        privproc_side: FileDescriptor, tun_index: int) -> AsyncChildProcess:
     privproc_side = privproc_side.move(thread.stdtask.task.base)
     await thread.stdtask.unshare_files(going_to_exec=True)
     await thread.stdtask.stdin.copy_from(privproc_side)
@@ -75,7 +75,7 @@ async def exec_miredo_run_client(
         reqsock: FileDescriptor,
         icmp6_fd: FileDescriptor,
         client_side: FileDescriptor,
-        server_name: str) -> ChildProcess:
+        server_name: str) -> AsyncChildProcess:
     fd_args = [fd.move(thread.stdtask.task.base)
                for fd in [inet_sock, tun_fd, reqsock, icmp6_fd, client_side]]
     await thread.stdtask.unshare_files(going_to_exec=True)

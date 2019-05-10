@@ -3,12 +3,13 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect, Command, ChildProcess, AsyncReadBuffer, ProcessResources, ReadableFile, WritableFile
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, ReadableWritableFile, robust_unix_bind, robust_unix_connect, Command, AsyncReadBuffer, ProcessResources, ReadableFile, WritableFile
 import trio
 import struct
 from dataclasses import dataclass
 import logging
 import rsyscall.memory.allocator as memory
+from rsyscall.monitor import AsyncChildProcess
 
 import rsyscall.nix as nix
 import rsyscall.batch as batch
@@ -32,7 +33,7 @@ async def stdin_bootstrap_path_from_store(store: nix.Store) -> Path:
 async def rsyscall_stdin_bootstrap(
         stdtask: StandardTask,
         bootstrap_command: Command,
-) -> t.Tuple[ChildProcess, StandardTask]:
+) -> t.Tuple[AsyncChildProcess, StandardTask]:
     """Fork and run an arbitrary Command which will start rsyscall_stdin_bootstrap"""
     #### fork and exec into the bootstrap command
     thread = await stdtask.fork()

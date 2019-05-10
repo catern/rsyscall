@@ -23,7 +23,7 @@ from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import EpollCenter, AsyncFileDescriptor
 from rsyscall.loader import Trampoline, ProcessResources
-from rsyscall.monitor import ChildProcess, ChildProcessMonitor
+from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, Socklen, GenericSockaddr, SendmsgFlags, RecvmsgFlags
 from rsyscall.fcntl import AT, O, F
@@ -816,7 +816,7 @@ class TemporaryDirectory:
 
 async def launch_futex_monitor(ram: RAM,
                                process_resources: ProcessResources, monitor: ChildProcessMonitor,
-                               futex_pointer: WrittenPointer[FutexNode]) -> ChildProcess:
+                               futex_pointer: WrittenPointer[FutexNode]) -> AsyncChildProcess:
     async def op(sem: batch.BatchSemantics) -> t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]]:
         stack_value = process_resources.make_trampoline_stack(Trampoline(
             process_resources.futex_helper_func, [
@@ -983,8 +983,8 @@ class ChildConnection(near.SyscallInterface):
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
                  rsyscall_connection: RsyscallConnection,
-                 server_task: ChildProcess,
-                 futex_task: t.Optional[ChildProcess],
+                 server_task: AsyncChildProcess,
+                 futex_task: t.Optional[AsyncChildProcess],
     ) -> None:
         self.rsyscall_connection = rsyscall_connection
         self.server_task = server_task
@@ -1491,12 +1491,12 @@ class RsyscallThread:
 
     async def exec(self, command: Command,
                    inherited_signal_blocks: t.List[SignalBlock]=[],
-    ) -> ChildProcess:
+    ) -> AsyncChildProcess:
         return (await self.execve(command.executable_path, command.arguments, command.env_updates,
                                   inherited_signal_blocks=inherited_signal_blocks))
 
     async def execveat(self, path: handle.Path,
-                       argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> ChildProcess:
+                       argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> AsyncChildProcess:
         def op(sem: batch.BatchSemantics) -> t.Tuple[handle.WrittenPointer[handle.Path],
                                                      handle.WrittenPointer[handle.ArgList],
                                                      handle.WrittenPointer[handle.ArgList]]:
@@ -1512,7 +1512,7 @@ class RsyscallThread:
     async def execve(self, path: handle.Path, argv: t.Sequence[t.Union[str, bytes, os.PathLike]],
                      env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]={},
                      inherited_signal_blocks: t.List[SignalBlock]=[],
-    ) -> ChildProcess:
+    ) -> AsyncChildProcess:
         """Replace the running executable in this thread with another.
 
         We take inherited_signal_blocks as an argument so that we can default it
@@ -1618,12 +1618,12 @@ class Command:
     # hmm we actually need an rsyscallthread to properly exec
     # would be nice to call this just "Thread".
     # we should namespace the current "Thread" properly, so we can do that...
-    async def exec(self, thread: RsyscallThread) -> ChildProcess:
+    async def exec(self, thread: RsyscallThread) -> AsyncChildProcess:
         return (await thread.execve(self.executable_path, self.arguments, self.env_updates))
 
 
 async def exec_cat(thread: RsyscallThread, cat: Command,
-                   stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> ChildProcess:
+                   stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> AsyncChildProcess:
     await thread.stdtask.unshare_files_and_replace({
         thread.stdtask.stdin.handle: stdin,
         thread.stdtask.stdout.handle: stdout,

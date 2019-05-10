@@ -3,7 +3,7 @@ import rsyscall.handle as handle
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, ChildProcess, UnixSocketFile, ProcessResources, ReadableFile, WritableFile, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, Task, ChildProcessMonitor, which, robust_unix_connect
+from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, UnixSocketFile, ProcessResources, ReadableFile, WritableFile, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, Task, ChildProcessMonitor, which, robust_unix_connect
 from dataclasses import dataclass
 import importlib.resources
 import logging
@@ -13,6 +13,7 @@ import contextlib
 import abc
 import random
 import string
+from rsyscall.monitor import AsyncChildProcess
 
 import rsyscall.nix as nix
 from rsyscall.fcntl import O
@@ -106,7 +107,7 @@ class SSHExecutables:
 class SSHHost:
     executables: SSHExecutables
     to_host: t.Any[t.Callable[[SSHCommand], SSHCommand]]
-    async def ssh(self, task: StandardTask) -> t.Tuple[ChildProcess, StandardTask]:
+    async def ssh(self, task: StandardTask) -> t.Tuple[AsyncChildProcess, StandardTask]:
         # we could get rid of the need to touch the local filesystem by directly
         # speaking the openssh multiplexer protocol. or directly speaking the ssh
         # protocol for that matter.
@@ -165,7 +166,7 @@ async def run_socket_binder(
         (await child.wait_for_exit()).check()
 
 async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
-                      local_path: handle.Path, remote_path: str) -> ChildProcess:
+                      local_path: handle.Path, remote_path: str) -> AsyncChildProcess:
     stdout_pipe = await stdtask.task.pipe()
     async_stdout = await stdtask.make_afd(stdout_pipe.rfd.handle)
     thread = await stdtask.fork()
@@ -194,7 +195,7 @@ async def ssh_bootstrap(
         local_socket_path: handle.Path,
         # the directory we're bootstrapping out of
         tmp_path_bytes: bytes,
-) -> t.Tuple[ChildProcess, StandardTask]:
+) -> t.Tuple[AsyncChildProcess, StandardTask]:
     # identify local path
     task = parent_task.task
     local_data_path = Path(task, local_socket_path)
