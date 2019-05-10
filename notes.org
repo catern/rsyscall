@@ -17093,6 +17093,17 @@ And we can have an exec which is not memory-abstracting, I guess.
    The tricky thing is "inheriting" it over something not quite simple as an unshare. hm.
 
    OK let's just punt on this, yet more punting.
+*** hm
+    OK so, we're currently facing the issue of,
+    we have a thing which is only valid while these guys are in the same address space,
+    and if we unshare the address space,
+    then we need to do some repair.
+
+    Maybe we just need to call it when we run unshare_files?
+
+    Maybe we can register callbacks on the task to be called as part of unshare?
+
+    Oh, for that matter, we should clean up how we currently handle unshare. Hm.
 ** make rsyscall_exec return RsyscallThread or whatever
    The thread is now generic enough that it can work for things that have called exec.
 

@@ -64,6 +64,49 @@ class SocketpairConnection(ConnectionInterface):
         # TODO batching
         return [await self.open_channel() for _ in range(count)]
 
+class MoverInterface:
+    @abc.abstractmethod
+    async def move_fds(self, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]: ...
+
+class SameFDTableMover(MoverInterface):
+    def __init__(self, task: Task) -> None:
+        self.task = task
+
+    async def move_fds(self, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
+        return [fd.move(self.task) for fd in fds]
+
+class SCMRightsMover(MoverInterface):
+    def __init__(self,
+                 from_ram: RAM, from_fd: FileDescriptor,
+                 to_ram: RAM, to_fd: FileDescriptor,
+    ) -> None:
+        self.from_ram = from_ram
+        self.from_fd = from_fd
+        self.to_ram = to_ram
+        self.to_fd = to_fd
+
+    async def move_fds(self, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
+        def sendmsg_op(sem: BatchSemantics) -> WrittenPointer[SendMsghdr]:
+            iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
+            cmsgs = sem.to_pointer(CmsgList([CmsgSCMRights([fd for fd in fds])]))
+            return sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
+        _, [] = await self.from_fd.sendmsg(await self.from_ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
+        def recvmsg_op(sem: BatchSemantics) -> WrittenPointer[RecvMsghdr]:
+            iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
+            cmsgs = sem.to_pointer(CmsgList([CmsgSCMRights([fd for fd in fds])]))
+            return sem.to_pointer(RecvMsghdr(None, iovec, cmsgs))
+        _, [], hdr = await self.to_fd.recvmsg(await self.to_ram.perform_batch(recvmsg_op), RecvmsgFlags.NONE)
+        cmsgs_ptr = (await hdr.read()).control
+        if cmsgs_ptr is None:
+            raise Exception("cmsgs field of header is, impossibly, None")
+        [cmsg] = await cmsgs_ptr.read()
+        if not isinstance(cmsg, CmsgSCMRights):
+            raise Exception("expected SCM_RIGHTS cmsg, instead got", cmsg)
+        passed_socks = cmsg
+        for sock in fds:
+            await sock.close()
+        return passed_socks
+
 class Connection:
     def __init__(self,
                  access_task: Task,
@@ -126,56 +169,14 @@ async def make_connections(self: Connection, count: int) -> t.List[t.Tuple[FileD
     # while the access task uses them.
     # okay but this is a slight simplification, because there may also be,
     # 4. the connection task, which is a task that actually gets the fds and passes them down to the parent task
-    access_socks: t.List[FileDescriptor] = []
-    connecting_socks: t.List[FileDescriptor] = []
-    if self.access_task.fd_table == self.connecting_task.fd_table:
-        async def make_conn() -> t.Tuple[FileDescriptor, FileDescriptor]:
-            pair = await (await self.access_task.socketpair(
-                AF.UNIX, SOCK.STREAM, 0, await self.access_ram.malloc_struct(FDPair))).read()
-            return (pair.first, pair.second)
-    else:
-        if self.access_connection is not None:
-            access_connection_addr, access_connection_socket = self.access_connection
-        else:
-            raise Exception("must pass access connection when access task and connecting task are different")
-        async def make_conn() -> t.Tuple[FileDescriptor, FileDescriptor]:
-            left_sock = await self.access_task.socket(access_connection_addr.value.family, SOCK.STREAM)
-            # TODO this connect should really be async
-            # but, since we're just connecting to a unix socket, it's fine I guess.
-            await left_sock.connect(access_connection_addr)
-            # TODO this accept should really be async
-            right_sock = await access_connection_socket.accept(SOCK.CLOEXEC)
-            return left_sock, right_sock
-    for _ in range(count):
-        access_sock, connecting_sock = await make_conn()
-        access_socks.append(access_sock)
-        connecting_socks.append(connecting_sock)
-    passed_socks: t.List[FileDescriptor]
+    connecting_socks: t.List[FileDescriptor]
+    pairs = await self.first_conn.open_channels(count)
+    # We set up the mover at runtime because we don't have a way to
+    # handle detecting an unshare_files in connecting_task/task.
     if self.connecting_task.fd_table == self.task.fd_table:
-        passed_socks = []
-        for sock in connecting_socks:
-            passed_socks.append(sock.move(self.task))
+        mover: MoverInterface = SameFDTableMover(self.task)
     else:
-        assert self.connecting_connection is not None
-        def sendmsg_op(sem: BatchSemantics) -> WrittenPointer[SendMsghdr]:
-            iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
-            cmsgs = sem.to_pointer(CmsgList([CmsgSCMRights([sock for sock in connecting_socks])]))
-            return sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
-        _, [] = await self.connecting_connection[0].sendmsg(await self.connecting_ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
-        def recvmsg_op(sem: BatchSemantics) -> WrittenPointer[RecvMsghdr]:
-            iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
-            cmsgs = sem.to_pointer(CmsgList([CmsgSCMRights([sock for sock in connecting_socks])]))
-            return sem.to_pointer(RecvMsghdr(None, iovec, cmsgs))
-        _, [], hdr = await self.connecting_connection[1].recvmsg(await self.ram.perform_batch(recvmsg_op), RecvmsgFlags.NONE)
-        cmsgs_ptr = (await hdr.read()).control
-        if cmsgs_ptr is None:
-            raise Exception("cmsgs field of header is, impossibly, None")
-        [cmsg] = await cmsgs_ptr.read()
-        if not isinstance(cmsg, CmsgSCMRights):
-            raise Exception("expected SCM_RIGHTS cmsg, instead got", cmsg)
-        passed_socks = cmsg
-        # don't need these in the connecting task anymore
-        for sock in connecting_socks:
-            await sock.close()
-    ret = list(zip(access_socks, passed_socks))
-    return ret
+        from_fd, to_fd = self.connecting_connection
+        mover = SCMRightsMover(self.connecting_ram, from_fd, self.ram, to_fd)
+    lastfds = await mover.move_fds([midfd for _, midfd in pairs])
+    return [(firstfd, lastfd) for (firstfd, _), lastfd in zip(pairs, lastfds)]
