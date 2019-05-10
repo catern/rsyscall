@@ -16916,7 +16916,189 @@ And we can have an exec which is not memory-abstracting, I guess.
    what should I call that directory?
 ** DONE move out sigmask
    oh, hey, I can do this with a mixin, too, for nice modularity!
-** TODO properly handle inheritance with handle
+** figure out good name for thing containing lots of resources, below thread
+   context?
+   process?
+
+   It's kind of like all the resources needed for an event loop.
+
+   loop?
+   vat?
+
+   It also has this network thing though.
+
+   HmMmMmMm.
+
+   oh hey can we call the network thing, AccessConnection?
+
+   after all, it it basically an already-established connection.
+
+   Yeah I like that.
+
+   Then we can say channels maybe.
+
+   tls?
+
+   like, how is this related to thread-local-storage?
+
+   well tls points to functions and things I guess,
+   and could point to other resources.
+
+   it's indeed TLS, I guess.
+
+   though the distinction is that a thread, um,
+   has to use TLS or something?
+
+   well, ok, so, we have TLS in everything, and a "thread",
+   is just something that we can monitor.
+
+   maybe I should call it ChildTask instead of thread.
+
+   after all we're now generic such that execs can use childtask.
+
+   Yeah hm.
+
+   Maybe I should come up with a new name other than task?
+
+   Meh no, task is fine: it's something I control.
+
+   So instead of RsyscallThread, I could call it ChildTask.
+
+   Maybe... I could call the main thing Thread then?
+
+   ChildThread?
+
+   Hmm. That's interesting.
+
+   Thread, yeah, Thread is a good name.
+
+   I like these names. ChildThread and Thread.
+
+   Thread nicely connotes that we control it.
+
+   I mean, maybe I should change Task to thread, for that matter.
+
+   Hey maybe ChildThread should be moved under the rest of this stuff?
+
+   After all, now Task can directly exec;
+   so maybe we should directly inherit from it.
+
+   Hm. That's tricky, because that's not actually the order of dependencies.
+
+   Not all Threads are ChildThreads.
+
+   But, ChildThread doesn't use any Thread stuff.
+
+   Wouldn't it be nice if one could just pass a ChildTask around?
+
+   OK, what if, instead, we have Thread be generic in the kind of Task?
+
+   And then ChildThread just specializes it to contain a ChildTask?
+
+   That... could work, I guess.
+
+   I mean... that's fairly pointless, isn't it?
+
+   Hm. Because, we can already exec directly on the task and get the childprocess and attach it.
+
+   Yeah I mean, putting ChildTask below Thread is silly,
+   because we still want ChildThread.
+
+   So then the API will generally be,
+   thread.task.pipe? etc?
+
+   thr.task.pipe?
+
+   Or I can just habitually do "task = thr.task; ram = thr.ram" at the start of functions.
+
+   Hmmmmm. oh, right, so the reason I want ChildTask below thread is,
+   so that I can, um,
+   pass around that Task without all the rest of the stuff.
+
+   Except, wait, I can already do that,
+   the only reason I'd want ChildTask is so I can exec.
+
+   But I am unlikely to want that.
+
+   So it's fine as is.
+*** names
+    so then I have ChildThread, Thread, and Task as my main hierarchy of types.
+
+    should we change the name of Task to Thread?
+
+    Then what would we call Thread?
+
+    Oh, actually, Thread should have the shortest name anyway.
+
+    The thing with the RAM and the task, is what people will usually want and use.
+
+    ok, I like these names!
+** make connection interface with open_channels
+   OK one difficulty is inheritance.
+
+   How do we inherit this object into a new task without opening it up?
+
+   Let's not make it an interface yet.
+
+   OK, so the only thing that we use from the connection resources is,
+   the connecting_connection.
+
+   We pass it over sendmsg so that the new process can use the connection.
+   Hm. How do we handle this cleanly?
+
+   Well, we could maybe have some kind of,
+   pass-this-fd-and-I'll-be-usable,
+   thing.
+
+   Or, actually, can we just say,
+   we want to update the remote task?
+   And so we need to give a new remote-task-side of the connection?
+
+   We could make it generic, so the interface is just,
+   you have to inherit this fd into the new task,
+   and then the connection can keep working.
+
+   Hmm is there some way to cleanly support connections like this,
+   without having to have one from the start?
+
+   So the issue is that if we're in the same fd space,
+   and we try to inherit to a new task,
+   then...
+
+   We'll need to make a socketpair I guess?
+
+   And then we can inherit that?
+   So how do we handle that?
+
+   Basically the user will ask for an fd, we'll make the socketpair, and return one end,
+   and then the user will handle getting that fd into a situation where it's owned by the new task,
+   and then passing it back to us.
+
+   Obviously the natural way to do this is inside a function that we call.
+
+   Doing things inside a closure is quite awkward though. Can't we make it less constrained somehow?
+
+   Maybe if there's some reason to have access to this fd all the time?
+
+   Well, the fd is totally internal to the Connection.
+
+   I don't see why we would need to have access to it.
+
+   Except for the purposes of migration to a new space.
+
+   Well, ok, so.
+   We can associate a task with a connection,
+   and inherit it over unshare - easy, it just keeps working.
+
+   The tricky thing is "inheriting" it over something not quite simple as an unshare. hm.
+
+   OK let's just punt on this, yet more punting.
+** make rsyscall_exec return RsyscallThread or whatever
+   The thread is now generic enough that it can work for things that have called exec.
+
+   The only novel thing about thread is that,
+   we know we can monitor the child. (In an aysnc way? no, at all, I guess, it's a certificate)
+** TODO properly handle inheritance across tasks with handle
 *** sigmask
     ok so how do we handle inheriting this signalblock?
 

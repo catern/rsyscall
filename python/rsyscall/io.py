@@ -42,6 +42,7 @@ from rsyscall.signal import HowSIG, Sigaction, Sighandler, Signals, Sigset, Sigi
 from rsyscall.signal import SignalBlock
 from rsyscall.linux.dirent import Dirent, DirentList
 from rsyscall.unistd import SEEK
+from rsyscall.network.connection import Connection
 
 import random
 import string
