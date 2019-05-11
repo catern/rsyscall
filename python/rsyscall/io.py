@@ -620,10 +620,9 @@ class StandardTask:
 
         TODO maybe this should return an object that lets us unset CLOEXEC on things?
         """
-        async def do_unshare(close_in_old_space: t.List[near.FileDescriptor],
-                             copy_to_new_space: t.List[near.FileDescriptor]) -> None:
+        async def do_unshare(copy_to_new_space: t.List[near.FileDescriptor]) -> None:
             await unshare_files(self.task, self.process,
-                                close_in_old_space, copy_to_new_space, going_to_exec)
+                                copy_to_new_space, going_to_exec)
         await self.task.base.unshare_files(do_unshare)
 
     async def unshare_files_and_replace(self, mapping: t.Dict[handle.FileDescriptor, handle.FileDescriptor],
@@ -807,13 +806,12 @@ async def do_cloexec_except(task: Task, process_resources: ProcessResources,
 
 async def unshare_files(
         task: Task, process_resources: ProcessResources,
-        close_in_old_space: t.List[near.FileDescriptor],
         copy_to_new_space: t.List[near.FileDescriptor],
         going_to_exec: bool,
 ) -> None:
     async def op(sem: batch.BatchSemantics) -> t.Tuple[t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
                                                        handle.Pointer[Siginfo]]:
-        fd_array = array.array('i', [int(fd) for fd in close_in_old_space])
+        fd_array = array.array('i', [])
         fd_array_ptr = sem.to_pointer(Bytes(fd_array.tobytes()))
         stack_value = process_resources.make_trampoline_stack(Trampoline(
             process_resources.stop_then_close_func, [fd_array_ptr, len(fd_array)]))

@@ -682,6 +682,7 @@ async def run_fd_table_gc(fd_table: rsyscall.far.FDTable) -> None:
     for fd in fds_to_close:
         del near_to_handles[fd]
         # TODO I guess we should take a lock on the fd table
+        # TODO I guess we should do this in parallel
         try:
             # TODO we should mark this task as dead and fall back to later tasks in the list if
             # we fail due to a SyscallInterface-level error; that might happen if, say, this is
@@ -763,46 +764,34 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         fd_table_to_near_to_handles[self.fd_table].setdefault(near, []).append(handle)
         return handle
 
+    def _setup_fd_table(self) -> None:
+        fd_table_to_task.setdefault(self.fd_table, []).append(self)
+        near_to_handles = fd_table_to_near_to_handles.setdefault(self.fd_table, {})
+        for handle in self.fd_handles:
+            near_to_handles.setdefault(handle.near, []).append(handle)
+
     async def unshare_files(self, do_unshare: t.Callable[[
-            # fds to close in the old space
-            t.List[rsyscall.near.FileDescriptor],
             # fds to copy into the new space
             t.List[rsyscall.near.FileDescriptor]
     ], t.Awaitable[None]]) -> None:
         if self.manipulating_fd_table:
             raise Exception("can't unshare_files while manipulating_fd_table==True")
-        old_fd_table = self.fd_table
-        new_fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
         # force a garbage collection to improve efficiency
         gc.collect()
-        new_near_to_handles: t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]] = {}
-        fd_table_to_near_to_handles[new_fd_table] = new_near_to_handles
-        for handle in self.fd_handles:
-            new_near_to_handles.setdefault(handle.near, []).append(handle)
-        self.fd_table = new_fd_table
-        old_near_to_handles = fd_table_to_near_to_handles[old_fd_table]
-        snapshot_old_near_to_handles: t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]] = {}
-        for key in old_near_to_handles:
-            snapshot_old_near_to_handles[key] = [fd for fd in old_near_to_handles[key]]
-        needs_close: t.List[rsyscall.near.FileDescriptor] = []
-        for handle in self.fd_handles:
-            near = handle.near
-            snapshot_old_near_to_handles[near].remove(handle)
-            # If the list is empty, it means the only handles for this fd in the old fd
-            # table are our own, and we therefore want to close this fd. No further
-            # handles for this fd can be created, even while we are asynchronously calling
-            # unshare, because no-one can make a new handle from one of ours, because we
-            # changed our Task.fd_table to point to a new fd table.
-            if len(snapshot_old_near_to_handles[near]) == 0:
-                needs_close.append(near)
+        old_fd_table = self.fd_table
+        self.fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
+        print("unshare", old_fd_table, self.fd_table)
+        self._setup_fd_table()
         self.manipulating_fd_table = True
-        await do_unshare(needs_close, [fd.near for fd in self.fd_handles])
+        await do_unshare([fd.near for fd in self.fd_handles])
         self.manipulating_fd_table = False
         # We can only remove our handles from the handle lists after the unshare is done
         # and the fds are safely copied, because otherwise someone else running GC on the
         # old fd table would close our fds when they notice there are no more handles.
+        old_near_to_handles = fd_table_to_near_to_handles[old_fd_table]
         for handle in self.fd_handles:
             old_near_to_handles[handle.near].remove(handle)
+        await run_fd_table_gc(old_fd_table)
 
     async def unshare_fs(self) -> None:
         old_fs = self.fs
