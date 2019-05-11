@@ -102,6 +102,18 @@ class SCMRightsMover(MoverInterface):
         return passed_socks
 
 class Connection:
+    @abc.abstractmethod
+    async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]: ...
+    @abc.abstractmethod
+    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]: ...
+    @abc.abstractmethod
+    async def prep_for_unshare_files(self) -> None: ...
+    @abc.abstractmethod
+    async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, RAM, FileDescriptor], Connection]]: ...
+    @abc.abstractmethod
+    def for_task(self, task: Task, ram: RAM) -> Connection: ...
+
+class FullConnection(Connection):
     def __init__(self,
                  access_task: Task,
                  access_ram: RAM,
@@ -170,8 +182,13 @@ class Connection:
             pair = await (await self.task.socketpair(AF.UNIX, SOCK.STREAM, 0, await self.ram.malloc_struct(FDPair))).read()
             self.mover = SCMRightsMover(self.connecting_ram, pair.first.move(self.connecting_task), self.ram, pair.second)
 
-    def for_task_with_fd(self, task: Task, ram: RAM, fd: FileDescriptor) -> Connection:
-        return Connection(
+    async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, RAM, FileDescriptor], Connection]]:
+        def f(task: Task, ram: RAM, fd: FileDescriptor) -> FullConnection:
+            return self.for_task_with_fd(task, ram, fd)
+        return self.connecting_connection[1], f
+
+    def for_task_with_fd(self, task: Task, ram: RAM, fd: FileDescriptor) -> FullConnection:
+        return FullConnection(
             self.access_task,
             self.access_ram,
             self.access_epoller,
@@ -181,10 +198,10 @@ class Connection:
             task, ram,
         )
 
-    def for_task(self, task: Task, ram: RAM) -> Connection:
+    def for_task(self, task: Task, ram: RAM) -> FullConnection:
         return self.for_task_with_fd(task, ram, self.connecting_connection[1].for_task(task))
 
-async def make_connections(self: Connection, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
+async def make_connections(self: FullConnection, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
     # so there's 1. the access task, through which we access the syscall and data fds,
     # 2. the parent task, and
     # 3. the connection between the access and parent task, so that we can have the parent task pass down the fds,

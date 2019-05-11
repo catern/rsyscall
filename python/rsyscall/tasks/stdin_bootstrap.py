@@ -55,10 +55,11 @@ async def rsyscall_stdin_bootstrap(
     futex_memfd = await stdtask.task.base.memfd_create(
         await stdtask.task.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
     # send the fds to the new process
+    connection_fd, make_connection = await stdtask.connection.prep_fd_transfer()
     def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.SendMsghdr]:
         iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
         cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([
-            passed_syscall_sock, passed_data_sock, futex_memfd, stdtask.connection.connecting_connection[1]])]))
+            passed_syscall_sock, passed_data_sock, futex_memfd, connection_fd])]))
         return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
     _, [] = await parent_sock.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
     # close our reference to fds that only the new process needs
@@ -100,9 +101,8 @@ async def rsyscall_stdin_bootstrap(
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     epoller = await task.make_epoll_center()
     child_monitor = await ChildProcessMonitor.make(task, task.base, epoller)
-    connection = stdtask.connection.for_task_with_fd(
-        base_task, task,
-        base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
+    connection = make_connection(base_task, task,
+                                 base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
     new_stdtask = StandardTask(
         connection=connection,
         task=task,

@@ -19,7 +19,7 @@ from rsyscall.handle import Pointer
 from rsyscall.signal import Signals, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
 import rsyscall.batch as batch
-from rsyscall.network.connection import Connection
+from rsyscall.network.connection import FullConnection
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
@@ -124,7 +124,7 @@ async def _make_local_stdtask() -> StandardTask:
     access_connection = None
     left_fd, right_fd = await mem_task.socketpair(AF.UNIX, SOCK.STREAM, 0)
     connecting_connection = (left_fd.handle, right_fd.handle)
-    connection = Connection(
+    connection = FullConnection(
         task, mem_task,
         epoller,
         None,
