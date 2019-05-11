@@ -33,7 +33,7 @@ struct options parse_options(int argc, char** argv)
         // re-enable cloexec on all passed-in fds
         const int passedfd = strtol(argv[i], NULL, 0);
         if (errno != 0) err(1, "strtol(argv[%d] = %s)", i, argv[i]);
-        if (fcntl(passedfd, F_SETFD, O_CLOEXEC) < 0) err(1, "fcntl(%d, F_SETFD, O_CLOEXEC)", passedfd);
+        if (fcntl(passedfd, F_SETFD, FD_CLOEXEC) < 0) err(1, "fcntl(%d, F_SETFD, FD_CLOEXEC)", passedfd);
     }
     const struct options opt = {
         .describefd = describefd,

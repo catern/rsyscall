@@ -679,10 +679,9 @@ async def run_fd_table_gc(fd_table: rsyscall.far.FDTable) -> None:
     else:
         # uh, there's no valid task available? I guess just do nothing?
         return
-    for fd in fds_to_close:
+    async def close_fd(fd: rsyscall.near.FileDescriptor) -> None:
         del near_to_handles[fd]
         # TODO I guess we should take a lock on the fd table
-        # TODO I guess we should do this in parallel
         try:
             # TODO we should mark this task as dead and fall back to later tasks in the list if
             # we fail due to a SyscallInterface-level error; that might happen if, say, this is
@@ -693,6 +692,9 @@ async def run_fd_table_gc(fd_table: rsyscall.far.FDTable) -> None:
                 raise Exception("somehow someone else closed fd", fd, "and then it was reopened???")
             # put the fd back, I guess.
             near_to_handles[fd] = []
+    async with trio.open_nursery() as nursery:
+        for fd in fds_to_close:
+            nursery.start_soon(close_fd, fd)
 
 class RootExecError(Exception):
     pass

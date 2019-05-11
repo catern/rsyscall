@@ -17339,6 +17339,127 @@ And we can have an exec which is not memory-abstracting, I guess.
 
     yeah I think the bottleneck is the many-small-writes.
     let's batch those
+** epoll insight
+   The new approach, where you read first, is taking advantage of something I missed:
+
+   You can query the readability level from the kernel! You just do it by, reading.
+
+   So we start by querying the readability level, then if it's low, we wait to read.
+** syscall connection rework for more batching
+*** debugging
+    um lol we're mmaping after execing? hMmmm no wonder it hangs for ever l m a o.
+
+    ok so for some reason we're a-dying.
+
+    oh.
+
+    we assume the response is for the execveat. hm.
+    interesting, interesting, problematic.
+
+    I guess, um...
+
+    We should switch to a new RsyscallConnection?
+
+    Cancelling is silly.
+
+    Yep, done, and fixes it.
+*** overlapping memcpy
+    Hmm. we're passing the same pointer twice to read.
+
+    I guess this could be due to, perhaps, me calling waitid_nohang twice,
+    and getting cancelled before the read completes?
+
+    likewise, what's up with this ECHILD thing?
+
+    no child processes? what?? implausible
+
+    OK so the memory overlap is definitely due to cancelled siginfo reads.
+
+    The transport doesn't actually cancel the read when it's cancelled. Hm.
+
+    I guess maybe we should remove it from the pending read ops.
+
+    Hmm.
+
+    Wait a second though, we have a cancel guard. How are we getting cancelled?
+    oh, in one-at-a-time.
+*** waitid
+    OK so it seems that we're submitting this waitid, but,
+    I guess we're getting cancelled and dropping the response?
+
+    How's that happening?
+
+    hmm. it might be that we're waiting for someone else to submit it. and, we get batch-submitted;
+    and then we get cancelled while waiting on the submit,
+    so we forget that we got submitted. hm.
+
+    syscall submission... shouldn't be cancellable?
+
+    maybe it should be. but if we do that, then...
+    we need to check in advance of the cance, whether we've been submitted.
+    oh, no, wait, we need to mark ourselves as cancelled. hm.
+
+    hmm but that would require us to re-write the struct list.
+
+    also doesn't this cause concerns also for the transport?
+    even if we mark something as cancelled, then...
+
+    oh, the transport is idempotent. accidentally doing a read doesn't matter.
+
+    accidentally doing a write sure matters though, hm.
+
+    likewise with syscalls, we don't want to accidentally do a syscall and forget about it.
+    cancellation...
+
+    if someone is trying to send the syscall, we can't cancel it.
+
+    so that's basically the concept, innit?
+
+    isn't that equivalent to no cancellation though?
+
+    well the brief idea was that we would mark a syscall as being performed as soon as we remove it from pending.
+
+    I guess that useful thing there is,
+    if we add ourselves to the pending list,
+    but then we're waiting on some earlier syscalls to complete,
+    we can still be cancelled.
+
+    like: if someone ahead of us is writing out some syscalls,
+    then we want to be able to cancel and not wait on them... hmm.
+
+    hmm okay so we could just set the response immediately,
+    so that cancellation would just cancel sending it.
+    but that would leave us in a situation where we might never send it,
+    if everyone cancels.
+
+    what's the situation where we'd have to block until it gets sent?
+
+    well, so, if we want to cancel ourselves,
+    but we're already in the written memory,
+    then I guess we can't cancel until, um, it's actually written out. um.
+
+    but if we allowed ourselves to, um, change the memory, then what?
+
+    well, suppose it was a single atomic call for all the list of things.
+
+    then we'd allow a cancelled flag,
+    and prune cancelled ones away before writing.
+
+    remember also partial writes
+
+    should only complete the requests i did...
+
+    and should not remove the requests if I am cancelled...
+
+    hmm supporting cancellation requires supporting partial writes:
+    if the coroutine writing the stuff has done a partial write,
+    and then gets cancelled,
+    then we need to be aware of that.
+** another insight
+   flexsc! flexsc! batching syscalls! dedicated syscall thread!
+
+   hey wait a second, couldn't we use these techniques in bump?
+   separate out a syscall thread? for nice locality? hmmm... neat...
 ** clean up handling of unshare for connection
 ** clean creation and inheritance for connection
    The connection interface is actually very nice.
