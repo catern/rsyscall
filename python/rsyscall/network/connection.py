@@ -12,18 +12,22 @@ from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, RecvmsgFlags, S
 from rsyscall.sys.uio import IovecList
 from rsyscall.handle import FDPair
 
+T = t.TypeVar('T')
+async def make_n_in_parallel(make: t.Callable[[], t.Awaitable[T]], count: int) -> t.List[T]:
+    pairs: t.List[t.Any] = [None]*count
+    async with trio.open_nursery() as nursery:
+        async def open_nth(n: int) -> None:
+            pairs[n] = await make()
+        for i in range(count):
+            nursery.start_soon(open_nth, i)
+    return pairs
+
 class ConnectionInterface:
     @abc.abstractmethod
     async def open_channel(self) -> t.Tuple[FileDescriptor, FileDescriptor]: ...
 
     async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
-        pairs: t.List[t.Any] = [None]*count
-        async with trio.open_nursery() as nursery:
-            async def open_nth(n: int) -> None:
-                pairs[n] = await self.open_channel()
-            for i in range(count):
-                nursery.start_soon(open_nth, i)
-        return pairs
+        return await make_n_in_parallel(self.open_channel, count)
 
 class ListeningConnection(ConnectionInterface):
     def __init__(self,
@@ -101,6 +105,9 @@ class SCMRightsMover(MoverInterface):
             await sock.close()
         return passed_socks
 
+    def for_task_with_fd(self, ram: RAM, fd: FileDescriptor) -> SCMRightsMover:
+        return SCMRightsMover(self.from_ram, self.from_fd, ram, fd)
+
 class Connection:
     @abc.abstractmethod
     async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]: ...
@@ -113,6 +120,59 @@ class Connection:
     @abc.abstractmethod
     def for_task(self, task: Task, ram: RAM) -> Connection: ...
 
+class LocalConnection(Connection):
+    @staticmethod
+    async def make(task: Task, ram: RAM, epoller: EpollCenter) -> LocalConnection:
+        pair = await (await task.socketpair(AF.UNIX, SOCK.STREAM, 0, await ram.malloc_struct(FDPair))).read()
+        return LocalConnection(task, ram, epoller, task, ram, SCMRightsMover(ram, pair.first, ram, pair.second))
+
+    def __init__(self, access_task: Task, access_ram: RAM, access_epoller: EpollCenter,
+                 task: Task, ram: RAM,
+                 scm_mover: SCMRightsMover) -> None:
+        self.access_task = access_task
+        self.access_ram = access_ram
+        self.access_epoller = access_epoller
+        self.task = task
+        self.ram = ram
+        self.scm_mover = scm_mover
+
+    async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
+        chans = await self.open_channels(count)
+        access_socks, local_socks = zip(*chans)
+        async_access_socks = [await AsyncFileDescriptor.make_handle(self.access_epoller, self.access_ram, sock)
+                              for sock in access_socks]
+        return list(zip(async_access_socks, local_socks))
+
+    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
+        async def make() -> FDPair:
+            return await (await self.access_task.socketpair(
+                AF.UNIX, SOCK.STREAM, 0, await self.access_ram.malloc_struct(FDPair))).read()
+        pairs = await make_n_in_parallel(make, count)
+        if self.access_task.fd_table == self.task.fd_table:
+            mover: MoverInterface = SameFDTableMover(self.task)
+        else:
+            mover = self.scm_mover
+        fds = await mover.move_fds([pair.second for pair in pairs])
+        return [(pair.first, fd) for pair, fd in zip(pairs, fds)]
+
+    async def prep_for_unshare_files(self) -> None:
+        pass
+
+    async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, RAM, FileDescriptor], LocalConnection]]:
+        def f(task: Task, ram: RAM, fd: FileDescriptor) -> LocalConnection:
+            return self.for_task_with_fd(task, ram, fd)
+        return self.scm_mover.to_fd, f
+
+    def for_task_with_fd(self, task: Task, ram: RAM, fd: FileDescriptor) -> LocalConnection:
+        return LocalConnection(
+            self.access_task,
+            self.access_ram,
+            self.access_epoller,
+            task, ram, self.scm_mover.for_task_with_fd(ram, fd))
+
+    def for_task(self, task: Task, ram: RAM) -> LocalConnection:
+        return self.for_task_with_fd(task, ram, self.scm_mover.to_fd.for_task(task))
+
 class FullConnection(Connection):
     def __init__(self,
                  access_task: Task,
@@ -120,7 +180,7 @@ class FullConnection(Connection):
                  access_epoller: EpollCenter,
                  # regrettably asymmetric...
                  # it would be nice to unify connect/accept with passing file descriptors somehow.
-                 access_connection: t.Optional[t.Tuple[WrittenPointer[Address], FileDescriptor]],
+                 access_connection: t.Tuple[WrittenPointer[Address], FileDescriptor],
                  connecting_task: Task,
                  connecting_ram: RAM,
                  # TODO we need to lock this, and the access_connection also.
@@ -133,7 +193,7 @@ class FullConnection(Connection):
             address, listening_fd = access_connection
             self.first_conn: ConnectionInterface = ListeningConnection(access_task, address, listening_fd)
         else:
-            self.first_conn = SocketpairConnection(access_task, access_ram, connecting_task)
+            raise Exception
         self.access_task = access_task
         self.access_ram = access_ram
         self.access_epoller = access_epoller
@@ -160,23 +220,6 @@ class FullConnection(Connection):
         return await make_connections(self, count)
 
     async def prep_for_unshare_files(self) -> None:
-        # ok so.
-        # what would be better here is,
-        # if, maybe, we just. um. hm.
-        # so, if the first_conn is a ListeningConnection,
-        # then what we would want to do is just inherit that.
-        # if it is not, then we need to make an SCMRights.
-        # right so maybe, uh, we directly own the ListeningConnection,
-        # and call unshare_files on it,
-        # and we do nothing cuz we just inherit it - fine.
-        # alternatively, we own a SocketpairConnection,
-        # and we need to add on a,
-        # SCMRightsMover,
-        # which we'll use to transfer one half of the pair over.
-        # and, for_task_with_fd also is just a matter of,
-        # we give them the fd, they move it over, easy peasy.
-        # and for_task just inherits the fd over - failing if we're not in the same fd space.
-        # so we'll just switch to that interface.
         if isinstance(self.mover, SameFDTableMover):
             # make fd pair, and stick it into the connecting task and task.
             pair = await (await self.task.socketpair(AF.UNIX, SOCK.STREAM, 0, await self.ram.malloc_struct(FDPair))).read()
