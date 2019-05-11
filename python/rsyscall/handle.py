@@ -662,6 +662,37 @@ class FileDescriptor:
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
 fd_table_to_task: t.Dict[rsyscall.far.FDTable, t.List[Task]] = {}
 
+async def run_fd_table_gc(fd_table: rsyscall.far.FDTable) -> None:
+    near_to_handles = fd_table_to_near_to_handles[fd_table]
+    fds_to_close = [fd for fd, handles in near_to_handles.items() if not handles]
+    if not fds_to_close:
+        return
+    tasks = fd_table_to_task[fd_table]
+    for task in list(tasks):
+        if task.fd_table is not fd_table:
+            tasks.remove(task)
+        elif task.manipulating_fd_table:
+            # skip tasks currently changing fd table
+            pass
+        else:
+            break
+    else:
+        # uh, there's no valid task available? I guess just do nothing?
+        return
+    for fd in fds_to_close:
+        del near_to_handles[fd]
+        # TODO I guess we should take a lock on the fd table
+        try:
+            # TODO we should mark this task as dead and fall back to later tasks in the list if
+            # we fail due to a SyscallInterface-level error; that might happen if, say, this is
+            # some decrepit task where we closed the syscallinterface but didn't exit the task.
+            await rsyscall.near.close(task.sysif, fd)
+        except:
+            if fd in fd_table_to_near_to_handles:
+                raise Exception("somehow someone else closed fd", fd, "and then it was reopened???")
+            # put the fd back, I guess.
+            near_to_handles[fd] = []
+
 class RootExecError(Exception):
     pass
 
@@ -925,7 +956,10 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             stack.enter_context(filename.borrow(self))
             for arg in [*argv.data, *envp.data]:
                 stack.enter_context(arg.borrow(self))
+            self.manipulating_fd_table = True
             await rsyscall.near.execveat(self.sysif, None, filename.near, argv.near, envp.near, flags)
+            self.manipulating_fd_table = False
+            self.fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
             if isinstance(self.process, ChildProcess):
                 return self.process.did_exec()
             else:
@@ -933,7 +967,10 @@ class Task(SignalMaskTask, rsyscall.far.Task):
                                     "and now we can't monitor it.")
 
     async def exit(self, status: int) -> None:
+        self.manipulating_fd_table = True
         await rsyscall.near.exit(self.sysif, status)
+        self.manipulating_fd_table = False
+        self.fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
 
     async def clone(self, flags: CLONE,
                     # these two pointers must be adjacent; the end of the first is the start of the
