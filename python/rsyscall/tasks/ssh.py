@@ -14,7 +14,7 @@ import abc
 import random
 import string
 from rsyscall.monitor import AsyncChildProcess
-from rsyscall.network.connection import FullConnection
+from rsyscall.network.connection import ListeningConnection
 
 import rsyscall.nix as nix
 from rsyscall.fcntl import O
@@ -257,14 +257,11 @@ async def ssh_bootstrap(
     connecting_connection = (left_connecting_connection.handle, right_connecting_connection.handle)
     epoller = await new_task.make_epoll_center()
     child_monitor = await ChildProcessMonitor.make(new_task, new_task.base, epoller)
-    connection = FullConnection(
-        parent_task.task.base, parent_task.task,
-        parent_task.epoller,
-        (await parent_task.task.to_pointer(await local_data_path.as_sockaddr_un()),
-         new_base_task.make_fd_handle(listening_fd)),
+    connection = ListeningConnection(
+        parent_task.task.base, parent_task.task, parent_task.epoller,
+        await parent_task.task.to_pointer(await local_data_path.as_sockaddr_un()),
         new_task.base, new_task,
-        connecting_connection,
-        new_task.task, new_task,
+        new_base_task.make_fd_handle(listening_fd),
     )
     new_stdtask = StandardTask(
         connection=connection,

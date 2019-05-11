@@ -53,6 +53,12 @@ class TestSSH(TrioTestCase):
         bash = await self.store.bin(bash_nixdep, "bash")
         await self.remote_stdtask.run(bash.args('-c', 'true'))
 
+    async def test_nest(self) -> None:
+        thread1 = await self.remote_stdtask.fork()
+        async with thread1 as stdtask1:
+            thread2 = await stdtask1.fork()
+            await thread2.close()
+
     async def test_copy(self) -> None:
         cat = await self.store.bin(coreutils_nixdep, "cat")
 

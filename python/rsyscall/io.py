@@ -628,7 +628,6 @@ class StandardTask:
         TODO maybe this should return an object that lets us unset CLOEXEC on things?
 
         """
-        await self.connection.prep_for_unshare_files()
         await self.task.base.unshare_files()
         if not going_to_exec:
             await do_cloexec_except(self.task, set([fd.near for fd in self.task.base.fd_handles]))
