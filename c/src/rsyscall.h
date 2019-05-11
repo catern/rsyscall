@@ -9,8 +9,6 @@ struct rsyscall_syscall {
 
 int rsyscall_server(const int infd, const int outfd);
 int rsyscall_persistent_server(int infd, int outfd, const int listensock);
-void rsyscall_do_cloexec(int* excluded_fds, int fd_count);
-void rsyscall_stop_then_close(int* fds_to_close, int fd_count);
 
 /* Assembly-language routines: */
 /* careful: the syscall number is the last arg, to make the assembly more convenient. */
@@ -31,16 +29,13 @@ struct rsyscall_trampoline_stack {
     void* function;
 };
 
-/* A symbol table and a routine for dumping it to an fd. */
+/* A symbol table and a routine for dumping it. */
 struct rsyscall_symbol_table {
     void* rsyscall_server;
     void* rsyscall_persistent_server;
-    void* rsyscall_do_cloexec;
-    void* rsyscall_stop_then_close;
     void* rsyscall_futex_helper;
     void* rsyscall_trampoline;
 };
-void rsyscall_describe(int describefd);
 struct rsyscall_symbol_table rsyscall_symbol_table();
 
 struct rsyscall_bootstrap {

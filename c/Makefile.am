@@ -24,8 +24,7 @@ rsyscall_bootstrap_LDADD = librsyscall.la
 rsyscall_unix_stub_SOURCES = src/rsyscall_unix_stub.c
 rsyscall_unix_stub_LDADD = librsyscall.la
 
-bin_PROGRAMS = cat remote_cat
-cat_SOURCES = src/cat.c
+bin_PROGRAMS = remote_cat
 remote_cat_SOURCES = src/remote_cat.c
 
 # remote_in_to_out_SOURCES = src/remote_in_to_out_main.c

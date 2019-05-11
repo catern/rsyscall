@@ -36,15 +36,6 @@ static long read(int fd, void *buf, size_t count) {
     return rsyscall_raw_syscall(fd, (long) buf, (long) count, 0, 0, 0, SYS_read);
 }
 
-static void exit(int status) {
-    rsyscall_raw_syscall(status, 0, 0, 0, 0, 0, SYS_exit);
-}
-
-static void error(char* msg, size_t msgsize) {
-    write(2, msg, msgsize);
-    exit(1);
-}
-
 static int read_request(const int infd, struct rsyscall_syscall *request)
 {
     char* buf = (char*) request;
@@ -88,101 +79,6 @@ static int write_response(const int outfd, const int64_t response)
         data += ret;
     }
     return 1;
-}
-
-static long getdents64(int fd, char* buf, unsigned int count) {
-    return rsyscall_raw_syscall(fd, (long)buf, count, 0, 0, 0, SYS_getdents64);
-}
-
-static long getfd(int fd) {
-    return rsyscall_raw_syscall(fd, F_GETFD, 0, 0, 0, 0, SYS_fcntl);
-}
-
-static long myopen(char* path, int flags) {
-    return rsyscall_raw_syscall((long)path, flags, 0, 0, 0, 0, SYS_open);
-}
-
-static long close(int fd) {
-    return rsyscall_raw_syscall(fd, 0, 0, 0, 0, 0, SYS_close);
-}
-
-static long getpid() {
-    return rsyscall_raw_syscall(0, 0, 0, 0, 0, 0, SYS_getpid);
-}
-
-static long tkill(int tid, int sig) {
-    return rsyscall_raw_syscall(tid, sig, 0, 0, 0, 0, SYS_tkill);
-}
-
-static int myraise(int sig) {
-    return tkill(getpid(), sig);
-}
-
-char getdents64_failed[] = "getdents64(fd, buf, count) failed\n";
-
-static int strtoint(const char* p) {
-    int ret = 0;
-    char c;
-    while ((c = *p)) {
-        ret *= 10;
-        ret += (c - '0');
-        p++;
-    }
-    return ret;
-}
-
-struct linux_dirent64 {
-    ino64_t        d_ino;    /* 64-bit inode number */
-    off64_t        d_off;    /* 64-bit offset to next structure */
-    unsigned short d_reclen; /* Size of this dirent */
-    unsigned char  d_type;   /* File type */
-    char           d_name[]; /* Filename (null-terminated) */
-};
-
-static int find_in_array(int wanted, int* array, int count) {
-    for (int i = 0; i < count; i++) {
-        if (wanted == array[i]) return 1;
-    }
-    return 0;
-}
-
-// Close all CLOEXEC file descriptors, excluding some in a list.
-// For each open fd, we do a linear scan of the excluded array.
-void rsyscall_do_cloexec(int* excluded_fds, int fd_count) {
-    /* this depends on /proc, dang, but whatever */
-    /* this doesn't set O_CLOEXEC because we shouldn't be calling this function in parallel */
-    int dirfd = myopen("/proc/self/fd", O_DIRECTORY|O_RDONLY);
-    char buf[1024];
-    for (;;) {
-        int const nread = getdents64(dirfd, buf, sizeof(buf));
-        if (nread < 0) {
-            close(dirfd);
-            error(getdents64_failed, sizeof(getdents64_failed) - 1);
-        } else if (nread == 0) {
-            /* no more fds, we're done */
-            close(dirfd);
-            return;
-        }
-        for (int bpos = 0; bpos < nread; bpos += ((struct linux_dirent64 *) &buf[bpos])->d_reclen) {
-            const struct linux_dirent64 *d = (struct linux_dirent64 *) &buf[bpos];
-            if (d->d_type == DT_LNK) {
-                const int fd = strtoint(d->d_name);
-                if (!find_in_array(fd, excluded_fds, fd_count)) {
-                    if (getfd(fd) & FD_CLOEXEC) {
-                        close(fd);
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Signals itself with SIGSTOP, then closes a list of file descriptors.
-void rsyscall_stop_then_close(int* fds_to_close, int fd_count) {
-    myraise(SIGSTOP);
-    for (int i = 0; i < fd_count; i++) {
-        close(fds_to_close[i]);
-    }
 }
 
 int rsyscall_server(const int infd, const int outfd)
@@ -241,16 +137,14 @@ struct rsyscall_symbol_table rsyscall_symbol_table()
     struct rsyscall_symbol_table table = {
         .rsyscall_server = rsyscall_server,
         .rsyscall_persistent_server = rsyscall_persistent_server,
-        .rsyscall_do_cloexec = rsyscall_do_cloexec,
-        .rsyscall_stop_then_close = rsyscall_stop_then_close,
         .rsyscall_futex_helper = rsyscall_futex_helper,
         .rsyscall_trampoline = rsyscall_trampoline,
     };
     return table;
 }
 
-void rsyscall_describe(int describefd)
-{
+static long close(int fd) {
+    return rsyscall_raw_syscall(fd, 0, 0, 0, 0, 0, SYS_close);
 }
 
 int rsyscall_persistent_server(int infd, int outfd, const int listensock)

@@ -772,17 +772,14 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         for handle in self.fd_handles:
             near_to_handles.setdefault(handle.near, []).append(handle)
 
-    async def unshare_files(self, do_unshare: t.Callable[[
-            # fds to copy into the new space
-            t.List[rsyscall.near.FileDescriptor]
-    ], t.Awaitable[None]]) -> None:
+    async def unshare_files(self) -> None:
         if self.manipulating_fd_table:
             raise Exception("can't unshare_files while manipulating_fd_table==True")
-        # force a garbage collection to improve efficiency
+        # do a GC now to improve efficiency when GCing both tables after the unshare
         gc.collect()
+        await run_fd_table_gc(self.fd_table)
         old_fd_table = self.fd_table
         self.fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
-        print("unshare", old_fd_table, self.fd_table)
         self._setup_fd_table()
         self.manipulating_fd_table = True
         # perform the actual unshare
@@ -795,7 +792,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         for handle in self.fd_handles:
             old_near_to_handles[handle.near].remove(handle)
         await run_fd_table_gc(old_fd_table)
-        await do_unshare([fd.near for fd in self.fd_handles])
+        await run_fd_table_gc(self.fd_table)
 
     async def unshare_fs(self) -> None:
         old_fs = self.fs

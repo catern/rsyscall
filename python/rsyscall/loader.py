@@ -87,8 +87,6 @@ class NullGateway(MemoryGateway):
 class ProcessResources:
     server_func: Pointer[NativeFunction]
     persistent_server_func: Pointer[NativeFunction]
-    do_cloexec_func: Pointer[NativeFunction]
-    stop_then_close_func: Pointer[NativeFunction]
     trampoline_func: Pointer[NativeFunction]
     futex_helper_func: Pointer[NativeFunction]
 
@@ -103,8 +101,6 @@ class ProcessResources:
         return ProcessResources(
             server_func=to_handle(symbols.rsyscall_server),
             persistent_server_func=to_handle(symbols.rsyscall_persistent_server),
-            do_cloexec_func=to_handle(symbols.rsyscall_do_cloexec),
-            stop_then_close_func=to_handle(symbols.rsyscall_stop_then_close),
             trampoline_func=to_handle(symbols.rsyscall_trampoline),
             futex_helper_func=to_handle(symbols.rsyscall_futex_helper),
         )

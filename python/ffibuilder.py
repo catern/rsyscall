@@ -573,8 +573,6 @@ int (*const rsyscall_persistent_server)(int infd, int outfd, const int listensoc
 int (*const rsyscall_server)(const int infd, const int outfd);
 void (*const rsyscall_futex_helper)(void *futex_addr);
 void (*const rsyscall_trampoline)(void);
-void (*const rsyscall_do_cloexec)(int* excluded_fds, int fd_count);
-void (*const rsyscall_stop_then_close)(int* excluded_fds, int fd_count);
 
 struct rsyscall_trampoline_stack {
     int64_t rdi;
@@ -593,8 +591,6 @@ struct rsyscall_syscall {
 struct rsyscall_symbol_table {
     void* rsyscall_server;
     void* rsyscall_persistent_server;
-    void* rsyscall_do_cloexec;
-    void* rsyscall_stop_then_close;
     void* rsyscall_futex_helper;
     void* rsyscall_trampoline;
 };

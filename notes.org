@@ -17031,7 +17031,7 @@ And we can have an exec which is not memory-abstracting, I guess.
     The thing with the RAM and the task, is what people will usually want and use.
 
     ok, I like these names!
-** TODO move application scripts out of rsyscall module
+** TODO figure out good name for application scripts
    what should I call that directory?
 ** TODO rename StandardTask/RsyscallThread to Thread/ChildThread
    Possibly with a further MemThread below Thread,
@@ -17107,7 +17107,7 @@ And we can have an exec which is not memory-abstracting, I guess.
     Maybe we can register callbacks on the task to be called as part of unshare?
 
     Oh, for that matter, we should clean up how we currently handle unshare. Hm.
-** clean up do_unshare implementation
+** DONE clean up do_unshare implementation
    It's spread across io and handle in a not-very-clean way.
 
    So, okay, let's first get an understanding of what's going on.
@@ -17324,7 +17324,7 @@ And we can have an exec which is not memory-abstracting, I guess.
     Should we switch arbitrarily between tasks?
     Or, we should just use the first one in the list;
     that seems wise.
-*** cleaned part up, now for do_cloexec_except
+*** DONE cleaned part up, now for do_cloexec_except
     hmm why is it so slow?
 
     hopefully we aren't batching properly
@@ -17339,13 +17339,14 @@ And we can have an exec which is not memory-abstracting, I guess.
 
     yeah I think the bottleneck is the many-small-writes.
     let's batch those
-** epoll insight
-   The new approach, where you read first, is taking advantage of something I missed:
 
-   You can query the readability level from the kernel! You just do it by, reading.
+    ok so I batched those and now it's working better
 
-   So we start by querying the readability level, then if it's low, we wait to read.
-** syscall connection rework for more batching
+    I think we could also afford to, um...
+    Do a GC first in the new fd space.
+
+    Great and I'm defaulting unshare_files now to not do the cloexec
+** DONE syscall connection rework for more batching
 *** debugging
     um lol we're mmaping after execing? hMmmm no wonder it hangs for ever l m a o.
 
@@ -17455,6 +17456,12 @@ And we can have an exec which is not memory-abstracting, I guess.
     if the coroutine writing the stuff has done a partial write,
     and then gets cancelled,
     then we need to be aware of that.
+** epoll insight
+   The new approach, where you read first, is taking advantage of something I missed:
+
+   You can query the readability level from the kernel! You just do it by, reading.
+
+   So we start by querying the readability level, then if it's low, we wait to read.
 ** another insight
    flexsc! flexsc! batching syscalls! dedicated syscall thread!
 
@@ -17471,6 +17478,14 @@ And we can have an exec which is not memory-abstracting, I guess.
    not a network.
 
    Though the fact that we have an implicit reference to the task on one side of the connection is somewhat weird.
+*** inheritance
+   So! How then do we handle automatically creating the new kind of connection?
+
+   We've cleaned up unshare and gained an understanding there.
+
+   Now let's think about this connection!
+
+   OK we'll just explicitly call unshare_files.
 ** DONE batch creation of channels in connection
    We can do them async-like.
 

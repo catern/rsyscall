@@ -613,18 +613,24 @@ class StandardTask:
             exit_event.check()
         return exit_event
 
-    async def unshare_files(self, going_to_exec=False) -> None:
+    async def unshare_files(self, going_to_exec=True) -> None:
         """Unshare the file descriptor table.
 
-        Set going_to_exec to True if you are about to exec with this task; then we'll skip the
-        manual CLOEXEC in userspace that we have to do to avoid keeping stray references around.
+        Set going_to_exec to False if you are going to keep this task around long-term, and we'll do
+        a manual cloexec in userspace to clear out fds held by any other non-rsyscall libraries,
+        which are automatically copied by Linux into the new fd space.
+
+        We default going_to_exec to True because there's little reason to call unshare_files other
+        than to then exec; and even if you do want to call unshare_files without execing, there
+        probably aren't any significant other libraries in the FD space; and even if there are such
+        libraries, it usually doesn't matter to keep stray references around to their FDs.
 
         TODO maybe this should return an object that lets us unset CLOEXEC on things?
+
         """
-        async def do_unshare(copy_to_new_space: t.List[near.FileDescriptor]) -> None:
-            await unshare_files(self.task, self.process,
-                                copy_to_new_space, going_to_exec)
-        await self.task.base.unshare_files(do_unshare)
+        await self.task.base.unshare_files()
+        if not going_to_exec:
+            await do_cloexec_except(self.task, set([fd.near for fd in self.task.base.fd_handles]))
 
     async def unshare_files_and_replace(self, mapping: t.Dict[handle.FileDescriptor, handle.FileDescriptor],
                                         going_to_exec=False) -> None:
@@ -773,15 +779,6 @@ async def do_cloexec_except(task: Task, excluded_fds: t.Set[near.FileDescriptor]
                     continue
                 nursery.start_soon(maybe_close, near.FileDescriptor(num))
             buf = valid.merge(rest)
-
-async def unshare_files(
-        task: Task, process_resources: ProcessResources,
-        copy_to_new_space: t.List[near.FileDescriptor],
-        going_to_exec: bool,
-) -> None:
-    # perform a cloexec
-    if not going_to_exec:
-        await do_cloexec_except(task, set(copy_to_new_space))
 
 class RsyscallThread:
     def __init__(self,
