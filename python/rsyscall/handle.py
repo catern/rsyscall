@@ -20,7 +20,7 @@ from rsyscall.sys.socket import (
     CmsgList, CmsgSCMRights,
     FDPair,
 )
-from rsyscall.sched import UnshareFlag, CLONE
+from rsyscall.sched import UnshareFlag, CLONE, Stack, Borrowable
 from rsyscall.struct import Serializer, HasSerializer, FixedSerializer, FixedSize, Serializable, Int32, Struct
 from rsyscall.signal import Sigaction, Sigset, Signals, Siginfo, SignalMaskTask
 from rsyscall.fcntl import AT, F, O
@@ -1040,6 +1040,10 @@ class Task(SignalMaskTask, rsyscall.far.Task):
     async def getgid(self) -> int:
         return (await rsyscall.near.getgid(self.sysif))
 
+
+################################################################################
+# Processes
+
 @dataclass
 class Process:
     task: Task
@@ -1165,31 +1169,7 @@ class ThreadProcess(ChildProcess):
 
 
 ################################################################################
-# various structs which need to be moved out
-
-class Borrowable:
-    def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
-        raise NotImplementedError("borrow_with not implemented on", type(self))
-
-import struct
-T_borrowable = t.TypeVar('T_borrowable', bound=Borrowable)
-@dataclass
-class Stack(Serializable, t.Generic[T_borrowable]):
-    function: Pointer
-    data: T_borrowable
-    serializer: Serializer[T_borrowable]
-
-    def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
-        stack.enter_context(self.function.borrow(task))
-        self.data.borrow_with(stack, task)
-
-    def to_bytes(self) -> bytes:
-        return struct.Struct("Q").pack(int(self.function.near)) + self.serializer.to_bytes(self.data)
-
-    T_stack = t.TypeVar('T_stack', bound='Stack')
-    @classmethod
-    def from_bytes(cls: t.Type[T_stack], data: bytes) -> T_stack:
-        raise Exception("nay")
+# Memory mappings
 
 @dataclass
 class MemoryMapping:
