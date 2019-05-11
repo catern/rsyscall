@@ -1,6 +1,7 @@
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 import types
+import time
 import traceback
 import pathlib
 
@@ -26,7 +27,7 @@ from rsyscall.tasks.fork import spawn_rsyscall_thread, RsyscallConnection, Sysca
 from rsyscall.tasks.common import raise_if_error, log_syscall
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, GenericSockaddr, SendmsgFlags, RecvmsgFlags, Sockbuf
-from rsyscall.fcntl import AT, O, F
+from rsyscall.fcntl import AT, O, F, FD_CLOEXEC
 from rsyscall.sys.socket import T_addr
 from rsyscall.sys.mount import MS
 from rsyscall.sys.un import SockaddrUn, PathTooLongError, SockaddrUnProcFd
@@ -804,38 +805,45 @@ async def do_cloexec_except(task: Task, process_resources: ProcessResources,
     if not child_event.clean():
         raise Exception("cloexec function child died!", child_event)
 
+async def new_do_cloexec_except(task: Task, excluded_fds: t.Set[near.FileDescriptor]) -> None:
+    print("cloexec on", task.base.sysif)
+    buf = await task.malloc_type(DirentList, 4096)
+    dirfd = (await (task.root()/"proc"/"self"/"fd").open_directory()).handle
+    async def maybe_close(fd: near.FileDescriptor) -> None:
+        flags = await near.fcntl(task.base.sysif, fd, F.GETFD)
+        if (flags & FD_CLOEXEC) and (fd not in excluded_fds):
+            await near.close(task.base.sysif, fd)
+    async with trio.open_nursery() as nursery:
+        while True:
+            valid, rest = await dirfd.getdents(buf)
+            if valid.bytesize() == 0:
+                break
+            dents = await valid.read()
+            for dent in dents:
+                try:
+                    num = int(dent.name)
+                except ValueError:
+                    continue
+                nursery.start_soon(maybe_close, near.FileDescriptor(num))
+            buf = valid.merge(rest)
+
 async def unshare_files(
         task: Task, process_resources: ProcessResources,
         copy_to_new_space: t.List[near.FileDescriptor],
         going_to_exec: bool,
 ) -> None:
-    async def op(sem: batch.BatchSemantics) -> t.Tuple[t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
-                                                       handle.Pointer[Siginfo]]:
-        fd_array = array.array('i', [])
-        fd_array_ptr = sem.to_pointer(Bytes(fd_array.tobytes()))
-        stack_value = process_resources.make_trampoline_stack(Trampoline(
-            process_resources.stop_then_close_func, [fd_array_ptr, len(fd_array)]))
-        stack_buf = sem.malloc_type(handle.Stack, 4096)
-        stack = await stack_buf.write_to_end(stack_value, alignment=16)
-        siginfo_buf = sem.malloc_struct(Siginfo)
-        return stack, siginfo_buf
-    stack, siginfo_buf = await task.perform_async_batch(op)
-    process = await task.base.clone(CLONE.VM|CLONE.FILES|CLONE.FS|CLONE.IO|CLONE.SIGHAND|CLONE.SYSVSEM,
-                                    stack, ptid=None, ctid=None, newtls=None)
-    await process.waitid(W.ALL|W.STOPPED|W.EXITED, siginfo_buf)
-    event = await process.read_event()
-    if event.died():
-        raise Exception("stop_then_close task died unexpectedly", event)
-    # perform the actual unshare
-    await near.unshare(task.base.sysif, UnshareFlag.FILES)
-    await process.kill(Signals.SIGCONT)
-    await process.waitid(W.ALL|W.EXITED, siginfo_buf)
-    event = await process.read_event()
-    if not event.clean():
-        raise Exception("unshare function child died uncleanly", event)
     # perform a cloexec
     if not going_to_exec:
-        await do_cloexec_except(task, process_resources, copy_to_new_space)
+        start = time.time()
+        logging.basicConfig(level=logging.DEBUG)
+        logging.getLogger().setLevel(level=logging.DEBUG)
+        print("CLOEXEC start", start)
+        # await do_cloexec_except(task, process_resources, copy_to_new_space)
+        await new_do_cloexec_except(task, set(copy_to_new_space))
+        end = time.time()
+        print("CLOEXEC end", end)
+        logging.getLogger().setLevel(level=logging.ERROR)
+        print("CLOEXEC time", end - start)
 
 class RsyscallThread:
     def __init__(self,

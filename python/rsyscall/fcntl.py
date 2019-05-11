@@ -34,4 +34,7 @@ class O(enum.IntFlag):
 
 class F(enum.IntEnum):
     SETFD = fcntl.F_SETFD
+    GETFD = fcntl.F_GETFD
     SETFL = fcntl.F_SETFL
+
+FD_CLOEXEC = fcntl.FD_CLOEXEC

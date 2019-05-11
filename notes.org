@@ -17308,7 +17308,7 @@ And we can have an exec which is not memory-abstracting, I guess.
     OK, meh, let's just be runtime.
     For now anyway.
     We'll clean up the thread creates and then come back to it.
-*** start cleanup
+*** DONE start cleanup
     We'll start cleaning up the thread creation done by unshare.
 
     The first one we should start with is the fd table thing.
@@ -17324,6 +17324,21 @@ And we can have an exec which is not memory-abstracting, I guess.
     Should we switch arbitrarily between tasks?
     Or, we should just use the first one in the list;
     that seems wise.
+*** cleaned part up, now for do_cloexec_except
+    hmm why is it so slow?
+
+    hopefully we aren't batching properly
+
+    seems we have this request lock, maybe that's serializing it somewhat?
+
+    ok so it does seem unusually slow, but the batching is also working.
+    the syscalls not being buffered and written all at once might be part of the problem.
+
+    waitids are also interrupting the writes,
+    but I think that would go away if we were batching the writes together.
+
+    yeah I think the bottleneck is the many-small-writes.
+    let's batch those
 ** clean up handling of unshare for connection
 ** clean creation and inheritance for connection
    The connection interface is actually very nice.

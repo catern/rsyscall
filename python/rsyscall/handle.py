@@ -540,7 +540,7 @@ class FileDescriptor:
         await rsyscall.near.dup3(self.task.sysif, self.near, newfd_near, flags)
         return self.task.make_fd_handle(newfd_near)
 
-    async def fcntl(self, cmd: int, arg: t.Optional[int]=None) -> int:
+    async def fcntl(self, cmd: F, arg: t.Optional[int]=None) -> int:
         self.validate()
         return (await rsyscall.near.fcntl(self.task.sysif, self.near, cmd, arg))
 
@@ -783,7 +783,8 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         print("unshare", old_fd_table, self.fd_table)
         self._setup_fd_table()
         self.manipulating_fd_table = True
-        await do_unshare([fd.near for fd in self.fd_handles])
+        # perform the actual unshare
+        await rsyscall.near.unshare(self.sysif, UnshareFlag.FILES)
         self.manipulating_fd_table = False
         # We can only remove our handles from the handle lists after the unshare is done
         # and the fds are safely copied, because otherwise someone else running GC on the
@@ -792,6 +793,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         for handle in self.fd_handles:
             old_near_to_handles[handle.near].remove(handle)
         await run_fd_table_gc(old_fd_table)
+        await do_unshare([fd.near for fd in self.fd_handles])
 
     async def unshare_fs(self) -> None:
         old_fs = self.fs

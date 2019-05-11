@@ -9,7 +9,7 @@ import logging
 import typing as t
 logger = logging.getLogger(__name__)
 
-from rsyscall.fcntl import AT
+from rsyscall.fcntl import AT, F
 from rsyscall.sys.wait import IdType
 if t.TYPE_CHECKING:
     from rsyscall.sys.epoll import EPOLL_CTL
@@ -221,7 +221,7 @@ async def recv(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count:
 async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
     await sysif.syscall(SYS.close, fd)
 
-async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: int, arg: t.Optional[t.Union[int, Pointer]]=None) -> int:
+async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: F, arg: t.Optional[t.Union[int, Pointer]]=None) -> int:
     logger.debug("fcntl(%s, %s, %s)", fd, cmd, arg)
     if arg is None:
         arg = 0
