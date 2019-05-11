@@ -25,6 +25,7 @@ from rsyscall.loader import Trampoline, ProcessResources
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.tasks.fork import spawn_rsyscall_thread, RsyscallConnection, SyscallResponse
 from rsyscall.tasks.common import raise_if_error, log_syscall
+from rsyscall.command import Command
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, GenericSockaddr, SendmsgFlags, RecvmsgFlags, Sockbuf
 from rsyscall.fcntl import AT, O, F, FD_CLOEXEC
@@ -606,7 +607,7 @@ class StandardTask:
     async def run(self, command: Command, check=True,
                   *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
         thread = await self.fork(fs=False)
-        child = await command.exec(thread)
+        child = await thread.exec(command)
         task_status.started(child)
         exit_event = await child.wait_for_exit()
         if check:
@@ -843,7 +844,7 @@ class RsyscallThread:
         return await self.execveat(path, [os.fsencode(arg) for arg in argv], raw_envp, AT.NONE)
 
     async def run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
-        child = await command.exec(self)
+        child = await self.exec(command)
         task_status.started(child)
         exit_event = await child.wait_for_exit()
         if check:
@@ -873,53 +874,6 @@ class Pipe(t.NamedTuple):
     async def __aexit__(self, *args, **kwargs):
         await self.aclose()
 
-T_command = t.TypeVar('T_command', bound="Command")
-class Command:
-    def __init__(self,
-                 executable_path: handle.Path,
-                 arguments: t.List[t.Union[str, bytes, os.PathLike]],
-                 env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]) -> None:
-        self.executable_path = executable_path
-        self.arguments = arguments
-        self.env_updates = env_updates
-
-    def args(self: T_command, *args: t.Union[str, bytes, os.PathLike]) -> T_command:
-        return type(self)(self.executable_path,
-                          [*self.arguments, *args],
-                          self.env_updates)
-
-    def env(self: T_command, env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]={},
-            **updates: t.Union[str, bytes, os.PathLike]) -> T_command:
-        return type(self)(self.executable_path,
-                          self.arguments,
-                          {**self.env_updates, **env_updates, **updates})
-
-    def in_shell_form(self) -> str:
-        ret = ""
-        for key, value in self.env_updates.items():
-            ret += os.fsdecode(key) + "=" + os.fsdecode(value)
-        ret += os.fsdecode(self.executable_path)
-        # skip first argument
-        for arg in self.arguments[1:]:
-            ret += " " + os.fsdecode(arg)
-        return ret
-
-    def __str__(self) -> str:
-        ret = "Command("
-        for key, value in self.env_updates.items():
-            ret += f"{key}={value} "
-        ret += f"{os.fsdecode(self.executable_path)},"
-        for arg in self.arguments:
-            ret += " " + os.fsdecode(arg)
-        ret += ")"
-        return ret
-
-    # hmm we actually need an rsyscallthread to properly exec
-    # would be nice to call this just "Thread".
-    # we should namespace the current "Thread" properly, so we can do that...
-    async def exec(self, thread: RsyscallThread) -> AsyncChildProcess:
-        return (await thread.execve(self.executable_path, self.arguments, self.env_updates))
-
 
 async def exec_cat(thread: RsyscallThread, cat: Command,
                    stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> AsyncChildProcess:
@@ -927,7 +881,7 @@ async def exec_cat(thread: RsyscallThread, cat: Command,
         thread.stdtask.stdin.handle: stdin,
         thread.stdtask.stdout.handle: stdout,
     }, going_to_exec=True)
-    child_task = await cat.exec(thread)
+    child_task = await thread.exec(cat)
     return child_task
 
 async def read_all(fd: MemFileDescriptor) -> bytes:

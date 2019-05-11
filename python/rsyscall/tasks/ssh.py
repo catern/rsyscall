@@ -144,7 +144,7 @@ async def run_socket_binder(
         await thread.stdtask.stdout.replace_with(stdout)
         await thread.stdtask.stdin.replace_with(bootstrap_executable)
     async with thread:
-        child = await ssh_command.args(ssh_bootstrap_script_contents).exec(thread)
+        child = await thread.exec(ssh_command.args(ssh_bootstrap_script_contents))
         # from... local?
         # I guess this throws into sharper relief the distinction between core and module.
         # The ssh bootstrapping stuff should come from a different class,
@@ -176,12 +176,12 @@ async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
     stdout = stdout_pipe.write.move(thread.stdtask.task.base)
     await thread.stdtask.unshare_files()
     await thread.stdtask.stdout.replace_with(stdout)
-    child_task = await ssh_command.local_forward(
+    child_task = await thread.exec(ssh_command.local_forward(
         local_path, remote_path,
     # TODO I optimistically assume that I'll have established a
     # connection through the tunnel before 1 second has passed;
     # that connection will then keep the tunnel open.
-    ).args("-n", "echo forwarded; exec sleep 1").exec(thread)
+    ).args("-n", "echo forwarded; exec sleep 1"))
     lines_buf = AsyncReadBuffer(async_stdout)
     forwarded = await lines_buf.read_line()
     if forwarded != b"forwarded":
@@ -207,9 +207,9 @@ async def ssh_bootstrap(
         parent_task, ssh_command, local_socket_path, (tmp_path_bytes + b"/data").decode())
     # start bootstrap
     bootstrap_thread = await parent_task.fork()
-    bootstrap_child_task = await ssh_command.args(
+    bootstrap_child_task = await bootstrap_thread.exec(ssh_command.args(
         "-n", f"cd {tmp_path_bytes.decode()}; exec ./bootstrap rsyscall"
-    ).exec(bootstrap_thread)
+    ))
     # TODO should unlink the bootstrap after I'm done execing.
     # it would be better if sh supported fexecve, then I could unlink it before I exec...
     # Connect to local socket 4 times
@@ -298,7 +298,7 @@ async def make_local_ssh_from_executables(stdtask: StandardTask,
     # ugh, we have to make a directory because ssh-keygen really wants to output to a directory
     async with (await stdtask.mkdtemp()) as tmpdir:
         await keygen_thread.stdtask.task.base.chdir(await tmpdir.to_pointer())
-        await (await keygen_command.exec(keygen_thread)).wait_for_exit()
+        await (await keygen_thread.exec(keygen_command)).wait_for_exit()
         privkey_file = await (tmpdir/'key').open(O.RDONLY)
         pubkey_file = await (tmpdir/'key.pub').open(O.RDONLY)
     def to_host(ssh: SSHCommand, privkey_file=privkey_file, pubkey_file=pubkey_file) -> SSHCommand:

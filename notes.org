@@ -16662,6 +16662,19 @@ but that doesn't scale as well as passing the epfd down.
 
     like, we definitely do want to memabstract at some levels.
     ehh ok, we'll still have two classes.
+** split out environment thing
+   This will be our path cache to look up things in the environment.
+** DONE move out command
+   oh, command references rsyscallthread. annoying.
+
+   we can just invert it though
+** decide what to do with our two Paths
+   can I really bear to get rid of our current memory-abstracting Path?
+
+   I guess getting rid of the mem-abstracting Path would promote usage of at syscalls. To some degree anyway.
+
+   And maybe I could have Command take a Union[Path, WrittenPointer[Path], FileDescriptor].
+** move stack out to sched, leave T_borrowable in handle
 ** DONE make make_connection object into an interface
    Then I can remove this annoying conditionality from the implementation.
 

@@ -23,8 +23,8 @@ async def bootstrap_nix(
     await query_pipe.wfd.invalidate()
     await query_thread.stdtask.unshare_files(going_to_exec=True)
     await query_thread.stdtask.stdout.replace_with(query_stdout)
-    await src_nix_store.args("--query", "--requisites",
-                             src_nix_store.executable_path).exec(query_thread)
+    await query_thread.exec(
+        src_nix_store.args("--query", "--requisites", src_nix_store.executable_path))
     closure = (await read_all(query_pipe.rfd)).split()
 
     src_tar_thread = await src_task.fork()
@@ -36,15 +36,15 @@ async def bootstrap_nix(
     await dest_tar_thread.stdtask.task.base.fchdir(dest_dir.handle)
     await dest_tar_thread.stdtask.unshare_files(going_to_exec=True)
     await dest_tar_thread.stdtask.stdin.replace_with(dest_tar_stdin)
-    child_task = await dest_tar.args("--extract").exec(dest_tar_thread)
+    child_task = await dest_tar_thread.exec(dest_tar.args("--extract"))
 
     await src_tar_thread.stdtask.unshare_files(going_to_exec=True)
     await src_tar_thread.stdtask.stdout.replace_with(src_tar_stdout)
-    await src_tar.args(
+    await src_tar_thread.exec(src_tar.args(
         "--create", "--to-stdout", "--hard-dereference",
         "--owner=0", "--group=0", "--mode=u+rw,uga+r",
         *closure,
-    ).exec(src_tar_thread)
+    ))
     await child_task.wait_for_exit()
     return closure
 
@@ -60,11 +60,11 @@ async def bootstrap_nix_database(
 
     await load_db_thread.stdtask.unshare_files(going_to_exec=True)
     await load_db_thread.stdtask.stdin.replace_with(load_db_stdin)
-    child_task = await dest_nix_store.args("--load-db").env({'NIX_REMOTE': ''}).exec(load_db_thread)
+    child_task = await load_db_thread.exec(dest_nix_store.args("--load-db").env({'NIX_REMOTE': ''}))
 
     await dump_db_thread.stdtask.unshare_files(going_to_exec=True)
     await dump_db_thread.stdtask.stdout.replace_with(dump_db_stdout)
-    await src_nix_store.args("--dump-db", *closure).exec(dump_db_thread)
+    await dump_db_thread.exec(src_nix_store.args("--dump-db", *closure))
     await child_task.check()
 
 async def create_nix_container(
@@ -112,7 +112,7 @@ async def nix_deploy(
     query_stdout = query_pipe.wfd.handle.move(query_thread.stdtask.task.base)
     await query_thread.stdtask.unshare_files(going_to_exec=True)
     await query_thread.stdtask.stdout.replace_with(query_stdout)
-    await Command(src_nix_bin/"nix-store", [b"nix-store"], {}).args("--query", "--requisites", src_path).exec(query_thread)
+    await query_thread.exec(Command(src_nix_bin/"nix-store", [b"nix-store"], {}).args("--query", "--requisites", src_path))
     closure = (await read_all(query_pipe.rfd)).split()
 
     export_thread = await src_task.fork()

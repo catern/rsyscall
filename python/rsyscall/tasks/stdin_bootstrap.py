@@ -46,7 +46,7 @@ async def rsyscall_stdin_bootstrap(
     await thread.stdtask.unshare_files(going_to_exec=True)
     await thread.stdtask.stdin.replace_with(child_sock)
     # exec
-    child_task = await bootstrap_command.exec(thread)
+    child_task = await thread.exec(bootstrap_command)
     #### set up all the fds we'll want to pass over
     # the basic connections
     [(access_syscall_sock, passed_syscall_sock),

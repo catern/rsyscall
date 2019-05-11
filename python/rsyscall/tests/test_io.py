@@ -753,7 +753,7 @@ class TestIO(unittest.TestCase):
                 bash = await rsyscall.io.which(remote_stdtask, b"bash")
                 await thread.stdtask.task.base.chdir(await remote_tmpdir.to_pointer())
                 await ((await (remote_tmpdir/"var").mkdir())/"stuff").mkdir()
-                child_task = await bash.exec(thread)
+                child_task = await thread.exec(bash)
                 await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
@@ -993,7 +993,7 @@ class TestIO(unittest.TestCase):
     def test_fork_exec(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             child_thread = await stdtask.fork()
-            child_task = await stdtask.sh.args('-c', 'true').exec(child_thread)
+            child_task = await child_thread.exec(stdtask.sh.args('-c', 'true'))
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
 

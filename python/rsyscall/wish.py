@@ -55,13 +55,13 @@ class ConsoleGenie(WishGranter):
                 await term_stdin.handle.invalidate()
                 await cat_stdin_thread.stdtask.unshare_files(going_to_exec=True)
                 await cat_stdin_thread.stdtask.stdin.replace_with(cat_stdin)
-                async with await self.cat.exec(cat_stdin_thread):
+                async with await cat_stdin_thread.exec(self.cat):
                     cat_stdout_thread = await self.stdtask.fork()
                     cat_stdout = cat_stdout_thread.stdtask.task.base.make_fd_handle(term_stdout.handle)
                     await term_stdout.handle.invalidate()
                     await cat_stdout_thread.stdtask.unshare_files(going_to_exec=True)
                     await cat_stdout_thread.stdtask.stdout.replace_with(cat_stdout)
-                    async with await self.cat.exec(cat_stdout_thread):
+                    async with await cat_stdout_thread.exec(self.cat):
                         ret = await run_repl(async_stdin, async_stdout, {
                             '__repl_stdin__': async_stdin,
                             '__repl_stdout__': async_stdout,
@@ -112,7 +112,7 @@ class ConsoleServerGenie(WishGranter):
                 while True:
                     thread = await self.stdtask.fork()
                     try:
-                        child = await cmd.exec(thread)
+                        child = await thread.exec(cmd)
                     except:
                         await thread.close()
                         raise
