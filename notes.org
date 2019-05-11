@@ -17467,8 +17467,8 @@ And we can have an exec which is not memory-abstracting, I guess.
 
    hey wait a second, couldn't we use these techniques in bump?
    separate out a syscall thread? for nice locality? hmmm... neat...
-** clean up handling of unshare for connection
-** clean creation and inheritance for connection
+** DONE clean up handling of unshare for connection
+** DONE clean creation and inheritance for connection
    The connection interface is actually very nice.
    We'll be able to very flexibly use it with TCP,
    or some other tunneling thing,
@@ -17486,6 +17486,8 @@ And we can have an exec which is not memory-abstracting, I guess.
    Now let's think about this connection!
 
    OK we'll just explicitly call unshare_files.
+
+   OK, nice, we cleaned it all up.
 ** DONE batch creation of channels in connection
    We can do them async-like.
 

@@ -1,11 +1,14 @@
 from __future__ import annotations
+from rsyscall._raw import ffi, lib # type: ignore
+from dataclasses import dataclass
 import enum
 import os
-from rsyscall.struct import Serializer, FixedSerializer, Serializable
+from rsyscall.struct import Serializer, FixedSerializer, Serializable, FixedSize
 import struct
 import typing as t
+import rsyscall.near as near
 if t.TYPE_CHECKING:
-    from rsyscall.handle import Pointer, Task
+    from rsyscall.handle import Pointer, Task, FileDescriptor
 else:
     Pointer = t.Optional
 
@@ -43,3 +46,35 @@ class ArgListSerializer(Serializer[T_arglist]):
 
     def from_bytes(self, data: bytes) -> T_arglist:
         raise Exception("can't get pointer handles from raw bytes")
+
+
+#### pipe stuff
+
+T_pipe = t.TypeVar('T_pipe', bound='Pipe')
+@dataclass
+class Pipe(FixedSize):
+    read: FileDescriptor
+    write: FileDescriptor
+
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('struct fdpair')
+
+    @classmethod
+    def get_serializer(cls: t.Type[T_pipe], task: Task) -> Serializer[T_pipe]:
+        return PipeSerializer(cls, task)
+
+@dataclass
+class PipeSerializer(Serializer[T_pipe]):
+    cls: t.Type[T_pipe]
+    task: Task
+
+    def to_bytes(self, pair: T_pipe) -> bytes:
+        struct = ffi.new('struct fdpair*', (pair.read, pair.write))
+        return bytes(ffi.buffer(struct))
+
+    def from_bytes(self, data: bytes) -> T_pipe:
+        struct = ffi.cast('struct fdpair const*', ffi.from_buffer(data))
+        def make(n: int) -> FileDescriptor:
+            return self.task.make_fd_handle(near.FileDescriptor(int(n)))
+        return self.cls(make(struct.first), make(struct.second))

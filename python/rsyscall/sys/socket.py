@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import typing as t
 import enum
 import socket
-from rsyscall.struct import Struct, FixedSerializer, Serializable, Serializer, HasSerializer
+from rsyscall.struct import Struct, FixedSerializer, Serializable, Serializer, HasSerializer, FixedSize
 import contextlib
 import abc
 import struct
@@ -119,6 +119,38 @@ class SockbufSerializer(t.Generic[T], Serializer[Sockbuf[T]]):
             raise Exception("not enough buffer space to read socket, need", socklen)
         valid, rest = self.buf.split(socklen)
         return Sockbuf(valid, rest)
+
+
+#### socketpair stuff
+
+T_fdpair = t.TypeVar('T_fdpair', bound='FDPair')
+@dataclass
+class FDPair(FixedSize):
+    first: FileDescriptor
+    second: FileDescriptor
+
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('struct fdpair')
+
+    @classmethod
+    def get_serializer(cls: t.Type[T_fdpair], task: Task) -> Serializer[T_fdpair]:
+        return FDPairSerializer(cls, task)
+
+@dataclass
+class FDPairSerializer(Serializer[T_fdpair]):
+    cls: t.Type[T_fdpair]
+    task: Task
+
+    def to_bytes(self, pair: T_fdpair) -> bytes:
+        struct = ffi.new('struct fdpair*', (pair.first, pair.second))
+        return bytes(ffi.buffer(struct))
+
+    def from_bytes(self, data: bytes) -> T_fdpair:
+        struct = ffi.cast('struct fdpair const*', ffi.from_buffer(data))
+        def make(n: int) -> FileDescriptor:
+            return self.task.make_fd_handle(near.FileDescriptor(int(n)))
+        return self.cls(make(struct.first), make(struct.second))
 
 
 #### sendmsg/recvmsg stuff
