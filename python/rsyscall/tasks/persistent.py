@@ -46,10 +46,6 @@ class PersistentConnection(near.SyscallInterface):
         self.epoll_fd: handle.FileDescriptor
         self.activity_fd: near.FileDescriptor
         self.task: handle.Task
-        # concurrency tracking stuff
-        self.request_lock = trio.Lock()
-        self.pending_responses: t.List[SyscallResponse] = []
-        self.running: trio.Event = None
 
     def store_remote_side_handles(self,
                                   infd: handle.FileDescriptor,
@@ -88,43 +84,13 @@ class PersistentConnection(near.SyscallInterface):
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
 
-    async def _process_response_for(self, response: SyscallResponse) -> None:
-        try:
-            ret = await self.rsyscall_connection.read_response()
-            raise_if_error(ret)
-        except Exception as e:
-            response.set_exception(e)
-        else:
-            response.set_result(ret)
-
-    async def _process_one_response_direct(self) -> None:
-        if len(self.pending_responses) == 0:
-            raise Exception("somehow we are trying to process a syscall response, when there are no pending syscalls.")
-        next = self.pending_responses[0]
-        await self._process_response_for(next)
-        self.pending_responses = self.pending_responses[1:]
-
-    async def _process_one_response(self) -> None:
-        if self.running is not None:
-            await self.running.wait()
-        else:
-            running = trio.Event()
-            self.running = running
-            try:
-                await self._process_one_response_direct()
-            finally:
-                self.running = None
-                running.set()
-
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
-        async with self.request_lock:
-            log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-            await self.rsyscall_connection.write_request(
-                number,
-                arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-                arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        response = SyscallResponse(self._process_one_response)
-        self.pending_responses.append(response)
+        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+        conn_response = await self.rsyscall_connection.write_request(
+            number,
+            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        response = SyscallResponse(self.rsyscall_connection.read_pending_responses, conn_response)
         return response
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
@@ -202,9 +168,7 @@ class PersistentServer:
         await self.task.base.prctl(PrctlOp.SET_PDEATHSIG, 0)
 
     async def reconnect(self, stdtask: StandardTask) -> None:
-        if self.syscall.pending_responses:
-            raise Exception("can't reconnect while there are pending syscalls!")
-        # TODO should also have the same check for transport, once we reify transport requests
+        # TODO should check that no transport requests are in flight
         await self.syscall.rsyscall_connection.close()
         if self.transport is not None:
             await self.transport.local.aclose()

@@ -11,7 +11,7 @@ from rsyscall.monitor import AsyncChildProcess
 import rsyscall.batch as batch
 import rsyscall.nix as nix
 from dataclasses import dataclass
-from rsyscall.tasks.fork import launch_futex_monitor
+from rsyscall.tasks.fork import launch_futex_monitor, ChildConnection, RsyscallConnection
 
 from rsyscall.fcntl import F
 from rsyscall.struct import Int32
@@ -80,7 +80,11 @@ async def rsyscall_exec(
     child_futex_memfd = await stdtask.task.base.memfd_create(
         await stdtask.task.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
     parent_futex_memfd = parent_stdtask.task.base.make_fd_handle(child_futex_memfd)
-    syscall: ChildConnection = stdtask.task.base.sysif # type: ignore
+    if isinstance(stdtask.task.base.sysif, ChildConnection):
+        syscall = stdtask.task.base.sysif
+    else:
+        raise Exception("can only exec in ChildConnection sysifs, not",
+                        stdtask.task.base.sysif)
     # unshare files so we can unset cloexec on fds to inherit
     await rsyscall_thread.stdtask.unshare_files(going_to_exec=True)
     base_task = rsyscall_thread.stdtask.task.base
@@ -102,6 +106,8 @@ async def rsyscall_exec(
     # the futex task we used before is dead now that we've exec'd, have
     # to null it out
     syscall.futex_task = None
+    # the old RC would wait forever for the exec to complete; we need to make a new one.
+    syscall.rsyscall_connection = RsyscallConnection(syscall.rsyscall_connection.tofd, syscall.rsyscall_connection.fromfd)
     stdtask.task.base.address_space = far.AddressSpace(rsyscall_thread.stdtask.task.base.process.near.id)
     # we mutate the allocator instead of replacing to so that anything that
     # has stored the allocator continues to work

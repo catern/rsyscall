@@ -721,9 +721,6 @@ class RsyscallInterface(near.SyscallInterface):
         # these are needed so that we don't accidentally close them when doing a do_cloexec_except
         self.infd: handle.FileDescriptor
         self.outfd: handle.FileDescriptor
-        self.request_lock = trio.Lock()
-        self.pending_responses: t.List[SyscallResponse] = []
-        self.running: trio.Event = None
 
     def store_remote_side_handles(self, infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> None:
         self.infd = infd
@@ -732,43 +729,13 @@ class RsyscallInterface(near.SyscallInterface):
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
 
-    async def _process_response_for(self, response: SyscallResponse) -> None:
-        try:
-            ret = await self.rsyscall_connection.read_response()
-            raise_if_error(ret)
-        except Exception as e:
-            response.set_exception(e)
-        else:
-            response.set_result(ret)
-
-    async def _process_one_response_direct(self) -> None:
-        if len(self.pending_responses) == 0:
-            raise Exception("somehow we are trying to process a syscall response, when there are no pending syscalls.")
-        next = self.pending_responses[0]
-        await self._process_response_for(next)
-        self.pending_responses = self.pending_responses[1:]
-
-    async def _process_one_response(self) -> None:
-        if self.running is not None:
-            await self.running.wait()
-        else:
-            running = trio.Event()
-            self.running = running
-            try:
-                await self._process_one_response_direct()
-            finally:
-                self.running = None
-                running.set()
-
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
-        async with self.request_lock:
-            log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-            await self.rsyscall_connection.write_request(
-                number,
-                arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-                arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        response = SyscallResponse(self._process_one_response)
-        self.pending_responses.append(response)
+        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+        conn_response = await self.rsyscall_connection.write_request(
+            number,
+            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        response = SyscallResponse(self.rsyscall_connection.read_pending_responses, conn_response)
         return response
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
@@ -785,28 +752,8 @@ class RsyscallInterface(near.SyscallInterface):
             self.logger.debug("%s -> %s", number, result)
             return result
 
-async def do_cloexec_except(task: Task, process_resources: ProcessResources,
-                            excluded_fds: t.Iterable[near.FileDescriptor]) -> None:
+async def do_cloexec_except(task: Task, excluded_fds: t.Set[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
-    async def op(sem: batch.BatchSemantics) -> t.Tuple[t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]],
-                                                       handle.Pointer[Siginfo]]:
-        fd_array = array.array('i', [int(fd) for fd in excluded_fds])
-        fd_array_ptr = sem.to_pointer(Bytes(fd_array.tobytes()))
-        stack_value = process_resources.make_trampoline_stack(Trampoline(
-            process_resources.do_cloexec_func, [fd_array_ptr, len(fd_array)]))
-        stack_buf = sem.malloc_type(handle.Stack, 4096)
-        stack = await stack_buf.write_to_end(stack_value, alignment=16)
-        siginfo_buf = sem.malloc_struct(Siginfo)
-        return stack, siginfo_buf
-    stack, siginfo_buf = await task.perform_async_batch(op)
-    process = await task.base.clone(CLONE.VM|CLONE.FILES, stack, ptid=None, ctid=None, newtls=None)
-    await process.waitid(W.ALL|W.EXITED, siginfo_buf)
-    child_event = await process.read_event()
-    if not child_event.clean():
-        raise Exception("cloexec function child died!", child_event)
-
-async def new_do_cloexec_except(task: Task, excluded_fds: t.Set[near.FileDescriptor]) -> None:
-    print("cloexec on", task.base.sysif)
     buf = await task.malloc_type(DirentList, 4096)
     dirfd = (await (task.root()/"proc"/"self"/"fd").open_directory()).handle
     async def maybe_close(fd: near.FileDescriptor) -> None:
@@ -834,16 +781,7 @@ async def unshare_files(
 ) -> None:
     # perform a cloexec
     if not going_to_exec:
-        start = time.time()
-        logging.basicConfig(level=logging.DEBUG)
-        logging.getLogger().setLevel(level=logging.DEBUG)
-        print("CLOEXEC start", start)
-        # await do_cloexec_except(task, process_resources, copy_to_new_space)
-        await new_do_cloexec_except(task, set(copy_to_new_space))
-        end = time.time()
-        print("CLOEXEC end", end)
-        logging.getLogger().setLevel(level=logging.ERROR)
-        print("CLOEXEC time", end - start)
+        await do_cloexec_except(task, set(copy_to_new_space))
 
 class RsyscallThread:
     def __init__(self,

@@ -9,7 +9,7 @@ from rsyscall.loader import Trampoline, ProcessResources
 from rsyscall.memory.allocator import Arena
 from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
-from rsyscall.struct import T_struct, Struct, Int32, Bytes
+from rsyscall.struct import T_struct, Struct, Int32, Bytes, StructList
 from rsyscall.tasks.common import raise_if_error, log_syscall
 import logging
 import rsyscall.far as far
@@ -26,30 +26,6 @@ class ChildExit(RsyscallHangup):
 
 class MMRelease(RsyscallHangup):
     pass
-
-@dataclass
-class SyscallResponse(near.SyscallResponse):
-    process_one_response: t.Any
-    result: t.Optional[t.Union[Exception, int]] = None
-
-    async def receive(self) -> int:
-        while self.result is None:
-            await self.process_one_response()
-        else:
-            if isinstance(self.result, int):
-                return self.result
-            else:
-                raise self.result
-
-    def set_exception(self, exn: Exception) -> None:
-        if self.result is not None:
-            raise Exception("trying to set result on SyscallResponse twice")
-        self.result = exn
-
-    def set_result(self, result: int) -> None:
-        if self.result is not None:
-            raise Exception("trying to set result on SyscallResponse twice")
-        self.result = result
 
 @dataclass
 class RsyscallSyscall(Struct):
@@ -96,6 +72,15 @@ class RsyscallResponse(Struct):
     def sizeof(cls) -> int:
         return ffi.sizeof('long')
 
+@dataclass
+class ConnectionResponse:
+    result: t.Optional[int] = None
+
+@dataclass
+class ConnectionRequest:
+    syscall: RsyscallSyscall
+    response: t.Optional[ConnectionResponse] = None
+
 class ReadBuffer:
     def __init__(self) -> None:
         self.buf = b""
@@ -112,6 +97,14 @@ class ReadBuffer:
         else:
             return None
 
+    def read_all_structs(self, cls: t.Type[T_struct]) -> t.List[T_struct]:
+        ret: t.List[T_struct] = []
+        while True:
+            x = self.read_struct(cls)
+            if x is None:
+                return ret
+            ret.append(x)
+
 class RsyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
@@ -122,21 +115,62 @@ class RsyscallConnection:
         self.fromfd = fromfd
         self.buffer = ReadBuffer()
         self.valid: t.Optional[Pointer[Bytes]] = None
+        self.sending_requests = OneAtATime()
+        self.pending_requests: t.List[ConnectionRequest] = []
+        self.reading_responses = OneAtATime()
+        self.pending_responses: t.List[ConnectionResponse] = []
 
     async def close(self) -> None:
+        if self.pending_requests:
+            # TODO we might want to do this, maybe we could cancel these instead?
+            # note that we don't check responses - exit, for example, doesn't get a response...
+            # TODO maybe we should cancel the response when we detect death of task in the enclosing classes?
+            raise Exception("can't close while there are pending requests", self.pending_requests)
         await self.tofd.aclose()
         await self.fromfd.aclose()
 
-    async def write_request(self, number: int,
-                            arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int) -> None:
-        request = RsyscallSyscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        ptr = await self.tofd.ram.to_pointer(request)
+    async def _write_pending_requests_direct(self) -> None:
+        requests = self.pending_requests
+        self.pending_requests = []
+        syscalls = StructList(RsyscallSyscall, [request.syscall for request in requests])
         try:
+            ptr = await self.tofd.ram.to_pointer(syscalls)
+            # TODO should mark the requests complete incrementally as we write them out,
+            # instead of only once all requests have been written out
             await self.tofd.write_handle(ptr)
         except OSError as e:
             # we raise a different exception so that users can distinguish syscall errors from
             # transport errors
+            # TODO we should copy the exception to all the requesters,
+            # not just the one calling us; otherwise they'll block forever.
             raise RsyscallException() from e
+
+        responses = [ConnectionResponse() for _ in requests]
+        for request, response in zip(requests, responses):
+            request.response = response
+        self.pending_responses += responses
+
+    async def _write_pending_requests(self) -> None:
+        async with self.sending_requests.needs_run() as needs_run:
+            if needs_run:
+                await self._write_pending_requests_direct()
+
+    async def _write_request(self, syscall: RsyscallSyscall) -> ConnectionResponse:
+        request = ConnectionRequest(syscall)
+        self.pending_requests.append(request)
+        # TODO as a hack, so we don't have to figure it out now, we don't allow
+        # a syscall request to be cancelled before it's actually made. we could
+        # make this work later, and that would reduce some blocking from waitid
+        with trio.CancelScope(shield=True):
+            while request.response is None:
+                await self._write_pending_requests()
+        return request.response
+
+    async def write_request(self, number: int,
+                            arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int
+    ) -> ConnectionResponse:
+        syscall = RsyscallSyscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
+        return (await self._write_request(syscall))
 
     def poll_response(self) -> t.Optional[int]:
         val = self.buffer.read_struct(RsyscallResponse)
@@ -145,12 +179,19 @@ class RsyscallConnection:
         else:
             return None
 
-    async def read_response(self) -> int:
-        val = self.buffer.read_struct(RsyscallResponse)
-        if val:
-            return val.value
-        buf = await self.fromfd.ram.malloc_type(Bytes, 256)
-        while val is None:
+    def _got_responses(self, vals: t.List[RsyscallResponse]) -> None:
+        responses = self.pending_responses[:len(vals)]
+        self.pending_responses = self.pending_responses[len(vals):]
+        for response, val in zip(responses, vals):
+            response.result = val.value
+
+    async def _read_pending_responses_direct(self) -> None:
+        vals = self.buffer.read_all_structs(RsyscallResponse)
+        if vals:
+            self._got_responses(vals)
+            return
+        buf = await self.fromfd.ram.malloc_type(Bytes, 1024)
+        while not vals:
             if self.valid is None:
                 valid, rest = await self.fromfd.read_handle(buf)
                 if valid.bytesize() == 0:
@@ -160,8 +201,28 @@ class RsyscallConnection:
             self.valid = None
             self.buffer.feed_bytes(data)
             buf = valid.merge(rest)
-            val = self.buffer.read_struct(RsyscallResponse)
-        return val.value
+            vals = self.buffer.read_all_structs(RsyscallResponse)
+        self._got_responses(vals)
+
+    async def read_pending_responses(self) -> None:
+        async with self.reading_responses.needs_run() as needs_run:
+            if needs_run:
+                await self._read_pending_responses_direct()
+
+@dataclass
+class SyscallResponse(near.SyscallResponse):
+    process_responses: t.Any
+    response: ConnectionResponse
+
+    async def receive(self, logger=None) -> int:
+        while self.response.result is None:
+            if logger:
+                logger.info("no response yet for %s, calling process responses", self.response)
+            await self.process_responses()
+            if logger:
+                logger.info("exited process responses for %s", self.response)
+        raise_if_error(self.response.result)
+        return self.response.result
 
 class ChildConnection(near.SyscallInterface):
     "A connection to some rsyscall server where we can make syscalls"
@@ -178,8 +239,6 @@ class ChildConnection(near.SyscallInterface):
         self.infd: FileDescriptor
         self.outfd: FileDescriptor
         self.activity_fd: near.FileDescriptor
-        self.request_lock = trio.Lock()
-        self.pending_responses: t.List[SyscallResponse] = []
         self.running_read = OneAtATime()
 
     def store_remote_side_handles(self, infd: FileDescriptor, outfd: FileDescriptor) -> None:
@@ -192,19 +251,16 @@ class ChildConnection(near.SyscallInterface):
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
 
-    async def _read_syscall_response(self) -> int:
-        # we poll first so that we don't unnecessarily issue waitids if we've
-        # already got a response in our buffer
-        response: t.Optional[int] = self.rsyscall_connection.poll_response()
-        if response is not None:
-            raise_if_error(response)
-            return response
+    async def _read_syscall_responses_direct(self) -> None:
+        got_responses = False
         try:
             async with trio.open_nursery() as nursery:
                 async def read_response() -> None:
-                    nonlocal response
-                    response = await self.rsyscall_connection.read_response()
-                    self.logger.info("read syscall response")
+                    self.logger.info("enter syscall response %s", self.rsyscall_connection.pending_responses)
+                    await self.rsyscall_connection.read_pending_responses()
+                    nonlocal got_responses
+                    got_responses = True
+                    self.logger.info("read syscall response %s", self.rsyscall_connection.pending_responses)
                     nursery.cancel_scope.cancel()
                 async def server_exit() -> None:
                     # meaning the server exited
@@ -230,47 +286,27 @@ class ChildConnection(near.SyscallInterface):
                 nursery.start_soon(server_exit)
                 nursery.start_soon(futex_exit)
         except:
-            # if response is not None, we shouldn't let this exception through;
-            # instead we should process this syscall response, and let the next syscall fail
-            if response is None:
+            # if we got some responses, we shouldn't let this exception through;
+            # instead we should process those syscall responses, and let the next syscall fail
+            if not got_responses:
                 raise
         else:
-            self.logger.info("returning or raising syscall response from nursery %s", response)
-        if response is None:
-            raise Exception("somehow made it out of the nursery without either throwing or getting a response")
-        raise_if_error(response)
-        return response
+            self.logger.info("returning or raising syscall response from nursery")
 
-    async def _process_response_for(self, response: SyscallResponse) -> None:
-        try:
-            ret = await self._read_syscall_response()
-            self.logger.info("returned syscall response %s", ret)
-        except Exception as e:
-            response.set_exception(e)
-        else:
-            response.set_result(ret)
-
-    async def _process_one_response_direct(self) -> None:
-        if len(self.pending_responses) == 0:
-            raise Exception("somehow we are trying to process a syscall response, when there are no pending syscalls.")
-        next = self.pending_responses[0]
-        await self._process_response_for(next)
-        self.pending_responses = self.pending_responses[1:]
-
-    async def _process_one_response(self) -> None:
+    async def _read_syscall_responses(self) -> None:
         async with self.running_read.needs_run() as needs_run:
             if needs_run:
-                await self._process_one_response_direct()
+                self.logger.info("running read_syscall_responses_direct")
+                await self._read_syscall_responses_direct()
+                self.logger.info("done with read_syscall_responses_direct")
 
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
-        async with self.request_lock:
-            log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-            await self.rsyscall_connection.write_request(
-                number,
-                arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-                arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        response = SyscallResponse(self._process_one_response)
-        self.pending_responses.append(response)
+        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+        conn_response = await self.rsyscall_connection.write_request(
+            number,
+            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        response = SyscallResponse(self._read_syscall_responses, conn_response)
         return response
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
@@ -279,7 +315,7 @@ class ChildConnection(near.SyscallInterface):
             # we must not be interrupted while reading the response - we need to return
             # the response so that our parent can deal with the state change we created.
             with trio.CancelScope(shield=True):
-                result = await response.receive()
+                result = await response.receive(self.logger)
         except Exception as exn:
             self.logger.debug("%s -> %s", number, exn)
             raise

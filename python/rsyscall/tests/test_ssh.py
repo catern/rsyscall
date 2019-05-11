@@ -17,6 +17,9 @@ from rsyscall.path import Path
 from rsyscall.io import StandardTask, Command
 from rsyscall.monitor import AsyncChildProcess
 
+# import logging
+# logging.basicConfig(level=logging.DEBUG)
+
 async def start_cat(stdtask: StandardTask, cat: Command,
                     stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> AsyncChildProcess:
     thread = await stdtask.fork()
@@ -79,8 +82,7 @@ class TestSSH(TrioTestCase):
         thread = await self.remote_stdtask.fork()
         await thread.stdtask.unshare_files(going_to_exec=True)
         await rsyscall.io.do_cloexec_except(
-            thread.stdtask.task, thread.stdtask.process,
-            [fd.near for fd in thread.stdtask.task.base.fd_handles])
+            thread.stdtask.task, set([fd.near for fd in thread.stdtask.task.base.fd_handles]))
         await self.remote_task.sigprocmask((HowSIG.SETMASK,
                                             await self.remote_ram.to_pointer(Sigset())),
                                            await self.remote_ram.malloc_struct(Sigset))

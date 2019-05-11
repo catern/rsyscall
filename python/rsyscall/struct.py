@@ -79,3 +79,27 @@ class Bytes(bytes, Serializable):
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         return cls(data)
+
+@dataclass
+class StructList(t.Generic[T_struct], HasSerializer):
+    cls: t.Type[T_struct]
+    elems: t.List[T_struct]
+
+    def get_self_serializer(self, task) -> StructListSerializer[T_struct]:
+        return StructListSerializer(self.cls)
+
+@dataclass
+class StructListSerializer(t.Generic[T_struct], Serializer[StructList[T_struct]]):
+    cls: t.Type[T_struct]
+
+    def to_bytes(self, val: StructList[T_struct]) -> bytes:
+        return b"".join(ent.to_bytes() for ent in val.elems)
+
+    @classmethod
+    def from_bytes(self, data: bytes) -> StructList[T_struct]:
+        entries = []
+        while len(data) > 0:
+            ent = self.cls.from_bytes(data)
+            entries.append(ent)
+            data = data[self.cls.sizeof():]
+        return StructList(self.cls, entries)

@@ -17,6 +17,7 @@ from rsyscall.memory.allocator import AllocatorClient
 class ReadOp:
     src: Pointer
     done: t.Optional[bytes] = None
+    cancelled: bool = False
 
     @property
     def data(self) -> bytes:
@@ -253,7 +254,7 @@ class SocketMemoryTransport(MemoryTransport):
                 # the list of pending ops to merge together.
                 ops_to_merge.append(op)
             elif int(prev_op.src.near + prev_op.src.bytesize()) > int(op.src.near):
-                raise Exception("pointers passed to memcpy are overlapping!")
+                raise Exception("pointers passed to memcpy are overlapping!", prev_op.src, op.src)
             else:
                 # the current op isn't adjacent to the previous op, so
                 # flush the list of ops_to_merge and start a new one.
@@ -329,6 +330,7 @@ class SocketMemoryTransport(MemoryTransport):
             if needs_run:
                 ops = self.pending_reads
                 self.pending_reads = []
+                ops = [op for op in ops if not op.cancelled]
                 merged_ops = self.merge_adjacent_reads(ops)
                 # TODO we should not use a cancel scope shield, we should use the SyscallResponse API
                 with trio.CancelScope(shield=True):
@@ -345,6 +347,11 @@ class SocketMemoryTransport(MemoryTransport):
         read_ops = [self._start_single_read(src) for src in ops]
         # TODO this is inefficient
         while not(all(op.done is not None for op in read_ops)):
-            await self._do_reads()
+            try:
+                await self._do_reads()
+            except trio.Cancelled:
+                for op in read_ops:
+                    op.cancelled = True
+                raise
         return [op.data for op in read_ops]
 

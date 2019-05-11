@@ -7,6 +7,7 @@ from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Poi
 from rsyscall.memory.ram import RAM
 from rsyscall.sched import CLONE
 from rsyscall.signal import Signals, Sigset, Siginfo
+import trio
 import contextlib
 import typing as t
 
