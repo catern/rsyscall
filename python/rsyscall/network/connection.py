@@ -131,6 +131,11 @@ class Connection:
         self.connecting_connection = connecting_connection
         self.task = task
         self.ram = ram
+        if self.connecting_task.fd_table == self.task.fd_table:
+            self.mover: MoverInterface = SameFDTableMover(self.task)
+        else:
+            from_fd, to_fd = self.connecting_connection
+            self.mover = SCMRightsMover(self.connecting_ram, from_fd, self.ram, to_fd)
 
     async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
         chans = await self.open_channels(count)
@@ -141,6 +146,29 @@ class Connection:
 
     async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
         return await make_connections(self, count)
+
+    async def prep_for_unshare_files(self) -> None:
+        # ok so.
+        # what would be better here is,
+        # if, maybe, we just. um. hm.
+        # so, if the first_conn is a ListeningConnection,
+        # then what we would want to do is just inherit that.
+        # if it is not, then we need to make an SCMRights.
+        # right so maybe, uh, we directly own the ListeningConnection,
+        # and call unshare_files on it,
+        # and we do nothing cuz we just inherit it - fine.
+        # alternatively, we own a SocketpairConnection,
+        # and we need to add on a,
+        # SCMRightsMover,
+        # which we'll use to transfer one half of the pair over.
+        # and, for_task_with_fd also is just a matter of,
+        # we give them the fd, they move it over, easy peasy.
+        # and for_task just inherits the fd over - failing if we're not in the same fd space.
+        # so we'll just switch to that interface.
+        if isinstance(self.mover, SameFDTableMover):
+            # make fd pair, and stick it into the connecting task and task.
+            pair = await (await self.task.socketpair(AF.UNIX, SOCK.STREAM, 0, await self.ram.malloc_struct(FDPair))).read()
+            self.mover = SCMRightsMover(self.connecting_ram, pair.first.move(self.connecting_task), self.ram, pair.second)
 
     def for_task_with_fd(self, task: Task, ram: RAM, fd: FileDescriptor) -> Connection:
         return Connection(
@@ -165,12 +193,5 @@ async def make_connections(self: Connection, count: int) -> t.List[t.Tuple[FileD
     # 4. the connection task, which is a task that actually gets the fds and passes them down to the parent task
     connecting_socks: t.List[FileDescriptor]
     pairs = await self.first_conn.open_channels(count)
-    # We set up the mover at runtime because we don't have a way to
-    # handle detecting an unshare_files in connecting_task/task.
-    if self.connecting_task.fd_table == self.task.fd_table:
-        mover: MoverInterface = SameFDTableMover(self.task)
-    else:
-        from_fd, to_fd = self.connecting_connection
-        mover = SCMRightsMover(self.connecting_ram, from_fd, self.ram, to_fd)
-    lastfds = await mover.move_fds([midfd for _, midfd in pairs])
+    lastfds = await self.mover.move_fds([midfd for _, midfd in pairs])
     return [(firstfd, lastfd) for (firstfd, _), lastfd in zip(pairs, lastfds)]
