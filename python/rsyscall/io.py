@@ -202,6 +202,19 @@ class MemFileDescriptor:
 
 FileDescriptor = MemFileDescriptor
 
+async def as_sockaddr_un(task: Task, path: handle.Path) -> SockaddrUn:
+    """Turn this path into a SockaddrUn, hacking around the 108 byte limit on socket addresses.
+
+    If the passed path is too long to fit in an address, this function will open the parent
+    directory with O_PATH and return SockaddrUn("/proc/self/fd/n/name").
+
+    """
+    try:
+        return SockaddrUn.from_path(path)
+    except PathTooLongError:
+        fd = await task.base.open(await task.to_pointer(path.parent), O.PATH|O.CLOEXEC)
+        return SockaddrUnProcFd(fd, path.name)
+
 class Path(rsyscall.path.PathLike):
     "This is a convenient combination of a Path and a Task to perform serialization."
     def __init__(self, task: Task, handle: rsyscall.path.Path) -> None:
@@ -312,17 +325,7 @@ class Path(rsyscall.path.PathLike):
             return (await Path(self.task, f.handle.as_proc_path()).readlink())
 
     async def as_sockaddr_un(self) -> SockaddrUn:
-        """Turn this path into a SockaddrUn, hacking around the 108 byte limit on socket addresses.
-
-        If the passed path is too long to fit in an address, this function will open that path with
-        O_PATH and return SockaddrUn("/proc/self/fd/n").
-
-        """
-        try:
-            return SockaddrUn.from_path(self)
-        except PathTooLongError:
-            fd = await self.open_path()
-            return SockaddrUnProcFd(fd.handle)
+        return await as_sockaddr_un(self.task, self.handle)
 
     # to_bytes and from_bytes, kinda sketchy, hmm....
     # from_bytes will fail at runtime... whatever
@@ -358,34 +361,9 @@ async def robust_unix_bind(path: Path, sock: MemFileDescriptor) -> None:
     function.
 
     """
-    try:
-        addr = SockaddrUn.from_path(path)
-    except PathTooLongError:
-        # shrink the path by opening its parent directly as a dirfd
-        async with (await path.parent.open_directory()) as dirfd:
-            await bindat(sock, dirfd.handle, path.name)
-    else:
-        await sock.bind(addr)
-
-async def bindat(sock: MemFileDescriptor, dirfd: handle.FileDescriptor, name: str) -> None:
-    """Perform a Unix socket bind to dirfd/name
-
-    TODO: This hack is actually semantically different from a normal direct bind: it's not
-    atomic. That's tricky...
-
-    """
-    dir = Path(sock.task, handle.Path("/proc/self/fd")/str(int(dirfd.near)))
-    path = dir/name
-    try:
-        addr = SockaddrUn.from_path(path)
-    except PathTooLongError:
-        # TODO retry if this name is used
-        tmpname = ".temp_for_bindat." + random_string(k=16)
-        tmppath = dir/tmpname
-        await sock.bind(SockaddrUn.from_path(tmppath))
-        await path.rename(tmppath)
-    else:
-        await sock.bind(addr)
+    addr = await path.as_sockaddr_un()
+    await sock.bind(addr)
+    await addr.close()
 
 async def robust_unix_connect(path: Path, sock: MemFileDescriptor) -> None:
     """Perform a Unix socket connect, hacking around the 108 byte limit on socket addresses.
