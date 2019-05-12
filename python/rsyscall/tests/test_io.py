@@ -301,7 +301,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
                 async with (await stdtask.task.socket_unix(SOCK.STREAM)) as sockfd:
-                    addr = SockaddrUn.from_path(path/"sock")
+                    addr = await (path/"sock").as_sockaddr_un()
                     await sockfd.bind(addr)
                     await sockfd.listen(10)
                     async with (await stdtask.task.socket_unix(SOCK.STREAM)) as clientfd:
@@ -316,7 +316,7 @@ class TestIO(unittest.TestCase):
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-                addr = SockaddrUn.from_path(path/"sock")
+                addr = await (path/"sock").as_sockaddr_un()
                 await sockfd.handle.bind(await sockfd.ram.to_pointer(addr))
                 await sockfd.handle.listen(10)
                 clientfd = await stdtask.make_afd(
@@ -333,7 +333,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
-                addr = SockaddrUn.from_path(path/"sock")
+                addr = await (path/"sock").as_sockaddr_un()
                 await sockfd.bind(addr)
                 await sockfd.listen(10)
                 async_sockfd = await stdtask.make_afd(sockfd.handle)
@@ -369,7 +369,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
-                addr = SockaddrUn.from_path(path/"sock")
+                addr = await (path/"sock").as_sockaddr_un()
                 await sockfd.bind(addr)
                 await sockfd.listen(10)
                 async_sockfd = await stdtask.make_afd(sockfd.handle)

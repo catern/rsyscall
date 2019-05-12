@@ -37,7 +37,7 @@ class StubServer:
     async def listen_on(cls, stdtask: StandardTask, path: Path) -> StubServer:
         "Start listening on the passed-in path for stub connections."
         sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
-        await sockfd.bind(SockaddrUn.from_path(path))
+        await sockfd.bind(await path.as_sockaddr_un())
         await sockfd.listen(10)
         asyncfd = await stdtask.make_afd(sockfd.handle)
         return StubServer(asyncfd, stdtask)

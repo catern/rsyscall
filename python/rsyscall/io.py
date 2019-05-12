@@ -210,7 +210,7 @@ async def as_sockaddr_un(task: Task, path: handle.Path) -> SockaddrUn:
 
     """
     try:
-        return SockaddrUn.from_path(path)
+        return SockaddrUn(os.fsencode(path))
     except PathTooLongError:
         fd = await task.base.open(await task.to_pointer(path.parent), O.PATH|O.CLOEXEC)
         return SockaddrUnProcFd(fd, path.name)

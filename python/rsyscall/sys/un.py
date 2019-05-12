@@ -20,10 +20,6 @@ class SockaddrUn(Address):
         if len(self.path) > 108:
             raise PathTooLongError("path", self.path, "is longer than the maximum unix address size")
 
-    @staticmethod
-    def from_path(path: PathLike) -> SockaddrUn:
-        return SockaddrUn(os.fsencode(path))
-
     T = t.TypeVar('T', bound='SockaddrUn')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
