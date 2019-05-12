@@ -711,7 +711,7 @@ class RsyscallInterface(near.SyscallInterface):
 async def do_cloexec_except(task: Task, excluded_fds: t.Set[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
     buf = await task.malloc_type(DirentList, 4096)
-    dirfd = (await (task.root()/"proc"/"self"/"fd").open_directory()).handle
+    dirfd = await task.base.open(await task.to_pointer(handle.Path("/proc/self/fd")), O.DIRECTORY|O.CLOEXEC)
     async def maybe_close(fd: near.FileDescriptor) -> None:
         flags = await near.fcntl(task.base.sysif, fd, F.GETFD)
         if (flags & FD_CLOEXEC) and (fd not in excluded_fds):

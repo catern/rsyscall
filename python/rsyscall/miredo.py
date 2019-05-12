@@ -10,8 +10,8 @@ import rsyscall.io as rsc
 import rsyscall.handle as handle
 import rsyscall.near
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.io import StandardTask, RsyscallThread, Path, Command
-from rsyscall.handle import FileDescriptor
+from rsyscall.io import StandardTask, RsyscallThread, Command
+from rsyscall.handle import FileDescriptor, Path
 from dataclasses import dataclass
 from rsyscall.struct import Int32, Bytes
 from rsyscall.monitor import AsyncChildProcess
@@ -114,9 +114,9 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, stdtask: Standar
     icmp6_fd = await ns_thread.stdtask.task.base.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
 
     # create the TUN interface
-    tun_fd = await (ns_thread.stdtask.task.root()/"dev"/"net"/"tun").open(O.RDWR)
+    tun_fd = await ns_thread.task.base.open(await ns_thread.ram.to_pointer(Path("/dev/net/tun")), O.RDWR|O.CLOEXEC)
     ptr = await stdtask.task.to_pointer(netif.Ifreq(b'teredo', flags=netif.IFF_TUN))
-    await tun_fd.handle.ioctl(netif.TUNSETIFF, ptr)
+    await tun_fd.ioctl(netif.TUNSETIFF, ptr)
     # create reqsock for ifreq operations in this network namespace
     reqsock = await ns_thread.stdtask.task.base.socket(AF.INET, SOCK.STREAM)
     await reqsock.ioctl(netif.SIOCGIFINDEX, ptr)
@@ -141,7 +141,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, stdtask: Standar
     await client_thread.stdtask.unshare_mount()
     await client_thread.stdtask.unshare_user()
     client_child = await exec_miredo_run_client(
-        miredo_exec, client_thread, inet_sock, tun_fd.handle, reqsock, icmp6_fd, privproc_pair.second, "teredo.remlab.net")
+        miredo_exec, client_thread, inet_sock, tun_fd, reqsock, icmp6_fd, privproc_pair.second, "teredo.remlab.net")
     nursery.start_soon(client_child.check)
 
     # we keep the ns thread around so we don't have to mess with setns
