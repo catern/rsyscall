@@ -44,7 +44,6 @@ class ConsoleGenie(WishGranter):
         async with self.lock:
             message = "".join(traceback.format_exception(None, wish, wish.__traceback__))
             wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
-            catfd, myfd = await self.stdtask.task.socketpair(AF.UNIX, SOCK.STREAM, 0)
 
             to_term_pipe = await (await self.stdtask.task.base.pipe(await self.stdtask.task.malloc_struct(Pipe))).read()
             from_term_pipe = await (await self.stdtask.task.base.pipe(await self.stdtask.task.malloc_struct(Pipe))).read()

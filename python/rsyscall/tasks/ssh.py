@@ -253,8 +253,6 @@ async def ssh_bootstrap(
                                           handle_remote_data_fd, new_allocator)
     # we don't inherit SignalMask; we assume ssh zeroes the sigmask before starting us
     new_task = Task(new_base_task, new_transport, new_allocator)
-    left_connecting_connection, right_connecting_connection = await new_task.socketpair(AF.UNIX, SOCK.STREAM, 0)
-    connecting_connection = (left_connecting_connection.handle, right_connecting_connection.handle)
     epoller = await new_task.make_epoll_center()
     child_monitor = await ChildProcessMonitor.make(new_task, new_task.base, epoller)
     connection = ListeningConnection(

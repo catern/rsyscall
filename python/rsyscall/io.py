@@ -114,11 +114,6 @@ class Task(RAM):
     # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
     # and they'll take an handle.FileDescriptor.
     # then we'll directly have StandardTask contain both Task and MemoryAbstractor?
-    async def socketpair(self, domain: AF, type: SOCK, protocol: int) -> t.Tuple[FileDescriptor, FileDescriptor]:
-        pair = await (await self.base.socketpair(domain, type, protocol, await self.malloc_struct(handle.FDPair))).read()
-        return (FileDescriptor(self, pair.first),
-                FileDescriptor(self, pair.second))
-
     async def socket_unix(self, type: SOCK, protocol: int=0, cloexec=True) -> MemFileDescriptor:
         sockfd = await self.base.socket(AF.UNIX, type, protocol, cloexec=cloexec)
         return FileDescriptor(self, sockfd)
