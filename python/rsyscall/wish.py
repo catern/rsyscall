@@ -11,6 +11,7 @@ import sys
 from rsyscall.io import StandardTask, AsyncFileDescriptor, which, Command, Path, robust_unix_bind
 from contextvars import ContextVar
 from rsyscall.sys.socket import SOCK, AF
+from rsyscall.unistd import Pipe
 import rsyscall.repl
 
 logger = logging.getLogger(__name__)
@@ -45,26 +46,24 @@ class ConsoleGenie(WishGranter):
             wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
             catfd, myfd = await self.stdtask.task.socketpair(AF.UNIX, SOCK.STREAM, 0)
 
-            term_stdin, repl_stdout = await self.stdtask.task.pipe()
-            repl_stdin, term_stdout = await self.stdtask.task.pipe()
-            async_stdin = await self.stdtask.make_afd(repl_stdin.handle)
-            async_stdout = await self.stdtask.make_afd(repl_stdout.handle)
+            to_term_pipe = await (await self.stdtask.task.base.pipe(await self.stdtask.task.malloc_struct(Pipe))).read()
+            from_term_pipe = await (await self.stdtask.task.base.pipe(await self.stdtask.task.malloc_struct(Pipe))).read()
+            async_from_term = await self.stdtask.make_afd(from_term_pipe.read)
+            async_to_term = await self.stdtask.make_afd(to_term_pipe.write)
             try:
                 cat_stdin_thread = await self.stdtask.fork()
-                cat_stdin = cat_stdin_thread.stdtask.task.base.make_fd_handle(term_stdin.handle)
-                await term_stdin.handle.invalidate()
+                cat_stdin = to_term_pipe.read.move(cat_stdin_thread.stdtask.task.base)
                 await cat_stdin_thread.stdtask.unshare_files(going_to_exec=True)
                 await cat_stdin_thread.stdtask.stdin.replace_with(cat_stdin)
                 async with await cat_stdin_thread.exec(self.cat):
                     cat_stdout_thread = await self.stdtask.fork()
-                    cat_stdout = cat_stdout_thread.stdtask.task.base.make_fd_handle(term_stdout.handle)
-                    await term_stdout.handle.invalidate()
+                    cat_stdout = from_term_pipe.write.move(cat_stdout_thread.stdtask.task.base)
                     await cat_stdout_thread.stdtask.unshare_files(going_to_exec=True)
                     await cat_stdout_thread.stdtask.stdout.replace_with(cat_stdout)
                     async with await cat_stdout_thread.exec(self.cat):
-                        ret = await run_repl(async_stdin, async_stdout, {
-                            '__repl_stdin__': async_stdin,
-                            '__repl_stdout__': async_stdout,
+                        ret = await run_repl(async_from_term, async_to_term, {
+                            '__repl_stdin__': async_from_term,
+                            '__repl_stdout__': async_to_term,
                             'wish': wish,
                             'wisher_frame': wisher_frame,
                             'wisher_locals': wisher_frame.f_locals,
@@ -72,8 +71,8 @@ class ConsoleGenie(WishGranter):
                         }, wish.return_type, message)
                         return ret
             finally:
-                await async_stdin.aclose()
-                await async_stdout.aclose()
+                await async_from_term.aclose()
+                await async_to_term.aclose()
 
 class ConsoleServerGenie(WishGranter):
     @classmethod

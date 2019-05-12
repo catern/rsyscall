@@ -929,7 +929,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
                 with rusage.borrow(self) as rusage_b:
                     await rsyscall.near.waitid(self.sysif, None, infop_b.near, options, rusage_b.near)
 
-    async def pipe(self, buf: Pointer[Pipe], flags: O) -> Pointer[Pipe]:
+    async def pipe(self, buf: Pointer[Pipe], flags: O=O.CLOEXEC) -> Pointer[Pipe]:
         with buf.borrow(self):
             await rsyscall.near.pipe2(self.sysif, buf.near, flags)
             return buf

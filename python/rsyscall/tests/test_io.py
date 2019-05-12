@@ -33,18 +33,17 @@ from rsyscall.sys.capability import CAP, CapHeader, CapData
 from rsyscall.sys.prctl import PrctlOp, CapAmbient
 from rsyscall.sys.socket import SOCK, AF
 from rsyscall.sys.un import SockaddrUn
-from rsyscall.sys.uio import RWF
+from rsyscall.sys.uio import RWF, IovecList
 from rsyscall.linux.netlink import NETLINK
 from rsyscall.signal import Signals, Sigset
 from rsyscall.sys.signalfd import SignalfdSiginfo
 from rsyscall.net.if_ import Ifreq
-from rsyscall.unistd import SEEK
+from rsyscall.unistd import SEEK, Pipe
 from rsyscall.fcntl import O
 from rsyscall.sys.mount import MS
 
 from rsyscall.struct import Bytes
 
-from rsyscall.handle import Pipe, IovecList
 from rsyscall.monitor import SignalQueue
 
 
@@ -55,21 +54,23 @@ logger = logging.getLogger(__name__)
 
 nix_bin_bytes = b"/nix/store/wpbag7vnmr4pr9p8a3003s68907w9bxq-nix-2.2pre6600_85488a93/bin"
 async def do_async_things(self: unittest.TestCase, epoller, task: rsyscall.io.Task) -> None:
-    async with (await task.pipe()) as pipe:
-        async_pipe_rfd = await AsyncFileDescriptor.make_handle(epoller, task, pipe.rfd.handle)
-        async_pipe_wfd = await AsyncFileDescriptor.make_handle(epoller, task, pipe.wfd.handle)
-        data = b"hello world"
-        async def stuff():
-            logger.info("performing read")
-            result = await async_pipe_rfd.read()
-            self.assertEqual(result, data)
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(stuff)
-            await trio.sleep(0.01)
-            logger.info("performing write")
-            # hmmm MMM MMMmmmm MMM mmm MMm mm MM mmm MM mm MM
-            # does this make sense?
-            await async_pipe_wfd.write(data)
+    pipe = await (await task.base.pipe(await task.malloc_struct(Pipe))).read()
+    async_pipe_rfd = await AsyncFileDescriptor.make_handle(epoller, task, pipe.read)
+    async_pipe_wfd = await AsyncFileDescriptor.make_handle(epoller, task, pipe.write)
+    data = b"hello world"
+    async def stuff():
+        logger.info("performing read")
+        result = await async_pipe_rfd.read()
+        self.assertEqual(result, data)
+    async with trio.open_nursery() as nursery:
+        nursery.start_soon(stuff)
+        await trio.sleep(0.01)
+        logger.info("performing write")
+        # hmmm MMM MMMmmmm MMM mmm MMm mm MM mmm MM mm MM
+        # does this make sense?
+        await async_pipe_wfd.write(data)
+    await async_pipe_rfd.aclose()
+    await async_pipe_wfd.aclose()
 
 class TestIO(unittest.TestCase):
     async def do_async_things(self, epoller, task: rsyscall.io.Task) -> None:
@@ -90,16 +91,6 @@ class TestIO(unittest.TestCase):
 
     def test_pipe(self):
         async def test(stdtask: StandardTask) -> None:
-            async with (await stdtask.task.pipe()) as pipe:
-                in_data = b"hello"
-                await pipe.wfd.write(in_data)
-                out_data = await pipe.rfd.read(len(in_data))
-                self.assertEqual(in_data, out_data)
-        trio.run(self.runner, test)
-
-    def test_new_pipe(self):
-        async def test(stdtask: StandardTask) -> None:
-            from rsyscall.handle import Pipe
             pipe = await (await stdtask.task.base.pipe(await stdtask.task.malloc_struct(Pipe), O.CLOEXEC)).read()
             in_data = b"hello"
             written, _ = await pipe.write.write(await stdtask.task.to_pointer(Bytes(in_data)))
@@ -131,11 +122,11 @@ class TestIO(unittest.TestCase):
 
         """
         async def test(stdtask: StandardTask) -> None:
-            async with (await stdtask.task.pipe()) as pipe:
-                in_data = b"hello"
-                await pipe.wfd.write(in_data)
-                with self.assertRaises(OSError):
-                    out_data = await pipe.rfd.handle.recv(await stdtask.task.malloc_type(Bytes, len(in_data)), 0)
+            pipe = await (await stdtask.task.base.pipe(await stdtask.task.malloc_struct(Pipe), O.CLOEXEC)).read()
+            in_data = b"hello"
+            written, _ = await pipe.write.write(await stdtask.task.to_pointer(Bytes(in_data)))
+            with self.assertRaises(OSError):
+                valid, _ = await pipe.read.recv(written, 0)
         trio.run(self.runner, test)
 
     def test_to_pointer(self):

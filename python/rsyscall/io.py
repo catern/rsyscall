@@ -114,11 +114,6 @@ class Task(RAM):
     # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
     # and they'll take an handle.FileDescriptor.
     # then we'll directly have StandardTask contain both Task and MemoryAbstractor?
-    async def pipe(self, flags=O.CLOEXEC) -> Pipe:
-        pipe = await (await self.base.pipe(await self.malloc_struct(handle.Pipe), O.CLOEXEC)).read()
-        return Pipe(FileDescriptor(self, pipe.read),
-                    FileDescriptor(self, pipe.write))
-
     async def socketpair(self, domain: AF, type: SOCK, protocol: int) -> t.Tuple[FileDescriptor, FileDescriptor]:
         pair = await (await self.base.socketpair(domain, type, protocol, await self.malloc_struct(handle.FDPair))).read()
         return (FileDescriptor(self, pair.first),
@@ -859,21 +854,6 @@ class RsyscallThread:
 
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
-
-class Pipe(t.NamedTuple):
-    rfd: MemFileDescriptor
-    wfd: MemFileDescriptor
-
-    async def aclose(self):
-        await self.rfd.aclose()
-        await self.wfd.aclose()
-
-    async def __aenter__(self) -> Pipe:
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.aclose()
-
 
 async def exec_cat(thread: RsyscallThread, cat: Command,
                    stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> AsyncChildProcess:

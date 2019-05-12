@@ -11,6 +11,7 @@ import nixdeps
 import logging
 
 from rsyscall.sys.mount import MS
+from rsyscall.unistd import Pipe
 
 async def bootstrap_nix(
         src_nix_store: Command, src_tar: Command, src_task: StandardTask,
@@ -18,14 +19,13 @@ async def bootstrap_nix(
 ) -> t.List[bytes]:
     "Copies the Nix binaries into dest task's CWD. Returns the list of paths in the closure."
     query_thread = await src_task.fork()
-    query_pipe = await src_task.task.pipe()
-    query_stdout = query_thread.stdtask.task.base.make_fd_handle(query_pipe.wfd.handle)
-    await query_pipe.wfd.invalidate()
+    query_pipe = await (await src_task.task.base.pipe(await src_task.task.malloc_struct(Pipe))).read()
+    query_stdout = query_pipe.write.move(query_thread.stdtask.task.base)
     await query_thread.stdtask.unshare_files(going_to_exec=True)
     await query_thread.stdtask.stdout.replace_with(query_stdout)
     await query_thread.exec(
         src_nix_store.args("--query", "--requisites", src_nix_store.executable_path))
-    closure = (await read_all(query_pipe.rfd)).split()
+    closure = (await read_all(MemFileDescriptor(src_task.task, query_pipe.read))).split()
 
     src_tar_thread = await src_task.fork()
     dest_tar_thread = await dest_task.fork()
@@ -108,12 +108,12 @@ async def nix_deploy(
     dest_path = dest_task.task.base.make_path_handle(src_path)
 
     query_thread = await src_task.fork()
-    query_pipe = await src_task.task.pipe()
-    query_stdout = query_pipe.wfd.handle.move(query_thread.stdtask.task.base)
+    query_pipe = await (await src_task.task.base.pipe(await src_task.task.malloc_struct(Pipe))).read()
+    query_stdout = query_pipe.write.move(query_thread.stdtask.task.base)
     await query_thread.stdtask.unshare_files(going_to_exec=True)
     await query_thread.stdtask.stdout.replace_with(query_stdout)
     await query_thread.exec(Command(src_nix_bin/"nix-store", [b"nix-store"], {}).args("--query", "--requisites", src_path))
-    closure = (await read_all(query_pipe.rfd)).split()
+    closure = (await read_all(MemFileDescriptor(src_task.task, query_pipe.read))).split()
 
     export_thread = await src_task.fork()
     import_thread = await dest_task.fork()
