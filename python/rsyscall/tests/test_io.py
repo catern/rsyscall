@@ -758,9 +758,9 @@ class TestIO(unittest.TestCase):
             shell_thread = await stdtask.fork()
             dest_nix_bin = shell_thread.stdtask.task.base.make_path_handle(dest_nix_bin)
             with child_task.process.borrow():
-                container_ns_dir = shell_thread.stdtask.task.root()/"proc"/str(child_task.process.near.id)/"ns"
-                usernsfd = await (container_ns_dir/"user").open(O.RDONLY)
-            await shell_thread.stdtask.setns_user(usernsfd.handle)
+                ns_user = rsyscall.path.Path("/proc")/str(child_task.process.near.id)/"ns"/"user"
+                usernsfd = await shell_thread.task.base.open(await shell_thread.ram.to_pointer(ns_user), O.RDONLY|O.CLOEXEC)
+            await shell_thread.stdtask.setns_user(usernsfd)
             await shell_thread.stdtask.unshare_mount()
             await shell_thread.stdtask.mount(b"nix", b"/nix", b"none", MS.BIND|MS.RDONLY, b"")
             # making a readonly bind mount is weird, you have to mount it first then remount it rdonly

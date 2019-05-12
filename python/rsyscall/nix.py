@@ -11,11 +11,12 @@ import nixdeps
 import logging
 
 from rsyscall.sys.mount import MS
+from rsyscall.fcntl import O
 from rsyscall.unistd import Pipe
 
 async def bootstrap_nix(
         src_nix_store: Command, src_tar: Command, src_task: StandardTask,
-        dest_tar: Command, dest_task: StandardTask, dest_dir: MemFileDescriptor,
+        dest_tar: Command, dest_task: StandardTask, dest_dir: handle.FileDescriptor,
 ) -> t.List[bytes]:
     "Copies the Nix binaries into dest task's CWD. Returns the list of paths in the closure."
     query_thread = await src_task.fork()
@@ -33,7 +34,7 @@ async def bootstrap_nix(
     src_tar_stdout = access_side.move(src_tar_thread.stdtask.task.base)
 
     await dest_tar_thread.stdtask.task.base.unshare_fs()
-    await dest_tar_thread.stdtask.task.base.fchdir(dest_dir.handle)
+    await dest_tar_thread.stdtask.task.base.fchdir(dest_dir)
     await dest_tar_thread.stdtask.unshare_files(going_to_exec=True)
     await dest_tar_thread.stdtask.stdin.replace_with(dest_tar_stdin)
     child_task = await dest_tar_thread.exec(dest_tar.args("--extract"))
@@ -96,7 +97,7 @@ async def deploy_nix_bin(
     src_nix_store = Command(src_nix_bin/'nix-store', [b'nix-store'], {})
     dest_nix_store = Command(dest_nix_bin/'nix-store', [b'nix-store'], {})
     # TODO check if dest_nix_bin exists, and skip this stuff if it does
-    rootdir = await dest_task.task.root().open_directory()
+    rootdir = await dest_task.task.base.open(await dest_task.ram.to_pointer(handle.Path("/")), O.DIRECTORY|O.CLOEXEC)
     closure = await bootstrap_nix(src_nix_store, src_tar, src_task, deploy_tar, deploy_task, rootdir)
     await bootstrap_nix_database(src_nix_store, src_task, dest_nix_store, dest_task, closure)
     return dest_nix_bin
