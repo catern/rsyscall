@@ -100,10 +100,7 @@ class Task(RAM):
         await self.base.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
 
     def _make_fd(self, num: int) -> MemFileDescriptor:
-        return self.make_fd(near.FileDescriptor(num))
-
-    def make_fd(self, fd: near.FileDescriptor) -> MemFileDescriptor:
-        return FileDescriptor(self, self.base.make_fd_handle(fd))
+        return FileDescriptor(self, self.base.make_fd_handle(near.FileDescriptor(num)))
 
     # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
     # and they'll take an handle.FileDescriptor.
