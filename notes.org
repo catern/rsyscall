@@ -16714,6 +16714,74 @@ but that doesn't scale as well as passing the epfd down.
 ** clean up make_epoll_center
    We should have some kind of thing in local to create the one special EpollCenter that uses wait_readable,
    and for the rest, just... use activity_fd or something.
+
+   Hm hm.
+
+   We sure do call it a lot.
+
+   We want to change its model to something more like Connection.
+
+   OK, I see, we'll just assume there's an activity fd; and make the root task slightly different, see?
+
+   Hmm but what if we want to make more epollers locally?
+
+   OK, how about maybe... we have some kind of... interface for this? Which we... stick on the thread?
+
+   Like, the task alone doesn't need this ability,
+   so why is it on the sysif?
+
+   Well, more specifically, usually we can't do this, right?
+   Mmm....
+   Usually we can't like, wake up whenever um, some code wants to run.
+
+   Well we could, if the code gave us an epollfd to monitor.
+
+   actually, why do we even want to make more epollcenters?
+
+   oho. if we want to make more epollcenters, we need to do them by registering on our parent.
+
+   right, right, otherwise it's not safe.
+
+   for that matter, we could give our parent our epfd,
+   and it could just stick the activity fd on us.
+
+   then, y'know. um. wait_readable does nothing, and we freely, um.
+
+   well no, we do want to differently block forever or not based on whether we have wait_readable.
+
+   if we have wait_readable, then we don't block ourselves.
+
+   well, theoretically we could rely on our parent to make the blocking call on epoll.
+
+   right so we could just call something on our parent with the pointer, count, etc.
+
+   and the sysif too I guess.
+
+   ok, so how do we handle the possibility of being cancelled then?
+
+   and how do we make it not quite so abstracted?
+
+   also, we can still register on our parent.
+
+   also also there's some interface, which EpollWaiter itself implements,
+   and which we can also implement with the trio stuff,
+   to do the epoll blocking.
+
+   ok so currently all we do is, based on wait_readable we choose our timeout,
+   and we use wait_readable.
+   and also we add the activity fd to our epoller.
+
+   so I think, if we just, um, register ourselves on our parent,
+   then, use our parent like an AFD to tell us when to read...
+
+   hmm we could even speculatively first do a timeout 0 one,
+   then block using our parent's stuff.
+
+   um, well, the only way to block is to call epoll itself.
+   (notwithstanding silly select silliness)
+
+   hm.
+   well, regardless, we should definitely be able to register an epfd on an epfd.
 ** DONE move stack out to sched, leave T_borrowable in handle
 ** DONE make make_connection object into an interface
    Then I can remove this annoying conditionality from the implementation.
