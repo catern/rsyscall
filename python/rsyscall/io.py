@@ -79,12 +79,6 @@ class Task(RAM):
         super().__init__(base_, transport, allocator)
         self.base = base_
 
-    def root(self) -> Path:
-        return Path(self, handle.Path("/"))
-
-    def cwd(self) -> Path:
-        return Path(self, handle.Path("."))
-
     def _make_fd(self, num: int) -> handle.FileDescriptor:
         return self.base.make_fd_handle(near.FileDescriptor(num))
 
@@ -416,19 +410,19 @@ async def write_user_mappings(task: Task, uid: int, gid: int,
         in_namespace_uid = uid
     if in_namespace_gid is None:
         in_namespace_gid = gid
-    root = task.root()
+    procself = handle.Path("/proc/self")
 
-    uid_map = await (root/"proc"/"self"/"uid_map").open(O.WRONLY)
-    await uid_map.write(f"{in_namespace_uid} {uid} 1\n".encode())
-    await uid_map.invalidate()
+    uid_map = await task.base.open(await task.to_pointer(procself/"uid_map"), O.WRONLY)
+    await uid_map.write(await task.to_pointer(Bytes(f"{in_namespace_uid} {uid} 1\n".encode())))
+    await uid_map.close()
 
-    setgroups = await (root/"proc"/"self"/"setgroups").open(O.WRONLY)
-    await setgroups.write(b"deny")
-    await setgroups.invalidate()
+    setgroups = await task.base.open(await task.to_pointer(procself/"setgroups"), O.WRONLY)
+    await setgroups.write(await task.to_pointer(Bytes(b"deny")))
+    await setgroups.close()
 
-    gid_map = await (root/"proc"/"self"/"gid_map").open(O.WRONLY)
-    await gid_map.write(f"{in_namespace_gid} {gid} 1\n".encode())
-    await gid_map.invalidate()
+    gid_map = await task.base.open(await task.to_pointer(procself/"gid_map"), O.WRONLY)
+    await gid_map.write(await task.to_pointer(Bytes(f"{in_namespace_gid} {gid} 1\n".encode())))
+    await gid_map.close()
 
 class StandardTask:
     def __init__(self,
