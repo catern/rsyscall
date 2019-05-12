@@ -82,10 +82,6 @@ class Task(RAM):
     def _make_fd(self, num: int) -> handle.FileDescriptor:
         return self.base.make_fd_handle(near.FileDescriptor(num))
 
-    async def socket_unix(self, type: SOCK, protocol: int=0, cloexec=True) -> MemFileDescriptor:
-        sockfd = await self.base.socket(AF.UNIX, type, protocol, cloexec=cloexec)
-        return FileDescriptor(self, sockfd)
-
     async def make_epoll_center(self) -> EpollCenter:
         epfd = await self.base.epoll_create(EpollFlag.CLOEXEC)
         if self.base.sysif.activity_fd is not None:

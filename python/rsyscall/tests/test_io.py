@@ -20,6 +20,8 @@ import rsyscall.repl
 import rsyscall.wish
 import rsyscall.nix
 
+from rsyscall.handle import WrittenPointer
+
 from rsyscall.tasks.persistent import fork_persistent
 from rsyscall.tasks.stdin_bootstrap import rsyscall_stdin_bootstrap
 from rsyscall.tasks.stub import StubServer
@@ -31,7 +33,7 @@ import rsyscall.inotify_watch as inotify
 from rsyscall.sys.epoll import EpollEvent, EPOLL
 from rsyscall.sys.capability import CAP, CapHeader, CapData
 from rsyscall.sys.prctl import PrctlOp, CapAmbient
-from rsyscall.sys.socket import SOCK, AF
+from rsyscall.sys.socket import SOCK, AF, Address
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.uio import RWF, IovecList
 from rsyscall.linux.netlink import NETLINK
@@ -300,15 +302,13 @@ class TestIO(unittest.TestCase):
     def test_listen(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
-                async with (await stdtask.task.socket_unix(SOCK.STREAM)) as sockfd:
-                    addr = await (path/"sock").as_sockaddr_un()
-                    await sockfd.bind(addr)
-                    await sockfd.listen(10)
-                    async with (await stdtask.task.socket_unix(SOCK.STREAM)) as clientfd:
-                        await clientfd.connect(addr)
-                        connfd, client_addr = await sockfd.accept(SOCK.CLOEXEC)
-                        async with connfd:
-                            logger.info("%s, %s", addr, client_addr)
+                sockfd = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
+                addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(await (path/"sock").as_sockaddr_un())
+                await sockfd.bind(addr)
+                await sockfd.listen(10)
+                clientfd = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
+                await clientfd.connect(addr)
+                connfd = await sockfd.accept(SOCK.CLOEXEC)
         trio.run(self.runner, test)
 
     def test_listen_async(self) -> None:
@@ -332,22 +332,24 @@ class TestIO(unittest.TestCase):
     def test_listen_async_accept(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
-                sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
-                addr = await (path/"sock").as_sockaddr_un()
-                await sockfd.bind(addr)
-                await sockfd.listen(10)
-                async_sockfd = await stdtask.make_afd(sockfd.handle)
-                clientfd = await stdtask.task.socket_unix(SOCK.STREAM)
-                async_clientfd = await stdtask.make_afd(clientfd.handle)
-                await async_clientfd.connect(addr)
-                async_connfd, client_addr = await async_sockfd.accept_as_async()
+                sockfd = await stdtask.make_afd(
+                    await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+                addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(await (path/"sock").as_sockaddr_un())
+                await sockfd.handle.bind(addr)
+                await sockfd.handle.listen(10)
+
+                clientfd = await stdtask.make_afd(
+                    await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+                await clientfd.connect_ptr(addr)
+
+                connfd, client_addr = await sockfd.accept_as_async()
                 logger.info("%s, %s", addr, client_addr)
                 data = b"hello"
-                await async_connfd.write(data)
-                self.assertEqual(data, await async_clientfd.read())
-                await async_connfd.aclose()
-                await async_sockfd.aclose()
-                await async_clientfd.aclose()
+                await connfd.write(data)
+                self.assertEqual(data, await clientfd.read())
+                await connfd.close()
+                await sockfd.close()
+                await clientfd.close()
         trio.run(self.runner, test)
 
     def test_pure_repl(self) -> None:

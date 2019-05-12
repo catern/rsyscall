@@ -16681,7 +16681,7 @@ but that doesn't scale as well as passing the epfd down.
    Oh, we could add a .base to handle.Task to get itself, if we are able to remove all the helpers from io.Task.
 
    OK let's stick with that plan, remove all the helpers.
-** remove socket_unix
+** DONE remove socket_unix
    Hopefully we can replace some of the uses with AFD.
 
    Ugh, this usage is a list of fds. Hmm.

@@ -600,9 +600,9 @@ class FileDescriptor:
         self.validate()
         await rsyscall.near.inotify_rm_watch(self.task.sysif, self.near, wd)
 
-    async def bind(self, addr: Pointer[Address]) -> None:
+    async def bind(self, addr: WrittenPointer[Address]) -> None:
         self.validate()
-        with addr.borrow(self.task) as addr:
+        with addr.borrow(self.task):
             await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addr.bytesize())
 
     async def connect(self, addr: WrittenPointer[Address]) -> None:

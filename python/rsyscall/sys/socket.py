@@ -23,7 +23,12 @@ class AF(enum.IntEnum):
     INET6 = socket.AF_INET6
 
 class Address(Struct):
-    "This is just a marker type to indicate different kinds of sockaddrs"
+    """This is just an interface to indicate different kinds of sockaddrs.
+
+    We don't call this "Sockaddr" because that's a real struct,
+    distinct from this class.
+
+    """
     family: AF
     @classmethod
     def check_family(cls, family: AF) -> None:
