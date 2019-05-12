@@ -19,16 +19,6 @@ class ExecutablePathCache:
         self.ram = ram
         self.paths = [Path(path) for path in paths]
         self.fds: t.Dict[Path, t.Optional[FileDescriptor]] = {}
-        # ok so. hm.
-        # what we could do is, we could open all these paths with fds,
-        # and then we only have to copy the name once,
-        # and use faccessat.
-        # also, we can batch all the faccessats together;
-        # well, not all of them, but maybe in batches of 32 or so.
-        # sounds neat.
-
-        # and, let's not take a task argument, cuz that would be annoying
-            # send over this path pointer
 
     async def lookup_executable_at_path(self, path: Path, name: str) -> None:
         if path in self.fds:
@@ -63,7 +53,7 @@ class ExecutablePathCache:
         nameptr = await self.ram.to_pointer(Path(name))
         # do the lookup for 16 paths at a time, that seems like a good batching number
         for paths in chunks(self.paths, 64):
-            results = await run_all([lambda path=path: self.check(path, nameptr) for path in paths])
+            results = await run_all([lambda path=path: self.check(path, nameptr) for path in paths]) # type: ignore
             for path, result in zip(paths, results):
                 if result:
                     break
@@ -73,8 +63,6 @@ class ExecutablePathCache:
             raise Exception("executable not found", name)
         return Command(path/name, [name], {})
 
-# ok so, we want to be able to look up in the environ with both bytes and strings,
-# and always get... strings back.
 class Environment:
     def __init__(self, task: Task, ram: RAM, environment: t.Dict[bytes, bytes]) -> None:
         self.data = environment

@@ -506,11 +506,9 @@ class StandardTask:
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
-        self.sh = Command(handle.Path("/bin/sh"), ['sh'], {})
-        self.tmpdir = handle.Path(os.fsdecode(self.environment.get(b"TMPDIR", b"/tmp")))
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
-        parent = Path(self.task, self.tmpdir)
+        parent = Path(self.task, self.environ.tmpdir)
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (prefix+"."+random_suffix).encode()
         await (parent/name).mkdir(mode=0o700)
@@ -672,7 +670,7 @@ class TemporaryDirectory:
         async with cleanup_thread:
             await cleanup_thread.stdtask.task.base.chdir(await self.parent.to_pointer())
             name = os.fsdecode(self.name)
-            child = await cleanup_thread.exec(self.stdtask.sh.args(
+            child = await cleanup_thread.exec(self.stdtask.environ.sh.args(
                 '-c', f"chmod -R +w -- {name} && rm -rf -- {name}"))
             await child.check()
 
