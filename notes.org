@@ -16668,10 +16668,20 @@ but that doesn't scale as well as passing the epfd down.
    oh, command references rsyscallthread. annoying.
 
    we can just invert it though
-** remove root/cwd from io.Task
+** DONE resolve conflict between root/cwd on io.Task and handle.Task
    This conflicts with handle.Task hmm
+
+   Hah, instead I just removed them from handle.Task
 ** make io.Task just inherit from RAM and handle.Task
    This way we can incrementally migrate!
+
+   Hm. This is tricky because we can't just suck out the innards of the handle.Task,
+   and paste them into the io.Task.
+
+   Oh, we could add a .base to handle.Task to get itself, if we are able to remove all the helpers from io.Task.
+
+   OK let's stick with that plan, remove all the helpers.
+** remove socket_unix
 ** decide what to do with our two Paths
    can I really bear to get rid of our current memory-abstracting Path?
 

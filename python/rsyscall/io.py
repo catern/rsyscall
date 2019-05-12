@@ -88,9 +88,6 @@ class Task(RAM):
     def _make_fd(self, num: int) -> handle.FileDescriptor:
         return self.base.make_fd_handle(near.FileDescriptor(num))
 
-    # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
-    # and they'll take an handle.FileDescriptor.
-    # then we'll directly have StandardTask contain both Task and MemoryAbstractor?
     async def socket_unix(self, type: SOCK, protocol: int=0, cloexec=True) -> MemFileDescriptor:
         sockfd = await self.base.socket(AF.UNIX, type, protocol, cloexec=cloexec)
         return FileDescriptor(self, sockfd)
