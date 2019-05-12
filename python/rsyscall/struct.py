@@ -64,7 +64,7 @@ class Int32(Struct, int): # type: ignore
     def from_bytes(cls: t.Type[T], data: bytes) -> T: # type: ignore
         if len(data) < cls.sizeof():
             raise Exception("data too small", data)
-        val, = struct.pack('i', data)
+        val, = struct.unpack_from('i', data)
         return cls(val)
         
     @classmethod
@@ -95,7 +95,6 @@ class StructListSerializer(t.Generic[T_struct], Serializer[StructList[T_struct]]
     def to_bytes(self, val: StructList[T_struct]) -> bytes:
         return b"".join(ent.to_bytes() for ent in val.elems)
 
-    @classmethod
     def from_bytes(self, data: bytes) -> StructList[T_struct]:
         entries = []
         while len(data) > 0:

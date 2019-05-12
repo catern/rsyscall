@@ -144,6 +144,15 @@ class Pointer(t.Generic[T]):
         alloc = self.allocation.merge(ptr.allocation)
         return self._with_alloc(alloc)
 
+    def __add__(self, right: Pointer[T]) -> Pointer[T]:
+        return self.merge(right)
+
+    def __radd__(self, left: t.Optional[Pointer[T]]) -> Pointer[T]:
+        if left is None:
+            return self
+        else:
+            return left + self
+
     def validate(self) -> None:
         if not self.valid:
             raise Exception("handle is no longer valid")
@@ -596,9 +605,9 @@ class FileDescriptor:
         with addr.borrow(self.task) as addr:
             await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addr.bytesize())
 
-    async def connect(self, addr: Pointer[Address]) -> None:
+    async def connect(self, addr: WrittenPointer[Address]) -> None:
         self.validate()
-        with addr.borrow(self.task) as addr:
+        with addr.borrow(self.task):
             await rsyscall.near.connect(self.task.sysif, self.near, addr.near, addr.bytesize())
 
     async def listen(self, backlog: int) -> None:

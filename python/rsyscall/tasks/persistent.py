@@ -6,7 +6,7 @@ import rsyscall.handle as handle
 from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ChildProcessMonitor, robust_unix_bind, robust_unix_connect
 
 from rsyscall.io import ProcessResources, Trampoline
-from rsyscall.handle import Stack, WrittenPointer, ThreadProcess
+from rsyscall.handle import Stack, WrittenPointer, ThreadProcess, Pointer
 
 import trio
 import struct
@@ -14,10 +14,11 @@ from dataclasses import dataclass
 import logging
 import rsyscall.batch as batch
 
-from rsyscall.struct import Bytes
+from rsyscall.struct import Bytes, Int32, StructList
 
 from rsyscall.sched import CLONE
-from rsyscall.sys.socket import SOCK, SendmsgFlags
+from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, SendMsghdr, CmsgSCMRights, CmsgList
+from rsyscall.sys.uio import IovecList
 from rsyscall.signal import Signals, Sigset, SignalBlock
 from rsyscall.sys.prctl import PrctlOp
 
@@ -69,10 +70,10 @@ class PersistentConnection(near.SyscallInterface):
         connected_sock = await stdtask.task.socket_unix(SOCK.STREAM)
         self.path = self.path.with_task(stdtask.task)
         await robust_unix_connect(self.path, connected_sock)
-        def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.SendMsghdr]:
-            iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
-            cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([remote_sock, remote_sock])]))
-            return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
+        def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[SendMsghdr]:
+            iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
+            cmsgs = sem.to_pointer(CmsgList([handle.CmsgSCMRights([remote_sock, remote_sock])]))
+            return sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
         _, [] = await connected_sock.handle.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
         await remote_sock.invalidate()
         fd_bytes = await connected_sock.read()
@@ -149,18 +150,29 @@ class PersistentServer:
     transport: t.Optional[SocketMemoryTransport] = None
 
     async def _connect_and_send(self, stdtask: StandardTask, fds: t.List[handle.FileDescriptor]) -> t.List[near.FileDescriptor]:
-        connected_sock = await stdtask.task.socket_unix(SOCK.STREAM)
+        connected_sock = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM, 0)
         self.path = self.path.with_task(stdtask.task)
-        await robust_unix_connect(self.path, connected_sock)
-        await connected_sock.write(struct.pack('I', len(fds)))
-        def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.SendMsghdr]:
-            iovec = sem.to_pointer(handle.IovecList([sem.malloc_type(Bytes, 1)]))
-            cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights(fds)]))
-            return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
-        _, [] = await connected_sock.handle.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
-        fd_bytes = await connected_sock.read()
-        remote_fds = [near.FileDescriptor(i) for i, in struct.iter_unpack('I', fd_bytes)]
-        await connected_sock.aclose()
+        sockaddr_un = await self.path.as_sockaddr_un()
+        def sendmsg_op(sem: batch.BatchSemantics) -> t.Tuple[
+                WrittenPointer[Address], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
+            addr: WrittenPointer[Address] = sem.to_pointer(sockaddr_un)
+            count = sem.to_pointer(Int32(len(fds)))
+            iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
+            cmsgs = sem.to_pointer(CmsgList([handle.CmsgSCMRights(fds)]))
+            hdr = sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
+            response_buf = sem.to_pointer(StructList(Int32, [Int32(0)]*len(fds)))
+            return addr, count, hdr, response_buf
+        addr, count, hdr, response = await stdtask.ram.perform_batch(sendmsg_op)
+        await connected_sock.connect(addr)
+        await sockaddr_un.close()
+        _, _ = await connected_sock.write(count)
+        _, [] = await connected_sock.sendmsg(hdr, SendmsgFlags.NONE)
+        data = None
+        while response.bytesize() > 0:
+            valid, response = await connected_sock.read(response)
+            data += valid
+        remote_fds = [near.FileDescriptor(int(i)) for i in (await data.read()).elems] if data else []
+        await connected_sock.close()
         return remote_fds
 
     async def make_persistent(self) -> None:

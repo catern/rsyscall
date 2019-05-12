@@ -16682,12 +16682,27 @@ but that doesn't scale as well as passing the epfd down.
 
    OK let's stick with that plan, remove all the helpers.
 ** remove socket_unix
+   Hopefully we can replace some of the uses with AFD.
+
+   Ugh, this usage is a list of fds. Hmm.
+   meh let's stick to the current approach
 ** decide what to do with our two Paths
    can I really bear to get rid of our current memory-abstracting Path?
 
    I guess getting rid of the mem-abstracting Path would promote usage of at syscalls. To some degree anyway.
 
    And maybe I could have Command take a Union[Path, WrittenPointer[Path], FileDescriptor].
+
+   hmm, we don't really need the path pointer cache, because if we're going to do a bunch of things to a path,
+   we should just open it.
+
+   Hm! Maybe that should be our replacement for mempath?
+   Just open the path and use the at syscalls?
+
+   That does appeal to me.
+   Although, annoyingly, it's one extra syscall.
+
+   Well, I guess we can always just pass around WP[Path]s, too.
 ** clean up make_epoll_center
    We should have some kind of thing in local to create the one special EpollCenter that uses wait_readable,
    and for the rest, just... use activity_fd or something.
