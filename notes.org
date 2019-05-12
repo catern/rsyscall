@@ -16686,6 +16686,10 @@ but that doesn't scale as well as passing the epfd down.
 
    Ugh, this usage is a list of fds. Hmm.
    meh let's stick to the current approach
+** add RAMThread
+   We can use this instead of the current io.Task in places, I guess.
+** move some of these tests to unittests in the actual in6 module
+   like this test_ipv6_encode test in test_io
 ** decide what to do with our two Paths
    can I really bear to get rid of our current memory-abstracting Path?
 

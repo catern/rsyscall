@@ -147,19 +147,19 @@ class TestIO(unittest.TestCase):
 
     def test_readlinkat_non_symlink(self):
         async def test(stdtask: StandardTask) -> None:
-            f = await stdtask.task.cwd().open_path()
-            empty_ptr = await stdtask.task.to_pointer(rsyscall.path.EmptyPath())
-            ptr = await stdtask.task.malloc_type(rsyscall.path.Path, 4096)
+            f = await stdtask.task.base.open(await stdtask.ram.to_pointer(rsyscall.path.Path(".")), O.PATH|O.CLOEXEC)
+            empty_ptr = await stdtask.ram.to_pointer(rsyscall.path.EmptyPath())
+            ptr = await stdtask.ram.malloc_type(rsyscall.path.Path, 4096)
             with self.assertRaises(FileNotFoundError):
-                await f.handle.readlinkat(empty_ptr, ptr)
+                await f.readlinkat(empty_ptr, ptr)
         trio.run(self.runner, test)
 
     def test_readlink_proc(self):
         async def test(stdtask: StandardTask) -> None:
-            f = await stdtask.task.cwd().open_path()
-            path_ptr = await stdtask.task.to_pointer(f.handle.as_proc_self_path())
-            ptr = await stdtask.task.malloc_type(rsyscall.path.Path, 4096)
-            await f.handle.readlinkat(path_ptr, ptr)
+            f = await stdtask.task.base.open(await stdtask.ram.to_pointer(rsyscall.path.Path(".")), O.PATH|O.CLOEXEC)
+            path_ptr = await stdtask.ram.to_pointer(f.as_proc_self_path())
+            ptr = await stdtask.ram.malloc_type(rsyscall.path.Path, 4096)
+            await f.readlinkat(path_ptr, ptr)
         trio.run(self.runner, test)
 
     # def test_cat(self) -> None:
@@ -473,9 +473,8 @@ class TestIO(unittest.TestCase):
             thread1 = await stdtask.fork()
             await thread1.stdtask.unshare_user()
             await thread1.stdtask.unshare_net()
-            procselfns = thread1.stdtask.task.root()/"proc"/"self"/"ns"
-            netnsfd = (await (procselfns/"net").open(O.RDONLY)).handle.move(stdtask.task.base)
-            usernsfd = (await (procselfns/"user").open(O.RDONLY)).handle.move(stdtask.task.base)
+            procselfns = rsyscall.path.Path("/proc/self/ns")
+            netnsfd = await thread1.task.base.open(await thread1.ram.to_pointer(procselfns/"net"), O.RDONLY|O.CLOEXEC)
 
             thread2 = await stdtask.fork()
             await thread2.stdtask.unshare_user()
@@ -490,9 +489,11 @@ class TestIO(unittest.TestCase):
             import rsyscall.net.if_ as net
             await stdtask.unshare_user()
             await stdtask.unshare_net()
-            tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(O.RDWR)
+
+            tunpath = rsyscall.path.Path("/dev/net/tun")
+            tun_fd = await stdtask.task.base.open(await stdtask.ram.to_pointer(tunpath), O.RDWR|O.CLOEXEC)
             ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
-            await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
+            await tun_fd.ioctl(net.TUNSETIFF, ptr)
             sock = await stdtask.task.base.socket(AF.INET, SOCK.STREAM)
             await sock.ioctl(net.SIOCGIFINDEX, ptr)
             # this is the second interface in an empty netns
@@ -510,9 +511,10 @@ class TestIO(unittest.TestCase):
             netsock = await stdtask.task.base.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
             await netsock.bind(await stdtask.task.to_pointer(SockaddrNl(0, RTMGRP.LINK)))
 
-            tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(O.RDWR)
+            tunpath = rsyscall.path.Path("/dev/net/tun")
+            tun_fd = await stdtask.task.base.open(await stdtask.ram.to_pointer(tunpath), O.RDWR|O.CLOEXEC)
             ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
-            await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
+            await tun_fd.ioctl(net.TUNSETIFF, ptr)
             sock = await stdtask.task.base.socket(AF.INET, SOCK.STREAM)
             await sock.ioctl(net.SIOCGIFINDEX, ptr)
             # this is the second interface in an empty netns
