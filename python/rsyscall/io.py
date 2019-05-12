@@ -99,8 +99,8 @@ class Task(RAM):
         source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.perform_batch(op)
         await self.base.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
 
-    def _make_fd(self, num: int) -> MemFileDescriptor:
-        return FileDescriptor(self, self.base.make_fd_handle(near.FileDescriptor(num)))
+    def _make_fd(self, num: int) -> handle.FileDescriptor:
+        return self.base.make_fd_handle(near.FileDescriptor(num))
 
     # TODO maybe we'll put these calls as methods on a MemoryAbstractor,
     # and they'll take an handle.FileDescriptor.
@@ -164,18 +164,6 @@ class MemFileDescriptor:
             return self.__class__(self.task, self.handle.move(task))
         else:
             raise Exception("file descriptor already closed")
-
-    async def copy_from(self, source: handle.FileDescriptor, flags=0) -> None:
-        if self.handle.task.fd_table != source.task.fd_table:
-            raise Exception("two fds are not in the same file descriptor tables",
-                            self.handle.task.fd_table, source.task.fd_table)
-        if self.handle.near == source.near:
-            return
-        await source.dup3(self.handle, flags)
-
-    async def replace_with(self, source: handle.FileDescriptor, flags=0) -> None:
-        await self.copy_from(source)
-        await source.invalidate()
 
     async def set_nonblock(self) -> None:
         "Set the O_NONBLOCK flag on the underlying file object"
@@ -482,9 +470,9 @@ class StandardTask:
                  epoller: EpollCenter,
                  child_monitor: ChildProcessMonitor,
                  environ: Environment,
-                 stdin: MemFileDescriptor,
-                 stdout: MemFileDescriptor,
-                 stderr: MemFileDescriptor,
+                 stdin: handle.FileDescriptor,
+                 stdout: handle.FileDescriptor,
+                 stderr: handle.FileDescriptor,
     ) -> None:
         self.connection = connection
         self.task = task
@@ -826,8 +814,8 @@ class RsyscallThread:
 async def exec_cat(thread: RsyscallThread, cat: Command,
                    stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> AsyncChildProcess:
     await thread.stdtask.unshare_files_and_replace({
-        thread.stdtask.stdin.handle: stdin,
-        thread.stdtask.stdout.handle: stdout,
+        thread.stdtask.stdin: stdin,
+        thread.stdtask.stdout: stdout,
     }, going_to_exec=True)
     child_task = await thread.exec(cat)
     return child_task

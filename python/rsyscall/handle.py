@@ -535,11 +535,17 @@ class FileDescriptor:
         self.validate()
         if not newfd.is_only_handle():
             raise Exception("can't dup over newfd, there are more handles to it than just ours")
-        newfd_near = self.task.to_near_fd(newfd.far)
-        # we take responsibility here for closing newfd (which we're doing through dup3)
-        newfd._invalidate_all_existing_handles()
-        await rsyscall.near.dup3(self.task.sysif, self.near, newfd_near, flags)
-        return self.task.make_fd_handle(newfd_near)
+        with newfd.borrow(self.task):
+            if self.near == newfd.near:
+                # dup3 fails if newfd == oldfd. I guess I'll just work around that.
+                return newfd
+            await rsyscall.near.dup3(self.task.sysif, self.near, newfd.near, flags)
+            # newfd is left as a valid pointer to the new file descriptor
+            return newfd
+
+    async def replace_with(self, source: FileDescriptor, flags=0) -> None:
+        await source.dup3(self, flags)
+        await source.invalidate()
 
     async def fcntl(self, cmd: F, arg: t.Optional[int]=None) -> int:
         self.validate()

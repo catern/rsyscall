@@ -24,8 +24,8 @@ async def start_cat(stdtask: StandardTask, cat: Command,
                     stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> AsyncChildProcess:
     thread = await stdtask.fork()
     await thread.stdtask.unshare_files_and_replace({
-        thread.stdtask.stdin.handle: stdin,
-        thread.stdtask.stdout.handle: stdout,
+        thread.stdtask.stdin: stdin,
+        thread.stdtask.stdout: stdout,
     }, going_to_exec=True)
     child = await thread.exec(cat)
     return child
