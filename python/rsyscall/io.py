@@ -733,13 +733,27 @@ async def do_cloexec_except(task: Task, excluded_fds: t.Set[near.FileDescriptor]
                 nursery.start_soon(maybe_close, near.FileDescriptor(num))
             buf = valid.merge(rest)
 
-class RsyscallThread:
+class RsyscallThread(StandardTask):
     def __init__(self,
                  stdtask: StandardTask,
                  parent_monitor: ChildProcessMonitor,
     ) -> None:
-        self.stdtask = stdtask
+        super().__init__(
+            stdtask.connection,
+            stdtask.task,
+            stdtask.process,
+            stdtask.epoller,
+            stdtask.child_monitor,
+            stdtask.environ,
+            stdtask.stdin,
+            stdtask.stdout,
+            stdtask.stderr,
+        )
         self.parent_monitor = parent_monitor
+
+    @property
+    def stdtask(self) -> StandardTask:
+        return self
 
     async def exec(self, command: Command,
                    inherited_signal_blocks: t.List[SignalBlock]=[],
