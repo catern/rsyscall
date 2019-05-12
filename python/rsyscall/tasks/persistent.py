@@ -3,7 +3,7 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ChildProcessMonitor, robust_unix_bind, robust_unix_connect
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ChildProcessMonitor
 
 from rsyscall.io import ProcessResources, Trampoline
 from rsyscall.handle import Stack, WrittenPointer, ThreadProcess, Pointer
@@ -73,7 +73,7 @@ class PersistentConnection(near.SyscallInterface):
         [(access_sock, remote_sock)] = await stdtask.make_async_connections(1)
         connected_sock = await stdtask.task.socket_unix(SOCK.STREAM)
         self.path = self.path.with_task(stdtask.task)
-        await robust_unix_connect(self.path, connected_sock)
+        await connected_sock.connect(await self.path.as_sockaddr_un())
         def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[SendMsghdr]:
             iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
             cmsgs = sem.to_pointer(CmsgList([handle.CmsgSCMRights([remote_sock, remote_sock])]))
@@ -262,7 +262,7 @@ async def fork_persistent(
         self: StandardTask, path: Path,
 ) -> t.Tuple[StandardTask, PersistentServer]:
     listening_sock = await self.task.socket_unix(SOCK.STREAM)
-    await robust_unix_bind(path, listening_sock)
+    await listening_sock.bind(await path.as_sockaddr_un())
     await listening_sock.listen(1)
     [(access_sock, remote_sock)] = await self.make_async_connections(1)
     task, syscall, listening_sock_handle, thread_process = await spawn_rsyscall_persistent_server(

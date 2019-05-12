@@ -8,7 +8,7 @@ import traceback
 import os
 import inspect
 import sys
-from rsyscall.io import StandardTask, AsyncFileDescriptor, which, Command, Path, robust_unix_bind
+from rsyscall.io import StandardTask, AsyncFileDescriptor, which, Command, Path
 from contextvars import ContextVar
 from rsyscall.sys.socket import SOCK, AF
 from rsyscall.unistd import Pipe
@@ -101,7 +101,7 @@ class ConsoleServerGenie(WishGranter):
         sock_path = self.sockdir/sock_name
         cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path))
         sockfd = await self.stdtask.task.socket_unix(SOCK.STREAM)
-        await robust_unix_bind(sock_path, sockfd)
+        await sockfd.bind(await sock_path.as_sockaddr_un())
         await sockfd.listen(10)
         async_sockfd = await self.stdtask.make_afd(sockfd.handle)
         async with trio.open_nursery() as nursery:

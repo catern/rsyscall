@@ -348,37 +348,6 @@ async def update_symlink(parent: Path, name: str, target: str) -> None:
     await tmppath.symlink(target)
     await (parent/name).rename(tmppath)
 
-async def robust_unix_bind(path: Path, sock: MemFileDescriptor) -> None:
-    """Perform a Unix socket bind, hacking around the 108 byte limit on socket addresses.
-
-    If the passed path is too long to fit in an address, this function will open the path's
-    directory with O_PATH, and bind to /proc/self/fd/n/{pathname}; if that's still too long due to
-    pathname being too long, this function will call robust_unix_bind_helper to bind to a temporary
-    name and rename the resulting socket to pathname.
-
-    If you are going to be binding to this path repeatedly, it's more efficient to open the
-    directory with O_PATH and call robust_unix_bind_helper yourself, rather than call into this
-    function.
-
-    """
-    addr = await path.as_sockaddr_un()
-    await sock.bind(addr)
-    await addr.close()
-
-async def robust_unix_connect(path: Path, sock: MemFileDescriptor) -> None:
-    """Perform a Unix socket connect, hacking around the 108 byte limit on socket addresses.
-
-    If the passed path is too long to fit in an address, this function will open that path with
-    O_PATH and connect to /proc/self/fd/n.
-
-    If you are going to be connecting to this path repeatedly, it's more efficient to open the path
-    with O_PATH yourself rather than call into this function.
-
-    """
-    addr = await path.as_sockaddr_un()
-    await sock.connect(addr)
-    await addr.close()
-
 async def which(stdtask: StandardTask, name: t.Union[str, bytes]) -> Command:
     return await stdtask.environ.which(os.fsdecode(name))
 
