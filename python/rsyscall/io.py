@@ -85,9 +85,6 @@ class Task(RAM):
     def cwd(self) -> Path:
         return Path(self, handle.Path("."))
 
-    async def close(self):
-        await self.base.sysif.close_interface()
-
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: MS,
                     data: bytes) -> None:
@@ -101,10 +98,6 @@ class Task(RAM):
             )
         source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.perform_batch(op)
         await self.base.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
-
-    async def exit(self, status: int) -> None:
-        await self.base.exit(status)
-        await self.close()
 
     def _make_fd(self, num: int) -> MemFileDescriptor:
         return self.make_fd(near.FileDescriptor(num))
@@ -644,10 +637,10 @@ class StandardTask:
         await fd.setns(UnshareFlag.NEWNS)
 
     async def exit(self, status) -> None:
-        await self.task.exit(0)
+        await self.task.base.exit(0)
 
     async def close(self) -> None:
-        await self.task.close()
+        await self.task.base.close_task()
 
     async def __aenter__(self) -> 'StandardTask':
         return self
@@ -825,7 +818,7 @@ class RsyscallThread:
         return exit_event
 
     async def close(self) -> None:
-        await self.stdtask.task.close()
+        await self.stdtask.task.base.close_task()
 
     async def __aenter__(self) -> StandardTask:
         return self.stdtask

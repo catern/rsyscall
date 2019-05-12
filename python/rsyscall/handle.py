@@ -967,6 +967,12 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         await rsyscall.near.exit(self.sysif, status)
         self.manipulating_fd_table = False
         self.fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
+        await self.close_task()
+
+    async def close_task(self):
+        # close the syscall interface and kill the process; we don't have to do this since it'll be
+        # GC'd, but maybe we want to be tidy in advance.
+        await self.sysif.close_interface()
 
     async def clone(self, flags: CLONE,
                     # these two pointers must be adjacent; the end of the first is the start of the
