@@ -17490,6 +17490,16 @@ And we can have an exec which is not memory-abstracting, I guess.
    hey wait a second, couldn't we use these techniques in bump?
    separate out a syscall thread? for nice locality? hmmm... neat...
 ** DONE clean up handling of unshare for connection
+** thoughts
+
+   can do ramthread etc in the speciif cmodules related to them
+
+   can add ram to stdtask and have childstdtask start inheriting,
+   and begin migration slowly.
+
+   rsysapps
+
+   oh hey, io.Task can just inherit from handle.Task for migration
 ** DONE clean creation and inheritance for connection
    The connection interface is actually very nice.
    We'll be able to very flexibly use it with TCP,
