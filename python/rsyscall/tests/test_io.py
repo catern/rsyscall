@@ -562,23 +562,6 @@ class TestIO(unittest.TestCase):
                 await stdtask2.exit(0)
         trio.run(self.runner, test)
 
-    def test_cwd_path_encode(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            cwd = stdtask.task.cwd()
-            self.assertEqual(os.fsdecode(cwd), '.')
-            self.assertEqual(os.fsdecode(cwd/"foo"), 'foo')
-        trio.run(self.runner, test)
-
-    def test_ipv6_encode(self) -> None:
-        from rsyscall.netinet.in_ import SockaddrIn6
-        orig = SockaddrIn6(1234, "::", 1234, 1234)
-        data = orig.to_bytes()
-        out = SockaddrIn6.from_bytes(data)        
-        self.assertEqual(orig.port, out.port)
-        self.assertEqual(orig.addr, out.addr)
-        self.assertEqual(orig.flowinfo, out.flowinfo)
-        self.assertEqual(orig.scope_id, out.scope_id)
-
     def test_spawn_basic(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await spawn_exec(stdtask, rsyscall.nix.local_store)
@@ -618,39 +601,6 @@ class TestIO(unittest.TestCase):
             fd = await (path/"foo").creat()
             await watch.wait_until_event(inotify.IN.CREATE, "foo")
         trio.run(self.runner_with_tempdir, test)
-
-    def test_persistent_thread_exit(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            async with (await stdtask.mkdtemp()) as tmpdir:
-                per_stdtask, connection = await fork_persistent(stdtask, tmpdir/"persist.sock")
-                await connection.reconnect(stdtask)
-                await per_stdtask.unshare_files()
-                await per_stdtask.exit(0)
-        trio.run(self.runner, test)
-
-    def test_persistent_thread_nest_exit(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            async with (await stdtask.mkdtemp()) as tmpdir:
-                per_stdtask, connection = await fork_persistent(stdtask, tmpdir/"persist.sock")
-                thread3 = await per_stdtask.fork()
-                async with thread3 as stdtask3:
-                    stdtask3 = thread3.stdtask
-                    await connection.reconnect(stdtask)
-                    await stdtask3.exit(0)
-        trio.run(self.runner, test)
-
-    @unittest.skip("broken due to unshare net stuff")
-    def test_ssh_persistent_thread_exit(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            host = await make_local_ssh(stdtask, rsyscall.nix.local_store)
-            local_child, remote_stdtask = await host.ssh(stdtask)
-            logger.info("about to fork")
-            per_stdtask, connection = await fork_persistent(remote_stdtask,
-                remote_stdtask.task.cwd()/"persist.sock")
-            await per_stdtask.unshare_files()
-            await connection.reconnect(remote_stdtask)
-            await per_stdtask.exit(0)
-        trio.run(self.runner, test)
 
     @unittest.skip("not working right now")
     def test_ssh_persistent_thread_reconnect(self) -> None:

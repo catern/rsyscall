@@ -22,6 +22,10 @@ from rsyscall.sys.uio import IovecList
 from rsyscall.signal import Signals, Sigset, SignalBlock
 from rsyscall.sys.prctl import PrctlOp
 
+__all__ = [
+    "fork_persistent",
+]
+
 class PersistentConnection(near.SyscallInterface):
     """An reconnectable rsyscall connection; the task won't be our child on resume.
 

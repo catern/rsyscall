@@ -18035,4 +18035,7 @@ in some sense the dynamic linker is the symantics for things...
 
   oh, you could dynbind one of these function maker things as self,
   so that all method calls become delayed.
-
+* main
+  august 5th to 15th
+  indianapolis
+  early july
