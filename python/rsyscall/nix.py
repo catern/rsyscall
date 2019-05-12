@@ -83,7 +83,7 @@ async def create_nix_container(
     # mutate dest_task so that it is nicely namespaced for the Nix container
     await dest_task.unshare_user()
     await dest_task.unshare_mount()
-    await dest_task.task.mount(b"nix", b"/nix", b"none", MS.BIND, b"")
+    await dest_task.mount(b"nix", b"/nix", b"none", MS.BIND, b"")
     await bootstrap_nix_database(src_nix_store, src_task, dest_nix_store, dest_task, closure)
     return dest_nix_bin
 

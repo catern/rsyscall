@@ -85,20 +85,6 @@ class Task(RAM):
     def cwd(self) -> Path:
         return Path(self, handle.Path("."))
 
-    async def mount(self, source: bytes, target: bytes,
-                    filesystemtype: bytes, mountflags: MS,
-                    data: bytes) -> None:
-        def op(sem: batch.BatchSemantics) -> t.Tuple[
-                WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg]]:
-            return (
-                sem.to_pointer(Arg(source)),
-                sem.to_pointer(Arg(target)),
-                sem.to_pointer(Arg(filesystemtype)),
-                sem.to_pointer(Arg(data)),
-            )
-        source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.perform_batch(op)
-        await self.base.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
-
     def _make_fd(self, num: int) -> handle.FileDescriptor:
         return self.base.make_fd_handle(near.FileDescriptor(num))
 
@@ -476,6 +462,7 @@ class StandardTask:
     ) -> None:
         self.connection = connection
         self.task = task
+        self.ram = task
         self.process = process_resources
         self.epoller = epoller
         self.child_monitor = child_monitor
@@ -490,6 +477,20 @@ class StandardTask:
         name = (prefix+"."+random_suffix).encode()
         await (parent/name).mkdir(mode=0o700)
         return TemporaryDirectory(self, parent, name)
+
+    async def mount(self, source: bytes, target: bytes,
+                    filesystemtype: bytes, mountflags: MS,
+                    data: bytes) -> None:
+        def op(sem: batch.BatchSemantics) -> t.Tuple[
+                WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg]]:
+            return (
+                sem.to_pointer(Arg(source)),
+                sem.to_pointer(Arg(target)),
+                sem.to_pointer(Arg(filesystemtype)),
+                sem.to_pointer(Arg(data)),
+            )
+        source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.ram.perform_batch(op)
+        await self.task.base.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
 
     async def make_afd(self, fd: handle.FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
         return await AsyncFileDescriptor.make_handle(self.epoller, self.task, fd, is_nonblock=nonblock)
