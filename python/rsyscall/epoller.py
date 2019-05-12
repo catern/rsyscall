@@ -281,6 +281,9 @@ class AsyncFileDescriptor:
             await connfd.close()
             raise
 
+    async def bind(self, addr: T_addr) -> None:
+        await self.handle.bind(await self.ram.to_pointer(addr))
+
     async def connect(self, addr: T_addr) -> None:
         try:
             await self.handle.connect(await self.ram.to_pointer(addr))

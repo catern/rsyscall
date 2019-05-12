@@ -368,17 +368,17 @@ class TestIO(unittest.TestCase):
     def test_repl(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
-                sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
+                sockfd = await stdtask.make_afd(
+                    await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
                 addr = await (path/"sock").as_sockaddr_un()
                 await sockfd.bind(addr)
-                await sockfd.listen(10)
-                async_sockfd = await stdtask.make_afd(sockfd.handle)
-                clientfd = await stdtask.task.socket_unix(SOCK.STREAM)
-                async_clientfd = await stdtask.make_afd(clientfd.handle)
-                await async_clientfd.connect(addr)
-                await async_clientfd.write(b"foo = 11\n")
-                await async_clientfd.write(b"return foo * 2\n")
-                ret = await rsyscall.wish.serve_repls(async_sockfd, {'locals': locals()}, int, "hello")
+                await sockfd.handle.listen(10)
+                clientfd = await stdtask.make_afd(
+                    await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+                await clientfd.connect(addr)
+                await clientfd.write(b"foo = 11\n")
+                await clientfd.write(b"return foo * 2\n")
+                ret = await rsyscall.wish.serve_repls(sockfd, {'locals': locals()}, int, "hello")
                 self.assertEqual(ret, 22)
         trio.run(self.runner, test)
 

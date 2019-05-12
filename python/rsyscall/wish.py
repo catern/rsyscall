@@ -100,10 +100,10 @@ class ConsoleServerGenie(WishGranter):
         sock_name = self._uniquify_name(f'{wisher_frame.f_code.co_name}-{wisher_frame.f_lineno}')
         sock_path = self.sockdir/sock_name
         cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path))
-        sockfd = await self.stdtask.task.socket_unix(SOCK.STREAM)
+        sockfd = await self.stdtask.make_afd(
+            await self.stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
         await sockfd.bind(await sock_path.as_sockaddr_un())
-        await sockfd.listen(10)
-        async_sockfd = await self.stdtask.make_afd(sockfd.handle)
+        await sockfd.handle.listen(10)
         async with trio.open_nursery() as nursery:
             @nursery.start_soon
             async def do_socat():
@@ -116,7 +116,7 @@ class ConsoleServerGenie(WishGranter):
                         raise
                     async with child:
                         await child.wait_for_exit()
-            ret = await serve_repls(async_sockfd, {
+            ret = await serve_repls(sockfd, {
                 'wisher_frame': wisher_frame,
                 'wisher_locals': wisher_frame.f_locals,
                 'wisher_globals': wisher_frame.f_globals,

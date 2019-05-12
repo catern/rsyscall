@@ -36,11 +36,11 @@ class StubServer:
     @classmethod
     async def listen_on(cls, stdtask: StandardTask, path: Path) -> StubServer:
         "Start listening on the passed-in path for stub connections."
-        sockfd = await stdtask.task.socket_unix(SOCK.STREAM)
+        sockfd = await stdtask.make_afd(
+            await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
         await sockfd.bind(await path.as_sockaddr_un())
-        await sockfd.listen(10)
-        asyncfd = await stdtask.make_afd(sockfd.handle)
-        return StubServer(asyncfd, stdtask)
+        await sockfd.handle.listen(10)
+        return StubServer(sockfd, stdtask)
 
     @classmethod
     async def make(cls, stdtask: StandardTask, store: nix.Store, dir: Path, name: str) -> StubServer:
