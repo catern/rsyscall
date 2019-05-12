@@ -25,7 +25,7 @@ from rsyscall.struct import Serializer, HasSerializer, FixedSerializer, FixedSiz
 from rsyscall.signal import Sigaction, Sigset, Signals, Siginfo, SignalMaskTask
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
-from rsyscall.unistd import SEEK, Arg, ArgList, Pipe
+from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
 from rsyscall.sys.epoll import EpollFlag, EPOLL_CTL, EpollEvent, EpollEventList
 from rsyscall.linux.dirent import DirentList
 from rsyscall.linux.futex import RobustListHead, FutexNode
@@ -649,6 +649,11 @@ class FileDescriptor:
                 ret = await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, buf.near, buf.bytesize())
                 return buf.split(ret)
 
+    async def faccessat(self, ptr: WrittenPointer[Path], mode: OK, flags: AT=AT.NONE) -> None:
+        self.validate()
+        with ptr.borrow(self.task):
+            await rsyscall.near.faccessat(self.task.sysif, self.near, ptr.near, mode, flags)
+
     async def getdents(self, dirp: Pointer[DirentList]) -> t.Tuple[Pointer[DirentList], Pointer]:
         self.validate()
         with dirp.borrow(self.task) as dirp_b:
@@ -852,7 +857,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
                                              oldact.near if oldact else None,
                                              Sigset.sizeof())
 
-    async def open(self, ptr: WrittenPointer[Path], flags: int, mode=0o644) -> FileDescriptor:
+    async def open(self, ptr: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
         with ptr.borrow(self) as ptr_b:
             fd = await rsyscall.near.openat(self.sysif, None, ptr_b.near, flags, mode)
             return self.make_fd_handle(fd)

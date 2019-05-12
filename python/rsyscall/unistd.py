@@ -15,6 +15,12 @@ else:
 class SEEK(enum.IntEnum):
     SET = os.SEEK_SET
 
+class OK(enum.IntFlag):
+    R = os.R_OK
+    W = os.W_OK
+    X = os.X_OK
+    F = os.F_OK
+
 class Arg(bytes, Serializable):
     def to_bytes(self) -> bytes:
         return self + b'\0'

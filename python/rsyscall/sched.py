@@ -8,8 +8,6 @@ import struct
 import contextlib
 if t.TYPE_CHECKING:
     from rsyscall.handle import Task, Pointer
-else:
-    T_borrowable = object
 
 class UnshareFlag(enum.IntFlag):
     NONE = 0

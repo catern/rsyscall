@@ -20,6 +20,7 @@ import rsyscall.tasks.local as local
 from rsyscall.sys.capability import CAP, CapHeader, CapData
 from rsyscall.sys.socket import AF, SOCK, SOL
 from rsyscall.sys.prctl import PrctlOp, CapAmbient
+from rsyscall.fcntl import O
 from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.netinet.ip import IP, IPPROTO
 from rsyscall.linux.netlink import SockaddrNl, NETLINK
@@ -113,7 +114,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, stdtask: Standar
     icmp6_fd = await ns_thread.stdtask.task.base.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
 
     # create the TUN interface
-    tun_fd = await (ns_thread.stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
+    tun_fd = await (ns_thread.stdtask.task.root()/"dev"/"net"/"tun").open(O.RDWR)
     ptr = await stdtask.task.to_pointer(netif.Ifreq(b'teredo', flags=netif.IFF_TUN))
     await tun_fd.handle.ioctl(netif.TUNSETIFF, ptr)
     # create reqsock for ifreq operations in this network namespace

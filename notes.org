@@ -16674,7 +16674,10 @@ but that doesn't scale as well as passing the epfd down.
    I guess getting rid of the mem-abstracting Path would promote usage of at syscalls. To some degree anyway.
 
    And maybe I could have Command take a Union[Path, WrittenPointer[Path], FileDescriptor].
-** move stack out to sched, leave T_borrowable in handle
+** clean up make_epoll_center
+   We should have some kind of thing in local to create the one special EpollCenter that uses wait_readable,
+   and for the rest, just... use activity_fd or something.
+** DONE move stack out to sched, leave T_borrowable in handle
 ** DONE make make_connection object into an interface
    Then I can remove this annoying conditionality from the implementation.
 

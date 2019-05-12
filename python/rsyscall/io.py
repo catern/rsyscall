@@ -26,6 +26,7 @@ from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.tasks.fork import spawn_rsyscall_thread, RsyscallConnection, SyscallResponse
 from rsyscall.tasks.common import raise_if_error, log_syscall
 from rsyscall.command import Command
+from rsyscall.environ import Environment
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, GenericSockaddr, SendmsgFlags, RecvmsgFlags, Sockbuf
 from rsyscall.fcntl import AT, O, F, FD_CLOEXEC
@@ -277,7 +278,7 @@ class Path(rsyscall.path.PathLike):
             raise FileExistsError(e.errno, e.strerror, self) from None
         return self
 
-    async def open(self, flags: int, mode=0o644) -> FileDescriptor:
+    async def open(self, flags: O, mode=0o644) -> FileDescriptor:
         """Open a path
 
         Note that this can block forever if we're opening a FIFO
@@ -460,24 +461,8 @@ async def spit(path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
             data = data[ret:]
     return path
 
-async def lookup_executable(paths: t.List[Path], name: bytes) -> Path:
-    "Find an executable by this name in this list of paths"
-    if b"/" in name:
-        raise Exception("name should be a single path element without any / present")
-    for path in paths:
-        filename = path/name
-        if (await filename.access(read=True, execute=True)):
-            return filename
-    raise Exception("executable not found", name)
-
 async def which(stdtask: StandardTask, name: t.Union[str, bytes]) -> Command:
-    "Find an executable by this name in PATH"
-    namebytes = os.fsencode(name)
-    executable_dirs: t.List[Path] = []
-    for prefix in stdtask.environment[b"PATH"].split(b":"):
-        executable_dirs.append(Path(stdtask.task, handle.Path(os.fsdecode(prefix))))
-    executable_path = await lookup_executable(executable_dirs, namebytes)
-    return Command(executable_path.handle, [namebytes], {})
+    return await stdtask.environ.which(os.fsdecode(name))
 
 async def write_user_mappings(task: Task, uid: int, gid: int,
                               in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
@@ -517,6 +502,7 @@ class StandardTask:
         self.epoller = epoller
         self.child_monitor = child_monitor
         self.environment = environment
+        self.environ = Environment(self.task.base, self.task, environment)
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr

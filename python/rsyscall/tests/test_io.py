@@ -270,7 +270,7 @@ class TestIO(unittest.TestCase):
                     text = b"Hello world!"
                     name = "hello"
                     hello_path = await rsyscall.io.spit(path/name, text)
-                    async with (await hello_path.open(os.O_RDONLY)) as readable:
+                    async with (await hello_path.open(O.RDONLY)) as readable:
                         self.assertEqual(await readable.read(), text)
                     await dirfd.handle.lseek(0, SEEK.SET)
                     self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], ['.', '..', name])
@@ -474,8 +474,8 @@ class TestIO(unittest.TestCase):
             await thread1.stdtask.unshare_user()
             await thread1.stdtask.unshare_net()
             procselfns = thread1.stdtask.task.root()/"proc"/"self"/"ns"
-            netnsfd = (await (procselfns/"net").open(os.O_RDONLY)).handle.move(stdtask.task.base)
-            usernsfd = (await (procselfns/"user").open(os.O_RDONLY)).handle.move(stdtask.task.base)
+            netnsfd = (await (procselfns/"net").open(O.RDONLY)).handle.move(stdtask.task.base)
+            usernsfd = (await (procselfns/"user").open(O.RDONLY)).handle.move(stdtask.task.base)
 
             thread2 = await stdtask.fork()
             await thread2.stdtask.unshare_user()
@@ -490,7 +490,7 @@ class TestIO(unittest.TestCase):
             import rsyscall.net.if_ as net
             await stdtask.unshare_user()
             await stdtask.unshare_net()
-            tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
+            tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(O.RDWR)
             ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
             await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
             sock = await stdtask.task.base.socket(AF.INET, SOCK.STREAM)
@@ -510,7 +510,7 @@ class TestIO(unittest.TestCase):
             netsock = await stdtask.task.base.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
             await netsock.bind(await stdtask.task.to_pointer(SockaddrNl(0, RTMGRP.LINK)))
 
-            tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(os.O_RDWR)
+            tun_fd = await (stdtask.task.root()/"dev"/"net"/"tun").open(O.RDWR)
             ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
             await tun_fd.handle.ioctl(net.TUNSETIFF, ptr)
             sock = await stdtask.task.base.socket(AF.INET, SOCK.STREAM)
@@ -751,11 +751,11 @@ class TestIO(unittest.TestCase):
     def test_copy(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as tmpdir:
-                source_file = await (tmpdir/"source").open(os.O_RDWR|os.O_CREAT)
+                source_file = await (tmpdir/"source").open(O.RDWR|O.CREAT)
                 data = b'hello world'
                 await source_file.write(data)
                 await source_file.handle.lseek(0, SEEK.SET)
-                dest_file = await (tmpdir/"dest").open(os.O_RDWR|os.O_CREAT)
+                dest_file = await (tmpdir/"dest").open(O.RDWR|O.CREAT)
 
                 thread = await stdtask.fork()
                 cat = await rsyscall.io.which(stdtask, b"cat")
@@ -807,7 +807,7 @@ class TestIO(unittest.TestCase):
             dest_nix_bin = shell_thread.stdtask.task.base.make_path_handle(dest_nix_bin)
             with child_task.process.borrow():
                 container_ns_dir = shell_thread.stdtask.task.root()/"proc"/str(child_task.process.near.id)/"ns"
-                usernsfd = await (container_ns_dir/"user").open(os.O_RDONLY)
+                usernsfd = await (container_ns_dir/"user").open(O.RDONLY)
             await shell_thread.stdtask.setns_user(usernsfd.handle)
             await shell_thread.stdtask.unshare_mount()
             await shell_thread.stdtask.task.mount(b"nix", b"/nix", b"none", MS.BIND|MS.RDONLY, b"")

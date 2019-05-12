@@ -7,20 +7,11 @@ from rsyscall.handle import FileDescriptor, WrittenPointer, Task
 from rsyscall.memory.ram import RAM
 from rsyscall.struct import Bytes
 from rsyscall.batch import BatchSemantics
+from rsyscall.concurrency import make_n_in_parallel
 
 from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, RecvmsgFlags, SendMsghdr, RecvMsghdr, CmsgList, CmsgSCMRights
 from rsyscall.sys.uio import IovecList
 from rsyscall.handle import FDPair
-
-T = t.TypeVar('T')
-async def make_n_in_parallel(make: t.Callable[[], t.Awaitable[T]], count: int) -> t.List[T]:
-    pairs: t.List[t.Any] = [None]*count
-    async with trio.open_nursery() as nursery:
-        async def open_nth(n: int) -> None:
-            pairs[n] = await make()
-        for i in range(count):
-            nursery.start_soon(open_nth, i)
-    return pairs
 
 class Connection:
     @abc.abstractmethod
