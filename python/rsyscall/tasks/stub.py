@@ -5,7 +5,7 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, robust_unix_bind, robust_unix_connect, Command, AsyncReadBuffer, ProcessResources, spit, FileDescriptor
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, robust_unix_bind, robust_unix_connect, Command, AsyncReadBuffer, ProcessResources, FileDescriptor
 import trio
 from dataclasses import dataclass
 import logging
@@ -54,7 +54,7 @@ class StubServer:
         wrapper = """#!/bin/sh
 RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
 """.format(sock=os.fsdecode(sock_path), bin=os.fsdecode(stub_path))
-        await spit(dir/name, wrapper, mode=0o755)
+        await stdtask.spit(dir.handle/name, wrapper, mode=0o755)
         return server
 
     async def accept(self, stdtask: StandardTask=None) -> t.Tuple[t.List[str], StandardTask]:

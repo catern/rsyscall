@@ -16707,6 +16707,10 @@ but that doesn't scale as well as passing the epfd down.
    Although, annoyingly, it's one extra syscall.
 
    Well, I guess we can always just pass around WP[Path]s, too.
+** could have a contextvar thread
+   then doing "with thread" would set that contextvar.
+
+   that would be kinda cool.
 ** clean up make_epoll_center
    We should have some kind of thing in local to create the one special EpollCenter that uses wait_readable,
    and for the rest, just... use activity_fd or something.

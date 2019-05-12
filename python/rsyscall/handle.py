@@ -683,6 +683,12 @@ class FileDescriptor:
         with mask.borrow(self.task) as mask:
             await rsyscall.near.signalfd4(self.task.sysif, self.near, mask.near, mask.bytesize(), flags)
 
+    async def openat(self, ptr: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
+        self.validate()
+        with ptr.borrow(self.task):
+            fd = await rsyscall.near.openat(self.task.sysif, self.near, ptr.near, flags, mode)
+            return self.task.make_fd_handle(fd)
+
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
 fd_table_to_task: t.Dict[rsyscall.far.FDTable, t.List[Task]] = {}
 

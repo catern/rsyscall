@@ -35,6 +35,7 @@ from rsyscall.sys.socket import SOCK, AF
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.uio import RWF, IovecList
 from rsyscall.linux.netlink import NETLINK
+from rsyscall.linux.dirent import DirentList
 from rsyscall.signal import Signals, Sigset
 from rsyscall.sys.signalfd import SignalfdSiginfo
 from rsyscall.net.if_ import Ifreq
@@ -264,16 +265,27 @@ class TestIO(unittest.TestCase):
     def test_mkdtemp(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
-                async with (await path.open_directory()) as dirfd:
-                    dirents = await dirfd.getdents()
-                    self.assertCountEqual([dirent.name for dirent in dirents], ['.', '..'])
-                    text = b"Hello world!"
-                    name = "hello"
-                    hello_path = await rsyscall.io.spit(path/name, text)
-                    async with (await hello_path.open(O.RDONLY)) as readable:
-                        self.assertEqual(await readable.read(), text)
-                    await dirfd.handle.lseek(0, SEEK.SET)
-                    self.assertCountEqual([dirent.name for dirent in await dirfd.getdents()], ['.', '..', name])
+                dirfd = await stdtask.task.base.open(await stdtask.ram.to_pointer(path.handle), O.DIRECTORY)
+                dent_buf = await stdtask.ram.malloc_type(DirentList, 4096)
+                valid, rest = await dirfd.getdents(dent_buf)
+                self.assertCountEqual(sorted([dirent.name for dirent in await valid.read()]), ['.', '..'])
+                dent_buf = valid + rest
+
+                text = b"Hello world!"
+                name = await stdtask.ram.to_pointer(rsyscall.path.Path("hello"))
+
+                write_fd = await dirfd.openat(name, O.WRONLY|O.CREAT)
+                buf = await stdtask.ram.to_pointer(Bytes(text))
+                written, _ = await write_fd.write(buf)
+
+                read_fd = await dirfd.openat(name, O.RDONLY)
+                read, _ = await read_fd.read(written)
+                self.assertEqual(await read.read(), text)
+
+                await dirfd.lseek(0, SEEK.SET)
+                valid, rest = await dirfd.getdents(dent_buf)
+                self.assertCountEqual(sorted([dirent.name for dirent in await valid.read()]),
+                                      ['.', '..', str(name.value)])
         trio.run(self.runner, test)
 
     # def test_bind(self) -> None:

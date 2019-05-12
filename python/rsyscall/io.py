@@ -407,21 +407,6 @@ async def robust_unix_connect(path: Path, sock: MemFileDescriptor) -> None:
     await sock.connect(addr)
     await addr.close()
 
-async def spit(path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
-    """Open a file, creating and truncating it, and write the passed text to it
-
-    Probably shouldn't use this on FIFOs or anything.
-
-    Returns the passed-in Path so this serves as a nice pseudo-constructor.
-
-    """
-    data = os.fsencode(text)
-    async with (await path.creat(mode=mode)) as fd:
-        while len(data) > 0:
-            ret = await fd.write(data)
-            data = data[ret:]
-    return path
-
 async def which(stdtask: StandardTask, name: t.Union[str, bytes]) -> Command:
     return await stdtask.environ.which(os.fsdecode(name))
 
@@ -474,6 +459,21 @@ class StandardTask:
         name = (prefix+"."+random_suffix).encode()
         await (parent/name).mkdir(mode=0o700)
         return TemporaryDirectory(self, parent, name)
+
+    async def spit(self, path: handle.Path, text: t.Union[str, bytes], mode=0o644) -> handle.Path:
+        """Open a file, creating and truncating it, and write the passed text to it
+
+        Probably shouldn't use this on FIFOs or anything.
+
+        Returns the passed-in Path so this serves as a nice pseudo-constructor.
+
+        """
+        fd = await self.task.base.open(await self.ram.to_pointer(path), O.WRONLY|O.TRUNC|O.CREAT, mode=mode)
+        to_write: Pointer = await self.ram.to_pointer(Bytes(os.fsencode(text)))
+        while to_write.bytesize() > 0:
+            _, to_write = await fd.write(to_write)
+        await fd.close()
+        return path
 
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: MS,
