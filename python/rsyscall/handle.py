@@ -543,6 +543,9 @@ class FileDescriptor:
             # newfd is left as a valid pointer to the new file descriptor
             return newfd
 
+    async def copy_from(self, source: FileDescriptor, flags=0) -> None:
+        await source.dup3(self, flags)
+
     async def replace_with(self, source: FileDescriptor, flags=0) -> None:
         await source.dup3(self, flags)
         await source.invalidate()
