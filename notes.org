@@ -16668,6 +16668,10 @@ but that doesn't scale as well as passing the epfd down.
    oh, command references rsyscallthread. annoying.
 
    we can just invert it though
+** remove root/cwd from io.Task
+   This conflicts with handle.Task hmm
+** make io.Task just inherit from RAM and handle.Task
+   This way we can incrementally migrate!
 ** decide what to do with our two Paths
    can I really bear to get rid of our current memory-abstracting Path?
 
