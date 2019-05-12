@@ -1,9 +1,10 @@
-import os
+from __future__ import annotations
 from rsyscall.command import Command
+from rsyscall.concurrency import run_all
 from rsyscall.handle import Path, Task, FileDescriptor, WrittenPointer
 from rsyscall.memory.ram import RAM
+import os
 import typing as t
-from rsyscall.concurrency import run_all
 
 from rsyscall.fcntl import O
 from rsyscall.unistd import OK
@@ -70,8 +71,11 @@ class Environment:
         self.tmpdir = Path(self.get("TMPDIR", "/tmp"))
         self.path = ExecutablePathCache(task, ram, self.get("PATH", "").split(":"))
 
-    def __getattr__(self, key: t.Union[str, bytes]) -> str:
+    def __getitem__(self, key: t.Union[str, bytes]) -> str:
         return os.fsdecode(self.data[os.fsencode(key)])
+
+    def __delitem__(self, key: t.Union[str, bytes]) -> None:
+        del self.data[os.fsencode(key)]
 
     def get(self, key: t.Union[str, bytes], default: str) -> str:
         result = self.data.get(os.fsencode(key))
@@ -82,3 +86,8 @@ class Environment:
 
     async def which(self, name: str) -> Command:
         return await self.path.which(name)
+
+    def inherit(self, task: Task, ram: RAM) -> Environment:
+        # TODO hmm this is a bit wasteful of the path cache, maybe we should share it?
+        # though if we unshare the mount namespace or chroot or chdir, it won't be valid anymore...
+        return Environment(task, ram, self.data)

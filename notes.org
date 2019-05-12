@@ -16662,7 +16662,7 @@ but that doesn't scale as well as passing the epfd down.
 
     like, we definitely do want to memabstract at some levels.
     ehh ok, we'll still have two classes.
-** split out environment thing
+** DONE split out environment thing
    This will be our path cache to look up things in the environment.
 ** DONE move out command
    oh, command references rsyscallthread. annoying.
@@ -17052,6 +17052,12 @@ And we can have an exec which is not memory-abstracting, I guess.
 ** TODO rename StandardTask/RsyscallThread to Thread/ChildThread
    Possibly with a further MemThread below Thread,
    containing just handle.Task, RAM, and EpollCenter.
+
+   Oh, maybe I can have ChildThread actually be a generic, like Child[Thread],
+   which inherits from its type argument,
+   and then I can have my own custom classes which inherit from Thread and which get put in there...
+
+   Well maybe that's not necessary, because, fork and all that isn't going to return my custom thread anyway...
 ** DONE make connection interface with open_channels
    OK one difficulty is inheritance.
 

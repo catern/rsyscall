@@ -797,7 +797,7 @@ class TestIO(unittest.TestCase):
     @unittest.skip("Nix deploy is broken")
     def test_nix_shell_with_daemon(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            del stdtask.environment[b'NIX_REMOTE']
+            del stdtask.environ['NIX_REMOTE']
             thread = await stdtask.fork()
             src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
             dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread.stdtask)

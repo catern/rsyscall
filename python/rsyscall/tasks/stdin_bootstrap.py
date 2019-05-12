@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import logging
 import rsyscall.memory.allocator as memory
 from rsyscall.monitor import AsyncChildProcess
+from rsyscall.environ import Environment
 
 import rsyscall.nix as nix
 import rsyscall.batch as batch
@@ -109,7 +110,7 @@ async def rsyscall_stdin_bootstrap(
         process_resources=ProcessResources.make_from_symbols(base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,
-        environment=environ,
+        environ=Environment(task.base, task, environ),
         stdin=task._make_fd(0),
         stdout=task._make_fd(1),
         stderr=task._make_fd(2),

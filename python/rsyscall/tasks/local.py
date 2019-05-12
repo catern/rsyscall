@@ -20,6 +20,7 @@ from rsyscall.signal import Signals, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
 import rsyscall.batch as batch
 from rsyscall.network.connection import FDPassConnection
+from rsyscall.environ import Environment
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
@@ -127,7 +128,7 @@ async def _make_local_stdtask() -> StandardTask:
         connection,
         mem_task, process_resources,
         epoller, child_monitor,
-        {**environ},
+        Environment(task, mem_task, environ),
         stdin=mem_task._make_fd(0),
         stdout=mem_task._make_fd(1),
         stderr=mem_task._make_fd(2),

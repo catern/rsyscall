@@ -266,7 +266,7 @@ async def fork_persistent(
         self.process,
         epoller,
         child_monitor,
-        {**self.environment},
+        self.environ.inherit(task.base, task),
         stdin=self.stdin.for_task(task.base),
         stdout=self.stdout.for_task(task.base),
         stderr=self.stderr.for_task(task.base),

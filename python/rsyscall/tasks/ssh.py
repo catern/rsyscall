@@ -15,6 +15,7 @@ import random
 import string
 from rsyscall.monitor import AsyncChildProcess
 from rsyscall.network.connection import ListeningConnection
+from rsyscall.environ import Environment
 
 import rsyscall.nix as nix
 from rsyscall.fcntl import O
@@ -267,7 +268,7 @@ async def ssh_bootstrap(
         process_resources=ProcessResources.make_from_symbols(new_base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,
-        environment=environ,
+        environ=Environment(new_task.base, new_task, environ),
         stdin=new_task._make_fd(0),
         stdout=new_task._make_fd(1),
         stderr=new_task._make_fd(2),

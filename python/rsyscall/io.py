@@ -491,7 +491,7 @@ class StandardTask:
                  process_resources: ProcessResources,
                  epoller: EpollCenter,
                  child_monitor: ChildProcessMonitor,
-                 environment: t.Dict[bytes, bytes],
+                 environ: Environment,
                  stdin: MemFileDescriptor,
                  stdout: MemFileDescriptor,
                  stderr: MemFileDescriptor,
@@ -501,8 +501,7 @@ class StandardTask:
         self.process = process_resources
         self.epoller = epoller
         self.child_monitor = child_monitor
-        self.environment = environment
-        self.environ = Environment(self.task.base, self.task, environment)
+        self.environ = environ
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
@@ -571,7 +570,7 @@ class StandardTask:
             task, 
             self.process,
             epoller, child_monitor,
-            {**self.environment},
+            self.environ.inherit(task.base, task),
             stdin=self.stdin.for_task(task.base),
             stdout=self.stdout.for_task(task.base),
             stderr=self.stderr.for_task(task.base),
@@ -807,7 +806,7 @@ class RsyscallThread:
         for block in inherited_signal_blocks:
             sigmask = sigmask.union(block.mask)
         await self.stdtask.task.base.sigprocmask((HowSIG.SETMASK, await self.stdtask.task.to_pointer(Sigset(sigmask))))
-        envp: t.Dict[bytes, bytes] = {**self.stdtask.environment}
+        envp: t.Dict[bytes, bytes] = {**self.stdtask.environ.data}
         for key in env_updates:
             envp[os.fsencode(key)] = os.fsencode(env_updates[key])
         raw_envp: t.List[bytes] = []
