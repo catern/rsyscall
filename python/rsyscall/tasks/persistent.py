@@ -26,93 +26,6 @@ __all__ = [
     "fork_persistent",
 ]
 
-class PersistentConnection(near.SyscallInterface):
-    """An reconnectable rsyscall connection; the task won't be our child on resume.
-
-    For correctness, we should ensure that we'll get HUP/EOF if the task has
-    exited and therefore will never respond. This is most easily achieved by
-    making sure that the fds keeping the other end of the RsyscallConnection
-    open, are only held by one task, and so will be closed when the task
-    exits. Note, though, that that requires that the task be in an unshared file
-    descriptor space.
-
-    """
-    def __init__(self, rsyscall_connection: RsyscallConnection,
-                 process: near.Process,
-                 path: Path) -> None:
-        self.rsyscall_connection = rsyscall_connection
-        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{process.id}")
-        self.identifier_process = process
-        self.path = path
-        # initialized by store_remote_side_handles
-        self.infd: handle.FileDescriptor
-        self.outfd: handle.FileDescriptor
-        self.listening_fd: handle.FileDescriptor
-        self.epoll_fd: handle.FileDescriptor
-        self.activity_fd: near.FileDescriptor
-        self.task: handle.Task
-
-    def store_remote_side_handles(self,
-                                  infd: handle.FileDescriptor,
-                                  outfd: handle.FileDescriptor,
-                                  listening_fd: handle.FileDescriptor,
-                                  epoll_fd: handle.FileDescriptor,
-                                  task: handle.Task,
-    ) -> None:
-        "We must call this with the remote side's used fds so we don't close them with GC"
-        self.infd = infd
-        self.outfd = outfd
-        self.listening_fd = listening_fd
-        self.epoll_fd = epoll_fd
-        self.activity_fd = self.epoll_fd.near
-        # hmmm I just need this so that I can make GC handles
-        self.task = task
-
-    async def reconnect(self, stdtask: StandardTask) -> None:
-        await self.rsyscall_connection.close()
-        [(access_sock, remote_sock)] = await stdtask.make_async_connections(1)
-        connected_sock = await stdtask.task.socket_unix(SOCK.STREAM)
-        self.path = self.path.with_task(stdtask.task)
-        await connected_sock.connect(await self.path.as_sockaddr_un())
-        def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[SendMsghdr]:
-            iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
-            cmsgs = sem.to_pointer(CmsgList([handle.CmsgSCMRights([remote_sock, remote_sock])]))
-            return sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
-        _, [] = await connected_sock.handle.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
-        await remote_sock.invalidate()
-        fd_bytes = await connected_sock.read()
-        infd, outfd = struct.Struct("II").unpack(fd_bytes)
-        self.rsyscall_connection = RsyscallConnection(access_sock, access_sock)
-        self.infd = self.task.make_fd_handle(near.FileDescriptor(infd))
-        self.outfd = self.task.make_fd_handle(near.FileDescriptor(outfd))
-
-    async def close_interface(self) -> None:
-        await self.rsyscall_connection.close()
-
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-        conn_response = await self.rsyscall_connection.write_request(
-            number,
-            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        response = SyscallResponse(self.rsyscall_connection.read_pending_responses, conn_response)
-        return response
-
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        response = await self.submit_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        try:
-            # we must not be interrupted while reading the response - we need to return
-            # the response so that our parent can deal with the state change we created.
-            with trio.CancelScope(shield=True):
-                result = await response.receive()
-        except Exception as exn:
-            self.logger.debug("%s -> %s", number, exn)
-            raise
-        else:
-            self.logger.debug("%s -> %s", number, result)
-            return result
-
-
 @dataclass
 class PersistentServer:
     """The tracking object for a task which can be made to live on after the main process exits.
@@ -248,8 +161,8 @@ async def spawn_rsyscall_persistent_server(
                               parent_task.base.pidns,
                               parent_task.base.netns)
     new_base_task.sigmask = parent_task.base.sigmask
-    remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
-    remote_listening_handle = new_base_task.make_fd_handle(listening_sock)
+    remote_sock_handle = remote_sock.move(new_base_task)
+    remote_listening_handle = listening_sock.move(new_base_task)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
                     parent_task.transport.inherit(new_base_task),
@@ -261,15 +174,13 @@ async def spawn_rsyscall_persistent_server(
 async def fork_persistent(
         self: StandardTask, path: Path,
 ) -> t.Tuple[StandardTask, PersistentServer]:
-    listening_sock = await self.task.socket_unix(SOCK.STREAM)
-    await listening_sock.bind(await path.as_sockaddr_un())
+    listening_sock = await self.task.base.socket(AF.UNIX, SOCK.STREAM)
+    await listening_sock.bind(await self.task.to_pointer(await path.as_sockaddr_un()))
     await listening_sock.listen(1)
     [(access_sock, remote_sock)] = await self.make_async_connections(1)
     task, syscall, listening_sock_handle, thread_process = await spawn_rsyscall_persistent_server(
-        access_sock, remote_sock, listening_sock.handle,
+        access_sock, remote_sock, listening_sock,
         self.task, self.process)
-    await remote_sock.invalidate()
-    await listening_sock.handle.invalidate()
 
     ## create the new persistent task
     epoller = await task.make_epoll_center()
