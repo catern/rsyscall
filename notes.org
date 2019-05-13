@@ -16782,6 +16782,104 @@ but that doesn't scale as well as passing the epfd down.
 
    hm.
    well, regardless, we should definitely be able to register an epfd on an epfd.
+
+   maybe we register, and that gives us a timeout and a wait_readable?
+
+   note that we really don't need an interface, since we'll always have an epoller in our thread.
+
+   we just need to be able to make an epoller on an epoller.
+
+   so, maybe that's the interface? the epoller has some kind of thing which contains its timeout and wait_readable?
+
+   or those just get passed in, I guess.
+
+   and then we can create new epollers from epoller. ok. seems fine.
+
+   let's start by changing that interface, and adding a new make_epoller on thread.
+
+   uh, do we really want to move the activity fd out of our field of view inside epoller?
+   isn't it, y'know, important?
+
+   maybe, but the timeout approach is simple, so let's just do that
+
+   hmm wait_readable is not directly that great for making an epoller registered on epoller.
+
+   let's optimize our interface for that, and only then adapt it for trio badness
+*** adding epoller on epoller
+    ok so what exactly would this look like?
+
+    I guess we'd use timeout 0 always of course. hm.
+
+    We can have the new fancy epoller style thing. So we don't have to add support to asyncfd.
+*** thoughts
+    okay so let's just always have wait_readable,
+    leave the activity fd on the sysif,
+    make the special trio-integrated epoller in local,
+    decide our timeout based on whether we have an activity fd,
+    boom boom boom boom
+
+    and make sure to comment that these contortions are,
+    partially due to the need for signalfds to be monitored by an epoll in their thread.
+
+    mostly due to that, really.
+    if not for that, I could just only make the activityfd having epollers in,
+    the task creation functions.
+
+    although, maybe it's cool to be sending activityfd stuff up?
+    we could have multiple epollers in a thread if the later ones add the upper ones.
+
+    instead of registering our epoller on the parent,
+    we register the parent on us.
+
+    what about siblings then, though?
+    well, they don't get monitored when we're monitoring a child,
+    but the top-level activityfd means that we'll be able to interrupt the child monitor,
+    to monitor the sibling.
+
+    yeah. and ideally we can get trio to give us an activityfd,
+    and then we can just exclusively uses activityfds.
+
+    this is good but could we really get asyncio and things to give us this?
+    because, it doesn't really give us pluggable event loops, since siblings aren't monitored.
+    hmm. or are they? or why aren't they?
+
+    well, they could be. it's just a matter of registering our event loop on them.
+    ah yes, so there's the master loop,
+    and we register on that;
+    but there's also our loop,
+    and we register the master loop on that.
+
+    um hmm that's a cycle though, huh.
+*** cycles
+    We can't have cycles,
+    we have to have one or the other,
+    of an activity_fd to monitor the rest of the world,
+    or a wait_readable for the world to monitor us.
+
+    Having both means a loop;
+    which would be fine, we could delegate to the kernel the responsibility of,
+    cutting the loop and building a tree at each epoll_wait call.
+
+    But, that would slow things down relative to having a static tree.
+
+    So, maybe we just need to support either one.
+
+    OK so... where would we hold the reference to the activity_fd registration?
+
+    Obviously in the enclosing event loop. Er, in the child event loop.
+
+    Oh, why do I even have to put the activity fd in the epollcenter?
+
+    If I can find a place to store the acfd, then I don't need to tell the epollcenter about it.
+    Which is clean - the epollcenter is just the root.
+
+    Maybe we could put it on the sysif???
+
+    That would be clean I guess.
+    We already have AFDs there, so it's not an extra entanglement.
+
+    We could/should probably switch from SendChannel to just a function we call;
+    so we can drop the events.
 ** DONE move stack out to sched, leave T_borrowable in handle
 ** DONE make make_connection object into an interface
    Then I can remove this annoying conditionality from the implementation.

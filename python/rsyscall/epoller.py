@@ -26,14 +26,15 @@ __all__ = [
 
 class EpollWaiter:
     def __init__(self, ram: RAM, epfd: FileDescriptor,
-                 wait_readable: t.Optional[t.Callable[[], t.Awaitable[None]]]) -> None:
+                 wait_readable: t.Optional[t.Callable[[], t.Awaitable[None]]],
+                 timeout: int,
+    ) -> None:
         self.ram = ram
         self.epfd = epfd
         self.wait_readable = wait_readable
-        self.activity_fd: t.Optional[FileDescriptor] = None
-        # we reserve 0 for the activity fd
-        self.activity_fd_data = 0
-        self.next_number = 1
+        self.timeout = timeout
+
+        self.next_number = 0
         self.number_to_queue: t.Dict[int, trio.abc.SendChannel] = {}
         self.running_wait = OneAtATime()
         # resumability
@@ -48,13 +49,6 @@ class EpollWaiter:
         self.number_to_queue[number] = queue
         return number
 
-    async def update_activity_fd(self, fd: FileDescriptor) -> None:
-        if self.activity_fd is not None:
-            raise Exception("activity fd already set", self.activity_fd, fd)
-        logger.info("setting activity fd for %s to %s", self.epfd, fd)
-        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.to_pointer(
-            EpollEvent(data=self.activity_fd_data, events=EPOLL.IN)))
-
     async def do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
@@ -62,13 +56,10 @@ class EpollWaiter:
                 if self.input_buf is None:
                     self.input_buf = await self.ram.malloc_type(EpollEventList, maxevents * EpollEvent.sizeof())
                 if self.syscall_response is None:
-                    if self.wait_readable is None:
-                        timeout = -1
-                    else:
-                        timeout = 0
+                    if self.wait_readable:
                         await self.wait_readable()
                     self.syscall_response = await self.epfd.task.sysif.submit_syscall(
-                        near.SYS.epoll_wait, self.epfd.near, self.input_buf.near, maxevents, timeout)
+                        near.SYS.epoll_wait, self.epfd.near, self.input_buf.near, maxevents, self.timeout)
                 if self.valid_events_buf is None:
                     count = await self.syscall_response.receive()
                     self.valid_events_buf, _ = self.input_buf.split(count * EpollEvent.sizeof())
@@ -77,22 +68,18 @@ class EpollWaiter:
                 self.valid_events_buf = None
                 self.syscall_response = None
                 for event in received_events:
-                    # TODO would be nice to just send these to a "devnull" queue instead...
-                    if event.data != self.activity_fd_data:
-                        queue = self.number_to_queue[event.data]
-                        queue.send_nowait(event.events)
+                    queue = self.number_to_queue[event.data]
+                    queue.send_nowait(event.events)
 
 class EpollCenter:
     "Terribly named class that allows registering fds on epoll, and waiting on them"
     @staticmethod
     async def make(ram: RAM, epfd: FileDescriptor,
                    wait_readable: t.Optional[t.Callable[[], t.Awaitable[None]]],
-                   activity_fd: t.Optional[FileDescriptor],
+                   timeout: int,
     ) -> EpollCenter:
-        waiter = EpollWaiter(ram, epfd, wait_readable)
+        waiter = EpollWaiter(ram, epfd, wait_readable, timeout)
         center = EpollCenter(waiter, epfd, ram)
-        if activity_fd:
-            await waiter.update_activity_fd(activity_fd)
         return center
 
     def __init__(self, epoller: EpollWaiter, epfd: FileDescriptor, ram: RAM) -> None:

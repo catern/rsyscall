@@ -86,13 +86,15 @@ class Task(RAM):
         epfd = await self.base.epoll_create(EpollFlag.CLOEXEC)
         if self.base.sysif.activity_fd is not None:
             activity_fd = self.base.make_fd_handle(self.base.sysif.activity_fd)
-            epoll_center = await EpollCenter.make(self, epfd, None, activity_fd)
+            epoll_center = await EpollCenter.make(self, epfd, None, -1)
+            epolled = await epoll_center.register(
+                activity_fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET)
         else:
             # TODO this is a pretty low-level detail, not sure where is the right place to do this
             async def wait_readable():
                 logger.debug("wait_readable(%s)", epfd.near.number)
                 await trio.hazmat.wait_readable(epfd.near.number)
-            epoll_center = await EpollCenter.make(self, epfd, wait_readable, None)
+            epoll_center = await EpollCenter.make(self, epfd, wait_readable, 0)
         return epoll_center
 
 class MemFileDescriptor:
