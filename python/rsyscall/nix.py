@@ -2,7 +2,7 @@ from __future__ import annotations
 import typing as t
 import os
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask, read_all, which, Command, MemFileDescriptor, Task, Path
+from rsyscall.io import StandardTask, read_all, which, Command, MemFileDescriptor, Path
 import rsyscall.tasks.local as local
 import trio
 import struct

@@ -15,6 +15,7 @@ import os
 import typing as t
 from dataclasses import dataclass
 import rsyscall.memory.allocator as memory
+from rsyscall.memory.ram import RAM
 from rsyscall.handle import Pointer
 from rsyscall.signal import Signals, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
@@ -116,9 +117,7 @@ def _make_local_function_handle(cffi_ptr) -> Pointer[loader.NativeFunction]:
 
 async def _make_local_stdtask() -> StandardTask:
     local_transport = LocalMemoryTransport()
-    mem_task = rsc.Task(task,
-                        local_transport,
-                        memory.AllocatorClient.make_allocator(task))
+    ram = RAM(task, local_transport, memory.AllocatorClient.make_allocator(task))
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
 
     process_resources = rsc.ProcessResources(
@@ -131,16 +130,16 @@ async def _make_local_stdtask() -> StandardTask:
     async def wait_readable():
         logger.debug("wait_readable(%s)", epfd.near.number)
         await trio.hazmat.wait_readable(epfd.near.number)
-    epoller = EpollCenter.make_subsidiary(mem_task, epfd, wait_readable)
-    child_monitor = await rsc.ChildProcessMonitor.make(mem_task, task, epoller)
+    epoller = EpollCenter.make_subsidiary(ram, epfd, wait_readable)
+    child_monitor = await rsc.ChildProcessMonitor.make(ram, task, epoller)
     access_connection = None
-    connection = await FDPassConnection.make(task, mem_task, epoller)
+    connection = await FDPassConnection.make(task, ram, epoller)
     stdtask = StandardTask(
-        task, mem_task,
+        task, ram,
         connection,
         process_resources,
         epoller, child_monitor,
-        Environment(task, mem_task, environ),
+        Environment(task, ram, environ),
         stdin=task.make_fd_handle(near.FileDescriptor(0)),
         stdout=task.make_fd_handle(near.FileDescriptor(1)),
         stderr=task.make_fd_handle(near.FileDescriptor(2)),

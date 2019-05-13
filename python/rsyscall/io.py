@@ -394,16 +394,16 @@ class StandardTask:
             self.child_monitor, self.process,
             newuser=newuser, newpid=newpid, fs=fs, sighand=sighand,
         )
-        task = Task(base_task,
-                    # We don't inherit the transport because it leads to a deadlock:
-                    # If when a child task calls transport.read, it performs a syscall in the child task,
-                    # then the parent task will need to call waitid to monitor the child task during the syscall,
-                    # which will in turn need to also call transport.read.
-                    # But the child is already using the transport and holding the lock,
-                    # so the parent will block forever on taking the lock,
-                    # and child's read syscall will never complete.
-                    self.ram.transport,
-                    self.ram.allocator.inherit(base_task),
+        ram = RAM(base_task,
+                  # We don't inherit the transport because it leads to a deadlock:
+                  # If when a child task calls transport.read, it performs a syscall in the child task,
+                  # then the parent task will need to call waitid to monitor the child task during the syscall,
+                  # which will in turn need to also call transport.read.
+                  # But the child is already using the transport and holding the lock,
+                  # so the parent will block forever on taking the lock,
+                  # and child's read syscall will never complete.
+                  self.ram.transport,
+                  self.ram.allocator.inherit(base_task),
         )
         await remote_sock.invalidate()
         if newuser:
@@ -411,29 +411,29 @@ class StandardTask:
             # we have to get the [ug]id from the parent because it will fail in the child
             uid = await self.task.base.getuid()
             gid = await self.task.base.getgid()
-            await write_user_mappings(RAMThread(base_task, task), uid, gid)
+            await write_user_mappings(RAMThread(base_task, ram), uid, gid)
         if newpid or self.child_monitor.is_reaper:
             # if the new process is pid 1, then CLONE_PARENT isn't allowed so we can't use inherit_to_child.
             # if we are a reaper, than we don't want our child CLONE_PARENTing to us, so we can't use inherit_to_child.
             # in both cases we just fall back to making a new ChildProcessMonitor for the child.
-            epoller = await EpollCenter.make_root(task, task.base)
+            epoller = await EpollCenter.make_root(ram, base_task)
             # this signal is already blocked, we inherited the block, um... I guess...
             # TODO handle this more formally
-            signal_block = SignalBlock(task.base, await task.to_pointer(Sigset({signal.SIGCHLD})))
-            child_monitor = await ChildProcessMonitor.make(task, task.base,
+            signal_block = SignalBlock(base_task, await ram.to_pointer(Sigset({signal.SIGCHLD})))
+            child_monitor = await ChildProcessMonitor.make(ram, base_task,
                                                            epoller, signal_block=signal_block, is_reaper=newpid)
         else:
-            epoller = self.epoller.inherit(task)
-            child_monitor = self.child_monitor.inherit_to_child(task.base)
+            epoller = self.epoller.inherit(ram)
+            child_monitor = self.child_monitor.inherit_to_child(base_task)
         stdtask = StandardTask(
-            task.base, task,
-            self.connection.for_task(task.base, task),
+            base_task, ram,
+            self.connection.for_task(base_task, ram),
             self.process,
             epoller, child_monitor,
-            self.environ.inherit(task.base, task),
-            stdin=self.stdin.for_task(task.base),
-            stdout=self.stdout.for_task(task.base),
-            stderr=self.stderr.for_task(task.base),
+            self.environ.inherit(base_task, ram),
+            stdin=self.stdin.for_task(base_task),
+            stdout=self.stdout.for_task(base_task),
+            stderr=self.stderr.for_task(base_task),
         )
         return RsyscallThread(stdtask, self.child_monitor)
 
