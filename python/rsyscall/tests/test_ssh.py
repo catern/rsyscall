@@ -32,29 +32,25 @@ async def start_cat(stdtask: StandardTask, cat: Command,
 
 class TestSSH(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.stdtask = local.stdtask
-        self.task = self.stdtask.task.base
-        self.ram = self.stdtask.ram
+        self.local = local.stdtask
         self.store = local_store
-        self.host = await make_local_ssh(self.stdtask, self.store)
-        self.local_child, self.remote_stdtask = await self.host.ssh(self.stdtask)
-        self.remote_task = self.remote_stdtask.task.base
-        self.remote_ram = self.remote_stdtask.ram
+        self.host = await make_local_ssh(self.local, self.store)
+        self.local_child, self.remote = await self.host.ssh(self.local)
 
     async def test_read(self) -> None:
-        [(local_sock, remote_sock)] = await self.remote_stdtask.make_connections(1)
+        [(local_sock, remote_sock)] = await self.remote.make_connections(1)
         data = Bytes(b"hello world")
-        await local_sock.write(await self.stdtask.ram.to_pointer(data))
-        valid, _ = await remote_sock.read(await self.remote_ram.malloc_type(Bytes, len(data)))
+        await local_sock.write(await self.local.ram.to_pointer(data))
+        valid, _ = await remote_sock.read(await self.remote.ram.malloc_type(Bytes, len(data)))
         self.assertEqual(len(data), valid.bytesize())
         self.assertEqual(data, await valid.read())
 
     async def test_exec(self) -> None:
         bash = await self.store.bin(bash_nixdep, "bash")
-        await self.remote_stdtask.run(bash.args('-c', 'true'))
+        await self.remote.run(bash.args('-c', 'true'))
 
     async def test_nest(self) -> None:
-        thread1 = await self.remote_stdtask.fork()
+        thread1 = await self.remote.fork()
         async with thread1 as stdtask1:
             thread2 = await stdtask1.fork()
             await thread2.close()
@@ -62,34 +58,34 @@ class TestSSH(TrioTestCase):
     async def test_copy(self) -> None:
         cat = await self.store.bin(coreutils_nixdep, "cat")
 
-        local_file = await self.task.memfd_create(await self.ram.to_pointer(Path("source")), MFD.CLOEXEC)
-        remote_file = await self.remote_task.memfd_create(await self.remote_ram.to_pointer(Path("dest")), MFD.CLOEXEC)
+        local_file = await self.local.task.memfd_create(await self.local.ram.to_pointer(Path("source")), MFD.CLOEXEC)
+        remote_file = await self.remote.task.memfd_create(await self.remote.ram.to_pointer(Path("dest")), MFD.CLOEXEC)
 
         data = b'hello world'
-        await local_file.write(await self.ram.to_pointer(Bytes(data)))
+        await local_file.write(await self.local.ram.to_pointer(Bytes(data)))
         await local_file.lseek(0, SEEK.SET)
 
-        [(local_sock, remote_sock)] = await self.remote_stdtask.make_connections(1)
+        [(local_sock, remote_sock)] = await self.remote.make_connections(1)
 
-        local_child = await start_cat(self.stdtask, cat, local_file, local_sock)
+        local_child = await start_cat(self.local, cat, local_file, local_sock)
         await local_sock.close()
 
-        remote_child = await start_cat(self.remote_stdtask, cat, remote_sock, remote_file)
+        remote_child = await start_cat(self.remote, cat, remote_sock, remote_file)
         await remote_sock.close()
 
         await local_child.check()
         await remote_child.check()
 
         await remote_file.lseek(0, SEEK.SET)
-        read, _ = await remote_file.read(await self.remote_ram.malloc_type(Bytes, len(data)))
+        read, _ = await remote_file.read(await self.remote.ram.malloc_type(Bytes, len(data)))
         self.assertEqual(await read.read(), data)
 
     async def test_sigmask_bug(self) -> None:
-        thread = await self.remote_stdtask.fork()
+        thread = await self.remote.fork()
         await thread.stdtask.unshare_files(going_to_exec=True)
         await rsyscall.io.do_cloexec_except(
             thread.stdtask.ramthr, set([fd.near for fd in thread.stdtask.task.base.fd_handles]))
-        await self.remote_task.sigprocmask((HowSIG.SETMASK,
-                                            await self.remote_ram.to_pointer(Sigset())),
-                                           await self.remote_ram.malloc_struct(Sigset))
-        await self.remote_task.read_oldset_and_check()
+        await self.remote.task.sigprocmask((HowSIG.SETMASK,
+                                            await self.remote.ram.to_pointer(Sigset())),
+                                           await self.remote.ram.malloc_struct(Sigset))
+        await self.remote.task.read_oldset_and_check()
