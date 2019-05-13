@@ -420,7 +420,7 @@ class StandardTask(RAMThread):
         else:
             epoller = self.epoller.inherit(ram)
             child_monitor = self.child_monitor.inherit_to_child(base_task)
-        stdtask = StandardTask(
+        return RsyscallThread(
             base_task, ram,
             self.connection.for_task(base_task, ram),
             self.process,
@@ -429,8 +429,8 @@ class StandardTask(RAMThread):
             stdin=self.stdin.for_task(base_task),
             stdout=self.stdout.for_task(base_task),
             stderr=self.stderr.for_task(base_task),
+            parent_monitor=self.child_monitor,
         )
-        return RsyscallThread(stdtask, self.child_monitor)
 
     async def run(self, command: Command, check=True,
                   *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
@@ -609,20 +609,29 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
 
 class RsyscallThread(StandardTask):
     def __init__(self,
-                 stdtask: StandardTask,
+                 task: handle.Task,
+                 ram: RAM,
+                 connection: Connection,
+                 process_resources: ProcessResources,
+                 epoller: EpollCenter,
+                 child_monitor: ChildProcessMonitor,
+                 environ: Environment,
+                 stdin: handle.FileDescriptor,
+                 stdout: handle.FileDescriptor,
+                 stderr: handle.FileDescriptor,
                  parent_monitor: ChildProcessMonitor,
     ) -> None:
         super().__init__(
-            stdtask.task,
-            stdtask.ram,
-            stdtask.connection,
-            stdtask.process,
-            stdtask.epoller,
-            stdtask.child_monitor,
-            stdtask.environ,
-            stdtask.stdin,
-            stdtask.stdout,
-            stdtask.stderr,
+            task,
+            ram,
+            connection,
+            process_resources,
+            epoller,
+            child_monitor,
+            environ,
+            stdin,
+            stdout,
+            stderr,
         )
         self.parent_monitor = parent_monitor
 
