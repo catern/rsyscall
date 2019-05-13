@@ -16880,6 +16880,56 @@ but that doesn't scale as well as passing the epfd down.
 
     We could/should probably switch from SendChannel to just a function we call;
     so we can drop the events.
+
+    we should make sure to note in the docs that the reason for this split between waiter and registrar,
+    is so that we can centralize our event loop across multiple threads.
+
+    ok so, putting the epolledfd on the sysif won't work,
+    because we can't do that when creating an epoller later on, lazily.
+
+    what are we even doing if we do that?
+
+    well. when we create an epoller,
+    we're creating something that can block forever,
+    and to do that we need to register our parent?
+    or register on our parent?
+
+    what if we put all the activityfds on one epoller?
+    no, we have to wait on the individual thread, argh.
+
+    well what if we put all the activityfds on one epoller?? what if????
+    that would be ... useless.
+
+    what if I just have an interface for making epollers?
+
+    like, is there any reason I'd want to block in an individual thread instead of elsewhere,
+    other than this signal stuff?
+
+    well.
+
+    i mean we're talking about authority to make blocking calls here.
+    the sysif is that authority, innit.
+
+    er hm we probably also shouldn't have a handle here for the activity fd. . .
+
+    since we can close it easily then.
+
+    could we have a handle for the activity fd on the sysif itself?
+
+    well, how else are we going to handle closing the fd when we die?
+
+    or exec for that matter!
+    when we exec, we need to close the fd we left behind.
+    well, when we unshare_files, that gets taken care of, cuz we're alone in our space
+    but if we don't unshare_files, it won't!
+
+    wait, for that matter, how does our left-behind fd in the old space,
+    get closed when we unshare files?
+
+    we clearly need a handle!
+    in our own task!
+
+    And... indeed we have one.
 ** DONE move stack out to sched, leave T_borrowable in handle
 ** DONE make make_connection object into an interface
    Then I can remove this annoying conditionality from the implementation.

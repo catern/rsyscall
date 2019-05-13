@@ -17,6 +17,7 @@ if t.TYPE_CHECKING:
     from rsyscall.sys.uio import RWF
     from rsyscall.sched import UnshareFlag
     from rsyscall.signal import HowSIG, Signals
+    import rsyscall.handle as handle
 
 class SYS(enum.IntEnum):
     read = lib.SYS_read
@@ -104,7 +105,8 @@ class SyscallInterface:
     # when this file descriptor is readable, it means other things want to run on this thread.
     # Users of the SyscallInterface should ensure that when they block, they are monitoring this fd as well.
     # Typically, this is in fact the fd which the rsyscall server reads for incoming system calls!
-    activity_fd: t.Optional[FileDescriptor]
+    @abc.abstractmethod
+    def get_activity_fd(self) -> t.Optional[handle.FileDescriptor]: ...
     # This is some process which is useful to identify this syscall interface.
     identifier_process: Process
 

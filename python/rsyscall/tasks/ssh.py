@@ -239,7 +239,7 @@ async def ssh_bootstrap(
     new_pid_namespace = far.PidNamespace(new_pid)
     new_process = far.Process(new_pid_namespace, near.Process(new_pid))
     new_syscall = RsyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
-                                    new_process.near, remote_syscall_fd.near)
+                                    new_process.near)
     new_fs_information = far.FSInformation(new_pid)
     # TODO we should get this from the SSHHost, this is usually going
     # to be common for all connections and we should express that

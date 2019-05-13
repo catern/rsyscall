@@ -83,18 +83,14 @@ class Task(RAM):
         return self.base.make_fd_handle(near.FileDescriptor(num))
 
     async def make_epoll_center(self) -> EpollCenter:
+        activity_fd = self.base.sysif.get_activity_fd()
+        if activity_fd is None:
+            raise Exception("can't make a root epoll center if we don't have an activity_fd to monitor")
         epfd = await self.base.epoll_create(EpollFlag.CLOEXEC)
-        if self.base.sysif.activity_fd is not None:
-            activity_fd = self.base.make_fd_handle(self.base.sysif.activity_fd)
-            epoll_center = await EpollCenter.make(self, epfd, None, -1)
-            epolled = await epoll_center.register(
-                activity_fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET)
-        else:
-            # TODO this is a pretty low-level detail, not sure where is the right place to do this
-            async def wait_readable():
-                logger.debug("wait_readable(%s)", epfd.near.number)
-                await trio.hazmat.wait_readable(epfd.near.number)
-            epoll_center = await EpollCenter.make(self, epfd, wait_readable, 0)
+        epoll_center = await EpollCenter.make(self, epfd, None, -1)
+        # TODO where should we store this, so that we don't deregister the activity_fd?
+        epolled = await epoll_center.register(
+            activity_fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET)
         return epoll_center
 
 class MemFileDescriptor:
@@ -607,19 +603,17 @@ class RsyscallInterface(near.SyscallInterface):
     """
     def __init__(self, rsyscall_connection: RsyscallConnection,
                  # usually the same pid that's inside the namespaces
-                 identifier_process: near.Process,
-                 activity_fd: near.FileDescriptor) -> None:
+                 identifier_process: near.Process) -> None:
         self.rsyscall_connection = rsyscall_connection
         self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{identifier_process.id}")
         self.identifier_process = identifier_process
-        self.activity_fd = activity_fd
-        # these are needed so that we don't accidentally close them when doing a do_cloexec_except
-        self.infd: handle.FileDescriptor
-        self.outfd: handle.FileDescriptor
 
     def store_remote_side_handles(self, infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> None:
         self.infd = infd
         self.outfd = outfd
+
+    def get_activity_fd(self) -> handle.FileDescriptor:
+        return self.infd
 
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()

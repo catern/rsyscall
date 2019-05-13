@@ -236,17 +236,15 @@ class ChildConnection(near.SyscallInterface):
         self.futex_task = futex_task
         self.identifier_process = self.server_task.process.near
         self.logger = logging.getLogger(f"rsyscall.ChildConnection.{int(self.server_task.process.near)}")
-        self.infd: FileDescriptor
-        self.outfd: FileDescriptor
-        self.activity_fd: near.FileDescriptor
         self.running_read = OneAtATime()
 
     def store_remote_side_handles(self, infd: FileDescriptor, outfd: FileDescriptor) -> None:
         # these are needed so that we don't close them with garbage collection
         self.infd = infd
         self.outfd = outfd
-        # this is part of the SyscallInterface
-        self.activity_fd = infd.near
+
+    def get_activity_fd(self) -> FileDescriptor:
+        return self.infd
 
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()

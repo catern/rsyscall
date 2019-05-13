@@ -22,6 +22,11 @@ import rsyscall.batch as batch
 from rsyscall.network.connection import FDPassConnection
 from rsyscall.environ import Environment
 
+from rsyscall.sys.epoll import EpollFlag
+from rsyscall.epoller import EpollCenter
+
+logger = logging.getLogger(__name__)
+
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
     return lib.rsyscall_raw_syscall(ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
@@ -39,13 +44,15 @@ class LocalSyscallResponse(near.SyscallResponse):
 @dataclass(eq=False)
 class LocalSyscall(near.SyscallInterface):
     identifier_process: near.Process
-    activity_fd = None
-    logger = logging.getLogger("rsyscall.LocalSyscall")
+
+    def get_activity_fd(self) -> None:
+        return None
+
     async def close_interface(self) -> None:
         pass
 
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> near.SyscallResponse:
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+        log_syscall(logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         result = await direct_syscall(
             number,
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
@@ -53,7 +60,7 @@ class LocalSyscall(near.SyscallInterface):
         return LocalSyscallResponse(result)
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+        log_syscall(logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         try:
             result = await direct_syscall(
                 number,
@@ -61,10 +68,10 @@ class LocalSyscall(near.SyscallInterface):
                 arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
             rsc.raise_if_error(result)
         except Exception as exn:
-            self.logger.debug("%s -> %s", number, exn)
+            logger.debug("%s -> %s", number, exn)
             raise
         else:
-            self.logger.debug("%s -> %s", number, result)
+            logger.debug("%s -> %s", number, result)
             return result
 
 task: Task
@@ -120,7 +127,11 @@ async def _make_local_stdtask() -> StandardTask:
         trampoline_func=_make_local_function_handle(lib.rsyscall_trampoline),
         futex_helper_func=_make_local_function_handle(lib.rsyscall_futex_helper),
     )
-    epoller = await mem_task.make_epoll_center()
+    epfd = await task.epoll_create(EpollFlag.CLOEXEC)
+    async def wait_readable():
+        logger.debug("wait_readable(%s)", epfd.near.number)
+        await trio.hazmat.wait_readable(epfd.near.number)
+    epoller = await EpollCenter.make(mem_task, epfd, wait_readable, 0)
     child_monitor = await rsc.ChildProcessMonitor.make(mem_task, task, epoller)
     access_connection = None
     connection = await FDPassConnection.make(task, mem_task, epoller)

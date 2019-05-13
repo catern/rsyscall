@@ -107,7 +107,7 @@ async def _setup_stub(
     # then we can automatically do it right
     netns = stdtask.task.base.netns
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
-    syscall = RsyscallInterface(RsyscallConnection(access_syscall_sock, access_syscall_sock), process.near, remote_syscall_fd)
+    syscall = RsyscallInterface(RsyscallConnection(access_syscall_sock, access_syscall_sock), process.near)
     base_task = handle.Task(syscall, process.near, None, fd_table, address_space, fs_information, pidns, netns)
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
