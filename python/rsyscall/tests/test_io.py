@@ -21,6 +21,7 @@ import rsyscall.wish
 import rsyscall.nix
 
 from rsyscall.handle import WrittenPointer
+from rsyscall.epoller import EpollCenter
 
 from rsyscall.tasks.persistent import fork_persistent
 from rsyscall.tasks.stdin_bootstrap import rsyscall_stdin_bootstrap
@@ -665,7 +666,7 @@ class TestIO(unittest.TestCase):
                 await stdtask2.unshare_files()
                 thread3 = await stdtask2.fork()
                 async with thread3 as stdtask3:
-                    epoller = await stdtask3.task.make_epoll_center()
+                    epoller = await EpollCenter.make_root(stdtask3.ram, stdtask3.task.base)
                     await stdtask3.unshare_files()
                     await self.do_async_things(epoller, stdtask3.task)
         trio.run(self.runner, test)
@@ -674,7 +675,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
             async with thread as stdtask2:
-                epoller = await stdtask2.task.make_epoll_center()
+                epoller = await EpollCenter.make_root(stdtask2.ram, stdtask2.task.base)
                 await self.do_async_things(epoller, stdtask2.task)
         trio.run(self.runner, test)
 
@@ -691,7 +692,7 @@ class TestIO(unittest.TestCase):
             thread = await stdtask.fork()
             async with thread as stdtask2:
                 # have to use an epoller for that specific task
-                epoller = await stdtask2.task.make_epoll_center()
+                epoller = await EpollCenter.make_root(stdtask2.ram, stdtask2.task.base)
                 sigqueue = await SignalQueue.make(stdtask2.task, stdtask2.task.base,
                                                   epoller, Sigset({Signals.SIGINT}))
                 await stdtask2.task.base.process.kill(Signals.SIGINT)

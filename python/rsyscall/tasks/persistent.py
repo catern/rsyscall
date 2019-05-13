@@ -14,6 +14,8 @@ from dataclasses import dataclass
 import logging
 import rsyscall.batch as batch
 
+from rsyscall.epoller import EpollCenter
+
 from rsyscall.struct import Bytes, Int32, StructList
 
 from rsyscall.sched import CLONE
@@ -183,7 +185,7 @@ async def fork_persistent(
         self.task, self.process)
 
     ## create the new persistent task
-    epoller = await task.make_epoll_center()
+    epoller = await EpollCenter.make_root(task, task.base)
     signal_block = SignalBlock(task.base, await task.to_pointer(Sigset({Signals.SIGCHLD})))
     # TODO use an inherited signalfd instead
     child_monitor = await ChildProcessMonitor.make(task, task.base, epoller, signal_block=signal_block)

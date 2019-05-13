@@ -16,6 +16,7 @@ import string
 from rsyscall.monitor import AsyncChildProcess
 from rsyscall.network.connection import ListeningConnection
 from rsyscall.environ import Environment
+from rsyscall.epoller import EpollCenter
 
 import rsyscall.nix as nix
 from rsyscall.fcntl import O
@@ -254,7 +255,7 @@ async def ssh_bootstrap(
                                           handle_remote_data_fd, new_allocator)
     # we don't inherit SignalMask; we assume ssh zeroes the sigmask before starting us
     new_task = Task(new_base_task, new_transport, new_allocator)
-    epoller = await new_task.make_epoll_center()
+    epoller = await EpollCenter.make_root(new_task, new_task.base)
     child_monitor = await ChildProcessMonitor.make(new_task, new_task.base, epoller)
     connection = ListeningConnection(
         parent_task.task.base, parent_task.task, parent_task.epoller,

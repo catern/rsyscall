@@ -11,6 +11,7 @@ import logging
 import rsyscall.memory.allocator as memory
 from rsyscall.monitor import AsyncChildProcess
 from rsyscall.environ import Environment
+from rsyscall.epoller import EpollCenter
 
 import rsyscall.nix as nix
 import rsyscall.batch as batch
@@ -100,7 +101,7 @@ async def rsyscall_stdin_bootstrap(
                                       allocator),
                 allocator)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
-    epoller = await task.make_epoll_center()
+    epoller = await EpollCenter.make_root(task, task.base)
     child_monitor = await ChildProcessMonitor.make(task, task.base, epoller)
     connection = make_connection(base_task, task,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))

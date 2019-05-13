@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import logging
 import rsyscall.memory.allocator as memory
 import rsyscall.nix as nix
+from rsyscall.epoller import EpollCenter
 
 import rsyscall.batch as batch
 from rsyscall.struct import Bytes
@@ -120,7 +121,7 @@ async def _setup_stub(
                 allocator)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     # I guess I need to write out the set too in describe
-    epoller = await task.make_epoll_center()
+    epoller = await EpollCenter.make_root(task, task.base)
     child_monitor = await ChildProcessMonitor.make(task, task.base, epoller)
     connection = make_connection(base_task, task,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))

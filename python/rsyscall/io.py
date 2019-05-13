@@ -82,9 +82,6 @@ class Task(RAM):
     def _make_fd(self, num: int) -> handle.FileDescriptor:
         return self.base.make_fd_handle(near.FileDescriptor(num))
 
-    async def make_epoll_center(self) -> EpollCenter:
-        return await EpollCenter.make_root(self, self.base)
-
 class MemFileDescriptor:
     "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."
     task: Task
@@ -459,7 +456,7 @@ class StandardTask:
             # if the new process is pid 1, then CLONE_PARENT isn't allowed so we can't use inherit_to_child.
             # if we are a reaper, than we don't want our child CLONE_PARENTing to us, so we can't use inherit_to_child.
             # in both cases we just fall back to making a new ChildProcessMonitor for the child.
-            epoller = await task.make_epoll_center()
+            epoller = await EpollCenter.make_root(task, task.base)
             # this signal is already blocked, we inherited the block, um... I guess...
             # TODO handle this more formally
             signal_block = SignalBlock(task.base, await task.to_pointer(Sigset({signal.SIGCHLD})))
