@@ -9,6 +9,7 @@ import struct
 from dataclasses import dataclass
 import nixdeps
 import logging
+from rsyscall.memory.ram import RAMThread
 
 from rsyscall.sys.mount import MS
 from rsyscall.fcntl import O
@@ -131,15 +132,11 @@ async def nix_deploy(
     await child_task.check()
     return dest_path
 
-async def canonicalize(task: Task, path: handle.Path) -> Path:
-    f = await Path(task, path).open_path()
-    return (await Path(task, f.handle.as_proc_path()).readlink())
-
 class NixPath(handle.Path):
     "A path in the Nix store, which can therefore be deployed to a remote host with Nix."
     @classmethod
-    async def make(cls, task: Task, path: handle.Path) -> NixPath:
-        return cls((await canonicalize(task, path)).handle)
+    async def make(cls, thr: RAMThread, path: handle.Path) -> NixPath:
+        return cls((await Path(thr, path).canonicalize()).handle)
 
     def __init__(self, *args) -> None:
         super().__init__(*args)
@@ -169,7 +166,7 @@ class Store:
         self.nix = nix
         # cache the target path, mildly useful caching for the pointers
         self.roots: t.Dict[StorePath, Path] = {}
-        self._add_root(nix, Path(self.stdtask.task, nix.path))
+        self._add_root(nix, Path(self.stdtask.ramthr, nix.path))
 
     def _add_root(self, store_path: StorePath, path: Path) -> None:
         self.roots[store_path] = path
@@ -182,7 +179,7 @@ class Store:
     async def realise(self, store_path: StorePath) -> Path:
         if store_path in self.roots:
             return self.roots[store_path]
-        path = Path(self.stdtask.task, store_path.path)
+        path = Path(self.stdtask.ramthr, store_path.path)
         if await path.access(read=True):
             return (await self.create_root(store_path, path))
         raise NotImplementedError("TODO deploy this store_path from local_store")
@@ -198,7 +195,7 @@ def import_nix_dep(name: str) -> StorePath:
     store_path = StorePath._load_without_registering(name)
     # the local store has a root for every StorePath; that's where the
     # paths actually originally are.
-    local_store._add_root(store_path, Path(local_store.stdtask.task, store_path.path))
+    local_store._add_root(store_path, Path(local_store.stdtask.ramthr, store_path.path))
     return store_path
 
 rsyscall = import_nix_dep("rsyscall")

@@ -146,18 +146,18 @@ FileDescriptor = MemFileDescriptor
 
 class Path(rsyscall.path.PathLike):
     "This is a convenient combination of a Path and a Task to perform serialization."
-    def __init__(self, task: Task, handle: rsyscall.path.Path) -> None:
-        self.task = task
+    def __init__(self, thr: RAMThread, handle: rsyscall.path.Path) -> None:
+        self.thr = thr
         self.handle = handle
         # we cache the pointer to the serialized path
         self._ptr: t.Optional[rsyscall.handle.WrittenPointer[rsyscall.path.Path]] = None
 
-    def with_task(self, task: Task) -> Path:
-        return Path(task, self.handle)
+    def with_thread(self, thr: RAMThread) -> Path:
+        return Path(thr, self.handle)
 
     @property
     def parent(self) -> Path:
-        return Path(self.task, self.handle.parent)
+        return Path(self.thr, self.handle.parent)
 
     @property
     def name(self) -> str:
@@ -165,12 +165,12 @@ class Path(rsyscall.path.PathLike):
 
     async def to_pointer(self) -> rsyscall.handle.WrittenPointer[rsyscall.path.Path]:
         if self._ptr is None:
-            self._ptr = await self.task.to_pointer(self.handle)
+            self._ptr = await self.thr.ram.to_pointer(self.handle)
         return self._ptr
 
     async def mkdir(self, mode=0o777) -> Path:
         try:
-            await self.task.base.mkdir(await self.to_pointer(), mode)
+            await self.thr.task.mkdir(await self.to_pointer(), mode)
         except FileExistsError as e:
             raise FileExistsError(e.errno, e.strerror, self) from None
         return self
@@ -181,8 +181,8 @@ class Path(rsyscall.path.PathLike):
         Note that this can block forever if we're opening a FIFO
 
         """
-        fd = await self.task.base.open(await self.to_pointer(), flags, mode)
-        return FileDescriptor(self.task, fd)
+        fd = await self.thr.task.open(await self.to_pointer(), flags, mode)
+        return FileDescriptor(self.thr.ram, fd)
 
     async def open_directory(self) -> MemFileDescriptor:
         return (await self.open(O.DIRECTORY))
@@ -206,20 +206,20 @@ class Path(rsyscall.path.PathLike):
             mode = os.F_OK
         ptr = await self.to_pointer()
         try:
-            await self.task.base.access(ptr, mode)
+            await self.thr.task.access(ptr, mode)
             return True
         except OSError:
             return False
 
     async def unlink(self, flags: int=0) -> None:
-        await self.task.base.unlink(await self.to_pointer())
+        await self.thr.task.unlink(await self.to_pointer())
 
     async def rmdir(self) -> None:
-        await self.task.base.rmdir(await self.to_pointer())
+        await self.thr.task.rmdir(await self.to_pointer())
 
     async def link(self, oldpath: Path, flags: int=0) -> Path:
         "Create a hardlink at Path 'self' to the file at Path 'oldpath'"
-        await self.task.base.link(await oldpath.to_pointer(), await self.to_pointer())
+        await self.thr.task.link(await oldpath.to_pointer(), await self.to_pointer())
         return self
 
     async def symlink(self, target: t.Union[bytes, str, Path]) -> Path:
@@ -229,29 +229,29 @@ class Path(rsyscall.path.PathLike):
         else:
             # TODO should write the bytes directly, rather than going through Path;
             # Path will canonicalize the bytes as a path, which isn't right
-            target_ptr = await self.task.to_pointer(handle.Path(os.fsdecode(target)))
-        await self.task.base.symlink(target_ptr, await self.to_pointer())
+            target_ptr = await self.thr.ram.to_pointer(handle.Path(os.fsdecode(target)))
+        await self.thr.task.symlink(target_ptr, await self.to_pointer())
         return self
 
     async def rename(self, oldpath: Path, flags: int=0) -> Path:
         "Create a file at Path 'self' by renaming the file at Path 'oldpath'"
-        await self.task.base.rename(await oldpath.to_pointer(), await self.to_pointer())
+        await self.thr.task.rename(await oldpath.to_pointer(), await self.to_pointer())
         return self
 
     async def readlink(self) -> Path:
         size = 4096
-        valid, _ = await self.task.base.readlink(await self.to_pointer(),
-                                                 await self.task.malloc_type(rsyscall.path.Path, size))
+        valid, _ = await self.thr.task.readlink(await self.to_pointer(),
+                                                 await self.thr.ram.malloc_type(rsyscall.path.Path, size))
         if valid.bytesize() == size:
             # ext4 limits symlinks to this size, so let's just throw if it's larger;
             # we can add retry logic later if we ever need it
             raise Exception("symlink longer than 4096 bytes, giving up on readlinking it")
         # readlink doesn't append a null byte, so unfortunately we can't save this buffer and use it for later calls
-        return Path(self.task, await valid.read())
+        return Path(self.thr, await valid.read())
 
     async def canonicalize(self) -> Path:
         f = await self.open_path()
-        ret = await Path(self.task, f.handle.as_proc_path()).readlink()
+        ret = await Path(self.thr, f.handle.as_proc_path()).readlink()
         await f.handle.close()
         return ret
 
@@ -265,7 +265,7 @@ class Path(rsyscall.path.PathLike):
         try:
             return SockaddrUn(os.fsencode(self.handle))
         except PathTooLongError:
-            fd = await self.task.base.open(await self.parent.to_pointer(), O.PATH|O.CLOEXEC)
+            fd = await self.thr.task.open(await self.parent.to_pointer(), O.PATH|O.CLOEXEC)
             return SockaddrUnProcFd(fd, self.name)
 
     # to_bytes and from_bytes, kinda sketchy, hmm....
@@ -275,7 +275,7 @@ class Path(rsyscall.path.PathLike):
     def __truediv__(self: T, key: t.Union[str, bytes, pathlib.PurePath]) -> T:
         if isinstance(key, bytes):
             key = os.fsdecode(key)
-        return type(self)(self.task, self.handle/key)
+        return type(self)(self.thr, self.handle/key)
 
     def __fspath__(self) -> str:
         return self.handle.__fspath__()
@@ -337,7 +337,7 @@ class StandardTask:
         self.stderr = stderr
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
-        parent = Path(self.task, self.environ.tmpdir)
+        parent = Path(self.ramthr, self.environ.tmpdir)
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (prefix+"."+random_suffix).encode()
         await (parent/name).mkdir(mode=0o700)

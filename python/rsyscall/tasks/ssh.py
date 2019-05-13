@@ -20,8 +20,9 @@ from rsyscall.epoller import EpollCenter
 
 import rsyscall.nix as nix
 from rsyscall.fcntl import O
-from rsyscall.sys.socket import SOCK, AF
-from rsyscall.handle import Pipe
+from rsyscall.sys.socket import SOCK, AF, Address
+from rsyscall.unistd import Pipe
+from rsyscall.handle import WrittenPointer
 
 __all__ = [
     "SSHCommand",
@@ -201,7 +202,8 @@ async def ssh_bootstrap(
         tmp_path_bytes: bytes,
 ) -> t.Tuple[AsyncChildProcess, StandardTask]:
     # identify local path
-    local_data_path = Path(parent_task.task, local_socket_path)
+    local_data_addr: WrittenPointer[Address] = await parent_task.ram.to_pointer(
+        await Path(parent_task.ramthr, local_socket_path).as_sockaddr_un())
     # start port forwarding; we'll just leak this process, no big deal
     # TODO we shouldn't leak processes; we should be GCing processes at some point
     forward_child = await ssh_forward(
@@ -216,9 +218,7 @@ async def ssh_bootstrap(
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor:
         sock = await parent_task.make_afd(await parent_task.task.base.socket(AF.UNIX, SOCK.STREAM))
-        addr = await local_data_path.as_sockaddr_un()
-        await sock.connect(addr)
-        await addr.close()
+        await sock.connect_ptr(local_data_addr)
         return sock
     async_local_syscall_sock = await make_async_connection()
     async_local_data_sock = await make_async_connection()
@@ -258,7 +258,7 @@ async def ssh_bootstrap(
     child_monitor = await ChildProcessMonitor.make(new_task, new_task.base, epoller)
     connection = ListeningConnection(
         parent_task.task.base, parent_task.task, parent_task.epoller,
-        await parent_task.task.to_pointer(await local_data_path.as_sockaddr_un()),
+        local_data_addr,
         new_task.base, new_task,
         new_base_task.make_fd_handle(listening_fd),
     )
