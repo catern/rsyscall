@@ -2,7 +2,7 @@ from __future__ import annotations
 import typing as t
 import os
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask, read_all, which, Command, MemFileDescriptor, Path
+from rsyscall.io import StandardTask, read_all, Command, MemFileDescriptor, Path
 import rsyscall.tasks.local as local
 import trio
 import struct
@@ -78,8 +78,8 @@ async def create_nix_container(
     dest_nix_store = Command(dest_nix_bin/'nix-store', [b'nix-store'], {})
     # TODO check if dest_nix_bin exists, and skip this stuff if it does
     # copy the nix binaries over
-    src_tar = await which(src_task, b"tar")
-    dest_tar = await which(dest_task, b"tar")
+    src_tar = await src_task.environ.which("tar")
+    dest_tar = await dest_task.environ.which("tar")
     closure = await bootstrap_nix(src_nix_store, src_tar, src_task, dest_tar, dest_task) # type: ignore
 
     # mutate dest_task so that it is nicely namespaced for the Nix container

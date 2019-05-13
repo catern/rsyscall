@@ -709,7 +709,7 @@ class TestIO(unittest.TestCase):
             local_child, remote_stdtask = await host.ssh(stdtask)
             async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
                 thread = await remote_stdtask.fork()
-                bash = await rsyscall.io.which(remote_stdtask, b"bash")
+                bash = await remote_stdtask.environ.which("bash")
                 await thread.stdtask.task.base.chdir(await remote_tmpdir.to_pointer())
                 await ((await (remote_tmpdir/"var").mkdir())/"stuff").mkdir()
                 child_task = await thread.exec(bash)
@@ -726,7 +726,7 @@ class TestIO(unittest.TestCase):
                 dest_file = await (tmpdir/"dest").open(O.RDWR|O.CREAT)
 
                 thread = await stdtask.fork()
-                cat = await rsyscall.io.which(stdtask, b"cat")
+                cat = await stdtask.environ.which("cat")
                 child_task = await rsyscall.io.exec_cat(thread, cat, source_file.handle, dest_file.handle)
                 await child_task.wait_for_exit()
 
@@ -744,7 +744,7 @@ class TestIO(unittest.TestCase):
             dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
             # let's use nix-copy-closure or nix-store --import/--export or nix copy to copy bash over then run it?
             # nix-store --import/--export
-            bash = await rsyscall.io.which(stdtask, b"bash")
+            bash = await stdtask.environ.which("bash")
             dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
             child_task = await thread.execve(dest_bash, ["bash"])
             await child_task.wait_for_exit()
@@ -756,7 +756,7 @@ class TestIO(unittest.TestCase):
             thread = await stdtask.fork()
             src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
             dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
-            bash = await rsyscall.io.which(stdtask, b"bash")
+            bash = await stdtask.environ.which("bash")
             dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
             child_task = await thread.execve(dest_bash, ["bash", "--norc"])
             await child_task.wait_for_exit()
@@ -782,9 +782,9 @@ class TestIO(unittest.TestCase):
             # making a readonly bind mount is weird, you have to mount it first then remount it rdonly
             await shell_thread.stdtask.mount(b"none", b"/nix", b"none",
                                              MS.BIND|MS.REMOUNT|MS.RDONLY, b"")
-            bash = await rsyscall.io.which(stdtask, b"bash")
+            bash = await stdtask.environ.which("bash")
             dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, shell_thread.stdtask)
-            mount = await rsyscall.io.which(stdtask, b"mount")
+            mount = await stdtask.environ.which("mount")
             # don't seem to be able to copy coreutils for some reason?
             # it doesn't have a valid signature?
             await rsyscall.nix.nix_deploy(src_nix_bin, mount.executable_path,

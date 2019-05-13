@@ -3629,6 +3629,10 @@ hmm, actually it just occurred to me that this question is essentially the same 
    and it turns out, abstracting over memory isn't even really necessary to have a good user experience.
 
    I hate the socket API though, because it's the one wart here.
+** we use str pervasively instead of bytes
+   The str type can encode arbitrary bytestrings using surrogateescape,
+   Python has embraced strings-for-filenames with the PathLike interface,
+   and str is much more convenient to use.
 * knowledge
 ** tkill vs kill
 The difference between kill and tkill (besides the special negative parameters to kill, which tkill

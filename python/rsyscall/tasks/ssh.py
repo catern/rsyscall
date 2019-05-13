@@ -3,7 +3,7 @@ import rsyscall.handle as handle
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, ProcessResources, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, ChildProcessMonitor, which
+from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, ProcessResources, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, ChildProcessMonitor
 from dataclasses import dataclass
 import importlib.resources
 import logging

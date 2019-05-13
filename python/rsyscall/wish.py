@@ -8,7 +8,7 @@ import traceback
 import os
 import inspect
 import sys
-from rsyscall.io import StandardTask, AsyncFileDescriptor, which, Command, Path
+from rsyscall.io import StandardTask, AsyncFileDescriptor, Command, Path
 from contextvars import ContextVar
 from rsyscall.sys.socket import SOCK, AF
 from rsyscall.unistd import Pipe
@@ -32,7 +32,7 @@ class WishGranter:
 class ConsoleGenie(WishGranter):
     @classmethod
     async def make(self, stdtask: StandardTask):
-        cat = await which(stdtask, "cat")
+        cat = await stdtask.environ.which("cat")
         return ConsoleGenie(stdtask, cat)
 
     def __init__(self, stdtask: StandardTask, cat: Command) -> None:
@@ -76,7 +76,7 @@ class ConsoleGenie(WishGranter):
 class ConsoleServerGenie(WishGranter):
     @classmethod
     async def make(self, stdtask: StandardTask, sockdir: Path):
-        socat = await which(stdtask, "socat")
+        socat = await stdtask.environ.which("socat")
         return ConsoleServerGenie(stdtask, sockdir, socat)
 
     def __init__(self, stdtask: StandardTask, sockdir: Path, socat: Command) -> None:

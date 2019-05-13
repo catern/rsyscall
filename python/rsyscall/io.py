@@ -280,9 +280,6 @@ async def update_symlink(parent: Path, name: str, target: str) -> None:
     await tmppath.symlink(target)
     await (parent/name).rename(tmppath)
 
-async def which(stdtask: StandardTask, name: t.Union[str, bytes]) -> Command:
-    return await stdtask.environ.which(os.fsdecode(name))
-
 async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
                               in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
     if in_namespace_uid is None:

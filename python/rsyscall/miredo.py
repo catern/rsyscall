@@ -168,7 +168,7 @@ class TestMiredo(TrioTestCase):
 
     async def test_miredo(self) -> None:
         print("b1", time.time())
-        ping6 = (await rsc.which(self.stdtask, "ping")).args('-6')
+        ping6 = (await self.stdtask.environ.which("ping")).args('-6')
         print("b1.5", time.time())
         # TODO lol actually parse this, don't just read and throw it away
         await self.netsock.read(await self.miredo.ns_thread.stdtask.ram.malloc_type(Bytes, 4096))
