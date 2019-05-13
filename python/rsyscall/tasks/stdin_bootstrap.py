@@ -3,12 +3,13 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, Command, AsyncReadBuffer, ProcessResources
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, Command, AsyncReadBuffer, ProcessResources
 import trio
 import struct
 from dataclasses import dataclass
 import logging
 import rsyscall.memory.allocator as memory
+from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess
 from rsyscall.environ import Environment
 from rsyscall.epoller import EpollCenter
@@ -95,27 +96,27 @@ async def rsyscall_stdin_bootstrap(
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     allocator = memory.AllocatorClient.make_allocator(base_task)
     # we assume our SignalMask is zero'd before being started, so we don't inherit it
-    task = Task(base_task,
-                SocketMemoryTransport(access_data_sock,
-                                      base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd)),
-                                      allocator),
-                allocator)
+    ram = RAM(base_task,
+               SocketMemoryTransport(access_data_sock,
+                                     base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd)),
+                                     allocator),
+               allocator)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
-    epoller = await EpollCenter.make_root(task, task.base)
-    child_monitor = await ChildProcessMonitor.make(task, task.base, epoller)
-    connection = make_connection(base_task, task,
+    epoller = await EpollCenter.make_root(ram, base_task)
+    child_monitor = await ChildProcessMonitor.make(ram, base_task, epoller)
+    connection = make_connection(base_task, ram,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
     new_stdtask = StandardTask(
-        task=task.base,
-        ram=task,
+        task=base_task,
+        ram=ram,
         connection=connection,
         process_resources=ProcessResources.make_from_symbols(base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,
-        environ=Environment(task.base, task, environ),
-        stdin=task.base.make_fd_handle(near.FileDescriptor(0)),
-        stdout=task.base.make_fd_handle(near.FileDescriptor(1)),
-        stderr=task.base.make_fd_handle(near.FileDescriptor(2)),
+        environ=Environment(base_task, ram, environ),
+        stdin=base_task.make_fd_handle(near.FileDescriptor(0)),
+        stdout=base_task.make_fd_handle(near.FileDescriptor(1)),
+        stderr=base_task.make_fd_handle(near.FileDescriptor(2)),
     )
     #### TODO set up futex I guess
     remote_futex_memfd = near.FileDescriptor(describe_struct.futex_memfd)
