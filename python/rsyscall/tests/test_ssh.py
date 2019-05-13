@@ -88,7 +88,7 @@ class TestSSH(TrioTestCase):
         thread = await self.remote_stdtask.fork()
         await thread.stdtask.unshare_files(going_to_exec=True)
         await rsyscall.io.do_cloexec_except(
-            thread.stdtask.task, set([fd.near for fd in thread.stdtask.task.base.fd_handles]))
+            thread.stdtask.ramthr, set([fd.near for fd in thread.stdtask.task.base.fd_handles]))
         await self.remote_task.sigprocmask((HowSIG.SETMASK,
                                             await self.remote_ram.to_pointer(Sigset())),
                                            await self.remote_ram.malloc_struct(Sigset))

@@ -463,7 +463,7 @@ class StandardTask:
         """
         await self.task.base.unshare_files()
         if not going_to_exec:
-            await do_cloexec_except(self.task, set([fd.near for fd in self.task.base.fd_handles]))
+            await do_cloexec_except(self.ramthr, set([fd.near for fd in self.task.base.fd_handles]))
 
     async def unshare_files_and_replace(self, mapping: t.Dict[handle.FileDescriptor, handle.FileDescriptor],
                                         going_to_exec=False) -> None:
@@ -589,14 +589,14 @@ class RsyscallInterface(near.SyscallInterface):
             self.logger.debug("%s -> %s", number, result)
             return result
 
-async def do_cloexec_except(task: Task, excluded_fds: t.Set[near.FileDescriptor]) -> None:
+async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
-    buf = await task.malloc_type(DirentList, 4096)
-    dirfd = await task.base.open(await task.to_pointer(handle.Path("/proc/self/fd")), O.DIRECTORY|O.CLOEXEC)
+    buf = await thr.ram.malloc_type(DirentList, 4096)
+    dirfd = await thr.task.open(await thr.ram.to_pointer(handle.Path("/proc/self/fd")), O.DIRECTORY|O.CLOEXEC)
     async def maybe_close(fd: near.FileDescriptor) -> None:
-        flags = await near.fcntl(task.base.sysif, fd, F.GETFD)
+        flags = await near.fcntl(thr.task.sysif, fd, F.GETFD)
         if (flags & FD_CLOEXEC) and (fd not in excluded_fds):
-            await near.close(task.base.sysif, fd)
+            await near.close(thr.task.sysif, fd)
     async with trio.open_nursery() as nursery:
         while True:
             valid, rest = await dirfd.getdents(buf)
