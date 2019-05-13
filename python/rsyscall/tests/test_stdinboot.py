@@ -23,10 +23,10 @@ class TestStdinboot(TrioTestCase):
         await self.remote_stdtask.exit(0)
 
     async def test_async(self) -> None:
-        await do_async_things(self, self.remote_stdtask.epoller, self.remote_stdtask.task)
+        await do_async_things(self, self.remote_stdtask.epoller, self.remote_stdtask.ramthr)
 
     async def test_nest(self) -> None:
         child, new_stdtask = await rsyscall_stdin_bootstrap(self.remote_stdtask, self.command)
         async with child:
-            await do_async_things(self, new_stdtask.epoller, new_stdtask.task)
+            await do_async_things(self, new_stdtask.epoller, new_stdtask.ramthr)
     

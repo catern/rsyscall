@@ -38,7 +38,7 @@ class TestStub(TrioTestCase):
         command = Command((self.path/self.stub_name).handle, [self.stub_name], {})
         child = await self.thread.exec(command)
         argv, new_stdtask = await self.server.accept()
-        await do_async_things(self, new_stdtask.epoller, new_stdtask.task)
+        await do_async_things(self, new_stdtask.epoller, new_stdtask.ramthr)
 
     async def test_read_stdin(self) -> None:
         data_in = "hello"
@@ -46,6 +46,6 @@ class TestStub(TrioTestCase):
         child = await self.thread.exec(command)
         argv, new_stdtask = await self.server.accept()
         valid, _ = await new_stdtask.stdin.read(
-            await new_stdtask.task.malloc_type(Bytes, len(data_in)))
+            await new_stdtask.ram.malloc_type(Bytes, len(data_in)))
         self.assertEqual(data_in, (await valid.read()).decode())
     

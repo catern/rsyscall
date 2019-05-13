@@ -22,6 +22,7 @@ import rsyscall.nix
 
 from rsyscall.handle import WrittenPointer
 from rsyscall.epoller import EpollCenter
+from rsyscall.memory.ram import RAMThread
 
 from rsyscall.tasks.persistent import fork_persistent
 from rsyscall.tasks.stdin_bootstrap import rsyscall_stdin_bootstrap
@@ -57,10 +58,10 @@ logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.DEBUG)
 
 nix_bin_bytes = b"/nix/store/wpbag7vnmr4pr9p8a3003s68907w9bxq-nix-2.2pre6600_85488a93/bin"
-async def do_async_things(self: unittest.TestCase, epoller, task: rsyscall.io.Task) -> None:
-    pipe = await (await task.base.pipe(await task.malloc_struct(Pipe))).read()
-    async_pipe_rfd = await AsyncFileDescriptor.make_handle(epoller, task, pipe.read)
-    async_pipe_wfd = await AsyncFileDescriptor.make_handle(epoller, task, pipe.write)
+async def do_async_things(self: unittest.TestCase, epoller, thr: RAMThread) -> None:
+    pipe = await (await thr.task.pipe(await thr.ram.malloc_struct(Pipe))).read()
+    async_pipe_rfd = await AsyncFileDescriptor.make_handle(epoller, thr.ram, pipe.read)
+    async_pipe_wfd = await AsyncFileDescriptor.make_handle(epoller, thr.ram, pipe.write)
     data = b"hello world"
     async def stuff():
         logger.info("performing read")
@@ -77,8 +78,8 @@ async def do_async_things(self: unittest.TestCase, epoller, task: rsyscall.io.Ta
     await async_pipe_wfd.aclose()
 
 class TestIO(unittest.TestCase):
-    async def do_async_things(self, epoller, task: rsyscall.io.Task) -> None:
-        await do_async_things(self, epoller, task)
+    async def do_async_things(self, epoller, thr: RAMThread) -> None:
+        await do_async_things(self, epoller, thr)
 
     async def runner(self, test: t.Callable[[StandardTask], t.Awaitable[None]]) -> None:
         async with trio.open_nursery() as nursery:
@@ -238,7 +239,7 @@ class TestIO(unittest.TestCase):
 
     def test_async(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            await self.do_async_things(stdtask.epoller, stdtask.ram)
+            await self.do_async_things(stdtask.epoller, stdtask.ramthr)
         trio.run(self.runner, test)
 
     # def test_async_multi(self) -> None:
@@ -480,7 +481,7 @@ class TestIO(unittest.TestCase):
             async with thread as stdtask2:
                 thread2 = await spawn_exec(stdtask2, rsyscall.nix.local_store)
                 async with thread2 as stdtask3:
-                    await self.do_async_things(stdtask3.epoller, stdtask3.task)
+                    await self.do_async_things(stdtask3.epoller, stdtask3.ramthr)
         trio.run(self.runner, test)
 
     def test_setns_ownership(self) -> None:
@@ -581,7 +582,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread = await spawn_exec(stdtask, rsyscall.nix.local_store)
             async with thread as stdtask2:
-                await self.do_async_things(stdtask2.epoller, stdtask2.task)
+                await self.do_async_things(stdtask2.epoller, stdtask2.ramthr)
         trio.run(self.runner, test)
 
     def test_spawn_nest(self) -> None:
@@ -590,7 +591,7 @@ class TestIO(unittest.TestCase):
             async with thread1 as stdtask2:
                 thread2 = await spawn_exec(stdtask2, rsyscall.nix.local_store)
                 async with thread2 as stdtask3:
-                    await self.do_async_things(stdtask3.epoller, stdtask3.task)
+                    await self.do_async_things(stdtask3.epoller, stdtask3.ramthr)
         trio.run(self.runner, test)
 
     def test_thread_nest_async(self) -> None:
@@ -599,7 +600,7 @@ class TestIO(unittest.TestCase):
             async with thread1 as stdtask2:
                 thread2 = await stdtask2.fork()
                 async with thread2 as stdtask3:
-                    await self.do_async_things(stdtask3.epoller, stdtask3.task)
+                    await self.do_async_things(stdtask3.epoller, stdtask3.ramthr)
         trio.run(self.runner, test)
 
     def test_thread_exit(self) -> None:
@@ -668,7 +669,7 @@ class TestIO(unittest.TestCase):
                 async with thread3 as stdtask3:
                     epoller = await EpollCenter.make_root(stdtask3.ram, stdtask3.task.base)
                     await stdtask3.unshare_files()
-                    await self.do_async_things(epoller, stdtask3.task)
+                    await self.do_async_things(epoller, stdtask3.ramthr)
         trio.run(self.runner, test)
 
     def test_thread_async(self) -> None:
@@ -676,7 +677,7 @@ class TestIO(unittest.TestCase):
             thread = await stdtask.fork()
             async with thread as stdtask2:
                 epoller = await EpollCenter.make_root(stdtask2.ram, stdtask2.task.base)
-                await self.do_async_things(epoller, stdtask2.task)
+                await self.do_async_things(epoller, stdtask2.ramthr)
         trio.run(self.runner, test)
 
     def test_thread_exec(self) -> None:
@@ -696,7 +697,7 @@ class TestIO(unittest.TestCase):
                 sigqueue = await SignalQueue.make(stdtask2.task, stdtask2.task.base,
                                                   epoller, Sigset({Signals.SIGINT}))
                 await stdtask2.task.base.process.kill(Signals.SIGINT)
-                buf = await stdtask2.task.malloc_struct(SignalfdSiginfo)
+                buf = await stdtask2.ram.malloc_struct(SignalfdSiginfo)
                 sigdata = await sigqueue.read(buf)
                 self.assertEqual((await sigdata.read()).signo, Signals.SIGINT)
         trio.run(self.runner, test)
