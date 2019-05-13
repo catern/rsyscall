@@ -10,7 +10,7 @@ import math
 
 import rsyscall.handle as handle
 import rsyscall.handle
-from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, FutexNode, Arg, ThreadProcess, MemoryGateway, Pointer
+from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, Arg, ThreadProcess, MemoryGateway, Pointer, Task
 import rsyscall.far as far
 import rsyscall.near as near
 from rsyscall.struct import T_struct, T_fixed_size, Bytes, Int32, Serializer, Struct
@@ -305,7 +305,7 @@ async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
 
 class StandardTask(RAMThread):
     def __init__(self,
-                 task: handle.Task,
+                 task: Task,
                  ram: RAM,
                  connection: Connection,
                  process_resources: ProcessResources,
@@ -609,7 +609,7 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
 
 class RsyscallThread(StandardTask):
     def __init__(self,
-                 task: handle.Task,
+                 task: Task,
                  ram: RAM,
                  connection: Connection,
                  process_resources: ProcessResources,
