@@ -81,50 +81,12 @@ class Task(RAM):
 
 class MemFileDescriptor:
     "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."
-    task: Task
     def __init__(self, task: Task, handle: handle.FileDescriptor) -> None:
         self.task = task
         self.handle = handle
-        self.open = True
-
-    async def aclose(self):
-        if self.open:
-            await self.handle.close()
-        else:
-            pass
 
     def __str__(self) -> str:
         return f'FD({self.task}, {self.handle})'
-
-    async def __aenter__(self) -> 'MemFileDescriptor':
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.aclose()
-
-    async def invalidate(self) -> None:
-        await self.handle.invalidate()
-        self.open = False
-
-    async def close(self):
-        await self.handle.close()
-        self.open = False
-
-    def for_task(self, task: handle.Task) -> 'MemFileDescriptor':
-        if self.open:
-            return self.__class__(self.task, task.make_fd_handle(self.handle))
-        else:
-            raise Exception("file descriptor already closed")
-
-    def move(self, task: handle.Task) -> 'MemFileDescriptor':
-        if self.open:
-            return self.__class__(self.task, self.handle.move(task))
-        else:
-            raise Exception("file descriptor already closed")
-
-    async def set_nonblock(self) -> None:
-        "Set the O_NONBLOCK flag on the underlying file object"
-        await self.handle.fcntl(F.SETFL, O.NONBLOCK)
 
     async def read(self, count: int=4096) -> bytes:
         valid, _ = await self.handle.read(await self.task.malloc_type(Bytes, count))
@@ -301,8 +263,10 @@ class Path(rsyscall.path.PathLike):
         return Path(self.task, await valid.read())
 
     async def canonicalize(self) -> Path:
-        async with (await self.open_path()) as f:
-            return (await Path(self.task, f.handle.as_proc_path()).readlink())
+        f = await self.open_path()
+        ret = await Path(self.task, f.handle.as_proc_path()).readlink()
+        await f.handle.close()
+        return ret
 
     async def as_sockaddr_un(self) -> SockaddrUn:
         return await as_sockaddr_un(self.task, self.handle)
