@@ -144,19 +144,6 @@ class MemFileDescriptor:
 
 FileDescriptor = MemFileDescriptor
 
-async def as_sockaddr_un(task: Task, path: handle.Path) -> SockaddrUn:
-    """Turn this path into a SockaddrUn, hacking around the 108 byte limit on socket addresses.
-
-    If the passed path is too long to fit in an address, this function will open the parent
-    directory with O_PATH and return SockaddrUn("/proc/self/fd/n/name").
-
-    """
-    try:
-        return SockaddrUn(os.fsencode(path))
-    except PathTooLongError:
-        fd = await task.base.open(await task.to_pointer(path.parent), O.PATH|O.CLOEXEC)
-        return SockaddrUnProcFd(fd, path.name)
-
 class Path(rsyscall.path.PathLike):
     "This is a convenient combination of a Path and a Task to perform serialization."
     def __init__(self, task: Task, handle: rsyscall.path.Path) -> None:
@@ -269,7 +256,17 @@ class Path(rsyscall.path.PathLike):
         return ret
 
     async def as_sockaddr_un(self) -> SockaddrUn:
-        return await as_sockaddr_un(self.task, self.handle)
+        """Turn this path into a SockaddrUn, hacking around the 108 byte limit on socket addresses.
+
+        If the passed path is too long to fit in an address, this function will open the parent
+        directory with O_PATH and return SockaddrUn("/proc/self/fd/n/name").
+
+        """
+        try:
+            return SockaddrUn(os.fsencode(self.handle))
+        except PathTooLongError:
+            fd = await self.task.base.open(await self.parent.to_pointer(), O.PATH|O.CLOEXEC)
+            return SockaddrUnProcFd(fd, self.name)
 
     # to_bytes and from_bytes, kinda sketchy, hmm....
     # from_bytes will fail at runtime... whatever
