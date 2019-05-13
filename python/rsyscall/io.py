@@ -127,13 +127,11 @@ class MemFileDescriptor:
         sockbuf = await self.handle.getsockopt(level, optname, written_sockbuf)
         return (await (await sockbuf.read()).buf.read())
 
-    async def accept(self, flags: SOCK) -> t.Tuple[FileDescriptor, Address]:
+    async def accept(self, flags: SOCK) -> t.Tuple[MemFileDescriptor, Address]:
         written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(GenericSockaddr)))
         fd, sockbuf = await self.handle.accept(flags, written_sockbuf)
         addr = (await (await sockbuf.read()).buf.read()).parse()
-        return FileDescriptor(self.ram, fd), addr
-
-FileDescriptor = MemFileDescriptor
+        return MemFileDescriptor(self.ram, fd), addr
 
 class Path(rsyscall.path.PathLike):
     "This is a convenient combination of a Path and a Task to perform serialization."
@@ -166,14 +164,14 @@ class Path(rsyscall.path.PathLike):
             raise FileExistsError(e.errno, e.strerror, self) from None
         return self
 
-    async def open(self, flags: O, mode=0o644) -> FileDescriptor:
+    async def open(self, flags: O, mode=0o644) -> MemFileDescriptor:
         """Open a path
 
         Note that this can block forever if we're opening a FIFO
 
         """
         fd = await self.thr.task.open(await self.to_pointer(), flags, mode)
-        return FileDescriptor(self.thr.ram, fd)
+        return MemFileDescriptor(self.thr.ram, fd)
 
     async def open_directory(self) -> MemFileDescriptor:
         return (await self.open(O.DIRECTORY))
