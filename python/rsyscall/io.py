@@ -81,66 +81,66 @@ class Task(RAM):
 
 class MemFileDescriptor:
     "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."
-    def __init__(self, task: Task, handle: handle.FileDescriptor) -> None:
-        self.task = task
+    def __init__(self, ram: RAM, handle: handle.FileDescriptor) -> None:
+        self.ram = ram
         self.handle = handle
 
     def __str__(self) -> str:
-        return f'FD({self.task}, {self.handle})'
+        return f'FD({self.ram}, {self.handle})'
 
     async def read(self, count: int=4096) -> bytes:
-        valid, _ = await self.handle.read(await self.task.malloc_type(Bytes, count))
+        valid, _ = await self.handle.read(await self.ram.malloc_type(Bytes, count))
         return await valid.read()
 
     async def write(self, data: bytes) -> int:
-        written, _ = await self.handle.write(await self.task.to_pointer(Bytes(data)))
+        written, _ = await self.handle.write(await self.ram.to_pointer(Bytes(data)))
         return written.bytesize()
 
     async def write_all(self, data: bytes) -> None:
-        remaining: handle.Pointer = await self.task.to_pointer(Bytes(data))
+        remaining: handle.Pointer = await self.ram.to_pointer(Bytes(data))
         while remaining.bytesize() > 0:
             written, remaining = await self.handle.write(remaining)
 
     async def getdents(self, count: int=4096) -> DirentList:
-        valid, _ = await self.handle.getdents(await self.task.malloc_type(DirentList, count))
+        valid, _ = await self.handle.getdents(await self.ram.malloc_type(DirentList, count))
         return await valid.read()
 
     async def bind(self, addr: Address) -> None:
-        await self.handle.bind(await self.task.to_pointer(addr))
+        await self.handle.bind(await self.ram.to_pointer(addr))
 
     async def connect(self, addr: Address) -> None:
-        await self.handle.connect(await self.task.to_pointer(addr))
+        await self.handle.connect(await self.ram.to_pointer(addr))
 
     async def listen(self, backlog: int) -> None:
         await self.handle.listen(backlog)
 
     async def setsockopt(self, level: int, optname: int, optval: t.Union[bytes, int]) -> None:
         if isinstance(optval, bytes):
-            ptr: handle.Pointer = await self.task.to_pointer(Bytes(optval))
+            ptr: handle.Pointer = await self.ram.to_pointer(Bytes(optval))
         else:
-            ptr = await self.task.to_pointer(Int32(optval))
+            ptr = await self.ram.to_pointer(Int32(optval))
         await self.handle.setsockopt(level, optname, ptr)
 
     async def getsockname(self) -> Address:
-        written_sockbuf = await self.task.to_pointer(Sockbuf(await self.task.malloc_struct(GenericSockaddr)))
+        written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(GenericSockaddr)))
         sockbuf = await self.handle.getsockname(written_sockbuf)
         return (await (await sockbuf.read()).buf.read()).parse()
 
     async def getpeername(self) -> Address:
-        written_sockbuf = await self.task.to_pointer(Sockbuf(await self.task.malloc_struct(GenericSockaddr)))
+        written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(GenericSockaddr)))
         sockbuf = await self.handle.getpeername(written_sockbuf)
         return (await (await sockbuf.read()).buf.read()).parse()
 
     async def getsockopt(self, level: int, optname: int, optlen: int) -> bytes:
-        written_sockbuf = await self.task.to_pointer(Sockbuf(await self.task.malloc_type(Bytes, optlen)))
+        written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_type(Bytes, optlen)))
         sockbuf = await self.handle.getsockopt(level, optname, written_sockbuf)
         return (await (await sockbuf.read()).buf.read())
 
     async def accept(self, flags: SOCK) -> t.Tuple[FileDescriptor, Address]:
-        written_sockbuf = await self.task.to_pointer(Sockbuf(await self.task.malloc_struct(GenericSockaddr)))
+        written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(GenericSockaddr)))
         fd, sockbuf = await self.handle.accept(flags, written_sockbuf)
         addr = (await (await sockbuf.read()).buf.read()).parse()
-        return FileDescriptor(self.task, fd), addr
+        return FileDescriptor(self.ram, fd), addr
 
 FileDescriptor = MemFileDescriptor
 
