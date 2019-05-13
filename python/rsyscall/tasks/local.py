@@ -131,7 +131,7 @@ async def _make_local_stdtask() -> StandardTask:
     async def wait_readable():
         logger.debug("wait_readable(%s)", epfd.near.number)
         await trio.hazmat.wait_readable(epfd.near.number)
-    epoller = await EpollCenter.make(mem_task, epfd, wait_readable, 0)
+    epoller = EpollCenter.make_subsidiary(mem_task, epfd, wait_readable)
     child_monitor = await rsc.ChildProcessMonitor.make(mem_task, task, epoller)
     access_connection = None
     connection = await FDPassConnection.make(task, mem_task, epoller)

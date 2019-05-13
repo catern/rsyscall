@@ -83,15 +83,7 @@ class Task(RAM):
         return self.base.make_fd_handle(near.FileDescriptor(num))
 
     async def make_epoll_center(self) -> EpollCenter:
-        activity_fd = self.base.sysif.get_activity_fd()
-        if activity_fd is None:
-            raise Exception("can't make a root epoll center if we don't have an activity_fd to monitor")
-        epfd = await self.base.epoll_create(EpollFlag.CLOEXEC)
-        epoll_center = await EpollCenter.make(self, epfd, None, -1)
-        # TODO where should we store this, so that we don't deregister the activity_fd?
-        epolled = await epoll_center.register(
-            activity_fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET)
-        return epoll_center
+        return await EpollCenter.make_root(self, self.base)
 
 class MemFileDescriptor:
     "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."

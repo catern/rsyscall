@@ -7,7 +7,7 @@ import rsyscall.near as near
 import typing as t
 from rsyscall.concurrency import OneAtATime
 from rsyscall.memory.ram import RAM
-from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer
+from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 import trio
 
 from rsyscall.struct import Bytes, Int32
@@ -74,21 +74,29 @@ class EpollWaiter:
 class EpollCenter:
     "Terribly named class that allows registering fds on epoll, and waiting on them"
     @staticmethod
-    async def make(ram: RAM, epfd: FileDescriptor,
-                   wait_readable: t.Optional[t.Callable[[], t.Awaitable[None]]],
-                   timeout: int,
-    ) -> EpollCenter:
-        waiter = EpollWaiter(ram, epfd, wait_readable, timeout)
-        center = EpollCenter(waiter, epfd, ram)
+    def make_subsidiary(ram: RAM, epfd: FileDescriptor, wait_readable: t.Callable[[], t.Awaitable[None]]) -> EpollCenter:
+        center = EpollCenter(EpollWaiter(ram, epfd, wait_readable, 0), ram, epfd)
         return center
 
-    def __init__(self, epoller: EpollWaiter, epfd: FileDescriptor, ram: RAM) -> None:
+    @staticmethod
+    async def make_root(ram: RAM, task: Task) -> EpollCenter:
+        activity_fd = task.sysif.get_activity_fd()
+        if activity_fd is None:
+            raise Exception("can't make a root epoll center if we don't have an activity_fd to monitor")
+        epfd = await task.epoll_create(EpollFlag.CLOEXEC)
+        center = EpollCenter(EpollWaiter(ram, epfd, None, -1), ram, epfd)
+        # TODO where should we store this, so that we don't deregister the activity_fd?
+        epolled = await center.register(
+            activity_fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET)
+        return center
+
+    def __init__(self, epoller: EpollWaiter, ram: RAM, epfd: FileDescriptor) -> None:
         self.epoller = epoller
-        self.epfd = epfd
         self.ram = ram
+        self.epfd = epfd
 
     def inherit(self, ram: RAM) -> EpollCenter:
-        return EpollCenter(self.epoller, ram.task.make_fd_handle(self.epfd), ram)
+        return EpollCenter(self.epoller, ram, ram.task.make_fd_handle(self.epfd))
 
     async def register(self, fd: FileDescriptor, events: EPOLL=None) -> EpolledFileDescriptor:
         if events is None:
