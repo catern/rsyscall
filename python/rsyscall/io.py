@@ -18,7 +18,7 @@ import rsyscall.batch as batch
 from rsyscall.batch import BatchSemantics
 
 import rsyscall.memory.allocator as memory
-from rsyscall.memory.ram import RAM
+from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.loader import Trampoline, ProcessResources
@@ -331,7 +331,7 @@ async def update_symlink(parent: Path, name: str, target: str) -> None:
 async def which(stdtask: StandardTask, name: t.Union[str, bytes]) -> Command:
     return await stdtask.environ.which(os.fsdecode(name))
 
-async def write_user_mappings(task: Task, uid: int, gid: int,
+async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
                               in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
     if in_namespace_uid is None:
         in_namespace_uid = uid
@@ -339,16 +339,16 @@ async def write_user_mappings(task: Task, uid: int, gid: int,
         in_namespace_gid = gid
     procself = handle.Path("/proc/self")
 
-    uid_map = await task.base.open(await task.to_pointer(procself/"uid_map"), O.WRONLY)
-    await uid_map.write(await task.to_pointer(Bytes(f"{in_namespace_uid} {uid} 1\n".encode())))
+    uid_map = await thr.task.open(await thr.ram.to_pointer(procself/"uid_map"), O.WRONLY)
+    await uid_map.write(await thr.ram.to_pointer(Bytes(f"{in_namespace_uid} {uid} 1\n".encode())))
     await uid_map.close()
 
-    setgroups = await task.base.open(await task.to_pointer(procself/"setgroups"), O.WRONLY)
-    await setgroups.write(await task.to_pointer(Bytes(b"deny")))
+    setgroups = await thr.task.open(await thr.ram.to_pointer(procself/"setgroups"), O.WRONLY)
+    await setgroups.write(await thr.ram.to_pointer(Bytes(b"deny")))
     await setgroups.close()
 
-    gid_map = await task.base.open(await task.to_pointer(procself/"gid_map"), O.WRONLY)
-    await gid_map.write(await task.to_pointer(Bytes(f"{in_namespace_gid} {gid} 1\n".encode())))
+    gid_map = await thr.task.open(await thr.ram.to_pointer(procself/"gid_map"), O.WRONLY)
+    await gid_map.write(await thr.ram.to_pointer(Bytes(f"{in_namespace_gid} {gid} 1\n".encode())))
     await gid_map.close()
 
 class StandardTask:
@@ -366,6 +366,7 @@ class StandardTask:
         self.connection = connection
         self.task = task
         self.ram = task
+        self.ramthr = RAMThread(task.base, task)
         self.process = process_resources
         self.epoller = epoller
         self.child_monitor = child_monitor
@@ -448,7 +449,7 @@ class StandardTask:
             # we have to get the [ug]id from the parent because it will fail in the child
             uid = await self.task.base.getuid()
             gid = await self.task.base.getgid()
-            await write_user_mappings(task, uid, gid)
+            await write_user_mappings(RAMThread(base_task, task), uid, gid)
         if newpid or self.child_monitor.is_reaper:
             # if the new process is pid 1, then CLONE_PARENT isn't allowed so we can't use inherit_to_child.
             # if we are a reaper, than we don't want our child CLONE_PARENTing to us, so we can't use inherit_to_child.
@@ -524,7 +525,7 @@ class StandardTask:
         uid = await self.task.base.getuid()
         gid = await self.task.base.getgid()
         await self.task.base.unshare_user()
-        await write_user_mappings(self.task, uid, gid,
+        await write_user_mappings(self.ramthr, uid, gid,
                                   in_namespace_uid=in_namespace_uid, in_namespace_gid=in_namespace_gid)
 
     async def unshare_net(self) -> None:

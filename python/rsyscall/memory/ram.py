@@ -54,3 +54,8 @@ class RAM:
         if allocator is None:
             allocator = self.allocator
         return await batch.perform_async_batch(self.task, self.transport, allocator, op)
+
+class RAMThread:
+    def __init__(self, task: Task, ram: RAM) -> None:
+        self.task = task
+        self.ram = ram
