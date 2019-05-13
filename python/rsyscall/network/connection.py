@@ -2,7 +2,7 @@ from __future__ import annotations
 import abc
 import typing as t
 import trio
-from rsyscall.epoller import AsyncFileDescriptor, EpollCenter
+from rsyscall.epoller import AsyncFileDescriptor, EpollCenter, EpollThread
 from rsyscall.handle import FileDescriptor, WrittenPointer, Task
 from rsyscall.memory.ram import RAM
 from rsyscall.struct import Bytes
@@ -144,3 +144,24 @@ class ListeningConnection(Connection):
 
     def for_task(self, task: Task, ram: RAM) -> ListeningConnection:
         return self.for_task_with_fd(task, ram, self.listening_fd.for_task(task))
+
+class ConnectionThread(EpollThread):
+    def __init__(self,
+                 task: Task,
+                 ram: RAM,
+                 epoller: EpollCenter,
+                 connection: Connection,
+    ) -> None:
+        super().__init__(task, ram, epoller)
+        self.connection = connection
+
+    async def make_async_connections(self, count: int) -> t.List[
+            t.Tuple[AsyncFileDescriptor, FileDescriptor]
+    ]:
+        return (await self.connection.open_async_channels(count))
+
+    async def make_connections(self, count: int) -> t.List[
+            t.Tuple[FileDescriptor, FileDescriptor]
+    ]:
+        return (await self.connection.open_channels(count))
+

@@ -6,7 +6,7 @@ import math
 import rsyscall.near as near
 import typing as t
 from rsyscall.concurrency import OneAtATime
-from rsyscall.memory.ram import RAM
+from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 import trio
 
@@ -422,3 +422,15 @@ class AsyncReadBuffer:
         if comma != b",":
             raise Exception("bad netstring delimiter", comma)
         return data
+
+class EpollThread(RAMThread):
+    def __init__(self,
+                 task: Task,
+                 ram: RAM,
+                 epoller: EpollCenter,
+    ) -> None:
+        super().__init__(task, ram)
+        self.epoller = epoller
+
+    async def make_afd(self, fd: FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
+        return await AsyncFileDescriptor.make_handle(self.epoller, self.ram, fd, is_nonblock=nonblock)

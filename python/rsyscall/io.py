@@ -45,7 +45,7 @@ from rsyscall.signal import HowSIG, Sigaction, Sighandler, Signals, Sigset, Sigi
 from rsyscall.signal import SignalBlock
 from rsyscall.linux.dirent import Dirent, DirentList
 from rsyscall.unistd import SEEK
-from rsyscall.network.connection import Connection
+from rsyscall.network.connection import Connection, ConnectionThread
 
 import random
 import string
@@ -298,7 +298,7 @@ async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
     await gid_map.write(await thr.ram.to_pointer(Bytes(f"{in_namespace_gid} {gid} 1\n".encode())))
     await gid_map.close()
 
-class StandardTask(RAMThread):
+class StandardTask(ConnectionThread):
     def __init__(self,
                  task: Task,
                  ram: RAM,
@@ -311,12 +311,8 @@ class StandardTask(RAMThread):
                  stdout: handle.FileDescriptor,
                  stderr: handle.FileDescriptor,
     ) -> None:
-        super().__init__(task, ram)
-        self.task = task
-        self.ram = ram
-        self.connection = connection
+        super().__init__(task, ram, epoller, connection)
         self.process = process_resources
-        self.epoller = epoller
         self.child_monitor = child_monitor
         self.environ = environ
         self.stdin = stdin
@@ -362,19 +358,6 @@ class StandardTask(RAMThread):
             )
         source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.ram.perform_batch(op)
         await self.task.base.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
-
-    async def make_afd(self, fd: handle.FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
-        return await AsyncFileDescriptor.make_handle(self.epoller, self.ram, fd, is_nonblock=nonblock)
-
-    async def make_async_connections(self, count: int) -> t.List[
-            t.Tuple[AsyncFileDescriptor, handle.FileDescriptor]
-    ]:
-        return (await self.connection.open_async_channels(count))
-
-    async def make_connections(self, count: int) -> t.List[
-            t.Tuple[handle.FileDescriptor, handle.FileDescriptor]
-    ]:
-        return (await self.connection.open_channels(count))
 
     async def fork(self, newuser=False, newpid=False, fs=True, sighand=True) -> RsyscallThread:
         [(access_sock, remote_sock)] = await self.make_async_connections(1)
