@@ -270,9 +270,9 @@ async def ssh_bootstrap(
         epoller=epoller,
         child_monitor=child_monitor,
         environ=Environment(new_task.base, new_task, environ),
-        stdin=new_task._make_fd(0),
-        stdout=new_task._make_fd(1),
-        stderr=new_task._make_fd(2),
+        stdin=new_task.base.make_fd_handle(near.FileDescriptor(0)),
+        stdout=new_task.base.make_fd_handle(near.FileDescriptor(1)),
+        stderr=new_task.base.make_fd_handle(near.FileDescriptor(2)),
     )
     return bootstrap_child_task, new_stdtask
 

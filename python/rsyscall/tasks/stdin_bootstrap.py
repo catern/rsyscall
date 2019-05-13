@@ -112,9 +112,9 @@ async def rsyscall_stdin_bootstrap(
         epoller=epoller,
         child_monitor=child_monitor,
         environ=Environment(task.base, task, environ),
-        stdin=task._make_fd(0),
-        stdout=task._make_fd(1),
-        stderr=task._make_fd(2),
+        stdin=task.base.make_fd_handle(near.FileDescriptor(0)),
+        stdout=task.base.make_fd_handle(near.FileDescriptor(1)),
+        stderr=task.base.make_fd_handle(near.FileDescriptor(2)),
     )
     #### TODO set up futex I guess
     remote_futex_memfd = near.FileDescriptor(describe_struct.futex_memfd)

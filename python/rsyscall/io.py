@@ -79,9 +79,6 @@ class Task(RAM):
         super().__init__(base_, transport, allocator)
         self.base = base_
 
-    def _make_fd(self, num: int) -> handle.FileDescriptor:
-        return self.base.make_fd_handle(near.FileDescriptor(num))
-
 class MemFileDescriptor:
     "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."
     task: Task
