@@ -3661,6 +3661,17 @@ other such things work like tkill (though they actually use tgkill).
 
   and have some kind of task where you want to provide a service,
   and want to avoid some prank callers from calling you.
+** hmm well
+   if sockets are telephones,
+   we'd want to representing blocking when you try to connect.
+
+   but to do that we need p'rhaps to have the socket pre-existing,
+   so that we can use some magic to make it nonblocking.
+
+   a fearsome heat sears your hand and you snatch it away!
+   is what happens when you EAGAIN.
+
+   (i guess you heat things up by making them nonblocking?)
 * what is this? explanation to normies
 it has the intent of providing an interface to Linux tasks as first-class internal entities,
 that can be manipulated by running syscalls inside of them
@@ -16676,7 +16687,7 @@ but that doesn't scale as well as passing the epfd down.
    This conflicts with handle.Task hmm
 
    Hah, instead I just removed them from handle.Task
-** make io.Task just inherit from RAM and handle.Task
+** DONE make io.Task just inherit from RAM and handle.Task
    This way we can incrementally migrate!
 
    Hm. This is tricky because we can't just suck out the innards of the handle.Task,
@@ -16685,15 +16696,19 @@ but that doesn't scale as well as passing the epfd down.
    Oh, we could add a .base to handle.Task to get itself, if we are able to remove all the helpers from io.Task.
 
    OK let's stick with that plan, remove all the helpers.
+
+   It is migrated!
 ** DONE remove socket_unix
    Hopefully we can replace some of the uses with AFD.
 
    Ugh, this usage is a list of fds. Hmm.
    meh let's stick to the current approach
-** add RAMThread
+** DONE add RAMThread
    We can use this instead of the current io.Task in places, I guess.
-** move some of these tests to unittests in the actual in6 module
+** DONE move some of these tests to unittests in the actual in6 module
    like this test_ipv6_encode test in test_io
+
+   I "moved" it by deleting it, it was already there.
 ** decide what to do with our two Paths
    can I really bear to get rid of our current memory-abstracting Path?
 
@@ -16715,7 +16730,7 @@ but that doesn't scale as well as passing the epfd down.
    then doing "with thread" would set that contextvar.
 
    that would be kinda cool.
-** clean up make_epoll_center
+** DONE clean up make_epoll_center
    We should have some kind of thing in local to create the one special EpollCenter that uses wait_readable,
    and for the rest, just... use activity_fd or something.
 
@@ -17306,6 +17321,8 @@ And we can have an exec which is not memory-abstracting, I guess.
     ok, I like these names!
 ** TODO figure out good name for application scripts
    what should I call that directory?
+
+   rsysapps, maybe?
 ** TODO rename StandardTask/RsyscallThread to Thread/ChildThread
    Possibly with a further MemThread below Thread,
    containing just handle.Task, RAM, and EpollCenter.
@@ -17315,6 +17332,40 @@ And we can have an exec which is not memory-abstracting, I guess.
    and then I can have my own custom classes which inherit from Thread and which get put in there...
 
    Well maybe that's not necessary, because, fork and all that isn't going to return my custom thread anyway...
+*** hmm
+   OK, so, this is tricky.
+
+   How do we have things which depend on the ability to fork,
+   but which we want to include in the Thread?
+
+   Well, we can have, um, maybe.
+
+   Some kind of Child generic?
+
+   would that help?
+
+   when inheriting, we could call parent fork,
+   and, just tear apart the thread it gives me,
+   and augment it with more stuff.
+
+   Wait a second lol, you can't even implement the curiously recurring template pattern!
+   Heh.
+
+   OK so any kind of thing like that would be too sketchy.
+
+   So, I guess users will just define two types, if they want to make their own Thread?
+
+   OK and we'll just use, um. hm.
+
+   Well if fork.py defines a ForkThread, and a ChildForkThread.
+
+   And, we define things which inherit from those.
+
+   And, which, just rip them apart and feast on their insides.
+
+   Well, there's a bit of multiple inheritance awkwardness,
+   in that we'll have to do ChildThread(Thread, ChildForkThread),
+   but it'll be fine.
 ** DONE make connection interface with open_channels
    OK one difficulty is inheritance.
 
