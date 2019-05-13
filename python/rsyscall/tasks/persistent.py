@@ -3,7 +3,7 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, Task, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ChildProcessMonitor
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ChildProcessMonitor
 
 from rsyscall.io import ProcessResources, Trampoline
 from rsyscall.handle import Stack, WrittenPointer, ThreadProcess, Pointer
@@ -63,7 +63,8 @@ class PersistentServer:
 
     """
     path: Path
-    task: Task
+    task: handle.Task
+    ram: RAM
     syscall: RsyscallInterface
     listening_sock: handle.FileDescriptor
     # saved to keep the reference to the stack pointer etc alive
@@ -97,8 +98,8 @@ class PersistentServer:
         return remote_fds
 
     async def make_persistent(self) -> None:
-        await self.task.base.setsid()
-        await self.task.base.prctl(PrctlOp.SET_PDEATHSIG, 0)
+        await self.task.setsid()
+        await self.task.prctl(PrctlOp.SET_PDEATHSIG, 0)
 
     async def reconnect(self, stdtask: StandardTask) -> None:
         # TODO should check that no transport requests are in flight
@@ -128,13 +129,13 @@ class PersistentServer:
         if self.transport is not None:
             cleanup_remote_fds.append(self.transport.remote)
         self.syscall.rsyscall_connection = RsyscallConnection(access_syscall_sock, access_syscall_sock)
-        self.syscall.infd = self.task.base.make_fd_handle(infd)
-        self.syscall.outfd = self.task.base.make_fd_handle(outfd)
+        self.syscall.infd = self.task.make_fd_handle(infd)
+        self.syscall.outfd = self.task.make_fd_handle(outfd)
         # TODO technically this could still be in the same address space - that's the case in our tests.
         # we should figure out a way to use a LocalMemoryTransport here so it can copy efficiently
         transport = SocketMemoryTransport(access_data_sock,
-                                          self.task.base.make_fd_handle(remote_data_sock), self.task.allocator)
-        self.task.transport = transport
+                                          self.task.make_fd_handle(remote_data_sock), self.ram.allocator)
+        self.ram.transport = transport
         self.transport = transport
         # close remote fds we are no longer using - can only do this here because we've
         # re-established the syscall connection
@@ -148,7 +149,7 @@ async def spawn_rsyscall_persistent_server(
         parent_task: handle.Task,
         parent_ram: RAM,
         process_resources: ProcessResources,
-    ) -> t.Tuple[Task, RsyscallInterface, handle.FileDescriptor, ThreadProcess]:
+    ) -> t.Tuple[handle.Task, RAM, RsyscallInterface, handle.FileDescriptor, ThreadProcess]:
     async def op(sem: batch.BatchSemantics) -> t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]]:
         stack_value = process_resources.make_trampoline_stack(Trampoline(
             process_resources.persistent_server_func, [remote_sock, remote_sock, listening_sock]))
@@ -170,39 +171,39 @@ async def spawn_rsyscall_persistent_server(
     remote_sock_handle = remote_sock.move(new_base_task)
     remote_listening_handle = listening_sock.move(new_base_task)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
-    new_task = Task(new_base_task,
-                    parent_ram.transport.inherit(new_base_task),
-                    parent_ram.allocator.inherit(new_base_task),
+    new_ram = RAM(new_base_task,
+                  parent_ram.transport.inherit(new_base_task),
+                  parent_ram.allocator.inherit(new_base_task),
     )
-    return new_task, syscall, remote_listening_handle, thread_process
+    return new_base_task, new_ram, syscall, remote_listening_handle, thread_process
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def fork_persistent(
         self: StandardTask, path: Path,
 ) -> t.Tuple[StandardTask, PersistentServer]:
-    listening_sock = await self.task.base.socket(AF.UNIX, SOCK.STREAM)
+    listening_sock = await self.task.socket(AF.UNIX, SOCK.STREAM)
     await listening_sock.bind(await self.ram.to_pointer(await path.as_sockaddr_un()))
     await listening_sock.listen(1)
     [(access_sock, remote_sock)] = await self.make_async_connections(1)
-    task, syscall, listening_sock_handle, thread_process = await spawn_rsyscall_persistent_server(
+    task, ram, syscall, listening_sock_handle, thread_process = await spawn_rsyscall_persistent_server(
         access_sock, remote_sock, listening_sock,
-        self.task.base, self.ram, self.process)
+        self.task, self.ram, self.process)
 
     ## create the new persistent task
-    epoller = await EpollCenter.make_root(task, task.base)
-    signal_block = SignalBlock(task.base, await task.to_pointer(Sigset({Signals.SIGCHLD})))
+    epoller = await EpollCenter.make_root(ram, task)
+    signal_block = SignalBlock(task, await ram.to_pointer(Sigset({Signals.SIGCHLD})))
     # TODO use an inherited signalfd instead
-    child_monitor = await ChildProcessMonitor.make(task, task.base, epoller, signal_block=signal_block)
+    child_monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
     stdtask = StandardTask(
-        task.base, task,
-        self.connection.for_task(task.base, task),
+        task, ram,
+        self.connection.for_task(task, ram),
         self.process,
         epoller,
         child_monitor,
-        self.environ.inherit(task.base, task),
-        stdin=self.stdin.for_task(task.base),
-        stdout=self.stdout.for_task(task.base),
-        stderr=self.stderr.for_task(task.base),
+        self.environ.inherit(task, ram),
+        stdin=self.stdin.for_task(task),
+        stdout=self.stdout.for_task(task),
+        stderr=self.stderr.for_task(task),
     )
-    persistent_server = PersistentServer(path, task, syscall, listening_sock_handle, thread_process)
+    persistent_server = PersistentServer(path, task, ram, syscall, listening_sock_handle, thread_process)
     return stdtask, persistent_server

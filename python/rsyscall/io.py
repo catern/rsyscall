@@ -70,15 +70,6 @@ import inspect
 logger = logging.getLogger(__name__)
 
 T = t.TypeVar('T')
-class Task(RAM):
-    def __init__(self,
-                 base_: handle.Task,
-                 transport: handle.MemoryTransport,
-                 allocator: memory.AllocatorClient,
-    ) -> None:
-        super().__init__(base_, transport, allocator)
-        self.base = base_
-
 class MemFileDescriptor:
     "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."
     def __init__(self, ram: RAM, handle: handle.FileDescriptor) -> None:
