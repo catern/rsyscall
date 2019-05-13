@@ -155,6 +155,10 @@ class ConnectionThread(EpollThread):
         super().__init__(task, ram, epoller)
         self.connection = connection
 
+    def _init_from(self, thr: ConnectionThread) -> None:
+        super().__init__(thr.task, thr.ram, thr.epoller)
+        self.connection = thr.connection
+
     async def make_async_connections(self, count: int) -> t.List[
             t.Tuple[AsyncFileDescriptor, FileDescriptor]
     ]:
