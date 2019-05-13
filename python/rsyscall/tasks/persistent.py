@@ -14,6 +14,8 @@ from dataclasses import dataclass
 import logging
 import rsyscall.batch as batch
 
+from rsyscall.memory.ram import RAM
+
 from rsyscall.epoller import EpollCenter
 
 from rsyscall.struct import Bytes, Int32, StructList
@@ -143,7 +145,9 @@ async def spawn_rsyscall_persistent_server(
         access_sock: AsyncFileDescriptor,
         remote_sock: handle.FileDescriptor,
         listening_sock: handle.FileDescriptor,
-        parent_task: Task, process_resources: ProcessResources,
+        parent_task: handle.Task,
+        parent_ram: RAM,
+        process_resources: ProcessResources,
     ) -> t.Tuple[Task, RsyscallInterface, handle.FileDescriptor, ThreadProcess]:
     async def op(sem: batch.BatchSemantics) -> t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]]:
         stack_value = process_resources.make_trampoline_stack(Trampoline(
@@ -151,24 +155,24 @@ async def spawn_rsyscall_persistent_server(
         stack_buf = sem.malloc_type(handle.Stack, 4096)
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         return stack
-    stack = await parent_task.perform_async_batch(op)
-    thread_process = await parent_task.base.clone(
+    stack = await parent_ram.perform_async_batch(op)
+    thread_process = await parent_task.clone(
         (CLONE.VM|CLONE.FS|CLONE.FILES|CLONE.IO|
          CLONE.SIGHAND|CLONE.SYSVSEM|Signals.SIGCHLD),
         stack, None, None, None)
     syscall = RsyscallInterface(RsyscallConnection(access_sock, access_sock),
                                 thread_process.near)
     new_base_task = handle.Task(syscall, thread_process.near, None,
-                              parent_task.base.fd_table, parent_task.base.address_space, parent_task.base.fs,
-                              parent_task.base.pidns,
-                              parent_task.base.netns)
-    new_base_task.sigmask = parent_task.base.sigmask
+                                parent_task.fd_table, parent_task.address_space, parent_task.fs,
+                                parent_task.pidns,
+                                parent_task.netns)
+    new_base_task.sigmask = parent_task.sigmask
     remote_sock_handle = remote_sock.move(new_base_task)
     remote_listening_handle = listening_sock.move(new_base_task)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     new_task = Task(new_base_task,
-                    parent_task.transport.inherit(new_base_task),
-                    parent_task.allocator.inherit(new_base_task),
+                    parent_ram.transport.inherit(new_base_task),
+                    parent_ram.allocator.inherit(new_base_task),
     )
     return new_task, syscall, remote_listening_handle, thread_process
 
@@ -182,7 +186,7 @@ async def fork_persistent(
     [(access_sock, remote_sock)] = await self.make_async_connections(1)
     task, syscall, listening_sock_handle, thread_process = await spawn_rsyscall_persistent_server(
         access_sock, remote_sock, listening_sock,
-        self.task, self.process)
+        self.task.base, self.ram, self.process)
 
     ## create the new persistent task
     epoller = await EpollCenter.make_root(task, task.base)
