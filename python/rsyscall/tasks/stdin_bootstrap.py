@@ -106,8 +106,9 @@ async def rsyscall_stdin_bootstrap(
     connection = make_connection(base_task, task,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
     new_stdtask = StandardTask(
+        task=task.base,
+        ram=task,
         connection=connection,
-        task=task,
         process_resources=ProcessResources.make_from_symbols(base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,

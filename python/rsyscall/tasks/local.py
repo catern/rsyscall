@@ -136,8 +136,9 @@ async def _make_local_stdtask() -> StandardTask:
     access_connection = None
     connection = await FDPassConnection.make(task, mem_task, epoller)
     stdtask = StandardTask(
+        task, mem_task,
         connection,
-        mem_task, process_resources,
+        process_resources,
         epoller, child_monitor,
         Environment(task, mem_task, environ),
         stdin=task.make_fd_handle(near.FileDescriptor(0)),

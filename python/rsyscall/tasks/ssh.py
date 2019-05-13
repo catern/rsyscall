@@ -263,8 +263,9 @@ async def ssh_bootstrap(
         new_base_task.make_fd_handle(listening_fd),
     )
     new_stdtask = StandardTask(
+        task=new_task.base,
+        ram=new_task,
         connection=connection,
-        task=new_task,
         process_resources=ProcessResources.make_from_symbols(new_base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,

@@ -314,8 +314,9 @@ async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
 
 class StandardTask:
     def __init__(self,
+                 task: handle.Task,
+                 ram: RAM,
                  connection: Connection,
-                 task: Task,
                  process_resources: ProcessResources,
                  epoller: EpollCenter,
                  child_monitor: ChildProcessMonitor,
@@ -324,10 +325,10 @@ class StandardTask:
                  stdout: handle.FileDescriptor,
                  stderr: handle.FileDescriptor,
     ) -> None:
-        self.connection = connection
         self.task = task
-        self.ram = task
-        self.ramthr = RAMThread(task.base, task)
+        self.ram = ram
+        self.connection = connection
+        self.ramthr = RAMThread(self.task, self.ram)
         self.process = process_resources
         self.epoller = epoller
         self.child_monitor = child_monitor
@@ -425,8 +426,8 @@ class StandardTask:
             epoller = self.epoller.inherit(task)
             child_monitor = self.child_monitor.inherit_to_child(task.base)
         stdtask = StandardTask(
+            task.base, task,
             self.connection.for_task(task.base, task),
-            task, 
             self.process,
             epoller, child_monitor,
             self.environ.inherit(task.base, task),
@@ -617,8 +618,9 @@ class RsyscallThread(StandardTask):
                  parent_monitor: ChildProcessMonitor,
     ) -> None:
         super().__init__(
-            stdtask.connection,
             stdtask.task,
+            stdtask.ram,
+            stdtask.connection,
             stdtask.process,
             stdtask.epoller,
             stdtask.child_monitor,

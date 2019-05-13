@@ -194,8 +194,8 @@ async def fork_persistent(
     # TODO use an inherited signalfd instead
     child_monitor = await ChildProcessMonitor.make(task, task.base, epoller, signal_block=signal_block)
     stdtask = StandardTask(
+        task.base, task,
         self.connection.for_task(task.base, task),
-        task, 
         self.process,
         epoller,
         child_monitor,
