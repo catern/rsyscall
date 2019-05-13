@@ -15,6 +15,7 @@ from rsyscall.handle import FileDescriptor, Path
 from dataclasses import dataclass
 from rsyscall.struct import Int32, Bytes
 from rsyscall.monitor import AsyncChildProcess
+from rsyscall.memory.ram import RAMThread
 
 import rsyscall.tasks.local as local
 from rsyscall.sys.capability import CAP, CapHeader, CapData
@@ -85,28 +86,28 @@ async def exec_miredo_run_client(
         server_name, server_name))
     return child
 
-async def add_to_ambient(task: rsc.Task, capset: t.Set[CAP]) -> None:
-    hdr_ptr = await task.to_pointer(CapHeader())
-    data_ptr = await task.malloc_struct(CapData)
-    await task.base.capget(hdr_ptr, data_ptr)
+async def add_to_ambient(thr: RAMThread, capset: t.Set[CAP]) -> None:
+    hdr_ptr = await thr.ram.to_pointer(CapHeader())
+    data_ptr = await thr.ram.malloc_struct(CapData)
+    await thr.task.capget(hdr_ptr, data_ptr)
     data = await data_ptr.read()
     data.inheritable.update(capset)
     data_ptr = await data_ptr.write(data)
-    await task.base.capset(hdr_ptr, data_ptr)
+    await thr.task.capset(hdr_ptr, data_ptr)
     for cap in capset:
-        await task.base.prctl(PrctlOp.CAP_AMBIENT, CapAmbient.RAISE, cap)
+        await thr.task.prctl(PrctlOp.CAP_AMBIENT, CapAmbient.RAISE, cap)
 
 async def start_miredo(nursery, miredo_exec: MiredoExecutables, stdtask: StandardTask) -> Miredo:
     inet_sock = await stdtask.task.base.socket(AF.INET, SOCK.DGRAM)
-    await inet_sock.bind(await stdtask.task.to_pointer(SockaddrIn(0, 0)))
+    await inet_sock.bind(await stdtask.ram.to_pointer(SockaddrIn(0, 0)))
     # set a bunch of sockopts
-    one = await stdtask.task.to_pointer(Int32(1))
+    one = await stdtask.ram.to_pointer(Int32(1))
     await inet_sock.setsockopt(SOL.IP, IP.RECVERR, one)
     await inet_sock.setsockopt(SOL.IP, IP.PKTINFO, one)
     await inet_sock.setsockopt(SOL.IP, IP.MULTICAST_TTL, one)
     # hello fragments my old friend
     await inet_sock.setsockopt(SOL.IP, IP.MTU_DISCOVER,
-                               await stdtask.task.to_pointer(Int32(IP.PMTUDISC_DONT)))
+                               await stdtask.ram.to_pointer(Int32(IP.PMTUDISC_DONT)))
     ns_thread = await stdtask.fork()
     await ns_thread.stdtask.unshare_user()
     await ns_thread.stdtask.unshare_net()
@@ -115,7 +116,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, stdtask: Standar
 
     # create the TUN interface
     tun_fd = await ns_thread.task.base.open(await ns_thread.ram.to_pointer(Path("/dev/net/tun")), O.RDWR|O.CLOEXEC)
-    ptr = await stdtask.task.to_pointer(netif.Ifreq(b'teredo', flags=netif.IFF_TUN))
+    ptr = await stdtask.ram.to_pointer(netif.Ifreq(b'teredo', flags=netif.IFF_TUN))
     await tun_fd.ioctl(netif.TUNSETIFF, ptr)
     # create reqsock for ifreq operations in this network namespace
     reqsock = await ns_thread.stdtask.task.base.socket(AF.INET, SOCK.STREAM)
@@ -124,10 +125,10 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, stdtask: Standar
     ptr.free()
     # create socketpair for communication between privileged process and teredo client
     privproc_pair = await (await ns_thread.stdtask.task.base.socketpair(
-        AF.UNIX, SOCK.STREAM, 0, await ns_thread.stdtask.task.malloc_struct(FDPair))).read()
+        AF.UNIX, SOCK.STREAM, 0, await ns_thread.stdtask.ram.malloc_struct(FDPair))).read()
 
     privproc_thread = await ns_thread.stdtask.fork()
-    await add_to_ambient(privproc_thread.stdtask.task, {CAP.NET_ADMIN})
+    await add_to_ambient(privproc_thread.stdtask.ramthr, {CAP.NET_ADMIN})
     privproc_child = await exec_miredo_privproc(miredo_exec, privproc_thread, privproc_pair.first, tun_index)
     nursery.start_soon(privproc_child.check)
 
@@ -176,7 +177,7 @@ class TestMiredo(TrioTestCase):
         print("c", time.time())
         # bash = await rsc.which(self.stdtask, "bash")
         # await (await thread.exec(bash)).check()
-        await add_to_ambient(thread.stdtask.task, {CAP.NET_RAW})
+        await add_to_ambient(thread.stdtask.ramthr, {CAP.NET_RAW})
         await (await thread.exec(ping6.args('-c', '1', 'google.com'))).check()
         print("d", time.time())
 

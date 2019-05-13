@@ -41,7 +41,7 @@ async def rsyscall_stdin_bootstrap(
     thread = await stdtask.fork()
     # create the socketpair that will be used as stdin
     stdin_pair = await (await stdtask.task.base.socketpair(
-        AF.UNIX, SOCK.STREAM, 0, await stdtask.task.malloc_struct(FDPair))).read()
+        AF.UNIX, SOCK.STREAM, 0, await stdtask.ram.malloc_struct(FDPair))).read()
     parent_sock = stdin_pair.first
     child_sock = stdin_pair.second.move(thread.stdtask.task.base)
     # set up stdin with socketpair
@@ -55,7 +55,7 @@ async def rsyscall_stdin_bootstrap(
      (access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(2)
     # memfd for setting up the futex
     futex_memfd = await stdtask.task.base.memfd_create(
-        await stdtask.task.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
+        await stdtask.ram.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
     # send the fds to the new process
     connection_fd, make_connection = await stdtask.connection.prep_fd_transfer()
     def sendmsg_op(sem: batch.BatchSemantics) -> handle.WrittenPointer[handle.SendMsghdr]:
@@ -63,7 +63,7 @@ async def rsyscall_stdin_bootstrap(
         cmsgs = sem.to_pointer(handle.CmsgList([handle.CmsgSCMRights([
             passed_syscall_sock, passed_data_sock, futex_memfd, connection_fd])]))
         return sem.to_pointer(handle.SendMsghdr(None, iovec, cmsgs))
-    _, [] = await parent_sock.sendmsg(await stdtask.task.perform_batch(sendmsg_op), SendmsgFlags.NONE)
+    _, [] = await parent_sock.sendmsg(await stdtask.ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
     # close our reference to fds that only the new process needs
     await passed_syscall_sock.close()
     await passed_data_sock.close()
