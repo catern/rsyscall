@@ -694,7 +694,7 @@ class TestIO(unittest.TestCase):
             async with thread as stdtask2:
                 # have to use an epoller for that specific task
                 epoller = await EpollCenter.make_root(stdtask2.ram, stdtask2.task.base)
-                sigqueue = await SignalQueue.make(stdtask2.task, stdtask2.task.base,
+                sigqueue = await SignalQueue.make(stdtask2.ram, stdtask2.task.base,
                                                   epoller, Sigset({Signals.SIGINT}))
                 await stdtask2.task.base.process.kill(Signals.SIGINT)
                 buf = await stdtask2.ram.malloc_struct(SignalfdSiginfo)

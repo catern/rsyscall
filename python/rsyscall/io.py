@@ -373,7 +373,7 @@ class StandardTask:
         await self.task.base.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
 
     async def make_afd(self, fd: handle.FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
-        return await AsyncFileDescriptor.make_handle(self.epoller, self.task, fd, is_nonblock=nonblock)
+        return await AsyncFileDescriptor.make_handle(self.epoller, self.ram, fd, is_nonblock=nonblock)
 
     async def make_async_connections(self, count: int) -> t.List[
             t.Tuple[AsyncFileDescriptor, handle.FileDescriptor]
@@ -388,7 +388,7 @@ class StandardTask:
     async def fork(self, newuser=False, newpid=False, fs=True, sighand=True) -> RsyscallThread:
         [(access_sock, remote_sock)] = await self.make_async_connections(1)
         base_task = await spawn_rsyscall_thread(
-            self.task, self.task.base,
+            self.ram, self.task.base,
             access_sock, remote_sock,
             self.child_monitor, self.process,
             newuser=newuser, newpid=newpid, fs=fs, sighand=sighand,
@@ -401,8 +401,8 @@ class StandardTask:
                     # But the child is already using the transport and holding the lock,
                     # so the parent will block forever on taking the lock,
                     # and child's read syscall will never complete.
-                    self.task.transport,
-                    self.task.allocator.inherit(base_task),
+                    self.ram.transport,
+                    self.ram.allocator.inherit(base_task),
         )
         await remote_sock.invalidate()
         if newuser:

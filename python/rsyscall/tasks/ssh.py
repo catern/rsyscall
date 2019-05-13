@@ -257,7 +257,7 @@ async def ssh_bootstrap(
     epoller = await EpollCenter.make_root(new_task, new_task.base)
     child_monitor = await ChildProcessMonitor.make(new_task, new_task.base, epoller)
     connection = ListeningConnection(
-        parent_task.task.base, parent_task.task, parent_task.epoller,
+        parent_task.task.base, parent_task.ram, parent_task.epoller,
         local_data_addr,
         new_task.base, new_task,
         new_base_task.make_fd_handle(listening_fd),

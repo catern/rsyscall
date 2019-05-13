@@ -162,7 +162,7 @@ class TestMiredo(TrioTestCase):
         print("b-1", time.time())
         print("b0", time.time())
         await self.netsock.bind(
-            await self.miredo.ns_thread.stdtask.task.to_pointer(SockaddrNl(0, RTMGRP.IPV6_ROUTE)))
+            await self.miredo.ns_thread.stdtask.ram.to_pointer(SockaddrNl(0, RTMGRP.IPV6_ROUTE)))
         print("b0.5", time.time())
 
 
@@ -171,7 +171,7 @@ class TestMiredo(TrioTestCase):
         ping6 = (await rsc.which(self.stdtask, "ping")).args('-6')
         print("b1.5", time.time())
         # TODO lol actually parse this, don't just read and throw it away
-        await self.netsock.read(await self.miredo.ns_thread.stdtask.task.malloc_type(Bytes, 4096))
+        await self.netsock.read(await self.miredo.ns_thread.stdtask.ram.malloc_type(Bytes, 4096))
         print("b2", time.time())
         thread = await self.miredo.ns_thread.stdtask.fork()
         print("c", time.time())

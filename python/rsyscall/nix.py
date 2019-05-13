@@ -110,7 +110,7 @@ async def nix_deploy(
     dest_path = dest_task.task.base.make_path_handle(src_path)
 
     query_thread = await src_task.fork()
-    query_pipe = await (await src_task.task.base.pipe(await src_task.task.malloc_struct(Pipe))).read()
+    query_pipe = await (await src_task.task.base.pipe(await src_task.ram.malloc_struct(Pipe))).read()
     query_stdout = query_pipe.write.move(query_thread.stdtask.task.base)
     await query_thread.stdtask.unshare_files(going_to_exec=True)
     await query_thread.stdtask.stdout.replace_with(query_stdout)
