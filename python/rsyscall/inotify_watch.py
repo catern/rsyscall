@@ -11,6 +11,7 @@ import typing as t
 from dataclasses import dataclass, field
 import math
 import enum
+from rsyscall.memory.ram import RAM
 
 from rsyscall.sys.inotify import InotifyFlag, IN, InotifyEvent, InotifyEventList
 from rsyscall.limits import NAME_MAX
@@ -60,9 +61,9 @@ _inotify_minimum_size_to_read_one_event = (ffi.sizeof('struct inotify_event') + 
 assert _inotify_read_size > _inotify_minimum_size_to_read_one_event
 
 class Inotify:
-    def __init__(self, asyncfd: AsyncFileDescriptor, task: Task) -> None:
+    def __init__(self, asyncfd: AsyncFileDescriptor, ram: RAM) -> None:
         self.asyncfd = asyncfd
-        self.task = task
+        self.ram = ram
         self.wd_to_channel: t.Dict[WatchDescriptor, trio.abc.SendChannel] = {}
         self.running_wait = OneAtATime()
 
@@ -73,11 +74,11 @@ class Inotify:
     @staticmethod
     async def make(stdtask: StandardTask) -> Inotify:
         fd = await stdtask.task.base.inotify_init(InotifyFlag.CLOEXEC|InotifyFlag.NONBLOCK)
-        asyncfd = await AsyncFileDescriptor.make_handle(stdtask.epoller, stdtask.task, fd, is_nonblock=True)
-        return Inotify(asyncfd, stdtask.task)
+        asyncfd = await AsyncFileDescriptor.make_handle(stdtask.epoller, stdtask.ram, fd, is_nonblock=True)
+        return Inotify(asyncfd, stdtask.ram)
 
     async def add(self, path: handle.Path, mask: IN) -> Watch:
-        wd = await self.asyncfd.handle.inotify_add_watch(await self.task.to_pointer(path), mask)
+        wd = await self.asyncfd.handle.inotify_add_watch(await self.ram.to_pointer(path), mask)
         send, receive = trio.open_memory_channel(math.inf)
         watch = Watch(self, receive, wd)
         # if we wrap, this could overwrite a removed watch that still
@@ -90,7 +91,7 @@ class Inotify:
     async def do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
-                valid, _ = await self.asyncfd.read_handle(await self.task.malloc_type(InotifyEventList, 4096))
+                valid, _ = await self.asyncfd.read_handle(await self.ram.malloc_type(InotifyEventList, 4096))
                 if valid.bytesize() == 0:
                     raise Exception('got EOF from inotify fd? what?')
                 for event in await valid.read():

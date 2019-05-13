@@ -34,12 +34,12 @@ class TestSSH(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.stdtask = local.stdtask
         self.task = self.stdtask.task.base
-        self.ram = self.stdtask.task
+        self.ram = self.stdtask.ram
         self.store = local_store
         self.host = await make_local_ssh(self.stdtask, self.store)
         self.local_child, self.remote_stdtask = await self.host.ssh(self.stdtask)
         self.remote_task = self.remote_stdtask.task.base
-        self.remote_ram = self.remote_stdtask.task
+        self.remote_ram = self.remote_stdtask.ram
 
     async def test_read(self) -> None:
         [(local_sock, remote_sock)] = await self.remote_stdtask.make_connections(1)

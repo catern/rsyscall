@@ -95,9 +95,9 @@ class TestIO(unittest.TestCase):
 
     def test_pipe(self):
         async def test(stdtask: StandardTask) -> None:
-            pipe = await (await stdtask.task.base.pipe(await stdtask.task.malloc_struct(Pipe), O.CLOEXEC)).read()
+            pipe = await (await stdtask.task.base.pipe(await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
             in_data = b"hello"
-            written, _ = await pipe.write.write(await stdtask.task.to_pointer(Bytes(in_data)))
+            written, _ = await pipe.write.write(await stdtask.ram.to_pointer(Bytes(in_data)))
             valid, _ = await pipe.read.read(written)
             self.assertEqual(in_data, await valid.read())
         trio.run(self.runner, test)
@@ -105,7 +105,7 @@ class TestIO(unittest.TestCase):
     def test_readv(self):
         async def test(stdtask: StandardTask) -> None:
             task = stdtask.task.base
-            ram = stdtask.task
+            ram = stdtask.ram
             pipe = await (await task.pipe(await ram.malloc_struct(Pipe), O.CLOEXEC)).read()
             in_data = [b"hello", b"world"]
             iov = await ram.to_pointer(IovecList([await ram.to_pointer(Bytes(data)) for data in in_data]))
@@ -126,9 +126,9 @@ class TestIO(unittest.TestCase):
 
         """
         async def test(stdtask: StandardTask) -> None:
-            pipe = await (await stdtask.task.base.pipe(await stdtask.task.malloc_struct(Pipe), O.CLOEXEC)).read()
+            pipe = await (await stdtask.task.base.pipe(await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
             in_data = b"hello"
-            written, _ = await pipe.write.write(await stdtask.task.to_pointer(Bytes(in_data)))
+            written, _ = await pipe.write.write(await stdtask.ram.to_pointer(Bytes(in_data)))
             with self.assertRaises(OSError):
                 valid, _ = await pipe.read.recv(written, 0)
         trio.run(self.runner, test)
@@ -136,14 +136,14 @@ class TestIO(unittest.TestCase):
     def test_to_pointer(self):
         async def test(stdtask: StandardTask) -> None:
             event = EpollEvent(42, EPOLL.NONE)
-            ptr = await stdtask.task.to_pointer(event)
+            ptr = await stdtask.ram.to_pointer(event)
             read_event = await ptr.read()
             self.assertEqual(event.data, read_event.data)
             
             ifreq = Ifreq()
             ifreq.name = b"1234"
             ifreq.ifindex = 13
-            iptr = await stdtask.task.to_pointer(ifreq)
+            iptr = await stdtask.ram.to_pointer(ifreq)
             read_ifreq = await iptr.read()
             self.assertEqual(read_ifreq.ifindex, ifreq.ifindex)
             self.assertEqual(read_ifreq.name, ifreq.name)
@@ -238,7 +238,7 @@ class TestIO(unittest.TestCase):
 
     def test_async(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            await self.do_async_things(stdtask.epoller, stdtask.task)
+            await self.do_async_things(stdtask.epoller, stdtask.ram)
         trio.run(self.runner, test)
 
     # def test_async_multi(self) -> None:
@@ -507,7 +507,7 @@ class TestIO(unittest.TestCase):
 
             tunpath = rsyscall.path.Path("/dev/net/tun")
             tun_fd = await stdtask.task.base.open(await stdtask.ram.to_pointer(tunpath), O.RDWR|O.CLOEXEC)
-            ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
+            ptr = await stdtask.ram.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
             await tun_fd.ioctl(net.TUNSETIFF, ptr)
             sock = await stdtask.task.base.socket(AF.INET, SOCK.STREAM)
             await sock.ioctl(net.SIOCGIFINDEX, ptr)
@@ -524,18 +524,18 @@ class TestIO(unittest.TestCase):
             await stdtask.unshare_net()
 
             netsock = await stdtask.task.base.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
-            await netsock.bind(await stdtask.task.to_pointer(SockaddrNl(0, RTMGRP.LINK)))
+            await netsock.bind(await stdtask.ram.to_pointer(SockaddrNl(0, RTMGRP.LINK)))
 
             tunpath = rsyscall.path.Path("/dev/net/tun")
             tun_fd = await stdtask.task.base.open(await stdtask.ram.to_pointer(tunpath), O.RDWR|O.CLOEXEC)
-            ptr = await stdtask.task.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
+            ptr = await stdtask.ram.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
             await tun_fd.ioctl(net.TUNSETIFF, ptr)
             sock = await stdtask.task.base.socket(AF.INET, SOCK.STREAM)
             await sock.ioctl(net.SIOCGIFINDEX, ptr)
             # this is the second interface in an empty netns
             self.assertEqual((await ptr.read()).ifindex, 2)
 
-            valid, _ = await netsock.read(await stdtask.task.malloc_type(Bytes, 4096))
+            valid, _ = await netsock.read(await stdtask.ram.malloc_type(Bytes, 4096))
             from pyroute2 import IPBatch
             batch = IPBatch()
             evs = batch.marshal.parse(await valid.read())
@@ -545,8 +545,8 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             await stdtask.unshare_user()
             await stdtask.unshare_net()
-            hdr_ptr = await stdtask.task.to_pointer(CapHeader())
-            data_ptr = await stdtask.task.malloc_struct(CapData)
+            hdr_ptr = await stdtask.ram.to_pointer(CapHeader())
+            data_ptr = await stdtask.ram.malloc_struct(CapData)
             await stdtask.task.base.capget(hdr_ptr, data_ptr)
             data = await data_ptr.read()
             data.inheritable.add(CAP.NET_ADMIN)
@@ -560,7 +560,7 @@ class TestIO(unittest.TestCase):
             from rsyscall.signal import Sighandler, Sigaction, Sigset, Signals
             import readline
             sa = Sigaction(Sighandler.DFL)
-            ptr = await stdtask.task.to_pointer(sa)
+            ptr = await stdtask.ram.to_pointer(sa)
             await stdtask.task.base.sigaction(Signals.SIGWINCH, ptr, None)
             await stdtask.task.base.sigaction(Signals.SIGWINCH, None, ptr)
             out_sa = await ptr.read()
@@ -927,18 +927,19 @@ class TestIO(unittest.TestCase):
             from rsyscall.handle import (FDPair, SendMsghdr, RecvMsghdr, IovecList, SendmsgFlags, RecvmsgFlags,
                                          CmsgSCMRights, CmsgList, MsghdrFlags)
             task = stdtask.task
+            ram = stdtask.ram
             fds = await (await task.base.socketpair(
                 AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC, 0,
-                await task.malloc_struct(FDPair))).read()
+                await ram.malloc_struct(FDPair))).read()
             in_data = b"hello"
 
-            iovec = await task.to_pointer(IovecList([await task.to_pointer(Bytes(in_data))]))
-            cmsgs = await task.to_pointer(CmsgList([CmsgSCMRights([fds.second])]))
+            iovec = await ram.to_pointer(IovecList([await ram.to_pointer(Bytes(in_data))]))
+            cmsgs = await ram.to_pointer(CmsgList([CmsgSCMRights([fds.second])]))
             [written], [] = await fds.second.sendmsg(
-                await task.to_pointer(SendMsghdr(None, iovec, cmsgs)), SendmsgFlags.NONE)
+                await ram.to_pointer(SendMsghdr(None, iovec, cmsgs)), SendmsgFlags.NONE)
 
             [valid], [], hdr = await fds.first.recvmsg(
-                await task.to_pointer(RecvMsghdr(None, iovec, cmsgs)), RecvmsgFlags.NONE)
+                await ram.to_pointer(RecvMsghdr(None, iovec, cmsgs)), RecvmsgFlags.NONE)
 
             self.assertEqual(in_data, await valid.read())
 

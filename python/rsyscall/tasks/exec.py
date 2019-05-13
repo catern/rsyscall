@@ -51,11 +51,11 @@ async def make_robust_futex_task(
     await child_memfd.invalidate()
 
     remote_futex_node = await set_singleton_robust_futex(
-        child_stdtask.task.base, child_stdtask.task.transport, memory.Arena(remote_mapping))
+        child_stdtask.task.base, child_stdtask.ram.transport, memory.Arena(remote_mapping))
     local_futex_node = remote_futex_node._with_mapping(local_mapping)
     # now we start the futex monitor
     futex_task = await launch_futex_monitor(
-        parent_stdtask.task, parent_stdtask.process, parent_stdtask.child_monitor, local_futex_node)
+        parent_stdtask.ram, parent_stdtask.process, parent_stdtask.child_monitor, local_futex_node)
     return futex_task, local_futex_node, remote_mapping
 
 @dataclass
@@ -78,7 +78,7 @@ async def rsyscall_exec(
     [(access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(1)
     # create this guy and pass him down to the new thread
     child_futex_memfd = await stdtask.task.base.memfd_create(
-        await stdtask.task.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
+        await stdtask.ram.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
     parent_futex_memfd = parent_stdtask.task.base.make_fd_handle(child_futex_memfd)
     if isinstance(stdtask.task.base.sysif, ChildConnection):
         syscall = stdtask.task.base.sysif
@@ -111,9 +111,9 @@ async def rsyscall_exec(
     stdtask.task.base.address_space = far.AddressSpace(rsyscall_thread.stdtask.task.base.process.near.id)
     # we mutate the allocator instead of replacing to so that anything that
     # has stored the allocator continues to work
-    stdtask.task.allocator.allocator = memory.Allocator(stdtask.task.base)
-    stdtask.task.transport = SocketMemoryTransport(access_data_sock,
-                                                   passed_data_sock, stdtask.task.allocator)
+    stdtask.ram.allocator.allocator = memory.Allocator(stdtask.task.base)
+    stdtask.ram.transport = SocketMemoryTransport(access_data_sock,
+                                                  passed_data_sock, stdtask.ram.allocator)
     base_task.manipulating_fd_table = False
 
     #### make new futex task

@@ -687,7 +687,7 @@ class RsyscallThread(StandardTask):
             return (sem.to_pointer(path),
                     sem.to_pointer(argv_ptrs),
                     sem.to_pointer(envp_ptrs))
-        filename, argv_ptr, envp_ptr = await self.stdtask.task.perform_batch(op)
+        filename, argv_ptr, envp_ptr = await self.stdtask.ram.perform_batch(op)
         child_process = await self.stdtask.task.base.execve(filename, argv_ptr, envp_ptr, flags)
         return self.parent_monitor.internal.add_task(child_process)
 
@@ -714,14 +714,13 @@ class RsyscallThread(StandardTask):
         sigmask: t.Set[signal.Signals] = set()
         for block in inherited_signal_blocks:
             sigmask = sigmask.union(block.mask)
-        await self.stdtask.task.base.sigprocmask((HowSIG.SETMASK, await self.stdtask.task.to_pointer(Sigset(sigmask))))
+        await self.stdtask.task.base.sigprocmask((HowSIG.SETMASK, await self.stdtask.ram.to_pointer(Sigset(sigmask))))
         envp: t.Dict[bytes, bytes] = {**self.stdtask.environ.data}
         for key in env_updates:
             envp[os.fsencode(key)] = os.fsencode(env_updates[key])
         raw_envp: t.List[bytes] = []
         for key_bytes, value in envp.items():
             raw_envp.append(b''.join([key_bytes, b'=', value]))
-        task = self.stdtask.task
         logger.info("execveat(%s, %s, %s)", path, argv, env_updates)
         return await self.execveat(path, [os.fsencode(arg) for arg in argv], raw_envp, AT.NONE)
 

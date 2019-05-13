@@ -177,7 +177,7 @@ async def fork_persistent(
         self: StandardTask, path: Path,
 ) -> t.Tuple[StandardTask, PersistentServer]:
     listening_sock = await self.task.base.socket(AF.UNIX, SOCK.STREAM)
-    await listening_sock.bind(await self.task.to_pointer(await path.as_sockaddr_un()))
+    await listening_sock.bind(await self.ram.to_pointer(await path.as_sockaddr_un()))
     await listening_sock.listen(1)
     [(access_sock, remote_sock)] = await self.make_async_connections(1)
     task, syscall, listening_sock_handle, thread_process = await spawn_rsyscall_persistent_server(

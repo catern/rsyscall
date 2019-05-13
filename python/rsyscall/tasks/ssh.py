@@ -134,7 +134,7 @@ async def run_socket_binder(
         bootstrap_executable: handle.FileDescriptor,
 ) -> t.AsyncGenerator[bytes, None]:
     stdout_pipe = await (await task.task.base.pipe(
-        await task.task.malloc_struct(Pipe), O.CLOEXEC)).read()
+        await task.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
     async_stdout = await task.make_afd(stdout_pipe.read)
     thread = await task.fork()
     stdout = stdout_pipe.write.move(thread.stdtask.task.base)
@@ -172,7 +172,7 @@ async def run_socket_binder(
 async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
                       local_path: handle.Path, remote_path: str) -> AsyncChildProcess:
     stdout_pipe = await (await stdtask.task.base.pipe(
-        await stdtask.task.malloc_struct(Pipe), O.CLOEXEC)).read()
+        await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
     async_stdout = await stdtask.make_afd(stdout_pipe.read)
     thread = await stdtask.fork()
     stdout = stdout_pipe.write.move(thread.stdtask.task.base)
@@ -201,8 +201,7 @@ async def ssh_bootstrap(
         tmp_path_bytes: bytes,
 ) -> t.Tuple[AsyncChildProcess, StandardTask]:
     # identify local path
-    task = parent_task.task
-    local_data_path = Path(task, local_socket_path)
+    local_data_path = Path(parent_task.task, local_socket_path)
     # start port forwarding; we'll just leak this process, no big deal
     # TODO we shouldn't leak processes; we should be GCing processes at some point
     forward_child = await ssh_forward(
@@ -216,7 +215,7 @@ async def ssh_bootstrap(
     # it would be better if sh supported fexecve, then I could unlink it before I exec...
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor:
-        sock = await parent_task.make_afd(await task.base.socket(AF.UNIX, SOCK.STREAM))
+        sock = await parent_task.make_afd(await parent_task.task.base.socket(AF.UNIX, SOCK.STREAM))
         addr = await local_data_path.as_sockaddr_un()
         await sock.connect(addr)
         await addr.close()
