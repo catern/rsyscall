@@ -303,7 +303,7 @@ async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
     await gid_map.write(await thr.ram.to_pointer(Bytes(f"{in_namespace_gid} {gid} 1\n".encode())))
     await gid_map.close()
 
-class StandardTask:
+class StandardTask(RAMThread):
     def __init__(self,
                  task: handle.Task,
                  ram: RAM,
@@ -316,10 +316,10 @@ class StandardTask:
                  stdout: handle.FileDescriptor,
                  stderr: handle.FileDescriptor,
     ) -> None:
+        super().__init__(task, ram)
         self.task = task
         self.ram = ram
         self.connection = connection
-        self.ramthr = RAMThread(self.task, self.ram)
         self.process = process_resources
         self.epoller = epoller
         self.child_monitor = child_monitor
@@ -327,6 +327,10 @@ class StandardTask:
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
+
+    @property
+    def ramthr(self) -> RAMThread:
+        return self
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
         parent = Path(self.ramthr, self.environ.tmpdir)
