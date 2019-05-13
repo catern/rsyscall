@@ -3,7 +3,7 @@ import rsyscall.handle as handle
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, ProcessResources, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, Task, ChildProcessMonitor, which
+from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, ProcessResources, FileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, ChildProcessMonitor, which
 from dataclasses import dataclass
 import importlib.resources
 import logging
@@ -17,6 +17,7 @@ from rsyscall.monitor import AsyncChildProcess
 from rsyscall.network.connection import ListeningConnection
 from rsyscall.environ import Environment
 from rsyscall.epoller import EpollCenter
+from rsyscall.memory.ram import RAM
 
 import rsyscall.nix as nix
 from rsyscall.fcntl import O
@@ -253,26 +254,26 @@ async def ssh_bootstrap(
     new_transport = SocketMemoryTransport(async_local_data_sock,
                                           handle_remote_data_fd, new_allocator)
     # we don't inherit SignalMask; we assume ssh zeroes the sigmask before starting us
-    new_task = Task(new_base_task, new_transport, new_allocator)
-    epoller = await EpollCenter.make_root(new_task, new_task.base)
-    child_monitor = await ChildProcessMonitor.make(new_task, new_task.base, epoller)
+    new_ram = RAM(new_base_task, new_transport, new_allocator)
+    epoller = await EpollCenter.make_root(new_ram, new_base_task)
+    child_monitor = await ChildProcessMonitor.make(new_ram, new_base_task, epoller)
     connection = ListeningConnection(
         parent_task.task.base, parent_task.ram, parent_task.epoller,
         local_data_addr,
-        new_task.base, new_task,
+        new_base_task, new_ram,
         new_base_task.make_fd_handle(listening_fd),
     )
     new_stdtask = StandardTask(
-        task=new_task.base,
-        ram=new_task,
+        task=new_base_task,
+        ram=new_ram,
         connection=connection,
         process_resources=ProcessResources.make_from_symbols(new_base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,
-        environ=Environment(new_task.base, new_task, environ),
-        stdin=new_task.base.make_fd_handle(near.FileDescriptor(0)),
-        stdout=new_task.base.make_fd_handle(near.FileDescriptor(1)),
-        stderr=new_task.base.make_fd_handle(near.FileDescriptor(2)),
+        environ=Environment(new_base_task, new_ram, environ),
+        stdin=new_base_task.make_fd_handle(near.FileDescriptor(0)),
+        stdout=new_base_task.make_fd_handle(near.FileDescriptor(1)),
+        stderr=new_base_task.make_fd_handle(near.FileDescriptor(2)),
     )
     return bootstrap_child_task, new_stdtask
 
