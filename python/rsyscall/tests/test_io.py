@@ -732,8 +732,12 @@ class TestIO(unittest.TestCase):
 
                 thread = await stdtask.fork()
                 cat = await stdtask.environ.which("cat")
-                child_task = await rsyscall.io.exec_cat(thread, cat, source_file, dest_file)
-                await child_task.wait_for_exit()
+                await thread.unshare_files_and_replace({
+                    thread.stdin: source_file,
+                    thread.stdout: dest_file,
+                })
+                child_process = await thread.exec(cat)
+                await child_process.check()
 
                 await dest_file.lseek(0, SEEK.SET)
                 self.assertEqual(await (await dest_file.read(buf))[0].read(), data)

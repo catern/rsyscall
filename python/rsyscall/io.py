@@ -5,7 +5,6 @@ from rsyscall.command import Command
 from rsyscall.handle import FileDescriptor, Path, WrittenPointer, Pointer, Task
 from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.mktemp import mkdtemp, TemporaryDirectory
-from rsyscall.monitor import AsyncChildProcess
 from rsyscall.struct import Bytes
 from rsyscall.unix_thread import UnixThread, ChildUnixThread
 import os
@@ -211,15 +210,6 @@ class ChildThread(StandardTask, ChildUnixThread):
         await self.close()
 
 RsyscallThread = ChildThread
-
-async def exec_cat(thread: RsyscallThread, cat: Command,
-                   stdin: FileDescriptor, stdout: FileDescriptor) -> AsyncChildProcess:
-    await thread.stdtask.unshare_files_and_replace({
-        thread.stdtask.stdin: stdin,
-        thread.stdtask.stdout: stdout,
-    }, going_to_exec=True)
-    child_task = await thread.exec(cat)
-    return child_task
 
 async def read_full(read: t.Callable[[int], t.Awaitable[bytes]], size: int) -> bytes:
     buf = b""
