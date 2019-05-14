@@ -73,7 +73,7 @@ async def do_async_things(self: unittest.TestCase, epoller, thr: RAMThread) -> N
         logger.info("performing write")
         # hmmm MMM MMMmmmm MMM mmm MMm mm MM mmm MM mm MM
         # does this make sense?
-        await async_pipe_wfd.write(data)
+        await async_pipe_wfd.write_all_bytes(data)
     await async_pipe_rfd.aclose()
     await async_pipe_wfd.aclose()
 
@@ -350,7 +350,7 @@ class TestIO(unittest.TestCase):
                 connfd, client_addr = await sockfd.accept_as_async()
                 logger.info("%s, %s", addr, client_addr)
                 data = b"hello"
-                await connfd.write(data)
+                await connfd.write_all_bytes(data)
                 self.assertEqual(data, await clientfd.read())
                 await connfd.close()
                 await sockfd.close()
@@ -384,8 +384,8 @@ class TestIO(unittest.TestCase):
                 clientfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
                 await clientfd.connect_ptr(addr)
-                await clientfd.write(b"foo = 11\n")
-                await clientfd.write(b"return foo * 2\n")
+                await clientfd.write_all_bytes(b"foo = 11\n")
+                await clientfd.write_all_bytes(b"return foo * 2\n")
                 ret = await rsyscall.wish.serve_repls(sockfd, {'locals': locals()}, int, "hello")
                 self.assertEqual(ret, 22)
         trio.run(self.runner, test)

@@ -162,8 +162,8 @@ async def run_repl(infd: AsyncFileDescriptor,
             # when we get RDHUP on the connection, we want to cancel the REPL, even if
             # some task is in progress.
             raise Exception("REPL connection hangup")
-        await outfd.write((message+"\n").encode())
-        ret = await rsyscall.repl.run_repl(infd.read, outfd.write, global_vars, wanted_type)
+        await outfd.write_all_bytes((message+"\n").encode())
+        ret = await rsyscall.repl.run_repl(infd.read, outfd.write_all_bytes, global_vars, wanted_type)
         repl_nursery.cancel_scope.cancel()
     return ret
 

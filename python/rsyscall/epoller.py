@@ -203,18 +203,6 @@ class AsyncFileDescriptor:
         while not (self.read_hangup or self.hangup):
             await self._wait_once()
 
-    async def read_raw(self, sysif: near.SyscallInterface, fd: near.FileDescriptor, pointer: near.Pointer, count: int) -> int:
-        while True:
-            while not self.could_read():
-                await self._wait_once()
-            try:
-                return (await near.read(sysif, fd, pointer, count))
-            except OSError as e:
-                if e.errno == errno.EAGAIN:
-                    self.is_readable = False
-                else:
-                    raise
-
     async def write_handle(self, to_write: Pointer) -> None:
         while to_write.bytesize() > 0:
             while not (self.is_writable or self.error):
@@ -229,23 +217,9 @@ class AsyncFileDescriptor:
                 else:
                     raise
 
-    async def write(self, buf: bytes) -> None:
+    async def write_all_bytes(self, buf: bytes) -> None:
         ptr = await self.ram.to_pointer(Bytes(buf))
         await self.write_handle(ptr)
-
-    async def write_raw(self, sysif: near.SyscallInterface, fd: near.FileDescriptor, pointer: near.Pointer, count: int) -> int:
-        while True:
-            while not (self.is_writable or self.error):
-                await self._wait_once()
-            try:
-                return (await near.write(sysif, fd, pointer, count))
-            except OSError as e:
-                if e.errno == errno.EAGAIN:
-                    # TODO this is not really quite right if it's possible to concurrently call methods on this object.
-                    # we really need to lock while we're making the async call, right? maybe...
-                    self.is_writable = False
-                else:
-                    raise
 
     async def accept_handle(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
     ) -> t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]:
