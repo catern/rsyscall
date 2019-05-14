@@ -84,21 +84,21 @@ class NullGateway(MemoryGateway):
         raise Exception("shouldn't try to write")
 
 @dataclass
-class ProcessResources:
+class NativeLoader:
     server_func: Pointer[NativeFunction]
     persistent_server_func: Pointer[NativeFunction]
     trampoline_func: Pointer[NativeFunction]
     futex_helper_func: Pointer[NativeFunction]
 
     @staticmethod
-    def make_from_symbols(task: Task, symbols: t.Any) -> ProcessResources:
+    def make_from_symbols(task: Task, symbols: t.Any) -> NativeLoader:
         def to_handle(cffi_ptr) -> Pointer[NativeFunction]:
             pointer_int = int(ffi.cast('ssize_t', cffi_ptr))
             # TODO we're just making up a memory mapping that this pointer is inside;
             # we should figure out the actual mapping, and the size for that matter.
             mapping = MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
             return Pointer(mapping, NullGateway(), NativeFunctionSerializer(), StaticAllocation())
-        return ProcessResources(
+        return NativeLoader(
             server_func=to_handle(symbols.rsyscall_server),
             persistent_server_func=to_handle(symbols.rsyscall_persistent_server),
             trampoline_func=to_handle(symbols.rsyscall_trampoline),

@@ -4,8 +4,7 @@ import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
 from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ChildProcessMonitor
-
-from rsyscall.io import ProcessResources, Trampoline
+from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.handle import Stack, WrittenPointer, ThreadProcess, Pointer
 
 import trio
@@ -148,11 +147,11 @@ async def spawn_rsyscall_persistent_server(
         listening_sock: handle.FileDescriptor,
         parent_task: handle.Task,
         parent_ram: RAM,
-        process_resources: ProcessResources,
+        loader: NativeLoader,
     ) -> t.Tuple[handle.Task, RAM, RsyscallInterface, handle.FileDescriptor, ThreadProcess]:
     async def op(sem: batch.BatchSemantics) -> t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]]:
-        stack_value = process_resources.make_trampoline_stack(Trampoline(
-            process_resources.persistent_server_func, [remote_sock, remote_sock, listening_sock]))
+        stack_value = loader.make_trampoline_stack(Trampoline(
+            loader.persistent_server_func, [remote_sock, remote_sock, listening_sock]))
         stack_buf = sem.malloc_type(handle.Stack, 4096)
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         return stack
@@ -187,7 +186,7 @@ async def fork_persistent(
     [(access_sock, remote_sock)] = await self.make_async_connections(1)
     task, ram, syscall, listening_sock_handle, thread_process = await spawn_rsyscall_persistent_server(
         access_sock, remote_sock, listening_sock,
-        self.task, self.ram, self.process)
+        self.task, self.ram, self.loader)
 
     ## create the new persistent task
     epoller = await EpollCenter.make_root(ram, task)
@@ -197,7 +196,7 @@ async def fork_persistent(
     stdtask = StandardTask(
         task, ram,
         self.connection.for_task(task, ram),
-        self.process,
+        self.loader,
         epoller,
         child_monitor,
         self.environ.inherit(task, ram),

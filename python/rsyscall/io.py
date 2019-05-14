@@ -21,7 +21,7 @@ import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, AsyncReadBuffer
-from rsyscall.loader import Trampoline, ProcessResources
+from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.tasks.fork import spawn_rsyscall_thread, RsyscallConnection, SyscallResponse
 from rsyscall.tasks.common import raise_if_error, log_syscall
@@ -303,7 +303,7 @@ class StandardTask(ConnectionThread):
                  task: Task,
                  ram: RAM,
                  connection: Connection,
-                 process_resources: ProcessResources,
+                 loader: NativeLoader,
                  epoller: EpollCenter,
                  child_monitor: ChildProcessMonitor,
                  environ: Environment,
@@ -312,7 +312,7 @@ class StandardTask(ConnectionThread):
                  stderr: handle.FileDescriptor,
     ) -> None:
         super().__init__(task, ram, epoller, connection)
-        self.process = process_resources
+        self.loader = loader
         self.child_monitor = child_monitor
         self.environ = environ
         self.stdin = stdin
@@ -364,7 +364,7 @@ class StandardTask(ConnectionThread):
         base_task = await spawn_rsyscall_thread(
             self.ram, self.task.base,
             access_sock, remote_sock,
-            self.child_monitor, self.process,
+            self.child_monitor, self.loader,
             newuser=newuser, newpid=newpid, fs=fs, sighand=sighand,
         )
         ram = RAM(base_task,
@@ -401,7 +401,7 @@ class StandardTask(ConnectionThread):
         return RsyscallThread(
             base_task, ram,
             self.connection.for_task(base_task, ram),
-            self.process,
+            self.loader,
             epoller, child_monitor,
             self.environ.inherit(base_task, ram),
             stdin=self.stdin.for_task(base_task),
@@ -591,7 +591,7 @@ class RsyscallThread(StandardTask):
                  task: Task,
                  ram: RAM,
                  connection: Connection,
-                 process_resources: ProcessResources,
+                 loader: NativeLoader,
                  epoller: EpollCenter,
                  child_monitor: ChildProcessMonitor,
                  environ: Environment,
@@ -604,7 +604,7 @@ class RsyscallThread(StandardTask):
             task,
             ram,
             connection,
-            process_resources,
+            loader,
             epoller,
             child_monitor,
             environ,

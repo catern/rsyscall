@@ -5,7 +5,7 @@ from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.exceptions import RsyscallException, RsyscallHangup
 from rsyscall.handle import Stack, WrittenPointer, Pointer, FutexNode, FileDescriptor, Task, FutexNode
-from rsyscall.loader import Trampoline, ProcessResources
+from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.memory.allocator import Arena
 from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
@@ -322,11 +322,11 @@ class ChildConnection(near.SyscallInterface):
             return result
 
 async def launch_futex_monitor(ram: RAM,
-                               process_resources: ProcessResources, monitor: ChildProcessMonitor,
+                               loader: NativeLoader, monitor: ChildProcessMonitor,
                                futex_pointer: WrittenPointer[FutexNode]) -> AsyncChildProcess:
     async def op(sem: BatchSemantics) -> t.Tuple[Pointer[Stack], WrittenPointer[Stack]]:
-        stack_value = process_resources.make_trampoline_stack(Trampoline(
-            process_resources.futex_helper_func, [
+        stack_value = loader.make_trampoline_stack(Trampoline(
+            loader.futex_helper_func, [
                 int(futex_pointer.near + ffi.offsetof('struct futex_node', 'futex')),
                 futex_pointer.value.futex]))
         stack_buf = sem.malloc_type(Stack, 4096)
@@ -348,7 +348,7 @@ async def spawn_rsyscall_thread(
         ram: RAM, task: Task,
         access_sock: AsyncFileDescriptor, remote_sock: FileDescriptor,
         monitor: ChildProcessMonitor,
-        process_resources: ProcessResources,
+        loader: NativeLoader,
         newuser: bool, newpid: bool, fs: bool, sighand: bool,
 ) -> Task:
     flags = CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM|Signals.SIGCHLD
@@ -367,14 +367,14 @@ async def spawn_rsyscall_thread(
     arena = Arena(await task.mmap(4096*2, PROT.READ|PROT.WRITE, MAP.SHARED))
     async def op(sem: BatchSemantics) -> t.Tuple[t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
                                                        WrittenPointer[FutexNode]]:
-        stack_value = process_resources.make_trampoline_stack(Trampoline(
-            process_resources.server_func, [remote_sock, remote_sock]))
+        stack_value = loader.make_trampoline_stack(Trampoline(
+            loader.server_func, [remote_sock, remote_sock]))
         stack_buf = sem.malloc_type(Stack, 4096)
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         futex_pointer = sem.to_pointer(FutexNode(None, Int32(0)))
         return stack, futex_pointer
     stack, futex_pointer = await perform_async_batch(task, ram.transport, arena, op)
-    futex_process = await launch_futex_monitor(ram, process_resources, monitor, futex_pointer)
+    futex_process = await launch_futex_monitor(ram, loader, monitor, futex_pointer)
     child_process = await monitor.clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
 
     syscall = ChildConnection(RsyscallConnection(access_sock, access_sock), child_process, futex_process)

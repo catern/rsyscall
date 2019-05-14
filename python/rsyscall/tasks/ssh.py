@@ -3,7 +3,8 @@ import rsyscall.handle as handle
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, ProcessResources, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, ChildProcessMonitor
+from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, Command, AsyncReadBuffer, Path, RsyscallInterface, RsyscallConnection, SocketMemoryTransport, ChildProcessMonitor
+from rsyscall.loader import NativeLoader
 from dataclasses import dataclass
 import importlib.resources
 import logging
@@ -267,7 +268,7 @@ async def ssh_bootstrap(
         task=new_base_task,
         ram=new_ram,
         connection=connection,
-        process_resources=ProcessResources.make_from_symbols(new_base_task, describe_struct.symbols),
+        loader=NativeLoader.make_from_symbols(new_base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,
         environ=Environment(new_base_task, new_ram, environ),

@@ -3,7 +3,8 @@ import rsyscall.handle as handle
 import rsyscall.far as far
 import rsyscall.near as near
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, AsyncReadBuffer, ProcessResources, StandardTask, SocketMemoryTransport, Command
+from rsyscall.io import RsyscallThread, AsyncReadBuffer, StandardTask, SocketMemoryTransport, Command
+from rsyscall.loader import NativeLoader
 import typing as t
 from rsyscall.handle import WrittenPointer
 from rsyscall.handle import FutexNode
@@ -55,7 +56,7 @@ async def make_robust_futex_task(
     local_futex_node = remote_futex_node._with_mapping(local_mapping)
     # now we start the futex monitor
     futex_task = await launch_futex_monitor(
-        parent_stdtask.ram, parent_stdtask.process, parent_stdtask.child_monitor, local_futex_node)
+        parent_stdtask.ram, parent_stdtask.loader, parent_stdtask.child_monitor, local_futex_node)
     return futex_task, local_futex_node, remote_mapping
 
 @dataclass
@@ -102,7 +103,7 @@ async def rsyscall_exec(
     #### read symbols from describe fd
     describe_buf = AsyncReadBuffer(access_data_sock)
     symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')
-    stdtask.process = ProcessResources.make_from_symbols(stdtask.task.base, symbol_struct)
+    stdtask.loader = NativeLoader.make_from_symbols(stdtask.task.base, symbol_struct)
     # the futex task we used before is dead now that we've exec'd, have
     # to null it out
     syscall.futex_task = None

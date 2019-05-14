@@ -22,6 +22,7 @@ from rsyscall.sys.socket import AF, SOCK
 import rsyscall.batch as batch
 from rsyscall.network.connection import FDPassConnection
 from rsyscall.environ import Environment
+from rsyscall.loader import NativeLoader
 
 from rsyscall.sys.epoll import EpollFlag
 from rsyscall.epoller import EpollCenter
@@ -120,7 +121,7 @@ async def _make_local_stdtask() -> StandardTask:
     ram = RAM(task, local_transport, memory.AllocatorClient.make_allocator(task))
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
 
-    process_resources = rsc.ProcessResources(
+    process_resources = NativeLoader(
         server_func=_make_local_function_handle(lib.rsyscall_server),
         persistent_server_func=_make_local_function_handle(lib.rsyscall_persistent_server),
         trampoline_func=_make_local_function_handle(lib.rsyscall_trampoline),

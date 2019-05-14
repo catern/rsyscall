@@ -3,7 +3,8 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, Command, AsyncReadBuffer, ProcessResources
+from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, Command, AsyncReadBuffer
+from rsyscall.loader import NativeLoader
 import trio
 import struct
 from dataclasses import dataclass
@@ -110,7 +111,7 @@ async def rsyscall_stdin_bootstrap(
         task=base_task,
         ram=ram,
         connection=connection,
-        process_resources=ProcessResources.make_from_symbols(base_task, describe_struct.symbols),
+        loader=NativeLoader.make_from_symbols(base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,
         environ=Environment(base_task, ram, environ),
