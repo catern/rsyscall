@@ -490,7 +490,7 @@ async def socketpair(sysif: SyscallInterface, domain: int, type: int, protocol: 
     await sysif.syscall(SYS.socketpair, domain, type, protocol, sv)
 
 import trio
-from rsyscall.exceptions import RsyscallHangup
+from rsyscall.tasks.exceptions import RsyscallHangup
 async def execveat(sysif: SyscallInterface,
                    dirfd: t.Optional[FileDescriptor], path: Pointer,
                    argv: Pointer, envp: Pointer, flags: int) -> None:

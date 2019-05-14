@@ -4,14 +4,14 @@ from dataclasses import dataclass
 from rsyscall.batch import BatchSemantics, perform_async_batch
 from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import AsyncFileDescriptor
-from rsyscall.exceptions import RsyscallHangup
+from rsyscall.tasks.exceptions import RsyscallHangup
 from rsyscall.handle import Stack, WrittenPointer, Pointer, FutexNode, FileDescriptor, Task, FutexNode
 from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.memory.allocator import Arena
 from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.tasks.util import raise_if_error, log_syscall
-from rsyscall.tasks.connection import ConnectionResponse, RsyscallConnection
+from rsyscall.tasks.connection import ConnectionResponse, SyscallConnection
 import logging
 import rsyscall.far as far
 import rsyscall.near as near
@@ -44,10 +44,10 @@ class SyscallResponse(near.SyscallResponse):
         raise_if_error(self.response.result)
         return self.response.result
 
-class ChildConnection(near.SyscallInterface):
+class ChildSyscallInterface(near.SyscallInterface):
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
-                 rsyscall_connection: RsyscallConnection,
+                 rsyscall_connection: SyscallConnection,
                  server_task: AsyncChildProcess,
                  futex_task: t.Optional[AsyncChildProcess],
     ) -> None:
@@ -55,7 +55,7 @@ class ChildConnection(near.SyscallInterface):
         self.server_task = server_task
         self.futex_task = futex_task
         self.identifier_process = self.server_task.process.near
-        self.logger = logging.getLogger(f"rsyscall.ChildConnection.{int(self.server_task.process.near)}")
+        self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{int(self.server_task.process.near)}")
         self.running_read = OneAtATime()
 
     def store_remote_side_handles(self, infd: FileDescriptor, outfd: FileDescriptor) -> None:
@@ -197,7 +197,7 @@ async def spawn_rsyscall_thread(
     futex_process = await launch_futex_monitor(ram, loader, monitor, futex_pointer)
     child_process = await monitor.clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
 
-    syscall = ChildConnection(RsyscallConnection(access_sock, access_sock), child_process, futex_process)
+    syscall = ChildSyscallInterface(SyscallConnection(access_sock, access_sock), child_process, futex_process)
     if fs:
         fs_information = task.fs
     else:

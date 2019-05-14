@@ -4,7 +4,7 @@ import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
 from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, Command, AsyncReadBuffer, Path, SocketMemoryTransport, ChildProcessMonitor
-from rsyscall.tasks.connection import RsyscallConnection
+from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader
 from dataclasses import dataclass
@@ -242,7 +242,7 @@ async def ssh_bootstrap(
     # TODO the pid namespace will probably be common for all connections...
     new_pid_namespace = far.PidNamespace(new_pid)
     new_process = far.Process(new_pid_namespace, near.Process(new_pid))
-    new_syscall = NonChildSyscallInterface(RsyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
+    new_syscall = NonChildSyscallInterface(SyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                     new_process.near)
     new_fs_information = far.FSInformation(new_pid)
     # TODO we should get this from the SSHHost, this is usually going

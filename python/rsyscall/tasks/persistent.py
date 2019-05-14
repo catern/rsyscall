@@ -4,7 +4,7 @@ import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
 from rsyscall.io import StandardTask, Path, SocketMemoryTransport, AsyncFileDescriptor, ChildProcessMonitor
-from rsyscall.tasks.connection import RsyscallConnection
+from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.handle import Stack, WrittenPointer, ThreadProcess, Pointer
@@ -129,7 +129,7 @@ class PersistentServer:
         cleanup_remote_fds = [self.syscall.infd, self.syscall.outfd]
         if self.transport is not None:
             cleanup_remote_fds.append(self.transport.remote)
-        self.syscall.rsyscall_connection = RsyscallConnection(access_syscall_sock, access_syscall_sock)
+        self.syscall.rsyscall_connection = SyscallConnection(access_syscall_sock, access_syscall_sock)
         self.syscall.infd = self.task.make_fd_handle(infd)
         self.syscall.outfd = self.task.make_fd_handle(outfd)
         # TODO technically this could still be in the same address space - that's the case in our tests.
@@ -162,7 +162,7 @@ async def spawn_rsyscall_persistent_server(
         (CLONE.VM|CLONE.FS|CLONE.FILES|CLONE.IO|
          CLONE.SIGHAND|CLONE.SYSVSEM|Signals.SIGCHLD),
         stack, None, None, None)
-    syscall = NonChildSyscallInterface(RsyscallConnection(access_sock, access_sock),
+    syscall = NonChildSyscallInterface(SyscallConnection(access_sock, access_sock),
                                        thread_process.near)
     new_base_task = handle.Task(syscall, thread_process.near, None,
                                 parent_task.fd_table, parent_task.address_space, parent_task.fs,

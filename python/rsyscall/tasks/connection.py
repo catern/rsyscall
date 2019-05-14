@@ -4,12 +4,17 @@ from rsyscall.handle import Pointer
 from rsyscall.concurrency import OneAtATime
 from rsyscall.struct import T_struct, Struct, Int32, Bytes, StructList
 from rsyscall.epoller import AsyncFileDescriptor
-from rsyscall.exceptions import RsyscallException, RsyscallHangup
+from rsyscall.tasks.exceptions import RsyscallException, RsyscallHangup
 import typing as t
 import trio
 
+__all__ = [
+    "SyscallConnection",
+    "ConnectionResponse",
+]
+
 @dataclass
-class RsyscallSyscall(Struct):
+class Syscall(Struct):
     number: int
     arg1: int
     arg2: int
@@ -24,7 +29,7 @@ class RsyscallSyscall(Struct):
             "args": (self.arg1, self.arg2, self.arg3, self.arg4, self.arg5, self.arg6),
         })))
 
-    T = t.TypeVar('T', bound='RsyscallSyscall')
+    T = t.TypeVar('T', bound='Syscall')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct rsyscall_syscall*', ffi.from_buffer(data))
@@ -37,13 +42,13 @@ class RsyscallSyscall(Struct):
         return ffi.sizeof('struct rsyscall_syscall')
 
 @dataclass
-class RsyscallResponse(Struct):
+class SyscallResponse(Struct):
     value: int
 
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('long const*', self.value)))
 
-    T = t.TypeVar('T', bound='RsyscallResponse')
+    T = t.TypeVar('T', bound='SyscallResponse')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('long*', ffi.from_buffer(data))
@@ -59,7 +64,7 @@ class ConnectionResponse:
 
 @dataclass
 class ConnectionRequest:
-    syscall: RsyscallSyscall
+    syscall: Syscall
     response: t.Optional[ConnectionResponse] = None
 
 class ReadBuffer:
@@ -86,7 +91,7 @@ class ReadBuffer:
                 return ret
             ret.append(x)
 
-class RsyscallConnection:
+class SyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
                  tofd: AsyncFileDescriptor,
@@ -113,7 +118,7 @@ class RsyscallConnection:
     async def _write_pending_requests_direct(self) -> None:
         requests = self.pending_requests
         self.pending_requests = []
-        syscalls = StructList(RsyscallSyscall, [request.syscall for request in requests])
+        syscalls = StructList(Syscall, [request.syscall for request in requests])
         try:
             ptr = await self.tofd.ram.to_pointer(syscalls)
             # TODO should mark the requests complete incrementally as we write them out,
@@ -136,7 +141,7 @@ class RsyscallConnection:
             if needs_run:
                 await self._write_pending_requests_direct()
 
-    async def _write_request(self, syscall: RsyscallSyscall) -> ConnectionResponse:
+    async def _write_request(self, syscall: Syscall) -> ConnectionResponse:
         request = ConnectionRequest(syscall)
         self.pending_requests.append(request)
         # TODO as a hack, so we don't have to figure it out now, we don't allow
@@ -150,24 +155,24 @@ class RsyscallConnection:
     async def write_request(self, number: int,
                             arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int
     ) -> ConnectionResponse:
-        syscall = RsyscallSyscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
+        syscall = Syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
         return (await self._write_request(syscall))
 
     def poll_response(self) -> t.Optional[int]:
-        val = self.buffer.read_struct(RsyscallResponse)
+        val = self.buffer.read_struct(SyscallResponse)
         if val:
             return val.value
         else:
             return None
 
-    def _got_responses(self, vals: t.List[RsyscallResponse]) -> None:
+    def _got_responses(self, vals: t.List[SyscallResponse]) -> None:
         responses = self.pending_responses[:len(vals)]
         self.pending_responses = self.pending_responses[len(vals):]
         for response, val in zip(responses, vals):
             response.result = val.value
 
     async def _read_pending_responses_direct(self) -> None:
-        vals = self.buffer.read_all_structs(RsyscallResponse)
+        vals = self.buffer.read_all_structs(SyscallResponse)
         if vals:
             self._got_responses(vals)
             return
@@ -182,7 +187,7 @@ class RsyscallConnection:
             self.valid = None
             self.buffer.feed_bytes(data)
             buf = valid.merge(rest)
-            vals = self.buffer.read_all_structs(RsyscallResponse)
+            vals = self.buffer.read_all_structs(SyscallResponse)
         self._got_responses(vals)
 
     async def read_pending_responses(self) -> None:

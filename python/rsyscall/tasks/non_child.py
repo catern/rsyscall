@@ -1,7 +1,7 @@
 from rsyscall.near import SyscallInterface
 import rsyscall.near as near
 from rsyscall.handle import FileDescriptor
-from rsyscall.tasks.fork import RsyscallConnection, SyscallResponse
+from rsyscall.tasks.fork import SyscallConnection, SyscallResponse
 import logging
 import trio
 from rsyscall.tasks.util import log_syscall
@@ -11,17 +11,17 @@ class NonChildSyscallInterface(SyscallInterface):
 
     For correctness, we should ensure that we'll get HUP/EOF if the task has
     exited and therefore will never respond. This is most easily achieved by
-    making sure that the fds keeping the other end of the RsyscallConnection
+    making sure that the fds keeping the other end of the SyscallConnection
     open, are only held by one task, and so will be closed when the task
     exits. Note, though, that that requires that the task be in an unshared file
     descriptor space.
 
     """
-    def __init__(self, rsyscall_connection: RsyscallConnection,
+    def __init__(self, rsyscall_connection: SyscallConnection,
                  # usually the same pid that's inside the namespaces
                  identifier_process: near.Process) -> None:
         self.rsyscall_connection = rsyscall_connection
-        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{identifier_process.id}")
+        self.logger = logging.getLogger(f"rsyscall.SyscallConnection.{identifier_process.id}")
         self.identifier_process = identifier_process
 
     def store_remote_side_handles(self, infd: FileDescriptor, outfd: FileDescriptor) -> None:
