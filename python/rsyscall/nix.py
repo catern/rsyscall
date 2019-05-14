@@ -2,7 +2,7 @@ from __future__ import annotations
 import typing as t
 import os
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask, read_all, Command, MemFileDescriptor, Path
+from rsyscall.io import StandardTask, read_all, Command, MemFileDescriptor
 import rsyscall.tasks.local as local
 import trio
 import struct
@@ -133,11 +133,22 @@ async def nix_deploy(
     await child_task.check()
     return dest_path
 
+
+async def canonicalize(thr: RAMThread, path: handle.Path) -> handle.Path:
+    f = await thr.task.open(await thr.ram.to_pointer(path), O.PATH)
+    size = 4096
+    valid, _ = await thr.task.readlink(await thr.ram.to_pointer(f.as_proc_path()),
+                                       await thr.ram.malloc_type(handle.Path, size))
+    if valid.bytesize() == size:
+        # 4096 seems like a reasonable value for PATH_MAX
+        raise Exception("symlink longer than 4096 bytes, giving up on readlinking it")
+    return await valid.read()
+
 class NixPath(handle.Path):
     "A path in the Nix store, which can therefore be deployed to a remote host with Nix."
     @classmethod
     async def make(cls, thr: RAMThread, path: handle.Path) -> NixPath:
-        return cls((await Path(thr, path).canonicalize()).handle)
+        return cls(await canonicalize(thr, path))
 
     def __init__(self, *args) -> None:
         super().__init__(*args)
