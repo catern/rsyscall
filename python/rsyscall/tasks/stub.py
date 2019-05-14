@@ -21,9 +21,10 @@ import rsyscall.batch as batch
 from rsyscall.struct import Bytes
 import rsyscall.struct
 from rsyscall.environ import Environment
+from rsyscall.handle import WrittenPointer
 
 from rsyscall.sched import CLONE
-from rsyscall.sys.socket import SOCK, AF, SendmsgFlags
+from rsyscall.sys.socket import SOCK, AF, SendmsgFlags, Address
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.signal import Signals, Sigset
@@ -39,16 +40,18 @@ class StubServer:
     stdtask: StandardTask
 
     @classmethod
-    async def listen_on(cls, stdtask: StandardTask, path: Path) -> StubServer:
+    async def listen_on(cls, stdtask: StandardTask, path: handle.Path) -> StubServer:
         "Start listening on the passed-in path for stub connections."
         sockfd = await stdtask.make_afd(
             await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-        await sockfd.bind(await path.as_sockaddr_un())
+        addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
+            await SockaddrUn.from_path(stdtask.task, stdtask.ram, path))
+        await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
         return StubServer(sockfd, stdtask)
 
     @classmethod
-    async def make(cls, stdtask: StandardTask, store: nix.Store, dir: Path, name: str) -> StubServer:
+    async def make(cls, stdtask: StandardTask, store: nix.Store, dir: handle.Path, name: str) -> StubServer:
         "In the passed-in dir, make a listening stub server and an executable to connect to it."
         rsyscall_path = await store.realise(nix.rsyscall)
         stub_path = rsyscall_path/"libexec"/"rsyscall"/"rsyscall-unix-stub"
@@ -59,7 +62,7 @@ class StubServer:
         wrapper = """#!/bin/sh
 RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
 """.format(sock=os.fsdecode(sock_path), bin=os.fsdecode(stub_path))
-        await stdtask.spit(dir.handle/name, wrapper, mode=0o755)
+        await stdtask.spit(dir/name, wrapper, mode=0o755)
         return server
 
     async def accept(self, stdtask: StandardTask=None) -> t.Tuple[t.List[str], StandardTask]:

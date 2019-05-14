@@ -29,13 +29,13 @@ class TestStub(TrioTestCase):
         await self.tmpdir.cleanup()
 
     async def test_exit(self) -> None:
-        command = Command((self.path/self.stub_name).handle, [self.stub_name], {})
+        command = Command(self.path/self.stub_name, [self.stub_name], {})
         child = await self.thread.exec(command)
         argv, new_stdtask = await self.server.accept()
         await new_stdtask.exit(0)
 
     async def test_async(self) -> None:
-        command = Command((self.path/self.stub_name).handle, [self.stub_name], {})
+        command = Command(self.path/self.stub_name, [self.stub_name], {})
         child = await self.thread.exec(command)
         argv, new_stdtask = await self.server.accept()
         await do_async_things(self, new_stdtask.epoller, new_stdtask.ramthr)

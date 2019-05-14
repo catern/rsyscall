@@ -12,7 +12,7 @@ class TestPersistent(TrioTestCase):
         self.stdtask = local.stdtask
         self.store = local_store
         self.tmpdir = await self.stdtask.mkdtemp("test_stub")
-        self.sock_path = self.tmpdir.path.handle/"persist.sock"
+        self.sock_path = self.tmpdir.path/"persist.sock"
         self.task = self.stdtask.task.base
         self.ram = self.stdtask.ram
 

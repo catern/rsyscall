@@ -430,7 +430,7 @@ class TemporaryDirectory:
         self.parent = parent
         self.name = name
         self._path = parent/os.fsdecode(name)
-        self.path = self._path
+        self.path = self._path.handle
 
     async def cleanup(self) -> None:
         # TODO would be nice if not sharing the fs information gave us a cap to chdir
