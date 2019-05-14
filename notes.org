@@ -17481,7 +17481,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    I mean, mutating existing tasks is similar in that it requires mutation.
    Taking the same data and plumbing it through new code, though...
    Meh, anyway.
-** TODO change AFD methods to take pointers in their short form
+** DONE change AFD methods to take pointers in their short form
 ** DONE move rsyscallconnection to rsyscall.tasks.connection
 ** DONE rename make_connection/make_async_connection
 ** DONE split out mkdtemp
@@ -18030,9 +18030,9 @@ And we can have an exec which is not memory-abstracting, I guess.
    Since we can't use it...
 ** clean up static allocation
    StaticAllocation, NullGateway, etc
-** make things uniformly return the pointers they were passed in
+** DONE make things uniformly return the pointers they were passed in
    It's convenient for expression-oriented programming.
-** manage keeping stackptr alive, validity tracking for processes, handle.ChildProcess
+** DONE manage keeping stackptr alive, validity tracking for processes, handle.ChildProcess
    So, we could just stick it on the Process.
    Return an inherited class from clone...
 
@@ -18085,12 +18085,12 @@ And we can have an exec which is not memory-abstracting, I guess.
    So we can be sure it doesn't actually perform effects.
 
    Well... we should maybe have direct_syscall do a yield, just so it breaks when running in null async runner.
-** handle resumable function for epoll by just re-running repeatedly
+** DONE handle resumable function for epoll by just re-running repeatedly
    ICFP-style, woo!
 
    As long as it doesn't have side effects, we can just re-run it indefinitely,
    storing previous results.
-** general purpose syscall batching
+** DONE general purpose syscall batching
    We could do a general purpose batching thing.
 
    We would, I guess, stick the interface in at the SyscallInterface level.
@@ -18098,6 +18098,16 @@ And we can have an exec which is not memory-abstracting, I guess.
    We'd return None or 0 or something from all syscalls
 
    Hopefully that would be enough so that we don't have to stick the interface at the task level.
+
+   Simply doing things in parallel is fairly powerful batching.
+   I don't think we need any more.
+
+   The notion would be, we have later syscalls whose result depends on the former;
+   and so we could, I guess, pipeline them together.
+
+   But we don't have a way to do that in our syscall threads;
+   we have to round-trip for each result.
+   So just doing things in parallel is sufficient to exploit all the batching we can do.
 ** DONE fd.near in serialization
    OK so uh, we are serializing the fds.
 
