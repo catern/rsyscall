@@ -429,7 +429,8 @@ class TemporaryDirectory:
         self.stdtask = stdtask
         self.parent = parent
         self.name = name
-        self.path = parent/os.fsdecode(name)
+        self._path = parent/os.fsdecode(name)
+        self.path = self._path
 
     async def cleanup(self) -> None:
         # TODO would be nice if not sharing the fs information gave us a cap to chdir
@@ -441,8 +442,8 @@ class TemporaryDirectory:
                 '-c', f"chmod -R +w -- {name} && rm -rf -- {name}"))
             await child.check()
 
-    async def __aenter__(self) -> Path:
-        return self.path
+    async def __aenter__(self) -> rsyscall.path.Path:
+        return self._path.handle
 
     async def __aexit__(self, *args, **kwargs):
         await self.cleanup()

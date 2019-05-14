@@ -300,8 +300,7 @@ async def make_local_ssh_from_executables(stdtask: StandardTask,
     keygen_command = ssh_keygen.args('-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key')
     keygen_thread = await stdtask.fork()
     # ugh, we have to make a directory because ssh-keygen really wants to output to a directory
-    async with (await stdtask.mkdtemp()) as tmpdir_p:
-        tmpdir = tmpdir_p.handle
+    async with (await stdtask.mkdtemp()) as tmpdir:
         await keygen_thread.task.chdir(await keygen_thread.ram.to_pointer(tmpdir))
         await (await keygen_thread.exec(keygen_command)).wait_for_exit()
         privkey_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir/'key'), O.RDONLY|O.CLOEXEC)

@@ -20,7 +20,7 @@ import rsyscall.repl
 import rsyscall.wish
 import rsyscall.nix
 
-from rsyscall.handle import WrittenPointer
+from rsyscall.handle import WrittenPointer, Pointer
 from rsyscall.epoller import EpollCenter
 from rsyscall.memory.ram import RAMThread
 
@@ -92,7 +92,7 @@ class TestIO(unittest.TestCase):
         stdtask = local.stdtask
         async with trio.open_nursery() as nursery:
             async with (await stdtask.mkdtemp()) as tmppath:
-                await test(stdtask, tmppath.handle)
+                await test(stdtask, tmppath)
 
     def test_pipe(self):
         async def test(stdtask: StandardTask) -> None:
@@ -269,7 +269,7 @@ class TestIO(unittest.TestCase):
     def test_mkdtemp(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
-                dirfd = await stdtask.task.base.open(await stdtask.ram.to_pointer(path.handle), O.DIRECTORY)
+                dirfd = await stdtask.task.base.open(await stdtask.ram.to_pointer(path), O.DIRECTORY)
                 dent_buf = await stdtask.ram.malloc_type(DirentList, 4096)
                 valid, rest = await dirfd.getdents(dent_buf)
                 self.assertCountEqual(sorted([dirent.name for dirent in await valid.read()]), ['.', '..'])
@@ -306,7 +306,7 @@ class TestIO(unittest.TestCase):
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
                 addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path.handle/"sock"))
+                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path/"sock"))
                 await sockfd.bind(addr)
                 await sockfd.listen(10)
                 clientfd = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
@@ -320,7 +320,7 @@ class TestIO(unittest.TestCase):
                 sockfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
                 addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path.handle/"sock"))
+                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path/"sock"))
                 await sockfd.handle.bind(addr)
                 await sockfd.handle.listen(10)
                 clientfd = await stdtask.make_afd(
@@ -339,7 +339,7 @@ class TestIO(unittest.TestCase):
                 sockfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
                 addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path.handle/"sock"))
+                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path/"sock"))
                 await sockfd.handle.bind(addr)
                 await sockfd.handle.listen(10)
 
@@ -378,7 +378,7 @@ class TestIO(unittest.TestCase):
                 sockfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
                 addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path.handle/"sock"))
+                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path/"sock"))
                 await sockfd.handle.bind(addr)
                 await sockfd.handle.listen(10)
                 clientfd = await stdtask.make_afd(
@@ -636,7 +636,7 @@ class TestIO(unittest.TestCase):
                 # probably.
                 # so, okay. SSHHost perhaps?
                 logger.info("about to fork")
-                per_stdtask, server = await fork_persistent(remote_stdtask, path.handle/"persist.sock")
+                per_stdtask, server = await fork_persistent(remote_stdtask, path/"persist.sock")
                 logger.info("forked persistent, %s", per_stdtask.task.base.process.near)
                 await server.make_persistent()
                 await local_child.kill()
@@ -714,8 +714,7 @@ class TestIO(unittest.TestCase):
             async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
                 thread = await remote_stdtask.fork()
                 bash = await remote_stdtask.environ.which("bash")
-                await thread.task.chdir(await thread.ram.to_pointer(remote_tmpdir.handle))
-                await ((await (remote_tmpdir/"var").mkdir())/"stuff").mkdir()
+                await thread.task.chdir(await thread.ram.to_pointer(remote_tmpdir))
                 child_task = await thread.exec(bash)
                 await child_task.wait_for_exit()
         trio.run(self.runner, test)
@@ -723,13 +722,13 @@ class TestIO(unittest.TestCase):
     def test_copy(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as tmpdir:
-                source_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir.handle/"source"), O.RDWR|O.CREAT)
+                source_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir/"source"), O.RDWR|O.CREAT)
                 data = b'hello world'
-                buf = await stdtask.ram.to_pointer(Bytes(data))
+                buf: Pointer[Bytes] = await stdtask.ram.to_pointer(Bytes(data))
                 valid, rest = await source_file.write(buf)
                 buf = valid + rest
                 await source_file.lseek(0, SEEK.SET)
-                dest_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir.handle/"dest"), O.RDWR|O.CREAT)
+                dest_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir/"dest"), O.RDWR|O.CREAT)
 
                 thread = await stdtask.fork()
                 cat = await stdtask.environ.which("cat")
