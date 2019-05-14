@@ -167,6 +167,10 @@ class AsyncFileDescriptor:
         self.error = False
         self.hangup = False
 
+    @property
+    def thr(self) -> EpollThread:
+        return EpollThread(self.handle.task, self.ram, self.epolled.epoll_center)
+
     async def _wait_once(self):
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
@@ -225,7 +229,8 @@ class AsyncFileDescriptor:
         ptr = await self.ram.to_pointer(Bytes(buf))
         await self.write_all(ptr)
 
-    async def accept_handle(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
+
+    async def _accept_with_addr(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
     ) -> t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]:
         while True:
             while not (self.is_readable or self.hangup):
@@ -238,21 +243,36 @@ class AsyncFileDescriptor:
                 else:
                     raise
 
-    async def accept(self, flags: SOCK=SOCK.CLOEXEC) -> t.Tuple[FileDescriptor, Address]:
+    async def _accept(self, flags: SOCK) -> FileDescriptor:
+        while True:
+            while not (self.is_readable or self.hangup):
+                await self._wait_once()
+            try:
+                return (await self.handle.accept(flags))
+            except OSError as e:
+                if e.errno == errno.EAGAIN:
+                    self.is_readable = False
+                else:
+                    raise
+
+    @t.overload
+    async def accept(self, flags: SOCK) -> FileDescriptor: ...
+    @t.overload
+    async def accept(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
+    ) -> t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]: ...
+
+    async def accept(self, flags: SOCK, addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
+    ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]]:
+        if addr is None:
+            return await self._accept(flags)
+        else:
+            return await self._accept_with_addr(flags, addr)
+
+    async def accept_addr(self, flags: SOCK=SOCK.CLOEXEC) -> t.Tuple[FileDescriptor, Address]:
         written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(GenericSockaddr)))
-        fd, sockbuf = await self.accept_handle(flags, written_sockbuf)
+        fd, sockbuf = await self.accept(flags, written_sockbuf)
         addr = (await (await sockbuf.read()).buf.read()).parse()
         return fd, addr
-
-    async def accept_as_async(self) -> t.Tuple[AsyncFileDescriptor, Address]:
-        connfd, addr = await self.accept(flags=SOCK.CLOEXEC|SOCK.NONBLOCK)
-        try:
-            aconnfd = await AsyncFileDescriptor.make_handle(
-                self.epolled.epoll_center, self.ram, connfd, is_nonblock=True)
-            return aconnfd, addr
-        except Exception:
-            await connfd.close()
-            raise
 
     async def bind(self, addr: T_addr) -> None:
         await self.handle.bind(await self.ram.to_pointer(addr))

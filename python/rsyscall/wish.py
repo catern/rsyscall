@@ -205,7 +205,8 @@ async def serve_repls(listenfd: AsyncFileDescriptor,
         num = 0
         while True:
             connfd: AsyncFileDescriptor
-            connfd, _ = await listenfd.accept_as_async()
+            connfd_h, _ = await listenfd.accept_addr()
+            connfd = await listenfd.thr.make_afd(connfd_h)
             global_vars = {**initial_vars, '__repls__': repl_vars, '__repl_stdin__': connfd,  '__repl_stdout__': connfd}
             repl_vars[str(num)] = global_vars
             nursery.start_soon(do_repl, connfd, global_vars)

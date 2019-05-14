@@ -326,7 +326,7 @@ class TestIO(unittest.TestCase):
                 clientfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
                 await clientfd.connect_ptr(addr)
-                connfd, client_addr = await sockfd.accept()
+                connfd, client_addr = await sockfd.accept_addr()
                 logger.info("%s, %s", addr, client_addr)
                 await connfd.close()
                 await sockfd.close()
@@ -347,7 +347,8 @@ class TestIO(unittest.TestCase):
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
                 await clientfd.connect_ptr(addr)
 
-                connfd, client_addr = await sockfd.accept_as_async()
+                connfd_h, client_addr = await sockfd.accept_addr(SOCK.CLOEXEC|SOCK.NONBLOCK)
+                connfd = await sockfd.thr.make_afd(connfd_h)
                 logger.info("%s, %s", addr, client_addr)
                 data = b"hello"
                 await connfd.write_all_bytes(data)
