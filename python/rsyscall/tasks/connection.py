@@ -112,8 +112,8 @@ class SyscallConnection:
             # note that we don't check responses - exit, for example, doesn't get a response...
             # TODO maybe we should cancel the response when we detect death of task in the enclosing classes?
             raise Exception("can't close while there are pending requests", self.pending_requests)
-        await self.tofd.aclose()
-        await self.fromfd.aclose()
+        await self.tofd.close()
+        await self.fromfd.close()
 
     async def _write_pending_requests_direct(self) -> None:
         requests = self.pending_requests

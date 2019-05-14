@@ -73,8 +73,8 @@ class ConsoleGenie(WishGranter):
                         }, wish.return_type, message)
                         return ret
             finally:
-                await async_from_term.aclose()
-                await async_to_term.aclose()
+                await async_from_term.close()
+                await async_to_term.close()
 
 class ConsoleServerGenie(WishGranter):
     @classmethod
@@ -201,7 +201,7 @@ async def serve_repls(listenfd: AsyncFileDescriptor,
                 retval = ret
                 nursery.cancel_scope.cancel()
             finally:
-                await connfd.aclose()
+                await connfd.close()
         num = 0
         while True:
             connfd: AsyncFileDescriptor

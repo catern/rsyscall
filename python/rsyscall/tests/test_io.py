@@ -74,8 +74,8 @@ async def do_async_things(self: unittest.TestCase, epoller, thr: RAMThread) -> N
         # hmmm MMM MMMmmmm MMM mmm MMm mm MM mmm MM mm MM
         # does this make sense?
         await async_pipe_wfd.write_all_bytes(data)
-    await async_pipe_rfd.aclose()
-    await async_pipe_wfd.aclose()
+    await async_pipe_rfd.close()
+    await async_pipe_wfd.close()
 
 class TestIO(unittest.TestCase):
     async def do_async_things(self, epoller, thr: RAMThread) -> None:
@@ -966,29 +966,6 @@ class TestIO(unittest.TestCase):
             child_task = await child_thread.exec(stdtask.environ.sh.args('-c', 'true'))
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
-
-    # def test_pass_fd_thread(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             task = stdtask.task
-    #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
-    #             rsyscall_task, [r_remote] = await stdtask.spawn([r.handle.far])
-    #             async with rsyscall_task as stdtask2:
-    #                 l2, r2 = await stdtask.task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
-    #                 await memsys.sendmsg_fds(task.base, task.gateway, task.allocator,
-    #                                          l.handle.far, [r2.handle.far])
-    #                 [r2_remote] = await memsys.recvmsg_fds(
-    #                     stdtask2.task.base, stdtask2.task.gateway, stdtask2.task.allocator, r_remote, 1)
-    #                 await r2.aclose()
-    #                 in_data = b"hello"
-    #                 await l2.write(in_data)
-    #                 out_data = await memsys.read(stdtask2.task.syscall,
-    #                                              stdtask2.task.gateway, stdtask2.task.allocator,
-    #                                              r2_remote, (len(in_data)))
-    #                 self.assertEqual(in_data, out_data)
-                    
-    #                 print("HELLO", r2_remote)
-    #     trio.run(test)
 
     async def foo(self) -> None:
         async with trio.open_nursery() as nursery:

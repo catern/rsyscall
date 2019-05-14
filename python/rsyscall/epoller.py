@@ -295,9 +295,6 @@ class AsyncFileDescriptor:
     async def connect_addr(self, addr: T_addr) -> None:
         await self.connect(await self.ram.to_pointer(addr))
 
-    async def aclose(self) -> None:
-        await self.close()
-
     async def close(self) -> None:
         await self.epolled.aclose()
 

@@ -108,7 +108,7 @@ class PersistentServer:
         # TODO should check that no transport requests are in flight
         await self.syscall.rsyscall_connection.close()
         if self.transport is not None:
-            await self.transport.local.aclose()
+            await self.transport.local.close()
         # TODO hmm how do we handle closing the remote side, hmm...
         # we can invalidate it here, but not close it.
         # we could do the same for infd/outfd actually, I guess?

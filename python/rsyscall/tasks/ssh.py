@@ -173,7 +173,7 @@ async def run_socket_binder(
         done = await lines_buf.read_line()
         if done != b"done":
             raise Exception("socket binder violated protocol, got instead of done:", done)
-        await async_stdout.aclose()
+        await async_stdout.close()
         logger.info("socket bootstrap done, got tmp path %s", tmp_path_bytes)
         yield tmp_path_bytes
         (await child.wait_for_exit()).check()
@@ -197,7 +197,7 @@ async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
     forwarded = await lines_buf.read_line()
     if forwarded != b"forwarded":
         raise Exception("ssh forwarding violated protocol, got instead of forwarded:", forwarded)
-    await async_stdout.aclose()
+    await async_stdout.close()
     return child_task
 
 async def ssh_bootstrap(
