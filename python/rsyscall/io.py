@@ -1,54 +1,25 @@
 from __future__ import annotations
-from rsyscall._raw import ffi, lib # type: ignore
-import types
-import time
-import traceback
-import pathlib
-
-import math
-
-
-from rsyscall.handle import FileDescriptor, Path, WrittenPointer, MemoryMapping, ThreadProcess, Pointer, Task
-import rsyscall.near as near
-from rsyscall.struct import Bytes
+from dataclasses import dataclass
 from rsyscall.batch import BatchSemantics
-from rsyscall.mktemp import mkdtemp, TemporaryDirectory
-
-from rsyscall.memory.ram import RAM, RAMThread
-from rsyscall.monitor import AsyncChildProcess
 from rsyscall.command import Command
+from rsyscall.handle import FileDescriptor, Path, WrittenPointer, Pointer, Task
+from rsyscall.memory.ram import RAM, RAMThread
+from rsyscall.mktemp import mkdtemp, TemporaryDirectory
+from rsyscall.monitor import AsyncChildProcess
+from rsyscall.struct import Bytes
 from rsyscall.unix_thread import UnixThread, ChildUnixThread
+import os
+import rsyscall.near as near
+import trio
+import typing as t
 
 from rsyscall.fcntl import O, F, FD_CLOEXEC
-from rsyscall.sys.mount import MS
-from rsyscall.sched import UnshareFlag
-from rsyscall.sys.wait import ChildEvent
 from rsyscall.linux.dirent import DirentList
+from rsyscall.sched import UnshareFlag
+from rsyscall.sys.mount import MS
+from rsyscall.sys.wait import ChildEvent
 from rsyscall.unistd import Arg
 
-import random
-import string
-import abc
-import prctl
-import socket
-import abc
-import sys
-import os
-import typing as t
-import struct
-import array
-import trio
-import signal
-from dataclasses import dataclass, field
-import logging
-import fcntl
-import errno
-import enum
-import contextlib
-import inspect
-logger = logging.getLogger(__name__)
-
-T = t.TypeVar('T')
 async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
                               in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
     if in_namespace_uid is None:
