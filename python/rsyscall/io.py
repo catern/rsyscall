@@ -532,7 +532,7 @@ class ChildThread(StandardTask, ChildUnixThread):
     def stdtask(self) -> StandardTask:
         return self
 
-    async def run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
+    async def exec_run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
         child = await self.exec(command)
         task_status.started(child)
         exit_event = await child.wait_for_exit()
