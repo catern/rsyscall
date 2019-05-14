@@ -17415,6 +17415,14 @@ And we can have an exec which is not memory-abstracting, I guess.
    Passing the individual task and ram is simply too much of a hassle.
 ** move out mkdtemp
    First we need to delete mempath
+** make mkdtemp a method on tmpdir
+   That would be cool, very cool.
+
+   Environ is low enough on the hierarchy that we could do it. Maybe.
+   Hmm, it would be a pretty twisted dependency.
+
+   Eh that would be too heavily nested anyway;
+   thread.environ.tmpdir.mkdir is, while cool, too nested.
 ** delete MemPath
    The goal of doing this is to be able to move out mkdtemp
 ** thought

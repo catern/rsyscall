@@ -300,10 +300,10 @@ class Thread(UnixThread):
         return self
 
     async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
-        parent = Path(self.ramthr, self.environ.tmpdir)
+        parent = self.environ.tmpdir
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        name = (prefix+"."+random_suffix).encode()
-        await (parent/name).mkdir(mode=0o700)
+        name = prefix+"."+random_suffix
+        await self.task.mkdir(await self.ram.to_pointer(parent/name), 0o700)
         return TemporaryDirectory(self, parent, name)
 
     async def spit(self, path: handle.Path, text: t.Union[str, bytes], mode=0o644) -> handle.Path:
@@ -425,25 +425,24 @@ class Thread(UnixThread):
 StandardTask = Thread
 
 class TemporaryDirectory:
-    def __init__(self, stdtask: StandardTask, parent: Path, name: bytes) -> None:
+    def __init__(self, stdtask: StandardTask, parent: rsyscall.path.Path, name: str) -> None:
         self.stdtask = stdtask
         self.parent = parent
         self.name = name
-        self._path = parent/os.fsdecode(name)
-        self.path = self._path.handle
+        self.path = parent/name
 
     async def cleanup(self) -> None:
         # TODO would be nice if not sharing the fs information gave us a cap to chdir
         cleanup_thread = await self.stdtask.fork(fs=False)
         async with cleanup_thread:
-            await cleanup_thread.stdtask.task.base.chdir(await self.parent.to_pointer())
+            await cleanup_thread.task.chdir(await cleanup_thread.ram.to_pointer(self.parent))
             name = os.fsdecode(self.name)
             child = await cleanup_thread.exec(self.stdtask.environ.sh.args(
                 '-c', f"chmod -R +w -- {name} && rm -rf -- {name}"))
             await child.check()
 
     async def __aenter__(self) -> rsyscall.path.Path:
-        return self._path.handle
+        return self.path
 
     async def __aexit__(self, *args, **kwargs):
         await self.cleanup()
