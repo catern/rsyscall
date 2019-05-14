@@ -16646,7 +16646,7 @@ but that doesn't scale as well as passing the epfd down.
 
    aha, it's just a problem with the persistent task!
    let's fix it.
-** remove all the helpers on io.Task
+** DONE remove all the helpers on io.Task
    and then delete io.Task
 
    hm to remove socket_inet/socket_unix I should first remove asyncfd,
@@ -16709,7 +16709,7 @@ but that doesn't scale as well as passing the epfd down.
    like this test_ipv6_encode test in test_io
 
    I "moved" it by deleting it, it was already there.
-** decide what to do with our two Paths
+** DONE decide what to do with our two Paths
    can I really bear to get rid of our current memory-abstracting Path?
 
    I guess getting rid of the mem-abstracting Path would promote usage of at syscalls. To some degree anyway.
@@ -16726,6 +16726,8 @@ but that doesn't scale as well as passing the epfd down.
    Although, annoyingly, it's one extra syscall.
 
    Well, I guess we can always just pass around WP[Path]s, too.
+
+   We deleted Mempath
 ** could have a contextvar thread
    then doing "with thread" would set that contextvar.
 
@@ -17199,7 +17201,7 @@ And we can have an exec which is not memory-abstracting, I guess.
 
    handle is now my largest file! awesome!
 ** DONE remove circular dep between near and signal
-** more mixingification of handle.Task
+** more mixin-ification of handle.Task
 ** DONE move out sigmask
    oh, hey, I can do this with a mixin, too, for nice modularity!
 ** DONE figure out good name for thing containing lots of resources, below thread
@@ -17401,7 +17403,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    And stick it in rsyscall.environ_thread??
 
    Meh let's call it UnixThread. That's fine.
-** move out memfd and mempath
+** DONE move out memfd and mempath
    Hmmm.
 
    I think we could maybe get rid of mempath;
@@ -17411,6 +17413,8 @@ And we can have an exec which is not memory-abstracting, I guess.
    MemFD is harder. Hm Hm.
 
    Yeah let's just delete MemPath.
+
+   They are both deleted! Wonderful!
 ** DONE make SockaddrUn.from_path take a ramthread
    Passing the individual task and ram is simply too much of a hassle.
 
@@ -17423,7 +17427,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    hmm I have no tests for this lol
 
    oh well, i'll rework it and use it later
-** make mkdtemp a method on tmpdir
+** DONE consider making mkdtemp a method on tmpdir
    That would be cool, very cool.
 
    Environ is low enough on the hierarchy that we could do it. Maybe.
@@ -17431,7 +17435,7 @@ And we can have an exec which is not memory-abstracting, I guess.
 
    Eh that would be too heavily nested anyway;
    thread.environ.tmpdir.mkdir is, while cool, too nested.
-** delete MemPath
+** DONE delete MemPath
    The goal of doing this is to be able to move out mkdtemp
 ** thought
    all these dependencies in my todos are tricky
@@ -17477,10 +17481,10 @@ And we can have an exec which is not memory-abstracting, I guess.
    I mean, mutating existing tasks is similar in that it requires mutation.
    Taking the same data and plumbing it through new code, though...
    Meh, anyway.
-** change AFD methods to take pointers in their short form
+** TODO change AFD methods to take pointers in their short form
 ** DONE move rsyscallconnection to rsyscall.tasks.connection
 ** DONE rename make_connection/make_async_connection
-** split out mkdtemp
+** DONE split out mkdtemp
 ** DONE make connection interface with open_channels
    OK one difficulty is inheritance.
 
@@ -18175,7 +18179,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    the MSG flags for sendmsg can't be named MSG since there are other such flags.
 
    But I could name the enum SendMSG.
-** make socklen functions return Pointer[Pointer[Sockaddr]]
+** DONE make socklen functions return Pointer[Pointer[Sockaddr]]
    Essentially we'll transform the type of the socklen buffer,
    and augment the serializer,
    so that first you read from the socklen,
@@ -18187,7 +18191,7 @@ And we can have an exec which is not memory-abstracting, I guess.
 ** somehow enforce that the user read pipe/socketpair/recvmsg buffers
    So that they don't leak file descriptors;
    this can even happen maliciously in the recvmsg case.
-** better execveat interface in general
+** DONE better execveat interface in general
     It's pretty awkward to have to go through the thread. Hm.
 
     ugh what, wait_for_mm_release isn't even used :(
