@@ -39,6 +39,28 @@ async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
     await gid_map.write(await thr.ram.to_pointer(Bytes(f"{in_namespace_gid} {gid} 1\n".encode())))
     await gid_map.close()
 
+async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescriptor]) -> None:
+    "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
+    buf = await thr.ram.malloc_type(DirentList, 4096)
+    dirfd = await thr.task.open(await thr.ram.to_pointer(Path("/proc/self/fd")), O.DIRECTORY|O.CLOEXEC)
+    async def maybe_close(fd: near.FileDescriptor) -> None:
+        flags = await near.fcntl(thr.task.sysif, fd, F.GETFD)
+        if (flags & FD_CLOEXEC) and (fd not in excluded_fds):
+            await near.close(thr.task.sysif, fd)
+    async with trio.open_nursery() as nursery:
+        while True:
+            valid, rest = await dirfd.getdents(buf)
+            if valid.bytesize() == 0:
+                break
+            dents = await valid.read()
+            for dent in dents:
+                try:
+                    num = int(dent.name)
+                except ValueError:
+                    continue
+                nursery.start_soon(maybe_close, near.FileDescriptor(num))
+            buf = valid.merge(rest)
+
 class Thread(UnixThread):
     @property
     def ramthr(self) -> RAMThread:
@@ -164,28 +186,6 @@ class Thread(UnixThread):
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 StandardTask = Thread
-
-async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescriptor]) -> None:
-    "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
-    buf = await thr.ram.malloc_type(DirentList, 4096)
-    dirfd = await thr.task.open(await thr.ram.to_pointer(Path("/proc/self/fd")), O.DIRECTORY|O.CLOEXEC)
-    async def maybe_close(fd: near.FileDescriptor) -> None:
-        flags = await near.fcntl(thr.task.sysif, fd, F.GETFD)
-        if (flags & FD_CLOEXEC) and (fd not in excluded_fds):
-            await near.close(thr.task.sysif, fd)
-    async with trio.open_nursery() as nursery:
-        while True:
-            valid, rest = await dirfd.getdents(buf)
-            if valid.bytesize() == 0:
-                break
-            dents = await valid.read()
-            for dent in dents:
-                try:
-                    num = int(dent.name)
-                except ValueError:
-                    continue
-                nursery.start_soon(maybe_close, near.FileDescriptor(num))
-            buf = valid.merge(rest)
 
 class ChildThread(StandardTask, ChildUnixThread):
     @property
