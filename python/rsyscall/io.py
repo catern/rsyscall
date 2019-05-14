@@ -23,8 +23,6 @@ from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
-from rsyscall.tasks.fork import spawn_rsyscall_thread, RsyscallConnection, SyscallResponse
-from rsyscall.tasks.util import raise_if_error, log_syscall
 from rsyscall.command import Command
 from rsyscall.environ import Environment
 from rsyscall.network.connection import Connection

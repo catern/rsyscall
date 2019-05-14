@@ -1,7 +1,8 @@
 """Resources in the local Python process
 """
 from __future__ import annotations
-from rsyscall.io import StandardTask, log_syscall
+from rsyscall.io import StandardTask
+from rsyscall.tasks.util import log_syscall, raise_if_error
 from rsyscall._raw import ffi, lib # type: ignore
 import rsyscall.io as rsc
 import trio
@@ -39,7 +40,7 @@ async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0)
 class LocalSyscallResponse(near.SyscallResponse):
     value: int
     async def receive(self) -> int:
-        rsc.raise_if_error(self.value)
+        raise_if_error(self.value)
         return self.value
 
 
@@ -68,7 +69,7 @@ class LocalSyscall(near.SyscallInterface):
                 number,
                 arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
                 arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-            rsc.raise_if_error(result)
+            raise_if_error(result)
         except Exception as exn:
             logger.debug("%s -> %s", number, exn)
             raise
