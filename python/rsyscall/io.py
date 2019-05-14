@@ -298,7 +298,7 @@ async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
     await gid_map.write(await thr.ram.to_pointer(Bytes(f"{in_namespace_gid} {gid} 1\n".encode())))
     await gid_map.close()
 
-class StandardTask(UnixThread):
+class Thread(UnixThread):
     @property
     def ramthr(self) -> RAMThread:
         return self
@@ -426,7 +426,7 @@ class StandardTask(UnixThread):
 
     async def __aexit__(self, *args, **kwargs):
         await self.close()
-Thread = StandardTask
+StandardTask = Thread
 
 class TemporaryDirectory:
     path: Path

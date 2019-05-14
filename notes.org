@@ -17401,7 +17401,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    And stick it in rsyscall.environ_thread??
 
    Meh let's call it UnixThread. That's fine.
-** move rsyscallconnection to rsyscall.tasks.connection
+** DONE move rsyscallconnection to rsyscall.tasks.connection
 ** DONE rename make_connection/make_async_connection
 ** split out mkdtemp
 ** DONE make connection interface with open_channels
