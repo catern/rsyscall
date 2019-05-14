@@ -24,7 +24,7 @@ from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.tasks.fork import spawn_rsyscall_thread, RsyscallConnection, SyscallResponse
-from rsyscall.tasks.common import raise_if_error, log_syscall
+from rsyscall.tasks.util import raise_if_error, log_syscall
 from rsyscall.command import Command
 from rsyscall.environ import Environment
 from rsyscall.network.connection import Connection
@@ -453,57 +453,6 @@ class TemporaryDirectory:
 
     async def __aexit__(self, *args, **kwargs):
         await self.cleanup()
-
-class RsyscallInterface(near.SyscallInterface):
-    """An rsyscall connection to a task that is not our child.
-
-    For correctness, we should ensure that we'll get HUP/EOF if the task has
-    exited and therefore will never respond. This is most easily achieved by
-    making sure that the fds keeping the other end of the RsyscallConnection
-    open, are only held by one task, and so will be closed when the task
-    exits. Note, though, that that requires that the task be in an unshared file
-    descriptor space.
-
-    """
-    def __init__(self, rsyscall_connection: RsyscallConnection,
-                 # usually the same pid that's inside the namespaces
-                 identifier_process: near.Process) -> None:
-        self.rsyscall_connection = rsyscall_connection
-        self.logger = logging.getLogger(f"rsyscall.RsyscallConnection.{identifier_process.id}")
-        self.identifier_process = identifier_process
-
-    def store_remote_side_handles(self, infd: handle.FileDescriptor, outfd: handle.FileDescriptor) -> None:
-        self.infd = infd
-        self.outfd = outfd
-
-    def get_activity_fd(self) -> handle.FileDescriptor:
-        return self.infd
-
-    async def close_interface(self) -> None:
-        await self.rsyscall_connection.close()
-
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-        conn_response = await self.rsyscall_connection.write_request(
-            number,
-            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        response = SyscallResponse(self.rsyscall_connection.read_pending_responses, conn_response)
-        return response
-
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        response = await self.submit_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        try:
-            # we must not be interrupted while reading the response - we need to return
-            # the response so that our parent can deal with the state change we created.
-            with trio.CancelScope(shield=True):
-                result = await response.receive()
-        except Exception as exn:
-            self.logger.debug("%s -> %s", number, exn)
-            raise
-        else:
-            self.logger.debug("%s -> %s", number, result)
-            return result
 
 async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."

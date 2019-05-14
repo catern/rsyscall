@@ -3,7 +3,8 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ChildProcessMonitor
+from rsyscall.io import RsyscallConnection, StandardTask, Path, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, ChildProcessMonitor
+from rsyscall.tasks.common import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.handle import Stack, WrittenPointer, ThreadProcess, Pointer
 
@@ -64,7 +65,7 @@ class PersistentServer:
     path: Path
     task: handle.Task
     ram: RAM
-    syscall: RsyscallInterface
+    syscall: NonChildSyscallInterface
     listening_sock: handle.FileDescriptor
     # saved to keep the reference to the stack pointer etc alive
     thread_process: ThreadProcess
@@ -148,7 +149,7 @@ async def spawn_rsyscall_persistent_server(
         parent_task: handle.Task,
         parent_ram: RAM,
         loader: NativeLoader,
-    ) -> t.Tuple[handle.Task, RAM, RsyscallInterface, handle.FileDescriptor, ThreadProcess]:
+    ) -> t.Tuple[handle.Task, RAM, NonChildSyscallInterface, handle.FileDescriptor, ThreadProcess]:
     async def op(sem: batch.BatchSemantics) -> t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]]:
         stack_value = loader.make_trampoline_stack(Trampoline(
             loader.persistent_server_func, [remote_sock, remote_sock, listening_sock]))
@@ -160,8 +161,8 @@ async def spawn_rsyscall_persistent_server(
         (CLONE.VM|CLONE.FS|CLONE.FILES|CLONE.IO|
          CLONE.SIGHAND|CLONE.SYSVSEM|Signals.SIGCHLD),
         stack, None, None, None)
-    syscall = RsyscallInterface(RsyscallConnection(access_sock, access_sock),
-                                thread_process.near)
+    syscall = NonChildSyscallInterface(RsyscallConnection(access_sock, access_sock),
+                                       thread_process.near)
     new_base_task = handle.Task(syscall, thread_process.near, None,
                                 parent_task.fd_table, parent_task.address_space, parent_task.fs,
                                 parent_task.pidns,

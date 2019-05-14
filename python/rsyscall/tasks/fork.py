@@ -11,7 +11,7 @@ from rsyscall.memory.allocator import Arena
 from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.struct import T_struct, Struct, Int32, Bytes, StructList
-from rsyscall.tasks.common import raise_if_error, log_syscall
+from rsyscall.tasks.util import raise_if_error, log_syscall
 import logging
 import rsyscall.far as far
 import rsyscall.near as near

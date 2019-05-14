@@ -3,7 +3,8 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import RsyscallConnection, StandardTask, RsyscallInterface, Path, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, Command, AsyncReadBuffer
+from rsyscall.io import RsyscallConnection, StandardTask, Path, SocketMemoryTransport, SyscallResponse, log_syscall, AsyncFileDescriptor, raise_if_error, SignalBlock, ChildProcessMonitor, Command, AsyncReadBuffer
+from rsyscall.tasks.common import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader
 import trio
 import struct
@@ -91,7 +92,7 @@ async def rsyscall_stdin_bootstrap(
     netns = stdtask.task.base.netns
     process = far.Process(pidns, near.Process(pid))
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
-    syscall = RsyscallInterface(RsyscallConnection(access_syscall_sock, access_syscall_sock), process.near)
+    syscall = NonChildSyscallInterface(RsyscallConnection(access_syscall_sock, access_syscall_sock), process.near)
     base_task = handle.Task(syscall, process.near, None, fd_table, address_space, fs_information, pidns, netns)
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
