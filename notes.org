@@ -17383,6 +17383,24 @@ And we can have an exec which is not memory-abstracting, I guess.
    Can we skip setting up the child monitor?
 
    Oh hey we can skip most of this.
+
+   OK hm.
+
+   Technically all we need is environ.
+
+   Oh let's just put this in a new file.
+
+   Hmm what will we call it?
+
+   UnixThread? Sure.
+
+   Since it's got Environ and stuff.
+
+   Or just, EnvironThread.
+
+   And stick it in rsyscall.environ_thread??
+
+   Meh let's call it UnixThread. That's fine.
 ** DONE rename make_connection/make_async_connection
 ** split out mkdtemp
 ** DONE make connection interface with open_channels
