@@ -17412,6 +17412,7 @@ And we can have an exec which is not memory-abstracting, I guess.
 
    Yeah let's just delete MemPath.
 ** delete MemPath
+** change AFD methods to take pointers in their short form
 ** DONE move rsyscallconnection to rsyscall.tasks.connection
 ** DONE rename make_connection/make_async_connection
 ** split out mkdtemp

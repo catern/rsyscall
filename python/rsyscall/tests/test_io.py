@@ -305,7 +305,8 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
-                addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(await (path/"sock").as_sockaddr_un())
+                addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
+                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path.handle/"sock"))
                 await sockfd.bind(addr)
                 await sockfd.listen(10)
                 clientfd = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
@@ -318,12 +319,13 @@ class TestIO(unittest.TestCase):
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-                addr = await (path/"sock").as_sockaddr_un()
-                await sockfd.handle.bind(await sockfd.ram.to_pointer(addr))
+                addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
+                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path.handle/"sock"))
+                await sockfd.handle.bind(addr)
                 await sockfd.handle.listen(10)
                 clientfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-                await clientfd.connect(addr)
+                await clientfd.connect_ptr(addr)
                 connfd, client_addr = await sockfd.accept()
                 logger.info("%s, %s", addr, client_addr)
                 await connfd.close()
@@ -336,7 +338,8 @@ class TestIO(unittest.TestCase):
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-                addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(await (path/"sock").as_sockaddr_un())
+                addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
+                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path.handle/"sock"))
                 await sockfd.handle.bind(addr)
                 await sockfd.handle.listen(10)
 
@@ -374,12 +377,13 @@ class TestIO(unittest.TestCase):
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-                addr = await (path/"sock").as_sockaddr_un()
-                await sockfd.bind(addr)
+                addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
+                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path.handle/"sock"))
+                await sockfd.handle.bind(addr)
                 await sockfd.handle.listen(10)
                 clientfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-                await clientfd.connect(addr)
+                await clientfd.connect_ptr(addr)
                 await clientfd.write(b"foo = 11\n")
                 await clientfd.write(b"return foo * 2\n")
                 ret = await rsyscall.wish.serve_repls(sockfd, {'locals': locals()}, int, "hello")
@@ -710,7 +714,7 @@ class TestIO(unittest.TestCase):
             async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
                 thread = await remote_stdtask.fork()
                 bash = await remote_stdtask.environ.which("bash")
-                await thread.stdtask.task.base.chdir(await remote_tmpdir.to_pointer())
+                await thread.task.chdir(await thread.ram.to_pointer(remote_tmpdir.handle))
                 await ((await (remote_tmpdir/"var").mkdir())/"stuff").mkdir()
                 child_task = await thread.exec(bash)
                 await child_task.wait_for_exit()
@@ -719,19 +723,21 @@ class TestIO(unittest.TestCase):
     def test_copy(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as tmpdir:
-                source_file = await (tmpdir/"source").open(O.RDWR|O.CREAT)
+                source_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir.handle/"source"), O.RDWR|O.CREAT)
                 data = b'hello world'
-                await source_file.write(data)
-                await source_file.handle.lseek(0, SEEK.SET)
-                dest_file = await (tmpdir/"dest").open(O.RDWR|O.CREAT)
+                buf = await stdtask.ram.to_pointer(Bytes(data))
+                valid, rest = await source_file.write(buf)
+                buf = valid + rest
+                await source_file.lseek(0, SEEK.SET)
+                dest_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir.handle/"dest"), O.RDWR|O.CREAT)
 
                 thread = await stdtask.fork()
                 cat = await stdtask.environ.which("cat")
-                child_task = await rsyscall.io.exec_cat(thread, cat, source_file.handle, dest_file.handle)
+                child_task = await rsyscall.io.exec_cat(thread, cat, source_file, dest_file)
                 await child_task.wait_for_exit()
 
-                await dest_file.handle.lseek(0, SEEK.SET)
-                self.assertEqual(await dest_file.read(), data)
+                await dest_file.lseek(0, SEEK.SET)
+                self.assertEqual(await (await dest_file.read(buf))[0].read(), data)
         trio.run(self.runner, test)
 
     @unittest.skip("Nix deploy is broken")
