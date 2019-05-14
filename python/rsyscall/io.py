@@ -245,15 +245,6 @@ class Path(rsyscall.path.PathLike):
         await f.handle.close()
         return ret
 
-    async def as_sockaddr_un(self) -> SockaddrUn:
-        """Turn this path into a SockaddrUn, hacking around the 108 byte limit on socket addresses.
-
-        If the passed path is too long to fit in an address, this function will open the parent
-        directory with O_PATH and return SockaddrUn("/proc/self/fd/n/name").
-
-        """
-        return await SockaddrUn.from_path(self.thr, self.handle)
-
     # to_bytes and from_bytes, kinda sketchy, hmm....
     # from_bytes will fail at runtime... whatever
 

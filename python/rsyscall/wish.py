@@ -11,6 +11,7 @@ import sys
 from rsyscall.io import StandardTask, AsyncFileDescriptor, Command, Path
 from contextvars import ContextVar
 from rsyscall.sys.socket import SOCK, AF
+from rsyscall.sys.un import SockaddrUn
 from rsyscall.unistd import Pipe
 import rsyscall.repl
 
@@ -102,7 +103,7 @@ class ConsoleServerGenie(WishGranter):
         cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path))
         sockfd = await self.stdtask.make_afd(
             await self.stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-        await sockfd.bind(await sock_path.as_sockaddr_un())
+        await sockfd.bind(await SockaddrUn.from_path(self.stdtask, sock_path.handle))
         await sockfd.handle.listen(10)
         async with trio.open_nursery() as nursery:
             @nursery.start_soon

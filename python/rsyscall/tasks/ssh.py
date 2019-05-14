@@ -25,6 +25,7 @@ from rsyscall.memory.ram import RAM
 import rsyscall.nix as nix
 from rsyscall.fcntl import O
 from rsyscall.sys.socket import SOCK, AF, Address
+from rsyscall.sys.un import SockaddrUn
 from rsyscall.unistd import Pipe
 from rsyscall.handle import WrittenPointer
 
@@ -207,7 +208,7 @@ async def ssh_bootstrap(
 ) -> t.Tuple[AsyncChildProcess, StandardTask]:
     # identify local path
     local_data_addr: WrittenPointer[Address] = await parent_task.ram.to_pointer(
-        await Path(parent_task.ramthr, local_socket_path).as_sockaddr_un())
+        await SockaddrUn.from_path(parent_task, local_socket_path))
     # start port forwarding; we'll just leak this process, no big deal
     # TODO we shouldn't leak processes; we should be GCing processes at some point
     forward_child = await ssh_forward(
