@@ -87,12 +87,12 @@ class TestIO(unittest.TestCase):
 
     async def runner_with_tempdir(
             self,
-            test: t.Callable[[StandardTask, Path], t.Awaitable[None]]
+            test: t.Callable[[StandardTask, rsyscall.path.Path], t.Awaitable[None]]
     ) -> None:
         stdtask = local.stdtask
         async with trio.open_nursery() as nursery:
             async with (await stdtask.mkdtemp()) as tmppath:
-                await test(stdtask, tmppath)
+                await test(stdtask, tmppath.handle)
 
     def test_pipe(self):
         async def test(stdtask: StandardTask) -> None:
@@ -611,10 +611,10 @@ class TestIO(unittest.TestCase):
         trio.run(self.runner, test)
 
     def test_inotify_create(self) -> None:
-        async def test(stdtask: StandardTask, path: Path) -> None:
+        async def test(stdtask: StandardTask, path: rsyscall.path.Path) -> None:
             inty = await inotify.Inotify.make(stdtask)
-            watch = await inty.add(path.handle, inotify.IN.CREATE)
-            fd = await (path/"foo").creat()
+            watch = await inty.add(path, inotify.IN.CREATE)
+            fd = await stdtask.task.open(await stdtask.ram.to_pointer(path/"foo"), O.CREAT|O.EXCL)
             await watch.wait_until_event(inotify.IN.CREATE, "foo")
         trio.run(self.runner_with_tempdir, test)
 

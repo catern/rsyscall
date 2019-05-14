@@ -300,14 +300,15 @@ async def make_local_ssh_from_executables(stdtask: StandardTask,
     keygen_command = ssh_keygen.args('-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key')
     keygen_thread = await stdtask.fork()
     # ugh, we have to make a directory because ssh-keygen really wants to output to a directory
-    async with (await stdtask.mkdtemp()) as tmpdir:
-        await keygen_thread.stdtask.task.base.chdir(await tmpdir.to_pointer())
+    async with (await stdtask.mkdtemp()) as tmpdir_p:
+        tmpdir = tmpdir_p.handle
+        await keygen_thread.task.chdir(await keygen_thread.ram.to_pointer(tmpdir))
         await (await keygen_thread.exec(keygen_command)).wait_for_exit()
-        privkey_file = await (tmpdir/'key').open(O.RDONLY)
-        pubkey_file = await (tmpdir/'key.pub').open(O.RDONLY)
+        privkey_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir/'key'), O.RDONLY|O.CLOEXEC)
+        pubkey_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir/'key.pub'), O.RDONLY|O.CLOEXEC)
     def to_host(ssh: SSHCommand, privkey_file=privkey_file, pubkey_file=pubkey_file) -> SSHCommand:
-        privkey = privkey_file.handle.as_proc_path()
-        pubkey = pubkey_file.handle.as_proc_path()
+        privkey = privkey_file.as_proc_path()
+        pubkey = pubkey_file.as_proc_path()
         sshd_command = sshd.args(
             '-i', '-e', '-f', '/dev/null',
         ).sshd_options({

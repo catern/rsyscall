@@ -17401,6 +17401,17 @@ And we can have an exec which is not memory-abstracting, I guess.
    And stick it in rsyscall.environ_thread??
 
    Meh let's call it UnixThread. That's fine.
+** move out memfd and mempath
+   Hmmm.
+
+   I think we could maybe get rid of mempath;
+   it's relatively easy to do to_pointer(path) manually,
+   and that's its main benefit.
+
+   MemFD is harder. Hm Hm.
+
+   Yeah let's just delete MemPath.
+** delete MemPath
 ** DONE move rsyscallconnection to rsyscall.tasks.connection
 ** DONE rename make_connection/make_async_connection
 ** split out mkdtemp

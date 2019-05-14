@@ -429,12 +429,11 @@ class Thread(UnixThread):
 StandardTask = Thread
 
 class TemporaryDirectory:
-    path: Path
     def __init__(self, stdtask: StandardTask, parent: Path, name: bytes) -> None:
         self.stdtask = stdtask
         self.parent = parent
         self.name = name
-        self.path = parent/name
+        self.path = parent/os.fsdecode(name)
 
     async def cleanup(self) -> None:
         # TODO would be nice if not sharing the fs information gave us a cap to chdir
@@ -446,7 +445,7 @@ class TemporaryDirectory:
                 '-c', f"chmod -R +w -- {name} && rm -rf -- {name}"))
             await child.check()
 
-    async def __aenter__(self) -> 'Path':
+    async def __aenter__(self) -> Path:
         return self.path
 
     async def __aexit__(self, *args, **kwargs):
