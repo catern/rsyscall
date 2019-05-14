@@ -487,6 +487,7 @@ class StandardTask(ConnectionThread):
 
     async def __aexit__(self, *args, **kwargs):
         await self.close()
+Thread = StandardTask
 
 class TemporaryDirectory:
     path: Path
@@ -686,6 +687,8 @@ class RsyscallThread(StandardTask):
 
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
+
+ChildThread = RsyscallThread
 
 async def exec_cat(thread: RsyscallThread, cat: Command,
                    stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> AsyncChildProcess:

@@ -157,3 +157,4 @@ async def _initialize_module() -> None:
 
 task = _make_local_task()
 trio.run(_initialize_module)
+thread = stdtask

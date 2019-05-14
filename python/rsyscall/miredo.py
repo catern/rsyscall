@@ -10,7 +10,7 @@ import rsyscall.io as rsc
 import rsyscall.handle as handle
 import rsyscall.near
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.io import StandardTask, RsyscallThread, Command
+from rsyscall.io import Thread, ChildThread, Command
 from rsyscall.handle import FileDescriptor, Path
 from dataclasses import dataclass
 from rsyscall.struct import Int32, Bytes
@@ -56,31 +56,31 @@ class Miredo:
     # I don't get why this is the case, and I'm not sure it can't be worked around.
     # So, I'll just use a thread, which I do understand.
     # Hopefully we can get a more lightweight setns-based approach later?
-    ns_thread: RsyscallThread
+    ns_thread: ChildThread
 
 async def exec_miredo_privproc(
         miredo_exec: MiredoExecutables,
-        thread: RsyscallThread,
+        thread: ChildThread,
         privproc_side: FileDescriptor, tun_index: int) -> AsyncChildProcess:
-    privproc_side = privproc_side.move(thread.stdtask.task.base)
-    await thread.stdtask.unshare_files(going_to_exec=True)
-    await thread.stdtask.stdin.copy_from(privproc_side)
-    await thread.stdtask.stdout.replace_with(privproc_side)
+    privproc_side = privproc_side.move(thread.task)
+    await thread.unshare_files(going_to_exec=True)
+    await thread.stdin.copy_from(privproc_side)
+    await thread.stdout.replace_with(privproc_side)
     child = await thread.exec(miredo_exec.privproc.args(str(tun_index)))
     return child
 
 async def exec_miredo_run_client(
         miredo_exec: MiredoExecutables,
-        thread: RsyscallThread,
+        thread: ChildThread,
         inet_sock: FileDescriptor,
         tun_fd: FileDescriptor,
         reqsock: FileDescriptor,
         icmp6_fd: FileDescriptor,
         client_side: FileDescriptor,
         server_name: str) -> AsyncChildProcess:
-    fd_args = [fd.move(thread.stdtask.task.base)
+    fd_args = [fd.move(thread.task)
                for fd in [inet_sock, tun_fd, reqsock, icmp6_fd, client_side]]
-    await thread.stdtask.unshare_files(going_to_exec=True)
+    await thread.unshare_files()
     child = await thread.exec(miredo_exec.run_client.args(
         *[str(await fd.as_argument()) for fd in fd_args],
         server_name, server_name))
@@ -97,38 +97,36 @@ async def add_to_ambient(thr: RAMThread, capset: t.Set[CAP]) -> None:
     for cap in capset:
         await thr.task.prctl(PrctlOp.CAP_AMBIENT, CapAmbient.RAISE, cap)
 
-async def start_miredo(nursery, miredo_exec: MiredoExecutables, stdtask: StandardTask) -> Miredo:
-    inet_sock = await stdtask.task.base.socket(AF.INET, SOCK.DGRAM)
-    await inet_sock.bind(await stdtask.ram.to_pointer(SockaddrIn(0, 0)))
+async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) -> Miredo:
+    inet_sock = await thread.task.socket(AF.INET, SOCK.DGRAM)
+    await inet_sock.bind(await thread.ram.to_pointer(SockaddrIn(0, 0)))
     # set a bunch of sockopts
-    one = await stdtask.ram.to_pointer(Int32(1))
+    one = await thread.ram.to_pointer(Int32(1))
     await inet_sock.setsockopt(SOL.IP, IP.RECVERR, one)
     await inet_sock.setsockopt(SOL.IP, IP.PKTINFO, one)
     await inet_sock.setsockopt(SOL.IP, IP.MULTICAST_TTL, one)
     # hello fragments my old friend
-    await inet_sock.setsockopt(SOL.IP, IP.MTU_DISCOVER,
-                               await stdtask.ram.to_pointer(Int32(IP.PMTUDISC_DONT)))
-    ns_thread = await stdtask.fork()
-    await ns_thread.stdtask.unshare_user()
-    await ns_thread.stdtask.unshare_net()
+    await inet_sock.setsockopt(SOL.IP, IP.MTU_DISCOVER, await thread.ram.to_pointer(Int32(IP.PMTUDISC_DONT)))
+    ns_thread = await thread.fork()
+    await ns_thread.unshare_user()
+    await ns_thread.unshare_net()
     # create icmp6 fd so miredo can relay pings
-    icmp6_fd = await ns_thread.stdtask.task.base.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
+    icmp6_fd = await ns_thread.task.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
 
     # create the TUN interface
-    tun_fd = await ns_thread.task.base.open(await ns_thread.ram.to_pointer(Path("/dev/net/tun")), O.RDWR|O.CLOEXEC)
-    ptr = await stdtask.ram.to_pointer(netif.Ifreq(b'teredo', flags=netif.IFF_TUN))
+    tun_fd = await ns_thread.task.open(await ns_thread.ram.to_pointer(Path("/dev/net/tun")), O.RDWR|O.CLOEXEC)
+    ptr = await thread.ram.to_pointer(netif.Ifreq(b'teredo', flags=netif.IFF_TUN))
     await tun_fd.ioctl(netif.TUNSETIFF, ptr)
     # create reqsock for ifreq operations in this network namespace
-    reqsock = await ns_thread.stdtask.task.base.socket(AF.INET, SOCK.STREAM)
+    reqsock = await ns_thread.task.socket(AF.INET, SOCK.STREAM)
     await reqsock.ioctl(netif.SIOCGIFINDEX, ptr)
     tun_index = (await ptr.read()).ifindex
-    ptr.free()
     # create socketpair for communication between privileged process and teredo client
-    privproc_pair = await (await ns_thread.stdtask.task.base.socketpair(
-        AF.UNIX, SOCK.STREAM, 0, await ns_thread.stdtask.ram.malloc_struct(FDPair))).read()
+    privproc_pair = await (await ns_thread.task.socketpair(
+        AF.UNIX, SOCK.STREAM, 0, await ns_thread.ram.malloc_struct(FDPair))).read()
 
-    privproc_thread = await ns_thread.stdtask.fork()
-    await add_to_ambient(privproc_thread.stdtask.ramthr, {CAP.NET_ADMIN})
+    privproc_thread = await ns_thread.fork()
+    await add_to_ambient(privproc_thread, {CAP.NET_ADMIN})
     privproc_child = await exec_miredo_privproc(miredo_exec, privproc_thread, privproc_pair.first, tun_index)
     nursery.start_soon(privproc_child.check)
 
@@ -137,10 +135,10 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, stdtask: Standar
     # iterate through / and umount(MNT_DETACH) everything that isn't /nix
     # ummm and let's use UMOUNT_NOFOLLOW too
     # ummm no let's just only umount directories
-    client_thread = await ns_thread.stdtask.fork(newpid=True)
-    await client_thread.stdtask.unshare_net()
-    await client_thread.stdtask.unshare_mount()
-    await client_thread.stdtask.unshare_user()
+    client_thread = await ns_thread.fork(newpid=True)
+    await client_thread.unshare_net()
+    await client_thread.unshare_mount()
+    await client_thread.unshare_user()
     client_child = await exec_miredo_run_client(
         miredo_exec, client_thread, inet_sock, tun_fd, reqsock, icmp6_fd, privproc_pair.second, "teredo.remlab.net")
     nursery.start_soon(client_child.check)
@@ -152,32 +150,32 @@ class TestMiredo(TrioTestCase):
     async def asyncSetUp(self) -> None:
         # TODO lmao stracing this stuff causes a bug,
         # what is even going on
-        self.stdtask = local.stdtask
+        self.thread = local.thread
         print("a", time.time())
         self.exec = await MiredoExecutables.from_store(nix.local_store)
         print("a1", time.time())
-        self.miredo = await start_miredo(self.nursery, self.exec, self.stdtask)
+        self.miredo = await start_miredo(self.nursery, self.exec, self.thread)
         print("b", time.time())
-        self.netsock = await self.miredo.ns_thread.stdtask.task.base.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
+        self.netsock = await self.miredo.ns_thread.task.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
         print("b-1", time.time())
         print("b0", time.time())
         await self.netsock.bind(
-            await self.miredo.ns_thread.stdtask.ram.to_pointer(SockaddrNl(0, RTMGRP.IPV6_ROUTE)))
+            await self.miredo.ns_thread.ram.to_pointer(SockaddrNl(0, RTMGRP.IPV6_ROUTE)))
         print("b0.5", time.time())
 
 
     async def test_miredo(self) -> None:
         print("b1", time.time())
-        ping6 = (await self.stdtask.environ.which("ping")).args('-6')
+        ping6 = (await self.thread.environ.which("ping")).args('-6')
         print("b1.5", time.time())
         # TODO lol actually parse this, don't just read and throw it away
-        await self.netsock.read(await self.miredo.ns_thread.stdtask.ram.malloc_type(Bytes, 4096))
+        await self.netsock.read(await self.miredo.ns_thread.ram.malloc_type(Bytes, 4096))
         print("b2", time.time())
-        thread = await self.miredo.ns_thread.stdtask.fork()
+        thread = await self.miredo.ns_thread.fork()
         print("c", time.time())
-        # bash = await rsc.which(self.stdtask, "bash")
+        # bash = await rsc.which(self.thread, "bash")
         # await (await thread.exec(bash)).check()
-        await add_to_ambient(thread.stdtask.ramthr, {CAP.NET_RAW})
+        await add_to_ambient(thread, {CAP.NET_RAW})
         await (await thread.exec(ping6.args('-c', '1', 'google.com'))).check()
         print("d", time.time())
 
