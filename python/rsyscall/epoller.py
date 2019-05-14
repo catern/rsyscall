@@ -277,7 +277,7 @@ class AsyncFileDescriptor:
     async def bind(self, addr: T_addr) -> None:
         await self.handle.bind(await self.ram.to_pointer(addr))
 
-    async def connect_ptr(self, addr: WrittenPointer[Address]) -> None:
+    async def connect(self, addr: WrittenPointer[Address]) -> None:
         try:
             await self.handle.connect(addr)
         except OSError as e:
@@ -292,8 +292,8 @@ class AsyncFileDescriptor:
             else:
                 raise
 
-    async def connect(self, addr: T_addr) -> None:
-        await self.connect_ptr(await self.ram.to_pointer(addr))
+    async def connect_addr(self, addr: T_addr) -> None:
+        await self.connect(await self.ram.to_pointer(addr))
 
     async def aclose(self) -> None:
         await self.close()

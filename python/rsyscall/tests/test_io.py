@@ -325,7 +325,7 @@ class TestIO(unittest.TestCase):
                 await sockfd.handle.listen(10)
                 clientfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-                await clientfd.connect_ptr(addr)
+                await clientfd.connect(addr)
                 connfd, client_addr = await sockfd.accept_addr()
                 logger.info("%s, %s", addr, client_addr)
                 await connfd.close()
@@ -345,7 +345,7 @@ class TestIO(unittest.TestCase):
 
                 clientfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-                await clientfd.connect_ptr(addr)
+                await clientfd.connect(addr)
 
                 connfd_h, client_addr = await sockfd.accept_addr(SOCK.CLOEXEC|SOCK.NONBLOCK)
                 connfd = await sockfd.thr.make_afd(connfd_h)
@@ -384,7 +384,7 @@ class TestIO(unittest.TestCase):
                 await sockfd.handle.listen(10)
                 clientfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-                await clientfd.connect_ptr(addr)
+                await clientfd.connect(addr)
                 await clientfd.write_all_bytes(b"foo = 11\n")
                 await clientfd.write_all_bytes(b"return foo * 2\n")
                 ret = await rsyscall.wish.serve_repls(sockfd, {'locals': locals()}, int, "hello")

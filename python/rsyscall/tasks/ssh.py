@@ -226,7 +226,7 @@ async def ssh_bootstrap(
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor:
         sock = await parent_task.make_afd(await parent_task.task.base.socket(AF.UNIX, SOCK.STREAM))
-        await sock.connect_ptr(local_data_addr)
+        await sock.connect(local_data_addr)
         return sock
     async_local_syscall_sock = await make_async_connection()
     async_local_data_sock = await make_async_connection()
