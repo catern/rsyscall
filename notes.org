@@ -17368,7 +17368,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    but it'll be fine.
 ** DONE rename processresources to nativeloader
    and the field to .loader
-** add more intermediate threads
+** DONE add more intermediate threads
    Why did I stop doing this?
 
    um, because, I really need all this stuff in stdtask, to exec.
@@ -17411,7 +17411,54 @@ And we can have an exec which is not memory-abstracting, I guess.
    MemFD is harder. Hm Hm.
 
    Yeah let's just delete MemPath.
+** move out mkdtemp
+   First we need to delete mempath
 ** delete MemPath
+   The goal of doing this is to be able to move out mkdtemp
+** thought
+   all these dependencies in my todos are tricky
+
+   that's like dependencies in bringing up a system,
+   which can be nicely solved with programs
+
+   what about a personal organizer based on rsyscall?
+   and wish.
+
+   I can Wish for something to be done, and it gets surfaced to the user.
+   what about dependencies though?
+   how do I depend on a task?
+
+   (and, it would be nice to be able to see what gets unblocked when I do something)
+   (but absolutely not essential)
+
+   well, I can depend on a task just through, I guess, calling some function?
+   I could have parameterized tasks, which remember their args and uniquify calls to themselves based on that.
+
+   That could be my primitive;
+   some generalization of wish that uniquifies.
+
+   Then I don't see larger task nodes, though.
+   Just individual ones surfaced to me;
+   but I guess that could be fine.
+
+   (I can have repeated tasks by passing the time)
+
+   maybe I can surface larger tasks nodes by explicitly doing uniquification,
+   or having a function which is decorated to uniquify itself,
+   and then those get surfaced as nodes.
+
+   and, how do I add new tasks?
+   well I guess that's just a matter of adding new threads.
+   I do want to be able to add new dependencies to an existing task, though, I guess.
+
+   Well I can just have a repl and type in new tasks;
+   or some UI to add new tasks with parameters, etc etc.
+   Standard stuff.
+
+   Is there anything that corresponds to upgrading the system?
+   I mean, mutating existing tasks is similar in that it requires mutation.
+   Taking the same data and plumbing it through new code, though...
+   Meh, anyway.
 ** change AFD methods to take pointers in their short form
 ** DONE move rsyscallconnection to rsyscall.tasks.connection
 ** DONE rename make_connection/make_async_connection
