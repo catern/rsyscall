@@ -96,7 +96,7 @@ class TestIO(unittest.TestCase):
 
     def test_pipe(self):
         async def test(stdtask: StandardTask) -> None:
-            pipe = await (await stdtask.task.base.pipe(await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
+            pipe = await (await stdtask.task.pipe(await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
             in_data = b"hello"
             written, _ = await pipe.write.write(await stdtask.ram.to_pointer(Bytes(in_data)))
             valid, _ = await pipe.read.read(written)
@@ -105,7 +105,7 @@ class TestIO(unittest.TestCase):
 
     def test_readv(self):
         async def test(stdtask: StandardTask) -> None:
-            task = stdtask.task.base
+            task = stdtask.task
             ram = stdtask.ram
             pipe = await (await task.pipe(await ram.malloc_struct(Pipe), O.CLOEXEC)).read()
             in_data = [b"hello", b"world"]
@@ -127,7 +127,7 @@ class TestIO(unittest.TestCase):
 
         """
         async def test(stdtask: StandardTask) -> None:
-            pipe = await (await stdtask.task.base.pipe(await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
+            pipe = await (await stdtask.task.pipe(await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
             in_data = b"hello"
             written, _ = await pipe.write.write(await stdtask.ram.to_pointer(Bytes(in_data)))
             with self.assertRaises(OSError):
@@ -152,7 +152,7 @@ class TestIO(unittest.TestCase):
 
     def test_readlinkat_non_symlink(self):
         async def test(stdtask: StandardTask) -> None:
-            f = await stdtask.task.base.open(await stdtask.ram.to_pointer(rsyscall.path.Path(".")), O.PATH|O.CLOEXEC)
+            f = await stdtask.task.open(await stdtask.ram.to_pointer(rsyscall.path.Path(".")), O.PATH|O.CLOEXEC)
             empty_ptr = await stdtask.ram.to_pointer(rsyscall.path.EmptyPath())
             ptr = await stdtask.ram.malloc_type(rsyscall.path.Path, 4096)
             with self.assertRaises(FileNotFoundError):
@@ -161,7 +161,7 @@ class TestIO(unittest.TestCase):
 
     def test_readlink_proc(self):
         async def test(stdtask: StandardTask) -> None:
-            f = await stdtask.task.base.open(await stdtask.ram.to_pointer(rsyscall.path.Path(".")), O.PATH|O.CLOEXEC)
+            f = await stdtask.task.open(await stdtask.ram.to_pointer(rsyscall.path.Path(".")), O.PATH|O.CLOEXEC)
             path_ptr = await stdtask.ram.to_pointer(f.as_proc_self_path())
             ptr = await stdtask.ram.malloc_type(rsyscall.path.Path, 4096)
             await f.readlinkat(path_ptr, ptr)
@@ -269,7 +269,7 @@ class TestIO(unittest.TestCase):
     def test_mkdtemp(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
-                dirfd = await stdtask.task.base.open(await stdtask.ram.to_pointer(path), O.DIRECTORY)
+                dirfd = await stdtask.task.open(await stdtask.ram.to_pointer(path), O.DIRECTORY)
                 dent_buf = await stdtask.ram.malloc_type(DirentList, 4096)
                 valid, rest = await dirfd.getdents(dent_buf)
                 self.assertCountEqual(sorted([dirent.name for dirent in await valid.read()]), ['.', '..'])
@@ -304,12 +304,12 @@ class TestIO(unittest.TestCase):
     def test_listen(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
-                sockfd = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
+                sockfd = await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
                 addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
                     await SockaddrUn.from_path(stdtask, path/"sock"))
                 await sockfd.bind(addr)
                 await sockfd.listen(10)
-                clientfd = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
+                clientfd = await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
                 await clientfd.connect(addr)
                 connfd = await sockfd.accept(SOCK.CLOEXEC)
         trio.run(self.runner, test)
@@ -318,13 +318,13 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.make_afd(
-                    await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+                    await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
                 addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
                     await SockaddrUn.from_path(stdtask, path/"sock"))
                 await sockfd.handle.bind(addr)
                 await sockfd.handle.listen(10)
                 clientfd = await stdtask.make_afd(
-                    await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+                    await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
                 await clientfd.connect(addr)
                 connfd, client_addr = await sockfd.accept_addr()
                 logger.info("%s, %s", addr, client_addr)
@@ -337,14 +337,14 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.make_afd(
-                    await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+                    await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
                 addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
                     await SockaddrUn.from_path(stdtask, path/"sock"))
                 await sockfd.handle.bind(addr)
                 await sockfd.handle.listen(10)
 
                 clientfd = await stdtask.make_afd(
-                    await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+                    await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
                 await clientfd.connect(addr)
 
                 connfd_h, client_addr = await sockfd.accept_addr(SOCK.CLOEXEC|SOCK.NONBLOCK)
@@ -377,13 +377,13 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.make_afd(
-                    await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+                    await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
                 addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
                     await SockaddrUn.from_path(stdtask, path/"sock"))
                 await sockfd.handle.bind(addr)
                 await sockfd.handle.listen(10)
                 clientfd = await stdtask.make_afd(
-                    await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+                    await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
                 await clientfd.connect(addr)
                 await clientfd.write_all_bytes(b"foo = 11\n")
                 await clientfd.write_all_bytes(b"return foo * 2\n")
@@ -492,16 +492,16 @@ class TestIO(unittest.TestCase):
     def test_setns_ownership(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread1 = await stdtask.fork()
-            await thread1.stdtask.unshare_user()
-            await thread1.stdtask.unshare_net()
+            await thread1.unshare_user()
+            await thread1.unshare_net()
             procselfns = rsyscall.path.Path("/proc/self/ns")
-            netnsfd = await thread1.task.base.open(await thread1.ram.to_pointer(procselfns/"net"), O.RDONLY|O.CLOEXEC)
+            netnsfd = await thread1.task.open(await thread1.ram.to_pointer(procselfns/"net"), O.RDONLY|O.CLOEXEC)
 
             thread2 = await stdtask.fork()
-            await thread2.stdtask.unshare_user()
+            await thread2.unshare_user()
             with self.assertRaises(PermissionError):
                 # we can't setns to a namespace that we don't own, I guess...
-                await thread2.stdtask.task.base.setns_net(netnsfd)
+                await thread2.task.setns_net(netnsfd)
                 # that's really lame...
         trio.run(self.runner, test)
 
@@ -512,10 +512,10 @@ class TestIO(unittest.TestCase):
             await stdtask.unshare_net()
 
             tunpath = rsyscall.path.Path("/dev/net/tun")
-            tun_fd = await stdtask.task.base.open(await stdtask.ram.to_pointer(tunpath), O.RDWR|O.CLOEXEC)
+            tun_fd = await stdtask.task.open(await stdtask.ram.to_pointer(tunpath), O.RDWR|O.CLOEXEC)
             ptr = await stdtask.ram.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
             await tun_fd.ioctl(net.TUNSETIFF, ptr)
-            sock = await stdtask.task.base.socket(AF.INET, SOCK.STREAM)
+            sock = await stdtask.task.socket(AF.INET, SOCK.STREAM)
             await sock.ioctl(net.SIOCGIFINDEX, ptr)
             # this is the second interface in an empty netns
             self.assertEqual((await ptr.read()).ifindex, 2)
@@ -529,14 +529,14 @@ class TestIO(unittest.TestCase):
             await stdtask.unshare_user()
             await stdtask.unshare_net()
 
-            netsock = await stdtask.task.base.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
+            netsock = await stdtask.task.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
             await netsock.bind(await stdtask.ram.to_pointer(SockaddrNl(0, RTMGRP.LINK)))
 
             tunpath = rsyscall.path.Path("/dev/net/tun")
-            tun_fd = await stdtask.task.base.open(await stdtask.ram.to_pointer(tunpath), O.RDWR|O.CLOEXEC)
+            tun_fd = await stdtask.task.open(await stdtask.ram.to_pointer(tunpath), O.RDWR|O.CLOEXEC)
             ptr = await stdtask.ram.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
             await tun_fd.ioctl(net.TUNSETIFF, ptr)
-            sock = await stdtask.task.base.socket(AF.INET, SOCK.STREAM)
+            sock = await stdtask.task.socket(AF.INET, SOCK.STREAM)
             await sock.ioctl(net.SIOCGIFINDEX, ptr)
             # this is the second interface in an empty netns
             self.assertEqual((await ptr.read()).ifindex, 2)
@@ -553,12 +553,12 @@ class TestIO(unittest.TestCase):
             await stdtask.unshare_net()
             hdr_ptr = await stdtask.ram.to_pointer(CapHeader())
             data_ptr = await stdtask.ram.malloc_struct(CapData)
-            await stdtask.task.base.capget(hdr_ptr, data_ptr)
+            await stdtask.task.capget(hdr_ptr, data_ptr)
             data = await data_ptr.read()
             data.inheritable.add(CAP.NET_ADMIN)
             data_ptr = await data_ptr.write(data)
-            await stdtask.task.base.capset(hdr_ptr, data_ptr)
-            await stdtask.task.base.prctl(PrctlOp.CAP_AMBIENT, CapAmbient.RAISE, CAP.NET_ADMIN)
+            await stdtask.task.capset(hdr_ptr, data_ptr)
+            await stdtask.task.prctl(PrctlOp.CAP_AMBIENT, CapAmbient.RAISE, CAP.NET_ADMIN)
         trio.run(self.runner, test)
 
     def test_sigaction(self) -> None:
@@ -567,8 +567,8 @@ class TestIO(unittest.TestCase):
             import readline
             sa = Sigaction(Sighandler.DFL)
             ptr = await stdtask.ram.to_pointer(sa)
-            await stdtask.task.base.sigaction(Signals.SIGWINCH, ptr, None)
-            await stdtask.task.base.sigaction(Signals.SIGWINCH, None, ptr)
+            await stdtask.task.sigaction(Signals.SIGWINCH, ptr, None)
+            await stdtask.task.sigaction(Signals.SIGWINCH, None, ptr)
             out_sa = await ptr.read()
             self.assertEqual(sa.handler, out_sa.handler)
             self.assertEqual(sa.flags, out_sa.flags)
@@ -638,7 +638,7 @@ class TestIO(unittest.TestCase):
                 # so, okay. SSHHost perhaps?
                 logger.info("about to fork")
                 per_stdtask, server = await fork_persistent(remote_stdtask, path/"persist.sock")
-                logger.info("forked persistent, %s", per_stdtask.task.base.process.near)
+                logger.info("forked persistent, %s", per_stdtask.task.process.near)
                 await server.make_persistent()
                 await local_child.kill()
                 local_child, remote_stdtask = await host.ssh(stdtask)
@@ -672,7 +672,7 @@ class TestIO(unittest.TestCase):
                 await stdtask2.unshare_files()
                 thread3 = await stdtask2.fork()
                 async with thread3 as stdtask3:
-                    epoller = await EpollCenter.make_root(stdtask3.ram, stdtask3.task.base)
+                    epoller = await EpollCenter.make_root(stdtask3.ram, stdtask3.task)
                     await stdtask3.unshare_files()
                     await self.do_async_things(epoller, stdtask3.ramthr)
         trio.run(self.runner, test)
@@ -681,7 +681,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
             async with thread as stdtask2:
-                epoller = await EpollCenter.make_root(stdtask2.ram, stdtask2.task.base)
+                epoller = await EpollCenter.make_root(stdtask2.ram, stdtask2.task)
                 await self.do_async_things(epoller, stdtask2.ramthr)
         trio.run(self.runner, test)
 
@@ -698,10 +698,10 @@ class TestIO(unittest.TestCase):
             thread = await stdtask.fork()
             async with thread as stdtask2:
                 # have to use an epoller for that specific task
-                epoller = await EpollCenter.make_root(stdtask2.ram, stdtask2.task.base)
-                sigqueue = await SignalQueue.make(stdtask2.ram, stdtask2.task.base,
+                epoller = await EpollCenter.make_root(stdtask2.ram, stdtask2.task)
+                sigqueue = await SignalQueue.make(stdtask2.ram, stdtask2.task,
                                                   epoller, Sigset({Signals.SIGINT}))
-                await stdtask2.task.base.process.kill(Signals.SIGINT)
+                await stdtask2.task.process.kill(Signals.SIGINT)
                 buf = await stdtask2.ram.malloc_struct(SignalfdSiginfo)
                 sigdata = await sigqueue.read(buf)
                 self.assertEqual((await sigdata.read()).signo, Signals.SIGINT)
@@ -750,12 +750,12 @@ class TestIO(unittest.TestCase):
             host = await make_local_ssh(stdtask, rsyscall.nix.local_store)
             local_child, remote_stdtask = await host.ssh(stdtask)
             thread = await remote_stdtask.fork()
-            src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
-            dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
+            src_nix_bin = stdtask.task.make_path_from_bytes(nix_bin_bytes)
+            dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread)
             # let's use nix-copy-closure or nix-store --import/--export or nix copy to copy bash over then run it?
             # nix-store --import/--export
             bash = await stdtask.environ.which("bash")
-            dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
+            dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread)
             child_task = await thread.execve(dest_bash, ["bash"])
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
@@ -764,10 +764,10 @@ class TestIO(unittest.TestCase):
     def test_nix_shell(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
-            src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
-            dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
+            src_nix_bin = stdtask.task.make_path_from_bytes(nix_bin_bytes)
+            dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread)
             bash = await stdtask.environ.which("bash")
-            dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread.stdtask)
+            dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread)
             child_task = await thread.execve(dest_bash, ["bash", "--norc"])
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
@@ -777,28 +777,28 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             del stdtask.environ['NIX_REMOTE']
             thread = await stdtask.fork()
-            src_nix_bin = stdtask.task.base.make_path_from_bytes(nix_bin_bytes)
-            dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread.stdtask)
+            src_nix_bin = stdtask.task.make_path_from_bytes(nix_bin_bytes)
+            dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread)
             child_task = await thread.execve(dest_nix_bin/"nix-daemon", ["nix-daemon"], {'NIX_REMOTE':''})
 
             shell_thread = await stdtask.fork()
-            dest_nix_bin = shell_thread.stdtask.task.base.make_path_handle(dest_nix_bin)
+            dest_nix_bin = shell_thread.task.make_path_handle(dest_nix_bin)
             with child_task.process.borrow():
                 ns_user = rsyscall.path.Path("/proc")/str(child_task.process.near.id)/"ns"/"user"
-                usernsfd = await shell_thread.task.base.open(await shell_thread.ram.to_pointer(ns_user), O.RDONLY|O.CLOEXEC)
-            await shell_thread.stdtask.setns_user(usernsfd)
-            await shell_thread.stdtask.unshare_mount()
-            await shell_thread.stdtask.mount(b"nix", b"/nix", b"none", MS.BIND|MS.RDONLY, b"")
+                usernsfd = await shell_thread.task.open(await shell_thread.ram.to_pointer(ns_user), O.RDONLY|O.CLOEXEC)
+            await shell_thread.setns_user(usernsfd)
+            await shell_thread.unshare_mount()
+            await shell_thread.mount(b"nix", b"/nix", b"none", MS.BIND|MS.RDONLY, b"")
             # making a readonly bind mount is weird, you have to mount it first then remount it rdonly
-            await shell_thread.stdtask.mount(b"none", b"/nix", b"none",
+            await shell_thread.mount(b"none", b"/nix", b"none",
                                              MS.BIND|MS.REMOUNT|MS.RDONLY, b"")
             bash = await stdtask.environ.which("bash")
-            dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, shell_thread.stdtask)
+            dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, shell_thread)
             mount = await stdtask.environ.which("mount")
             # don't seem to be able to copy coreutils for some reason?
             # it doesn't have a valid signature?
             await rsyscall.nix.nix_deploy(src_nix_bin, mount.executable_path,
-                                         stdtask, dest_nix_bin, shell_thread.stdtask)
+                                         stdtask, dest_nix_bin, shell_thread)
             child_task = await shell_thread.execve(dest_bash, ["bash", "--norc"])
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
@@ -939,7 +939,7 @@ class TestIO(unittest.TestCase):
                                          CmsgSCMRights, CmsgList, MsghdrFlags)
             task = stdtask.task
             ram = stdtask.ram
-            fds = await (await task.base.socketpair(
+            fds = await (await task.socketpair(
                 AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC, 0,
                 await ram.malloc_struct(FDPair))).read()
             in_data = b"hello"
