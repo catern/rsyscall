@@ -632,7 +632,7 @@ class TestIO(unittest.TestCase):
                 # probably.
                 # so, okay. SSHHost perhaps?
                 logger.info("about to fork")
-                per_stdtask, server = await fork_persistent(remote_stdtask, path/"persist.sock")
+                per_stdtask, server = await fork_persistent(remote_stdtask, path.handle/"persist.sock")
                 logger.info("forked persistent, %s", per_stdtask.task.base.process.near)
                 await server.make_persistent()
                 await local_child.kill()

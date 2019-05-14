@@ -251,11 +251,7 @@ class Path(rsyscall.path.PathLike):
         directory with O_PATH and return SockaddrUn("/proc/self/fd/n/name").
 
         """
-        try:
-            return SockaddrUn(os.fsencode(self.handle))
-        except PathTooLongError:
-            fd = await self.thr.task.open(await self.parent.to_pointer(), O.PATH|O.CLOEXEC)
-            return SockaddrUnProcFd(fd, self.name)
+        return await SockaddrUn.from_path(self.thr.task, self.thr.ram, self.handle)
 
     # to_bytes and from_bytes, kinda sketchy, hmm....
     # from_bytes will fail at runtime... whatever

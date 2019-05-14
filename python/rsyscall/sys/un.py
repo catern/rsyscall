@@ -2,11 +2,13 @@ from __future__ import annotations
 import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.sys.socket import AF, Address, _register_sockaddr
-from rsyscall.path import PathLike
+from rsyscall.path import Path
 from dataclasses import dataclass
 import os
+from rsyscall.fcntl import O
 if t.TYPE_CHECKING:
-    from rsyscall.handle import FileDescriptor
+    from rsyscall.handle import FileDescriptor, Task
+    from rsyscall.memory.ram import RAM
 
 class PathTooLongError(ValueError):
     pass
@@ -19,6 +21,20 @@ class SockaddrUn(Address):
     def __post_init__(self) -> None:
         if len(self.path) > 108:
             raise PathTooLongError("path", self.path, "is longer than the maximum unix address size")
+
+    @staticmethod
+    async def from_path(task: Task, ram: RAM, path: Path) -> SockaddrUn:
+        """Turn this path into a SockaddrUn, hacking around the 108 byte limit on socket addresses.
+
+        If the passed path is too long to fit in an address, this function will open the parent
+        directory with O_PATH and return SockaddrUn("/proc/self/fd/n/name").
+
+        """
+        try:
+            return SockaddrUn(os.fsencode(path))
+        except PathTooLongError:
+            fd = await task.open(await ram.to_pointer(path.parent), O.PATH|O.CLOEXEC)
+            return SockaddrUnProcFd(fd, path.name)
 
     T = t.TypeVar('T', bound='SockaddrUn')
     @classmethod

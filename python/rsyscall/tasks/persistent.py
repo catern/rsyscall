@@ -3,7 +3,8 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask, Path, SocketMemoryTransport, AsyncFileDescriptor, ChildProcessMonitor
+from rsyscall.io import StandardTask, SocketMemoryTransport, AsyncFileDescriptor, ChildProcessMonitor
+from rsyscall.path import Path
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader, Trampoline
@@ -23,6 +24,7 @@ from rsyscall.struct import Bytes, Int32, StructList
 
 from rsyscall.sched import CLONE
 from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, SendMsghdr, CmsgSCMRights, CmsgList
+from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.uio import IovecList
 from rsyscall.signal import Signals, Sigset, SignalBlock
 from rsyscall.sys.prctl import PrctlOp
@@ -74,8 +76,7 @@ class PersistentServer:
 
     async def _connect_and_send(self, stdtask: StandardTask, fds: t.List[handle.FileDescriptor]) -> t.List[near.FileDescriptor]:
         connected_sock = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM, 0)
-        self.path = self.path.with_thread(stdtask.ramthr)
-        sockaddr_un = await self.path.as_sockaddr_un()
+        sockaddr_un = await SockaddrUn.from_path(stdtask.task, stdtask.ram, self.path)
         def sendmsg_op(sem: batch.BatchSemantics) -> t.Tuple[
                 WrittenPointer[Address], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
             addr: WrittenPointer[Address] = sem.to_pointer(sockaddr_un)
@@ -183,7 +184,7 @@ async def fork_persistent(
         self: StandardTask, path: Path,
 ) -> t.Tuple[StandardTask, PersistentServer]:
     listening_sock = await self.task.socket(AF.UNIX, SOCK.STREAM)
-    await listening_sock.bind(await self.ram.to_pointer(await path.as_sockaddr_un()))
+    await listening_sock.bind(await self.ram.to_pointer(await SockaddrUn.from_path(self.task, self.ram, path)))
     await listening_sock.listen(1)
     [(access_sock, remote_sock)] = await self.open_async_channels(1)
     task, ram, syscall, listening_sock_handle, thread_process = await spawn_rsyscall_persistent_server(
