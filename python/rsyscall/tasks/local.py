@@ -24,6 +24,7 @@ import rsyscall.batch as batch
 from rsyscall.network.connection import FDPassConnection
 from rsyscall.environ import Environment
 from rsyscall.loader import NativeLoader
+from rsyscall.monitor import ChildProcessMonitor
 
 from rsyscall.sys.epoll import EpollFlag
 from rsyscall.epoller import EpollCenter
@@ -133,7 +134,7 @@ async def _make_local_stdtask() -> StandardTask:
         logger.debug("wait_readable(%s)", epfd.near.number)
         await trio.hazmat.wait_readable(epfd.near.number)
     epoller = EpollCenter.make_subsidiary(ram, epfd, wait_readable)
-    child_monitor = await rsc.ChildProcessMonitor.make(ram, task, epoller)
+    child_monitor = await ChildProcessMonitor.make(ram, task, epoller)
     access_connection = None
     connection = await FDPassConnection.make(task, ram, epoller)
     stdtask = StandardTask(

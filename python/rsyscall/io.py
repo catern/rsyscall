@@ -8,21 +8,15 @@ import pathlib
 import math
 
 
-import rsyscall.handle as handle
-import rsyscall.handle
-from rsyscall.handle import T_pointer, Stack, WrittenPointer, MemoryMapping, Arg, ThreadProcess, MemoryGateway, Pointer, Task
-import rsyscall.far as far
+from rsyscall.handle import FileDescriptor, Path, WrittenPointer, MemoryMapping, ThreadProcess, Pointer, Task
 import rsyscall.near as near
-from rsyscall.struct import T_struct, T_fixed_size, Bytes, Int32, Serializer, Struct
-import rsyscall.batch as batch
+from rsyscall.struct import Bytes
 from rsyscall.batch import BatchSemantics
 from rsyscall.mktemp import mkdtemp, TemporaryDirectory
 
 from rsyscall.memory.ram import RAM, RAMThread
-from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, AsyncReadBuffer
-from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
+from rsyscall.monitor import AsyncChildProcess
 from rsyscall.command import Command
-from rsyscall.network.connection import Connection
 from rsyscall.unix_thread import UnixThread, ChildUnixThread
 
 from rsyscall.fcntl import O, F, FD_CLOEXEC
@@ -30,6 +24,7 @@ from rsyscall.sys.mount import MS
 from rsyscall.sched import UnshareFlag
 from rsyscall.sys.wait import ChildEvent
 from rsyscall.linux.dirent import DirentList
+from rsyscall.unistd import Arg
 
 import random
 import string
@@ -60,7 +55,7 @@ async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
         in_namespace_uid = uid
     if in_namespace_gid is None:
         in_namespace_gid = gid
-    procself = handle.Path("/proc/self")
+    procself = Path("/proc/self")
 
     uid_map = await thr.task.open(await thr.ram.to_pointer(procself/"uid_map"), O.WRONLY)
     await uid_map.write(await thr.ram.to_pointer(Bytes(f"{in_namespace_uid} {uid} 1\n".encode())))
@@ -82,7 +77,7 @@ class Thread(UnixThread):
     async def mkdtemp(self, prefix: str="mkdtemp") -> TemporaryDirectory:
         return await mkdtemp(self, prefix)
 
-    async def spit(self, path: handle.Path, text: t.Union[str, bytes], mode=0o644) -> handle.Path:
+    async def spit(self, path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
         """Open a file, creating and truncating it, and write the passed text to it
 
         Probably shouldn't use this on FIFOs or anything.
@@ -100,7 +95,7 @@ class Thread(UnixThread):
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: MS,
                     data: bytes) -> None:
-        def op(sem: batch.BatchSemantics) -> t.Tuple[
+        def op(sem: BatchSemantics) -> t.Tuple[
                 WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg]]:
             return (
                 sem.to_pointer(Arg(source)),
@@ -150,7 +145,7 @@ class Thread(UnixThread):
         if not going_to_exec:
             await do_cloexec_except(self.ramthr, set([fd.near for fd in self.task.base.fd_handles]))
 
-    async def unshare_files_and_replace(self, mapping: t.Dict[handle.FileDescriptor, handle.FileDescriptor],
+    async def unshare_files_and_replace(self, mapping: t.Dict[FileDescriptor, FileDescriptor],
                                         going_to_exec=False) -> None:
         mapping = {
             # we maybe_copy the key because we need to have the only handle to it in the task,
@@ -177,13 +172,13 @@ class Thread(UnixThread):
     async def unshare_net(self) -> None:
         await self.task.base.unshare_net()
 
-    async def setns_user(self, fd: handle.FileDescriptor) -> None:
+    async def setns_user(self, fd: FileDescriptor) -> None:
         await self.task.base.setns_user(fd)
 
     async def unshare_mount(self) -> None:
-        await rsyscall.near.unshare(self.task.base.sysif, UnshareFlag.NEWNS)
+        await self.task.unshare_mount()
 
-    async def setns_mount(self, fd: handle.FileDescriptor) -> None:
+    async def setns_mount(self, fd: FileDescriptor) -> None:
         fd.check_is_for(self.task.base)
         await fd.setns(UnshareFlag.NEWNS)
 
@@ -203,7 +198,7 @@ StandardTask = Thread
 async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
     buf = await thr.ram.malloc_type(DirentList, 4096)
-    dirfd = await thr.task.open(await thr.ram.to_pointer(handle.Path("/proc/self/fd")), O.DIRECTORY|O.CLOEXEC)
+    dirfd = await thr.task.open(await thr.ram.to_pointer(Path("/proc/self/fd")), O.DIRECTORY|O.CLOEXEC)
     async def maybe_close(fd: near.FileDescriptor) -> None:
         flags = await near.fcntl(thr.task.sysif, fd, F.GETFD)
         if (flags & FD_CLOEXEC) and (fd not in excluded_fds):
@@ -247,7 +242,7 @@ class ChildThread(StandardTask, ChildUnixThread):
 RsyscallThread = ChildThread
 
 async def exec_cat(thread: RsyscallThread, cat: Command,
-                   stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> AsyncChildProcess:
+                   stdin: FileDescriptor, stdout: FileDescriptor) -> AsyncChildProcess:
     await thread.stdtask.unshare_files_and_replace({
         thread.stdtask.stdin: stdin,
         thread.stdtask.stdout: stdout,

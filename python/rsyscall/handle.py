@@ -837,6 +837,9 @@ class Task(SignalMaskTask, rsyscall.far.Task):
     async def unshare_net(self) -> None:
         await rsyscall.near.unshare(self.sysif, UnshareFlag.NEWNET)
 
+    async def unshare_mount(self) -> None:
+        await rsyscall.near.unshare(self.sysif, UnshareFlag.NEWNS)
+
     async def setns_user(self, fd: FileDescriptor) -> None:
         with fd.borrow(self) as fd:
             # can't setns to a user namespace while sharing CLONE_FS

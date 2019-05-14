@@ -1,8 +1,8 @@
 import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.io import AsyncFileDescriptor
+from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.io import StandardTask
-from rsyscall.io import Command
+from rsyscall.command import Command
 import rsyscall.io as rsc
 import shutil
 import rsyscall.near as near

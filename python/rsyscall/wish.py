@@ -8,7 +8,8 @@ import traceback
 import os
 import inspect
 import sys
-from rsyscall.io import StandardTask, AsyncFileDescriptor, Command
+from rsyscall.io import StandardTask, Command
+from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.path import Path
 from contextvars import ContextVar
 from rsyscall.sys.socket import SOCK, AF
