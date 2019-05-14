@@ -5,7 +5,7 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask, Path, SocketMemoryTransport, AsyncFileDescriptor, SignalBlock, ChildProcessMonitor, Command, AsyncReadBuffer
+from rsyscall.io import StandardTask, SocketMemoryTransport, AsyncFileDescriptor, SignalBlock, ChildProcessMonitor, Command, AsyncReadBuffer
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader

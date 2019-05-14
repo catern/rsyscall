@@ -10,10 +10,11 @@ from dataclasses import dataclass
 import nixdeps
 import logging
 from rsyscall.memory.ram import RAMThread
+from rsyscall.handle import WrittenPointer
 
 from rsyscall.sys.mount import MS
 from rsyscall.fcntl import O
-from rsyscall.unistd import Pipe
+from rsyscall.unistd import Pipe, OK
 
 async def bootstrap_nix(
         src_nix_store: Command, src_tar: Command, src_task: StandardTask,
@@ -165,28 +166,32 @@ class Store:
         self.stdtask = stdtask
         self.nix = nix
         # cache the target path, mildly useful caching for the pointers
-        self.roots: t.Dict[StorePath, Path] = {}
-        self._add_root(nix, Path(self.stdtask.ramthr, nix.path))
+        self.roots: t.Dict[StorePath, handle.Path] = {}
+        self._add_root(nix, nix.path)
 
-    def _add_root(self, store_path: StorePath, path: Path) -> None:
+    def _add_root(self, store_path: StorePath, path: handle.Path) -> None:
         self.roots[store_path] = path
 
-    async def create_root(self, store_path: StorePath, path: Path) -> Path:
+    async def create_root(self, store_path: StorePath, path: WrittenPointer[handle.Path]) -> handle.Path:
         # TODO create a Nix temp root pointing to this path
-        self._add_root(store_path, path)
-        return path
+        self._add_root(store_path, path.value)
+        # TODO would be cool to store and return the pointers
+        return path.value
 
-    async def realise(self, store_path: StorePath) -> Path:
+    async def realise(self, store_path: StorePath) -> handle.Path:
         if store_path in self.roots:
             return self.roots[store_path]
-        path = Path(self.stdtask.ramthr, store_path.path)
-        if await path.access(read=True):
-            return (await self.create_root(store_path, path))
-        raise NotImplementedError("TODO deploy this store_path from local_store")
+        ptr = await self.stdtask.ram.to_pointer(store_path.path)
+        try:
+            await self.stdtask.task.access(ptr, OK.R)
+        except PermissionError:
+            raise NotImplementedError("TODO deploy this store_path from local_store")
+        else:
+            return await self.create_root(store_path, ptr)
 
     async def bin(self, store_path: StorePath, name: str) -> Command:
         path = await self.realise(store_path)
-        return Command(path.handle/"bin"/name, [name], {})
+        return Command(path/"bin"/name, [name], {})
 
 nix = StorePath._load_without_registering("nix")
 local_store = Store(local.stdtask, nix)
@@ -195,7 +200,7 @@ def import_nix_dep(name: str) -> StorePath:
     store_path = StorePath._load_without_registering(name)
     # the local store has a root for every StorePath; that's where the
     # paths actually originally are.
-    local_store._add_root(store_path, Path(local_store.stdtask.ramthr, store_path.path))
+    local_store._add_root(store_path, store_path.path)
     return store_path
 
 rsyscall = import_nix_dep("rsyscall")

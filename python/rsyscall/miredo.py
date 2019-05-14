@@ -42,8 +42,8 @@ class MiredoExecutables:
     async def from_store(cls, store: nix.Store) -> MiredoExecutables:
         miredo_path = await store.realise(miredo_nixdep)
         return MiredoExecutables(
-            run_client=Command(miredo_path.handle/"libexec"/"miredo"/"miredo-run-client", ["miredo-run-client"], {}),
-            privproc=Command(miredo_path.handle/"libexec"/"miredo"/"miredo-privproc", ["miredo-privproc"], {}),
+            run_client=Command(miredo_path/"libexec"/"miredo"/"miredo-run-client", ["miredo-run-client"], {}),
+            privproc=Command(miredo_path/"libexec"/"miredo"/"miredo-privproc", ["miredo-privproc"], {}),
         )
 
 @dataclass

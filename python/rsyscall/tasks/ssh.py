@@ -3,7 +3,7 @@ import rsyscall.handle as handle
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, Command, AsyncReadBuffer, Path, SocketMemoryTransport, ChildProcessMonitor
+from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, Command, AsyncReadBuffer, SocketMemoryTransport, ChildProcessMonitor
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader
@@ -82,8 +82,9 @@ class SSHExecutables:
     async def from_store(cls, store: nix.Store) -> SSHExecutables:
         ssh_path = await store.realise(openssh)
         rsyscall_path = await store.realise(nix.rsyscall)
-        base_ssh = SSHCommand.make(ssh_path.handle/"bin"/"ssh")
-        bootstrap_executable = (await (rsyscall_path/"libexec"/"rsyscall"/"rsyscall-bootstrap").open(O.RDONLY)).handle
+        base_ssh = SSHCommand.make(ssh_path/"bin"/"ssh")
+        bootstrap_executable = await store.stdtask.task.open(
+            await store.stdtask.ram.to_pointer(rsyscall_path/"libexec"/"rsyscall"/"rsyscall-bootstrap"), O.RDONLY|O.CLOEXEC)
         return SSHExecutables(base_ssh, bootstrap_executable)
 
     def host(self, to_host: t.Callable[[SSHCommand], SSHCommand]) -> SSHHost:
@@ -289,8 +290,8 @@ class SSHDExecutables:
     @classmethod
     async def from_store(cls, store: nix.Store) -> SSHDExecutables:
         ssh_path = await store.realise(openssh)
-        ssh_keygen = Command(ssh_path.handle/"bin"/"ssh-keygen", ["ssh-keygen"], {})
-        sshd = SSHDCommand.make(ssh_path.handle/"bin"/"sshd")
+        ssh_keygen = Command(ssh_path/"bin"/"ssh-keygen", ["ssh-keygen"], {})
+        sshd = SSHDCommand.make(ssh_path/"bin"/"sshd")
         return SSHDExecutables(ssh_keygen, sshd)
 
 async def make_local_ssh_from_executables(stdtask: StandardTask,

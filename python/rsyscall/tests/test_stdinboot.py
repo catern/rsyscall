@@ -13,7 +13,7 @@ class TestStdinboot(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.stdtask = local.stdtask
         path = await stdin_bootstrap_path_from_store(local_store)
-        self.command = Command(path.handle, ['rsyscall-stdin-bootstrap'], {})
+        self.command = Command(path, ['rsyscall-stdin-bootstrap'], {})
         self.local_child, self.remote_stdtask = await rsyscall_stdin_bootstrap(self.stdtask, self.command)
 
     async def asyncTearDown(self) -> None:

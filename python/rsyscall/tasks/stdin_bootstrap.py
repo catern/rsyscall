@@ -3,7 +3,7 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask, Path, SocketMemoryTransport, AsyncFileDescriptor, SignalBlock, ChildProcessMonitor, Command, AsyncReadBuffer
+from rsyscall.io import StandardTask, SocketMemoryTransport, AsyncFileDescriptor, SignalBlock, ChildProcessMonitor, Command, AsyncReadBuffer
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader
@@ -32,7 +32,14 @@ __all__ = [
     "rsyscall_stdin_bootstrap",
 ]
 
-async def stdin_bootstrap_path_from_store(store: nix.Store) -> Path:
+async def stdin_bootstrap_path_from_store(store: nix.Store) -> handle.Path:
+    """Get the path to the rsyscall-stdin-bootstrap executable.
+
+    We return a Path rather than a Command because the typical usage
+    of this path will be to pass it as an argument to some other
+    command, such as sudo.
+
+    """
     rsyscall_path = await store.realise(nix.rsyscall)
     return rsyscall_path/"libexec"/"rsyscall"/"rsyscall-stdin-bootstrap"
 
