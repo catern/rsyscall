@@ -210,9 +210,3 @@ class ChildThread(StandardTask, ChildUnixThread):
         await self.close()
 
 RsyscallThread = ChildThread
-
-async def read_full(read: t.Callable[[int], t.Awaitable[bytes]], size: int) -> bytes:
-    buf = b""
-    while len(buf) < size:
-        buf += await read(size - len(buf))
-    return buf
