@@ -17373,6 +17373,17 @@ And we can have an exec which is not memory-abstracting, I guess.
 
    um, because, I really need all this stuff in stdtask, to exec.
    so, y'know.
+
+   OK hm so write_user_mappings is needed
+
+   Maybe we should have a low-level fork, which, um, dunno.
+
+   Well we can skip setting up the user mappings.
+
+   Can we skip setting up the child monitor?
+
+   Oh hey we can skip most of this.
+** remove make_connection/make_async_connection
 ** split out mkdtemp
 ** DONE make connection interface with open_channels
    OK one difficulty is inheritance.

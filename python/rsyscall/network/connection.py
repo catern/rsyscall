@@ -155,7 +155,7 @@ class ConnectionThread(EpollThread):
         super().__init__(task, ram, epoller)
         self.connection = connection
 
-    def _init_from(self, thr: ConnectionThread) -> None:
+    def _init_from(self, thr: ConnectionThread) -> None: # type: ignore
         super().__init__(thr.task, thr.ram, thr.epoller)
         self.connection = thr.connection
 

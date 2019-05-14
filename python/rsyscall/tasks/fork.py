@@ -1,3 +1,4 @@
+from __future__ import annotations
 from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
 from rsyscall.batch import BatchSemantics, perform_async_batch
@@ -394,4 +395,36 @@ async def spawn_rsyscall_thread(
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     return new_base_task
+
+from rsyscall.epoller import EpollCenter
+from rsyscall.network.connection import Connection, ConnectionThread
+class ForkThread(ConnectionThread):
+    def __init__(self,
+                 task: Task,
+                 ram: RAM,
+                 epoller: EpollCenter,
+                 connection: Connection,
+                 loader: NativeLoader,
+                 child_monitor: ChildProcessMonitor,
+    ) -> None:
+        super().__init__(task, ram, epoller, connection)
+        self.loader = loader
+        self.child_monitor = child_monitor
+
+    def _init_from(self, thr: ForkThread) -> None: # type: ignore
+        super()._init_from(thr)
+        self.loader = thr.loader
+        self.child_monitor = thr.child_monitor
+
+    async def _fork_task(self, newuser=False, newpid=False, fs=True, sighand=True) -> Task:
+        [(access_sock, remote_sock)] = await self.connection.open_async_channels(1)
+        base_task = await spawn_rsyscall_thread(
+            self.ram, self.task.base,
+            access_sock, remote_sock,
+            self.child_monitor, self.loader,
+            newuser=newuser, newpid=newpid, fs=fs, sighand=sighand,
+        )
+        await remote_sock.invalidate()
+        return base_task
+
 

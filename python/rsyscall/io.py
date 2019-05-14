@@ -27,6 +27,8 @@ from rsyscall.tasks.fork import spawn_rsyscall_thread, RsyscallConnection, Sysca
 from rsyscall.tasks.common import raise_if_error, log_syscall
 from rsyscall.command import Command
 from rsyscall.environ import Environment
+from rsyscall.network.connection import Connection
+from rsyscall.tasks.fork import ForkThread
 
 from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, GenericSockaddr, SendmsgFlags, RecvmsgFlags, Sockbuf
 from rsyscall.fcntl import AT, O, F, FD_CLOEXEC
@@ -45,7 +47,6 @@ from rsyscall.signal import HowSIG, Sigaction, Sighandler, Signals, Sigset, Sigi
 from rsyscall.signal import SignalBlock
 from rsyscall.linux.dirent import Dirent, DirentList
 from rsyscall.unistd import SEEK
-from rsyscall.network.connection import Connection, ConnectionThread
 
 import random
 import string
@@ -298,7 +299,7 @@ async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
     await gid_map.write(await thr.ram.to_pointer(Bytes(f"{in_namespace_gid} {gid} 1\n".encode())))
     await gid_map.close()
 
-class StandardTask(ConnectionThread):
+class StandardTask(ForkThread):
     def __init__(self,
                  task: Task,
                  ram: RAM,
@@ -311,9 +312,7 @@ class StandardTask(ConnectionThread):
                  stdout: handle.FileDescriptor,
                  stderr: handle.FileDescriptor,
     ) -> None:
-        super().__init__(task, ram, epoller, connection)
-        self.loader = loader
-        self.child_monitor = child_monitor
+        super().__init__(task, ram, epoller, connection, loader, child_monitor)
         self.environ = environ
         self.stdin = stdin
         self.stdout = stdout
@@ -360,14 +359,8 @@ class StandardTask(ConnectionThread):
         await self.task.base.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
 
     async def fork(self, newuser=False, newpid=False, fs=True, sighand=True) -> RsyscallThread:
-        [(access_sock, remote_sock)] = await self.make_async_connections(1)
-        base_task = await spawn_rsyscall_thread(
-            self.ram, self.task.base,
-            access_sock, remote_sock,
-            self.child_monitor, self.loader,
-            newuser=newuser, newpid=newpid, fs=fs, sighand=sighand,
-        )
-        ram = RAM(base_task,
+        task = await self._fork_task(newuser=newuser, newpid=newpid, fs=fs, sighand=sighand)
+        ram = RAM(task,
                   # We don't inherit the transport because it leads to a deadlock:
                   # If when a child task calls transport.read, it performs a syscall in the child task,
                   # then the parent task will need to call waitid to monitor the child task during the syscall,
@@ -376,37 +369,36 @@ class StandardTask(ConnectionThread):
                   # so the parent will block forever on taking the lock,
                   # and child's read syscall will never complete.
                   self.ram.transport,
-                  self.ram.allocator.inherit(base_task),
+                  self.ram.allocator.inherit(task),
         )
-        await remote_sock.invalidate()
         if newuser:
             # hack, we should really track the [ug]id ahead of this so we don't have to get it
             # we have to get the [ug]id from the parent because it will fail in the child
             uid = await self.task.base.getuid()
             gid = await self.task.base.getgid()
-            await write_user_mappings(RAMThread(base_task, ram), uid, gid)
+            await write_user_mappings(RAMThread(task, ram), uid, gid)
         if newpid or self.child_monitor.is_reaper:
             # if the new process is pid 1, then CLONE_PARENT isn't allowed so we can't use inherit_to_child.
             # if we are a reaper, than we don't want our child CLONE_PARENTing to us, so we can't use inherit_to_child.
             # in both cases we just fall back to making a new ChildProcessMonitor for the child.
-            epoller = await EpollCenter.make_root(ram, base_task)
+            epoller = await EpollCenter.make_root(ram, task)
             # this signal is already blocked, we inherited the block, um... I guess...
             # TODO handle this more formally
-            signal_block = SignalBlock(base_task, await ram.to_pointer(Sigset({signal.SIGCHLD})))
-            child_monitor = await ChildProcessMonitor.make(ram, base_task,
+            signal_block = SignalBlock(task, await ram.to_pointer(Sigset({signal.SIGCHLD})))
+            child_monitor = await ChildProcessMonitor.make(ram, task,
                                                            epoller, signal_block=signal_block, is_reaper=newpid)
         else:
             epoller = self.epoller.inherit(ram)
-            child_monitor = self.child_monitor.inherit_to_child(base_task)
+            child_monitor = self.child_monitor.inherit_to_child(task)
         return RsyscallThread(
-            base_task, ram,
-            self.connection.for_task(base_task, ram),
+            task, ram,
+            self.connection.for_task(task, ram),
             self.loader,
             epoller, child_monitor,
-            self.environ.inherit(base_task, ram),
-            stdin=self.stdin.for_task(base_task),
-            stdout=self.stdout.for_task(base_task),
-            stderr=self.stderr.for_task(base_task),
+            self.environ.inherit(task, ram),
+            stdin=self.stdin.for_task(task),
+            stdout=self.stdout.for_task(task),
+            stderr=self.stderr.for_task(task),
             parent_monitor=self.child_monitor,
         )
 
