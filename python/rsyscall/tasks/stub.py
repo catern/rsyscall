@@ -44,8 +44,7 @@ class StubServer:
         "Start listening on the passed-in path for stub connections."
         sockfd = await stdtask.make_afd(
             await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-        addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-            await SockaddrUn.from_path(stdtask.task, stdtask.ram, path))
+        addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(await SockaddrUn.from_path(stdtask, path))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
         return StubServer(sockfd, stdtask)

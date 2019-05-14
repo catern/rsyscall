@@ -76,7 +76,7 @@ class PersistentServer:
 
     async def _connect_and_send(self, stdtask: StandardTask, fds: t.List[handle.FileDescriptor]) -> t.List[near.FileDescriptor]:
         connected_sock = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM, 0)
-        sockaddr_un = await SockaddrUn.from_path(stdtask.task, stdtask.ram, self.path)
+        sockaddr_un = await SockaddrUn.from_path(stdtask, self.path)
         def sendmsg_op(sem: batch.BatchSemantics) -> t.Tuple[
                 WrittenPointer[Address], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
             addr: WrittenPointer[Address] = sem.to_pointer(sockaddr_un)
@@ -184,7 +184,7 @@ async def fork_persistent(
         self: StandardTask, path: Path,
 ) -> t.Tuple[StandardTask, PersistentServer]:
     listening_sock = await self.task.socket(AF.UNIX, SOCK.STREAM)
-    await listening_sock.bind(await self.ram.to_pointer(await SockaddrUn.from_path(self.task, self.ram, path)))
+    await listening_sock.bind(await self.ram.to_pointer(await SockaddrUn.from_path(self, path)))
     await listening_sock.listen(1)
     [(access_sock, remote_sock)] = await self.open_async_channels(1)
     task, ram, syscall, listening_sock_handle, thread_process = await spawn_rsyscall_persistent_server(

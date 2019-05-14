@@ -252,7 +252,7 @@ class Path(rsyscall.path.PathLike):
         directory with O_PATH and return SockaddrUn("/proc/self/fd/n/name").
 
         """
-        return await SockaddrUn.from_path(self.thr.task, self.thr.ram, self.handle)
+        return await SockaddrUn.from_path(self.thr, self.handle)
 
     # to_bytes and from_bytes, kinda sketchy, hmm....
     # from_bytes will fail at runtime... whatever

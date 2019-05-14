@@ -17411,7 +17411,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    MemFD is harder. Hm Hm.
 
    Yeah let's just delete MemPath.
-** make SockaddrUn.from_path take a ramthread
+** DONE make SockaddrUn.from_path take a ramthread
    Passing the individual task and ram is simply too much of a hassle.
 
    We should do this before deleting mempath;

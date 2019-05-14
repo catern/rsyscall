@@ -306,7 +306,7 @@ class TestIO(unittest.TestCase):
             async with (await stdtask.mkdtemp()) as path:
                 sockfd = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
                 addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path/"sock"))
+                    await SockaddrUn.from_path(stdtask, path/"sock"))
                 await sockfd.bind(addr)
                 await sockfd.listen(10)
                 clientfd = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
@@ -320,7 +320,7 @@ class TestIO(unittest.TestCase):
                 sockfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
                 addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path/"sock"))
+                    await SockaddrUn.from_path(stdtask, path/"sock"))
                 await sockfd.handle.bind(addr)
                 await sockfd.handle.listen(10)
                 clientfd = await stdtask.make_afd(
@@ -339,7 +339,7 @@ class TestIO(unittest.TestCase):
                 sockfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
                 addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path/"sock"))
+                    await SockaddrUn.from_path(stdtask, path/"sock"))
                 await sockfd.handle.bind(addr)
                 await sockfd.handle.listen(10)
 
@@ -378,7 +378,7 @@ class TestIO(unittest.TestCase):
                 sockfd = await stdtask.make_afd(
                     await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
                 addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-                    await SockaddrUn.from_path(stdtask.task, stdtask.ram, path/"sock"))
+                    await SockaddrUn.from_path(stdtask, path/"sock"))
                 await sockfd.handle.bind(addr)
                 await sockfd.handle.listen(10)
                 clientfd = await stdtask.make_afd(
