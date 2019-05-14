@@ -17413,8 +17413,16 @@ And we can have an exec which is not memory-abstracting, I guess.
    Yeah let's just delete MemPath.
 ** make SockaddrUn.from_path take a ramthread
    Passing the individual task and ram is simply too much of a hassle.
-** move out mkdtemp
+
+   We should do this before deleting mempath;
+   currently we use this method off mempath a lot.
+** DONE move out mkdtemp
    First we need to delete mempath
+   well, delete it from mkdtemp, which we did.
+** DONE move out update_symlink
+   hmm I have no tests for this lol
+
+   oh well, i'll rework it and use it later
 ** make mkdtemp a method on tmpdir
    That would be cool, very cool.
 

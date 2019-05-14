@@ -16,6 +16,7 @@ import rsyscall.near as near
 from rsyscall.struct import T_struct, T_fixed_size, Bytes, Int32, Serializer, Struct
 import rsyscall.batch as batch
 from rsyscall.batch import BatchSemantics
+from rsyscall.mktemp import mkdtemp, TemporaryDirectory
 
 import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM, RAMThread
@@ -265,15 +266,6 @@ class Path(rsyscall.path.PathLike):
     def __fspath__(self) -> str:
         return self.handle.__fspath__()
 
-def random_string(k=8) -> str:
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=k))
-
-async def update_symlink(parent: Path, name: str, target: str) -> None:
-    tmpname = name + ".updating." + random_string()
-    tmppath = (parent/tmpname)
-    await tmppath.symlink(target)
-    await (parent/name).rename(tmppath)
-
 async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
                               in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
     if in_namespace_uid is None:
@@ -299,12 +291,8 @@ class Thread(UnixThread):
     def ramthr(self) -> RAMThread:
         return self
 
-    async def mkdtemp(self, prefix: str="mkdtemp") -> 'TemporaryDirectory':
-        parent = self.environ.tmpdir
-        random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        name = prefix+"."+random_suffix
-        await self.task.mkdir(await self.ram.to_pointer(parent/name), 0o700)
-        return TemporaryDirectory(self, parent, name)
+    async def mkdtemp(self, prefix: str="mkdtemp") -> TemporaryDirectory:
+        return await mkdtemp(self, prefix)
 
     async def spit(self, path: handle.Path, text: t.Union[str, bytes], mode=0o644) -> handle.Path:
         """Open a file, creating and truncating it, and write the passed text to it
@@ -423,29 +411,6 @@ class Thread(UnixThread):
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 StandardTask = Thread
-
-class TemporaryDirectory:
-    def __init__(self, stdtask: StandardTask, parent: rsyscall.path.Path, name: str) -> None:
-        self.stdtask = stdtask
-        self.parent = parent
-        self.name = name
-        self.path = parent/name
-
-    async def cleanup(self) -> None:
-        # TODO would be nice if not sharing the fs information gave us a cap to chdir
-        cleanup_thread = await self.stdtask.fork(fs=False)
-        async with cleanup_thread:
-            await cleanup_thread.task.chdir(await cleanup_thread.ram.to_pointer(self.parent))
-            name = os.fsdecode(self.name)
-            child = await cleanup_thread.exec(self.stdtask.environ.sh.args(
-                '-c', f"chmod -R +w -- {name} && rm -rf -- {name}"))
-            await child.check()
-
-    async def __aenter__(self) -> rsyscall.path.Path:
-        return self.path
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.cleanup()
 
 async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
