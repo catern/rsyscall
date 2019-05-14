@@ -71,69 +71,6 @@ import inspect
 logger = logging.getLogger(__name__)
 
 T = t.TypeVar('T')
-class MemFileDescriptor:
-    "A file descriptor, plus a task to access it from, plus the file object underlying the descriptor."
-    def __init__(self, ram: RAM, handle: handle.FileDescriptor) -> None:
-        self.ram = ram
-        self.handle = handle
-
-    def __str__(self) -> str:
-        return f'FD({self.ram}, {self.handle})'
-
-    async def read(self, count: int=4096) -> bytes:
-        valid, _ = await self.handle.read(await self.ram.malloc_type(Bytes, count))
-        return await valid.read()
-
-    async def write(self, data: bytes) -> int:
-        written, _ = await self.handle.write(await self.ram.to_pointer(Bytes(data)))
-        return written.bytesize()
-
-    async def write_all(self, data: bytes) -> None:
-        remaining: handle.Pointer = await self.ram.to_pointer(Bytes(data))
-        while remaining.bytesize() > 0:
-            written, remaining = await self.handle.write(remaining)
-
-    async def getdents(self, count: int=4096) -> DirentList:
-        valid, _ = await self.handle.getdents(await self.ram.malloc_type(DirentList, count))
-        return await valid.read()
-
-    async def bind(self, addr: Address) -> None:
-        await self.handle.bind(await self.ram.to_pointer(addr))
-
-    async def connect(self, addr: Address) -> None:
-        await self.handle.connect(await self.ram.to_pointer(addr))
-
-    async def listen(self, backlog: int) -> None:
-        await self.handle.listen(backlog)
-
-    async def setsockopt(self, level: int, optname: int, optval: t.Union[bytes, int]) -> None:
-        if isinstance(optval, bytes):
-            ptr: handle.Pointer = await self.ram.to_pointer(Bytes(optval))
-        else:
-            ptr = await self.ram.to_pointer(Int32(optval))
-        await self.handle.setsockopt(level, optname, ptr)
-
-    async def getsockname(self) -> Address:
-        written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(GenericSockaddr)))
-        sockbuf = await self.handle.getsockname(written_sockbuf)
-        return (await (await sockbuf.read()).buf.read()).parse()
-
-    async def getpeername(self) -> Address:
-        written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(GenericSockaddr)))
-        sockbuf = await self.handle.getpeername(written_sockbuf)
-        return (await (await sockbuf.read()).buf.read()).parse()
-
-    async def getsockopt(self, level: int, optname: int, optlen: int) -> bytes:
-        written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_type(Bytes, optlen)))
-        sockbuf = await self.handle.getsockopt(level, optname, written_sockbuf)
-        return (await (await sockbuf.read()).buf.read())
-
-    async def accept(self, flags: SOCK) -> t.Tuple[MemFileDescriptor, Address]:
-        written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(GenericSockaddr)))
-        fd, sockbuf = await self.handle.accept(flags, written_sockbuf)
-        addr = (await (await sockbuf.read()).buf.read()).parse()
-        return MemFileDescriptor(self.ram, fd), addr
-
 async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
                               in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
     if in_namespace_uid is None:
@@ -334,14 +271,6 @@ async def exec_cat(thread: RsyscallThread, cat: Command,
     }, going_to_exec=True)
     child_task = await thread.exec(cat)
     return child_task
-
-async def read_all(fd: MemFileDescriptor) -> bytes:
-    buf = b""
-    while True:
-        data = await fd.read()
-        if len(data) == 0:
-            return buf
-        buf += data
 
 async def read_full(read: t.Callable[[int], t.Awaitable[bytes]], size: int) -> bytes:
     buf = b""

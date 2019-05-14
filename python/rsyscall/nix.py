@@ -2,19 +2,36 @@ from __future__ import annotations
 import typing as t
 import os
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask, read_all, Command, MemFileDescriptor
+from rsyscall.io import StandardTask, Command
 import rsyscall.tasks.local as local
 import trio
 import struct
 from dataclasses import dataclass
 import nixdeps
 import logging
-from rsyscall.memory.ram import RAMThread
-from rsyscall.handle import WrittenPointer
+from rsyscall.memory.ram import RAM, RAMThread
+from rsyscall.handle import WrittenPointer, Pointer
+from rsyscall.struct import Bytes
 
 from rsyscall.sys.mount import MS
 from rsyscall.fcntl import O
 from rsyscall.unistd import Pipe, OK
+
+
+async def read_to_eof(ram: RAM, fd: handle.FileDescriptor) -> bytes:
+    buf = await ram.malloc_type(Bytes, 4096)
+    valids: t.List[Pointer] = []
+    while True:
+        valid, rest = await fd.read(buf)
+        if valid.bytesize() == 0:
+            break
+        valids.append(valid)
+        if rest.bytesize() > 256:
+            buf = rest
+        else:
+            rest.free()
+            buf = await ram.malloc_type(Bytes, 4096)
+    return b"".join(await ram.transport.batch_read(valids))
 
 async def bootstrap_nix(
         src_nix_store: Command, src_tar: Command, src_task: StandardTask,
@@ -28,7 +45,7 @@ async def bootstrap_nix(
     await query_thread.stdtask.stdout.replace_with(query_stdout)
     await query_thread.exec(
         src_nix_store.args("--query", "--requisites", src_nix_store.executable_path))
-    closure = (await read_all(MemFileDescriptor(src_task.ram, query_pipe.read))).split()
+    closure = (await read_to_eof(src_task.ram, query_pipe.read)).split()
 
     src_tar_thread = await src_task.fork()
     dest_tar_thread = await dest_task.fork()
@@ -116,7 +133,7 @@ async def nix_deploy(
     await query_thread.stdtask.unshare_files(going_to_exec=True)
     await query_thread.stdtask.stdout.replace_with(query_stdout)
     await query_thread.exec(Command(src_nix_bin/"nix-store", [b"nix-store"], {}).args("--query", "--requisites", src_path))
-    closure = (await read_all(MemFileDescriptor(src_task.ram, query_pipe.read))).split()
+    closure = (await read_to_eof(src_task.ram, query_pipe.read)).split()
 
     export_thread = await src_task.fork()
     import_thread = await dest_task.fork()
