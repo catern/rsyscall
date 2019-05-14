@@ -91,7 +91,7 @@ class Inotify:
     async def do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
-                valid, _ = await self.asyncfd.read_handle(await self.ram.malloc_type(InotifyEventList, 4096))
+                valid, _ = await self.asyncfd.read(await self.ram.malloc_type(InotifyEventList, 4096))
                 if valid.bytesize() == 0:
                     raise Exception('got EOF from inotify fd? what?')
                 for event in await valid.read():

@@ -179,7 +179,7 @@ class SyscallConnection:
         buf = await self.fromfd.ram.malloc_type(Bytes, 1024)
         while not vals:
             if self.valid is None:
-                valid, rest = await self.fromfd.read_handle(buf)
+                valid, rest = await self.fromfd.read(buf)
                 if valid.bytesize() == 0:
                     raise RsyscallHangup()
                 self.valid = valid

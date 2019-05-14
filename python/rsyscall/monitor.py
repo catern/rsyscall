@@ -40,7 +40,7 @@ class SignalQueue:
         return cls(signal_block, async_sigfd)
 
     async def read(self, buf: Pointer) -> Pointer:
-        validp, _ = await self.sigfd.read_handle(buf)
+        validp, _ = await self.sigfd.read(buf)
         return validp
 
 class AsyncChildProcess:

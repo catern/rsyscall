@@ -197,7 +197,7 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
             read: t.Optional[Pointer[Bytes]] = None
             rest = dest
             while rest.bytesize() > 0:
-                more_read, rest = await self.local.read_handle(rest)
+                more_read, rest = await self.local.read(rest)
                 if read is None:
                     read = more_read
                 else:

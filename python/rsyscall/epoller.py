@@ -182,7 +182,7 @@ class AsyncFileDescriptor:
     def could_read(self) -> bool:
         return self.is_readable or self.read_hangup or self.hangup or self.error
 
-    async def read_handle(self, ptr: Pointer) -> t.Tuple[Pointer, Pointer]:
+    async def read(self, ptr: Pointer) -> t.Tuple[Pointer, Pointer]:
         while True:
             while not self.could_read():
                 await self._wait_once()
@@ -194,9 +194,9 @@ class AsyncFileDescriptor:
                 else:
                     raise
 
-    async def read(self, count: int=4096) -> bytes:
+    async def read_some_bytes(self, count: int=4096) -> bytes:
         ptr = await self.ram.malloc_type(Bytes, count)
-        valid, _ = await self.read_handle(ptr)
+        valid, _ = await self.read(ptr)
         return await valid.read()
 
     async def wait_for_rdhup(self) -> None:
@@ -286,7 +286,7 @@ class AsyncReadBuffer:
         self.buf = b""
 
     async def _read(self) -> t.Optional[bytes]:
-        data = await self.fd.read()
+        data = await self.fd.read_some_bytes()
         if len(data) == 0:
             if len(self.buf) != 0:
                 raise EOFException("got EOF while we still hold unhandled buffered data")

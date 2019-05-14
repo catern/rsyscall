@@ -65,7 +65,7 @@ async def do_async_things(self: unittest.TestCase, epoller, thr: RAMThread) -> N
     data = b"hello world"
     async def stuff():
         logger.info("performing read")
-        result = await async_pipe_rfd.read()
+        result = await async_pipe_rfd.read_some_bytes()
         self.assertEqual(result, data)
     async with trio.open_nursery() as nursery:
         nursery.start_soon(stuff)
@@ -351,7 +351,7 @@ class TestIO(unittest.TestCase):
                 logger.info("%s, %s", addr, client_addr)
                 data = b"hello"
                 await connfd.write_all_bytes(data)
-                self.assertEqual(data, await clientfd.read())
+                self.assertEqual(data, await clientfd.read_some_bytes())
                 await connfd.close()
                 await sockfd.close()
                 await clientfd.close()
