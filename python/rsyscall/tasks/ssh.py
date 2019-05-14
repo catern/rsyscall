@@ -3,7 +3,7 @@ import rsyscall.handle as handle
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, StandardTask, AsyncFileDescriptor, Command, AsyncReadBuffer, SocketMemoryTransport, ChildProcessMonitor
+from rsyscall.io import RsyscallThread, StandardTask
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader
@@ -16,11 +16,13 @@ import contextlib
 import abc
 import random
 import string
-from rsyscall.monitor import AsyncChildProcess
+from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.network.connection import ListeningConnection
 from rsyscall.environ import Environment
-from rsyscall.epoller import EpollCenter
+from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.memory.ram import RAM
+from rsyscall.memory.socket_transport import SocketMemoryTransport
+from rsyscall.command import Command
 
 import rsyscall.nix as nix
 from rsyscall.fcntl import O

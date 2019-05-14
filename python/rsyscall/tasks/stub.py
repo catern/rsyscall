@@ -5,7 +5,7 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask, SocketMemoryTransport, AsyncFileDescriptor, SignalBlock, ChildProcessMonitor, Command, AsyncReadBuffer
+from rsyscall.io import StandardTask
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader
@@ -15,7 +15,10 @@ import logging
 import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM
 import rsyscall.nix as nix
-from rsyscall.epoller import EpollCenter
+from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, AsyncReadBuffer
+from rsyscall.monitor import ChildProcessMonitor
+from rsyscall.command import Command
+from rsyscall.memory.socket_transport import SocketMemoryTransport
 
 import rsyscall.batch as batch
 from rsyscall.struct import Bytes
@@ -27,7 +30,7 @@ from rsyscall.sched import CLONE
 from rsyscall.sys.socket import SOCK, AF, SendmsgFlags, Address
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.un import SockaddrUn
-from rsyscall.signal import Signals, Sigset
+from rsyscall.signal import Signals, Sigset, SignalBlock
 from rsyscall.fcntl import O
 
 __all__ = [

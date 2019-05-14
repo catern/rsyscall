@@ -1,14 +1,14 @@
 import typing as t
-import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask, SocketMemoryTransport, AsyncFileDescriptor, ChildProcessMonitor
+from rsyscall.io import StandardTask
 from rsyscall.path import Path
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.handle import Stack, WrittenPointer, ThreadProcess, Pointer
+from rsyscall.memory.socket_transport import SocketMemoryTransport
 
 import trio
 import struct
@@ -18,7 +18,8 @@ import rsyscall.batch as batch
 
 from rsyscall.memory.ram import RAM
 
-from rsyscall.epoller import EpollCenter
+from rsyscall.monitor import ChildProcessMonitor
+from rsyscall.epoller import EpollCenter, AsyncFileDescriptor
 
 from rsyscall.struct import Bytes, Int32, StructList
 

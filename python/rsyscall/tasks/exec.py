@@ -3,7 +3,7 @@ import rsyscall.handle as handle
 import rsyscall.far as far
 import rsyscall.near as near
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, AsyncReadBuffer, StandardTask, SocketMemoryTransport, Command
+from rsyscall.io import RsyscallThread, StandardTask
 from rsyscall.loader import NativeLoader
 import typing as t
 from rsyscall.handle import WrittenPointer
@@ -13,6 +13,9 @@ import rsyscall.batch as batch
 import rsyscall.nix as nix
 from dataclasses import dataclass
 from rsyscall.tasks.fork import launch_futex_monitor, ChildSyscallInterface, SyscallConnection
+from rsyscall.memory.socket_transport import SocketMemoryTransport
+from rsyscall.epoller import AsyncReadBuffer
+from rsyscall.command import Command
 
 from rsyscall.fcntl import F
 from rsyscall.struct import Int32

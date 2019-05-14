@@ -18,35 +18,18 @@ import rsyscall.batch as batch
 from rsyscall.batch import BatchSemantics
 from rsyscall.mktemp import mkdtemp, TemporaryDirectory
 
-import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM, RAMThread
-from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, AsyncReadBuffer
-from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.command import Command
-from rsyscall.environ import Environment
 from rsyscall.network.connection import Connection
-from rsyscall.tasks.fork import ForkThread
 from rsyscall.unix_thread import UnixThread, ChildUnixThread
 
-from rsyscall.sys.socket import AF, SOCK, SOL, SO, Address, GenericSockaddr, SendmsgFlags, RecvmsgFlags, Sockbuf
-from rsyscall.fcntl import AT, O, F, FD_CLOEXEC
-from rsyscall.sys.socket import T_addr
+from rsyscall.fcntl import O, F, FD_CLOEXEC
 from rsyscall.sys.mount import MS
-from rsyscall.sys.un import SockaddrUn, PathTooLongError, SockaddrUnProcFd
-from rsyscall.netinet.in_ import SockaddrIn
-from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EPOLL_CTL, EpollFlag
-from rsyscall.sys.wait import W, ChildEvent
-from rsyscall.sys.memfd import MFD
-from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
-from rsyscall.sys.inotify import InotifyFlag
-from rsyscall.sys.mman import PROT, MAP
-from rsyscall.sched import UnshareFlag, CLONE
-from rsyscall.signal import HowSIG, Sigaction, Sighandler, Signals, Sigset, Siginfo
-from rsyscall.signal import SignalBlock
-from rsyscall.linux.dirent import Dirent, DirentList
-from rsyscall.unistd import SEEK
+from rsyscall.sched import UnshareFlag
+from rsyscall.sys.wait import ChildEvent
+from rsyscall.linux.dirent import DirentList
 
 import random
 import string
