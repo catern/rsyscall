@@ -17366,6 +17366,12 @@ And we can have an exec which is not memory-abstracting, I guess.
    Well, there's a bit of multiple inheritance awkwardness,
    in that we'll have to do ChildThread(Thread, ChildForkThread),
    but it'll be fine.
+** add more intermediate threads
+   Why did I stop doing this?
+
+   um, because, I really need all this stuff in stdtask, to exec.
+   so, y'know.
+** split out mkdtemp
 ** DONE make connection interface with open_channels
    OK one difficulty is inheritance.
 
