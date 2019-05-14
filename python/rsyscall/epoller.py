@@ -137,7 +137,7 @@ class EpolledFileDescriptor:
             except trio.WouldBlock:
                 await self.epoll_center.epoller.do_wait()
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         if self.in_epollfd:
             # TODO hmm, I guess we need to serialize this removal with calls to epoll?
             await self.epoll_center.delete(self.fd)
@@ -296,7 +296,7 @@ class AsyncFileDescriptor:
         await self.connect(await self.ram.to_pointer(addr))
 
     async def close(self) -> None:
-        await self.epolled.aclose()
+        await self.epolled.close()
 
 class EOFException(Exception):
     pass

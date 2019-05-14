@@ -100,5 +100,5 @@ class Inotify:
     async def remove(self, wd: WatchDescriptor) -> None:
         await self.asyncfd.handle.inotify_rm_watch(wd)
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         await self.asyncfd.close()

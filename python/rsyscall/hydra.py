@@ -231,7 +231,7 @@ async def start_postgres(nursery, stdtask: StandardTask, path: Path) -> Postgres
             pm_status = b""
         if b"ready" in pm_status:
             break
-    await inty.aclose()
+    await inty.close()
     return Postgres(sockdir, stdtask, createuser, createdb)
 
 class NginxChild:
