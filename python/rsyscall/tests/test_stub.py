@@ -15,7 +15,7 @@ import os
 
 class TestStub(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.stdtask = local.stdtask
+        self.stdtask = local.thread
         self.store = nix.local_store
         self.tmpdir = await self.stdtask.mkdtemp("test_stub")
         self.path = self.tmpdir.path
@@ -38,7 +38,7 @@ class TestStub(TrioTestCase):
         command = Command(self.path/self.stub_name, [self.stub_name], {})
         child = await self.thread.exec(command)
         argv, new_stdtask = await self.server.accept()
-        await do_async_things(self, new_stdtask.epoller, new_stdtask.ramthr)
+        await do_async_things(self, new_stdtask.epoller, new_stdtask)
 
     async def test_read_stdin(self) -> None:
         data_in = "hello"

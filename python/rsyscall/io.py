@@ -62,10 +62,6 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
             buf = valid.merge(rest)
 
 class Thread(UnixThread):
-    @property
-    def ramthr(self) -> RAMThread:
-        return self
-
     async def mkdtemp(self, prefix: str="mkdtemp") -> TemporaryDirectory:
         return await mkdtemp(self, prefix)
 
@@ -135,7 +131,7 @@ class Thread(UnixThread):
         """
         await self.task.base.unshare_files()
         if not going_to_exec:
-            await do_cloexec_except(self.ramthr, set([fd.near for fd in self.task.base.fd_handles]))
+            await do_cloexec_except(self, set([fd.near for fd in self.task.base.fd_handles]))
 
     async def unshare_files_and_replace(self, mapping: t.Dict[FileDescriptor, FileDescriptor],
                                         going_to_exec=False) -> None:
@@ -158,7 +154,7 @@ class Thread(UnixThread):
         uid = await self.task.base.getuid()
         gid = await self.task.base.getgid()
         await self.task.base.unshare_user()
-        await write_user_mappings(self.ramthr, uid, gid,
+        await write_user_mappings(self, uid, gid,
                                   in_namespace_uid=in_namespace_uid, in_namespace_gid=in_namespace_gid)
 
     async def unshare_net(self) -> None:

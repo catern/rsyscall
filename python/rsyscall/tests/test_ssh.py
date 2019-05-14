@@ -23,16 +23,16 @@ from rsyscall.monitor import AsyncChildProcess
 async def start_cat(stdtask: StandardTask, cat: Command,
                     stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> AsyncChildProcess:
     thread = await stdtask.fork()
-    await thread.stdtask.unshare_files_and_replace({
-        thread.stdtask.stdin: stdin,
-        thread.stdtask.stdout: stdout,
+    await thread.unshare_files_and_replace({
+        thread.stdin: stdin,
+        thread.stdout: stdout,
     }, going_to_exec=True)
     child = await thread.exec(cat)
     return child
 
 class TestSSH(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local.stdtask
+        self.local = local.thread
         self.store = local_store
         self.host = await make_local_ssh(self.local, self.store)
         self.local_child, self.remote = await self.host.ssh(self.local)
@@ -82,9 +82,9 @@ class TestSSH(TrioTestCase):
 
     async def test_sigmask_bug(self) -> None:
         thread = await self.remote.fork()
-        await thread.stdtask.unshare_files(going_to_exec=True)
+        await thread.unshare_files(going_to_exec=True)
         await rsyscall.io.do_cloexec_except(
-            thread.stdtask.ramthr, set([fd.near for fd in thread.stdtask.task.base.fd_handles]))
+            thread, set([fd.near for fd in thread.task.fd_handles]))
         await self.remote.task.sigprocmask((HowSIG.SETMASK,
                                             await self.remote.ram.to_pointer(Sigset())),
                                            await self.remote.ram.malloc_struct(Sigset))

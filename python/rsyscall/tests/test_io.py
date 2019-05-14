@@ -83,13 +83,13 @@ class TestIO(unittest.TestCase):
 
     async def runner(self, test: t.Callable[[StandardTask], t.Awaitable[None]]) -> None:
         async with trio.open_nursery() as nursery:
-            await test(local.stdtask)
+            await test(local.thread)
 
     async def runner_with_tempdir(
             self,
             test: t.Callable[[StandardTask, rsyscall.path.Path], t.Awaitable[None]]
     ) -> None:
-        stdtask = local.stdtask
+        stdtask = local.thread
         async with trio.open_nursery() as nursery:
             async with (await stdtask.mkdtemp()) as tmppath:
                 await test(stdtask, tmppath)
@@ -239,7 +239,7 @@ class TestIO(unittest.TestCase):
 
     def test_async(self) -> None:
         async def test(stdtask: StandardTask) -> None:
-            await self.do_async_things(stdtask.epoller, stdtask.ramthr)
+            await self.do_async_things(stdtask.epoller, stdtask)
         trio.run(self.runner, test)
 
     # def test_async_multi(self) -> None:
@@ -486,7 +486,7 @@ class TestIO(unittest.TestCase):
             async with thread as stdtask2:
                 thread2 = await spawn_exec(stdtask2, rsyscall.nix.local_store)
                 async with thread2 as stdtask3:
-                    await self.do_async_things(stdtask3.epoller, stdtask3.ramthr)
+                    await self.do_async_things(stdtask3.epoller, stdtask3)
         trio.run(self.runner, test)
 
     def test_setns_ownership(self) -> None:
@@ -587,7 +587,7 @@ class TestIO(unittest.TestCase):
         async def test(stdtask: StandardTask) -> None:
             thread = await spawn_exec(stdtask, rsyscall.nix.local_store)
             async with thread as stdtask2:
-                await self.do_async_things(stdtask2.epoller, stdtask2.ramthr)
+                await self.do_async_things(stdtask2.epoller, stdtask2)
         trio.run(self.runner, test)
 
     def test_spawn_nest(self) -> None:
@@ -596,7 +596,7 @@ class TestIO(unittest.TestCase):
             async with thread1 as stdtask2:
                 thread2 = await spawn_exec(stdtask2, rsyscall.nix.local_store)
                 async with thread2 as stdtask3:
-                    await self.do_async_things(stdtask3.epoller, stdtask3.ramthr)
+                    await self.do_async_things(stdtask3.epoller, stdtask3)
         trio.run(self.runner, test)
 
     def test_thread_nest_async(self) -> None:
@@ -605,7 +605,7 @@ class TestIO(unittest.TestCase):
             async with thread1 as stdtask2:
                 thread2 = await stdtask2.fork()
                 async with thread2 as stdtask3:
-                    await self.do_async_things(stdtask3.epoller, stdtask3.ramthr)
+                    await self.do_async_things(stdtask3.epoller, stdtask3)
         trio.run(self.runner, test)
 
     def test_thread_exit(self) -> None:
@@ -674,7 +674,7 @@ class TestIO(unittest.TestCase):
                 async with thread3 as stdtask3:
                     epoller = await EpollCenter.make_root(stdtask3.ram, stdtask3.task)
                     await stdtask3.unshare_files()
-                    await self.do_async_things(epoller, stdtask3.ramthr)
+                    await self.do_async_things(epoller, stdtask3)
         trio.run(self.runner, test)
 
     def test_thread_async(self) -> None:
@@ -682,7 +682,7 @@ class TestIO(unittest.TestCase):
             thread = await stdtask.fork()
             async with thread as stdtask2:
                 epoller = await EpollCenter.make_root(stdtask2.ram, stdtask2.task)
-                await self.do_async_things(epoller, stdtask2.ramthr)
+                await self.do_async_things(epoller, stdtask2)
         trio.run(self.runner, test)
 
     def test_thread_exec(self) -> None:

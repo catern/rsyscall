@@ -11,22 +11,22 @@ from rsyscall.io import Command
 
 class TestStdinboot(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.stdtask = local.stdtask
+        self.local = local.thread
         path = await stdin_bootstrap_path_from_store(local_store)
         self.command = Command(path, ['rsyscall-stdin-bootstrap'], {})
-        self.local_child, self.remote_stdtask = await rsyscall_stdin_bootstrap(self.stdtask, self.command)
+        self.local_child, self.remote = await rsyscall_stdin_bootstrap(self.local, self.command)
 
     async def asyncTearDown(self) -> None:
         await self.local_child.kill()
 
     async def test_exit(self) -> None:
-        await self.remote_stdtask.exit(0)
+        await self.remote.exit(0)
 
     async def test_async(self) -> None:
-        await do_async_things(self, self.remote_stdtask.epoller, self.remote_stdtask.ramthr)
+        await do_async_things(self, self.remote.epoller, self.remote)
 
     async def test_nest(self) -> None:
-        child, new_stdtask = await rsyscall_stdin_bootstrap(self.remote_stdtask, self.command)
+        child, new_stdtask = await rsyscall_stdin_bootstrap(self.remote, self.command)
         async with child:
-            await do_async_things(self, new_stdtask.epoller, new_stdtask.ramthr)
+            await do_async_things(self, new_stdtask.epoller, new_stdtask)
     
