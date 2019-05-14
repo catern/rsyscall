@@ -173,7 +173,7 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
         dest = to_span(dest)
         src = await self.local.ram.to_pointer(Bytes(data))
         async def write() -> None:
-            await self.local.write_handle(src)
+            await self.local.write_all(src)
         async def read() -> None:
             rest = dest
             while rest.bytesize() > 0:
@@ -283,7 +283,7 @@ class SocketMemoryTransport(MemoryTransport):
             async with trio.open_nursery() as nursery:
                 @nursery.start_soon
                 async def write() -> None:
-                    await self.local.write_handle(datap)
+                    await self.local.write_all(datap)
                 rest = iovp
                 while rest.bytesize() > 0:
                     _, split, rest = await self.remote.readv(rest)

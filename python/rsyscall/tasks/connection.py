@@ -123,7 +123,9 @@ class SyscallConnection:
             ptr = await self.tofd.ram.to_pointer(syscalls)
             # TODO should mark the requests complete incrementally as we write them out,
             # instead of only once all requests have been written out
-            await self.tofd.write_handle(ptr)
+            to_write: Pointer = ptr
+            while to_write.bytesize() > 0:
+                written, to_write = await self.tofd.write(to_write)
         except OSError as e:
             # we raise a different exception so that users can distinguish syscall errors from
             # transport errors

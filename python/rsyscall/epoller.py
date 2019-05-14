@@ -203,12 +203,12 @@ class AsyncFileDescriptor:
         while not (self.read_hangup or self.hangup):
             await self._wait_once()
 
-    async def write_handle(self, to_write: Pointer) -> None:
-        while to_write.bytesize() > 0:
-            while not (self.is_writable or self.error):
-                await self._wait_once()
+    async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
+        while not (self.is_writable or self.error):
+            await self._wait_once()
+        while True:
             try:
-                written, to_write = await self.handle.write(to_write)
+                return await self.handle.write(buf)
             except OSError as e:
                 if e.errno == errno.EAGAIN:
                     # TODO this is not really quite right if it's possible to concurrently call methods on this object.
@@ -217,9 +217,13 @@ class AsyncFileDescriptor:
                 else:
                     raise
 
+    async def write_all(self, to_write: Pointer) -> None:
+        while to_write.bytesize() > 0:
+            written, to_write = await self.handle.write(to_write)
+
     async def write_all_bytes(self, buf: bytes) -> None:
         ptr = await self.ram.to_pointer(Bytes(buf))
-        await self.write_handle(ptr)
+        await self.write_all(ptr)
 
     async def accept_handle(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
     ) -> t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]:
