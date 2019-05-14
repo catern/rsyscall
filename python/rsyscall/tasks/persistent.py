@@ -117,7 +117,7 @@ class PersistentServer:
         # so what we would need to do is, hold an epfd here in PersistentServer,
         # and maintain it as we connect and reconnect.
         # so, having some other thread handle the cleanup for an exited thread, does make sense.
-        [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await stdtask.make_async_connections(2)
+        [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await stdtask.open_async_channels(2)
         [infd, outfd, remote_data_sock] = await self._connect_and_send(
             stdtask, [syscall_sock, syscall_sock, data_sock])
         await syscall_sock.invalidate()
@@ -183,7 +183,7 @@ async def fork_persistent(
     listening_sock = await self.task.socket(AF.UNIX, SOCK.STREAM)
     await listening_sock.bind(await self.ram.to_pointer(await path.as_sockaddr_un()))
     await listening_sock.listen(1)
-    [(access_sock, remote_sock)] = await self.make_async_connections(1)
+    [(access_sock, remote_sock)] = await self.open_async_channels(1)
     task, ram, syscall, listening_sock_handle, thread_process = await spawn_rsyscall_persistent_server(
         access_sock, remote_sock, listening_sock,
         self.task, self.ram, self.loader)

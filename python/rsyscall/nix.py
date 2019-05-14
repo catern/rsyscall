@@ -31,7 +31,7 @@ async def bootstrap_nix(
 
     src_tar_thread = await src_task.fork()
     dest_tar_thread = await dest_task.fork()
-    [(access_side, dest_tar_stdin)] = await dest_tar_thread.stdtask.make_connections(1)
+    [(access_side, dest_tar_stdin)] = await dest_tar_thread.stdtask.open_channels(1)
     src_tar_stdout = access_side.move(src_tar_thread.stdtask.task.base)
 
     await dest_tar_thread.stdtask.task.base.unshare_fs()
@@ -57,7 +57,7 @@ async def bootstrap_nix_database(
 ) -> None:
     dump_db_thread = await src_task.fork()
     load_db_thread = await dest_task.fork()
-    [(access_side, load_db_stdin)] = await load_db_thread.stdtask.make_connections(1)
+    [(access_side, load_db_stdin)] = await load_db_thread.stdtask.open_channels(1)
     dump_db_stdout = access_side.move(dump_db_thread.stdtask.task.base)
 
     await load_db_thread.stdtask.unshare_files(going_to_exec=True)
@@ -119,7 +119,7 @@ async def nix_deploy(
 
     export_thread = await src_task.fork()
     import_thread = await dest_task.fork()
-    [(access_side, import_stdin)] = await import_thread.stdtask.make_connections(1)
+    [(access_side, import_stdin)] = await import_thread.stdtask.open_channels(1)
     export_stdout = access_side.move(export_thread.stdtask.task.base)
 
     await import_thread.stdtask.unshare_files(going_to_exec=True)

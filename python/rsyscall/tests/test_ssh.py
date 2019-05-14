@@ -38,7 +38,7 @@ class TestSSH(TrioTestCase):
         self.local_child, self.remote = await self.host.ssh(self.local)
 
     async def test_read(self) -> None:
-        [(local_sock, remote_sock)] = await self.remote.make_connections(1)
+        [(local_sock, remote_sock)] = await self.remote.open_channels(1)
         data = Bytes(b"hello world")
         await local_sock.write(await self.local.ram.to_pointer(data))
         valid, _ = await remote_sock.read(await self.remote.ram.malloc_type(Bytes, len(data)))
@@ -65,7 +65,7 @@ class TestSSH(TrioTestCase):
         await local_file.write(await self.local.ram.to_pointer(Bytes(data)))
         await local_file.lseek(0, SEEK.SET)
 
-        [(local_sock, remote_sock)] = await self.remote.make_connections(1)
+        [(local_sock, remote_sock)] = await self.remote.open_channels(1)
 
         local_child = await start_cat(self.local, cat, local_file, local_sock)
         await local_sock.close()

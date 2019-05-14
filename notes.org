@@ -17383,7 +17383,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    Can we skip setting up the child monitor?
 
    Oh hey we can skip most of this.
-** remove make_connection/make_async_connection
+** DONE rename make_connection/make_async_connection
 ** split out mkdtemp
 ** DONE make connection interface with open_channels
    OK one difficulty is inheritance.

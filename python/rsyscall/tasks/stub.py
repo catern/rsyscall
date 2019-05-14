@@ -73,7 +73,7 @@ async def _setup_stub(
         bootstrap_sock: handle.FileDescriptor,
 ) -> t.Tuple[t.List[str], StandardTask]:
     [(access_syscall_sock, passed_syscall_sock),
-     (access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(2)
+     (access_data_sock, passed_data_sock)] = await stdtask.open_async_channels(2)
     # memfd for setting up the futex
     futex_memfd = await stdtask.task.base.memfd_create(
         await stdtask.ram.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)

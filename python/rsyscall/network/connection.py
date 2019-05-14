@@ -159,13 +159,9 @@ class ConnectionThread(EpollThread):
         super().__init__(thr.task, thr.ram, thr.epoller)
         self.connection = thr.connection
 
-    async def make_async_connections(self, count: int) -> t.List[
-            t.Tuple[AsyncFileDescriptor, FileDescriptor]
-    ]:
+    async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
         return (await self.connection.open_async_channels(count))
 
-    async def make_connections(self, count: int) -> t.List[
-            t.Tuple[FileDescriptor, FileDescriptor]
-    ]:
+    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
         return (await self.connection.open_channels(count))
 

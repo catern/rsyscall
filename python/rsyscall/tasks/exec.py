@@ -76,7 +76,7 @@ async def rsyscall_exec(
     ) -> None:
     "Exec into the standalone rsyscall_server executable"
     stdtask = rsyscall_thread.stdtask
-    [(access_data_sock, passed_data_sock)] = await stdtask.make_async_connections(1)
+    [(access_data_sock, passed_data_sock)] = await stdtask.open_async_channels(1)
     # create this guy and pass him down to the new thread
     child_futex_memfd = await stdtask.task.base.memfd_create(
         await stdtask.ram.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
