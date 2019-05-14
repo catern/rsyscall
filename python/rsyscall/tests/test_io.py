@@ -1,6 +1,5 @@
 import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.io import StandardTask
 from rsyscall.command import Command
 import rsyscall.io as rsc
@@ -21,7 +20,7 @@ import rsyscall.wish
 import rsyscall.nix
 
 from rsyscall.handle import WrittenPointer, Pointer
-from rsyscall.epoller import EpollCenter
+from rsyscall.epoller import EpollCenter, AsyncFileDescriptor
 from rsyscall.memory.ram import RAMThread
 
 from rsyscall.tasks.persistent import fork_persistent
@@ -574,29 +573,6 @@ class TestIO(unittest.TestCase):
             self.assertEqual(sa.flags, out_sa.flags)
             self.assertEqual(sa.mask, out_sa.mask)
             self.assertEqual(sa.restorer, out_sa.restorer)
-        trio.run(self.runner, test)
-
-    def test_spawn_exit(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread = await spawn_exec(stdtask, rsyscall.nix.local_store)
-            async with thread as stdtask2:
-                await stdtask2.exit(0)
-        trio.run(self.runner, test)
-
-    def test_spawn_basic(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread = await spawn_exec(stdtask, rsyscall.nix.local_store)
-            async with thread as stdtask2:
-                await self.do_async_things(stdtask2.epoller, stdtask2)
-        trio.run(self.runner, test)
-
-    def test_spawn_nest(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread1 = await spawn_exec(stdtask, rsyscall.nix.local_store)
-            async with thread1 as stdtask2:
-                thread2 = await spawn_exec(stdtask2, rsyscall.nix.local_store)
-                async with thread2 as stdtask3:
-                    await self.do_async_things(stdtask3.epoller, stdtask3)
         trio.run(self.runner, test)
 
     def test_thread_nest_async(self) -> None:

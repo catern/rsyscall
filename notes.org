@@ -17368,6 +17368,10 @@ And we can have an exec which is not memory-abstracting, I guess.
    Well, there's a bit of multiple inheritance awkwardness,
    in that we'll have to do ChildThread(Thread, ChildForkThread),
    but it'll be fine.
+** clean up test_io more
+   There's a bunch of commented out tests,
+   the Nix tests are skipped,
+   all needs cleaning up.
 ** DONE rename processresources to nativeloader
    and the field to .loader
 ** DONE add more intermediate threads
