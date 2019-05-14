@@ -8,7 +8,8 @@ import traceback
 import os
 import inspect
 import sys
-from rsyscall.io import StandardTask, AsyncFileDescriptor, Command, Path
+from rsyscall.io import StandardTask, AsyncFileDescriptor, Command
+from rsyscall.path import Path
 from contextvars import ContextVar
 from rsyscall.sys.socket import SOCK, AF
 from rsyscall.sys.un import SockaddrUn
@@ -103,7 +104,7 @@ class ConsoleServerGenie(WishGranter):
         cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path))
         sockfd = await self.stdtask.make_afd(
             await self.stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-        await sockfd.bind(await SockaddrUn.from_path(self.stdtask, sock_path.handle))
+        await sockfd.bind(await SockaddrUn.from_path(self.stdtask, sock_path))
         await sockfd.handle.listen(10)
         async with trio.open_nursery() as nursery:
             @nursery.start_soon
@@ -123,7 +124,7 @@ class ConsoleServerGenie(WishGranter):
                 'wisher_globals': wisher_frame.f_globals,
             }, wish.return_type, message)
             nursery.cancel_scope.cancel()
-        await sock_path.unlink()
+        await self.stdtask.task.unlink(await self.stdtask.ram.to_pointer(sock_path))
         return ret
 
 my_wish_granter: ContextVar[WishGranter] = ContextVar('wish_granter')
