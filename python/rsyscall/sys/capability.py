@@ -4,6 +4,12 @@ from dataclasses import dataclass
 import typing as t
 import enum
 
+__all__ = [
+    "CAP",
+    "CapHeader",
+    "CapData",
+]
+
 class CAP(enum.IntEnum):
     CHOWN = lib.CAP_CHOWN
     DAC_OVERRIDE = lib.CAP_DAC_OVERRIDE

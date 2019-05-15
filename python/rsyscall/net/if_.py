@@ -4,6 +4,13 @@ from rsyscall.netinet.ip import SockaddrIn
 from rsyscall.struct import Struct
 import typing as t
 
+__all__ = [
+    "IFF_TUN",
+    "TUNSETIFF",
+    "SIOCGIFINDEX",
+    "Ifreq",
+]
+
 IFF_TUN: int = lib.IFF_TUN
 TUNSETIFF: int = lib.TUNSETIFF
 SIOCGIFINDEX: int = lib.SIOCGIFINDEX

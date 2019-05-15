@@ -4,6 +4,11 @@ import typing as t
 import enum
 from dataclasses import dataclass
 
+__all__ = [
+    "NETLINK",
+    "SockaddrNl",
+]
+
 class NETLINK(enum.IntEnum):
     ROUTE = lib.NETLINK_ROUTE
 

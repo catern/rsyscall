@@ -1,6 +1,10 @@
 import pyroute2.netlink.rtnl as rtnl
 import enum
 
+__all__ = [
+    "RTMGRP",
+]
+
 class RTMGRP(enum.IntFlag):
     NONE = rtnl.RTMGRP_NONE
     LINK = rtnl.RTMGRP_LINK

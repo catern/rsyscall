@@ -28,7 +28,7 @@ from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, SendMsghdr, Cms
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.uio import IovecList
 from rsyscall.signal import Signals, Sigset, SignalBlock
-from rsyscall.sys.prctl import PrctlOp
+from rsyscall.sys.prctl import PR
 
 __all__ = [
     "fork_persistent",
@@ -102,7 +102,7 @@ class PersistentServer:
 
     async def make_persistent(self) -> None:
         await self.task.setsid()
-        await self.task.prctl(PrctlOp.SET_PDEATHSIG, 0)
+        await self.task.prctl(PR.SET_PDEATHSIG, 0)
 
     async def reconnect(self, stdtask: StandardTask) -> None:
         # TODO should check that no transport requests are in flight

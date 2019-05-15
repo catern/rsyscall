@@ -20,7 +20,7 @@ from rsyscall.memory.ram import RAMThread
 import rsyscall.tasks.local as local
 from rsyscall.sys.capability import CAP, CapHeader, CapData
 from rsyscall.sys.socket import AF, SOCK, SOL
-from rsyscall.sys.prctl import PrctlOp, CapAmbient
+from rsyscall.sys.prctl import PR, PR_CAP_AMBIENT
 from rsyscall.fcntl import O
 from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.netinet.ip import IP, IPPROTO
@@ -95,7 +95,7 @@ async def add_to_ambient(thr: RAMThread, capset: t.Set[CAP]) -> None:
     data_ptr = await data_ptr.write(data)
     await thr.task.capset(hdr_ptr, data_ptr)
     for cap in capset:
-        await thr.task.prctl(PrctlOp.CAP_AMBIENT, CapAmbient.RAISE, cap)
+        await thr.task.prctl(PR.CAP_AMBIENT, PR_CAP_AMBIENT.RAISE, cap)
 
 async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) -> Miredo:
     inet_sock = await thread.task.socket(AF.INET, SOCK.DGRAM)

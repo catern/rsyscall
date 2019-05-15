@@ -13,7 +13,7 @@ from rsyscall.fcntl import AT, F
 from rsyscall.sys.wait import IdType
 if t.TYPE_CHECKING:
     from rsyscall.sys.epoll import EPOLL_CTL
-    from rsyscall.sys.prctl import PrctlOp
+    from rsyscall.sys.prctl import PR
     from rsyscall.sys.uio import RWF
     from rsyscall.sched import UnshareFlag
     from rsyscall.signal import HowSIG, Signals
@@ -313,7 +313,7 @@ async def mount(sysif: SyscallInterface, source: Pointer, target: Pointer,
 async def setns(sysif: SyscallInterface, fd: FileDescriptor, nstype: int) -> None:
     await sysif.syscall(SYS.setns, fd, nstype)
 
-async def prctl(sysif: SyscallInterface, option: PrctlOp, arg2: int,
+async def prctl(sysif: SyscallInterface, option: PR, arg2: int,
                 arg3: t.Optional[int], arg4: t.Optional[int], arg5: t.Optional[int]) -> int:
     if arg3 is None:
         arg3 = 0

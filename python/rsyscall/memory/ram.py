@@ -28,6 +28,8 @@ class RAM:
         return await self.malloc_serializer(cls.get_serializer(self.task), size)
 
     async def malloc_serializer(self, serializer: Serializer[T], size: int, alignment: int=1) -> Pointer[T]:
+        if alignment == 0:
+            raise Exception("alignment is", alignment, "did you mess up arguments?")
         mapping, allocation = await self.allocator.malloc(size, alignment=alignment)
         try:
             return Pointer(mapping, self.transport, serializer, allocation)

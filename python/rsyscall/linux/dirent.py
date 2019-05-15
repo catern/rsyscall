@@ -5,6 +5,12 @@ import enum
 from dataclasses import dataclass
 from rsyscall.struct import Serializable
 
+__all__ = [
+    "DT",
+    "Dirent",
+    "DirentList",
+]
+
 class DT(enum.IntEnum):
     BLK = lib.DT_BLK # This is a block device.
     CHR = lib.DT_CHR # This is a character device.

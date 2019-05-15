@@ -33,7 +33,6 @@ from rsyscall.tasks.exec import spawn_exec
 import rsyscall.inotify_watch as inotify
 from rsyscall.sys.epoll import EpollEvent, EPOLL
 from rsyscall.sys.capability import CAP, CapHeader, CapData
-from rsyscall.sys.prctl import PrctlOp, CapAmbient
 from rsyscall.sys.socket import SOCK, AF, Address
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.uio import RWF, IovecList
@@ -93,46 +92,6 @@ class TestIO(unittest.TestCase):
             async with (await stdtask.mkdtemp()) as tmppath:
                 await test(stdtask, tmppath)
 
-    def test_pipe(self):
-        async def test(stdtask: StandardTask) -> None:
-            pipe = await (await stdtask.task.pipe(await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
-            in_data = b"hello"
-            written, _ = await pipe.write.write(await stdtask.ram.to_pointer(Bytes(in_data)))
-            valid, _ = await pipe.read.read(written)
-            self.assertEqual(in_data, await valid.read())
-        trio.run(self.runner, test)
-
-    def test_readv(self):
-        async def test(stdtask: StandardTask) -> None:
-            task = stdtask.task
-            ram = stdtask.ram
-            pipe = await (await task.pipe(await ram.malloc_struct(Pipe), O.CLOEXEC)).read()
-            in_data = [b"hello", b"world"]
-            iov = await ram.to_pointer(IovecList([await ram.to_pointer(Bytes(data)) for data in in_data]))
-            written, partial, rest = await pipe.write.writev(iov)
-            self.assertEqual(partial, None, msg="got unexpected partial write")
-            self.assertEqual(rest.bytesize(), 0, msg="got unexpected partial write")
-            read, partial, rest = await pipe.read.readv(written)
-            self.assertEqual(partial, None, msg="got unexpected partial read")
-            self.assertEqual(rest.bytesize(), 0, msg="got unexpected partial read")
-            self.assertEqual(in_data, [await ptr.read() for ptr in read.value])
-        trio.run(self.runner, test)
-
-    def test_recv_pipe(self) -> None:
-        """Sadly, recv doesn't work on pipes
-
-        Which is a major bummer, because that would allow us to avoid
-        messing with O_NONBLOCk stuff
-
-        """
-        async def test(stdtask: StandardTask) -> None:
-            pipe = await (await stdtask.task.pipe(await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
-            in_data = b"hello"
-            written, _ = await pipe.write.write(await stdtask.ram.to_pointer(Bytes(in_data)))
-            with self.assertRaises(OSError):
-                valid, _ = await pipe.read.recv(written, 0)
-        trio.run(self.runner, test)
-
     def test_to_pointer(self):
         async def test(stdtask: StandardTask) -> None:
             event = EpollEvent(42, EPOLL.NONE)
@@ -147,23 +106,6 @@ class TestIO(unittest.TestCase):
             read_ifreq = await iptr.read()
             self.assertEqual(read_ifreq.ifindex, ifreq.ifindex)
             self.assertEqual(read_ifreq.name, ifreq.name)
-        trio.run(self.runner, test)
-
-    def test_readlinkat_non_symlink(self):
-        async def test(stdtask: StandardTask) -> None:
-            f = await stdtask.task.open(await stdtask.ram.to_pointer(rsyscall.path.Path(".")), O.PATH|O.CLOEXEC)
-            empty_ptr = await stdtask.ram.to_pointer(rsyscall.path.EmptyPath())
-            ptr = await stdtask.ram.malloc_type(rsyscall.path.Path, 4096)
-            with self.assertRaises(FileNotFoundError):
-                await f.readlinkat(empty_ptr, ptr)
-        trio.run(self.runner, test)
-
-    def test_readlink_proc(self):
-        async def test(stdtask: StandardTask) -> None:
-            f = await stdtask.task.open(await stdtask.ram.to_pointer(rsyscall.path.Path(".")), O.PATH|O.CLOEXEC)
-            path_ptr = await stdtask.ram.to_pointer(f.as_proc_self_path())
-            ptr = await stdtask.ram.malloc_type(rsyscall.path.Path, 4096)
-            await f.readlinkat(path_ptr, ptr)
         trio.run(self.runner, test)
 
     # def test_cat(self) -> None:
@@ -264,32 +206,6 @@ class TestIO(unittest.TestCase):
     #         # and we need a tempdir maker thingy
     #         pass
     #     trio.run(test)
-
-    def test_mkdtemp(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            async with (await stdtask.mkdtemp()) as path:
-                dirfd = await stdtask.task.open(await stdtask.ram.to_pointer(path), O.DIRECTORY)
-                dent_buf = await stdtask.ram.malloc_type(DirentList, 4096)
-                valid, rest = await dirfd.getdents(dent_buf)
-                self.assertCountEqual(sorted([dirent.name for dirent in await valid.read()]), ['.', '..'])
-                dent_buf = valid + rest
-
-                text = b"Hello world!"
-                name = await stdtask.ram.to_pointer(rsyscall.path.Path("hello"))
-
-                write_fd = await dirfd.openat(name, O.WRONLY|O.CREAT)
-                buf = await stdtask.ram.to_pointer(Bytes(text))
-                written, _ = await write_fd.write(buf)
-
-                read_fd = await dirfd.openat(name, O.RDONLY)
-                read, _ = await read_fd.read(written)
-                self.assertEqual(await read.read(), text)
-
-                await dirfd.lseek(0, SEEK.SET)
-                valid, rest = await dirfd.getdents(dent_buf)
-                self.assertCountEqual(sorted([dirent.name for dirent in await valid.read()]),
-                                      ['.', '..', str(name.value)])
-        trio.run(self.runner, test)
 
     # def test_bind(self) -> None:
     #     async def test() -> None:
@@ -431,93 +347,6 @@ class TestIO(unittest.TestCase):
                     await self.do_async_things(stdtask3.epoller, stdtask3)
         trio.run(self.runner, test)
 
-    def test_setns_ownership(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread1 = await stdtask.fork()
-            await thread1.unshare_user()
-            await thread1.unshare_net()
-            procselfns = rsyscall.path.Path("/proc/self/ns")
-            netnsfd = await thread1.task.open(await thread1.ram.to_pointer(procselfns/"net"), O.RDONLY|O.CLOEXEC)
-
-            thread2 = await stdtask.fork()
-            await thread2.unshare_user()
-            with self.assertRaises(PermissionError):
-                # we can't setns to a namespace that we don't own, I guess...
-                await thread2.task.setns_net(netnsfd)
-                # that's really lame...
-        trio.run(self.runner, test)
-
-    def test_make_tun(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            import rsyscall.net.if_ as net
-            await stdtask.unshare_user()
-            await stdtask.unshare_net()
-
-            tunpath = rsyscall.path.Path("/dev/net/tun")
-            tun_fd = await stdtask.task.open(await stdtask.ram.to_pointer(tunpath), O.RDWR|O.CLOEXEC)
-            ptr = await stdtask.ram.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
-            await tun_fd.ioctl(net.TUNSETIFF, ptr)
-            sock = await stdtask.task.socket(AF.INET, SOCK.STREAM)
-            await sock.ioctl(net.SIOCGIFINDEX, ptr)
-            # this is the second interface in an empty netns
-            self.assertEqual((await ptr.read()).ifindex, 2)
-        trio.run(self.runner, test)
-
-    def test_rtnetlink(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            from rsyscall.linux.netlink import SockaddrNl
-            from rsyscall.linux.rtnetlink import RTMGRP
-            import rsyscall.net.if_ as net
-            await stdtask.unshare_user()
-            await stdtask.unshare_net()
-
-            netsock = await stdtask.task.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
-            await netsock.bind(await stdtask.ram.to_pointer(SockaddrNl(0, RTMGRP.LINK)))
-
-            tunpath = rsyscall.path.Path("/dev/net/tun")
-            tun_fd = await stdtask.task.open(await stdtask.ram.to_pointer(tunpath), O.RDWR|O.CLOEXEC)
-            ptr = await stdtask.ram.to_pointer(net.Ifreq(b'tun0', flags=net.IFF_TUN))
-            await tun_fd.ioctl(net.TUNSETIFF, ptr)
-            sock = await stdtask.task.socket(AF.INET, SOCK.STREAM)
-            await sock.ioctl(net.SIOCGIFINDEX, ptr)
-            # this is the second interface in an empty netns
-            self.assertEqual((await ptr.read()).ifindex, 2)
-
-            valid, _ = await netsock.read(await stdtask.ram.malloc_type(Bytes, 4096))
-            from pyroute2 import IPBatch
-            batch = IPBatch()
-            evs = batch.marshal.parse(await valid.read())
-        trio.run(self.runner, test)
-
-    def test_ambient_caps(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            await stdtask.unshare_user()
-            await stdtask.unshare_net()
-            hdr_ptr = await stdtask.ram.to_pointer(CapHeader())
-            data_ptr = await stdtask.ram.malloc_struct(CapData)
-            await stdtask.task.capget(hdr_ptr, data_ptr)
-            data = await data_ptr.read()
-            data.inheritable.add(CAP.NET_ADMIN)
-            data_ptr = await data_ptr.write(data)
-            await stdtask.task.capset(hdr_ptr, data_ptr)
-            await stdtask.task.prctl(PrctlOp.CAP_AMBIENT, CapAmbient.RAISE, CAP.NET_ADMIN)
-        trio.run(self.runner, test)
-
-    def test_sigaction(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            from rsyscall.signal import Sighandler, Sigaction, Sigset, Signals
-            import readline
-            sa = Sigaction(Sighandler.DFL)
-            ptr = await stdtask.ram.to_pointer(sa)
-            await stdtask.task.sigaction(Signals.SIGWINCH, ptr, None)
-            await stdtask.task.sigaction(Signals.SIGWINCH, None, ptr)
-            out_sa = await ptr.read()
-            self.assertEqual(sa.handler, out_sa.handler)
-            self.assertEqual(sa.flags, out_sa.flags)
-            self.assertEqual(sa.mask, out_sa.mask)
-            self.assertEqual(sa.restorer, out_sa.restorer)
-        trio.run(self.runner, test)
-
     def test_inotify_create(self) -> None:
         async def test(stdtask: StandardTask, path: rsyscall.path.Path) -> None:
             inty = await inotify.Inotify.make(stdtask)
@@ -557,20 +386,6 @@ class TestIO(unittest.TestCase):
                 # don't have to unshare because the only other
                 # thing in the fd space was the original ssh task.
                 await per_stdtask.exit(0)
-        trio.run(self.runner, test)
-
-    def test_thread_signal_queue(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread = await stdtask.fork()
-            async with thread as stdtask2:
-                # have to use an epoller for that specific task
-                epoller = await EpollCenter.make_root(stdtask2.ram, stdtask2.task)
-                sigqueue = await SignalQueue.make(stdtask2.ram, stdtask2.task,
-                                                  epoller, Sigset({Signals.SIGINT}))
-                await stdtask2.task.process.kill(Signals.SIGINT)
-                buf = await stdtask2.ram.malloc_struct(SignalfdSiginfo)
-                sigdata = await sigqueue.read(buf)
-                self.assertEqual((await sigdata.read()).signo, Signals.SIGINT)
         trio.run(self.runner, test)
 
     @unittest.skip("requires a user")
@@ -734,33 +549,6 @@ class TestIO(unittest.TestCase):
     #             logger.info("finished destructing inner task")
     #         logger.info("finished destructing outer task")
     #     trio.run(test)
-
-    def test_pass_fd(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            from rsyscall.handle import (FDPair, SendMsghdr, RecvMsghdr, IovecList, SendmsgFlags, RecvmsgFlags,
-                                         CmsgSCMRights, CmsgList, MsghdrFlags)
-            task = stdtask.task
-            ram = stdtask.ram
-            fds = await (await task.socketpair(
-                AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC, 0,
-                await ram.malloc_struct(FDPair))).read()
-            in_data = b"hello"
-
-            iovec = await ram.to_pointer(IovecList([await ram.to_pointer(Bytes(in_data))]))
-            cmsgs = await ram.to_pointer(CmsgList([CmsgSCMRights([fds.second])]))
-            [written], [] = await fds.second.sendmsg(
-                await ram.to_pointer(SendMsghdr(None, iovec, cmsgs)), SendmsgFlags.NONE)
-
-            [valid], [], hdr = await fds.first.recvmsg(
-                await ram.to_pointer(RecvMsghdr(None, iovec, cmsgs)), RecvmsgFlags.NONE)
-
-            self.assertEqual(in_data, await valid.read())
-
-            hdrval = await hdr.read()
-            [[passed_fd]] = await hdrval.control.read() # type: ignore
-            self.assertEqual(hdrval.name, None)
-            self.assertEqual(hdrval.flags, MsghdrFlags.NONE)
-        trio.run(self.runner, test)
 
     async def foo(self) -> None:
         async with trio.open_nursery() as nursery:

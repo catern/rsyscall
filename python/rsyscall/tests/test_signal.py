@@ -1,0 +1,22 @@
+from rsyscall.trio_test_case import TrioTestCase
+import rsyscall.tasks.local as local
+from rsyscall.signal import *
+
+class TestSignal(TrioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.thr = local.thread
+
+    async def test_sigaction(self) -> None:
+        sa = Sigaction(Sighandler.DFL)
+        ptr = await self.thr.ram.to_pointer(sa)
+        await self.thr.task.sigaction(Signals.SIGWINCH, ptr, None)
+        await self.thr.task.sigaction(Signals.SIGWINCH, None, ptr)
+        out_sa = await ptr.read()
+        self.assertEqual(sa.handler, out_sa.handler)
+        self.assertEqual(sa.flags, out_sa.flags)
+        self.assertEqual(sa.mask, out_sa.mask)
+        self.assertEqual(sa.restorer, out_sa.restorer)
+
+    # TODO test_signalblock
+    # async def test_signalblock(self) -> None:
+    #     pass

@@ -27,6 +27,9 @@ __all__ = [
     "CmsgList",
     "SendMsghdr",
     "RecvMsghdr",
+    "SendmsgFlags",
+    "RecvmsgFlags",
+    "MsghdrFlags",
 ]
 
 T = t.TypeVar('T')

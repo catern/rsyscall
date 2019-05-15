@@ -1,15 +1,13 @@
-from __future__ import annotations
-import unittest
-
 from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.nix import local_store
-
 import rsyscall.tasks.local as local
 
 from rsyscall.tests.test_io import do_async_things
 from rsyscall.fcntl import O
 from rsyscall.unistd import SEEK
 from rsyscall.struct import Bytes
+from rsyscall.path import EmptyPath, Path
+from rsyscall.linux.dirent import *
 
 class TestFS(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -41,3 +39,38 @@ class TestFS(TrioTestCase):
 
         await dest_file.lseek(0, SEEK.SET)
         self.assertEqual(await (await dest_file.read(buf))[0].read(), data)
+
+    async def test_getdents(self) -> None:
+        dirfd = await self.thr.task.open(await self.thr.ram.to_pointer(self.path), O.DIRECTORY)
+        dent_buf = await self.thr.ram.malloc_type(DirentList, 4096)
+        valid, rest = await dirfd.getdents(dent_buf)
+        self.assertCountEqual(sorted([dirent.name for dirent in await valid.read()]), ['.', '..'])
+        dent_buf = valid + rest
+
+        text = b"Hello world!"
+        name = await self.thr.ram.to_pointer(Path("hello"))
+
+        write_fd = await dirfd.openat(name, O.WRONLY|O.CREAT)
+        buf = await self.thr.ram.to_pointer(Bytes(text))
+        written, _ = await write_fd.write(buf)
+
+        read_fd = await dirfd.openat(name, O.RDONLY)
+        read, _ = await read_fd.read(written)
+        self.assertEqual(await read.read(), text)
+
+        await dirfd.lseek(0, SEEK.SET)
+        valid, rest = await dirfd.getdents(dent_buf)
+        self.assertCountEqual(sorted([dirent.name for dirent in await valid.read()]), ['.', '..', str(name.value)])
+
+    async def test_readlinkat_non_symlink(self) -> None:
+        f = await self.thr.task.open(await self.thr.ram.to_pointer(Path(".")), O.PATH|O.CLOEXEC)
+        empty_ptr = await self.thr.ram.to_pointer(EmptyPath())
+        ptr = await self.thr.ram.malloc_type(Path, 4096)
+        with self.assertRaises(FileNotFoundError):
+            await f.readlinkat(empty_ptr, ptr)
+
+    async def test_readlink_proc(self) -> None:
+        f = await self.thr.task.open(await self.thr.ram.to_pointer(Path(".")), O.PATH|O.CLOEXEC)
+        path_ptr = await self.thr.ram.to_pointer(f.as_proc_self_path())
+        ptr = await self.thr.ram.malloc_type(Path, 4096)
+        await f.readlinkat(path_ptr, ptr)

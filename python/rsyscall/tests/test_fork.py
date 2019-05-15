@@ -1,10 +1,10 @@
-from __future__ import annotations
-import unittest
-
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
 from rsyscall.tests.test_io import do_async_things
 from rsyscall.epoller import EpollCenter
+from rsyscall.monitor import SignalQueue
+from rsyscall.signal import Signals, Sigset
+from rsyscall.sys.signalfd import SignalfdSiginfo
 
 class TestFork(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -47,3 +47,12 @@ class TestFork(TrioTestCase):
     async def test_mkdtemp(self) -> None:
         async with (await self.thr.mkdtemp()):
             pass
+
+    async def test_signal_queue(self) -> None:
+        # have to use an epoller for this specific task
+        epoller = await EpollCenter.make_root(self.thr.ram, self.thr.task)
+        sigqueue = await SignalQueue.make(self.thr.ram, self.thr.task, epoller, Sigset({Signals.SIGINT}))
+        await self.thr.task.process.kill(Signals.SIGINT)
+        buf = await self.thr.ram.malloc_struct(SignalfdSiginfo)
+        sigdata = await sigqueue.read(buf)
+        self.assertEqual((await sigdata.read()).signo, Signals.SIGINT)

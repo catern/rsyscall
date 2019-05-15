@@ -14,6 +14,16 @@ else:
 
 import signal
 
+__all__ = [
+    "Signals",
+    "SA",
+    "HowSIG",
+    "Sighandler",
+    "Siginfo",
+    "Sigset",
+    "Sigaction",
+]
+
 # re-exported
 from signal import Signals
 

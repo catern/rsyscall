@@ -33,7 +33,7 @@ from rsyscall.sys.inotify import InotifyFlag, IN
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.wait import W, ChildEvent
 from rsyscall.sys.mman import MAP, PROT
-from rsyscall.sys.prctl import PrctlOp
+from rsyscall.sys.prctl import PR
 from rsyscall.sys.mount import MS
 from rsyscall.sys.uio import RWF, IovecList, split_iovec
 
@@ -1054,7 +1054,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
     async def setsid(self) -> int:
         return (await rsyscall.near.setsid(self.sysif))
 
-    async def prctl(self, option: PrctlOp, arg2: int,
+    async def prctl(self, option: PR, arg2: int,
                     arg3: int=None, arg4: int=None, arg5: int=None) -> int:
         return (await rsyscall.near.prctl(self.sysif, option, arg2, arg3, arg4, arg5))
 

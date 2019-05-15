@@ -1,12 +1,9 @@
-from __future__ import annotations
-import unittest
-
 from rsyscall.trio_test_case import TrioTestCase
-
 import rsyscall.tasks.local as local
 
 from rsyscall.sys.socket import *
 from rsyscall.sys.un import *
+from rsyscall.sys.uio import IovecList
 from rsyscall.struct import Bytes
 
 import logging
@@ -64,3 +61,25 @@ class TestSocket(TrioTestCase):
         await connfd.close()
         await sockfd.close()
         await clientfd.close()
+
+    async def test_pass_fd(self) -> None:
+        fds = await (await self.thr.task.socketpair(
+            AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC, 0,
+            await self.thr.ram.malloc_struct(FDPair))).read()
+        in_data = b"hello"
+
+        iovec = await self.thr.ram.to_pointer(IovecList([await self.thr.ram.to_pointer(Bytes(in_data))]))
+        cmsgs = await self.thr.ram.to_pointer(CmsgList([CmsgSCMRights([fds.second])]))
+        [written], [] = await fds.second.sendmsg(
+            await self.thr.ram.to_pointer(SendMsghdr(None, iovec, cmsgs)), SendmsgFlags.NONE)
+
+        [valid], [], hdr = await fds.first.recvmsg(
+            await self.thr.ram.to_pointer(RecvMsghdr(None, iovec, cmsgs)), RecvmsgFlags.NONE)
+
+        self.assertEqual(in_data, await valid.read())
+
+        hdrval = await hdr.read()
+        [[passed_fd]] = await hdrval.control.read() # type: ignore
+        self.assertEqual(hdrval.name, None)
+        self.assertEqual(hdrval.flags, MsghdrFlags.NONE)
+
