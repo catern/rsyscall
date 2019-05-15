@@ -207,15 +207,6 @@ class TestIO(unittest.TestCase):
     #         pass
     #     trio.run(test)
 
-    # def test_bind(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             async with (await stdtask.mkdtemp()) as path:
-    #                 async with (await stdtask.task.socket_unix(SOCK.STREAM)) as sockfd:
-    #                     addr = SockaddrUn.from_path(path/"sock")
-    #                     await sockfd.bind(addr)
-    #     trio.run(test)
-
     def test_pure_repl(self) -> None:
         async def test() -> None:
             repl = rsyscall.repl.PureREPL({})
@@ -310,26 +301,6 @@ class TestIO(unittest.TestCase):
     #                          self.assertEqual(await recv_sockfd.read(4096), b"hello")
     #     trio.run(test)
 
-    # def test_getdents_noent(self) -> None:
-    #     "getdents on a removed directory throws FileNotFoundError"
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             async with (await stdtask.mkdtemp()) as path:
-    #                 new_path = await (path/"foo").mkdir()
-    #                 async with (await new_path.open_directory()) as new_dirfd:
-    #                     await new_path.rmdir()
-    #                     with self.assertRaises(FileNotFoundError):
-    #                         await new_dirfd.getdents()
-    #     trio.run(test)
-
-    # def test_thread_exit(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             rsyscall_task, _ = await stdtask.spawn([])
-    #             async with rsyscall_task as stdtask2:
-    #                 await stdtask2.exit(0)
-    #     trio.run(test)
-
     # def test_thread_epoll(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
@@ -346,14 +317,6 @@ class TestIO(unittest.TestCase):
                 async with thread2 as stdtask3:
                     await self.do_async_things(stdtask3.epoller, stdtask3)
         trio.run(self.runner, test)
-
-    def test_inotify_create(self) -> None:
-        async def test(stdtask: StandardTask, path: rsyscall.path.Path) -> None:
-            inty = await inotify.Inotify.make(stdtask)
-            watch = await inty.add(path, inotify.IN.CREATE)
-            fd = await stdtask.task.open(await stdtask.ram.to_pointer(path/"foo"), O.CREAT|O.EXCL)
-            await watch.wait_until_event(inotify.IN.CREATE, "foo")
-        trio.run(self.runner_with_tempdir, test)
 
     @unittest.skip("not working right now")
     def test_ssh_persistent_thread_reconnect(self) -> None:

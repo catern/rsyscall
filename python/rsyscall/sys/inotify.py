@@ -6,6 +6,13 @@ import typing as t
 from dataclasses import dataclass
 import enum
 
+__all__ = [
+    "InotifyFlag",
+    "IN",
+    "InotifyEvent",
+    "InotifyEventList",
+]
+
 class InotifyFlag(enum.IntFlag):
     CLOEXEC = lib.IN_CLOEXEC
     NONBLOCK = lib.IN_NONBLOCK

@@ -62,6 +62,16 @@ class TestFS(TrioTestCase):
         valid, rest = await dirfd.getdents(dent_buf)
         self.assertCountEqual(sorted([dirent.name for dirent in await valid.read()]), ['.', '..', str(name.value)])
 
+    async def test_getdents_noent(self) -> None:
+        "getdents on a removed directory returns ENOENT/FileNotFoundError"
+        name = await self.thr.ram.to_pointer(self.path/"foo")
+        await self.thr.task.mkdir(name)
+        dirfd = await self.thr.task.open(name, O.DIRECTORY)
+        await self.thr.task.rmdir(name)
+        buf = await self.thr.ram.malloc_type(DirentList, 4096)
+        with self.assertRaises(FileNotFoundError):
+            await dirfd.getdents(buf)
+
     async def test_readlinkat_non_symlink(self) -> None:
         f = await self.thr.task.open(await self.thr.ram.to_pointer(Path(".")), O.PATH|O.CLOEXEC)
         empty_ptr = await self.thr.ram.to_pointer(EmptyPath())
