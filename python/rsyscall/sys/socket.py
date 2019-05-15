@@ -15,6 +15,20 @@ else:
     FileDescriptor = object
 from rsyscall.sys.uio import IovecList
 
+__all__ = [
+    "AF",
+    "Address",
+    "SOCK",
+    "SOL",
+    "SO",
+    "FDPair",
+    "Sockbuf",
+    "CmsgSCMRights",
+    "CmsgList",
+    "SendMsghdr",
+    "RecvMsghdr",
+]
+
 T = t.TypeVar('T')
 class AF(enum.IntEnum):
     UNIX = socket.AF_UNIX

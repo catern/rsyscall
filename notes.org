@@ -17372,6 +17372,33 @@ And we can have an exec which is not memory-abstracting, I guess.
    There's a bunch of commented out tests,
    the Nix tests are skipped,
    all needs cleaning up.
+** remove nonblock arg to make_afd
+   We should just manually call it I guess.
+** fix ssh test ordering
+** DONE fix broken test_socket tests
+   There's a weird exception happening in the destructor.
+
+   Oh hmm I think I see, are these coming from, after we unshare,
+   these are the handles in that space,
+   which are closed by the exec? Hm.
+
+   But it's confusing because the fd table should still be in this map. Hm.
+
+   Oh I see, the issue is with execing without first calling unshare_files. Hmmm.
+
+   I guess, um... we need to set the handles up,
+   but.... not put ourselves in the fd_table_to_task list, as that's a list of tasks that can be used.
+
+   Ummm that would have the right effect, but does it make sense?
+   Well what about exit? I mean right now when we exit, we leave our handles around...
+** implement GC for asyncfds
+   We need to do this I guess.
+
+   Currently we can drop them and it's not a big deal because eventually epoll stops getting events, hm.
+
+   Relying on that would be interesting.
+** implement some const_pointer optimization
+   So we can cached writtenpointers and return the same back.
 ** DONE rename processresources to nativeloader
    and the field to .loader
 ** DONE add more intermediate threads

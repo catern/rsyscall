@@ -300,63 +300,6 @@ class TestIO(unittest.TestCase):
     #                     await sockfd.bind(addr)
     #     trio.run(test)
 
-    def test_listen(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            async with (await stdtask.mkdtemp()) as path:
-                sockfd = await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
-                addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-                    await SockaddrUn.from_path(stdtask, path/"sock"))
-                await sockfd.bind(addr)
-                await sockfd.listen(10)
-                clientfd = await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
-                await clientfd.connect(addr)
-                connfd = await sockfd.accept(SOCK.CLOEXEC)
-        trio.run(self.runner, test)
-
-    def test_listen_async(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            async with (await stdtask.mkdtemp()) as path:
-                sockfd = await stdtask.make_afd(
-                    await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-                addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-                    await SockaddrUn.from_path(stdtask, path/"sock"))
-                await sockfd.handle.bind(addr)
-                await sockfd.handle.listen(10)
-                clientfd = await stdtask.make_afd(
-                    await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-                await clientfd.connect(addr)
-                connfd, client_addr = await sockfd.accept_addr()
-                logger.info("%s, %s", addr, client_addr)
-                await connfd.close()
-                await sockfd.close()
-                await clientfd.close()
-        trio.run(self.runner, test)
-
-    def test_listen_async_accept(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            async with (await stdtask.mkdtemp()) as path:
-                sockfd = await stdtask.make_afd(
-                    await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-                addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-                    await SockaddrUn.from_path(stdtask, path/"sock"))
-                await sockfd.handle.bind(addr)
-                await sockfd.handle.listen(10)
-
-                clientfd = await stdtask.make_afd(
-                    await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-                await clientfd.connect(addr)
-
-                connfd_h, client_addr = await sockfd.accept_addr(SOCK.CLOEXEC|SOCK.NONBLOCK)
-                connfd = await sockfd.thr.make_afd(connfd_h)
-                logger.info("%s, %s", addr, client_addr)
-                data = b"hello"
-                await connfd.write_all_bytes(data)
-                self.assertEqual(data, await clientfd.read_some_bytes())
-                await connfd.close()
-                await sockfd.close()
-                await clientfd.close()
-        trio.run(self.runner, test)
-
     def test_pure_repl(self) -> None:
         async def test() -> None:
             repl = rsyscall.repl.PureREPL({})
@@ -575,22 +518,6 @@ class TestIO(unittest.TestCase):
             self.assertEqual(sa.restorer, out_sa.restorer)
         trio.run(self.runner, test)
 
-    def test_thread_nest_async(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread1 = await stdtask.fork()
-            async with thread1 as stdtask2:
-                thread2 = await stdtask2.fork()
-                async with thread2 as stdtask3:
-                    await self.do_async_things(stdtask3.epoller, stdtask3)
-        trio.run(self.runner, test)
-
-    def test_thread_exit(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread = await stdtask.fork()
-            async with thread as stdtask2:
-                await stdtask2.exit(0)
-        trio.run(self.runner, test)
-
     def test_inotify_create(self) -> None:
         async def test(stdtask: StandardTask, path: rsyscall.path.Path) -> None:
             inty = await inotify.Inotify.make(stdtask)
@@ -632,43 +559,6 @@ class TestIO(unittest.TestCase):
                 await per_stdtask.exit(0)
         trio.run(self.runner, test)
 
-    def test_thread_nest_exit(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread = await stdtask.fork()
-            async with thread as stdtask2:
-                thread3 = await stdtask2.fork()
-                async with thread3 as stdtask3:
-                    await stdtask3.exit(0)
-        trio.run(self.runner, test)
-
-    def test_thread_unshare(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread = await stdtask.fork()
-            async with thread as stdtask2:
-                await stdtask2.unshare_files()
-                thread3 = await stdtask2.fork()
-                async with thread3 as stdtask3:
-                    epoller = await EpollCenter.make_root(stdtask3.ram, stdtask3.task)
-                    await stdtask3.unshare_files()
-                    await self.do_async_things(epoller, stdtask3)
-        trio.run(self.runner, test)
-
-    def test_thread_async(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread = await stdtask.fork()
-            async with thread as stdtask2:
-                epoller = await EpollCenter.make_root(stdtask2.ram, stdtask2.task)
-                await self.do_async_things(epoller, stdtask2)
-        trio.run(self.runner, test)
-
-    def test_thread_exec(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread = await stdtask.fork()
-            async with thread as stdtask2:
-                child_task = await thread.exec(stdtask.environ.sh.args('-c', 'sleep .01'))
-                await child_task.wait_for_exit()
-        trio.run(self.runner, test)
-
     def test_thread_signal_queue(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             thread = await stdtask.fork()
@@ -694,30 +584,6 @@ class TestIO(unittest.TestCase):
                 await thread.task.chdir(await thread.ram.to_pointer(remote_tmpdir))
                 child_task = await thread.exec(bash)
                 await child_task.wait_for_exit()
-        trio.run(self.runner, test)
-
-    def test_copy(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            async with (await stdtask.mkdtemp()) as tmpdir:
-                source_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir/"source"), O.RDWR|O.CREAT)
-                data = b'hello world'
-                buf: Pointer[Bytes] = await stdtask.ram.to_pointer(Bytes(data))
-                valid, rest = await source_file.write(buf)
-                buf = valid + rest
-                await source_file.lseek(0, SEEK.SET)
-                dest_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir/"dest"), O.RDWR|O.CREAT)
-
-                thread = await stdtask.fork()
-                cat = await stdtask.environ.which("cat")
-                await thread.unshare_files_and_replace({
-                    thread.stdin: source_file,
-                    thread.stdout: dest_file,
-                })
-                child_process = await thread.exec(cat)
-                await child_process.check()
-
-                await dest_file.lseek(0, SEEK.SET)
-                self.assertEqual(await (await dest_file.read(buf))[0].read(), data)
         trio.run(self.runner, test)
 
     @unittest.skip("Nix deploy is broken")
@@ -778,26 +644,6 @@ class TestIO(unittest.TestCase):
             child_task = await shell_thread.execve(dest_bash, ["bash", "--norc"])
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
-
-    # def test_thread_mkdtemp(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             async with (await stdtask.mkdtemp()) as tmpdir:
-    #                 pass
-    #     trio.run(test)
-
-    # def test_do_cloexec_except(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             rsyscall_task, _ = await stdtask.spawn([])
-    #             async with rsyscall_task as stdtask2:
-    #                 pipe = await stdtask2.task.pipe()
-    #                 fds = [stdtask2.task.syscall.infd, stdtask2.task.syscall.outfd] # type: ignore
-    #                 await rsyscall.io.do_cloexec_except(stdtask2.task, fds)
-    #                 with self.assertRaises(OSError):
-    #                     # it was closed due to being cloexec
-    #                     await pipe.wfd.write(b"foo")
-    #     trio.run(test)
 
     # def test_epoll_two(self) -> None:
     #     async def test() -> None:
@@ -889,26 +735,6 @@ class TestIO(unittest.TestCase):
     #         logger.info("finished destructing outer task")
     #     trio.run(test)
 
-    # def test_pass_fd(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
-    #             in_data = b"hello"
-    #             await l.write(in_data)
-    #             out_data = await r.read(len(in_data))
-    #             self.assertEqual(in_data, out_data)
-    #     trio.run(test)
-
-    # def test_socketpair(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             l, r = await stdtask.task.socketpair(socket.AF_UNIX, SOCK.STREAM, 0)
-    #             in_data = b"hello"
-    #             await l.write(in_data)
-    #             out_data = await r.read(len(in_data))
-    #             self.assertEqual(in_data, out_data)
-    #     trio.run(test)
-
     def test_pass_fd(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             from rsyscall.handle import (FDPair, SendMsghdr, RecvMsghdr, IovecList, SendmsgFlags, RecvmsgFlags,
@@ -934,13 +760,6 @@ class TestIO(unittest.TestCase):
             [[passed_fd]] = await hdrval.control.read() # type: ignore
             self.assertEqual(hdrval.name, None)
             self.assertEqual(hdrval.flags, MsghdrFlags.NONE)
-        trio.run(self.runner, test)
-
-    def test_fork_exec(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            child_thread = await stdtask.fork()
-            child_task = await child_thread.exec(stdtask.environ.sh.args('-c', 'true'))
-            await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
     async def foo(self) -> None:

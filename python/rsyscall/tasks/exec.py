@@ -23,6 +23,12 @@ from rsyscall.linux.futex import FUTEX_WAITERS, FUTEX_TID_MASK
 from rsyscall.sys.mman import PROT, MAP
 from rsyscall.sys.memfd import MFD
 
+__all__ = [
+    "RsyscallServerExecutable",
+    "spawn_exec",
+    "rsyscall_exec",
+]
+
 async def set_singleton_robust_futex(
         task: handle.Task, transport: handle.MemoryTransport, allocator: memory.AllocatorInterface,
 ) -> WrittenPointer[handle.FutexNode]:

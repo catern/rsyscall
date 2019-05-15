@@ -10,6 +10,11 @@ if t.TYPE_CHECKING:
     from rsyscall.handle import FileDescriptor
     from rsyscall.memory.ram import RAMThread
 
+__all__ = [
+    "PathTooLongError",
+    "SockaddrUn",
+]
+
 class PathTooLongError(ValueError):
     pass
 

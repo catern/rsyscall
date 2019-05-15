@@ -11,7 +11,7 @@ from rsyscall.tests.test_io import do_async_things
 class TestExec(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
-        self.store = nix.local_store
+        self.store = local_store
         self.executables = await RsyscallServerExecutable.from_store(self.store)
         thread = await self.local.fork()
         await rsyscall_exec(self.local, await self.local.fork(), self.executables)
