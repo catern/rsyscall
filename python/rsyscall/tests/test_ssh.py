@@ -37,6 +37,9 @@ class TestSSH(TrioTestCase):
         self.host = await make_local_ssh(self.local, self.store)
         self.local_child, self.remote = await self.host.ssh(self.local)
 
+    async def asyncTearDown(self) -> None:
+        await self.local_child.kill()
+
     async def test_read(self) -> None:
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)
         data = Bytes(b"hello world")
@@ -49,11 +52,15 @@ class TestSSH(TrioTestCase):
         bash = await self.store.bin(bash_nixdep, "bash")
         await self.remote.run(bash.args('-c', 'true'))
 
-    async def test_nest(self) -> None:
+    async def test_fork(self) -> None:
         thread1 = await self.remote.fork()
         async with thread1 as stdtask1:
             thread2 = await stdtask1.fork()
             await thread2.close()
+
+    async def test_nest(self) -> None:
+        local_child, remote = await self.host.ssh(self.remote)
+        await local_child.kill()
 
     async def test_copy(self) -> None:
         cat = await self.store.bin(coreutils_nixdep, "cat")

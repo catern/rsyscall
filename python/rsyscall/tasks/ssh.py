@@ -23,6 +23,7 @@ from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.memory.ram import RAM
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.command import Command
+from rsyscall.path import Path
 
 import rsyscall.nix as nix
 from rsyscall.fcntl import O
@@ -78,16 +79,15 @@ class SSHDCommand(Command):
 @dataclass
 class SSHExecutables:
     base_ssh: SSHCommand
-    bootstrap_executable: handle.FileDescriptor
+    bootstrap_path: Path
 
     @classmethod
     async def from_store(cls, store: nix.Store) -> SSHExecutables:
         ssh_path = await store.realise(openssh)
         rsyscall_path = await store.realise(nix.rsyscall)
         base_ssh = SSHCommand.make(ssh_path/"bin"/"ssh")
-        bootstrap_executable = await store.stdtask.task.open(
-            await store.stdtask.ram.to_pointer(rsyscall_path/"libexec"/"rsyscall"/"rsyscall-bootstrap"), O.RDONLY|O.CLOEXEC)
-        return SSHExecutables(base_ssh, bootstrap_executable)
+        bootstrap_path = rsyscall_path/"libexec"/"rsyscall"/"rsyscall-bootstrap"
+        return SSHExecutables(base_ssh, bootstrap_path)
 
     def host(self, to_host: t.Callable[[SSHCommand], SSHCommand]) -> SSHHost:
         """Create an object for sshing to a host.
@@ -132,9 +132,9 @@ class SSHHost:
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (hostname+random_suffix+".sock")
         local_socket_path: handle.Path = task.environ.tmpdir/name
-        # TODO let's check up front that the bootstrap_executable is in this task's fd space?
-        async with run_socket_binder(task, ssh_to_host, self.executables.bootstrap_executable) as tmp_path_bytes:
-            return (await ssh_bootstrap(task, ssh_to_host, local_socket_path, tmp_path_bytes))
+        fd = await task.task.open(await task.ram.to_pointer(self.executables.bootstrap_path), O.RDONLY)
+        async with run_socket_binder(task, ssh_to_host, fd) as tmp_path_bytes:
+            return await ssh_bootstrap(task, ssh_to_host, local_socket_path, tmp_path_bytes)
 
 @contextlib.asynccontextmanager
 async def run_socket_binder(
