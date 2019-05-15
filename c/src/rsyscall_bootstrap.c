@@ -9,6 +9,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/prctl.h>
+#include <signal.h>
 #include "rsyscall.h"
 
 static int listen_unix_socket(const struct sockaddr_un addr) {
@@ -164,6 +166,9 @@ int main(int argc, char** argv, char** envp)
     if (argc < 2) errx(1, "usage: %s <type>", argv[0]);
     const char* type = argv[1];
     if (strcmp(type, "rsyscall") == 0) {
+        // we're going to be started by ssh, which sadly does not kill its child processes
+        // on death. so we need to take our cleanup into our own hands...
+        prctl(PR_SET_PDEATHSIG, SIGKILL);
         bootstrap(envp);
     } else if (strcmp(type, "socket") == 0) {
         socket_binder();

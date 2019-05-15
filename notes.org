@@ -17374,10 +17374,18 @@ And we can have an exec which is not memory-abstracting, I guess.
    all needs cleaning up.
 ** remove nonblock arg to make_afd
    We should just manually call it I guess.
-** fix ssh test ordering
+** DONE fix ssh test ordering
+   nice, we can do it in any order now
 ** remove syscall eof message
    Hmm, what's the clean way to shut down a thread?
    Exit it?
+** optimize ssh startup
+   It's annoyingly slow. 100 milliseconds! And I run it three times for each ssh!
+
+   The obvious optimization is multiplexing...
+** TODO remove need for careful use of unshare_files with persistent thread
+   In fact there's a ton of crazy unshare_files stuff going on here.
+** TODO fix mysterious __del__ exceptions
 ** DONE fix broken test_socket tests
    There's a weird exception happening in the destructor.
 

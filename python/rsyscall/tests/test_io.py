@@ -23,7 +23,6 @@ from rsyscall.handle import WrittenPointer, Pointer
 from rsyscall.epoller import EpollCenter, AsyncFileDescriptor
 from rsyscall.memory.ram import RAMThread
 
-from rsyscall.tasks.persistent import fork_persistent
 from rsyscall.tasks.stdin_bootstrap import rsyscall_stdin_bootstrap
 from rsyscall.tasks.stub import StubServer
 from rsyscall.tasks.ssh import make_local_ssh
@@ -316,39 +315,6 @@ class TestIO(unittest.TestCase):
                 thread2 = await spawn_exec(stdtask2, rsyscall.nix.local_store)
                 async with thread2 as stdtask3:
                     await self.do_async_things(stdtask3.epoller, stdtask3)
-        trio.run(self.runner, test)
-
-    @unittest.skip("not working right now")
-    def test_ssh_persistent_thread_reconnect(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            async with (await stdtask.mkdtemp("rsyscall_state")) as path:
-                host = await make_local_ssh(stdtask, rsyscall.nix.local_store)
-                local_child, remote_stdtask = await host.ssh(stdtask)
-                # TODO need to have notion of "Host",
-                # which I can pull the namespaces out of. hm.
-                # it's to represent that two ssh connections to the same place,
-                # will have the same,
-                # namespaces and stuff.
-                # probably.
-                # so, okay. SSHHost perhaps?
-                logger.info("about to fork")
-                per_stdtask, server = await fork_persistent(remote_stdtask, path/"persist.sock")
-                logger.info("forked persistent, %s", per_stdtask.task.process.near)
-                await server.make_persistent()
-                await local_child.kill()
-                local_child, remote_stdtask = await host.ssh(stdtask)
-                # OK, so it is indeed non-deterministic.
-                # await per_stdtask.unshare_files()
-                # await connection.rsyscall_connection.close()
-                # hmm. if the connection is down then...
-                # probably the data connection is down too...
-                # AAA ok so the data connection is down. how do we repair it?
-                # I guess we can just return the Transport as well as the Syscall,
-                # and have a reconnectable transport thing.
-                await server.reconnect(remote_stdtask)
-                # don't have to unshare because the only other
-                # thing in the fd space was the original ssh task.
-                await per_stdtask.exit(0)
         trio.run(self.runner, test)
 
     @unittest.skip("requires a user")
