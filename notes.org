@@ -17379,13 +17379,34 @@ And we can have an exec which is not memory-abstracting, I guess.
 ** remove syscall eof message
    Hmm, what's the clean way to shut down a thread?
    Exit it?
-** optimize ssh startup
-   It's annoyingly slow. 100 milliseconds! And I run it three times for each ssh!
+** switch ssh to use multiplexing
+   ssh is annoyingly slow. 100 milliseconds! And I run it three times for each ssh!
 
-   The obvious optimization is multiplexing...
+   The obvious optimization is multiplexing.
+
+   I was reluctant before, but, really, always multiplexing simplifies so many things.
+   The current level of customizability is abnormal, let's abandon it.
+   And anyone we don't lose that much, I don't think, by forcing multiplexing.
+
+   Note that we'll still need the separate SSHHost thing,
+   so that we can track when namespaces are shared across ssh connections.
+
+   Though we don't really use those namespaces at the moment anyway...
 ** TODO remove need for careful use of unshare_files with persistent thread
    In fact there's a ton of crazy unshare_files stuff going on here.
+
+   OK the issue is really just the same thing as with childsyscallinterface.
+   We need a hard rule that if a task is in our fd space, it's our child,
+   and when we perform operations on its fds,
+   we monitor the child task/futex task for exiting.
+
+   Otherwise we don't have the nice hangup guarantees!
+
+   This applies both in syscall interface, and in connecting to the persistent socket.
+** implement real dynamic loader so we can get rid of fake mappings for local and remote functions
+   If we do a real loader then, I guess, uh, we can know the mappings, both remotely and locally.
 ** TODO fix mysterious __del__ exceptions
+   need to setup fd tables on exit
 ** DONE fix broken test_socket tests
    There's a weird exception happening in the destructor.
 
