@@ -108,7 +108,6 @@ async def rsyscall_exec(
             encode(passed_data_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
             *[encode(fd.near) for fd in base_task.fd_handles],
     ), [stdtask.child_monitor.internal.signal_queue.signal_block])
-    base_task._setup_fd_table()
     #### read symbols from describe fd
     describe_buf = AsyncReadBuffer(access_data_sock)
     symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')
@@ -131,6 +130,7 @@ async def rsyscall_exec(
         parent_stdtask, parent_futex_memfd, stdtask, child_futex_memfd)
     # TODO how do we unmap the remote mapping?
     syscall.futex_task = futex_task
+    base_task._add_to_active_fd_table_tasks()
 
 async def spawn_exec(self: StandardTask, store: nix.Store) -> RsyscallThread:
     executable = await RsyscallServerExecutable.from_store(store)

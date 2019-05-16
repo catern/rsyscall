@@ -755,7 +755,9 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         self.netns = netns
         self.fd_handles: t.List[FileDescriptor] = []
         self.manipulating_fd_table = False
-        self._setup_fd_table()
+
+        self._setup_fd_table_handles()
+        self._add_to_active_fd_table_tasks()
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -791,19 +793,16 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         fd_table_to_near_to_handles[self.fd_table].setdefault(near, []).append(handle)
         return handle
 
-    def _set_fd_table(self, fd_table: rsyscall.far.FDTable) -> None:
-        self.fd_table = fd_table
-        near_to_handles = fd_table_to_near_to_handles.setdefault(self.fd_table, {})
-        for handle in self.fd_handles:
-            near_to_handles.setdefault(handle.near, []).append(handle)
+    def _add_to_active_fd_table_tasks(self) -> None:
+        fd_table_to_task.setdefault(self.fd_table, []).append(self)
 
     def _setup_fd_table_handles(self) -> None:
         near_to_handles = fd_table_to_near_to_handles.setdefault(self.fd_table, {})
         for handle in self.fd_handles:
             near_to_handles.setdefault(handle.near, []).append(handle)
 
-    def _setup_fd_table(self) -> None:
-        fd_table_to_task.setdefault(self.fd_table, []).append(self)
+    def _make_fresh_fd_table(self) -> None:
+        self.fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
         self._setup_fd_table_handles()
 
     async def unshare_files(self) -> None:
@@ -813,8 +812,8 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         gc.collect()
         await run_fd_table_gc(self.fd_table)
         old_fd_table = self.fd_table
-        self.fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
-        self._setup_fd_table()
+        self._make_fresh_fd_table()
+        self._add_to_active_fd_table_tasks()
         self.manipulating_fd_table = True
         # perform the actual unshare
         await rsyscall.near.unshare(self.sysif, UnshareFlag.FILES)
@@ -986,8 +985,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             self.manipulating_fd_table = True
             await rsyscall.near.execveat(self.sysif, None, filename.near, argv.near, envp.near, flags)
             self.manipulating_fd_table = False
-            self.fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
-            self._setup_fd_table_handles()
+            self._make_fresh_fd_table()
             if isinstance(self.process, ChildProcess):
                 return self.process.did_exec()
             else:
@@ -998,7 +996,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         self.manipulating_fd_table = True
         await rsyscall.near.exit(self.sysif, status)
         self.manipulating_fd_table = False
-        self.fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
+        self._make_fresh_fd_table()
         await self.close_task()
 
     async def close_task(self):

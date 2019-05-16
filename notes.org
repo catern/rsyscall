@@ -17405,7 +17405,9 @@ And we can have an exec which is not memory-abstracting, I guess.
    This applies both in syscall interface, and in connecting to the persistent socket.
 ** implement real dynamic loader so we can get rid of fake mappings for local and remote functions
    If we do a real loader then, I guess, uh, we can know the mappings, both remotely and locally.
-** TODO fix mysterious __del__ exceptions
+** TODO clean up lifecycle for fd tables
+   Namely this manipulating_fd_table thing. What does it mean?
+** DONE fix mysterious __del__ exceptions
    need to setup fd tables on exit
 ** DONE fix broken test_socket tests
    There's a weird exception happening in the destructor.
