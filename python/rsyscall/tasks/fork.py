@@ -71,16 +71,16 @@ class ChildSyscallInterface(near.SyscallInterface):
         self.infd._invalidate()
         self.outfd._invalidate()
 
-    async def _read_syscall_responses_direct(self) -> None:
+    async def _await_while_waiting_for_child_exit(self, awaitable: t.Awaitable) -> None:
         got_responses = False
         try:
             async with trio.open_nursery() as nursery:
-                async def read_response() -> None:
-                    self.logger.info("enter syscall response %s", self.rsyscall_connection.pending_responses)
-                    await self.rsyscall_connection.read_pending_responses()
+                async def await_responses() -> None:
+                    self.logger.info("enter await_responses %s", self.rsyscall_connection.pending_responses)
+                    await awaitable
                     nonlocal got_responses
                     got_responses = True
-                    self.logger.info("read syscall response %s", self.rsyscall_connection.pending_responses)
+                    self.logger.info("return await_responses %s", self.rsyscall_connection.pending_responses)
                     nursery.cancel_scope.cancel()
                 async def server_exit() -> None:
                     # meaning the server exited
@@ -102,7 +102,7 @@ class ChildSyscallInterface(near.SyscallInterface):
                             self.logger.info("out of futex exit")
                             raise
                         raise MMRelease()
-                nursery.start_soon(read_response)
+                nursery.start_soon(await_responses)
                 nursery.start_soon(server_exit)
                 nursery.start_soon(futex_exit)
         except:
@@ -110,8 +110,10 @@ class ChildSyscallInterface(near.SyscallInterface):
             # instead we should process those syscall responses, and let the next syscall fail
             if not got_responses:
                 raise
-        else:
-            self.logger.info("returning or raising syscall response from nursery")
+
+    async def _read_syscall_responses_direct(self) -> None:
+        await self._await_while_waiting_for_child_exit(self.rsyscall_connection.read_pending_responses())
+        self.logger.info("returning after reading some syscall responses")
 
     async def _read_syscall_responses(self) -> None:
         async with self.running_read.needs_run() as needs_run:

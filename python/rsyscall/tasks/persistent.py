@@ -77,11 +77,11 @@ class PersistentServer:
     transport: t.Optional[SocketMemoryTransport] = None
 
     async def _do_connect(self, sock: FileDescriptor, addr: WrittenPointer[Address]) -> None:
-        sysif = self._get_sysif()
+        sysif = self.task.sysif
         if isinstance(sysif, NonChildSyscallInterface):
             await sock.connect(addr)
         elif isinstance(sysif, ChildSyscallInterface):
-            raise Exception
+            await sysif._await_while_waiting_for_child_exit(sock.connect(addr))
         else:
             raise Exception
 
