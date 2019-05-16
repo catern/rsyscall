@@ -6,8 +6,10 @@ from rsyscall.io import StandardTask
 from rsyscall.path import Path
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
+from rsyscall.tasks.fork import ChildSyscallInterface
 from rsyscall.loader import NativeLoader, Trampoline
-from rsyscall.handle import Stack, WrittenPointer, ThreadProcess, Pointer
+from rsyscall.sched import Stack
+from rsyscall.handle import WrittenPointer, ThreadProcess, Pointer, Task, FileDescriptor
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 
 import trio
@@ -67,15 +69,23 @@ class PersistentServer:
 
     """
     path: Path
-    task: handle.Task
+    task: Task
     ram: RAM
-    syscall: NonChildSyscallInterface
-    listening_sock: handle.FileDescriptor
+    listening_sock: FileDescriptor
     # saved to keep the reference to the stack pointer etc alive
     thread_process: ThreadProcess
     transport: t.Optional[SocketMemoryTransport] = None
 
-    async def _connect_and_send(self, stdtask: StandardTask, fds: t.List[handle.FileDescriptor]) -> t.List[near.FileDescriptor]:
+    async def _do_connect(self, sock: FileDescriptor, addr: WrittenPointer[Address]) -> None:
+        sysif = self._get_sysif()
+        if isinstance(sysif, NonChildSyscallInterface):
+            await sock.connect(addr)
+        elif isinstance(sysif, ChildSyscallInterface):
+            raise Exception
+        else:
+            raise Exception
+
+    async def _connect_and_send(self, stdtask: StandardTask, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
         connected_sock = await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM, 0)
         sockaddr_un = await SockaddrUn.from_path(stdtask, self.path)
         def sendmsg_op(sem: batch.BatchSemantics) -> t.Tuple[
@@ -83,12 +93,12 @@ class PersistentServer:
             addr: WrittenPointer[Address] = sem.to_pointer(sockaddr_un)
             count = sem.to_pointer(Int32(len(fds)))
             iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
-            cmsgs = sem.to_pointer(CmsgList([handle.CmsgSCMRights(fds)]))
+            cmsgs = sem.to_pointer(CmsgList([CmsgSCMRights(fds)]))
             hdr = sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
             response_buf = sem.to_pointer(StructList(Int32, [Int32(0)]*len(fds)))
             return addr, count, hdr, response_buf
         addr, count, hdr, response = await stdtask.ram.perform_batch(sendmsg_op)
-        await connected_sock.connect(addr)
+        await self._do_connect(connected_sock, addr)
         await sockaddr_un.close()
         _, _ = await connected_sock.write(count)
         _, [] = await connected_sock.sendmsg(hdr, SendmsgFlags.NONE)
@@ -96,7 +106,10 @@ class PersistentServer:
         while response.bytesize() > 0:
             valid, response = await connected_sock.read(response)
             data += valid
-        remote_fds = [near.FileDescriptor(int(i)) for i in (await data.read()).elems] if data else []
+        if data is None:
+            return []
+        remote_fds = [self.task.make_fd_handle(near.FileDescriptor(int(i)))
+                      for i in (await data.read()).elems]
         await connected_sock.close()
         return remote_fds
 
@@ -105,58 +118,40 @@ class PersistentServer:
         await self.task.prctl(PR.SET_PDEATHSIG, 0)
 
     async def reconnect(self, stdtask: StandardTask) -> None:
+        await self.task.sysif.close_interface()
         # TODO should check that no transport requests are in flight
-        await self.syscall.rsyscall_connection.close()
         if self.transport is not None:
             await self.transport.local.close()
-        # TODO hmm how do we handle closing the remote side, hmm...
-        # we can invalidate it here, but not close it.
-        # we could do the same for infd/outfd actually, I guess?
-        # I suppose the reason we aren't is... to make sure that the cleanup happens even if we crash.
-        # but we can always just clean up with another task...
-        # hmmmmmmmmmMMMMMMMMMMMMMMMM i don't remember
-        # yeah, I think we can handle it in python!
-        # hmm, we could also handle manipulating the epoll from python. right?
-        # ...yes the dependencies all are fine. we don't need to use an epoller to add something to an epfd.
-        # so what we would need to do is, hold an epfd here in PersistentServer,
-        # and maintain it as we connect and reconnect.
-        # so, having some other thread handle the cleanup for an exited thread, does make sense.
         [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await stdtask.open_async_channels(2)
         [infd, outfd, remote_data_sock] = await self._connect_and_send(
             stdtask, [syscall_sock, syscall_sock, data_sock])
-        await syscall_sock.invalidate()
-        await data_sock.invalidate()
+        await syscall_sock.close()
+        await data_sock.close()
         # update the syscall and transport with new connections
-        # TODO it would be nice to be able to invalidate these immediately, and only then flush the closes afterwards.
-        cleanup_remote_fds = [self.syscall.infd, self.syscall.outfd]
-        if self.transport is not None:
-            cleanup_remote_fds.append(self.transport.remote)
-        self.syscall.rsyscall_connection = SyscallConnection(access_syscall_sock, access_syscall_sock)
-        self.syscall.infd = self.task.make_fd_handle(infd)
-        self.syscall.outfd = self.task.make_fd_handle(outfd)
+        new_sysif = NonChildSyscallInterface(SyscallConnection(access_syscall_sock, access_syscall_sock),
+                                             self.task.process.near)
+        new_sysif.store_remote_side_handles(infd, outfd)
+        self.task.sysif = new_sysif
         # TODO technically this could still be in the same address space - that's the case in our tests.
         # we should figure out a way to use a LocalMemoryTransport here so it can copy efficiently
-        transport = SocketMemoryTransport(access_data_sock,
-                                          self.task.make_fd_handle(remote_data_sock), self.ram.allocator)
+        transport = SocketMemoryTransport(access_data_sock, remote_data_sock, self.ram.allocator)
         self.ram.transport = transport
         self.transport = transport
-        # close remote fds we are no longer using - can only do this here because we've
-        # re-established the syscall connection
-        for fd in cleanup_remote_fds:
-            await fd.invalidate()
+        # close remote fds we don't have handles to; this includes the old interface fds.
+        await handle.run_fd_table_gc(self.task.fd_table)
 
 async def spawn_rsyscall_persistent_server(
         access_sock: AsyncFileDescriptor,
-        remote_sock: handle.FileDescriptor,
-        listening_sock: handle.FileDescriptor,
-        parent_task: handle.Task,
+        remote_sock: FileDescriptor,
+        listening_sock: FileDescriptor,
+        parent_task: Task,
         parent_ram: RAM,
         loader: NativeLoader,
-    ) -> t.Tuple[handle.Task, RAM, NonChildSyscallInterface, handle.FileDescriptor, ThreadProcess]:
-    async def op(sem: batch.BatchSemantics) -> t.Tuple[handle.Pointer[Stack], WrittenPointer[Stack]]:
+    ) -> t.Tuple[Task, RAM, NonChildSyscallInterface, FileDescriptor, ThreadProcess]:
+    async def op(sem: batch.BatchSemantics) -> t.Tuple[Pointer[Stack], WrittenPointer[Stack]]:
         stack_value = loader.make_trampoline_stack(Trampoline(
             loader.persistent_server_func, [remote_sock, remote_sock, listening_sock]))
-        stack_buf = sem.malloc_type(handle.Stack, 4096)
+        stack_buf = sem.malloc_type(Stack, 4096)
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         return stack
     stack = await parent_ram.perform_async_batch(op)
@@ -166,7 +161,7 @@ async def spawn_rsyscall_persistent_server(
         stack, None, None, None)
     syscall = NonChildSyscallInterface(SyscallConnection(access_sock, access_sock),
                                        thread_process.near)
-    new_base_task = handle.Task(syscall, thread_process.near, None,
+    new_base_task = Task(syscall, thread_process.near, None,
                                 parent_task.fd_table, parent_task.address_space, parent_task.fs,
                                 parent_task.pidns,
                                 parent_task.netns)
@@ -208,5 +203,5 @@ async def fork_persistent(
         stdout=self.stdout.for_task(task),
         stderr=self.stderr.for_task(task),
     )
-    persistent_server = PersistentServer(path, task, ram, syscall, listening_sock_handle, thread_process)
+    persistent_server = PersistentServer(path, task, ram, listening_sock_handle, thread_process)
     return stdtask, persistent_server

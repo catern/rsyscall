@@ -313,24 +313,33 @@ class FileDescriptor:
         self.validate()
         return rsyscall.far.FileDescriptor(self.task.fd_table, self.near)
 
+    def _invalidate(self) -> bool:
+        """Invalidate this reference to this file descriptor
+
+        Returns true if we removed the last reference, and are now responsible for closing the FD.
+
+        """
+        if self.valid:
+            self.valid = False
+            handles = self._remove_from_tracking()
+            return len(handles) == 0
+        else:
+            return False
+
     async def invalidate(self) -> bool:
         """Invalidate this reference to this file descriptor
 
         Returns true if we remove the last reference, and close the FD.
 
         """
-        if self.valid:
-            self.valid = False
-            handles = self._remove_from_tracking()
-            if len(handles) == 0:
-                # we were the last handle for this fd, we should close it
-                logger.debug("invalidating %s, no handles remaining, closing", self)
-                await rsyscall.near.close(self.task.sysif, self.near)
-                return True
-            else:
-                logger.debug("invalidating %s, handles remaining: %s", self, handles)
-                return False
-        return False
+        if self._invalidate():
+            # we were the last handle for this fd, we should close it
+            logger.debug("invalidating %s, no handles remaining, closing", self)
+            await rsyscall.near.close(self.task.sysif, self.near)
+            return True
+        else:
+            logger.debug("invalidating %s, some handles remaining", self)
+            return False
 
     async def close(self) -> None:
         if not self.is_only_handle():
@@ -693,6 +702,7 @@ fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.F
 fd_table_to_task: t.Dict[rsyscall.far.FDTable, t.List[Task]] = {}
 
 async def run_fd_table_gc(fd_table: rsyscall.far.FDTable) -> None:
+    gc.collect()
     near_to_handles = fd_table_to_near_to_handles[fd_table]
     fds_to_close = [fd for fd, handles in near_to_handles.items() if not handles]
     if not fds_to_close:

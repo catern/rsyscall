@@ -33,6 +33,8 @@ class NonChildSyscallInterface(SyscallInterface):
 
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
+        self.infd._invalidate()
+        self.outfd._invalidate()
 
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)

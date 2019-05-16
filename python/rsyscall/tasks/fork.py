@@ -68,6 +68,8 @@ class ChildSyscallInterface(near.SyscallInterface):
 
     async def close_interface(self) -> None:
         await self.rsyscall_connection.close()
+        self.infd._invalidate()
+        self.outfd._invalidate()
 
     async def _read_syscall_responses_direct(self) -> None:
         got_responses = False

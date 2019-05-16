@@ -36,7 +36,7 @@ class TestPersistent(TrioTestCase):
             await connection.reconnect(self.stdtask)
             await thread.exit(0)
 
-    async def test_ssh(self) -> None:
+    async def test_ssh_same(self) -> None:
         host = await make_local_ssh(self.stdtask, self.store)
         local_child, remote_stdtask = await host.ssh(self.stdtask)
         per_stdtask, connection = await fork_persistent(remote_stdtask, self.sock_path)
