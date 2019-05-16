@@ -168,11 +168,13 @@ async def launch_futex_monitor(ram: RAM,
     # the stack will be freed as it is no longer needed, but the futex pointer will live on
     return futex_task
 
-async def spawn_rsyscall_thread(
-        ram: RAM, task: Task,
-        access_sock: AsyncFileDescriptor, remote_sock: FileDescriptor,
-        monitor: ChildProcessMonitor,
+async def spawn_child_task(
+        task: Task, ram: RAM,
         loader: NativeLoader,
+        monitor: ChildProcessMonitor,
+        access_sock: AsyncFileDescriptor,
+        remote_sock: FileDescriptor,
+        trampoline: Trampoline,
         newuser: bool, newpid: bool, fs: bool, sighand: bool,
 ) -> Task:
     flags = CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM|Signals.SIGCHLD
@@ -191,8 +193,7 @@ async def spawn_rsyscall_thread(
     arena = Arena(await task.mmap(4096*2, PROT.READ|PROT.WRITE, MAP.SHARED))
     async def op(sem: BatchSemantics) -> t.Tuple[t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
                                                        WrittenPointer[FutexNode]]:
-        stack_value = loader.make_trampoline_stack(Trampoline(
-            loader.server_func, [remote_sock, remote_sock]))
+        stack_value = loader.make_trampoline_stack(trampoline)
         stack_buf = sem.malloc_type(Stack, 4096)
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         futex_pointer = sem.to_pointer(FutexNode(None, Int32(0)))
@@ -218,6 +219,18 @@ async def spawn_rsyscall_thread(
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     return new_base_task
+
+async def spawn_rsyscall_thread(
+        ram: RAM, task: Task,
+        access_sock: AsyncFileDescriptor, remote_sock: FileDescriptor,
+        monitor: ChildProcessMonitor,
+        loader: NativeLoader,
+        newuser: bool, newpid: bool, fs: bool, sighand: bool,
+) -> Task:
+    return await spawn_child_task(
+        task, ram, loader, monitor, access_sock, remote_sock,
+        Trampoline(loader.server_func, [remote_sock, remote_sock]),
+        newuser=newuser, newpid=newpid, fs=fs, sighand=sighand)
 
 from rsyscall.epoller import EpollCenter
 from rsyscall.network.connection import Connection, ConnectionThread
