@@ -13,8 +13,6 @@ class TestPersistent(TrioTestCase):
         self.store = local_store
         self.tmpdir = await self.stdtask.mkdtemp("test_stub")
         self.sock_path = self.tmpdir.path/"persist.sock"
-        self.task = self.stdtask.task.base
-        self.ram = self.stdtask.ram
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()

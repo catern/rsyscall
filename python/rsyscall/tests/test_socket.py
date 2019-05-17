@@ -5,6 +5,8 @@ from rsyscall.sys.socket import *
 from rsyscall.sys.un import *
 from rsyscall.sys.uio import IovecList
 from rsyscall.struct import Bytes
+from rsyscall.fcntl import O
+from rsyscall.linux.dirent import DirentList
 
 import logging
 logger = logging.getLogger(__name__)
@@ -83,3 +85,21 @@ class TestSocket(TrioTestCase):
         self.assertEqual(hdrval.name, None)
         self.assertEqual(hdrval.flags, MsghdrFlags.NONE)
 
+    async def test_long_sockaddr(self) -> None:
+        "SockaddrUn.from_path works correctly on long Unix socket paths"
+        longdir = await self.thr.ram.to_pointer(self.path/("long"*50))
+        await self.thr.task.mkdir(longdir)
+        addr: WrittenPointer[Address] = await self.thr.ram.to_pointer(
+            await SockaddrUn.from_path(self.thr, longdir.value/"sock"))
+
+        sockfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
+        await sockfd.bind(addr)
+        await sockfd.listen(10)
+        
+        clientfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
+        await clientfd.connect(addr)
+        connfd = await sockfd.accept(SOCK.CLOEXEC)
+
+        dirfd = await self.thr.task.open(longdir, O.DIRECTORY)
+        valid, rest = await dirfd.getdents(await self.thr.ram.malloc_type(DirentList, 4096))
+        self.assertCountEqual([dirent.name for dirent in await valid.read()], ['.', '..', 'sock'])

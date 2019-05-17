@@ -24,6 +24,12 @@ from dataclasses import dataclass
 import trio
 import abc
 
+__all__ = [
+    'PureREPL',
+    'ExpressionResult',
+]
+
+T = t.TypeVar('T')
 def _ast_compile(source, filename, symbol):
     return compile(source, filename, symbol, ast.PyCF_ONLY_AST|codeop.PyCF_DONT_IMPLY_DEDENT) # type: ignore
 
@@ -193,16 +199,6 @@ class PureREPL:
                 self.buf = ""
                 return (await self.eval_single(astob))
             return None
-
-T = t.TypeVar('T')
-def await_pure(awaitable: t.Awaitable[T]) -> T:
-    iterable = awaitable.__await__()
-    try:
-        next(iterable)
-    except StopIteration as e:
-        return e.value
-    else:
-        raise Exception("this awaitable actually is impure! it yields!")
 
 import pydoc # type: ignore
 class Output:

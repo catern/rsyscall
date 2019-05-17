@@ -148,40 +148,6 @@ class TestIO(unittest.TestCase):
     #                             self.assertEqual(in_data, out_data)
     #     trio.run(test)
 
-    # async def do_epoll_things(self, epoller) -> None:
-    #     async with (await self.task.pipe()) as pipe:
-    #         pipe_rfd_wrapped = await epoller.register(pipe.rfd, EpollEventMask.make(in_=True))
-    #         async def stuff():
-    #             events = await pipe_rfd_wrapped.wait()
-    #             self.assertEqual(len(events), 1)
-    #             self.assertTrue(events[0].in_)
-    #         async with trio.open_nursery() as nursery:
-    #             nursery.start_soon(stuff)
-    #             await trio.sleep(0)
-    #             await pipe.wfd.write(b"data")
-
-    # def test_epoll(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             await self.do_epoll_things(stdtask.resources.epoller)
-    #     trio.run(test)
-
-    # def test_epoll_multi(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             epoller = stdtask.resources.epoller
-    #             async with trio.open_nursery() as nursery:
-    #                 for i in range(5):
-    #                     nursery.start_soon(self.do_epoll_things, epoller)
-    #     trio.run(test)
-
-    # def test_epoll_read(self) -> None:
-    #     async def test() -> None:
-    #         async with (await self.task.epoll_create()) as epoll:
-    #             with self.assertRaises(OSError):
-    #                 await memsys.read(self.task.syscall, self.task.gateway, self.task.allocator, epoll.pure, 4096)
-    #     trio.run(test)
-
     def test_async(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             await self.do_async_things(stdtask.epoller, stdtask)
@@ -209,59 +175,6 @@ class TestIO(unittest.TestCase):
     #         # so we'll add a write_text method?
     #         # and we need a tempdir maker thingy
     #         pass
-    #     trio.run(test)
-
-    def test_pure_repl(self) -> None:
-        async def test() -> None:
-            repl = rsyscall.repl.PureREPL({})
-            async def eval(line: str) -> t.Any:
-                result = await repl.add_line(line + '\n')
-                if isinstance(result, rsyscall.repl.ExpressionResult):
-                    return result.value
-                else:
-                    raise Exception("unexpected", result)
-            self.assertEqual(await eval('1'), 1)
-            self.assertEqual(await eval('1+1'), 2)
-            await repl.add_line('foo = 1\n')
-            self.assertEqual(await eval('foo*4'), 4)
-        rsyscall.repl.await_pure(test())
-
-    def test_repl(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            async with (await stdtask.mkdtemp()) as path:
-                sockfd = await stdtask.make_afd(
-                    await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-                addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(
-                    await SockaddrUn.from_path(stdtask, path/"sock"))
-                await sockfd.handle.bind(addr)
-                await sockfd.handle.listen(10)
-                clientfd = await stdtask.make_afd(
-                    await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-                await clientfd.connect(addr)
-                await clientfd.write_all_bytes(b"foo = 11\n")
-                await clientfd.write_all_bytes(b"return foo * 2\n")
-                ret = await rsyscall.wish.serve_repls(sockfd, {'locals': locals()}, int, "hello")
-                self.assertEqual(ret, 22)
-        trio.run(self.runner, test)
-
-    # def test_robust_bind_connect(self) -> None:
-    #     "robust_unix_bind and robust_unix_connect work correctly on long Unix socket paths"
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             async with (await stdtask.mkdtemp()) as path:
-    #                 async with (await stdtask.task.socket_unix(SOCK.STREAM)) as sockfd:
-    #                     sockpath = path/("long"*25 + "sock")
-    #                     await rsyscall.io.robust_unix_bind(sockpath, sockfd)
-    #                     await sockfd.listen(10)
-    #                     async with (await stdtask.task.socket_unix(SOCK.STREAM)) as clientfd:
-    #                         # Unix sockets succeed in connecting immediately, but then block for writing.
-    #                         await rsyscall.io.robust_unix_connect(sockpath, clientfd)
-    #                         connfd, client_addr = await sockfd.accept(0) # type: ignore
-    #                         async with connfd:
-    #                             logger.info("Server sockname: %s, client peername: %s, server connection sockname %s",
-    #                                         await sockfd.getsockname(),
-    #                                         await clientfd.getpeername(),
-    #                                         await connfd.getsockname())
     #     trio.run(test)
 
     # def test_ip_listen_async(self) -> None:

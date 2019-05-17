@@ -17392,7 +17392,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    so that we can track when namespaces are shared across ssh connections.
 
    Though we don't really use those namespaces at the moment anyway...
-** TODO remove need for careful use of unshare_files with persistent thread
+** DONE remove need for careful use of unshare_files with persistent thread
    In fact there's a ton of crazy unshare_files stuff going on here.
 
    OK the issue is really just the same thing as with childsyscallinterface.
@@ -17405,7 +17405,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    This applies both in syscall interface, and in connecting to the persistent socket.
 ** implement real dynamic loader so we can get rid of fake mappings for local and remote functions
    If we do a real loader then, I guess, uh, we can know the mappings, both remotely and locally.
-** use spawn_child_task in persistent?
+** DONE use spawn_child_task in persistent?
    the issue is maintaining a reference to the stack stuff
 
    hmm, if we purge the stack, maybe we're good?
@@ -17501,6 +17501,11 @@ And we can have an exec which is not memory-abstracting, I guess.
 
    Ummm that would have the right effect, but does it make sense?
    Well what about exit? I mean right now when we exit, we leave our handles around...
+** cloexec
+   we do actually need to cloexec when in a shared fd space, I guess,
+   otherwise our fds will get inherited if some other task calls exec without first calling unshare_files.
+
+   hmm this is kind of security-sensitive too because the fds might be inherited by a network-exposed process.
 ** implement GC for asyncfds
    We need to do this I guess.
 

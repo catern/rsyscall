@@ -44,7 +44,7 @@ class TestFS(TrioTestCase):
         dirfd = await self.thr.task.open(await self.thr.ram.to_pointer(self.path), O.DIRECTORY)
         dent_buf = await self.thr.ram.malloc_type(DirentList, 4096)
         valid, rest = await dirfd.getdents(dent_buf)
-        self.assertCountEqual(sorted([dirent.name for dirent in await valid.read()]), ['.', '..'])
+        self.assertCountEqual([dirent.name for dirent in await valid.read()], ['.', '..'])
         dent_buf = valid + rest
 
         text = b"Hello world!"
@@ -60,7 +60,7 @@ class TestFS(TrioTestCase):
 
         await dirfd.lseek(0, SEEK.SET)
         valid, rest = await dirfd.getdents(dent_buf)
-        self.assertCountEqual(sorted([dirent.name for dirent in await valid.read()]), ['.', '..', str(name.value)])
+        self.assertCountEqual([dirent.name for dirent in await valid.read()], ['.', '..', str(name.value)])
 
     async def test_getdents_noent(self) -> None:
         "getdents on a removed directory returns ENOENT/FileNotFoundError"

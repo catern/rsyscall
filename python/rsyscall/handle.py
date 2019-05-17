@@ -612,7 +612,11 @@ class FileDescriptor:
     async def bind(self, addr: WrittenPointer[Address]) -> None:
         self.validate()
         with addr.borrow(self.task):
-            await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addr.bytesize())
+            try:
+                await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addr.bytesize())
+            except PermissionError as exn:
+                exn.filename = addr.value
+                raise
 
     async def connect(self, addr: WrittenPointer[Address]) -> None:
         self.validate()
@@ -907,10 +911,14 @@ class Task(SignalMaskTask, rsyscall.far.Task):
 
     async def open(self, ptr: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
         with ptr.borrow(self) as ptr_b:
-            fd = await rsyscall.near.openat(self.sysif, None, ptr_b.near, flags, mode)
+            try:
+                fd = await rsyscall.near.openat(self.sysif, None, ptr_b.near, flags, mode)
+            except FileNotFoundError as exn:
+                exn.filename = ptr.value
+                raise
             return self.make_fd_handle(fd)
 
-    async def mkdir(self, ptr: WrittenPointer[Path], mode=0o644) -> None:
+    async def mkdir(self, ptr: WrittenPointer[Path], mode=0o755) -> None:
         with ptr.borrow(self) as ptr_b:
             await rsyscall.near.mkdirat(self.sysif, None, ptr_b.near, mode)
 
@@ -1169,8 +1177,9 @@ class ChildProcess(Process):
             try:
                 await rsyscall.near.waitid(self.task.sysif, self.near, infop.near, options,
                                            rusage.near if rusage else None)
-            except ChildProcessError as e:
-                raise ChildProcessError(e.errno, e.strerror, self.near) from None
+            except ChildProcessError as exn:
+                exn.filename = self.near
+                raise
         self.unread_siginfo = infop
 
     def parse_waitid_siginfo(self, siginfo: Siginfo) -> t.Optional[ChildEvent]:

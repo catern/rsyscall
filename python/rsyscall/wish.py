@@ -19,6 +19,11 @@ import rsyscall.repl
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    'wish',
+    'serve_repls',
+]
+
 # TODO should we inherit from BaseException or Exception?
 T = t.TypeVar('T')
 class Wish(BaseException, t.Generic[T]):
