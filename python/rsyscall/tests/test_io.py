@@ -112,23 +112,6 @@ class TestIO(unittest.TestCase):
             self.assertEqual(read_ifreq.name, ifreq.name)
         trio.run(self.runner, test)
 
-    # def test_cat(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             async with (await self.task.pipe()) as pipe_in:
-    #                 async with (await self.task.pipe()) as pipe_out:
-    #                     rsyscall_task, (stdin, stdout, new_stdin, new_stdout) = await stdtask.spawn(
-    #                         [self.stdin, self.stdout, pipe_in.rfd, pipe_out.wfd])
-    #                     async with rsyscall_task:
-    #                         await new_stdin.dup2(stdin)
-    #                         await new_stdout.dup2(stdout)
-    #                         async with (await rsyscall_task.execve(stdtask.filesystem.utilities.sh, ['sh', '-c', 'cat'])):
-    #                             in_data = b"hello"
-    #                             await pipe_in.wfd.write(in_data)
-    #                             out_data = await pipe_out.rfd.read(len(in_data))
-    #                             self.assertEqual(in_data, out_data)
-    #     trio.run(test)
-
     # def test_cat_async(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
@@ -193,79 +176,6 @@ class TestIO(unittest.TestCase):
                 async with thread2 as stdtask3:
                     await self.do_async_things(stdtask3.epoller, stdtask3)
         trio.run(self.runner, test)
-
-    @unittest.skip("Nix deploy is broken")
-    def test_ssh_nix_shell(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            host = await make_local_ssh(stdtask, rsyscall.nix.local_store)
-            local_child, remote_stdtask = await host.ssh(stdtask)
-            thread = await remote_stdtask.fork()
-            src_nix_bin = stdtask.task.make_path_from_bytes(nix_bin_bytes)
-            dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread)
-            # let's use nix-copy-closure or nix-store --import/--export or nix copy to copy bash over then run it?
-            # nix-store --import/--export
-            bash = await stdtask.environ.which("bash")
-            dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread)
-            child_task = await thread.execve(dest_bash, ["bash"])
-            await child_task.wait_for_exit()
-        trio.run(self.runner, test)
-
-    @unittest.skip("Nix deploy is broken")
-    def test_nix_shell_with_daemon(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            del stdtask.environ['NIX_REMOTE']
-            thread = await stdtask.fork()
-            src_nix_bin = stdtask.task.make_path_from_bytes(nix_bin_bytes)
-            dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread)
-            child_task = await thread.execve(dest_nix_bin/"nix-daemon", ["nix-daemon"], {'NIX_REMOTE':''})
-
-            shell_thread = await stdtask.fork()
-            dest_nix_bin = shell_thread.task.make_path_handle(dest_nix_bin)
-            with child_task.process.borrow():
-                ns_user = rsyscall.path.Path("/proc")/str(child_task.process.near.id)/"ns"/"user"
-                usernsfd = await shell_thread.task.open(await shell_thread.ram.to_pointer(ns_user), O.RDONLY|O.CLOEXEC)
-            await shell_thread.setns_user(usernsfd)
-            await shell_thread.unshare_mount()
-            await shell_thread.mount(b"nix", b"/nix", b"none", MS.BIND|MS.RDONLY, b"")
-            # making a readonly bind mount is weird, you have to mount it first then remount it rdonly
-            await shell_thread.mount(b"none", b"/nix", b"none",
-                                             MS.BIND|MS.REMOUNT|MS.RDONLY, b"")
-            bash = await stdtask.environ.which("bash")
-            dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, shell_thread)
-            mount = await stdtask.environ.which("mount")
-            # don't seem to be able to copy coreutils for some reason?
-            # it doesn't have a valid signature?
-            await rsyscall.nix.nix_deploy(src_nix_bin, mount.executable_path,
-                                         stdtask, dest_nix_bin, shell_thread)
-            child_task = await shell_thread.execve(dest_bash, ["bash", "--norc"])
-            await child_task.wait_for_exit()
-        trio.run(self.runner, test)
-
-    async def foo(self) -> None:
-        async with trio.open_nursery() as nursery:
-            async def thing1() -> None:
-                await trio.sleep(0)
-                raise Exception("ha ha")
-            async def thing2() -> None:
-                await trio.sleep(1000)
-            nursery.start_soon(thing1)
-            nursery.start_soon(thing2)
-
-    def test_nursery(self) -> None:
-        async def test() -> None:
-            async with trio.open_nursery() as nursery:
-                async def a1() -> None:
-                    await trio.sleep(10)
-                async def a2() -> None:
-                    try:
-                        await self.foo()
-                    except:
-                        pass
-                    finally:
-                        nursery.cancel_scope.cancel()
-                nursery.start_soon(a1)
-                nursery.start_soon(a2)
-        trio.run(test)
         
 
 # if __name__ == '__main__':

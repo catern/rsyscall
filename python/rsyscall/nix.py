@@ -2,7 +2,6 @@ from __future__ import annotations
 import typing as t
 import os
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask
 from rsyscall.io import Thread, ChildThread
 from rsyscall.command import Command
 import rsyscall.tasks.local as local
@@ -89,22 +88,22 @@ async def enter_nix_container(store: Store, dest: Thread, dest_dir: Path) -> Sto
     if 'NIX_REMOTE' in dest.environ:
         del dest.environ['NIX_REMOTE']
     # copy the binaries over
-    await copy_tree(store.stdtask, store.nix.closure, dest, dest_dir)
+    await copy_tree(store.thread, store.nix.closure, dest, dest_dir)
     # enter the container
     await dest.unshare_user()
     await dest.unshare_mount()
     await dest.mount(os.fsencode(dest_dir/"nix"), b"/nix", b"none", MS.BIND, b"")
     # init the database
     nix_store = Command(store.nix.path/'bin/nix-store', ['nix-store'], {})
-    await bootstrap_nix_database(store.stdtask, nix_store, store.nix.closure, dest, nix_store)
+    await bootstrap_nix_database(store.thread, nix_store, store.nix.closure, dest, nix_store)
     return Store(dest, store.nix)
 
 async def deploy_nix_bin(store: Store, dest: Thread) -> Store:
     # copy the binaries over
-    await copy_tree(store.stdtask, store.nix.closure, dest, Path("/nix"))
+    await copy_tree(store.thread, store.nix.closure, dest, Path("/nix"))
     # init the database
     nix_store = Command(store.nix.path/'bin/nix-store', ['nix-store'], {})
-    await bootstrap_nix_database(store.stdtask, nix_store, store.nix.closure, dest, nix_store)
+    await bootstrap_nix_database(store.thread, nix_store, store.nix.closure, dest, nix_store)
     return Store(dest, store.nix)
 
 async def exec_nix_store_import_export(
@@ -171,9 +170,8 @@ class StorePath:
         return StorePath(path, closure)
 
 class Store:
-    def __init__(self, stdtask: StandardTask, nix: StorePath) -> None:
-        self.stdtask = stdtask
-        self.thread = stdtask
+    def __init__(self, thread: Thread, nix: StorePath) -> None:
+        self.thread = thread
         self.nix = nix
         self.roots: t.Dict[StorePath, Path] = {}
         self._add_root(nix, nix.path)
@@ -190,9 +188,9 @@ class Store:
     async def realise(self, store_path: StorePath) -> Path:
         if store_path in self.roots:
             return self.roots[store_path]
-        ptr = await self.stdtask.ram.to_pointer(store_path.path)
+        ptr = await self.thread.ram.to_pointer(store_path.path)
         try:
-            await self.stdtask.task.access(ptr, OK.R)
+            await self.thread.task.access(ptr, OK.R)
         except (PermissionError, FileNotFoundError):
             await nix_deploy(local_store, self, store_path)
             return await self.create_root(store_path, ptr)
@@ -204,7 +202,7 @@ class Store:
         return Command(path/"bin"/name, [name], {})
 
 nix = StorePath._load_without_registering("nix")
-local_store = Store(local.stdtask, nix)
+local_store = Store(local.thread, nix)
 
 def import_nix_dep(name: str) -> StorePath:
     store_path = StorePath._load_without_registering(name)
