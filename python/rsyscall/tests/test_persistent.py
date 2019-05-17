@@ -1,16 +1,11 @@
 from __future__ import annotations
-import unittest
-
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.io
 from rsyscall.nix import local_store
 import rsyscall.tasks.local as local
 from rsyscall.tasks.persistent import *
 from rsyscall.tasks.ssh import make_local_ssh
 from rsyscall.tasks.exceptions import RsyscallHangup
-
-import logging
-# logging.basicConfig(level=logging.DEBUG)
+from rsyscall.tests.test_io import assert_thread_works
 
 class TestPersistent(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -25,9 +20,11 @@ class TestPersistent(TrioTestCase):
         await self.tmpdir.cleanup()
 
     async def test_reconnect_exit(self) -> None:
-        per_stdtask, connection = await fork_persistent(self.stdtask, self.sock_path)
+        per_thr, connection = await fork_persistent(self.stdtask, self.sock_path)
+        await assert_thread_works(self, per_thr)
         await connection.reconnect(self.stdtask)
-        await per_stdtask.exit(0)
+        # await assert_thread_works(self, per_thr)
+        await per_thr.exit(0)
 
     async def test_exit_reconnect(self) -> None:
         thread = await self.stdtask.fork()
@@ -64,29 +61,24 @@ class TestPersistent(TrioTestCase):
 
     async def test_no_make_persistent(self) -> None:
         pidns_thr = await self.stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
-
         sacr_thr = await pidns_thr.fork()
-
         per_thr, connection = await fork_persistent(sacr_thr, self.sock_path)
         # exit sacr_thr, and per_thr will be killed by PDEATHSIG, like a normal thread
         await sacr_thr.exit(0)
         # the persistent thread is dead, we can't reconnect to it
-        with self.assertRaises(BaseException):
+        with self.assertRaises(BaseException): # type: ignore
             await connection.reconnect(self.stdtask)
 
-    @unittest.skip("not working right now")
     async def test_make_persistent(self) -> None:
         # use a pidns so that the persistent task will be killed after all
         pidns_thr = await self.stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
-
         sacr_thr = await pidns_thr.fork()
-
         per_thr, connection = await fork_persistent(sacr_thr, self.sock_path)
+        # make the persistent thread, actually persistent.
         await connection.make_persistent()
-        # TODO argh, we need this because otherwise the listening socket is still around in our fd space.
-        await per_thr.unshare_files()
         # exit sacr_thr, and per_thr won't be killed
         await sacr_thr.exit(0)
-
         # the persistent thread is still around!
         await connection.reconnect(self.stdtask)
+        # await assert_thread_works(self, per_thr)
+        await per_thr.exit(0)

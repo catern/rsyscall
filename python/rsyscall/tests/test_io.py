@@ -20,7 +20,7 @@ import rsyscall.wish
 import rsyscall.nix
 
 from rsyscall.handle import WrittenPointer, Pointer
-from rsyscall.epoller import EpollCenter, AsyncFileDescriptor
+from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, EpollThread
 from rsyscall.memory.ram import RAMThread
 
 from rsyscall.tasks.stdin_bootstrap import rsyscall_stdin_bootstrap
@@ -73,6 +73,9 @@ async def do_async_things(self: unittest.TestCase, epoller, thr: RAMThread) -> N
         await async_pipe_wfd.write_all_bytes(data)
     await async_pipe_rfd.close()
     await async_pipe_wfd.close()
+
+async def assert_thread_works(self: unittest.TestCase, thr: EpollThread) -> None:
+    await do_async_things(self, thr.epoller, thr)
 
 class TestIO(unittest.TestCase):
     async def do_async_things(self, epoller, thr: RAMThread) -> None:
