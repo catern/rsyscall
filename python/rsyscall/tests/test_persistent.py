@@ -23,41 +23,44 @@ class TestPersistent(TrioTestCase):
         per_thr, connection = await fork_persistent(self.stdtask, self.sock_path)
         await assert_thread_works(self, per_thr)
         await connection.reconnect(self.stdtask)
-        # await assert_thread_works(self, per_thr)
+        await assert_thread_works(self, per_thr)
         await per_thr.exit(0)
 
     async def test_exit_reconnect(self) -> None:
         thread = await self.stdtask.fork()
-        per_stdtask, connection = await fork_persistent(self.stdtask, self.sock_path)
-        await per_stdtask.exit(0)
+        per_thr, connection = await fork_persistent(self.stdtask, self.sock_path)
+        await per_thr.exit(0)
         # when we try to reconnect, we'll fail
         with self.assertRaises(RsyscallHangup):
             await connection.reconnect(self.stdtask)
 
     async def test_nest_exit(self) -> None:
-        per_stdtask, connection = await fork_persistent(self.stdtask, self.sock_path)
-        thread = await per_stdtask.fork()
+        per_thr, connection = await fork_persistent(self.stdtask, self.sock_path)
+        thread = await per_thr.fork()
         async with thread:
             await connection.reconnect(self.stdtask)
+            await assert_thread_works(self, thread)
             await thread.exit(0)
 
     async def test_ssh_same(self) -> None:
         host = await make_local_ssh(self.stdtask, self.store)
         local_child, remote_stdtask = await host.ssh(self.stdtask)
-        per_stdtask, connection = await fork_persistent(remote_stdtask, self.sock_path)
+        per_thr, connection = await fork_persistent(remote_stdtask, self.sock_path)
         await connection.reconnect(remote_stdtask)
-        await per_stdtask.exit(0)
+        await assert_thread_works(self, per_thr)
+        await per_thr.exit(0)
 
     async def test_ssh_new(self) -> None:
         "Start the persistent thread from one ssh thread, then reconnect to it from a new ssh thread."
         host = await make_local_ssh(self.stdtask, self.store)
         local_child, remote_stdtask = await host.ssh(self.stdtask)
-        per_stdtask, connection = await fork_persistent(remote_stdtask, self.sock_path)
+        per_thr, connection = await fork_persistent(remote_stdtask, self.sock_path)
 
         local_child, remote_stdtask = await host.ssh(self.stdtask)
         await connection.reconnect(remote_stdtask)
+        await assert_thread_works(self, per_thr)
 
-        await per_stdtask.exit(0)
+        await per_thr.exit(0)
 
     async def test_no_make_persistent(self) -> None:
         pidns_thr = await self.stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
@@ -80,5 +83,5 @@ class TestPersistent(TrioTestCase):
         await sacr_thr.exit(0)
         # the persistent thread is still around!
         await connection.reconnect(self.stdtask)
-        # await assert_thread_works(self, per_thr)
+        await assert_thread_works(self, per_thr)
         await per_thr.exit(0)

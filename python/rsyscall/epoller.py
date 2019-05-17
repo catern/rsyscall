@@ -87,7 +87,8 @@ class EpollCenter:
         center = EpollCenter(EpollWaiter(ram, epfd, None, -1), ram, epfd)
         # TODO where should we store this, so that we don't deregister the activity_fd?
         epolled = await center.register(
-            activity_fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET)
+            # not edge triggered; we don't want to block if there's anything that can be read.
+            activity_fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP)
         return center
 
     def __init__(self, epoller: EpollWaiter, ram: RAM, epfd: FileDescriptor) -> None:

@@ -61,16 +61,18 @@ async def do_async_things(self: unittest.TestCase, epoller, thr: RAMThread) -> N
     async_pipe_wfd = await AsyncFileDescriptor.make_handle(epoller, thr.ram, pipe.write)
     data = b"hello world"
     async def stuff():
-        logger.info("performing read")
+        logger.info("async test read: starting")
         result = await async_pipe_rfd.read_some_bytes()
+        logger.info("async test read: returned")
         self.assertEqual(result, data)
     async with trio.open_nursery() as nursery:
         nursery.start_soon(stuff)
         await trio.sleep(0.01)
-        logger.info("performing write")
         # hmmm MMM MMMmmmm MMM mmm MMm mm MM mmm MM mm MM
         # does this make sense?
+        logger.info("async test write: starting")
         await async_pipe_wfd.write_all_bytes(data)
+        logger.info("async test write: returned")
     await async_pipe_rfd.close()
     await async_pipe_wfd.close()
 

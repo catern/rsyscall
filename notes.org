@@ -17437,6 +17437,46 @@ And we can have an exec which is not memory-abstracting, I guess.
     And here that exception works just fine.
 
     Well... if we successfully do an await anyway then... I think we might as well return responses.
+*** unshare files issue
+    wait lol, how do we learn exactly what fds are in the new fd table so we can close them?
+
+    uhhh. we aren't copying the fd table right.
+
+    great!!! fixed!!
+*** async testing doesn't work after reconnect
+    sigh, not a surprise, we don't actually work.
+
+    fufufufufu there's some kind of truly severe issue, maybe.
+
+    oH!!! oh oh!!!
+
+    we forgot to register the new fds on epoll!!!
+
+    hum!!
+*** crazy waitid
+   also what was that crazy waitid loop issue?
+
+   i was spinning on waitid, that seems bad..
+
+   oh I think I got rid of it by removing my hack to do eager reading in epoller.
+   if it's something I have to worry about, I'll see it again when I next refactor epoller in that direction.
+*** epoll activity fd registration
+    ok so since my fds will change over time,
+    we could/should use a single epfd to manage them.
+
+    recovering my old thoughts, I think I got to the point where,
+    we can manage that epfd from python.
+
+    but, wait, if we're managing it from python,
+    then we could just use the raw epfd.
+
+    let's just manage it from python, I don't care about overhead.
+
+    woo it works!!
+** TODO still getting EINTR or something from resizing terminal
+   HmMmMmMm ugh
+** fix fd leaks in tests
+   We close some fds, but we still gradually increase in number of fds.
 ** pass in single flags: CLONE argument to spawn_child_task
    rather than a bunch of different keyword arguments.
 

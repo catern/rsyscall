@@ -23,6 +23,7 @@ from rsyscall.memory.ram import RAM
 
 from rsyscall.monitor import ChildProcessMonitor
 from rsyscall.epoller import EpollCenter, AsyncFileDescriptor
+from rsyscall.sys.epoll import EPOLL
 
 from rsyscall.struct import Bytes, Int32, StructList
 
@@ -72,6 +73,7 @@ class PersistentServer:
     path: Path
     task: Task
     ram: RAM
+    epoller: EpollCenter
     listening_sock: FileDescriptor
     # saved to keep the reference to the stack pointer etc alive
     thread_process: t.Optional[ThreadProcess] = None
@@ -131,14 +133,17 @@ class PersistentServer:
             stdtask, [syscall_sock, syscall_sock, data_sock])
         await syscall_sock.close()
         await data_sock.close()
-        # update the syscall and transport with new connections
+        # Fix up Task's sysif with new SyscallConnection
         self.task.sysif.rsyscall_connection = SyscallConnection(access_syscall_sock, access_syscall_sock)
         self.task.sysif.store_remote_side_handles(infd, outfd)
+        # Fix up RAM with new transport
         # TODO technically this could still be in the same address space - that's the case in our tests.
         # we should figure out a way to use a LocalMemoryTransport here so it can copy efficiently
         transport = SocketMemoryTransport(access_data_sock, remote_data_sock, self.ram.allocator)
         self.ram.transport = transport
         self.transport = transport
+        # Fix up epoller with new activity fd
+        await self.epoller.register(infd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP)
         # close remote fds we don't have handles to; this includes the old interface fds.
         await handle.run_fd_table_gc(self.task.fd_table)
 
@@ -156,7 +161,7 @@ async def fork_persistent(
         Trampoline(self.loader.persistent_server_func, [remote_sock, remote_sock, listening_sock]),
         newuser=False, newpid=False, fs=True, sighand=True)
     listening_sock_handle = listening_sock.move(task)
-    ram = RAM(task, self.ram.transport.inherit(task), self.ram.allocator.inherit(task))
+    ram = RAM(task, self.ram.transport, self.ram.allocator.inherit(task))
 
     ## create the new persistent task
     epoller = await EpollCenter.make_root(ram, task)
@@ -174,5 +179,5 @@ async def fork_persistent(
         stdout=self.stdout.for_task(task),
         stderr=self.stderr.for_task(task),
     )
-    persistent_server = PersistentServer(path, task, ram, listening_sock_handle)
+    persistent_server = PersistentServer(path, task, ram, epoller, listening_sock_handle)
     return stdtask, persistent_server
