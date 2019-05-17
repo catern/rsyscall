@@ -211,18 +211,6 @@ class TestIO(unittest.TestCase):
         trio.run(self.runner, test)
 
     @unittest.skip("Nix deploy is broken")
-    def test_nix_shell(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            thread = await stdtask.fork()
-            src_nix_bin = stdtask.task.make_path_from_bytes(nix_bin_bytes)
-            dest_nix_bin = await rsyscall.nix.create_nix_container(src_nix_bin, stdtask, thread)
-            bash = await stdtask.environ.which("bash")
-            dest_bash = await rsyscall.nix.nix_deploy(src_nix_bin, bash.executable_path, stdtask, dest_nix_bin, thread)
-            child_task = await thread.execve(dest_bash, ["bash", "--norc"])
-            await child_task.wait_for_exit()
-        trio.run(self.runner, test)
-
-    @unittest.skip("Nix deploy is broken")
     def test_nix_shell_with_daemon(self) -> None:
         async def test(stdtask: StandardTask) -> None:
             del stdtask.environ['NIX_REMOTE']

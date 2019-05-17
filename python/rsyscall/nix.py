@@ -103,65 +103,45 @@ async def deploy_nix_bin(store: Store, dest: Thread) -> Store:
     await bootstrap_nix_database(store.stdtask, nix_store, store.nix.closure, dest, nix_store)
     return Store(dest, store.nix)
 
-async def read_to_eof(ram: RAM, fd: handle.FileDescriptor) -> bytes:
-    buf = await ram.malloc_type(Bytes, 4096)
-    valids: t.List[Pointer] = []
-    while True:
-        valid, rest = await fd.read(buf)
-        if valid.bytesize() == 0:
-            break
-        valids.append(valid)
-        if rest.bytesize() > 256:
-            buf = rest
-        else:
-            rest.free()
-            buf = await ram.malloc_type(Bytes, 4096)
-    return b"".join(await ram.transport.batch_read(valids))
+async def exec_nix_store_import_export(
+        src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor, closure: t.List[Path],
+        dest: ChildThread, dest_nix_store: Command, dest_fd: FileDescriptor,
+) -> None:
+    await dest.unshare_files_and_replace({
+        dest.stdin: dest_fd,
+    })
+    await dest_fd.close()
+    dest_child = await dest.exec(dest_nix_store.args("--import").env({'NIX_REMOTE': ''}))
 
-async def nix_deploy(
-        src_nix_bin: handle.Path, src_path: handle.Path, src_task: StandardTask,
-        dest_nix_bin: handle.Path, dest_task: StandardTask,
-) -> handle.Path:
-    dest_path = dest_task.task.base.make_path_handle(src_path)
+    await src.unshare_files_and_replace({
+        src.stdout: src_fd,
+    })
+    await src_fd.close()
+    src_child = await src.exec(src_nix_store.args("--export", *closure))
+    await src_child.check()
+    await dest_child.check()
 
-    query_thread = await src_task.fork()
-    query_pipe = await (await src_task.task.base.pipe(await src_task.ram.malloc_struct(Pipe))).read()
-    query_stdout = query_pipe.write.move(query_thread.stdtask.task.base)
-    await query_thread.stdtask.unshare_files(going_to_exec=True)
-    await query_thread.stdtask.stdout.replace_with(query_stdout)
-    await query_thread.exec(Command(src_nix_bin/"nix-store", [b"nix-store"], {}).args("--query", "--requisites", src_path))
-    closure = (await read_to_eof(src_task.ram, query_pipe.read)).split()
+async def nix_deploy(src: Store, dest: Store, path: StorePath) -> None:
+    [(local_fd, dest_fd)] = await dest.thread.open_channels(1)
+    src_fd = local_fd.move(src.thread.task)
+    await exec_nix_store_import_export(
+        await src.thread.fork(), Command(src.nix.path/'bin/nix-store', ['nix-store'], {}), src_fd, path.closure,
+        await dest.thread.fork(), Command(dest.nix.path/'bin/nix-store', ['nix-store'], {}), dest_fd)
 
-    export_thread = await src_task.fork()
-    import_thread = await dest_task.fork()
-    [(access_side, import_stdin)] = await import_thread.stdtask.open_channels(1)
-    export_stdout = access_side.move(export_thread.stdtask.task.base)
-
-    await import_thread.stdtask.unshare_files(going_to_exec=True)
-    await import_thread.stdtask.stdin.replace_with(import_stdin)
-    child_task = await import_thread.execve(dest_nix_bin/"nix-store", ["nix-store", "--import"])
-
-    await export_thread.stdtask.unshare_files(going_to_exec=True)
-    await export_thread.stdtask.stdout.replace_with(export_stdout)
-    await export_thread.execve(dest_nix_bin/"nix-store", ["nix-store", "--export", *closure])
-    await child_task.check()
-    return dest_path
-
-
-async def canonicalize(thr: RAMThread, path: handle.Path) -> handle.Path:
+async def canonicalize(thr: RAMThread, path: Path) -> Path:
     f = await thr.task.open(await thr.ram.to_pointer(path), O.PATH)
     size = 4096
     valid, _ = await thr.task.readlink(await thr.ram.to_pointer(f.as_proc_path()),
-                                       await thr.ram.malloc_type(handle.Path, size))
+                                       await thr.ram.malloc_type(Path, size))
     if valid.bytesize() == size:
         # 4096 seems like a reasonable value for PATH_MAX
         raise Exception("symlink longer than 4096 bytes, giving up on readlinking it")
     return await valid.read()
 
-class NixPath(handle.Path):
+class NixPath(Path):
     "A path in the Nix store, which can therefore be deployed to a remote host with Nix."
     @classmethod
-    async def make(cls, thr: RAMThread, path: handle.Path) -> NixPath:
+    async def make(cls, thr: RAMThread, path: Path) -> NixPath:
         return cls(await canonicalize(thr, path))
 
     def __init__(self, *args) -> None:
@@ -175,42 +155,43 @@ import importlib.resources
 import json
 
 class StorePath:
-    def __init__(self, path: handle.Path, closure: t.List[handle.Path]) -> None:
+    def __init__(self, path: Path, closure: t.List[Path]) -> None:
         self.path = path
         self.closure = closure
 
     @classmethod
     def _load_without_registering(self, name: str) -> StorePath:
         dep = nixdeps.import_nixdep('rsyscall._nixdeps', name)
-        path = handle.Path(dep.path)
-        closure = [handle.Path(elem) for elem in dep.closure]
+        path = Path(dep.path)
+        closure = [Path(elem) for elem in dep.closure]
         return StorePath(path, closure)
 
 class Store:
     def __init__(self, stdtask: StandardTask, nix: StorePath) -> None:
         self.stdtask = stdtask
+        self.thread = stdtask
         self.nix = nix
-        # cache the target path, mildly useful caching for the pointers
-        self.roots: t.Dict[StorePath, handle.Path] = {}
+        self.roots: t.Dict[StorePath, Path] = {}
         self._add_root(nix, nix.path)
 
-    def _add_root(self, store_path: StorePath, path: handle.Path) -> None:
+    def _add_root(self, store_path: StorePath, path: Path) -> None:
         self.roots[store_path] = path
 
-    async def create_root(self, store_path: StorePath, path: WrittenPointer[handle.Path]) -> handle.Path:
+    async def create_root(self, store_path: StorePath, path: WrittenPointer[Path]) -> Path:
         # TODO create a Nix temp root pointing to this path
         self._add_root(store_path, path.value)
-        # TODO would be cool to store and return the pointers
+        # TODO would be cool to store and return a WrittenPointer[Path]
         return path.value
 
-    async def realise(self, store_path: StorePath) -> handle.Path:
+    async def realise(self, store_path: StorePath) -> Path:
         if store_path in self.roots:
             return self.roots[store_path]
         ptr = await self.stdtask.ram.to_pointer(store_path.path)
         try:
             await self.stdtask.task.access(ptr, OK.R)
-        except PermissionError:
-            raise NotImplementedError("TODO deploy this store_path from local_store")
+        except (PermissionError, FileNotFoundError):
+            await nix_deploy(local_store, self, store_path)
+            return await self.create_root(store_path, ptr)
         else:
             return await self.create_root(store_path, ptr)
 
