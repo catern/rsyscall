@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.io
-from rsyscall.nix import local_store
-from rsyscall.misc import bash_nixdep, coreutils_nixdep
+from rsyscall.nix import local_store, enter_nix_container
+from rsyscall.misc import bash_nixdep, coreutils_nixdep, hello_nixdep
 from rsyscall.struct import Bytes
 from rsyscall.tasks.ssh import *
 import rsyscall.tasks.local as local
@@ -111,3 +111,10 @@ class TestSSH(TrioTestCase):
                                             await self.remote.ram.to_pointer(Sigset())),
                                            await self.remote.ram.malloc_struct(Sigset))
         await self.remote.task.read_oldset_and_check()
+
+    async def test_nix_deploy(self) -> None:
+        tmpdir = await self.remote.mkdtemp()
+        async with tmpdir:
+            store = await enter_nix_container(local_store, self.remote, tmpdir.path)
+            hello = await store.bin(hello_nixdep, "hello")
+            await self.remote.run(hello)

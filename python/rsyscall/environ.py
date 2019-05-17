@@ -5,6 +5,7 @@ from rsyscall.handle import Path, Task, FileDescriptor, WrittenPointer
 from rsyscall.memory.ram import RAM
 import os
 import typing as t
+import functools
 
 from rsyscall.fcntl import O
 from rsyscall.unistd import OK
@@ -54,7 +55,8 @@ class ExecutablePathCache:
         nameptr = await self.ram.to_pointer(Path(name))
         # do the lookup for 16 paths at a time, that seems like a good batching number
         for paths in chunks(self.paths, 64):
-            results = await run_all([lambda path=path: self.check(path, nameptr) for path in paths]) # type: ignore
+            thunks = [functools.partial(self.check, path, nameptr) for path in paths]
+            results = await run_all(thunks) # type: ignore
             for path, result in zip(paths, results):
                 if result:
                     break
@@ -74,8 +76,17 @@ class Environment:
     def __getitem__(self, key: t.Union[str, bytes]) -> str:
         return os.fsdecode(self.data[os.fsencode(key)])
 
+    def __contains__(self, key: t.Union[str, bytes]) -> bool:
+        return os.fsencode(key) in self.data
+
+    def __len__(self) -> int:
+        return len(self.data)
+
     def __delitem__(self, key: t.Union[str, bytes]) -> None:
         del self.data[os.fsencode(key)]
+
+    def __setitem__(self, key: t.Union[str, bytes], val: t.Union[str, bytes]) -> None:
+        self.data[os.fsencode(key)] = os.fsencode(val)
 
     def get(self, key: t.Union[str, bytes], default: str) -> str:
         result = self.data.get(os.fsencode(key))

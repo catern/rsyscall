@@ -17584,6 +17584,16 @@ And we can have an exec which is not memory-abstracting, I guess.
 
    Meh but it's a hassle, let's just, um,
    make a thread with a store.
+** TODO nix deploy is obscenely slow
+   hmmmmmm, hmm, hmm.
+** DONE memory corruption on batch writes
+   memoyr corrruption?????
+   in MY threads??
+   it's more likely than u think...
+
+   hmm so how is this happening...
+
+   haha oops i didn't properly keep doing writes until I was done, when batching several together
 ** implement some const_pointer optimization
    So we can cached writtenpointers and return the same back.
 ** DONE rename processresources to nativeloader

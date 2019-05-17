@@ -30,9 +30,10 @@ class WriteOp:
     dest: Pointer
     data: bytes
     done: bool = False
+    cancelled: bool = False
 
     def assert_done(self) -> None:
-        if self.done is None:
+        if not self.done:
             raise Exception("not done yet")
 
 @dataclass
@@ -302,6 +303,7 @@ class SocketMemoryTransport(MemoryTransport):
             if needs_run:
                 writes = self.pending_writes
                 self.pending_writes = []
+                writes = [op for op in writes if not op.cancelled]
                 if len(writes) == 0:
                     return
                 # TODO we should not use a cancel scope shield, we should use the SyscallResponse API
@@ -312,9 +314,13 @@ class SocketMemoryTransport(MemoryTransport):
 
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         write_ops = [self._start_single_write(dest, data) for (dest, data) in ops]
-        await self._do_writes()
-        for op in write_ops:
-            op.assert_done()
+        while not(all(op.done for op in write_ops)):
+            try:
+                await self._do_writes()
+            except trio.Cancelled:
+                for op in write_ops:
+                    op.cancelled = True
+                raise
 
     async def _unlocked_batch_read(self, ops: t.List[ReadOp]) -> None:
         for op in ops:

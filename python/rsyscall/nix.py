@@ -23,6 +23,7 @@ from rsyscall.unistd import Pipe, OK
 __all__ = [
     "enter_nix_container",
     "local_store",
+    "nix",
 ]
 
 async def exec_tar_copy_tree(src: ChildThread, src_paths: t.List[Path], src_fd: FileDescriptor,
@@ -84,6 +85,9 @@ async def bootstrap_nix_database(
                                      await dest.fork(), dest_nix_store, dest_fd)
 
 async def enter_nix_container(store: Store, dest: Thread, dest_dir: Path) -> Store:
+    # we want to use our own container Nix store, not the global one on the system
+    if 'NIX_REMOTE' in dest.environ:
+        del dest.environ['NIX_REMOTE']
     # copy the binaries over
     await copy_tree(store.stdtask, store.nix.closure, dest, dest_dir)
     # enter the container

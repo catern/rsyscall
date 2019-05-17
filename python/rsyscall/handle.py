@@ -93,6 +93,9 @@ class Pointer(t.Generic[T]):
         self.validate()
         return self.mapping.near.as_pointer() + self.allocation.offset()
 
+    def __repr__(self) -> str:
+        return f"Pointer({self.near}, {self.serializer})"
+
     def bytesize(self) -> int:
         return self.allocation.size()
 
@@ -228,6 +231,9 @@ class WrittenPointer(Pointer[T]):
     ) -> None:
         super().__init__(mapping, transport, serializer, allocation)
         self.data = data
+
+    def __repr__(self) -> str:
+        return f"WrittenPointer({self.near}, {self.data})"
 
     @property
     def value(self) -> T:
