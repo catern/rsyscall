@@ -17506,12 +17506,84 @@ And we can have an exec which is not memory-abstracting, I guess.
    otherwise our fds will get inherited if some other task calls exec without first calling unshare_files.
 
    hmm this is kind of security-sensitive too because the fds might be inherited by a network-exposed process.
+** get nix deploy stuff working again
+   ok so...
+
+   I guess the initial thing we want to get working is, bootstrapping the Nix binaries.
+
+   We could start from a Store?
+
+   Some store on some host,
+   a thread on that host,
+   and a thread on another host?
+
+   We don't really need a full store, just the Nix binaries.
+
+   Or, I guess, we create a store?
+
+   If we assume write-access to /nix in the thread, then.
+
+   I think that's fine, we'll just make a Store.
+   Then, heck, we can even exec into the daemon maybe?
+*** thoughts
+    We need to be able to run when our binaries come from /nix,
+    for example in a nix build.
+
+    OK so it's two stages:
+    One to copy the binaries to a subdir,
+    and two to enter the container.
+
+    And three, I guess, to init the database? Awkward.
+    Can we init the database without entering the container?
+    No, we need the tools themselves to do that.
+
+    Ok let's just do this by hand.
+
+    Well ok I guess we could just, maybe...
+
+    Stick a thread in the /nix namespace, and just immediately exec the daemon?
+    And talk to it to configure things?
+
+    I mean, using the daemon is definitely better.
+
+    OK so we just want to test Nix deploy stuff.
+
+    That's our goal.
+
+    So we need a working Nix daemon where we're a trusted user, I guess.
+    
+    also we want to be able to use this to deploy Nix on the secure servers, mmm
 ** implement GC for asyncfds
    We need to do this I guess.
 
    Currently we can drop them and it's not a big deal because eventually epoll stops getting events, hm.
 
    Relying on that would be interesting.
+
+   Hmm, we could get the output of dump-db...
+
+   We could even get the database pre-created at build time.
+
+   That would be nice.
+
+   Indeed, very cool.
+
+   Then we don't need to enter the namespace at all.
+
+   Hmm wait a second. If we want to test deploying with Nix, we can just deploy to a prefixed store,
+   with the binaries from /nix.
+
+   So, hm, this is a bit overkill.
+
+   Oh, wait, but, to use that store, we'd need to enter the container,
+   and in that container, our Nix binaries aren't available.
+
+   OK so.
+
+   I like the notion of just copying some stuff over to initialize.
+
+   Meh but it's a hassle, let's just, um,
+   make a thread with a store.
 ** implement some const_pointer optimization
    So we can cached writtenpointers and return the same back.
 ** DONE rename processresources to nativeloader

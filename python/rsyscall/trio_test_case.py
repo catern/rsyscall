@@ -19,8 +19,10 @@ class TrioTestCase(unittest.TestCase):
             async with trio.open_nursery() as nursery:
                 self.nursery = nursery
                 await self.asyncSetUp()
-                await test(self)
-                await self.asyncTearDown()
+                try:
+                    await test(self)
+                finally:
+                    await self.asyncTearDown()
                 nursery.cancel_scope.cancel()
         @functools.wraps(test_with_setup)
         def sync_test_with_setup() -> None:

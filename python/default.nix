@@ -70,6 +70,7 @@ pytest ];
   openssh = pkgs.openssh;
   bash = pkgs.bash;
   coreutils = pkgs.coreutils;
+  hello = pkgs.hello;
   exportReferencesGraph = [
     "miredo" pkgs.miredo
     "nix" pkgs.nix
@@ -77,6 +78,7 @@ pytest ];
     "openssh" pkgs.openssh
     "bash" pkgs.bash
     "coreutils" pkgs.coreutils
+    "hello" pkgs.hello
   ];
 }
 

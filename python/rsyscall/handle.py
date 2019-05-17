@@ -924,7 +924,11 @@ class Task(SignalMaskTask, rsyscall.far.Task):
 
     async def access(self, ptr: WrittenPointer[Path], mode: int, flags: int=0) -> None:
         with ptr.borrow(self) as ptr_b:
-            await rsyscall.near.faccessat(self.sysif, None, ptr_b.near, mode, flags)
+            try:
+                await rsyscall.near.faccessat(self.sysif, None, ptr_b.near, mode, flags)
+            except FileNotFoundError as exn:
+                exn.filename = ptr.value
+                raise
 
     async def unlink(self, ptr: WrittenPointer[Path]) -> None:
         with ptr.borrow(self) as ptr_b:
@@ -1009,7 +1013,11 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             for arg in [*argv.data, *envp.data]:
                 stack.enter_context(arg.borrow(self))
             self.manipulating_fd_table = True
-            await rsyscall.near.execveat(self.sysif, None, filename.near, argv.near, envp.near, flags)
+            try:
+                await rsyscall.near.execveat(self.sysif, None, filename.near, argv.near, envp.near, flags)
+            except FileNotFoundError as exn:
+                exn.filename = filename.value
+                raise
             self.manipulating_fd_table = False
             self._make_fresh_fd_table()
             if isinstance(self.process, ChildProcess):
