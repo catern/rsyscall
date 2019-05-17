@@ -6,7 +6,7 @@ from rsyscall.tasks.exec import *
 
 import rsyscall.tasks.local as local
 
-from rsyscall.tests.test_io import do_async_things
+from rsyscall.tests.test_io import assert_thread_works
 
 class TestExec(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -24,11 +24,11 @@ class TestExec(TrioTestCase):
         await self.child.exit(0)
 
     async def test_basic(self) -> None:
-        await do_async_things(self, self.child.epoller, self.child)
+        await assert_thread_works(self, self.child)
 
     async def test_spawn_nest(self) -> None:
         thread = await self.child.fork()
         async with thread:
             await rsyscall_exec(self.child, thread, self.executables)
-            await do_async_things(self, thread.epoller, thread)
+            await assert_thread_works(self, thread)
     

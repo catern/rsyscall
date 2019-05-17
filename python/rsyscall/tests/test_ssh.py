@@ -48,9 +48,24 @@ class TestSSH(TrioTestCase):
         self.assertEqual(len(data), valid.bytesize())
         self.assertEqual(data, await valid.read())
 
-    async def test_exec(self) -> None:
+    async def test_exec_true(self) -> None:
         bash = await self.store.bin(bash_nixdep, "bash")
         await self.remote.run(bash.args('-c', 'true'))
+
+    async def test_exec_pipe(self) -> None:
+        [(local_sock, remote_sock)] = await self.remote.open_channels(1)
+        cat = await self.store.bin(coreutils_nixdep, "cat")
+        thread = await self.remote.fork()
+        await thread.unshare_files_and_replace({
+            thread.stdin: remote_sock,
+            thread.stdout: remote_sock,
+        })
+        child_process = await thread.exec(cat)
+
+        in_data = await self.local.ram.to_pointer(Bytes(b"hello"))
+        written, _ = await local_sock.write(in_data)
+        valid, _ = await local_sock.read(written)
+        self.assertEqual(in_data.value, await valid.read())
 
     async def test_fork(self) -> None:
         thread1 = await self.remote.fork()

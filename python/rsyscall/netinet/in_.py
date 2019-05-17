@@ -5,6 +5,11 @@ import socket
 import typing as t
 from dataclasses import dataclass
 
+__all__ = [
+    'SockaddrIn',
+    'SockaddrIn6',
+]
+
 class SockaddrIn(Address):
     family = AF.INET
     def __init__(self, port: int, addr: t.Union[str, int, ipaddress.IPv4Address]) -> None:

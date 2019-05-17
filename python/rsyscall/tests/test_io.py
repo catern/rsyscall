@@ -177,47 +177,6 @@ class TestIO(unittest.TestCase):
     #         pass
     #     trio.run(test)
 
-    # def test_ip_listen_async(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #              async with (await stdtask.task.socket_inet(SOCK.STREAM)) as sockfd:
-    #                  bind_addr = sockfd.file.address_type(0, 0x7F_00_00_01)
-    #                  await sockfd.bind(bind_addr)
-    #                  addr = await sockfd.getsockname()
-    #                  await sockfd.listen(10)
-    #                  async with (await AsyncFileDescriptor.make(stdtask.resources.epoller, sockfd)) as async_sockfd:
-    #                      clientfd = await stdtask.task.socket_inet(SOCK.STREAM)
-    #                      async_clientfd = await AsyncFileDescriptor.make(stdtask.resources.epoller, clientfd)
-    #                      async with async_clientfd:
-    #                          await async_clientfd.connect(addr)
-    #                          connfd, client_addr = await async_sockfd.accept(0) # type: ignore
-    #                          async with connfd:
-    #                              logger.info("%s, %s", addr, client_addr)
-    #     trio.run(test)
-
-    # def test_ip_dgram_connect(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #              async with (await stdtask.task.socket_inet(SOCK.DGRAM)) as recv_sockfd:
-    #                  await recv_sockfd.bind(recv_sockfd.file.address_type(0, 0x7F_00_00_01))
-    #                  addr_recv = await recv_sockfd.getsockname()
-    #                  async with (await stdtask.task.socket_inet(SOCK.DGRAM)) as send1_sockfd:
-    #                      await send1_sockfd.bind(recv_sockfd.file.address_type(0, 0x7F_00_00_01))
-    #                      addr_send1 = await send1_sockfd.getsockname()
-    #                      await recv_sockfd.connect(addr_send1)
-    #                      await send1_sockfd.connect(addr_recv)
-    #                      async with (await stdtask.task.socket_inet(SOCK.DGRAM)) as send2_sockfd:
-    #                          await send2_sockfd.bind(recv_sockfd.file.address_type(0, 0x7F_00_00_01))
-    #                          await send2_sockfd.connect(addr_recv)
-    #                          addr_send2 = await send1_sockfd.getsockname()
-    #                          # send some data from send1 and receive it
-    #                          await send1_sockfd.write(b"hello")
-    #                          self.assertEqual(await recv_sockfd.read(4096), b"hello")
-    #                          await send2_sockfd.write(b"goodbye")
-    #                          await send1_sockfd.write(b"hello")
-    #                          self.assertEqual(await recv_sockfd.read(4096), b"hello")
-    #     trio.run(test)
-
     # def test_thread_epoll(self) -> None:
     #     async def test() -> None:
     #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
@@ -233,19 +192,6 @@ class TestIO(unittest.TestCase):
                 thread2 = await spawn_exec(stdtask2, rsyscall.nix.local_store)
                 async with thread2 as stdtask3:
                     await self.do_async_things(stdtask3.epoller, stdtask3)
-        trio.run(self.runner, test)
-
-    @unittest.skip("requires a user")
-    def test_ssh_shell(self) -> None:
-        async def test(stdtask: StandardTask) -> None:
-            host = await make_local_ssh(stdtask, rsyscall.nix.local_store)
-            local_child, remote_stdtask = await host.ssh(stdtask)
-            async with (await remote_stdtask.mkdtemp()) as remote_tmpdir:
-                thread = await remote_stdtask.fork()
-                bash = await remote_stdtask.environ.which("bash")
-                await thread.task.chdir(await thread.ram.to_pointer(remote_tmpdir))
-                child_task = await thread.exec(bash)
-                await child_task.wait_for_exit()
         trio.run(self.runner, test)
 
     @unittest.skip("Nix deploy is broken")
@@ -306,96 +252,6 @@ class TestIO(unittest.TestCase):
             child_task = await shell_thread.execve(dest_bash, ["bash", "--norc"])
             await child_task.wait_for_exit()
         trio.run(self.runner, test)
-
-    # def test_epoll_two(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as local.stdtask:
-    #             rsyscall_task, _ = await local.stdtask.spawn([])
-    #             async with rsyscall_task as stdtask:
-    #                 epoller1 = stdtask.resources.epoller
-    #                 task = stdtask.task
-    #                 async with (await task.pipe()) as pipe1:
-    #                     pipe1_rfd_wrapped = await epoller1.register(pipe1.rfd, EpollEventMask.make(in_=True))
-    #                     async with (await task.make_epoller()) as epoller2:
-    #                         async with (await task.pipe()) as pipe2:
-    #                             pipe2_rfd_wrapped = await epoller2.register(pipe2.rfd, EpollEventMask.make(in_=True))
-    #                             async def stuff(pipe_rfd):
-    #                                 events = await pipe_rfd.wait()
-    #                                 self.assertEqual(len(events), 1)
-    #                                 self.assertTrue(events[0].in_)
-    #                             async with trio.open_nursery() as nursery:
-    #                                 nursery.start_soon(stuff, pipe1_rfd_wrapped)
-    #                                 nursery.start_soon(stuff, pipe2_rfd_wrapped)
-    #                                 await trio.sleep(0)
-    #                                 await pipe1.wfd.write(b"data")
-    #                                 await pipe2.wfd.write(b"data")
-    #     trio.run(test)
-
-    # def test_unshared_thread_epoll(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             rsyscall_task, _ = await stdtask.spawn([])
-    #             async with rsyscall_task as stdtask2:
-    #                     await self.do_async_things(stdtask2.resources.epoller, stdtask2.task)
-    #     trio.run(test)
-
-    # def test_unshared_thread_nest(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             rsyscall_task, _ = await stdtask.spawn([])
-    #             async with rsyscall_task as stdtask2:
-    #                 rsyscall_task3, _ = await stdtask2.spawn([])
-    #                 async with rsyscall_task3 as stdtask3:
-    #                     await self.do_async_things(stdtask3.resources.epoller, stdtask3.task)
-    #     trio.run(test)
-
-    # def test_unshared_thread_pipe(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             rsyscall_task, _ = await stdtask.spawn([])
-    #             async with rsyscall_task as stdtask2:
-    #                 async with (await stdtask2.task.pipe()) as pipe:
-    #                     in_data = b"hello"
-    #                     await pipe.wfd.write(in_data)
-    #                     out_data = await pipe.rfd.read(len(in_data))
-    #                     logger.info("HELLO")
-    #                     self.assertEqual(in_data, out_data)
-    #                     logger.info("HELLO 2")
-    #                     # so closing is hanging.
-    #                     # hmm
-    #                     # we sigkill the process...
-    #                     # then we try to read from something?
-    #                     # logger.info("sleeping %s", rsyscall_task.thread.thread.child_task.process)
-    #                     logger.info("sleeping %s", rsyscall_task.child_task.process)
-    #                     # await trio.sleep(30923023940)
-    #                 logger.info("finished destructing pipe")
-    #             logger.info("finished destructing inner task")
-    #         logger.info("finished destructing outer task")
-    #     trio.run(test)
-
-    # def test_subprocess_pipe(self) -> None:
-    #     async def test() -> None:
-    #         async with (await rsyscall.io.StandardTask.make_local()) as stdtask:
-    #             rsyscall_task, _ = await stdtask.spawn([])
-    #             async with rsyscall_task as stdtask2:
-    #                 # need to exec into a task
-    #                 async with (await stdtask2.task.pipe()) as pipe:
-    #                     in_data = b"hello"
-    #                     await pipe.wfd.write(in_data)
-    #                     out_data = await pipe.rfd.read(len(in_data))
-    #                     logger.info("HELLO")
-    #                     self.assertEqual(in_data, out_data)
-    #                     logger.info("HELLO 2")
-    #                     # so closing is hanging.
-    #                     # hmm
-    #                     # we sigkill the process...
-    #                     # then we try to read from something?
-    #                     logger.info("sleeping %s", rsyscall_task.child_task.process)
-    #                     # await trio.sleep(30923023940)
-    #                 logger.info("finished destructing pipe")
-    #             logger.info("finished destructing inner task")
-    #         logger.info("finished destructing outer task")
-    #     trio.run(test)
 
     async def foo(self) -> None:
         async with trio.open_nursery() as nursery:
