@@ -826,10 +826,13 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         # do a GC now to improve efficiency when GCing both tables after the unshare
         gc.collect()
         await run_fd_table_gc(self.fd_table)
+        self.manipulating_fd_table = True
         old_fd_table = self.fd_table
         self._make_fresh_fd_table()
+        # each fd in the old table is also in the new table, possibly with no handles
+        for fd in fd_table_to_near_to_handles[old_fd_table]:
+            fd_table_to_near_to_handles[self.fd_table].setdefault(fd, [])
         self._add_to_active_fd_table_tasks()
-        self.manipulating_fd_table = True
         # perform the actual unshare
         await rsyscall.near.unshare(self.sysif, UnshareFlag.FILES)
         self.manipulating_fd_table = False

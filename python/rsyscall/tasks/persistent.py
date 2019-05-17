@@ -91,11 +91,9 @@ class PersistentServer:
             return addr, count, hdr, response_buf
         addr, count, hdr, response = await stdtask.ram.perform_batch(sendmsg_op)
         data = None
-        if isinstance(self.task.sysif, NonChildSyscallInterface):
-            cm = contextlib.nullcontext() # type: ignore
-        elif isinstance(self.task.sysif, ChildSyscallInterface):
-            cm = self.task.sysif._throw_on_child_exit()
-        async with cm:
+        async with contextlib.AsyncExitStack() as stack:
+            if isinstance(self.task.sysif, ChildSyscallInterface):
+                await stack.enter_async_context(self.task.sysif._throw_on_child_exit())
             await sock.connect(addr)
             _, _ = await sock.write(count)
             _, [] = await sock.handle.sendmsg(hdr, SendmsgFlags.NONE)
@@ -110,7 +108,12 @@ class PersistentServer:
         return remote_fds
 
     async def make_persistent(self) -> None:
-        raise Exception("switch to NonChildSyscallInterface")
+        await self.task.unshare_files()
+        if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
+            raise Exception("self.task.sysif of unexpected type", self.task.sysif)
+        new_sysif = NonChildSyscallInterface(self.task.sysif.rsyscall_connection, self.task.process.near)
+        new_sysif.store_remote_side_handles(self.task.sysif.infd, self.task.sysif.outfd)
+        self.task.sysif = new_sysif
         await self.task.setsid()
         await self.task.prctl(PR.SET_PDEATHSIG, 0)
 
