@@ -26,7 +26,7 @@ class TestPersistent(TrioTestCase):
     async def test_exit(self) -> None:
         per_stdtask, connection = await fork_persistent(self.stdtask, self.sock_path)
         await connection.reconnect(self.stdtask)
-        await per_stdtask.unshare_files()
+        # await per_stdtask.unshare_files()
         await per_stdtask.exit(0)
 
     async def test_nest_exit(self) -> None:

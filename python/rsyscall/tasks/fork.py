@@ -72,12 +72,17 @@ class ChildSyscallInterface(near.SyscallInterface):
         self.outfd._invalidate()
 
     async def _await_while_waiting_for_child_exit(self, awaitable: t.Awaitable) -> None:
+        exception = None
         got_responses = False
         try:
             async with trio.open_nursery() as nursery:
                 async def await_responses() -> None:
                     self.logger.info("enter await_responses %s", self.rsyscall_connection.pending_responses)
-                    await awaitable
+                    try:
+                        await awaitable
+                    except Exception as e:
+                        nonlocal exception
+                        exception = e
                     nonlocal got_responses
                     got_responses = True
                     self.logger.info("return await_responses %s", self.rsyscall_connection.pending_responses)
@@ -110,6 +115,9 @@ class ChildSyscallInterface(near.SyscallInterface):
             # instead we should process those syscall responses, and let the next syscall fail
             if not got_responses:
                 raise
+        # if we got an exception from await_responses, we should throw that
+        if exception:
+            raise exception from None
 
     async def _read_syscall_responses_direct(self) -> None:
         await self._await_while_waiting_for_child_exit(self.rsyscall_connection.read_pending_responses())

@@ -17405,6 +17405,42 @@ And we can have an exec which is not memory-abstracting, I guess.
    This applies both in syscall interface, and in connecting to the persistent socket.
 ** implement real dynamic loader so we can get rid of fake mappings for local and remote functions
    If we do a real loader then, I guess, uh, we can know the mappings, both remotely and locally.
+** use spawn_child_task in persistent?
+   the issue is maintaining a reference to the stack stuff
+
+   hmm, if we purge the stack, maybe we're good?
+
+   Maybe I hold the reference to the ThreadProcess in the Sysif??
+
+   hmm, when it's not a threadprocess, how do we keep its stack alive?
+
+   when we're the ones allocating our own stack, hmm.
+
+   I guess it stays a threadprocess, it's just not our child anymore.
+
+   hm.
+
+   because the task it was a child of is dead.
+*** what should happen when a ChildSyscallInterface's parent dies?
+    Well... shouldn't that kill off the child too? In fact, why isn't that happening?
+
+    Oh! Wait, it is.
+
+    OK so... how do we make the reconnect fail nicely?
+
+    So we're in a CSI, and our parent is dead.
+    We... can't necessarily tell, I guess?
+    We try to do a waitid, and we notice our parent is dead.
+    What do we do?
+    Well, we throw an exception, natch, because we can't reasonably call syscalls in this task anymore.
+    
+    And here that exception works just fine.
+
+    Well... if we successfully do an await anyway then... I think we might as well return responses.
+** pass in single flags: CLONE argument to spawn_child_task
+   rather than a bunch of different keyword arguments.
+
+   This will be equivalent and more idiomatic.
 ** TODO clean up lifecycle for fd tables
    Namely this manipulating_fd_table thing. What does it mean?
 ** DONE fix mysterious __del__ exceptions
