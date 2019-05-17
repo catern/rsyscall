@@ -702,6 +702,10 @@ fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.F
 fd_table_to_task: t.Dict[rsyscall.far.FDTable, t.List[Task]] = {}
 
 async def run_fd_table_gc(fd_table: rsyscall.far.FDTable) -> None:
+    if fd_table not in fd_table_to_task:
+        # this is an fd table that has never had active tasks;
+        # probably we called run_fd_table_gc on an exited task
+        return
     gc.collect()
     near_to_handles = fd_table_to_near_to_handles[fd_table]
     fds_to_close = [fd for fd, handles in near_to_handles.items() if not handles]

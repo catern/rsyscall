@@ -7,6 +7,7 @@ from rsyscall.nix import local_store
 import rsyscall.tasks.local as local
 from rsyscall.tasks.persistent import *
 from rsyscall.tasks.ssh import make_local_ssh
+from rsyscall.tasks.exceptions import RsyscallHangup
 
 import logging
 # logging.basicConfig(level=logging.DEBUG)
@@ -23,11 +24,18 @@ class TestPersistent(TrioTestCase):
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()
 
-    async def test_exit(self) -> None:
+    async def test_reconnect_exit(self) -> None:
         per_stdtask, connection = await fork_persistent(self.stdtask, self.sock_path)
         await connection.reconnect(self.stdtask)
-        # await per_stdtask.unshare_files()
         await per_stdtask.exit(0)
+
+    async def test_exit_reconnect(self) -> None:
+        thread = await self.stdtask.fork()
+        per_stdtask, connection = await fork_persistent(self.stdtask, self.sock_path)
+        await per_stdtask.exit(0)
+        # when we try to reconnect, we'll fail
+        with self.assertRaises(RsyscallHangup):
+            await connection.reconnect(self.stdtask)
 
     async def test_nest_exit(self) -> None:
         per_stdtask, connection = await fork_persistent(self.stdtask, self.sock_path)
@@ -40,7 +48,6 @@ class TestPersistent(TrioTestCase):
         host = await make_local_ssh(self.stdtask, self.store)
         local_child, remote_stdtask = await host.ssh(self.stdtask)
         per_stdtask, connection = await fork_persistent(remote_stdtask, self.sock_path)
-        await per_stdtask.unshare_files()
         await connection.reconnect(remote_stdtask)
         await per_stdtask.exit(0)
 
@@ -49,8 +56,6 @@ class TestPersistent(TrioTestCase):
         host = await make_local_ssh(self.stdtask, self.store)
         local_child, remote_stdtask = await host.ssh(self.stdtask)
         per_stdtask, connection = await fork_persistent(remote_stdtask, self.sock_path)
-
-        await per_stdtask.unshare_files()
 
         local_child, remote_stdtask = await host.ssh(self.stdtask)
         await connection.reconnect(remote_stdtask)
@@ -63,13 +68,10 @@ class TestPersistent(TrioTestCase):
         sacr_thr = await pidns_thr.fork()
 
         per_thr, connection = await fork_persistent(sacr_thr, self.sock_path)
-        # TODO argh, we need this because otherwise the listening socket is still around in our fd space.
-        await per_thr.unshare_files()
         # exit sacr_thr, and per_thr will be killed by PDEATHSIG, like a normal thread
         await sacr_thr.exit(0)
-
         # the persistent thread is dead, we can't reconnect to it
-        with self.assertRaises(ConnectionRefusedError):
+        with self.assertRaises(BaseException):
             await connection.reconnect(self.stdtask)
 
     @unittest.skip("not working right now")

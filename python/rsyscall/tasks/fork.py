@@ -18,6 +18,7 @@ import rsyscall.near as near
 import trio
 import typing as t
 from rsyscall.struct import Int32
+import contextlib
 
 from rsyscall.sched import CLONE
 from rsyscall.signal import Signals
@@ -71,56 +72,39 @@ class ChildSyscallInterface(near.SyscallInterface):
         self.infd._invalidate()
         self.outfd._invalidate()
 
-    async def _await_while_waiting_for_child_exit(self, awaitable: t.Awaitable) -> None:
-        exception = None
-        got_responses = False
-        try:
-            async with trio.open_nursery() as nursery:
-                async def await_responses() -> None:
-                    self.logger.info("enter await_responses %s", self.rsyscall_connection.pending_responses)
-                    try:
-                        await awaitable
-                    except Exception as e:
-                        nonlocal exception
-                        exception = e
-                    nonlocal got_responses
-                    got_responses = True
-                    self.logger.info("return await_responses %s", self.rsyscall_connection.pending_responses)
+    @contextlib.asynccontextmanager
+    async def _throw_on_child_exit(self) -> t.AsyncGenerator[None, None]:
+        child_exited = False
+        futex_exited = False
+        got_result = False
+        async with trio.open_nursery() as nursery:
+            async def server_exit() -> None:
+                await self.server_task.wait_for_exit()
+                nonlocal child_exited
+                child_exited = True
+                nursery.cancel_scope.cancel()
+            async def futex_exit() -> None:
+                if self.futex_task is not None:
+                    await self.futex_task.wait_for_exit()
+                    nonlocal futex_exited
+                    futex_exited = True
                     nursery.cancel_scope.cancel()
-                async def server_exit() -> None:
-                    # meaning the server exited
-                    try:
-                        self.logger.info("enter server exit")
-                        await self.server_task.wait_for_exit()
-                    except:
-                        self.logger.info("out of server exit")
-                        raise
-                    raise ChildExit()
-                async def futex_exit() -> None:
-                    if self.futex_task is not None:
-                        # meaning the server called exec or exited; we don't
-                        # wait to see which one.
-                        try:
-                            self.logger.info("enter futex exit")
-                            await self.futex_task.wait_for_exit()
-                        except:
-                            self.logger.info("out of futex exit")
-                            raise
-                        raise MMRelease()
-                nursery.start_soon(await_responses)
-                nursery.start_soon(server_exit)
-                nursery.start_soon(futex_exit)
-        except:
-            # if we got some responses, we shouldn't let this exception through;
-            # instead we should process those syscall responses, and let the next syscall fail
-            if not got_responses:
-                raise
-        # if we got an exception from await_responses, we should throw that
-        if exception:
-            raise exception from None
+            nursery.start_soon(server_exit)
+            nursery.start_soon(futex_exit)
+            yield
+            got_result = True
+            nursery.cancel_scope.cancel()
+        if got_result:
+            return
+        elif child_exited:
+            # this takes precedence over MMRelease, since it gives us more information
+            raise ChildExit()
+        elif futex_exited:
+            raise MMRelease()
 
     async def _read_syscall_responses_direct(self) -> None:
-        await self._await_while_waiting_for_child_exit(self.rsyscall_connection.read_pending_responses())
+        async with self._throw_on_child_exit():
+            await self.rsyscall_connection.read_pending_responses()
         self.logger.info("returning after reading some syscall responses")
 
     async def _read_syscall_responses(self) -> None:
