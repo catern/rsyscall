@@ -80,7 +80,7 @@ class PersistentServer:
     transport: t.Optional[SocketMemoryTransport] = None
 
     async def _connect_and_send(self, stdtask: StandardTask, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
-        sock = await stdtask.make_afd(await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK, 0), nonblock=True)
+        sock = await stdtask.make_afd(await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK, 0), nonblock=True)
         sockaddr_un = await SockaddrUn.from_path(stdtask, self.path)
         def sendmsg_op(sem: batch.BatchSemantics) -> t.Tuple[
                 WrittenPointer[Address], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:

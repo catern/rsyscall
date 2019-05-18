@@ -142,12 +142,12 @@ async def run_socket_binder(
         ssh_command: SSHCommand,
         bootstrap_executable: handle.FileDescriptor,
 ) -> t.AsyncGenerator[bytes, None]:
-    stdout_pipe = await (await task.task.base.pipe(
+    stdout_pipe = await (await task.task.pipe(
         await task.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
     async_stdout = await task.make_afd(stdout_pipe.read)
     thread = await task.fork()
-    stdout = stdout_pipe.write.move(thread.stdtask.task.base)
-    with bootstrap_executable.borrow(thread.stdtask.task.base) as bootstrap_executable:
+    stdout = stdout_pipe.write.move(thread.stdtask.task)
+    with bootstrap_executable.borrow(thread.stdtask.task) as bootstrap_executable:
         await thread.stdtask.unshare_files()
         # TODO we are relying here on the fact that replace_with doesn't set cloexec on the new fd.
         # maybe we should explicitly list what we want to pass down...
@@ -180,11 +180,11 @@ async def run_socket_binder(
 
 async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
                       local_path: handle.Path, remote_path: str) -> AsyncChildProcess:
-    stdout_pipe = await (await stdtask.task.base.pipe(
+    stdout_pipe = await (await stdtask.task.pipe(
         await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
     async_stdout = await stdtask.make_afd(stdout_pipe.read)
     thread = await stdtask.fork()
-    stdout = stdout_pipe.write.move(thread.stdtask.task.base)
+    stdout = stdout_pipe.write.move(thread.stdtask.task)
     await thread.stdtask.unshare_files()
     await thread.stdtask.stdout.replace_with(stdout)
     child_task = await thread.exec(ssh_command.local_forward(
@@ -225,7 +225,7 @@ async def ssh_bootstrap(
     # it would be better if sh supported fexecve, then I could unlink it before I exec...
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor:
-        sock = await parent_task.make_afd(await parent_task.task.base.socket(AF.UNIX, SOCK.STREAM))
+        sock = await parent_task.make_afd(await parent_task.task.socket(AF.UNIX, SOCK.STREAM))
         await sock.connect(local_data_addr)
         return sock
     async_local_syscall_sock = await make_async_connection()
@@ -265,7 +265,7 @@ async def ssh_bootstrap(
     epoller = await EpollCenter.make_root(new_ram, new_base_task)
     child_monitor = await ChildProcessMonitor.make(new_ram, new_base_task, epoller)
     connection = ListeningConnection(
-        parent_task.task.base, parent_task.ram, parent_task.epoller,
+        parent_task.task, parent_task.ram, parent_task.epoller,
         local_data_addr,
         new_base_task, new_ram,
         new_base_task.make_fd_handle(listening_fd),

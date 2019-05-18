@@ -44,7 +44,7 @@ class LocalSyscallResponse(near.SyscallResponse):
 
 
 @dataclass(eq=False)
-class LocalSyscallInterface(near.SyscallInterface):
+class LocalSyscall(near.SyscallInterface):
     identifier_process: near.Process
 
     def get_activity_fd(self) -> None:
@@ -102,7 +102,7 @@ def _make_local_task() -> Task:
     pid_namespace = far.PidNamespace(pid)
     process = far.Process(pid_namespace, near.Process(pid))
     base_task = handle.Task(
-        LocalSyscallInterface(process.near), process.near, None, far.FDTable(pid),
+        LocalSyscall(process.near), process.near, None, far.FDTable(pid),
         far.AddressSpace(os.getpid()),
         far.FSInformation(pid),
         pid_namespace,
@@ -153,7 +153,7 @@ async def _initialize_module() -> None:
     stdtask = await _make_local_stdtask()
     # wipe out the SIGWINCH handler that the readline module installs
     import readline
-    await stdtask.task.base.sigaction(
+    await stdtask.task.sigaction(
         Signals.SIGWINCH, await stdtask.ram.to_pointer(Sigaction(Sighandler.DFL)), None)
 
 task = _make_local_task()

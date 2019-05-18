@@ -61,7 +61,7 @@ async def make_robust_futex_task(
     await child_memfd.invalidate()
 
     remote_futex_node = await set_singleton_robust_futex(
-        child_stdtask.task.base, child_stdtask.ram.transport, memory.Arena(remote_mapping))
+        child_stdtask.task, child_stdtask.ram.transport, memory.Arena(remote_mapping))
     local_futex_node = remote_futex_node._with_mapping(local_mapping)
     # now we start the futex monitor
     futex_task = await launch_futex_monitor(
@@ -87,17 +87,17 @@ async def rsyscall_exec(
     stdtask = rsyscall_thread.stdtask
     [(access_data_sock, passed_data_sock)] = await stdtask.open_async_channels(1)
     # create this guy and pass him down to the new thread
-    child_futex_memfd = await stdtask.task.base.memfd_create(
+    child_futex_memfd = await stdtask.task.memfd_create(
         await stdtask.ram.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
-    parent_futex_memfd = parent_stdtask.task.base.make_fd_handle(child_futex_memfd)
-    if isinstance(stdtask.task.base.sysif, ChildSyscallInterface):
-        syscall = stdtask.task.base.sysif
+    parent_futex_memfd = parent_stdtask.task.make_fd_handle(child_futex_memfd)
+    if isinstance(stdtask.task.sysif, ChildSyscallInterface):
+        syscall = stdtask.task.sysif
     else:
         raise Exception("can only exec in ChildSyscallInterface sysifs, not",
-                        stdtask.task.base.sysif)
+                        stdtask.task.sysif)
     # unshare files so we can unset cloexec on fds to inherit
     await rsyscall_thread.stdtask.unshare_files(going_to_exec=True)
-    base_task = rsyscall_thread.stdtask.task.base
+    base_task = rsyscall_thread.stdtask.task
     base_task.manipulating_fd_table = True
     # unset cloexec on all the fds we want to copy to the new space
     for fd in base_task.fd_handles:
@@ -111,16 +111,16 @@ async def rsyscall_exec(
     #### read symbols from describe fd
     describe_buf = AsyncReadBuffer(access_data_sock)
     symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')
-    stdtask.loader = NativeLoader.make_from_symbols(stdtask.task.base, symbol_struct)
+    stdtask.loader = NativeLoader.make_from_symbols(stdtask.task, symbol_struct)
     # the futex task we used before is dead now that we've exec'd, have
     # to null it out
     syscall.futex_task = None
     # the old RC would wait forever for the exec to complete; we need to make a new one.
     syscall.rsyscall_connection = SyscallConnection(syscall.rsyscall_connection.tofd, syscall.rsyscall_connection.fromfd)
-    stdtask.task.base.address_space = far.AddressSpace(rsyscall_thread.stdtask.task.base.process.near.id)
+    stdtask.task.address_space = far.AddressSpace(rsyscall_thread.stdtask.task.process.near.id)
     # we mutate the allocator instead of replacing to so that anything that
     # has stored the allocator continues to work
-    stdtask.ram.allocator.allocator = memory.Allocator(stdtask.task.base)
+    stdtask.ram.allocator.allocator = memory.Allocator(stdtask.task)
     stdtask.ram.transport = SocketMemoryTransport(access_data_sock,
                                                   passed_data_sock, stdtask.ram.allocator)
     base_task.manipulating_fd_table = False

@@ -247,7 +247,7 @@ class ForkThread(ConnectionThread):
     async def _fork_task(self, newuser=False, newpid=False, fs=True, sighand=True) -> Task:
         [(access_sock, remote_sock)] = await self.connection.open_async_channels(1)
         base_task = await spawn_rsyscall_thread(
-            self.ram, self.task.base,
+            self.ram, self.task,
             access_sock, remote_sock,
             self.child_monitor, self.loader,
             newuser=newuser, newpid=newpid, fs=fs, sighand=sighand,

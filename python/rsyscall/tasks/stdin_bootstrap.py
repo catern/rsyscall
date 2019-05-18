@@ -53,10 +53,10 @@ async def rsyscall_stdin_bootstrap(
     #### fork and exec into the bootstrap command
     thread = await stdtask.fork()
     # create the socketpair that will be used as stdin
-    stdin_pair = await (await stdtask.task.base.socketpair(
+    stdin_pair = await (await stdtask.task.socketpair(
         AF.UNIX, SOCK.STREAM, 0, await stdtask.ram.malloc_struct(FDPair))).read()
     parent_sock = stdin_pair.first
-    child_sock = stdin_pair.second.move(thread.stdtask.task.base)
+    child_sock = stdin_pair.second.move(thread.stdtask.task)
     # set up stdin with socketpair
     await thread.stdtask.unshare_files(going_to_exec=True)
     await thread.stdtask.stdin.replace_with(child_sock)
@@ -67,7 +67,7 @@ async def rsyscall_stdin_bootstrap(
     [(access_syscall_sock, passed_syscall_sock),
      (access_data_sock, passed_data_sock)] = await stdtask.open_async_channels(2)
     # memfd for setting up the futex
-    futex_memfd = await stdtask.task.base.memfd_create(
+    futex_memfd = await stdtask.task.memfd_create(
         await stdtask.ram.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
     # send the fds to the new process
     connection_fd, make_connection = await stdtask.connection.prep_fd_transfer()
@@ -92,14 +92,14 @@ async def rsyscall_stdin_bootstrap(
     address_space = far.AddressSpace(pid)
     fs_information = far.FSInformation(pid)
     # we assume pid namespace is shared
-    pidns = stdtask.task.base.pidns
+    pidns = stdtask.task.pidns
     # we assume net namespace is shared
     # TODO include namespace inode numbers numbers in describe
     # note: if we start dealing with namespace numbers then we need to
     # have a Kernel namespace which tells us which kernel we get those
     # numbers from.
     # oh hey we can conveniently dump the inode numbers with getdents!
-    netns = stdtask.task.base.netns
+    netns = stdtask.task.netns
     process = far.Process(pidns, near.Process(pid))
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
     syscall = NonChildSyscallInterface(SyscallConnection(access_syscall_sock, access_syscall_sock), process.near)

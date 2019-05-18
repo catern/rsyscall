@@ -46,7 +46,7 @@ class StubServer:
     async def listen_on(cls, stdtask: StandardTask, path: handle.Path) -> StubServer:
         "Start listening on the passed-in path for stub connections."
         sockfd = await stdtask.make_afd(
-            await stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+            await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
         addr: WrittenPointer[Address] = await stdtask.ram.to_pointer(await SockaddrUn.from_path(stdtask, path))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
@@ -82,7 +82,7 @@ async def _setup_stub(
     [(access_syscall_sock, passed_syscall_sock),
      (access_data_sock, passed_data_sock)] = await stdtask.open_async_channels(2)
     # memfd for setting up the futex
-    futex_memfd = await stdtask.task.base.memfd_create(
+    futex_memfd = await stdtask.task.memfd_create(
         await stdtask.ram.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
     # send the fds to the new process
     connection_fd, make_connection = await stdtask.connection.prep_fd_transfer()
@@ -109,13 +109,13 @@ async def _setup_stub(
     address_space = far.AddressSpace(pid)
     fs_information = far.FSInformation(pid)
     # we assume pid namespace is shared
-    pidns = stdtask.task.base.pidns
+    pidns = stdtask.task.pidns
     process = far.Process(pidns, near.Process(pid))
     # we assume net namespace is shared - that's dubious...
     # we should make it possible to control the namespace sharing more, hmm.
     # TODO maybe the describe should contain the net namespace number? and we can store our own as well?
     # then we can automatically do it right
-    netns = stdtask.task.base.netns
+    netns = stdtask.task.netns
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
     syscall = NonChildSyscallInterface(SyscallConnection(access_syscall_sock, access_syscall_sock), process.near)
     base_task = handle.Task(syscall, process.near, None, fd_table, address_space, fs_information, pidns, netns)

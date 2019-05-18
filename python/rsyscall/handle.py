@@ -799,11 +799,6 @@ class Task(SignalMaskTask, rsyscall.far.Task):
     def __post_init__(self) -> None:
         super().__post_init__()
 
-    @property
-    def base(self) -> Task:
-        # backwards-compat hack, TODO delete
-        return self
-
     def make_path_from_bytes(self, path: t.Union[str, bytes]) -> Path:
         return Path(os.fsdecode(path))
 

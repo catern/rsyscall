@@ -53,18 +53,18 @@ class ConsoleGenie(WishGranter):
             message = "".join(traceback.format_exception(None, wish, wish.__traceback__))
             wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
 
-            to_term_pipe = await (await self.stdtask.task.base.pipe(await self.stdtask.ram.malloc_struct(Pipe))).read()
-            from_term_pipe = await (await self.stdtask.task.base.pipe(await self.stdtask.ram.malloc_struct(Pipe))).read()
+            to_term_pipe = await (await self.stdtask.task.pipe(await self.stdtask.ram.malloc_struct(Pipe))).read()
+            from_term_pipe = await (await self.stdtask.task.pipe(await self.stdtask.ram.malloc_struct(Pipe))).read()
             async_from_term = await self.stdtask.make_afd(from_term_pipe.read)
             async_to_term = await self.stdtask.make_afd(to_term_pipe.write)
             try:
                 cat_stdin_thread = await self.stdtask.fork()
-                cat_stdin = to_term_pipe.read.move(cat_stdin_thread.stdtask.task.base)
+                cat_stdin = to_term_pipe.read.move(cat_stdin_thread.stdtask.task)
                 await cat_stdin_thread.stdtask.unshare_files(going_to_exec=True)
                 await cat_stdin_thread.stdtask.stdin.replace_with(cat_stdin)
                 async with await cat_stdin_thread.exec(self.cat):
                     cat_stdout_thread = await self.stdtask.fork()
-                    cat_stdout = from_term_pipe.write.move(cat_stdout_thread.stdtask.task.base)
+                    cat_stdout = from_term_pipe.write.move(cat_stdout_thread.stdtask.task)
                     await cat_stdout_thread.stdtask.unshare_files(going_to_exec=True)
                     await cat_stdout_thread.stdtask.stdout.replace_with(cat_stdout)
                     async with await cat_stdout_thread.exec(self.cat):
@@ -109,7 +109,7 @@ class ConsoleServerGenie(WishGranter):
         sock_path = self.sockdir/sock_name
         cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path))
         sockfd = await self.stdtask.make_afd(
-            await self.stdtask.task.base.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+            await self.stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
         await sockfd.bind(await SockaddrUn.from_path(self.stdtask, sock_path))
         await sockfd.handle.listen(10)
         async with trio.open_nursery() as nursery:
