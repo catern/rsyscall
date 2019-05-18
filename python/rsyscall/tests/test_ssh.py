@@ -26,7 +26,7 @@ async def start_cat(thread: Thread, cat: Command,
     await thread.unshare_files_and_replace({
         thread.stdin: stdin,
         thread.stdout: stdout,
-    }, going_to_exec=True)
+    })
     child = await thread.exec(cat)
     return child
 

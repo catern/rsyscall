@@ -80,6 +80,10 @@ class Thread(UnixThread):
         await fd.close()
         return path
 
+    async def mkdir(self, path: Path, mode=0o755) -> Path:
+        await self.task.mkdir(await self.ram.ptr(path))
+        return path
+
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: MS,
                     data: bytes) -> None:
@@ -134,7 +138,7 @@ class Thread(UnixThread):
             await do_cloexec_except(self, set([fd.near for fd in self.task.base.fd_handles]))
 
     async def unshare_files_and_replace(self, mapping: t.Dict[FileDescriptor, FileDescriptor],
-                                        going_to_exec=False) -> None:
+                                        disable_cloexec: t.List[FileDescriptor]=[]) -> None:
         mapping = {
             # we maybe_copy the key because we need to have the only handle to it in the task,
             # which we'll then consume through dup3.
@@ -144,10 +148,13 @@ class Thread(UnixThread):
             # we will close that fd - nice.
             val.for_task(self.task.base)
             for key, val in mapping.items()}
-        await self.unshare_files(going_to_exec=going_to_exec)
+        disable_cloexec = [fd.maybe_copy(self.task) for fd in disable_cloexec]
+        await self.unshare_files()
         for dest, source in mapping.items():
             await source.dup3(dest, 0)
             await source.invalidate()
+        for fd in disable_cloexec:
+            await fd.disable_cloexec()
 
     async def unshare_user(self,
                            in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
