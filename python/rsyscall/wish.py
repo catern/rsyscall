@@ -1,22 +1,23 @@
 from __future__ import annotations
-import typing as t
-import trio
-import abc
-import logging
-import types
-import traceback
-import os
-import inspect
-import sys
-from rsyscall.io import Thread
+from contextvars import ContextVar
 from rsyscall.command import Command
 from rsyscall.epoller import AsyncFileDescriptor
+from rsyscall.io import Thread
 from rsyscall.path import Path
-from contextvars import ContextVar
+import abc
+import inspect
+import logging
+import os
+import rsyscall.repl
+import sys
+import traceback
+import trio
+import types
+import typing as t
+
 from rsyscall.sys.socket import SOCK, AF
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.unistd import Pipe
-import rsyscall.repl
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +41,12 @@ class WishGranter:
 
 class ConsoleGenie(WishGranter):
     @classmethod
-    async def make(self, stdtask: Thread):
-        cat = await stdtask.environ.which("cat")
-        return ConsoleGenie(stdtask, cat)
+    async def make(self, thread: Thread):
+        cat = await thread.environ.which("cat")
+        return ConsoleGenie(thread, cat)
 
-    def __init__(self, stdtask: Thread, cat: Command) -> None:
-        self.stdtask = stdtask
+    def __init__(self, thread: Thread, cat: Command) -> None:
+        self.thread = thread
         self.cat = cat
         self.lock = trio.Lock()
 
@@ -54,17 +55,17 @@ class ConsoleGenie(WishGranter):
             message = "".join(traceback.format_exception(None, wish, wish.__traceback__))
             wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
 
-            to_term_pipe = await (await self.stdtask.task.pipe(await self.stdtask.ram.malloc_struct(Pipe))).read()
-            from_term_pipe = await (await self.stdtask.task.pipe(await self.stdtask.ram.malloc_struct(Pipe))).read()
-            async_from_term = await self.stdtask.make_afd(from_term_pipe.read)
-            async_to_term = await self.stdtask.make_afd(to_term_pipe.write)
+            to_term_pipe = await (await self.thread.task.pipe(await self.thread.ram.malloc_struct(Pipe))).read()
+            from_term_pipe = await (await self.thread.task.pipe(await self.thread.ram.malloc_struct(Pipe))).read()
+            async_from_term = await self.thread.make_afd(from_term_pipe.read)
+            async_to_term = await self.thread.make_afd(to_term_pipe.write)
             try:
-                cat_stdin_thread = await self.stdtask.fork()
+                cat_stdin_thread = await self.thread.fork()
                 cat_stdin = to_term_pipe.read.move(cat_stdin_thread.task)
                 await cat_stdin_thread.unshare_files(going_to_exec=True)
                 await cat_stdin_thread.stdin.replace_with(cat_stdin)
                 async with await cat_stdin_thread.exec(self.cat):
-                    cat_stdout_thread = await self.stdtask.fork()
+                    cat_stdout_thread = await self.thread.fork()
                     cat_stdout = from_term_pipe.write.move(cat_stdout_thread.task)
                     await cat_stdout_thread.unshare_files(going_to_exec=True)
                     await cat_stdout_thread.stdout.replace_with(cat_stdout)
@@ -84,12 +85,12 @@ class ConsoleGenie(WishGranter):
 
 class ConsoleServerGenie(WishGranter):
     @classmethod
-    async def make(self, stdtask: Thread, sockdir: Path):
-        socat = await stdtask.environ.which("socat")
-        return ConsoleServerGenie(stdtask, sockdir, socat)
+    async def make(self, thread: Thread, sockdir: Path):
+        socat = await thread.environ.which("socat")
+        return ConsoleServerGenie(thread, sockdir, socat)
 
-    def __init__(self, stdtask: Thread, sockdir: Path, socat: Command) -> None:
-        self.stdtask = stdtask
+    def __init__(self, thread: Thread, sockdir: Path, socat: Command) -> None:
+        self.thread = thread
         self.sockdir = sockdir
         self.socat = socat
         self.name_counts: t.Dict[str, int] = {}
@@ -109,15 +110,15 @@ class ConsoleServerGenie(WishGranter):
         sock_name = self._uniquify_name(f'{wisher_frame.f_code.co_name}-{wisher_frame.f_lineno}')
         sock_path = self.sockdir/sock_name
         cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path))
-        sockfd = await self.stdtask.make_afd(
-            await self.stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
-        await sockfd.bind(await SockaddrUn.from_path(self.stdtask, sock_path))
+        sockfd = await self.thread.make_afd(
+            await self.thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+        await sockfd.bind(await SockaddrUn.from_path(self.thread, sock_path))
         await sockfd.handle.listen(10)
         async with trio.open_nursery() as nursery:
             @nursery.start_soon
             async def do_socat():
                 while True:
-                    thread = await self.stdtask.fork()
+                    thread = await self.thread.fork()
                     try:
                         child = await thread.exec(cmd)
                     except:
@@ -131,7 +132,7 @@ class ConsoleServerGenie(WishGranter):
                 'wisher_globals': wisher_frame.f_globals,
             }, wish.return_type, message)
             nursery.cancel_scope.cancel()
-        await self.stdtask.task.unlink(await self.stdtask.ram.to_pointer(sock_path))
+        await self.thread.task.unlink(await self.thread.ram.to_pointer(sock_path))
         return ret
 
 my_wish_granter: ContextVar[WishGranter] = ContextVar('wish_granter')
@@ -219,9 +220,9 @@ async def serve_repls(listenfd: AsyncFileDescriptor,
             num += 1
     return retval
 
-async def _init_wish_granter(stdtask: Thread) -> None:
-    my_wish_granter.set(await ConsoleGenie.make(stdtask))
+async def _init_wish_granter(thread: Thread) -> None:
+    my_wish_granter.set(await ConsoleGenie.make(thread))
 def _initialize_module() -> None:
     import rsyscall.tasks.local as local
-    trio.run(_init_wish_granter, local.stdtask)
+    trio.run(_init_wish_granter, local.thread)
 _initialize_module()
