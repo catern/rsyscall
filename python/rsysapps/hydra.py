@@ -545,12 +545,7 @@ class TestHydra(TrioTestCase):
 
         args, sendmail_task = await self.sendmail_stub.accept()
         print("sendmail args", args)
-        data = b""
-        while True:
-            read, rest = await sendmail_task.stdin.read(await sendmail_task.ram.malloc_type(Bytes, 4096))
-            if read.bytesize() == 0:
-                break
-            data += await read.read()
+        data = await sendmail_task.read_to_eof(sendmail_task.stdin)
         message = email.message_from_bytes(data)
         self.assertEqual(email_address,  message['To'])
         self.assertIn("Success", str(message['Subject']))

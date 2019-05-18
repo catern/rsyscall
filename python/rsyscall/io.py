@@ -94,6 +94,14 @@ class Thread(UnixThread):
         await self.task.mkdir(await self.ram.ptr(path))
         return path
 
+    async def read_to_eof(self, fd: FileDescriptor) -> bytes:
+        data = b""
+        while True:
+            read, rest = await fd.read(await self.ram.malloc_type(Bytes, 4096))
+            if read.bytesize() == 0:
+                return data
+            data += await read.read()
+
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: MS,
                     data: bytes) -> None:
