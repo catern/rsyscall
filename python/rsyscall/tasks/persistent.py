@@ -2,7 +2,7 @@ import typing as t
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask
+from rsyscall.io import Thread
 from rsyscall.path import Path
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
@@ -79,7 +79,7 @@ class PersistentServer:
     thread_process: t.Optional[ThreadProcess] = None
     transport: t.Optional[SocketMemoryTransport] = None
 
-    async def _connect_and_send(self, stdtask: StandardTask, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
+    async def _connect_and_send(self, stdtask: Thread, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
         sock = await stdtask.make_afd(await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK, 0), nonblock=True)
         sockaddr_un = await SockaddrUn.from_path(stdtask, self.path)
         def sendmsg_op(sem: batch.BatchSemantics) -> t.Tuple[
@@ -119,7 +119,7 @@ class PersistentServer:
         await self.task.setsid()
         await self.task.prctl(PR.SET_PDEATHSIG, 0)
 
-    async def reconnect(self, stdtask: StandardTask) -> None:
+    async def reconnect(self, stdtask: Thread) -> None:
         self.listening_sock.validate()
         await handle.run_fd_table_gc(self.task.fd_table)
         if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
@@ -149,8 +149,8 @@ class PersistentServer:
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def fork_persistent(
-        self: StandardTask, path: Path,
-) -> t.Tuple[StandardTask, PersistentServer]:
+        self: Thread, path: Path,
+) -> t.Tuple[Thread, PersistentServer]:
     listening_sock = await self.task.socket(AF.UNIX, SOCK.STREAM)
     await listening_sock.bind(await self.ram.to_pointer(await SockaddrUn.from_path(self, path)))
     await listening_sock.listen(1)
@@ -168,7 +168,7 @@ async def fork_persistent(
     signal_block = SignalBlock(task, await ram.to_pointer(Sigset({Signals.SIGCHLD})))
     # TODO use an inherited signalfd instead
     child_monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
-    stdtask = StandardTask(
+    stdtask = Thread(
         task, ram,
         self.connection.for_task(task, ram),
         self.loader,

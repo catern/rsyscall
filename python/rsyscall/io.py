@@ -206,7 +206,6 @@ class Thread(UnixThread):
 
     async def __aexit__(self, *args, **kwargs):
         await self.close()
-StandardTask = Thread
 
 class ChildThread(Thread, ChildUnixThread):
     async def exec_run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
@@ -225,5 +224,3 @@ class ChildThread(Thread, ChildUnixThread):
 
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
-
-RsyscallThread = ChildThread

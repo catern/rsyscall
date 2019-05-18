@@ -5,7 +5,7 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask
+from rsyscall.io import Thread
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader
@@ -40,10 +40,10 @@ __all__ = [
 @dataclass
 class StubServer:
     listening_sock: AsyncFileDescriptor
-    stdtask: StandardTask
+    stdtask: Thread
 
     @classmethod
-    async def listen_on(cls, stdtask: StandardTask, path: handle.Path) -> StubServer:
+    async def listen_on(cls, stdtask: Thread, path: handle.Path) -> StubServer:
         "Start listening on the passed-in path for stub connections."
         sockfd = await stdtask.make_afd(
             await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
@@ -53,7 +53,7 @@ class StubServer:
         return StubServer(sockfd, stdtask)
 
     @classmethod
-    async def make(cls, stdtask: StandardTask, store: nix.Store, dir: handle.Path, name: str) -> StubServer:
+    async def make(cls, stdtask: Thread, store: nix.Store, dir: handle.Path, name: str) -> StubServer:
         "In the passed-in dir, make a listening stub server and an executable to connect to it."
         rsyscall_path = await store.realise(nix.rsyscall)
         stub_path = rsyscall_path/"libexec"/"rsyscall"/"rsyscall-unix-stub"
@@ -67,7 +67,7 @@ RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
         await stdtask.spit(dir/name, wrapper, mode=0o755)
         return server
 
-    async def accept(self, stdtask: StandardTask=None) -> t.Tuple[t.List[str], StandardTask]:
+    async def accept(self, stdtask: Thread=None) -> t.Tuple[t.List[str], Thread]:
         if stdtask is None:
             stdtask = self.stdtask
         conn = await self.listening_sock.accept(SOCK.CLOEXEC)
@@ -76,9 +76,9 @@ RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
         return argv[1:], new_stdtask
 
 async def _setup_stub(
-        stdtask: StandardTask,
+        stdtask: Thread,
         bootstrap_sock: handle.FileDescriptor,
-) -> t.Tuple[t.List[str], StandardTask]:
+) -> t.Tuple[t.List[str], Thread]:
     [(access_syscall_sock, passed_syscall_sock),
      (access_data_sock, passed_data_sock)] = await stdtask.open_async_channels(2)
     # memfd for setting up the futex
@@ -134,7 +134,7 @@ async def _setup_stub(
     child_monitor = await ChildProcessMonitor.make(ram, base_task, epoller)
     connection = make_connection(base_task, ram,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
-    new_stdtask = StandardTask(
+    new_stdtask = Thread(
         task=base_task,
         ram=ram,
         connection=connection,

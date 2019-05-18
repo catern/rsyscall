@@ -1,7 +1,7 @@
 """Resources in the local Python process
 """
 from __future__ import annotations
-from rsyscall.io import StandardTask
+from rsyscall.io import Thread
 from rsyscall.tasks.util import log_syscall, raise_if_error
 from rsyscall._raw import ffi, lib # type: ignore
 import rsyscall.io as rsc
@@ -116,7 +116,7 @@ def _make_local_function_handle(cffi_ptr) -> Pointer[loader.NativeFunction]:
     mapping = handle.MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
     return Pointer(mapping, loader.NullGateway(), loader.NativeFunctionSerializer(), loader.StaticAllocation())
 
-async def _make_local_stdtask() -> StandardTask:
+async def _make_local_stdtask() -> Thread:
     local_transport = LocalMemoryTransport()
     ram = RAM(task, local_transport, memory.AllocatorClient.make_allocator(task))
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
@@ -135,7 +135,7 @@ async def _make_local_stdtask() -> StandardTask:
     child_monitor = await ChildProcessMonitor.make(ram, task, epoller)
     access_connection = None
     connection = await FDPassConnection.make(task, ram, epoller)
-    stdtask = StandardTask(
+    stdtask = Thread(
         task, ram,
         connection,
         process_resources,
@@ -147,7 +147,7 @@ async def _make_local_stdtask() -> StandardTask:
     )
     return stdtask
 
-stdtask: StandardTask
+stdtask: Thread
 async def _initialize_module() -> None:
     global stdtask
     stdtask = await _make_local_stdtask()

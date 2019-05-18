@@ -1,6 +1,6 @@
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.io import StandardTask
+from rsyscall.io import Thread
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.concurrency import OneAtATime
 from rsyscall.near import WatchDescriptor
@@ -70,7 +70,7 @@ class Inotify:
     # I guess the unit here is the inode.
     # and we can only have a single watch for an inode.
     @staticmethod
-    async def make(stdtask: StandardTask) -> Inotify:
+    async def make(stdtask: Thread) -> Inotify:
         fd = await stdtask.task.inotify_init(InotifyFlag.CLOEXEC|InotifyFlag.NONBLOCK)
         asyncfd = await AsyncFileDescriptor.make_handle(stdtask.epoller, stdtask.ram, fd, is_nonblock=True)
         return Inotify(asyncfd, stdtask.ram)

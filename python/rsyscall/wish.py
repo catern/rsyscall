@@ -8,7 +8,8 @@ import traceback
 import os
 import inspect
 import sys
-from rsyscall.io import StandardTask, Command
+from rsyscall.io import Thread
+from rsyscall.command import Command
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.path import Path
 from contextvars import ContextVar
@@ -39,11 +40,11 @@ class WishGranter:
 
 class ConsoleGenie(WishGranter):
     @classmethod
-    async def make(self, stdtask: StandardTask):
+    async def make(self, stdtask: Thread):
         cat = await stdtask.environ.which("cat")
         return ConsoleGenie(stdtask, cat)
 
-    def __init__(self, stdtask: StandardTask, cat: Command) -> None:
+    def __init__(self, stdtask: Thread, cat: Command) -> None:
         self.stdtask = stdtask
         self.cat = cat
         self.lock = trio.Lock()
@@ -83,11 +84,11 @@ class ConsoleGenie(WishGranter):
 
 class ConsoleServerGenie(WishGranter):
     @classmethod
-    async def make(self, stdtask: StandardTask, sockdir: Path):
+    async def make(self, stdtask: Thread, sockdir: Path):
         socat = await stdtask.environ.which("socat")
         return ConsoleServerGenie(stdtask, sockdir, socat)
 
-    def __init__(self, stdtask: StandardTask, sockdir: Path, socat: Command) -> None:
+    def __init__(self, stdtask: Thread, sockdir: Path, socat: Command) -> None:
         self.stdtask = stdtask
         self.sockdir = sockdir
         self.socat = socat
@@ -218,7 +219,7 @@ async def serve_repls(listenfd: AsyncFileDescriptor,
             num += 1
     return retval
 
-async def _init_wish_granter(stdtask: StandardTask) -> None:
+async def _init_wish_granter(stdtask: Thread) -> None:
     my_wish_granter.set(await ConsoleGenie.make(stdtask))
 def _initialize_module() -> None:
     import rsyscall.tasks.local as local

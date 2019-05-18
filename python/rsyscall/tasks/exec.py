@@ -3,7 +3,7 @@ import rsyscall.handle as handle
 import rsyscall.far as far
 import rsyscall.near as near
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, StandardTask
+from rsyscall.io import ChildThread, Thread
 from rsyscall.loader import NativeLoader
 import typing as t
 from rsyscall.handle import WrittenPointer
@@ -44,9 +44,9 @@ async def set_singleton_robust_futex(
     return robust_list_entry
 
 async def make_robust_futex_task(
-        parent_stdtask: StandardTask,
+        parent_stdtask: Thread,
         parent_memfd: handle.FileDescriptor,
-        child_stdtask: StandardTask,
+        child_stdtask: Thread,
         child_memfd: handle.FileDescriptor,
 ) -> t.Tuple[AsyncChildProcess, handle.Pointer[FutexNode], handle.MemoryMapping]:
     # resize memfd appropriately
@@ -79,8 +79,8 @@ class RsyscallServerExecutable:
         return cls(server)
 
 async def rsyscall_exec(
-        parent_stdtask: StandardTask,
-        rsyscall_thread: RsyscallThread,
+        parent_stdtask: Thread,
+        rsyscall_thread: ChildThread,
         executable: RsyscallServerExecutable,
     ) -> None:
     "Exec into the standalone rsyscall_server executable"
@@ -132,8 +132,8 @@ async def rsyscall_exec(
     syscall.futex_task = futex_task
     base_task._add_to_active_fd_table_tasks()
 
-async def spawn_exec(self: StandardTask, store: nix.Store) -> RsyscallThread:
+async def spawn_exec(thread: Thread, store: nix.Store) -> ChildThread:
     executable = await RsyscallServerExecutable.from_store(store)
-    rsyscall_thread = await self.fork()
-    await rsyscall_exec(self, rsyscall_thread, executable)
-    return rsyscall_thread
+    child = await thread.fork()
+    await rsyscall_exec(thread, child, executable)
+    return child

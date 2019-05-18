@@ -1,5 +1,5 @@
 import rsyscall.io as rsc
-from rsyscall.io import StandardTask, wish, Wish, Path
+from rsyscall.io import Thread, wish, Wish, Path
 import rsyscall.local_executables as local
 import socket
 import trio
@@ -7,8 +7,8 @@ import typing as t
 import argparse
 import rsyscall.tasks.local as local
 
-async def deploy_nix_daemon(remote_stdtask: rsc.StandardTask,
-                            container_stdtask: rsc.StandardTask) -> rsc.Command:
+async def deploy_nix_daemon(remote_stdtask: rsc.Thread,
+                            container_stdtask: rsc.Thread) -> rsc.Command:
     "Deploy the Nix daemon from localhost"
     # TODO check if remote_nix_store exists, and skip this stuff if it does
     remote_tar = await rsc.which(remote_stdtask, b"tar")
@@ -18,7 +18,7 @@ async def deploy_nix_daemon(remote_stdtask: rsc.StandardTask,
                                        container_stdtask)
     return rsc.Command(nix_bin/"nix-daemon", [b'nix-daemon'], {})
 
-async def make_container(root: Path, stdtask: StandardTask) -> StandardTask:
+async def make_container(root: Path, stdtask: Thread) -> Thread:
     # TODO do we need to keep track of this thread?
     thread = await stdtask.fork()
     container_stdtask = thread
@@ -42,7 +42,7 @@ async def run_nix_in_local_container() -> None:
         container_stdtask = await make_container(tmpdir, local.stdtask)
         await run_nix_daemon(local.stdtask, container_stdtask)
 
-async def run_nix_daemon(remote_stdtask: rsc.StandardTask, container_stdtask: rsc.StandardTask) -> None:
+async def run_nix_daemon(remote_stdtask: rsc.Thread, container_stdtask: rsc.Thread) -> None:
     "Deploys Nix from the local_stdtask to this remote_stdtask and runs nix-daemon there"
     try:
         nix_daemon = await deploy_nix_daemon(remote_stdtask, container_stdtask)

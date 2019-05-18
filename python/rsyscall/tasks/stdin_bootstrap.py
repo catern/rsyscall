@@ -3,7 +3,7 @@ import rsyscall.io as rsc
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import StandardTask
+from rsyscall.io import Thread
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader
@@ -46,9 +46,9 @@ async def stdin_bootstrap_path_from_store(store: nix.Store) -> handle.Path:
     return rsyscall_path/"libexec"/"rsyscall"/"rsyscall-stdin-bootstrap"
 
 async def rsyscall_stdin_bootstrap(
-        stdtask: StandardTask,
+        stdtask: Thread,
         bootstrap_command: Command,
-) -> t.Tuple[AsyncChildProcess, StandardTask]:
+) -> t.Tuple[AsyncChildProcess, Thread]:
     """Fork and run an arbitrary Command which will start rsyscall_stdin_bootstrap"""
     #### fork and exec into the bootstrap command
     thread = await stdtask.fork()
@@ -118,7 +118,7 @@ async def rsyscall_stdin_bootstrap(
     child_monitor = await ChildProcessMonitor.make(ram, base_task, epoller)
     connection = make_connection(base_task, ram,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
-    new_stdtask = StandardTask(
+    new_stdtask = Thread(
         task=base_task,
         ram=ram,
         connection=connection,

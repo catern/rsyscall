@@ -3,7 +3,7 @@ import rsyscall.handle as handle
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
-from rsyscall.io import RsyscallThread, StandardTask
+from rsyscall.io import Thread
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader
@@ -120,7 +120,7 @@ class SSHExecutables:
 class SSHHost:
     executables: SSHExecutables
     to_host: t.Any[t.Callable[[SSHCommand], SSHCommand]]
-    async def ssh(self, task: StandardTask) -> t.Tuple[AsyncChildProcess, StandardTask]:
+    async def ssh(self, thread: Thread) -> t.Tuple[AsyncChildProcess, Thread]:
         # we could get rid of the need to touch the local filesystem by directly
         # speaking the openssh multiplexer protocol. or directly speaking the ssh
         # protocol for that matter.
@@ -131,14 +131,14 @@ class SSHHost:
         hostname = os.fsdecode(ssh_to_host.arguments[-1])
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (hostname+random_suffix+".sock")
-        local_socket_path: handle.Path = task.environ.tmpdir/name
-        fd = await task.task.open(await task.ram.to_pointer(self.executables.bootstrap_path), O.RDONLY)
-        async with run_socket_binder(task, ssh_to_host, fd) as tmp_path_bytes:
-            return await ssh_bootstrap(task, ssh_to_host, local_socket_path, tmp_path_bytes)
+        local_socket_path: handle.Path = thread.environ.tmpdir/name
+        fd = await thread.task.open(await thread.ram.to_pointer(self.executables.bootstrap_path), O.RDONLY)
+        async with run_socket_binder(thread, ssh_to_host, fd) as tmp_path_bytes:
+            return await ssh_bootstrap(thread, ssh_to_host, local_socket_path, tmp_path_bytes)
 
 @contextlib.asynccontextmanager
 async def run_socket_binder(
-        task: StandardTask,
+        task: Thread,
         ssh_command: SSHCommand,
         bootstrap_executable: handle.FileDescriptor,
 ) -> t.AsyncGenerator[bytes, None]:
@@ -178,7 +178,7 @@ async def run_socket_binder(
         yield tmp_path_bytes
         (await child.wait_for_exit()).check()
 
-async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
+async def ssh_forward(stdtask: Thread, ssh_command: SSHCommand,
                       local_path: handle.Path, remote_path: str) -> AsyncChildProcess:
     stdout_pipe = await (await stdtask.task.pipe(
         await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
@@ -201,14 +201,14 @@ async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
     return child_task
 
 async def ssh_bootstrap(
-        parent_task: StandardTask,
+        parent_task: Thread,
         # the actual ssh command to run
         ssh_command: SSHCommand,
         # the local path we'll use for the socket
         local_socket_path: handle.Path,
         # the directory we're bootstrapping out of
         tmp_path_bytes: bytes,
-) -> t.Tuple[AsyncChildProcess, StandardTask]:
+) -> t.Tuple[AsyncChildProcess, Thread]:
     # identify local path
     local_data_addr: WrittenPointer[Address] = await parent_task.ram.to_pointer(
         await SockaddrUn.from_path(parent_task, local_socket_path))
@@ -270,7 +270,7 @@ async def ssh_bootstrap(
         new_base_task, new_ram,
         new_base_task.make_fd_handle(listening_fd),
     )
-    new_stdtask = StandardTask(
+    new_stdtask = Thread(
         task=new_base_task,
         ram=new_ram,
         connection=connection,
@@ -296,7 +296,7 @@ class SSHDExecutables:
         sshd = SSHDCommand.make(ssh_path/"bin"/"sshd")
         return SSHDExecutables(ssh_keygen, sshd)
 
-async def make_local_ssh_from_executables(stdtask: StandardTask,
+async def make_local_ssh_from_executables(stdtask: Thread,
                                           executables: SSHExecutables, sshd_executables: SSHDExecutables) -> SSHHost:
     ssh_keygen = sshd_executables.ssh_keygen
     sshd = sshd_executables.sshd
@@ -341,7 +341,7 @@ async def make_ssh_host(store: nix.Store, to_host: t.Callable[[SSHCommand], SSHC
     ssh = await SSHExecutables.from_store(store)
     return ssh.host(to_host)
 
-async def make_local_ssh(stdtask: StandardTask, store: nix.Store) -> SSHHost:
+async def make_local_ssh(stdtask: Thread, store: nix.Store) -> SSHHost:
     ssh = await SSHExecutables.from_store(store)
     sshd = await SSHDExecutables.from_store(store)
     return (await make_local_ssh_from_executables(stdtask, ssh, sshd))
