@@ -178,16 +178,16 @@ async def run_socket_binder(
         yield tmp_path_bytes
         (await child.wait_for_exit()).check()
 
-async def ssh_forward(stdtask: Thread, ssh_command: SSHCommand,
+async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
                       local_path: handle.Path, remote_path: str) -> AsyncChildProcess:
-    stdout_pipe = await (await stdtask.task.pipe(
-        await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
-    async_stdout = await stdtask.make_afd(stdout_pipe.read)
-    thread = await stdtask.fork()
-    stdout = stdout_pipe.write.move(thread.task)
-    await thread.unshare_files()
-    await thread.stdout.replace_with(stdout)
-    child_task = await thread.exec(ssh_command.local_forward(
+    stdout_pipe = await (await thread.task.pipe(
+        await thread.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
+    async_stdout = await thread.make_afd(stdout_pipe.read)
+    child = await thread.fork()
+    stdout = stdout_pipe.write.move(child.task)
+    await child.unshare_files()
+    await child.stdout.replace_with(stdout)
+    child_process = await child.exec(ssh_command.local_forward(
         local_path, remote_path,
     # TODO I optimistically assume that I'll have established a
     # connection through the tunnel before 1 second has passed;
@@ -198,10 +198,10 @@ async def ssh_forward(stdtask: Thread, ssh_command: SSHCommand,
     if forwarded != b"forwarded":
         raise Exception("ssh forwarding violated protocol, got instead of forwarded:", forwarded)
     await async_stdout.close()
-    return child_task
+    return child_process
 
 async def ssh_bootstrap(
-        parent_task: Thread,
+        parent: Thread,
         # the actual ssh command to run
         ssh_command: SSHCommand,
         # the local path we'll use for the socket
@@ -210,22 +210,22 @@ async def ssh_bootstrap(
         tmp_path_bytes: bytes,
 ) -> t.Tuple[AsyncChildProcess, Thread]:
     # identify local path
-    local_data_addr: WrittenPointer[Address] = await parent_task.ram.to_pointer(
-        await SockaddrUn.from_path(parent_task, local_socket_path))
+    local_data_addr: WrittenPointer[Address] = await parent.ram.to_pointer(
+        await SockaddrUn.from_path(parent, local_socket_path))
     # start port forwarding; we'll just leak this process, no big deal
     # TODO we shouldn't leak processes; we should be GCing processes at some point
     forward_child = await ssh_forward(
-        parent_task, ssh_command, local_socket_path, (tmp_path_bytes + b"/data").decode())
+        parent, ssh_command, local_socket_path, (tmp_path_bytes + b"/data").decode())
     # start bootstrap
-    bootstrap_thread = await parent_task.fork()
-    bootstrap_child_task = await bootstrap_thread.exec(ssh_command.args(
+    bootstrap_thread = await parent.fork()
+    bootstrap_child_process = await bootstrap_thread.exec(ssh_command.args(
         "-n", f"cd {tmp_path_bytes.decode()}; exec ./bootstrap rsyscall"
     ))
     # TODO should unlink the bootstrap after I'm done execing.
     # it would be better if sh supported fexecve, then I could unlink it before I exec...
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor:
-        sock = await parent_task.make_afd(await parent_task.task.socket(AF.UNIX, SOCK.STREAM))
+        sock = await parent.make_afd(await parent.task.socket(AF.UNIX, SOCK.STREAM))
         await sock.connect(local_data_addr)
         return sock
     async_local_syscall_sock = await make_async_connection()
@@ -265,7 +265,7 @@ async def ssh_bootstrap(
     epoller = await EpollCenter.make_root(new_ram, new_base_task)
     child_monitor = await ChildProcessMonitor.make(new_ram, new_base_task, epoller)
     connection = ListeningConnection(
-        parent_task.task, parent_task.ram, parent_task.epoller,
+        parent.task, parent.ram, parent.epoller,
         local_data_addr,
         new_base_task, new_ram,
         new_base_task.make_fd_handle(listening_fd),
@@ -282,7 +282,7 @@ async def ssh_bootstrap(
         stdout=new_base_task.make_fd_handle(near.FileDescriptor(1)),
         stderr=new_base_task.make_fd_handle(near.FileDescriptor(2)),
     )
-    return bootstrap_child_task, new_stdtask
+    return bootstrap_child_process, new_stdtask
 
 @dataclass
 class SSHDExecutables:
@@ -296,19 +296,19 @@ class SSHDExecutables:
         sshd = SSHDCommand.make(ssh_path/"bin"/"sshd")
         return SSHDExecutables(ssh_keygen, sshd)
 
-async def make_local_ssh_from_executables(stdtask: Thread,
+async def make_local_ssh_from_executables(thread: Thread,
                                           executables: SSHExecutables, sshd_executables: SSHDExecutables) -> SSHHost:
     ssh_keygen = sshd_executables.ssh_keygen
     sshd = sshd_executables.sshd
 
     keygen_command = ssh_keygen.args('-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key')
-    keygen_thread = await stdtask.fork()
+    keygen_thread = await thread.fork()
     # ugh, we have to make a directory because ssh-keygen really wants to output to a directory
-    async with (await stdtask.mkdtemp()) as tmpdir:
+    async with (await thread.mkdtemp()) as tmpdir:
         await keygen_thread.task.chdir(await keygen_thread.ram.to_pointer(tmpdir))
         await (await keygen_thread.exec(keygen_command)).wait_for_exit()
-        privkey_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir/'key'), O.RDONLY|O.CLOEXEC)
-        pubkey_file = await stdtask.task.open(await stdtask.ram.to_pointer(tmpdir/'key.pub'), O.RDONLY|O.CLOEXEC)
+        privkey_file = await thread.task.open(await thread.ram.to_pointer(tmpdir/'key'), O.RDONLY|O.CLOEXEC)
+        pubkey_file = await thread.task.open(await thread.ram.to_pointer(tmpdir/'key.pub'), O.RDONLY|O.CLOEXEC)
     def to_host(ssh: SSHCommand, privkey_file=privkey_file, pubkey_file=pubkey_file) -> SSHCommand:
         privkey = privkey_file.as_proc_path()
         pubkey = pubkey_file.as_proc_path()
@@ -341,9 +341,9 @@ async def make_ssh_host(store: nix.Store, to_host: t.Callable[[SSHCommand], SSHC
     ssh = await SSHExecutables.from_store(store)
     return ssh.host(to_host)
 
-async def make_local_ssh(stdtask: Thread, store: nix.Store) -> SSHHost:
+async def make_local_ssh(thread: Thread, store: nix.Store) -> SSHHost:
     ssh = await SSHExecutables.from_store(store)
     sshd = await SSHDExecutables.from_store(store)
-    return (await make_local_ssh_from_executables(stdtask, ssh, sshd))
+    return (await make_local_ssh_from_executables(thread, ssh, sshd))
 
 

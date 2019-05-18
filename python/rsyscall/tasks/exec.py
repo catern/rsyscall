@@ -101,7 +101,8 @@ async def rsyscall_exec(
         await fd.fcntl(F.SETFD, 0)
     def encode(fd: near.FileDescriptor) -> bytes:
         return str(int(fd)).encode()
-    child_task = await child.exec(executable.command.args(
+    # TODO we're just leaking this, I guess?
+    child_process = await child.exec(executable.command.args(
             encode(passed_data_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
             *[encode(fd.near) for fd in child.task.fd_handles],
     ), [child.child_monitor.internal.signal_queue.signal_block])

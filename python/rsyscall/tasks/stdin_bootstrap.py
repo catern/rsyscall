@@ -61,7 +61,7 @@ async def rsyscall_stdin_bootstrap(
     await thread.unshare_files(going_to_exec=True)
     await thread.stdin.replace_with(child_sock)
     # exec
-    child_task = await thread.exec(bootstrap_command)
+    child_process = await thread.exec(bootstrap_command)
     #### set up all the fds we'll want to pass over
     # the basic connections
     [(access_syscall_sock, passed_syscall_sock),
@@ -132,4 +132,4 @@ async def rsyscall_stdin_bootstrap(
     )
     #### TODO set up futex I guess
     remote_futex_memfd = near.FileDescriptor(describe_struct.futex_memfd)
-    return child_task, new_stdtask
+    return child_process, new_stdtask
