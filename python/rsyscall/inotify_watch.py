@@ -1,17 +1,17 @@
 from __future__ import annotations
+from dataclasses import dataclass, field
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.io import Thread
-from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.concurrency import OneAtATime
+from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
+from rsyscall.io import Thread
+from rsyscall.memory.ram import RAM
 from rsyscall.near import WatchDescriptor
+import enum
+import math
 import os
 import rsyscall.handle as handle
 import trio
 import typing as t
-from dataclasses import dataclass, field
-import math
-import enum
-from rsyscall.memory.ram import RAM
 
 from rsyscall.sys.inotify import InotifyFlag, IN, InotifyEvent, InotifyEventList
 from rsyscall.limits import NAME_MAX
@@ -70,10 +70,10 @@ class Inotify:
     # I guess the unit here is the inode.
     # and we can only have a single watch for an inode.
     @staticmethod
-    async def make(stdtask: Thread) -> Inotify:
-        fd = await stdtask.task.inotify_init(InotifyFlag.CLOEXEC|InotifyFlag.NONBLOCK)
-        asyncfd = await AsyncFileDescriptor.make_handle(stdtask.epoller, stdtask.ram, fd, is_nonblock=True)
-        return Inotify(asyncfd, stdtask.ram)
+    async def make(thread: Thread) -> Inotify:
+        fd = await thread.task.inotify_init(InotifyFlag.CLOEXEC|InotifyFlag.NONBLOCK)
+        asyncfd = await AsyncFileDescriptor.make_handle(thread.epoller, thread.ram, fd, is_nonblock=True)
+        return Inotify(asyncfd, thread.ram)
 
     async def add(self, path: handle.Path, mask: IN) -> Watch:
         wd = await self.asyncfd.handle.inotify_add_watch(await self.ram.to_pointer(path), mask)
