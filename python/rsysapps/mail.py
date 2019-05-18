@@ -4,8 +4,6 @@ import os
 import abc
 import trio
 import socket
-import rsyscall.io as rsc
-import rsyscall.handle as handle
 from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import Thread
 from rsyscall.handle import FileDescriptor, Path
@@ -48,7 +46,7 @@ class Maildir(MailLocation):
         return self.path/'new'
 
 async def start_dovecot(nursery, thread: Thread, path: Path,
-                        lmtp_listener: handle.FileDescriptor, mail: MailLocation) -> Dovecot:
+                        lmtp_listener: FileDescriptor, mail: MailLocation) -> Dovecot:
     dovecot = await thread.environ.which("dovecot")
     doveadm = await thread.environ.which("doveadm")
     s6_ipcserverd = await thread.environ.which("s6-ipcserverd")
@@ -104,11 +102,11 @@ passdb {
 @dataclass
 class Smtpd:
     lmtp_socket_path: Path
-    lmtp_listener: handle.FileDescriptor
+    lmtp_listener: FileDescriptor
     config_file: Path
 
 async def start_smtpd(nursery, thread: Thread, path: Path,
-                      smtp_listener: handle.FileDescriptor) -> Smtpd:
+                      smtp_listener: FileDescriptor) -> Smtpd:
     smtpd = await thread.environ.which("smtpd")
     smtpd_thread = await thread.fork()
     smtp_listener = smtp_listener.move(smtpd_thread.task)

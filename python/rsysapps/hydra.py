@@ -8,8 +8,6 @@ import time
 import os
 import requests
 import trio
-import rsyscall.io as rsc
-import rsyscall.handle as handle
 import typing as t
 from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import StandardTask
@@ -254,8 +252,8 @@ class NginxChild:
         self.child = child
 
 async def exec_nginx(thread: ChildThread, nginx: Command,
-                     path: Path, config: handle.FileDescriptor,
-                     listen_fds: t.List[handle.FileDescriptor]) -> AsyncChildProcess:
+                     path: Path, config: FileDescriptor,
+                     listen_fds: t.List[FileDescriptor]) -> AsyncChildProcess:
     nginx_fds = [fd.maybe_copy(thread.task) for fd in listen_fds]
     config_fd = config.maybe_copy(thread.task)
     await thread.unshare_files()
