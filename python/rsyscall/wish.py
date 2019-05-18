@@ -135,7 +135,7 @@ class ConsoleServerGenie(WishGranter):
         await self.thread.task.unlink(await self.thread.ram.to_pointer(sock_path))
         return ret
 
-my_wish_granter: ContextVar[WishGranter] = ContextVar('wish_granter')
+my_wish_granter: ContextVar[WishGranter] = ContextVar('my_wish_granter')
 
 def frames_to_traceback(frames: t.List[types.FrameType]) -> t.Optional[types.TracebackType]:
     tb = None
@@ -145,7 +145,9 @@ def frames_to_traceback(frames: t.List[types.FrameType]) -> t.Optional[types.Tra
 
 # TODO should switch bool to typing_extensions.Literal[False]
 # we allow passing None for from_exn to suppress the context
-async def wish(wish: Wish[T], from_exn: t.Union[BaseException, None, bool]=False) -> T:
+async def wish(wish: Wish[T], *, from_exn: t.Union[BaseException, None, bool]=False) -> T:
+    if not isinstance(wish, Wish):
+        raise Exception("wishes should be of type Wish, not", wish)
     raising_exception = sys.exc_info()[1]
     if not isinstance(from_exn, bool):
         wish.__cause__ = from_exn
@@ -220,9 +222,7 @@ async def serve_repls(listenfd: AsyncFileDescriptor,
             num += 1
     return retval
 
-async def _init_wish_granter(thread: Thread) -> None:
-    my_wish_granter.set(await ConsoleGenie.make(thread))
 def _initialize_module() -> None:
     import rsyscall.tasks.local as local
-    trio.run(_init_wish_granter, local.thread)
+    my_wish_granter.set(trio.run(ConsoleGenie.make, local.thread))
 _initialize_module()
