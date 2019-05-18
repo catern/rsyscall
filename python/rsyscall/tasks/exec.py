@@ -1,27 +1,26 @@
 from __future__ import annotations
-import rsyscall.handle as handle
-import rsyscall.far as far
-import rsyscall.near as near
-import rsyscall.memory.allocator as memory
+from dataclasses import dataclass
+from rsyscall.batch import BatchSemantics, perform_batch
+from rsyscall.command import Command
+from rsyscall.epoller import AsyncReadBuffer
+from rsyscall.handle import WrittenPointer, Pointer, MemoryTransport, Task, FileDescriptor, MemoryMapping
 from rsyscall.io import ChildThread, Thread
 from rsyscall.loader import NativeLoader
-import typing as t
-from rsyscall.handle import WrittenPointer
-from rsyscall.handle import FutexNode
-from rsyscall.monitor import AsyncChildProcess
-import rsyscall.batch as batch
-import rsyscall.nix as nix
-from dataclasses import dataclass
-from rsyscall.tasks.fork import launch_futex_monitor, ChildSyscallInterface, SyscallConnection
 from rsyscall.memory.socket_transport import SocketMemoryTransport
-from rsyscall.epoller import AsyncReadBuffer
-from rsyscall.command import Command
+from rsyscall.monitor import AsyncChildProcess
+from rsyscall.tasks.fork import launch_futex_monitor, ChildSyscallInterface, SyscallConnection
+import rsyscall.far as far
+import rsyscall.memory.allocator as memory
+import rsyscall.near as near
+import rsyscall.nix as nix
+import typing as t
 
 from rsyscall.fcntl import F
 from rsyscall.struct import Int32
-from rsyscall.linux.futex import FUTEX_WAITERS, FUTEX_TID_MASK
+from rsyscall.linux.futex import FutexNode, RobustListHead, FUTEX_WAITERS, FUTEX_TID_MASK
 from rsyscall.sys.mman import PROT, MAP
 from rsyscall.sys.memfd import MFD
+from rsyscall.path import Path
 
 __all__ = [
     "RsyscallServerExecutable",
@@ -30,25 +29,25 @@ __all__ = [
 ]
 
 async def set_singleton_robust_futex(
-        task: handle.Task, transport: handle.MemoryTransport, allocator: memory.AllocatorInterface,
-) -> WrittenPointer[handle.FutexNode]:
+        task: Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
+) -> WrittenPointer[FutexNode]:
     # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
     futex_value = FUTEX_WAITERS|(int(task.process.near) & FUTEX_TID_MASK)
-    def op(sem: batch.BatchSemantics) -> t.Tuple[WrittenPointer[handle.FutexNode],
-                                                 WrittenPointer[handle.RobustListHead]]:
-        robust_list_entry = sem.to_pointer(handle.FutexNode(None, Int32(futex_value)))
-        robust_list_head = sem.to_pointer(handle.RobustListHead(robust_list_entry))
+    def op(sem: BatchSemantics) -> t.Tuple[WrittenPointer[FutexNode],
+                                                 WrittenPointer[RobustListHead]]:
+        robust_list_entry = sem.to_pointer(FutexNode(None, Int32(futex_value)))
+        robust_list_head = sem.to_pointer(RobustListHead(robust_list_entry))
         return robust_list_entry, robust_list_head
-    robust_list_entry, robust_list_head = await batch.perform_batch(task, transport, allocator, op)
+    robust_list_entry, robust_list_head = await perform_batch(task, transport, allocator, op)
     await task.set_robust_list(robust_list_head)
     return robust_list_entry
 
 async def make_robust_futex_task(
-        parent_stdtask: Thread,
-        parent_memfd: handle.FileDescriptor,
-        child_stdtask: Thread,
-        child_memfd: handle.FileDescriptor,
-) -> t.Tuple[AsyncChildProcess, handle.Pointer[FutexNode], handle.MemoryMapping]:
+        parent: Thread,
+        parent_memfd: FileDescriptor,
+        child: Thread,
+        child_memfd: FileDescriptor,
+) -> t.Tuple[AsyncChildProcess, Pointer[FutexNode], MemoryMapping]:
     # resize memfd appropriately
     futex_memfd_size = 4096
     await parent_memfd.ftruncate(futex_memfd_size)
@@ -61,11 +60,11 @@ async def make_robust_futex_task(
     await child_memfd.invalidate()
 
     remote_futex_node = await set_singleton_robust_futex(
-        child_stdtask.task, child_stdtask.ram.transport, memory.Arena(remote_mapping))
+        child.task, child.ram.transport, memory.Arena(remote_mapping))
     local_futex_node = remote_futex_node._with_mapping(local_mapping)
     # now we start the futex monitor
     futex_task = await launch_futex_monitor(
-        parent_stdtask.ram, parent_stdtask.loader, parent_stdtask.child_monitor, local_futex_node)
+        parent.ram, parent.loader, parent.child_monitor, local_futex_node)
     return futex_task, local_futex_node, remote_mapping
 
 @dataclass
@@ -79,58 +78,56 @@ class RsyscallServerExecutable:
         return cls(server)
 
 async def rsyscall_exec(
-        parent_stdtask: Thread,
-        rsyscall_thread: ChildThread,
+        parent: Thread,
+        child: ChildThread,
         executable: RsyscallServerExecutable,
     ) -> None:
     "Exec into the standalone rsyscall_server executable"
-    stdtask = rsyscall_thread
-    [(access_data_sock, passed_data_sock)] = await stdtask.open_async_channels(1)
+    [(access_data_sock, passed_data_sock)] = await child.open_async_channels(1)
     # create this guy and pass him down to the new thread
-    child_futex_memfd = await stdtask.task.memfd_create(
-        await stdtask.ram.to_pointer(handle.Path("child_robust_futex_list")), MFD.CLOEXEC)
-    parent_futex_memfd = parent_stdtask.task.make_fd_handle(child_futex_memfd)
-    if isinstance(stdtask.task.sysif, ChildSyscallInterface):
-        syscall = stdtask.task.sysif
+    child_futex_memfd = await child.task.memfd_create(
+        await child.ram.to_pointer(Path("child_robust_futex_list")), MFD.CLOEXEC)
+    parent_futex_memfd = parent.task.make_fd_handle(child_futex_memfd)
+    if isinstance(child.task.sysif, ChildSyscallInterface):
+        syscall = child.task.sysif
     else:
         raise Exception("can only exec in ChildSyscallInterface sysifs, not",
-                        stdtask.task.sysif)
+                        child.task.sysif)
     # unshare files so we can unset cloexec on fds to inherit
-    await rsyscall_thread.unshare_files(going_to_exec=True)
-    base_task = rsyscall_thread.task
-    base_task.manipulating_fd_table = True
+    await child.unshare_files(going_to_exec=True)
+    child.task.manipulating_fd_table = True
     # unset cloexec on all the fds we want to copy to the new space
-    for fd in base_task.fd_handles:
+    for fd in child.task.fd_handles:
         await fd.fcntl(F.SETFD, 0)
     def encode(fd: near.FileDescriptor) -> bytes:
         return str(int(fd)).encode()
-    child_task = await rsyscall_thread.exec(executable.command.args(
+    child_task = await child.exec(executable.command.args(
             encode(passed_data_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
-            *[encode(fd.near) for fd in base_task.fd_handles],
-    ), [stdtask.child_monitor.internal.signal_queue.signal_block])
+            *[encode(fd.near) for fd in child.task.fd_handles],
+    ), [child.child_monitor.internal.signal_queue.signal_block])
     #### read symbols from describe fd
     describe_buf = AsyncReadBuffer(access_data_sock)
     symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')
-    stdtask.loader = NativeLoader.make_from_symbols(stdtask.task, symbol_struct)
+    child.loader = NativeLoader.make_from_symbols(child.task, symbol_struct)
     # the futex task we used before is dead now that we've exec'd, have
     # to null it out
     syscall.futex_task = None
     # the old RC would wait forever for the exec to complete; we need to make a new one.
     syscall.rsyscall_connection = SyscallConnection(syscall.rsyscall_connection.tofd, syscall.rsyscall_connection.fromfd)
-    stdtask.task.address_space = far.AddressSpace(rsyscall_thread.task.process.near.id)
+    child.task.address_space = far.AddressSpace(child.task.process.near.id)
     # we mutate the allocator instead of replacing to so that anything that
     # has stored the allocator continues to work
-    stdtask.ram.allocator.allocator = memory.Allocator(stdtask.task)
-    stdtask.ram.transport = SocketMemoryTransport(access_data_sock,
-                                                  passed_data_sock, stdtask.ram.allocator)
-    base_task.manipulating_fd_table = False
+    child.ram.allocator.allocator = memory.Allocator(child.task)
+    child.ram.transport = SocketMemoryTransport(access_data_sock,
+                                                  passed_data_sock, child.ram.allocator)
+    child.task.manipulating_fd_table = False
 
     #### make new futex task
     futex_task, local_futex_node, remote_mapping = await make_robust_futex_task(
-        parent_stdtask, parent_futex_memfd, stdtask, child_futex_memfd)
+        parent, parent_futex_memfd, child, child_futex_memfd)
     # TODO how do we unmap the remote mapping?
     syscall.futex_task = futex_task
-    base_task._add_to_active_fd_table_tasks()
+    child.task._add_to_active_fd_table_tasks()
 
 async def spawn_exec(thread: Thread, store: nix.Store) -> ChildThread:
     executable = await RsyscallServerExecutable.from_store(store)
