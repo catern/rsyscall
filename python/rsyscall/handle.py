@@ -97,7 +97,11 @@ class Pointer(t.Generic[T]):
     def __repr__(self) -> str:
         return f"Pointer({self.near}, {self.serializer})"
 
+    # TODO delete me I guess?
     def bytesize(self) -> int:
+        return self.size()
+
+    def size(self) -> int:
         return self.allocation.size()
 
     @contextlib.contextmanager

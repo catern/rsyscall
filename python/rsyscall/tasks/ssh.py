@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall.command import Command
 from rsyscall.environ import Environment
-from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, AsyncReadBuffer
+from rsyscall.epoller import Epoller, AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.handle import WrittenPointer, FileDescriptor, Task
 from rsyscall.io import Thread
 from rsyscall.loader import NativeLoader
@@ -261,7 +261,7 @@ async def ssh_bootstrap(
                                           handle_remote_data_fd, new_allocator)
     # we don't inherit SignalMask; we assume ssh zeroes the sigmask before starting us
     new_ram = RAM(new_base_task, new_transport, new_allocator)
-    epoller = await EpollCenter.make_root(new_ram, new_base_task)
+    epoller = await Epoller.make_root(new_ram, new_base_task)
     child_monitor = await ChildProcessMonitor.make(new_ram, new_base_task, epoller)
     connection = ListeningConnection(
         parent.task, parent.ram, parent.epoller,

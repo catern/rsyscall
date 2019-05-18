@@ -1,0 +1,232 @@
+The single-threaded parts of the rsyscall library
+are a low-level interface to the Linux kernel in Python.
+
+When used with a single thread,
+rsyscall provides interfaces to all the same functionality as the Python standard library.
+
+rsyscall also provides interfaces to Linux features which are not in the Python standard library.
+For example, inotify and rtnetlink.
+* Initial example
+An example rsyscall program is the following:
+#+BEGIN_SRC python
+from rsyscall.tasks.local import thread as thr
+from rsyscall.unistd import Pipe
+
+async def f(pipe: Pipe) -> None:
+    # write some data to memory
+    in_data_ptr = await thr.ram.ptr(b"hello world")
+    # write that data to the write-end of the pipe
+    written_ptr, remaining_ptr = await pipe.write.write(in_data)
+    # read that data from the read-end of the pipe
+    read_ptr, unused_ptr = await pipe.read.read(written)
+    if read_ptr.bytesize() != in_data_ptr.bytesize():
+        raise Exception("unexpected partial write or read happened")
+    # read the data from memory into a Python bytes object
+    print(await read_ptr.read())
+#+END_SRC
+
+We receive a pipe as an argument, produced elsewhere by a call to the pipe() system call.
+The Pipe class contains the two file descriptor ends of the pipe in the "read" and "write" fields.
+
+In rsyscall, syscalls that operate on memory take a Pointer argument.
+Any data that you want to pass to a syscall must be first turned into a Pointer
+before the syscall can be made.
+Pointers are garbage collected, so we don't need to worry about freeing it.
+
+Here we use the "ptr" method, which takes some data,
+allocates memory for it,
+writes the data to memory,
+and returns the resulting Pointer.
+
+We then call the `write` syscall with our new Pointer,
+on the write-end of the pipe.
+Pointers know the size (and the type) of the data they point to,
+so we don't provide a size argument to `write`;
+the size is simply pulled out of the Pointer.
+
+Returned to us from `write` is a tuple of two Pointers.
+The first element of the tuple is a Pointer to the data that was successfully written;
+the second element of the tuple is a Pointer to any data that was left un-written.
+The two Pointers are, of course, adjacent,
+and it's possible for us to combine them again and reuse the larger pointer,
+or continue to use them each separately.
+The original Pointer passed in to `write` is no longer usable,
+since it has been split into to the two Pointers returned back out.
+
+We then call the `read` syscall on the read-end of the pipe.
+We reuse the `written` pointer as a buffer to read into,
+so we don't have to allocate more memory.
+We know that the `written` pointer is exactly the right size for reading out the data that is currently in the pipe,
+since it in fact points to the original copy of the data that is currently in the pipe.
+This is true even if there was a partial write, or indeed even if no data was written at all.
+This is only marginally useful for this function,
+but it demonstrates the kind of reasoning that can be done with this interface.
+
+Returned to use from `read` is again a tuple of two Pointers.
+The first element of the tuple is a Pointer to data that was read from the pipe;
+the second element of the tuple is a Pointer to the unused portion of the buffer we passed in.
+Again, the original pointer is no longer usable,
+since it has been split into these two returned Pointers.
+If we tried to use the original pointer,
+we'd get a Python-level exception about an invalid pointer before any syscall is made.
+
+We then check whether the read data is equal in length to the original data we tried to write in.
+If it isn't, then either a partial write or a partial read must have happened;
+we could have retried to write the full amount of data,
+but we choose not to in this example.
+
+Then, finally, we read the pointer returned from the `read` syscall;
+this reads the data from memory into a Python object depending on the type of the pointer.
+In this case, the pointer is a pointer to a bytestring, so we'll get back a bytestring,
+which we then print.
+* read, write, and other similar syscalls return tuples of pointers
+This general pattern of passing one Pointer and returning a pair of Pointers applies to many similar syscalls in rsyscall.
+
+The traditional POSIX interface to Linux returns a number of bytes from `write` and many other syscalls.
+Then the user is responsible for determining what that implies about the state of the buffer passed in.
+Depending on the syscall,
+this might tell us what part of the buffer has been written out and what part was not written,
+or this might tell us what part of the buffer contains valid data and what part contains garbage,
+or any other number of things.
+The user is responsible for only operating on the part of the buffer that is in the desired state.
+
+Rather than delegate this responsibility to the user,
+rsyscall splits the pointer in two;
+one pointer returned was completely written out, or completely contains valid data,
+and the other pointer returned was not at all written out, or contains no useful data,
+or whatever the semantics of that specific syscall are.
+
+This reduces the possibility of error in interpretation,
+while still allowing for arbitrary manipulations of the buffer,
+and makes a number of use cases simpler.
+
+For example, to write an entire buffer out, a simple loop as follows will suffice:
+#+BEGIN_SRC python
+remaining = to_write
+while remaining.size() > 0:
+  _, remaining = await fd.write(remaining)
+#+END_SRC
+
+The resulting pointers are independently garbage-collected,
+so you may save just one of the pointers and continue to use it,
+and the other pointer will be freed and its space reused.
+
+After a split,
+the pointers may be merged back together so that the whole buffer may be reused.
+For example (somewhat gratuitously concise):
+#+BEGIN_SRC python
+read, rest = await fd.read(await ram.malloc(Bytes, 4096))
+while read.size() > 0:
+  print(await read.read())
+  read, rest = await fd.read(read.merge(rest))
+#+END_SRC
+
+In general, any two pointers that are adjacent in memory may be merged into a single allocation.
+
+This style applies to any syscall that takes a pointer and returns information about what part of that pointer was used.
+Consult the documentation for more details about specific syscalls.
+* TODO header organization
+  Many constants and structures are involved in the Linux API.
+  The layout of these constants in rsyscall follows the headers exported by Linux.
+
+  For example,
+  #+BEGIN_SRC python
+  from rsyscall.sys.socket import AF, SOCK
+
+  sock = await thr.task.socket(AF.INET, SOCK.INET, 0)
+  #+END_SRC
+
+  This allows consulting normal manpages
+  to determine how to use various constants and structures,
+  and what "headers" should be imported to use those constants and structures.
+
+  In general, if something is defined as `NAMESPACE_PREFIX_SOME_FLAG` in the Linux header `foo/bar.h`,
+  then it can be imported as `NAMESPACE_PREFIX` from `rsyscall.foo.bar` and used as `NAMESPACE_PREFIX.SOME_FLAG`.
+
+  Sometimes a manpage will mention several headers;
+  in general, the last header mentioned is the header that actually defines the associated constants and structs,
+  both in the Linux headers and in rsyscall.
+
+  Structs, to comply with normal Python practices, are camel-cased.
+  So, for example, `struct sockaddr_in` from `"netinet/in.h"` can be imported and used as follows:
+
+  #+BEGIN_SRC python
+  from rsyscall.netinet.in_ import SockaddrIn
+
+  await sock.bind(await thr.ram.ptr(SockaddrIn(53, "127.0.0.1")))
+  #+END_SRC
+
+  Some headers or constants (such as "netinet/in.h") collide with Python keywords ("in");
+  they are suffixed with a single underscore to disambiguate them.
+
+  In some cases, to improve type safety and usability,
+  we will intentionally deviate from how the Linux headers define things.
+  `struct msghdr` is one example; it is used differently by `sendmsg` and `recvmsg`,
+  and in the case of `recvmsg` also serves as an out-parameter.
+  Therefore, it is represented with three classes, all in `rsyscall.sys.socket`,
+  `SendMsghdr`, `RecvMsghdr`, and `RecvMsghdrOut`.
+
+  Consule the rsyscall documentation for specific headers for more details about how to use those headers.
+* TODO classes and helpers on Thread
+  The "Thread" object contains several classes,
+  along with some helper methods.
+
+  Some of these classes are only relevant for multi-threaded operation; we won't cover those here.
+** task: Task
+   The Task is the low-level representation of a thread,
+   and the central place to make most syscalls.
+** ram: RAM
+   The RAM abstracts over memory and allows us to create pointers which can be passed to syscalls.
+** epoller: Epoller
+   The Epoller is an interface to epoll.
+   In general, it won't be used directly;
+   instead, you use it by passing a file descriptor to `thread.make_afd`,
+   which registers that FD on the epoller and returns back an AsyncFileDescriptor
+   which you can use to perform reads, writes, and other syscalls without blocking the thread.
+** Filesystem helpers
+   There are a few repetitive tasks that crop up a lot in scripting.
+   Making directories at some path, reading in an entire file, and writing out a file at some path with specific contents.
+
+   `thread.mkdir`, `thread.read_to_eof` and `thread.write` are here to help!
+** TODO mktemp
+   `thread.mktemp` returns a TemporaryDirectory.
+
+   This is *not* garbage-collected away.
+** stdin/stdout/stderr: FileDescriptor
+   Good old stdin/stdout/stderr!
+   These three file descriptors are available as `thread.stdin`, `thread.stdout`, `thread.stderr`.
+** environ: Environment
+   The Environment contains, of course, environment variables.
+   You can index into it with strings, and get back strings; that's pretty much it.
+   #+BEGIN_SRC python
+   print(thread.environ['USER'])
+   #+END_SRC
+* TODO handle/syscall organization
+  In general, if a syscall takes some thing as its first argument in the POSIX interface to Linux,
+  then in rsyscall it is a method on an object representing and owning that thing.
+
+  - syscalls which operate on file descriptors are methods on file descriptor objects
+  - syscalls which operate on existing memory mappings are methods on memory mapping objects
+  - syscalls which operate on processes are methods on process objects
+
+  These objects are returned from other syscalls that create them, and are garbage collected.
+  For example, when the last reference to a file descriptor goes out of scope, the file descriptor is closed.
+  The same applies for memory mappings, child processes, and other objects.
+  It is also possible to manually close a file descriptor
+  (or unmap a memory mapping, or kill a child process)
+  if you want it to be deterministically closed.
+
+  Syscalls which don't fit into another category are methods on the task object.
+  This notably includes all syscalls operating on paths;
+  we don't yet represent paths as a concrete object.
+  (primarily because the ownership model of a path is not clear)
+
+  Some syscalls can operate in multiple modes;
+  for example, `kill` can operate on a process, but it can also operate on process groups.
+  In this case, the syscall will be split across multiple objects.
+* missing interfaces
+We seek to provide user-accessible low-level interfaces to the entirety of the Linux kernel,
+including all non-obsolete syscalls,
+and including things that are typically considered low-level implementation details (for example, futexes).
+If you want to use some feature of the Linux kernel that is missing an interface in rsyscall,
+we're happy to add support for it, just file a feature request.

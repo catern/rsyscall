@@ -27,7 +27,7 @@ from rsyscall.loader import NativeLoader
 from rsyscall.monitor import ChildProcessMonitor
 
 from rsyscall.sys.epoll import EpollFlag
-from rsyscall.epoller import EpollCenter
+from rsyscall.epoller import Epoller
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ async def _make_local_thread() -> Thread:
     async def wait_readable():
         logger.debug("wait_readable(%s)", epfd.near.number)
         await trio.hazmat.wait_readable(epfd.near.number)
-    epoller = EpollCenter.make_subsidiary(ram, epfd, wait_readable)
+    epoller = Epoller.make_subsidiary(ram, epfd, wait_readable)
     child_monitor = await ChildProcessMonitor.make(ram, task, epoller)
     access_connection = None
     connection = await FDPassConnection.make(task, ram, epoller)

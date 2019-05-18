@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from rsyscall.batch import BatchSemantics
 from rsyscall.command import Command
 from rsyscall.environ import Environment
-from rsyscall.epoller import EpollCenter, AsyncReadBuffer
+from rsyscall.epoller import Epoller, AsyncReadBuffer
 from rsyscall.handle import WrittenPointer, Task
 from rsyscall.io import Thread
 from rsyscall.loader import NativeLoader
@@ -113,7 +113,7 @@ async def rsyscall_stdin_bootstrap(
                                      allocator),
                allocator)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
-    epoller = await EpollCenter.make_root(ram, base_task)
+    epoller = await Epoller.make_root(ram, base_task)
     child_monitor = await ChildProcessMonitor.make(ram, base_task, epoller)
     connection = make_connection(base_task, ram,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))

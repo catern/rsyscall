@@ -1,0 +1,43 @@
+What is rsyscall?
+Unfortunately, no-one can be told what rsyscall is;
+you have to see it for yourself.
+
+More prosaically:
+There are many different perspectives in software engineering,
+and rsyscall fits into different places depending on your favored perspective.
+There are at least 10 different explanations,
+depending on whether you're a Python fan, a Unix fan, a Linux fan, a DJB fan, a containers fan,
+a programming language theory fan, an operating systems research fan,
+a distributed systems fan, a capability security fan,
+an RPC fan, an RPC hater,
+an abstraction fan, an abstraction hater,
+or still other perspectives.
+
+We're going to write a choose-your-own-adventure to explain rsyscall interactively
+based on your pre-existing knowledge and biases,
+but we haven't gotten around to it yet,
+so in the meantime, you can just read these tutorials.
+
+We'll explain rsyscall in two separate tutorials:
+The single-threaded tutorial and the multi-threaded tutorial.
+
+Note that there's some background knowledge you need for these tutorials.
+We use Python 3 async/await and Python 3 type annotations.
+If you haven't seen those before,
+there's a [[file:docs/prereqs.org][background tutorial]] you can read.
+
+The [[file:docs/single_threaded.org][single-threaded tutorial]] explains how to do things
+with only a single thread, without creating more.
+The single-threaded interface is fundamentally similar to normal Python,
+though with a novel, significantly expanded, and more low-level interface to Linux.
+
+The [[file:docs/multi_threaded.org][multi-threaded tutorial]] explains the interface to creating and using multiple threads,
+including explaining exactly what "thread" means in rsyscall,
+as well as some operations which only make sense with multiple threads.
+
+Note that this division is purely for convenience;
+the "multi-threaded" portions of rsyscall
+are simply useful library functions built on top of "single-threaded" operations.
+Everything that the "multi-threaded" part of rsyscall uses,
+is available for you to use in the "single-threaded" part of rsyscall;
+so if you want to implement new kinds of threads, you are fully able to do so.

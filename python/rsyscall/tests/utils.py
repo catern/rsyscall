@@ -1,6 +1,6 @@
 import typing as t
 import trio
-from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, EpollThread
+from rsyscall.epoller import Epoller, AsyncFileDescriptor, EpollThread
 from rsyscall.memory.ram import RAMThread
 from rsyscall.unistd import Pipe
 
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.DEBUG)
 
 import unittest
-async def do_async_things(self: unittest.TestCase, epoller: EpollCenter, thr: RAMThread) -> None:
+async def do_async_things(self: unittest.TestCase, epoller: Epoller, thr: RAMThread) -> None:
     pipe = await (await thr.task.pipe(await thr.ram.malloc_struct(Pipe))).read()
     async_pipe_rfd = await AsyncFileDescriptor.make_handle(epoller, thr.ram, pipe.read)
     async_pipe_wfd = await AsyncFileDescriptor.make_handle(epoller, thr.ram, pipe.write)

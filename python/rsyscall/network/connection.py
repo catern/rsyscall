@@ -2,7 +2,7 @@ from __future__ import annotations
 import abc
 import typing as t
 import trio
-from rsyscall.epoller import AsyncFileDescriptor, EpollCenter, EpollThread
+from rsyscall.epoller import AsyncFileDescriptor, Epoller, EpollThread
 from rsyscall.handle import FileDescriptor, WrittenPointer, Task
 from rsyscall.memory.ram import RAM
 from rsyscall.struct import Bytes
@@ -25,11 +25,11 @@ class Connection:
 
 class FDPassConnection(Connection):
     @staticmethod
-    async def make(task: Task, ram: RAM, epoller: EpollCenter) -> FDPassConnection:
+    async def make(task: Task, ram: RAM, epoller: Epoller) -> FDPassConnection:
         pair = await (await task.socketpair(AF.UNIX, SOCK.STREAM, 0, await ram.malloc_struct(FDPair))).read()
         return FDPassConnection(task, ram, epoller, pair.first, task, ram, pair.second)
 
-    def __init__(self, access_task: Task, access_ram: RAM, access_epoller: EpollCenter, access_fd: FileDescriptor,
+    def __init__(self, access_task: Task, access_ram: RAM, access_epoller: Epoller, access_fd: FileDescriptor,
                  task: Task, ram: RAM, fd: FileDescriptor) -> None:
         self.access_task = access_task
         self.access_ram = access_ram
@@ -97,7 +97,7 @@ class ListeningConnection(Connection):
     def __init__(self,
                  access_task: Task,
                  access_ram: RAM,
-                 access_epoller: EpollCenter,
+                 access_epoller: Epoller,
                  access_address: WrittenPointer[Address],
                  task: Task,
                  ram: RAM,
@@ -149,7 +149,7 @@ class ConnectionThread(EpollThread):
     def __init__(self,
                  task: Task,
                  ram: RAM,
-                 epoller: EpollCenter,
+                 epoller: Epoller,
                  connection: Connection,
     ) -> None:
         super().__init__(task, ram, epoller)

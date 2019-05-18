@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall.batch import BatchSemantics
 from rsyscall.concurrency import OneAtATime
-from rsyscall.epoller import EpollCenter, AsyncFileDescriptor
+from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Pointer, ChildProcess
 from rsyscall.memory.ram import RAM
 from rsyscall.sched import CLONE
@@ -21,7 +21,7 @@ class SignalQueue:
         self.sigfd = sigfd
 
     @classmethod
-    async def make(cls, ram: RAM, task: Task, epoller: EpollCenter, mask: Sigset,
+    async def make(cls, ram: RAM, task: Task, epoller: Epoller, mask: Sigset,
                    *, signal_block: SignalBlock=None,
     ) -> SignalQueue:
         if signal_block is None:
@@ -158,7 +158,7 @@ class ChildProcessMonitor:
     is_reaper: bool
 
     @staticmethod
-    async def make(ram: RAM, task: Task, epoller: EpollCenter,
+    async def make(ram: RAM, task: Task, epoller: Epoller,
                    *, signal_block: SignalBlock=None,
                    is_reaper: bool=False,
     ) -> ChildProcessMonitor:

@@ -20,7 +20,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "EpollCenter",
+    "Epoller",
     "AsyncFileDescriptor",
 ]
 
@@ -71,20 +71,20 @@ class EpollWaiter:
                     queue = self.number_to_queue[event.data]
                     queue.send_nowait(event.events)
 
-class EpollCenter:
+class Epoller:
     "Terribly named class that allows registering fds on epoll, and waiting on them"
     @staticmethod
-    def make_subsidiary(ram: RAM, epfd: FileDescriptor, wait_readable: t.Callable[[], t.Awaitable[None]]) -> EpollCenter:
-        center = EpollCenter(EpollWaiter(ram, epfd, wait_readable, 0), ram, epfd)
+    def make_subsidiary(ram: RAM, epfd: FileDescriptor, wait_readable: t.Callable[[], t.Awaitable[None]]) -> Epoller:
+        center = Epoller(EpollWaiter(ram, epfd, wait_readable, 0), ram, epfd)
         return center
 
     @staticmethod
-    async def make_root(ram: RAM, task: Task) -> EpollCenter:
+    async def make_root(ram: RAM, task: Task) -> Epoller:
         activity_fd = task.sysif.get_activity_fd()
         if activity_fd is None:
             raise Exception("can't make a root epoll center if we don't have an activity_fd to monitor")
         epfd = await task.epoll_create(EpollFlag.CLOEXEC)
-        center = EpollCenter(EpollWaiter(ram, epfd, None, -1), ram, epfd)
+        center = Epoller(EpollWaiter(ram, epfd, None, -1), ram, epfd)
         # TODO where should we store this, so that we don't deregister the activity_fd?
         epolled = await center.register(
             # not edge triggered; we don't want to block if there's anything that can be read.
@@ -96,8 +96,8 @@ class EpollCenter:
         self.ram = ram
         self.epfd = epfd
 
-    def inherit(self, ram: RAM) -> EpollCenter:
-        return EpollCenter(self.epoller, ram, ram.task.make_fd_handle(self.epfd))
+    def inherit(self, ram: RAM) -> Epoller:
+        return Epoller(self.epoller, ram, ram.task.make_fd_handle(self.epfd))
 
     async def register(self, fd: FileDescriptor, events: EPOLL=None) -> EpolledFileDescriptor:
         if events is None:
@@ -118,7 +118,7 @@ class EpollCenter:
 
 class EpolledFileDescriptor:
     def __init__(self,
-                 epoll_center: EpollCenter,
+                 epoll_center: Epoller,
                  fd: FileDescriptor,
                  queue: trio.abc.ReceiveChannel,
                  number: int) -> None:
@@ -149,7 +149,7 @@ class AsyncFileDescriptor:
     epolled: EpolledFileDescriptor
 
     @staticmethod
-    async def make_handle(epoller: EpollCenter, ram: RAM, fd: FileDescriptor, is_nonblock=False
+    async def make_handle(epoller: Epoller, ram: RAM, fd: FileDescriptor, is_nonblock=False
     ) -> AsyncFileDescriptor:
         if not is_nonblock:
             await fd.fcntl(F.SETFL, O.NONBLOCK)
@@ -423,7 +423,7 @@ class EpollThread(RAMThread):
     def __init__(self,
                  task: Task,
                  ram: RAM,
-                 epoller: EpollCenter,
+                 epoller: Epoller,
     ) -> None:
         super().__init__(task, ram)
         self.epoller = epoller

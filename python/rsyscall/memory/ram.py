@@ -1,6 +1,6 @@
 from rsyscall.handle import Task, Pointer, WrittenPointer, MemoryTransport
 from rsyscall.memory.allocator import AllocatorClient, AllocatorInterface
-from rsyscall.struct import T_fixed_size, T_has_serializer, T_fixed_serializer, Serializer
+from rsyscall.struct import FixedSize, T_fixed_size, T_has_serializer, T_fixed_serializer, Serializer, Bytes
 
 import typing as t
 import rsyscall.batch as batch
@@ -21,6 +21,18 @@ class RAM:
         self.transport = transport
         self.allocator = allocator
 
+    @t.overload
+    async def malloc(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]: ...
+    @t.overload
+    async def malloc(self, cls: t.Type[T_fixed_serializer], size: int, alignment: int=1) -> Pointer[T_fixed_serializer]: ...
+
+    async def malloc(self, cls: t.Type[T_fixed_serializer], size: int=None, alignment: int=1
+    ) -> Pointer[T_fixed_serializer]:
+        if size is None:
+            return await self.malloc_struct(cls) # type: ignore
+        else:
+            return await self.malloc_type(cls, size, alignment)
+
     async def malloc_struct(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]:
         return await self.malloc_type(cls, cls.sizeof())
 
@@ -37,8 +49,16 @@ class RAM:
             allocation.free()
             raise
 
-    async def ptr(self, data: T_has_serializer, alignment: int=1) -> WrittenPointer[T_has_serializer]:
-        return await self.to_pointer(data, alignment)
+    @t.overload
+    async def ptr(self, data: t.Union[bytes], alignment: int=1) -> WrittenPointer[Bytes]: ...
+    @t.overload
+    async def ptr(self, data: T_has_serializer, alignment: int=1) -> WrittenPointer[T_has_serializer]: ...
+    async def ptr(self, data: t.Union[bytes, T_has_serializer], alignment: int=1
+    ) -> t.Union[WrittenPointer[Bytes], WrittenPointer[T_has_serializer]]:
+        if isinstance(data, bytes):
+            return await self.to_pointer(Bytes(data), alignment)
+        else:
+            return await self.to_pointer(data, alignment)
 
     async def to_pointer(self, data: T_has_serializer, alignment: int=1) -> WrittenPointer[T_has_serializer]:
         serializer = data.get_self_serializer(self.task)

@@ -3686,10 +3686,6 @@ it's kind of going back to python's roots and being a distributed scripting lang
    to undo those hardnesses that are created by abstractions.
 
    maybe abstraction is a bad word for this.
-** name
-   rsc is russ cox's username :(
-
-   rsys is better
 ** it's a distributed thread library
 ** it's a library for building distributed systems
 ** it's a way around the reduced expressiveness of existing IPC/RPC APIs
@@ -17324,11 +17320,13 @@ And we can have an exec which is not memory-abstracting, I guess.
     The thing with the RAM and the task, is what people will usually want and use.
 
     ok, I like these names!
-** TODO figure out good name for application scripts
+** DONE figure out good name for application scripts
    what should I call that directory?
 
    rsysapps, maybe?
-** TODO rename StandardTask/RsyscallThread to Thread/ChildThread
+
+   that is not a good name but it will do for now
+** DONE rename StandardTask/RsyscallThread to Thread/ChildThread
    Possibly with a further MemThread below Thread,
    containing just handle.Task, RAM, and EpollCenter.
 
@@ -18480,25 +18478,6 @@ And we can have an exec which is not memory-abstracting, I guess.
    two tutorials:
    single-threaded and multi-threaded
 
-   We'll explain rsyscall in two separate tutorials:
-   The single-threaded tutorial and the multi-threaded tutorial.
-
-   The single-threaded tutorial explains how to do things
-   with only a single thread, without creating more.
-   The single-threaded interface is fundamentally similar to normal Python,
-   though with a novel, significantly expanded, and more low-level interface to Linux.
-
-   The multi-threaded tutorial explains the interface to creating and using multiple threads,
-   including explaining exactly what "thread" means in rsyscall,
-   as well as some operations which only make sense with multiple threads.
-
-   Note that this division is purely for convenience;
-   the "multi-threaded" portions of rsyscall
-   are simply useful library functions built on top of "single-threaded" operations.
-   Everything that the "multi-threaded" part of rsyscall uses,
-   is available for you to use in the "single-threaded" part of rsyscall;
-   so if you want to implement new kinds of threads, you are fully able to do so.
-
    take thr: Thread as arg in both
 
    prerequisites:
@@ -18531,6 +18510,26 @@ And we can have an exec which is not memory-abstracting, I guess.
    from rsyscall.local import thread as thr
 ** multi-threaded
    tasks
+** ooh, make a choose your own explanation
+   will need to split up categories of programmers, I guess.
+*** are you enthusiastic about capability security?
+**** do you know about capsicum and the general usage of FDs for capsec?
+     if no, then explain capsicum, notion of using file descriptors for capsec
+**** then
+     rsyscall is a framework for deploying distributed systems made up of capability-secure components,
+     which take already-established communication channels as file descriptors.
+
+     with existing tools, it's tricky to do something even as simple as
+     "start process A here, process B there,
+     and pass down one end of an already-connected bidirectional socket to both of them."
+
+     rsyscall makes this, and much more complicated scenarios, possible without tears.
+
+     In some ways it's complementery to CloudABI (an awesome project!);
+     CloudABI makes it possible to write capability-secure components,
+     and rsyscall makes it possible to run and orchestrate capability-secure components.
+     (Of course, the CloudABI people have their own ideas for how to do this orchestration, I'm sure!)
+*** do you like ucspi stuff
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

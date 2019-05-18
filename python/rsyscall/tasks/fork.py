@@ -224,13 +224,13 @@ async def spawn_rsyscall_thread(
         Trampoline(loader.server_func, [remote_sock, remote_sock]),
         newuser=newuser, newpid=newpid, fs=fs, sighand=sighand)
 
-from rsyscall.epoller import EpollCenter
+from rsyscall.epoller import Epoller
 from rsyscall.network.connection import Connection, ConnectionThread
 class ForkThread(ConnectionThread):
     def __init__(self,
                  task: Task,
                  ram: RAM,
-                 epoller: EpollCenter,
+                 epoller: Epoller,
                  connection: Connection,
                  loader: NativeLoader,
                  child_monitor: ChildProcessMonitor,

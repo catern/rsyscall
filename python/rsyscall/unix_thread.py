@@ -6,7 +6,7 @@ from rsyscall.network.connection import Connection
 from rsyscall.loader import NativeLoader
 from rsyscall.environ import Environment
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
-from rsyscall.epoller import EpollCenter
+from rsyscall.epoller import Epoller
 from rsyscall.memory.ram import RAM
 from rsyscall.batch import BatchSemantics
 from rsyscall.command import Command
@@ -21,7 +21,7 @@ class UnixThread(ForkThread):
                  ram: RAM,
                  connection: Connection,
                  loader: NativeLoader,
-                 epoller: EpollCenter,
+                 epoller: Epoller,
                  child_monitor: ChildProcessMonitor,
                  environ: Environment,
                  stdin: FileDescriptor,
@@ -58,7 +58,7 @@ class UnixThread(ForkThread):
             # if the new process is pid 1, then CLONE_PARENT isn't allowed so we can't use inherit_to_child.
             # if we are a reaper, than we don't want our child CLONE_PARENTing to us, so we can't use inherit_to_child.
             # in both cases we just fall back to making a new ChildProcessMonitor for the child.
-            epoller = await EpollCenter.make_root(ram, task)
+            epoller = await Epoller.make_root(ram, task)
             # this signal is already blocked, we inherited the block, um... I guess...
             # TODO handle this more formally
             signal_block = SignalBlock(task, await ram.to_pointer(Sigset({Signals.SIGCHLD})))

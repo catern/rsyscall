@@ -22,7 +22,7 @@ import rsyscall.batch as batch
 from rsyscall.memory.ram import RAM
 
 from rsyscall.monitor import ChildProcessMonitor
-from rsyscall.epoller import EpollCenter, AsyncFileDescriptor
+from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.sys.epoll import EPOLL
 
 from rsyscall.struct import Bytes, Int32, StructList
@@ -73,7 +73,7 @@ class PersistentServer:
     path: Path
     task: Task
     ram: RAM
-    epoller: EpollCenter
+    epoller: Epoller
     listening_sock: FileDescriptor
     # saved to keep the reference to the stack pointer etc alive
     thread_process: t.Optional[ThreadProcess] = None
@@ -164,7 +164,7 @@ async def fork_persistent(
     ram = RAM(task, parent.ram.transport, parent.ram.allocator.inherit(task))
 
     ## create the new persistent task
-    epoller = await EpollCenter.make_root(ram, task)
+    epoller = await Epoller.make_root(ram, task)
     signal_block = SignalBlock(task, await ram.to_pointer(Sigset({Signals.SIGCHLD})))
     # TODO use an inherited signalfd instead
     child_monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
