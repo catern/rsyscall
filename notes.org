@@ -18449,6 +18449,11 @@ And we can have an exec which is not memory-abstracting, I guess.
     inside the syscallinterface.
 
     if we know that, then yes, we don't need thread.
+* DOCUMENTATION!
+  Time to write it!
+** wait actually no
+   because I need to finish refactoring to Thread instead of stdtask first,
+   and also need to fix up the rsysapps.
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far
