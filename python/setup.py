@@ -16,7 +16,7 @@ setup(name='rsyscall',
       author_email='sbaugh@catern.com',
       license='MIT',
       cffi_modules=["ffibuilder.py:ffibuilder"],
-      packages=['rsyscall', 'nixdeps', 'rsyscall.tests'],
+      packages=['rsyscall', 'nixdeps', 'rsyscall.tests', 'rsysapps'],
       nix_deps={'rsyscall._nixdeps': ['miredo', 'nix', 'rsyscall', 'openssh', 'bash', 'coreutils', 'hello']},
       entry_points={
           'distutils.setup_keywords': [
