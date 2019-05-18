@@ -112,11 +112,11 @@ async def {wrapper_name}():
     if isinstance(try_block.body[-1], (ast.Expr, ast.Await)):
         # if the last statement in the AST is an expression, then have its value be
         # propagated up by throwing it from the __result_exception__ exception.
-        wrapper_raise = ast.parse("raise __result_exception__(True, None)", filename="<internal_wrapper>", mode="single").body[0]
+        wrapper_raise = ast.parse("raise __result_exception__(True, None)", filename="<internal_wrapper>", mode="single").body[0] # type: ignore
         wrapper_raise.exc.args[1] = try_block.body[-1].value # type: ignore
         try_block.body[-1] = wrapper_raise
     else:
-        wrapper_raise = ast.parse("raise __result_exception__(False, None)", filename="<internal_wrapper>", mode="single").body[0]
+        wrapper_raise = ast.parse("raise __result_exception__(False, None)", filename="<internal_wrapper>", mode="single").body[0] # type: ignore
         try_block.body.append(wrapper_raise)
     global_vars.update({
         '__builtins__': builtins,
@@ -210,7 +210,7 @@ class Output:
 
 def help_to_str(request) -> str:
     out = Output()
-    pydoc.Helper(None, out).help(request)
+    pydoc.Helper(None, out).help(request) # type: ignore
     return "".join(out.results)
 
 # TODO I should also be able to pass in a predicate function which I call on the return value.
