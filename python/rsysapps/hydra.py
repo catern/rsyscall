@@ -94,7 +94,7 @@ class HTTPClient:
 
     @staticmethod
     async def connect_unix(thread: Thread, addr: WrittenPointer[SockaddrUn]) -> HTTPClient:
-        sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM))
+        sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC|SOCK.NONBLOCK), nonblock=True)
         await sock.connect(addr)
         return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
             ("Host", "localhost"),
@@ -104,7 +104,7 @@ class HTTPClient:
 
     @staticmethod
     async def connect_inet(thread: Thread, addr: SockaddrIn) -> HTTPClient:
-        sock = await thread.make_afd(await thread.task.socket(AF.INET, SOCK.STREAM))
+        sock = await thread.make_afd(await thread.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC|SOCK.NONBLOCK), nonblock=True)
         await sock.connect(await thread.ram.to_pointer(addr))
         return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
             ("Host", "localhost"),
@@ -273,7 +273,7 @@ async def start_fresh_nginx(
 ) -> t.Tuple[SockaddrIn, NginxChild]:
     nginx = await parent.environ.which("nginx")
     thread = await parent.fork(newuser=True, newpid=True, fs=False, sighand=False)
-    sock = await thread.task.socket(AF.INET, SOCK.STREAM)
+    sock = await thread.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
     zero_addr = await thread.ram.ptr(SockaddrIn(0, 0x7F_00_00_01))
     await sock.bind(zero_addr)
     addr = await (await (await sock.getsockname(
@@ -319,7 +319,7 @@ http {
   }
 }
 """ % os.fsencode(sockpath)
-    sock = await thread.task.socket(AF.INET, SOCK.STREAM)
+    sock = await thread.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
     await sock.bind(await thread.ram.ptr(SockaddrIn(3000, 0x7F_00_00_01)))
     await sock.listen(10)
     config_fd = await thread.task.open(await thread.ram.ptr(path/"nginx.conf"),
@@ -421,13 +421,13 @@ async def start_hydra(nursery, thread: Thread, path: Path, dbi: str, store: Loca
     }
     # start server
     server_thread = await thread.fork()
+    await server_thread.unshare_files()
     sock = await server_thread.task.socket(AF.UNIX, SOCK.STREAM)
     addr = await server_thread.ram.ptr(
         await SockaddrUn.from_path(server_thread, path/"hydra_server.sock"))
     await sock.bind(addr)
     await sock.listen(10)
     ssport = os.fsdecode(addr.value.path)+"="+str(int(sock.near))
-    await server_thread.unshare_files_and_replace({}, [sock])
     server_child = await server_thread.exec(hydra_server.env(
         **hydra_env, SERVER_STARTER_PORT=ssport))
     nursery.start_soon(server_child.check)

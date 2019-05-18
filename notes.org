@@ -17518,6 +17518,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    since we don't run constructors
 
    maybe to_pointer should be "new"???
+** TODO make an overload for to_pointer which takes regular Python "bytes" directly
 ** cloexec
    we do actually need to cloexec when in a shared fd space, I guess,
    otherwise our fds will get inherited if some other task calls exec without first calling unshare_files.
@@ -18520,6 +18521,11 @@ And we can have an exec which is not memory-abstracting, I guess.
    there are plenty of interfaces that are missing,
    we are happy to add those,
    just file a feature request.
+
+   explain ram
+
+   explain that headers are laid out like linux;
+   use example of finding "SEEK".
 
    maybe:
    from rsyscall.local import thread as thr

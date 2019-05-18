@@ -65,7 +65,12 @@ class Thread(UnixThread):
     async def mkdtemp(self, prefix: str="mkdtemp") -> TemporaryDirectory:
         return await mkdtemp(self, prefix)
 
-    async def spit(self, path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
+    @t.overload
+    async def spit(self, path: FileDescriptor, text: t.Union[str, bytes]) -> None: ...
+    @t.overload
+    async def spit(self, path: Path, text: t.Union[str, bytes], mode=0o644) -> Path: ...
+
+    async def spit(self, path: t.Union[Path, FileDescriptor], text: t.Union[str, bytes], mode=0o644) -> t.Optional[Path]:
         """Open a file, creating and truncating it, and write the passed text to it
 
         Probably shouldn't use this on FIFOs or anything.
@@ -73,12 +78,17 @@ class Thread(UnixThread):
         Returns the passed-in Path so this serves as a nice pseudo-constructor.
 
         """
-        fd = await self.task.base.open(await self.ram.to_pointer(path), O.WRONLY|O.TRUNC|O.CREAT, mode=mode)
+        if isinstance(path, Path):
+            out: t.Optional[Path] = path
+            fd = await self.task.base.open(await self.ram.to_pointer(path), O.WRONLY|O.TRUNC|O.CREAT, mode=mode)
+        else:
+            out = None
+            fd = path
         to_write: Pointer = await self.ram.to_pointer(Bytes(os.fsencode(text)))
         while to_write.bytesize() > 0:
             _, to_write = await fd.write(to_write)
         await fd.close()
-        return path
+        return out
 
     async def mkdir(self, path: Path, mode=0o755) -> Path:
         await self.task.mkdir(await self.ram.ptr(path))
