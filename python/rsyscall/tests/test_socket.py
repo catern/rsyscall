@@ -1,6 +1,7 @@
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
 
+from rsyscall.handle import WrittenPointer
 from rsyscall.sys.socket import *
 from rsyscall.sys.un import *
 from rsyscall.sys.uio import IovecList

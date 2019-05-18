@@ -15,6 +15,11 @@ def chunks(l, n):
     for i in range(0, len(l), n):
         yield l[i:i+n]
 
+class ExecutableNotFound(Exception):
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.name = name
+
 class ExecutablePathCache:
     def __init__(self, task: Task, ram: RAM, paths: t.List[str]) -> None:
         self.task = task
@@ -63,7 +68,7 @@ class ExecutablePathCache:
             if result:
                 break
         else:
-            raise Exception("executable not found", name)
+            raise ExecutableNotFound(name)
         return Command(path/name, [name], {})
 
 class Environment:

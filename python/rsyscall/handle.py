@@ -708,6 +708,10 @@ class FileDescriptor:
             fd = await rsyscall.near.openat(self.task.sysif, self.near, ptr.near, flags, mode)
             return self.task.make_fd_handle(fd)
 
+    async def fchmod(self, mode: int) -> None:
+        self.validate()
+        await rsyscall.near.fchmod(self.task.sysif, self.near, mode)
+
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
 fd_table_to_task: t.Dict[rsyscall.far.FDTable, t.List[Task]] = {}
 

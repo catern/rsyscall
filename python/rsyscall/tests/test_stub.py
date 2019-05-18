@@ -7,7 +7,7 @@ from rsyscall.tasks.stub import *
 import rsyscall.nix as nix
 import rsyscall.tasks.local as local
 
-from rsyscall.tests.test_io import do_async_things
+from rsyscall.tests.utils import do_async_things
 from rsyscall.io import Command
 from rsyscall.struct import Bytes
 

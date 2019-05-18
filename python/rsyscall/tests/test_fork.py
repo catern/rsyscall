@@ -1,6 +1,6 @@
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
-from rsyscall.tests.test_io import do_async_things
+from rsyscall.tests.utils import do_async_things
 from rsyscall.epoller import EpollCenter
 from rsyscall.monitor import SignalQueue
 from rsyscall.signal import Signals, Sigset

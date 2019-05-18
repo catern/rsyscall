@@ -3473,6 +3473,8 @@ hmm, actually it just occurred to me that this question is essentially the same 
    that allows me to conveniently do additional typechecking of my accept.
 
    similar to nsenter.
+** at-functions should operate on the fd when a null pointer is passed for the pathname
+   That way I don't have to allocate memory for them :(
 * possible kernel bugs
 ** MMAP_GROWSDOWN doesn't seem to work
    It doesn't grow.

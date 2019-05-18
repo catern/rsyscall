@@ -9,7 +9,7 @@ import rsyscall.tasks.local as local
 
 from rsyscall.io import do_cloexec_except
 
-from rsyscall.tests.test_io import do_async_things
+from rsyscall.tests.utils import do_async_things
 from rsyscall.fcntl import O
 from rsyscall.unistd import Pipe
 from rsyscall.struct import Bytes

@@ -9,21 +9,31 @@ class TestCat(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local.thread
         self.cat = await self.thr.environ.which("cat")
-
-    async def test_cat(self) -> None:
-        pipe_in = await (await self.thr.task.pipe(await self.thr.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
-        pipe_out = await (await self.thr.task.pipe(await self.thr.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
+        self.pipe_in = await (await self.thr.task.pipe(await self.thr.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
+        self.pipe_out = await (await self.thr.task.pipe(await self.thr.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
         thread = await self.thr.fork()
         await thread.unshare_files_and_replace({
-            thread.stdin: pipe_in.read,
-            thread.stdout: pipe_out.write,
+            thread.stdin: self.pipe_in.read,
+            thread.stdout: self.pipe_out.write,
         })
-        child = await thread.exec(self.cat)
+        self.child = await thread.exec(self.cat)
 
+    async def test_cat_pipe(self) -> None:
         in_data = await self.thr.ram.to_pointer(Bytes(b"hello"))
-        written, _ = await pipe_in.write.write(in_data)
-        valid, _ = await pipe_out.read.read(written)
+        written, _ = await self.pipe_in.write.write(in_data)
+        valid, _ = await self.pipe_out.read.read(written)
         self.assertEqual(in_data.value, await valid.read())
         
-        await pipe_in.write.close()
-        await child.check()
+        await self.pipe_in.write.close()
+        await self.child.check()
+
+    async def test_cat_async(self) -> None:
+        stdin = await self.thr.make_afd(self.pipe_in.write, nonblock=False)
+        stdout = await self.thr.make_afd(self.pipe_out.read, nonblock=False)
+        in_data = await self.thr.ram.to_pointer(Bytes(b"hello"))
+        written, _ = await stdin.write(in_data)
+        valid, _ = await stdout.read(written)
+        self.assertEqual(in_data.value, await valid.read())
+        
+        await self.pipe_in.write.close()
+        await self.child.check()

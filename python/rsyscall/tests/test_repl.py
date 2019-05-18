@@ -3,8 +3,9 @@ from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
 from rsyscall.repl import *
 from rsyscall.wish import serve_repls
-from rsyscall.sys.socket import AF, SOCK
+from rsyscall.sys.socket import AF, SOCK, Address
 from rsyscall.sys.un import SockaddrUn
+from rsyscall.handle import WrittenPointer
 import unittest
 import typing as t
 

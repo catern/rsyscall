@@ -2,12 +2,14 @@ from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.nix import local_store
 import rsyscall.tasks.local as local
 
-from rsyscall.tests.test_io import do_async_things
+from rsyscall.handle import Pointer
+from rsyscall.tests.utils import do_async_things
 from rsyscall.fcntl import O
 from rsyscall.unistd import SEEK
 from rsyscall.struct import Bytes
 from rsyscall.path import EmptyPath, Path
 from rsyscall.linux.dirent import *
+from rsyscall.environ import ExecutablePathCache, ExecutableNotFound
 
 class TestFS(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -84,3 +86,20 @@ class TestFS(TrioTestCase):
         path_ptr = await self.thr.ram.to_pointer(f.as_proc_self_path())
         ptr = await self.thr.ram.malloc_type(Path, 4096)
         await f.readlinkat(path_ptr, ptr)
+
+    async def test_which(self) -> None:
+        names = []
+        for i in range(5):
+            name = await self.thr.ram.to_pointer(self.path/f"dir{i}")
+            names.append(name)
+            await self.thr.task.mkdir(name)
+        cache = ExecutablePathCache(self.thr.task, self.thr.ram, [str(name.value) for name in names])
+
+        with self.assertRaises(ExecutableNotFound):
+            await cache.which("foo")
+        with self.assertRaises(ExecutableNotFound):
+            await cache.which("foo")
+        fd = await self.thr.task.open(await self.thr.ram.to_pointer(names[2].value/"foo"), O.CREAT)
+        await fd.fchmod(0o700)
+        await cache.which("foo")
+        

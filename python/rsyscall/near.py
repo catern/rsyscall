@@ -84,6 +84,7 @@ class SYS(enum.IntEnum):
     clone = lib.SYS_clone
     preadv2 = lib.SYS_preadv2
     pwritev2 = lib.SYS_pwritev2
+    fchmod = lib.SYS_fchmod
 
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallResponse:
@@ -397,6 +398,8 @@ async def openat(sysif: SyscallInterface, dirfd: t.Optional[FileDescriptor],
         dirfd = AT.FDCWD # type: ignore
     return FileDescriptor(await sysif.syscall(SYS.openat, dirfd, path, flags, mode))
 
+async def fchmod(sysif: SyscallInterface, fd: FileDescriptor, mode: int) -> None:
+    await sysif.syscall(SYS.fchmod, fd, mode)
 
 async def mkdirat(sysif: SyscallInterface,
                   dirfd: t.Optional[FileDescriptor], path: Pointer, mode: int) -> None:

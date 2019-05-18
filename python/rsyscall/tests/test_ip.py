@@ -1,6 +1,7 @@
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
 
+from rsyscall.handle import WrittenPointer
 from rsyscall.sys.socket import *
 from rsyscall.netinet.in_ import *
 from rsyscall.struct import Bytes
@@ -15,7 +16,8 @@ class TestSocket(TrioTestCase):
         await sockfd.bind(zero_addr)
         await sockfd.listen(10)
 
-        real_addr = (await (await sockfd.getsockname(await self.thr.ram.to_pointer(Sockbuf(zero_addr)))).read()).buf
+        addr = await (await (await sockfd.getsockname(await self.thr.ram.to_pointer(Sockbuf(zero_addr)))).read()).buf.read()
+        real_addr = await self.thr.ram.to_pointer(addr)
 
         clientfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
         await clientfd.connect(real_addr)
@@ -31,7 +33,8 @@ class TestSocket(TrioTestCase):
         zero_addr: WrittenPointer[Address] = await self.thr.ram.to_pointer(SockaddrIn(0, '127.0.0.1'))
         await sockfd.bind(zero_addr)
 
-        real_addr = (await (await sockfd.getsockname(await self.thr.ram.to_pointer(Sockbuf(zero_addr)))).read()).buf
+        addr = await (await (await sockfd.getsockname(await self.thr.ram.to_pointer(Sockbuf(zero_addr)))).read()).buf.read()
+        real_addr = await self.thr.ram.to_pointer(addr)
 
         clientfd = await self.thr.task.socket(AF.INET, SOCK.DGRAM)
         await clientfd.connect(real_addr)

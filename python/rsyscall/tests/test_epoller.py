@@ -5,11 +5,19 @@ import rsyscall.tasks.local as local
 from rsyscall.epoller import *
 import trio
 
-from rsyscall.tests.test_io import do_async_things
+from rsyscall.tests.utils import do_async_things
 
 class TestExec(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local.thread
+
+    async def test_local(self) -> None:
+        await do_async_things(self, self.thr.epoller, self.thr)
+
+    async def test_multi(self) -> None:
+        async with trio.open_nursery() as nursery:
+            for i in range(5):
+                nursery.start_soon(do_async_things, self, self.thr.epoller, self.thr)
 
     async def test_thread_two(self) -> None:
         thread = await self.thr.fork()

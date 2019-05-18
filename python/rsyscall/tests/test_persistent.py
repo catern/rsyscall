@@ -5,7 +5,7 @@ import rsyscall.tasks.local as local
 from rsyscall.tasks.persistent import *
 from rsyscall.tasks.ssh import make_local_ssh
 from rsyscall.tasks.exceptions import RsyscallHangup
-from rsyscall.tests.test_io import assert_thread_works
+from rsyscall.tests.utils import assert_thread_works
 
 class TestPersistent(TrioTestCase):
     async def asyncSetUp(self) -> None:
