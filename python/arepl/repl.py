@@ -21,13 +21,7 @@ import inspect
 import builtins
 from dataclasses import dataclass
 
-import trio
 import abc
-
-__all__ = [
-    'PureREPL',
-    'ExpressionResult',
-]
 
 T = t.TypeVar('T')
 def _ast_compile(source, filename, symbol):

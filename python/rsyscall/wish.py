@@ -8,7 +8,7 @@ import abc
 import inspect
 import logging
 import os
-import rsyscall.repl
+import arepl
 import sys
 import traceback
 import trio
@@ -172,7 +172,7 @@ async def run_repl(infd: AsyncFileDescriptor,
             # some task is in progress.
             raise Exception("REPL connection hangup")
         await outfd.write_all_bytes((message+"\n").encode())
-        ret = await rsyscall.repl.run_repl(infd.read_some_bytes, outfd.write_all_bytes, global_vars, wanted_type)
+        ret = await arepl.run_repl(infd.read_some_bytes, outfd.write_all_bytes, global_vars, wanted_type)
         repl_nursery.cancel_scope.cancel()
     return ret
 
@@ -201,7 +201,7 @@ async def serve_repls(listenfd: AsyncFileDescriptor,
                           global_vars: t.Dict[str, t.Any]) -> None:
             try:
                 ret = await run_repl(connfd, connfd, global_vars, wanted_type, message)
-            except rsyscall.repl.FromREPL as e:
+            except arepl.FromREPL as e:
                 raise e.exn from e
             except Exception:
                 logger.exception("run_repl's internal logic raised an exception, disconnecting that REPL and continuing")
