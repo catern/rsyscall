@@ -18465,6 +18465,7 @@ And we can have an exec which is not memory-abstracting, I guess.
     if we know that, then yes, we don't need thread.
 ** finish refactoring to thread
 ** fix up rsysapps
+** move out repl to separate package
 * DOCUMENTATION!
   Time to write it!
 ** wait actually no

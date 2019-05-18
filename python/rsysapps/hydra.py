@@ -12,7 +12,7 @@ import rsyscall.io as rsc
 import rsyscall.handle as handle
 import typing as t
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.io import StandardTask, RsyscallThread
+from rsyscall.io import StandardTask
 from rsyscall.io import Thread, ChildThread
 from rsyscall.handle import FileDescriptor, Path, WrittenPointer, Pointer
 from rsyscall.command import Command
@@ -185,15 +185,15 @@ class HTTPClient:
 @dataclass
 class Postgres:
     sockdir: Path
-    stdtask: StandardTask
+    thread: StandardTask
     createuser_cmd: Command
     createdb_cmd: Command
 
     async def createuser(self, name: str) -> None:
-        await self.stdtask.run(self.createuser_cmd.args("--host", self.sockdir, "--no-password", name))
+        await self.thread.run(self.createuser_cmd.args("--host", self.sockdir, "--no-password", name))
 
     async def createdb(self, name: str, owner: str) -> None:
-        await self.stdtask.run(self.createdb_cmd.args("--host", self.sockdir, "--owner", owner, name))
+        await self.thread.run(self.createdb_cmd.args("--host", self.sockdir, "--owner", owner, name))
 
 async def read_completely(ram: RAM, fd: FileDescriptor) -> bytes:
     data = b''
@@ -204,16 +204,16 @@ async def read_completely(ram: RAM, fd: FileDescriptor) -> bytes:
             return data
         data += await valid.read()
 
-async def start_postgres(nursery, stdtask: StandardTask, path: Path) -> Postgres:
-    initdb = await stdtask.environ.which("initdb")
-    postgres = await stdtask.environ.which("postgres")
-    createuser = await stdtask.environ.which("createuser")
-    createdb = await stdtask.environ.which("createdb")
+async def start_postgres(nursery, thread: Thread, path: Path) -> Postgres:
+    initdb = await thread.environ.which("initdb")
+    postgres = await thread.environ.which("postgres")
+    createuser = await thread.environ.which("createuser")
+    createdb = await thread.environ.which("createdb")
 
     data = path/"data"
-    await stdtask.run(initdb.args("--pgdata", data, "--nosync", "--no-locale", "--auth=trust"))
+    await thread.run(initdb.args("--pgdata", data, "--nosync", "--no-locale", "--auth=trust"))
     sockdir = path/"sock"
-    await stdtask.mkdir(sockdir)
+    await thread.mkdir(sockdir)
     config = {
         # connection
         "listen_addresses": "''",
@@ -223,20 +223,20 @@ async def start_postgres(nursery, stdtask: StandardTask, path: Path) -> Postgres
         "synchronous_commit": "off",
         "full_page_writes": "off",
     }
-    await stdtask.spit(data/"postgresql.auto.conf", "\n".join([f"{key} = {value}" for key, value in config.items()]))
-    inty = await Inotify.make(stdtask)
+    await thread.spit(data/"postgresql.auto.conf", "\n".join([f"{key} = {value}" for key, value in config.items()]))
+    inty = await Inotify.make(thread)
     watch = await inty.add(data, IN.CLOSE_WRITE)
 
-    await nursery.start(stdtask.run, postgres.args('-D', data))
+    await nursery.start(thread.run, postgres.args('-D', data))
     # pg_ctl uses the pid file to determine when postgres is up, so we do the same.
     pid_file_name = "postmaster.pid"
     pid_file = None
-    name = await stdtask.ram.to_pointer(data/pid_file_name)
+    name = await thread.ram.to_pointer(data/pid_file_name)
     while True:
         await watch.wait_until_event(IN.CLOSE_WRITE, pid_file_name)
         if pid_file is None:
-            pid_file = await stdtask.task.open(name, O.RDONLY|O.CLOEXEC)
-        pid_file_data = await read_completely(stdtask.ram, pid_file)
+            pid_file = await thread.task.open(name, O.RDONLY|O.CLOEXEC)
+        pid_file_data = await read_completely(thread.ram, pid_file)
         try:
             # the postmaster status is on line 7
             # would be nice to get that from LOCK_FILE_LINE_PM_STATUS in pidfile.h
@@ -246,7 +246,7 @@ async def start_postgres(nursery, stdtask: StandardTask, path: Path) -> Postgres
         if b"ready" in pm_status:
             break
     await inty.close()
-    return Postgres(sockdir, stdtask, createuser, createdb)
+    return Postgres(sockdir, thread, createuser, createdb)
 
 class NginxChild:
     # can support methods for reloading configuration, etc
@@ -269,10 +269,10 @@ async def exec_nginx(thread: ChildThread, nginx: Command,
     return child
 
 async def start_fresh_nginx(
-        nursery, stdtask: StandardTask, path: Path, proxy_addr: SockaddrUn
+        nursery, parent: StandardTask, path: Path, proxy_addr: SockaddrUn
 ) -> t.Tuple[SockaddrIn, NginxChild]:
-    nginx = await stdtask.environ.which("nginx")
-    thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
+    nginx = await parent.environ.which("nginx")
+    thread = await parent.fork(newuser=True, newpid=True, fs=False, sighand=False)
     sock = await thread.task.socket(AF.INET, SOCK.STREAM)
     zero_addr = await thread.ram.ptr(SockaddrIn(0, 0x7F_00_00_01))
     await sock.bind(zero_addr)
@@ -302,9 +302,9 @@ http {
     nursery.start_soon(child.check)
     return addr, NginxChild(child)
 
-async def start_simple_nginx(nursery, stdtask: Thread, path: Path, sockpath: Path) -> NginxChild:
-    nginx = await stdtask.environ.which("nginx")
-    thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
+async def start_simple_nginx(nursery, parent: Thread, path: Path, sockpath: Path) -> NginxChild:
+    nginx = await parent.environ.which("nginx")
+    thread = await parent.fork(newuser=True, newpid=True, fs=False, sighand=False)
     config = b"""
 error_log stderr error;
 daemon off;
@@ -391,17 +391,17 @@ class DaemonStore(Store):
     def uri(self) -> str:
         return "daemon"
 
-async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str, store: LocalStore) -> Hydra:
+async def start_hydra(nursery, thread: Thread, path: Path, dbi: str, store: LocalStore) -> Hydra:
     # maybe have a version of this function which uses cached path locations?
     # or better yet, compiled in locations?
-    hydra_init = await stdtask.environ.which("hydra-init")
-    hydra_create_user = await stdtask.environ.which("hydra-create-user")
-    hydra_server = await stdtask.environ.which("hydra-server")
-    hydra_evaluator = await stdtask.environ.which("hydra-evaluator")
-    hydra_queue_runner = await stdtask.environ.which("hydra-queue-runner")
+    hydra_init = await thread.environ.which("hydra-init")
+    hydra_create_user = await thread.environ.which("hydra-create-user")
+    hydra_server = await thread.environ.which("hydra-server")
+    hydra_evaluator = await thread.environ.which("hydra-evaluator")
+    hydra_queue_runner = await thread.environ.which("hydra-queue-runner")
 
-    await stdtask.run(hydra_init.env(HYDRA_DBI=dbi, HYDRA_DATA=path))
-    await stdtask.run(hydra_create_user.args(
+    await thread.run(hydra_init.env(HYDRA_DBI=dbi, HYDRA_DATA=path))
+    await thread.run(hydra_create_user.args(
         "sbaugh",
         "--full-name", "Spencer Baugh",
         "--email-address", "sbaugh@localhost",
@@ -411,7 +411,7 @@ async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str, stor
 
     # create config files
     config = {"email_notification": "1"}
-    config_path = await stdtask.spit(path/"hydra.conf", "\n".join([f"{key} = {value}" for key, value in config.items()]))
+    config_path = await thread.spit(path/"hydra.conf", "\n".join([f"{key} = {value}" for key, value in config.items()]))
     hydra_env: t.Mapping[str, t.Union[str, bytes, os.PathLike]] = {
         'HYDRA_DBI': dbi,
         'HYDRA_DATA': path,
@@ -420,7 +420,7 @@ async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str, stor
         'NIX_STATE_DIR': store.state_dir(),
     }
     # start server
-    server_thread = await stdtask.fork()
+    server_thread = await thread.fork()
     sock = await server_thread.task.socket(AF.UNIX, SOCK.STREAM)
     addr = await server_thread.ram.ptr(
         await SockaddrUn.from_path(server_thread, path/"hydra_server.sock"))
@@ -432,8 +432,8 @@ async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str, stor
         **hydra_env, SERVER_STARTER_PORT=ssport))
     nursery.start_soon(server_child.check)
     # start evaluator, queue runner
-    await nursery.start(stdtask.run, hydra_evaluator.env(**hydra_env))
-    await nursery.start(stdtask.run, hydra_queue_runner.env(**hydra_env))
+    await nursery.start(thread.run, hydra_evaluator.env(**hydra_env))
+    await nursery.start(thread.run, hydra_queue_runner.env(**hydra_env))
     return Hydra(addr)
 
 class Jobset:
@@ -501,23 +501,23 @@ class HydraClient:
 
 class TestHydra(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.stdtask = local.stdtask
-        self.tmpdir = await self.stdtask.mkdtemp("test_hydra")
+        self.thread = local.thread
+        self.tmpdir = await self.thread.mkdtemp("test_hydra")
         self.path = self.tmpdir.path
-        await update_symlink(self.stdtask, await self.stdtask.ram.ptr(self.tmpdir.parent/"test_hydra.current"), self.path)
+        await update_symlink(self.thread, await self.thread.ram.ptr(self.tmpdir.parent/"test_hydra.current"), self.path)
 
-        self.postgres = await start_postgres(self.nursery, self.stdtask, await self.stdtask.mkdir(self.path/"postgres"))
+        self.postgres = await start_postgres(self.nursery, self.thread, await self.thread.mkdir(self.path/"postgres"))
         await self.postgres.createuser("hydra")
         await self.postgres.createdb("hydra", owner="hydra")
 
-        stubbin = await self.stdtask.mkdir(self.path/"stubbin")
-        self.sendmail_stub = await StubServer.make(self.stdtask, local_store, stubbin, "sendmail")
-        self.stdtask.environ['PATH'] = os.fsdecode(stubbin) + ':' + self.stdtask.environ['PATH']
+        stubbin = await self.thread.mkdir(self.path/"stubbin")
+        self.sendmail_stub = await StubServer.make(self.thread, local_store, stubbin, "sendmail")
+        self.thread.environ['PATH'] = os.fsdecode(stubbin) + ':' + self.thread.environ['PATH']
         # start server
         # TODO I suppose this pidns thread is just going to be GC'd away... gotta make sure that works fine.
-        pidns_thread = await self.stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
+        pidns_thread = await self.thread.fork(newuser=True, newpid=True, fs=False, sighand=False)
         self.hydra = await start_hydra(
-            self.nursery, pidns_thread.stdtask, await self.stdtask.mkdir(self.path/"hydra"),
+            self.nursery, pidns_thread, await self.thread.mkdir(self.path/"hydra"),
             "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;",
             DirectStore(store=self.path/"nix"/"store", state=self.path/"nix"/"state"),
         )
@@ -528,9 +528,9 @@ class TestHydra(TrioTestCase):
     async def create_and_validate_job(self, client: HydraClient) -> None:
         project = await client.make_project('neato', "A neat project")
         job_name = "jobbymcjobface"
-        jobset_dir = await self.stdtask.mkdir(self.path/"jobset")
+        jobset_dir = await self.thread.mkdir(self.path/"jobset")
         jobset_path = "trivial.nix"
-        await self.stdtask.spit(jobset_dir/jobset_path, """{ string }:
+        await self.thread.spit(jobset_dir/jobset_path, """{ string }:
 { """ + job_name + """ = builtins.derivation {
     name = "trivial";
     system = "x86_64-linux";
@@ -559,13 +559,13 @@ class TestHydra(TrioTestCase):
         self.assertEqual(job_name, message['X-Hydra-Job'])
 
     async def test_hydra(self) -> None:
-        client = await HydraClient.login(await HTTPClient.connect_unix(self.stdtask, self.hydra.addr))
+        client = await HydraClient.login(await HTTPClient.connect_unix(self.thread, self.hydra.addr))
         await self.create_and_validate_job(client)
 
     async def test_proxy(self) -> None:
-        addr, _ = await start_fresh_nginx(self.nursery, self.stdtask, await self.stdtask.mkdir(self.path/"nginx"),
+        addr, _ = await start_fresh_nginx(self.nursery, self.thread, await self.thread.mkdir(self.path/"nginx"),
                                           self.hydra.addr.value)
-        client = await HydraClient.login(await HTTPClient.connect_inet(self.stdtask, addr))
+        client = await HydraClient.login(await HTTPClient.connect_inet(self.thread, addr))
         await self.create_and_validate_job(client)
 
 if __name__ == "__main__":
