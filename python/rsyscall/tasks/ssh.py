@@ -1,36 +1,35 @@
 from __future__ import annotations
-import rsyscall.handle as handle
-import rsyscall.near as near
-import rsyscall.far as far
-import rsyscall.memory.allocator as memory
-from rsyscall.io import Thread
-from rsyscall.tasks.connection import SyscallConnection
-from rsyscall.tasks.non_child import NonChildSyscallInterface
-from rsyscall.loader import NativeLoader
 from dataclasses import dataclass
-import importlib.resources
-import logging
-import typing as t
-import os
-import contextlib
-import abc
-import random
-import string
-from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
-from rsyscall.network.connection import ListeningConnection
+from rsyscall.command import Command
 from rsyscall.environ import Environment
 from rsyscall.epoller import EpollCenter, AsyncFileDescriptor, AsyncReadBuffer
+from rsyscall.handle import WrittenPointer, FileDescriptor, Task
+from rsyscall.io import Thread
+from rsyscall.loader import NativeLoader
 from rsyscall.memory.ram import RAM
 from rsyscall.memory.socket_transport import SocketMemoryTransport
-from rsyscall.command import Command
+from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
+from rsyscall.network.connection import ListeningConnection
 from rsyscall.path import Path
-
+from rsyscall.tasks.connection import SyscallConnection
+from rsyscall.tasks.non_child import NonChildSyscallInterface
+import abc
+import contextlib
+import importlib.resources
+import logging
+import os
+import random
+import rsyscall.far as far
+import rsyscall.memory.allocator as memory
+import rsyscall.near as near
 import rsyscall.nix as nix
+import string
+import typing as t
+
 from rsyscall.fcntl import O
 from rsyscall.sys.socket import SOCK, AF, Address
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.unistd import Pipe
-from rsyscall.handle import WrittenPointer
 
 __all__ = [
     "SSHCommand",
@@ -58,11 +57,11 @@ class SSHCommand(Command):
     def proxy_command(self, command: Command) -> SSHCommand:
         return self.ssh_options({'ProxyCommand': command.in_shell_form()})
 
-    def local_forward(self, local_socket: handle.Path, remote_socket: str) -> SSHCommand:
+    def local_forward(self, local_socket: Path, remote_socket: str) -> SSHCommand:
         return self.args("-L", os.fsdecode(local_socket) + ":" + os.fsdecode(remote_socket))
 
     @classmethod
-    def make(cls: t.Type[T_ssh_command], executable_path: handle.Path) -> T_ssh_command:
+    def make(cls: t.Type[T_ssh_command], executable_path: Path) -> T_ssh_command:
         return cls(executable_path, [b"ssh"], {})
 
 class SSHDCommand(Command):
@@ -73,7 +72,7 @@ class SSHDCommand(Command):
         return self.args(*option_list)
 
     @classmethod
-    def make(cls, executable_path: handle.Path) -> SSHDCommand:
+    def make(cls, executable_path: Path) -> SSHDCommand:
         return cls(executable_path, [b"sshd"], {})
 
 @dataclass
@@ -131,31 +130,31 @@ class SSHHost:
         hostname = os.fsdecode(ssh_to_host.arguments[-1])
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (hostname+random_suffix+".sock")
-        local_socket_path: handle.Path = thread.environ.tmpdir/name
+        local_socket_path = thread.environ.tmpdir/name
         fd = await thread.task.open(await thread.ram.to_pointer(self.executables.bootstrap_path), O.RDONLY)
         async with run_socket_binder(thread, ssh_to_host, fd) as tmp_path_bytes:
             return await ssh_bootstrap(thread, ssh_to_host, local_socket_path, tmp_path_bytes)
 
 @contextlib.asynccontextmanager
 async def run_socket_binder(
-        task: Thread,
+        parent: Thread,
         ssh_command: SSHCommand,
-        bootstrap_executable: handle.FileDescriptor,
+        bootstrap_executable: FileDescriptor,
 ) -> t.AsyncGenerator[bytes, None]:
-    stdout_pipe = await (await task.task.pipe(
-        await task.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
-    async_stdout = await task.make_afd(stdout_pipe.read)
-    thread = await task.fork()
-    stdout = stdout_pipe.write.move(thread.task)
-    with bootstrap_executable.borrow(thread.task) as bootstrap_executable:
-        await thread.unshare_files()
-        # TODO we are relying here on the fact that replace_with doesn't set cloexec on the new fd.
-        # maybe we should explicitly list what we want to pass down...
-        # or no, let's tag things as inheritable, maybe?
-        await thread.stdout.replace_with(stdout)
-        await thread.stdin.replace_with(bootstrap_executable)
-    async with thread:
-        child = await thread.exec(ssh_command.args(ssh_bootstrap_script_contents))
+    stdout_pipe = await (await parent.task.pipe(
+        await parent.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
+    async_stdout = await parent.make_afd(stdout_pipe.read)
+    child = await parent.fork()
+    async with child:
+        stdout = stdout_pipe.write.move(child.task)
+        with bootstrap_executable.borrow(child.task) as bootstrap_executable:
+            await child.unshare_files()
+            # TODO we are relying here on the fact that replace_with doesn't set cloexec on the new fd.
+            # maybe we should explicitly list what we want to pass down...
+            # or no, let's tag things as inheritable, maybe?
+            await child.stdout.replace_with(stdout)
+            await child.stdin.replace_with(bootstrap_executable)
+        child_process = await child.exec(ssh_command.args(ssh_bootstrap_script_contents))
         # from... local?
         # I guess this throws into sharper relief the distinction between core and module.
         # The ssh bootstrapping stuff should come from a different class,
@@ -176,10 +175,10 @@ async def run_socket_binder(
         await async_stdout.close()
         logger.info("socket bootstrap done, got tmp path %s", tmp_path_bytes)
         yield tmp_path_bytes
-        (await child.wait_for_exit()).check()
+        await child_process.check()
 
 async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
-                      local_path: handle.Path, remote_path: str) -> AsyncChildProcess:
+                      local_path: Path, remote_path: str) -> AsyncChildProcess:
     stdout_pipe = await (await thread.task.pipe(
         await thread.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
     async_stdout = await thread.make_afd(stdout_pipe.read)
@@ -205,7 +204,7 @@ async def ssh_bootstrap(
         # the actual ssh command to run
         ssh_command: SSHCommand,
         # the local path we'll use for the socket
-        local_socket_path: handle.Path,
+        local_socket_path: Path,
         # the directory we're bootstrapping out of
         tmp_path_bytes: bytes,
 ) -> t.Tuple[AsyncChildProcess, Thread]:
@@ -214,7 +213,7 @@ async def ssh_bootstrap(
         await SockaddrUn.from_path(parent, local_socket_path))
     # start port forwarding; we'll just leak this process, no big deal
     # TODO we shouldn't leak processes; we should be GCing processes at some point
-    forward_child = await ssh_forward(
+    forward_child_process = await ssh_forward(
         parent, ssh_command, local_socket_path, (tmp_path_bytes + b"/data").decode())
     # start bootstrap
     bootstrap_thread = await parent.fork()
@@ -252,7 +251,7 @@ async def ssh_bootstrap(
     # TODO we should get this from the SSHHost, this is usually going
     # to be common for all connections and we should express that
     net = far.NetNamespace(new_pid)
-    new_base_task = handle.Task(new_syscall, new_process.near, None, new_fd_table, new_address_space, new_fs_information,
+    new_base_task = Task(new_syscall, new_process.near, None, new_fd_table, new_address_space, new_fs_information,
                                 new_pid_namespace, net)
     handle_remote_syscall_fd = new_base_task.make_fd_handle(remote_syscall_fd)
     new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
