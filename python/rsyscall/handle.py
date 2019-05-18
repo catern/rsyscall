@@ -77,6 +77,7 @@ class MemoryTransport(MemoryGateway):
 # there's no point in having something that knows the size but not the
 # type.
 T = t.TypeVar('T')
+T_co = t.TypeVar('T_co', covariant=True)
 U = t.TypeVar('U')
 T_pointer = t.TypeVar('T_pointer', bound='Pointer')
 @dataclass(eq=False)
@@ -221,12 +222,12 @@ class Pointer(t.Generic[T]):
     def __exit__(self, *args) -> None:
         self.free()
 
-class WrittenPointer(Pointer[T]):
+class WrittenPointer(Pointer[T_co]):
     def __init__(self,
                  mapping: MemoryMapping,
                  transport: MemoryGateway,
-                 data: T,
-                 serializer: Serializer[T],
+                 data: T_co,
+                 serializer: Serializer[T_co],
                  allocation: AllocationInterface,
     ) -> None:
         super().__init__(mapping, transport, serializer, allocation)
@@ -236,7 +237,7 @@ class WrittenPointer(Pointer[T]):
         return f"WrittenPointer({self.near}, {self.data})"
 
     @property
-    def value(self) -> T:
+    def value(self) -> T_co:
         # can't decide what to call this field
         return self.data
 

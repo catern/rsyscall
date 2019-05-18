@@ -1,7 +1,6 @@
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
 
-from rsyscall.handle import WrittenPointer
 from rsyscall.sys.socket import *
 from rsyscall.sys.un import *
 from rsyscall.sys.uio import IovecList
@@ -23,7 +22,7 @@ class TestSocket(TrioTestCase):
 
     async def test_listen(self) -> None:
         sockfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
-        addr: WrittenPointer[Address] = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, self.path/"sock"))
+        addr = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, self.path/"sock"))
         await sockfd.bind(addr)
         await sockfd.listen(10)
 
@@ -33,7 +32,7 @@ class TestSocket(TrioTestCase):
 
     async def test_listen_async(self) -> None:
         sockfd = await self.thr.make_afd(await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-        addr: WrittenPointer[Address] = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, self.path/"sock"))
+        addr = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, self.path/"sock"))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
 
@@ -47,7 +46,7 @@ class TestSocket(TrioTestCase):
 
     async def test_listen_async_accept(self) -> None:
         sockfd = await self.thr.make_afd(await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-        addr: WrittenPointer[Address] = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, self.path/"sock"))
+        addr = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, self.path/"sock"))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
 
@@ -90,8 +89,7 @@ class TestSocket(TrioTestCase):
         "SockaddrUn.from_path works correctly on long Unix socket paths"
         longdir = await self.thr.ram.to_pointer(self.path/("long"*50))
         await self.thr.task.mkdir(longdir)
-        addr: WrittenPointer[Address] = await self.thr.ram.to_pointer(
-            await SockaddrUn.from_path(self.thr, longdir.value/"sock"))
+        addr = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, longdir.value/"sock"))
 
         sockfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
         await sockfd.bind(addr)

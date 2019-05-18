@@ -1,7 +1,6 @@
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
 
-from rsyscall.handle import WrittenPointer
 from rsyscall.sys.socket import *
 from rsyscall.netinet.in_ import *
 from rsyscall.struct import Bytes
@@ -12,7 +11,7 @@ class TestSocket(TrioTestCase):
 
     async def test_stream_listen(self) -> None:
         sockfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
-        zero_addr: WrittenPointer[Address] = await self.thr.ram.to_pointer(SockaddrIn(0, '127.0.0.1'))
+        zero_addr = await self.thr.ram.to_pointer(SockaddrIn(0, '127.0.0.1'))
         await sockfd.bind(zero_addr)
         await sockfd.listen(10)
 
@@ -30,7 +29,7 @@ class TestSocket(TrioTestCase):
 
     async def test_dgram_connect(self) -> None:
         sockfd = await self.thr.task.socket(AF.INET, SOCK.DGRAM)
-        zero_addr: WrittenPointer[Address] = await self.thr.ram.to_pointer(SockaddrIn(0, '127.0.0.1'))
+        zero_addr = await self.thr.ram.to_pointer(SockaddrIn(0, '127.0.0.1'))
         await sockfd.bind(zero_addr)
 
         addr = await (await (await sockfd.getsockname(await self.thr.ram.to_pointer(Sockbuf(zero_addr)))).read()).buf.read()
