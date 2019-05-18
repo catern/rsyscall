@@ -33,9 +33,7 @@ logger = logging.getLogger(__name__)
 
 async def direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
-    return lib.rsyscall_raw_syscall(ffi.cast('long', arg1), ffi.cast('long', arg2), ffi.cast('long', arg3),
-                                    ffi.cast('long', arg4), ffi.cast('long', arg5), ffi.cast('long', arg6),
-                                    number)
+    return lib.rsyscall_raw_syscall(arg1, arg2, arg3, arg4, arg5, arg6, number)
 
 @dataclass
 class LocalSyscallResponse(near.SyscallResponse):
@@ -46,7 +44,7 @@ class LocalSyscallResponse(near.SyscallResponse):
 
 
 @dataclass(eq=False)
-class LocalSyscall(near.SyscallInterface):
+class LocalSyscallInterface(near.SyscallInterface):
     identifier_process: near.Process
 
     def get_activity_fd(self) -> None:
@@ -104,7 +102,7 @@ def _make_local_task() -> Task:
     pid_namespace = far.PidNamespace(pid)
     process = far.Process(pid_namespace, near.Process(pid))
     base_task = handle.Task(
-        LocalSyscall(process.near), process.near, None, far.FDTable(pid),
+        LocalSyscallInterface(process.near), process.near, None, far.FDTable(pid),
         far.AddressSpace(os.getpid()),
         far.FSInformation(pid),
         pid_namespace,

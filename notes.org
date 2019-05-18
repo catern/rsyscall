@@ -14095,7 +14095,7 @@ there's too many methods here to override
    ok let's just do a basic conversion
 ** cancellation
    remember that????
-** merge pointers
+** DONE merge pointers
 
    And I can support radd!
 
@@ -14317,7 +14317,8 @@ well, obviously we can signal ourselves...
 oh yeah and if we make it a handle, then we can gc processes nicely, that's cool
 
 including entire tasks - when we drop the task, we drop the process, and it dies, and everything is cool
-** TODO add nice memoryabstractor API
+** TODO add pointer cache/const pointers
+** DONE add nice memoryabstractor API
    make SocketMemoryTransport use the direct_transport to convert bytes to pointer
    as well as allocating memory
 
@@ -14348,16 +14349,16 @@ including entire tasks - when we drop the task, we drop the process, and it dies
    then reads that pointer to bytes - cheating again, by just returning the underlying bytearray,
    which it pulls out of the allocation?
    MemoryAbstractor??
-*** TODO the bes
+*** DONE the bes
     the best way is to have thsi interface all as one
 
     and i'll stay with my current bytes to pointer (preallocated) thing 
     since that allows rearranging
 
     oh I guess if we controlled allocation too we could even do that nicely
-*** TODO to_pointer can have pointer cache in it
+*** to_pointer can have pointer cache in it
     like a page cache kinda
-*** TODO can do epoll on remotte side?
+*** can do epoll on remotte side?
 *** DONE preparation
     before doing this, let's get rid of the remaining calls in memory_abstracted_syscalls.
 
@@ -14558,7 +14559,7 @@ including entire tasks - when we drop the task, we drop the process, and it dies
     ok yeah i just need serializer objects, it's obviou
 *** serializer objects
     boom, got 'em
-** upgrade to cffi 1.12
+** DONE upgrade to cffi 1.12
    Then I can use the fancy new features!
 
    ffi.from_buffer("type", object) is a major advance!
@@ -16245,7 +16246,7 @@ so the subprocess is stuck in read, and the main process is... in "x32 mode"????
    ok let's think about it, how can I do this...
 
    oh I'll just sleep 1 instead of inf, that's fine.
-** TODO getting rid of processresources
+** DONE getting rid of processresources
    We can have it basically be a dynamic linking API,
    so that you can load a library into your process,
    even on a remote host.
