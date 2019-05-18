@@ -269,7 +269,7 @@ async def ssh_bootstrap(
         new_base_task, new_ram,
         new_base_task.make_fd_handle(listening_fd),
     )
-    new_stdtask = Thread(
+    new_thread = Thread(
         task=new_base_task,
         ram=new_ram,
         connection=connection,
@@ -281,7 +281,7 @@ async def ssh_bootstrap(
         stdout=new_base_task.make_fd_handle(near.FileDescriptor(1)),
         stderr=new_base_task.make_fd_handle(near.FileDescriptor(2)),
     )
-    return bootstrap_child_process, new_stdtask
+    return bootstrap_child_process, new_thread
 
 @dataclass
 class SSHDExecutables:
