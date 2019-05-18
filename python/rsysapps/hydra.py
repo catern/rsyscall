@@ -10,7 +10,6 @@ import requests
 import trio
 import typing as t
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.io import StandardTask
 from rsyscall.io import Thread, ChildThread
 from rsyscall.handle import FileDescriptor, Path, WrittenPointer, Pointer
 from rsyscall.command import Command
@@ -183,7 +182,7 @@ class HTTPClient:
 @dataclass
 class Postgres:
     sockdir: Path
-    thread: StandardTask
+    thread: Thread
     createuser_cmd: Command
     createdb_cmd: Command
 
@@ -267,7 +266,7 @@ async def exec_nginx(thread: ChildThread, nginx: Command,
     return child
 
 async def start_fresh_nginx(
-        nursery, parent: StandardTask, path: Path, proxy_addr: SockaddrUn
+        nursery, parent: Thread, path: Path, proxy_addr: SockaddrUn
 ) -> t.Tuple[SockaddrIn, NginxChild]:
     nginx = await parent.environ.which("nginx")
     thread = await parent.fork(newuser=True, newpid=True, fs=False, sighand=False)

@@ -8,7 +8,6 @@ from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.io import Thread
 from rsyscall.handle import FileDescriptor, Path
 from rsyscall.command import Command
-from rsyscall.monitor import AsyncChildProcess
 from dataclasses import dataclass
 from rsyscall.inotify_watch import Inotify
 from rsyscall.struct import Bytes

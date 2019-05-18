@@ -4,18 +4,19 @@ import time
 import os
 import abc
 import trio
-import rsyscall.io as rsc
 import rsyscall.handle as handle
 import rsyscall.near
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.io import StandardTask, RsyscallThread, Path, Command
-from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
+from rsyscall.io import StandardTask
+from rsyscall.io import Thread
+from rsyscall.command import Command
+from rsyscall.handle import FileDescriptor, Path
 from dataclasses import dataclass
 import dns.zone
 from dns.rdataset import from_text_list as make_rdset
-import rsyscall.dnspython_LUA
+import rsysapps.dnspython_LUA
 import typing as t
-dns.rdata.register_type(rsyscall.dnspython_LUA, 65402, 'LUA')
+dns.rdata.register_type(rsysapps.dnspython_LUA, 65402, 'LUA')
 
 from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.sys.socket import AF, SOCK
@@ -29,7 +30,7 @@ async def start_powerdns(nursery, stdtask: StandardTask, path: Path, zone: dns.z
                                   ipv4_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
                                   ipv6_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
 ) -> Powerdns:
-    pdns_server = rsc.Command(stdtask.task.base.make_path_from_bytes("/home/sbaugh/.local/src/pdns/pdns/pdns_server"),
+    pdns_server = Command(stdtask.task.base.make_path_from_bytes("/home/sbaugh/.local/src/pdns/pdns/pdns_server"),
                               ['pdns_server'], {})
     # pdns_server = await rsc.which(stdtask, "pdns_server")
     thread = await stdtask.fork()
@@ -51,10 +52,10 @@ async def start_powerdns(nursery, stdtask: StandardTask, path: Path, zone: dns.z
         "log-dns-queries": "yes",
         # backend
         "launch": "bind",
-        "bind-config": os.fsdecode(await rsc.spit(path/"named.conf",
+        "bind-config": os.fsdecode(await thread.spit(path/"named.conf",
             'zone "%s" { file "%s"; };' % (
                 zone.origin.to_text(),
-                os.fsdecode(await rsc.spit(path/"zone", zone.to_text()))))),
+                os.fsdecode(await thread.spit(path/"zone", zone.to_text()))))),
         "enable-lua-records": "yes",
         # relevant stuff
         "local-address": ",".join(ipv4s),
@@ -73,7 +74,7 @@ async def start_recursor(nursery, stdtask: StandardTask, path: Path,
                                   ipv4_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
                                   ipv6_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
                                   root_hints: dns.zone.Zone=None) -> Powerdns:
-    pdns_recursor = rsc.Command(stdtask.task.base.make_path_from_bytes(
+    pdns_recursor = Command(stdtask.task.base.make_path_from_bytes(
         "/home/sbaugh/.local/src/pdns/pdns/recursordist/pdns_recursor"),
                                 ['pdns_recursor'], {})
     thread = await stdtask.fork()
@@ -101,7 +102,7 @@ async def start_recursor(nursery, stdtask: StandardTask, path: Path,
         "local-address-tcp-fds": ",".join([f"{i}={await fd.as_argument()}" for i, (_, fd) in addresses.items()]),
     }
     if root_hints is not None:
-        config["hint-file"] = os.fsdecode(await rsc.spit(path/'root.hints', root_hints.to_text()))
+        config["hint-file"] = os.fsdecode(await thread.spit(path/'root.hints', root_hints.to_text()))
     child = await thread.exec(pdns_recursor.args(*[f"--{name}={value}" for name, value in config.items()]))
     nursery.start_soon(child.check)
     return Powerdns()
@@ -119,15 +120,15 @@ def make_zone(origin: t.Union[str, dns.name.Name],
     return zone
 
 
+import rsyscall.tasks.local as local
 class TestPowerdns(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        import rsyscall.tasks.local as local
         self.ns_thread = await local.stdtask.fork()
         self.stdtask = self.ns_thread.stdtask
         await self.stdtask.unshare_user(0, 0)
         await self.stdtask.unshare_net()
         # set loopback up
-        ip = await rsc.which(self.stdtask, "ip")
+        ip = await self.stdtask.environ.which("ip")
         # TODO blah this requires root and we don't want to have to run as root because it's a hassle
         # well, I guess we should be sandboxing anything bad, so maybe we should run as root..
         # no that's silly
@@ -135,8 +136,8 @@ class TestPowerdns(TrioTestCase):
         self.pdns_idx = 1
         self.tmpdir = await self.stdtask.mkdtemp("test_powerdns")
         self.path = self.tmpdir.path
-        self.dig = await rsc.which(self.stdtask, "dig")
-        self.host = await rsc.which(self.stdtask, "host")
+        self.dig = await self.stdtask.environ.which("dig")
+        self.host = await self.stdtask.environ.which("host")
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()
@@ -145,13 +146,13 @@ class TestPowerdns(TrioTestCase):
         idx = self.pdns_idx
         self.pdns_idx += 1
         addr = ipaddress.IPv4Address(0x7F_00_00_00 + idx)
-        sockaddr = rsc.SockaddrIn(53, addr)
+        sockaddr = await self.stdtask.ram.ptr(SockaddrIn(53, addr))
         print("sockaddr", sockaddr)
-        path = await (self.path/f"pdns{idx}").mkdir()
+        path = await self.stdtask.mkdir(self.path/f"pdns{idx}")
 
-        udp_sock = await self.stdtask.task.socket_inet(SOCK.DGRAM)
+        udp_sock = await self.stdtask.task.socket(AF.INET, SOCK.DGRAM|SOCK.CLOEXEC)
         await udp_sock.bind(sockaddr)
-        tcp_sock = await self.stdtask.task.socket_inet(SOCK.STREAM)
+        tcp_sock = await self.stdtask.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
         await tcp_sock.bind(sockaddr)
         await tcp_sock.listen(10)
 
@@ -164,24 +165,24 @@ class TestPowerdns(TrioTestCase):
         add_rdata('@', 'NS', 3600, 'ns1')
         add_rdata('ns1', 'A', 3600, str(addr))
         powerdns = await start_powerdns(
-            self.nursery, self.stdtask, path, zone, [(udp_sock.handle, tcp_sock.handle)], [])
+            self.nursery, self.stdtask, path, zone, [(udp_sock, tcp_sock)], [])
         return addr
 
     async def start_recursor(self, root_hints: dns.zone.Zone) -> ipaddress.IPv4Address:
         idx = self.pdns_idx
         self.pdns_idx += 1
         addr = ipaddress.IPv4Address(0x7F_00_00_00 + idx)
-        sockaddr = rsc.SockaddrIn(53, addr)
-        path = await (self.path/f"pdns{idx}").mkdir()
+        sockaddr = await self.stdtask.ram.ptr(SockaddrIn(53, addr))
+        path = await self.stdtask.mkdir(self.path/f"pdns{idx}")
 
-        udp_sock = await self.stdtask.task.socket_inet(SOCK.DGRAM)
+        udp_sock = await self.stdtask.task.socket(AF.INET, SOCK.DGRAM|SOCK.CLOEXEC)
         await udp_sock.bind(sockaddr)
-        tcp_sock = await self.stdtask.task.socket_inet(SOCK.STREAM)
+        tcp_sock = await self.stdtask.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
         await tcp_sock.bind(sockaddr)
         await tcp_sock.listen(10)
 
         powerdns = await start_recursor(
-            self.nursery, self.stdtask, path, [(udp_sock.handle, tcp_sock.handle)], [], root_hints=root_hints)
+            self.nursery, self.stdtask, path, [(udp_sock, tcp_sock)], [], root_hints=root_hints)
         return addr
 
     async def test_basic(self) -> None:
@@ -207,7 +208,6 @@ class TestPowerdns(TrioTestCase):
             # '*': [make_rdset('IN', 'LUA', 3600, ["NS \"; return 'foo.bar.';\""])],
         }))
         await self.stdtask.run(self.dig.args('@'+str(magic_addr), 'NS', 'magical'))
-        raise Exception
 
     async def test_powerdns(self) -> None:
         user_addr = await self.start_authoritative(make_zone('user.1.magic', {
@@ -238,7 +238,7 @@ class TestPowerdns(TrioTestCase):
             'a.root-servers.net': [make_rdset('IN', 'A', 3600000, [str(root_addr)])],
         }))
 
-        self.host = await rsc.which(self.stdtask, "host")
+        self.host = await self.stdtask.environ.which("host")
         # oh hmm we want to return an NS record for something else though
         # that's awkward to do with lua records.
         # or... maybe this is fine? can we return NS record for this domain at all levels?
@@ -254,13 +254,3 @@ class TestPowerdns(TrioTestCase):
         # await self.stdtask.run(self.host.args('-v', '-a', 'a.user.1.magic', str(recursor_addr)))
         # await self.stdtask.run(self.host.args('-a', 'a.user.1.magic', str(magic_addr)))
         # raise Exception('hi')
-
-print(os.getpid())
-time.sleep(30)
-import sys
-print(sys.modules['readline'])
-import os
-import time
-print(os.getpid())
-time.sleep(30)
-
