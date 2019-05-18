@@ -17504,6 +17504,20 @@ And we can have an exec which is not memory-abstracting, I guess.
 
    Ummm that would have the right effect, but does it make sense?
    Well what about exit? I mean right now when we exit, we leave our handles around...
+** TODO abbreviate to_pointer?
+   to_ptr?
+
+   ptr?
+
+   it is definitely the longest thing in usage.
+
+   and maybe abbreviate malloc_struct/malloc_type as well?
+
+   to just malloc?
+   or, perhaps, new? nah malloc.
+   since we don't run constructors
+
+   maybe to_pointer should be "new"???
 ** cloexec
    we do actually need to cloexec when in a shared fd space, I guess,
    otherwise our fds will get inherited if some other task calls exec without first calling unshare_files.
@@ -18456,6 +18470,41 @@ And we can have an exec which is not memory-abstracting, I guess.
 ** wait actually no
    because I need to finish refactoring to Thread instead of stdtask first,
    and also need to fix up the rsysapps.
+** strategy
+   write main thing first,
+   then write docstrings,
+   then re-write main thing
+** split
+   two tutorials:
+   single-threaded and multi-threaded
+
+   take thr: Thread as arg in both
+
+   prerequisites:
+   basic understanding of "async/await" in Python;
+   basic understanding of type hints in Python.
+
+   maybe I could explain async/await?
+   in rsyscall, the low-level syscall function is marked async;
+   that is the only fundamental async function.
+   this means if a function wants to make a syscall,
+   it has to be async;
+   and conversely, if a function is not marked async,
+   then we know that it does not make any syscalls.
+** single-threaded
+   explain:
+   just like conventional python
+   can be used as a more low-level, more featureful interface to Linux in Python
+
+   it has inotify, for example! also rtnetlink.
+   there are plenty of interfaces that are missing,
+   we are happy to add those,
+   just file a feature request.
+
+   maybe:
+   from rsyscall.local import thread as thr
+** multi-threaded
+   tasks
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

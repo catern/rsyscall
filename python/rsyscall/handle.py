@@ -473,6 +473,12 @@ class FileDescriptor:
             ret = await rsyscall.near.read(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
             return buf.split(ret)
 
+    async def pread(self, buf: Pointer, offset: int) -> t.Tuple[Pointer, Pointer]:
+        self.validate()
+        with buf.borrow(self.task):
+            ret = await rsyscall.near.pread(self.task.sysif, self.near, buf.near, buf.bytesize(), offset)
+            return buf.split(ret)
+
     async def readv(self, iov: WrittenPointer[IovecList], flags: RWF=RWF.NONE
     ) -> t.Tuple[WrittenPointer[IovecList], t.Optional[t.Tuple[Pointer, Pointer]], WrittenPointer[IovecList]]:
         # TODO should check that the WrittenPointer's value and size correspond...

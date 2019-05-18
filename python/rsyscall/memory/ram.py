@@ -37,6 +37,9 @@ class RAM:
             allocation.free()
             raise
 
+    async def ptr(self, data: T_has_serializer, alignment: int=1) -> WrittenPointer[T_has_serializer]:
+        return await self.to_pointer(data, alignment)
+
     async def to_pointer(self, data: T_has_serializer, alignment: int=1) -> WrittenPointer[T_has_serializer]:
         serializer = data.get_self_serializer(self.task)
         data_bytes = serializer.to_bytes(data)

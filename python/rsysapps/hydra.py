@@ -12,8 +12,13 @@ import rsyscall.io as rsc
 import rsyscall.handle as handle
 import typing as t
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.io import StandardTask, RsyscallThread, Path, Command
-from rsyscall.io import FileDescriptor, ReadableWritableFile, ChildProcess
+from rsyscall.io import StandardTask, RsyscallThread
+from rsyscall.io import Thread, ChildThread
+from rsyscall.handle import FileDescriptor, Path, WrittenPointer, Pointer
+from rsyscall.command import Command
+from rsyscall.memory.ram import RAM
+from rsyscall.struct import Bytes
+from rsyscall.monitor import ChildProcess
 from dataclasses import dataclass
 import rsyscall.tasks.local as local
 
@@ -21,6 +26,9 @@ from rsyscall.inotify_watch import Inotify
 
 from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.sys.inotify import IN
+from rsyscall.sys.socket import AF, SOCK, Sockbuf
+from rsyscall.fcntl import O
+from rsyscall.sys.un import SockaddrUn
 
 class JobsetInput:
     @abc.abstractmethod
@@ -73,7 +81,7 @@ class HTTPClient:
 
     """
     def __init__(self, read: t.Callable[[], t.Awaitable[bytes]],
-                 write: t.Callable[[bytes], t.Awaitable[int]],
+                 write: t.Callable[[bytes], t.Awaitable[None]],
                  headers: t.List[t.Tuple[str, str]]) -> None:
         self.read = read
         self.write = write
@@ -82,20 +90,20 @@ class HTTPClient:
         self.cookie: t.Optional[bytes] = None
 
     @staticmethod
-    async def connect_unix(stdtask: StandardTask, sockpath: Path) -> HTTPClient:
-        sock = await stdtask.task.socket_unix(socket.SOCK_STREAM)
-        await rsc.robust_unix_connect(sockpath, sock)
-        return HTTPClient(sock.read, sock.write, [
+    async def connect_unix(thread: Thread, addr: WrittenPointer[SockaddrUn]) -> HTTPClient:
+        sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM))
+        await sock.connect(addr)
+        return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
             ("Host", "localhost"),
             ("Accept", "application/json"),
             ("Content-Type", "application/json"),
         ])
 
     @staticmethod
-    async def connect_inet(stdtask: StandardTask, addr: SockaddrIn) -> HTTPClient:
-        sock = await stdtask.task.socket_inet(socket.SOCK_STREAM)
-        await sock.connect(addr)
-        return HTTPClient(sock.read, sock.write, [
+    async def connect_inet(thread: Thread, addr: SockaddrIn) -> HTTPClient:
+        sock = await thread.make_afd(await thread.task.socket(AF.INET, SOCK.STREAM))
+        await sock.connect(await thread.ram.to_pointer(addr))
+        return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
             ("Host", "localhost"),
             ("Accept", "application/json"),
             ("Content-Type", "application/json"),
@@ -184,13 +192,14 @@ class Postgres:
     async def createdb(self, name: str, owner: str) -> None:
         await self.stdtask.run(self.createdb_cmd.args("--host", self.sockdir, "--owner", owner, name))
 
-async def read_completely(task: rsc.Task, fd: handle.FileDescriptor) -> bytes:
+async def read_completely(ram: RAM, fd: FileDescriptor) -> bytes:
     data = b''
     while True:
-        new_data = await task.pread(fd, 4096, offset=len(data))
-        if len(new_data) == 0:
+        buf = await ram.malloc_type(Bytes, 4096)
+        valid, rest = await fd.pread(buf, offset=len(data))
+        if valid.bytesize() == 0:
             return data
-        data += new_data
+        data += await valid.read()
 
 async def start_postgres(nursery, stdtask: StandardTask, path: Path) -> Postgres:
     initdb = await rsc.which(stdtask, "initdb")
@@ -212,17 +221,18 @@ async def start_postgres(nursery, stdtask: StandardTask, path: Path) -> Postgres
     }
     await rsc.spit(data/"postgresql.auto.conf", "\n".join([f"{key} = {value}" for key, value in config.items()]))
     inty = await Inotify.make(stdtask)
-    watch = await inty.add(data.handle, IN.CLOSE_WRITE)
+    watch = await inty.add(data, IN.CLOSE_WRITE)
 
     await nursery.start(stdtask.run, postgres.args('-D', data))
     # pg_ctl uses the pid file to determine when postgres is up, so we do the same.
     pid_file_name = "postmaster.pid"
     pid_file = None
+    name = await stdtask.ram.to_pointer(data/pid_file_name)
     while True:
         await watch.wait_until_event(IN.CLOSE_WRITE, pid_file_name)
         if pid_file is None:
-            pid_file = await (data/pid_file_name).open(os.O_RDWR)
-        pid_file_data = await read_completely(stdtask.task, pid_file.handle)
+            pid_file = await stdtask.task.open(name, O.RDONLY|O.CLOEXEC)
+        pid_file_data = await read_completely(stdtask.ram, pid_file)
         try:
             # the postmaster status is on line 7
             # would be nice to get that from LOCK_FILE_LINE_PM_STATUS in pidfile.h
@@ -239,12 +249,12 @@ class NginxChild:
     def __init__(self, child: ChildProcess) -> None:
         self.child = child
 
-async def exec_nginx(thread: RsyscallThread, nginx: Command,
+async def exec_nginx(thread: ChildThread, nginx: Command,
                      path: Path, config: handle.FileDescriptor,
                      listen_fds: t.List[handle.FileDescriptor]) -> ChildProcess:
-    nginx_fds = [fd.maybe_copy(thread.stdtask.task.base) for fd in listen_fds]
-    config_fd = config.maybe_copy(thread.stdtask.task.base)
-    await thread.stdtask.unshare_files(going_to_exec=True)
+    nginx_fds = [fd.maybe_copy(thread.task) for fd in listen_fds]
+    config_fd = config.maybe_copy(thread.task)
+    await thread.unshare_files()
     if nginx_fds:
         nginx_var = ";".join([str(await fd.as_argument()) for fd in nginx_fds]) + ';'
     else:
@@ -259,9 +269,11 @@ async def start_fresh_nginx(
 ) -> t.Tuple[SockaddrIn, NginxChild]:
     nginx = await rsc.which(stdtask, "nginx")
     thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
-    sock = await thread.stdtask.task.socket_inet(socket.SOCK_STREAM)
-    await sock.bind(SockaddrIn(0, 0x7F_00_00_01))
-    addr: SockaddrIn = await sock.getsockname()
+    sock = await thread.task.socket(AF.INET, SOCK.STREAM)
+    zero_addr = await thread.ram.ptr(SockaddrIn(0, 0x7F_00_00_01))
+    await sock.bind(zero_addr)
+    addr = await (await (await sock.getsockname(
+        await thread.ram.ptr(Sockbuf(zero_addr)))).read()).buf.read()
     config = b"""
 error_log stderr error;
 daemon off;
@@ -277,13 +289,16 @@ http {
 }
 """ % (addr.port, os.fsencode(sockpath))
     await sock.listen(10)
-    config_fd = await (path.with_task(thread.stdtask.task)/"nginx.conf").open(os.O_RDWR|os.O_CREAT)
-    await config_fd.write_all(config)
-    child = await exec_nginx(thread, nginx, path, config_fd.handle, [sock.handle])
+    config_fd = await thread.task.open(await thread.ram.ptr(path/"nginx.conf"),
+                                       O.RDWR|O.CREAT|O.CLOEXEC)
+    remaining = await thread.ram.ptr(Bytes(config))
+    while remaining.bytesize() > 0:
+        _, remaining = await config_fd.write(remaining)
+    child = await exec_nginx(thread, nginx, path, config_fd, [sock])
     nursery.start_soon(child.check)
     return addr, NginxChild(child)
 
-async def start_simple_nginx(nursery, stdtask: StandardTask, path: Path, sockpath: Path) -> NginxChild:
+async def start_simple_nginx(nursery, thread: Thread, path: Path, sockpath: Path) -> NginxChild:
     nginx = await rsc.which(stdtask, "nginx")
     thread = await stdtask.fork(newuser=True, newpid=True, fs=False, sighand=False)
     config = b"""
@@ -300,12 +315,15 @@ http {
   }
 }
 """ % os.fsencode(sockpath)
-    sock = await thread.stdtask.task.socket_inet(socket.SOCK_STREAM)
-    await sock.bind(SockaddrIn(3000, 0x7F_00_00_01))
+    sock = await thread.task.socket(AF.INET, SOCK.STREAM)
+    await sock.bind(await thread.ram.ptr(SockaddrIn(3000, 0x7F_00_00_01)))
     await sock.listen(10)
-    config_fd = await (path.with_task(thread.stdtask.task)/"nginx.conf").open(os.O_RDWR|os.O_CREAT)
-    await config_fd.write_all(config)
-    child = await exec_nginx(thread, nginx, path, config_fd.handle, [sock.handle])
+    config_fd = await thread.task.open(await thread.ram.ptr(path/"nginx.conf"),
+                                       O.RDWR|O.CREAT|O.CLOEXEC)
+    remaining = await thread.ram.ptr(Bytes(config))
+    while remaining.bytesize() > 0:
+        _, remaining = await config_fd.write(remaining)
+    child = await exec_nginx(thread, nginx, path, config_fd, [sock])
     nursery.start_soon(child.check)
     return NginxChild(child)
 
@@ -399,18 +417,19 @@ async def start_hydra(nursery, stdtask: StandardTask, path: Path, dbi: str, stor
     }
     # start server
     server_thread = await stdtask.fork()
-    sock = await server_thread.stdtask.task.socket_unix(socket.SOCK_STREAM, cloexec=False)
-    sockpath = path/"hydra_server.sock"
-    await sock.bind(sockpath.unix_address())
+    sock = await server_thread.task.socket(AF.UNIX, SOCK.STREAM)
+    addr = await server_thread.ram.ptr(
+        await SockaddrUn.from_path(server_thread, path/"hydra_server.sock"))
+    await sock.bind(addr)
     await sock.listen(10)
-    ssport = os.fsdecode(sockpath)+"="+str(sock.handle.near.number)
+    ssport = os.fsdecode(addr.value.path)+"="+str(int(sock.near))
     server_child = await server_thread.exec(hydra_server.env(
         **hydra_env, SERVER_STARTER_PORT=ssport))
     nursery.start_soon(server_child.check)
     # start evaluator, queue runner
     await nursery.start(stdtask.run, hydra_evaluator.env(**hydra_env))
     await nursery.start(stdtask.run, hydra_queue_runner.env(**hydra_env))
-    return Hydra(sockpath)
+    return Hydra(addr)
 
 class Jobset:
     def __init__(self, project: Project, identifier: str) -> None:
@@ -530,7 +549,7 @@ class TestHydra(TrioTestCase):
         self.assertEqual(job_name, message['X-Hydra-Job'])
 
     async def test_hydra(self) -> None:
-        client = await HydraClient.login(await HTTPClient.connect_unix(self.stdtask, self.hydra.sockpath))
+        client = await HydraClient.login(await HTTPClient.connect_unix(self.stdtask, self.hydra.addr))
         await self.create_and_validate_job(client)
 
     async def test_proxy(self) -> None:
