@@ -116,7 +116,7 @@ def _make_local_function_handle(cffi_ptr) -> Pointer[loader.NativeFunction]:
     mapping = handle.MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
     return Pointer(mapping, loader.NullGateway(), loader.NativeFunctionSerializer(), loader.StaticAllocation())
 
-async def _make_local_stdtask() -> Thread:
+async def _make_local_thread() -> Thread:
     local_transport = LocalMemoryTransport()
     ram = RAM(task, local_transport, memory.AllocatorClient.make_allocator(task))
     environ = {key.encode(): value.encode() for key, value in os.environ.items()}
@@ -135,7 +135,7 @@ async def _make_local_stdtask() -> Thread:
     child_monitor = await ChildProcessMonitor.make(ram, task, epoller)
     access_connection = None
     connection = await FDPassConnection.make(task, ram, epoller)
-    stdtask = Thread(
+    thread = Thread(
         task, ram,
         connection,
         process_resources,
@@ -145,17 +145,16 @@ async def _make_local_stdtask() -> Thread:
         stdout=task.make_fd_handle(near.FileDescriptor(1)),
         stderr=task.make_fd_handle(near.FileDescriptor(2)),
     )
-    return stdtask
+    return thread
 
-stdtask: Thread
+thread: Thread
 async def _initialize_module() -> None:
-    global stdtask
-    stdtask = await _make_local_stdtask()
+    global thread
+    thread = await _make_local_thread()
     # wipe out the SIGWINCH handler that the readline module installs
     import readline
-    await stdtask.task.sigaction(
-        Signals.SIGWINCH, await stdtask.ram.to_pointer(Sigaction(Sighandler.DFL)), None)
+    await thread.task.sigaction(
+        Signals.SIGWINCH, await thread.ram.to_pointer(Sigaction(Sighandler.DFL)), None)
 
 task = _make_local_task()
 trio.run(_initialize_module)
-thread = stdtask
