@@ -7,7 +7,6 @@ import trio
 import rsyscall.handle as handle
 import rsyscall.near
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.io import StandardTask
 from rsyscall.io import Thread
 from rsyscall.command import Command
 from rsyscall.handle import FileDescriptor, Path
@@ -25,23 +24,22 @@ from rsyscall.sys.socket import AF, SOCK
 class Powerdns:
     pass
 
-async def start_powerdns(nursery, stdtask: StandardTask, path: Path, zone: dns.zone.Zone,
+async def start_powerdns(nursery, parent: Thread, path: Path, zone: dns.zone.Zone,
                                   # tuple is (udpfd, listening tcpfd)
                                   ipv4_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
                                   ipv6_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
 ) -> Powerdns:
-    pdns_server = Command(stdtask.task.base.make_path_from_bytes("/home/sbaugh/.local/src/pdns/pdns/pdns_server"),
-                              ['pdns_server'], {})
-    # pdns_server = await rsc.which(stdtask, "pdns_server")
-    thread = await stdtask.fork()
+    pdns_server = Command(Path("/home/sbaugh/.local/src/pdns/pdns/pdns_server"), ['pdns_server'], {})
+    # pdns_server = await parent.environ.which("pdns_server")
+    thread = await parent.fork()
 
     # we pretend to pass addresses like 0.0.0.1 etc
     # we add one so we don't pass 0.0.0.0 and make powerdns think it's bound to everything
-    ipv4s = {str(i+1): (udp.move(thread.stdtask.task.base), tcp.move(thread.stdtask.task.base))
+    ipv4s = {str(i+1): (udp.move(thread.task), tcp.move(thread.task))
              for i, (udp, tcp) in enumerate(ipv4_sockets)}
-    ipv6s = {str(i+1): (udp.move(thread.stdtask.task.base), tcp.move(thread.stdtask.task.base))
+    ipv6s = {str(i+1): (udp.move(thread.task), tcp.move(thread.task))
              for i, (udp, tcp) in enumerate(ipv6_sockets)}
-    await thread.stdtask.unshare_files(going_to_exec=True)
+    await thread.unshare_files(going_to_exec=True)
     config = {
         "config-dir": os.fsdecode(path),
         # TODO control-console seems to be a feature where it will listen on stdin or something?
@@ -70,21 +68,19 @@ async def start_powerdns(nursery, stdtask: StandardTask, path: Path, zone: dns.z
     nursery.start_soon(child.check)
     return Powerdns()
 
-async def start_recursor(nursery, stdtask: StandardTask, path: Path,
+async def start_recursor(nursery, parent: Thread, path: Path,
                                   ipv4_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
                                   ipv6_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
                                   root_hints: dns.zone.Zone=None) -> Powerdns:
-    pdns_recursor = Command(stdtask.task.base.make_path_from_bytes(
-        "/home/sbaugh/.local/src/pdns/pdns/recursordist/pdns_recursor"),
-                                ['pdns_recursor'], {})
-    thread = await stdtask.fork()
+    pdns_recursor = Command(Path("/home/sbaugh/.local/src/pdns/pdns/recursordist/pdns_recursor"), ['pdns_recursor'], {})
+    thread = await parent.fork()
 
-    ipv4s = {str(i+1): (udp.move(thread.stdtask.task.base), tcp.move(thread.stdtask.task.base))
+    ipv4s = {str(i+1): (udp.move(thread.task), tcp.move(thread.task))
              for i, (udp, tcp) in enumerate(ipv4_sockets)}
-    ipv6s = {"::"+str(i+1): (udp.move(thread.stdtask.task.base), tcp.move(thread.stdtask.task.base))
+    ipv6s = {"::"+str(i+1): (udp.move(thread.task), tcp.move(thread.task))
              for i, (udp, tcp) in enumerate(ipv6_sockets)}
     addresses = {**ipv4s, **ipv6s}
-    await thread.stdtask.unshare_files(going_to_exec=True)
+    await thread.unshare_files(going_to_exec=True)
     config = {
         "config-dir": os.fsdecode(path),
         "socket-dir": os.fsdecode(path),
@@ -123,21 +119,20 @@ def make_zone(origin: t.Union[str, dns.name.Name],
 import rsyscall.tasks.local as local
 class TestPowerdns(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.ns_thread = await local.stdtask.fork()
-        self.stdtask = self.ns_thread.stdtask
-        await self.stdtask.unshare_user(0, 0)
-        await self.stdtask.unshare_net()
+        self.thread = await local.thread.fork()
+        await self.thread.unshare_user(0, 0)
+        await self.thread.unshare_net()
         # set loopback up
-        ip = await self.stdtask.environ.which("ip")
+        ip = await self.thread.environ.which("ip")
         # TODO blah this requires root and we don't want to have to run as root because it's a hassle
         # well, I guess we should be sandboxing anything bad, so maybe we should run as root..
         # no that's silly
-        await self.stdtask.run(ip.args('link', 'set', 'dev', 'lo', 'up'))
+        await self.thread.run(ip.args('link', 'set', 'dev', 'lo', 'up'))
         self.pdns_idx = 1
-        self.tmpdir = await self.stdtask.mkdtemp("test_powerdns")
+        self.tmpdir = await self.thread.mkdtemp("test_powerdns")
         self.path = self.tmpdir.path
-        self.dig = await self.stdtask.environ.which("dig")
-        self.host = await self.stdtask.environ.which("host")
+        self.dig = await self.thread.environ.which("dig")
+        self.host = await self.thread.environ.which("host")
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()
@@ -146,13 +141,13 @@ class TestPowerdns(TrioTestCase):
         idx = self.pdns_idx
         self.pdns_idx += 1
         addr = ipaddress.IPv4Address(0x7F_00_00_00 + idx)
-        sockaddr = await self.stdtask.ram.ptr(SockaddrIn(53, addr))
+        sockaddr = await self.thread.ram.ptr(SockaddrIn(53, addr))
         print("sockaddr", sockaddr)
-        path = await self.stdtask.mkdir(self.path/f"pdns{idx}")
+        path = await self.thread.mkdir(self.path/f"pdns{idx}")
 
-        udp_sock = await self.stdtask.task.socket(AF.INET, SOCK.DGRAM|SOCK.CLOEXEC)
+        udp_sock = await self.thread.task.socket(AF.INET, SOCK.DGRAM|SOCK.CLOEXEC)
         await udp_sock.bind(sockaddr)
-        tcp_sock = await self.stdtask.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
+        tcp_sock = await self.thread.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
         await tcp_sock.bind(sockaddr)
         await tcp_sock.listen(10)
 
@@ -165,24 +160,24 @@ class TestPowerdns(TrioTestCase):
         add_rdata('@', 'NS', 3600, 'ns1')
         add_rdata('ns1', 'A', 3600, str(addr))
         powerdns = await start_powerdns(
-            self.nursery, self.stdtask, path, zone, [(udp_sock, tcp_sock)], [])
+            self.nursery, self.thread, path, zone, [(udp_sock, tcp_sock)], [])
         return addr
 
     async def start_recursor(self, root_hints: dns.zone.Zone) -> ipaddress.IPv4Address:
         idx = self.pdns_idx
         self.pdns_idx += 1
         addr = ipaddress.IPv4Address(0x7F_00_00_00 + idx)
-        sockaddr = await self.stdtask.ram.ptr(SockaddrIn(53, addr))
-        path = await self.stdtask.mkdir(self.path/f"pdns{idx}")
+        sockaddr = await self.thread.ram.ptr(SockaddrIn(53, addr))
+        path = await self.thread.mkdir(self.path/f"pdns{idx}")
 
-        udp_sock = await self.stdtask.task.socket(AF.INET, SOCK.DGRAM|SOCK.CLOEXEC)
+        udp_sock = await self.thread.task.socket(AF.INET, SOCK.DGRAM|SOCK.CLOEXEC)
         await udp_sock.bind(sockaddr)
-        tcp_sock = await self.stdtask.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
+        tcp_sock = await self.thread.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
         await tcp_sock.bind(sockaddr)
         await tcp_sock.listen(10)
 
         powerdns = await start_recursor(
-            self.nursery, self.stdtask, path, [(udp_sock, tcp_sock)], [], root_hints=root_hints)
+            self.nursery, self.thread, path, [(udp_sock, tcp_sock)], [], root_hints=root_hints)
         return addr
 
     async def test_basic(self) -> None:
@@ -199,7 +194,7 @@ class TestPowerdns(TrioTestCase):
         }))
 
         # TODO should assert that the address returned is actually correct
-        await self.stdtask.run(self.host.args('a.user', str(recursor_addr)))
+        await self.thread.run(self.host.args('a.user', str(recursor_addr)))
 
     async def test_bad_ns(self) -> None:
         magic_addr = await self.start_authoritative(make_zone('.', {
@@ -207,7 +202,7 @@ class TestPowerdns(TrioTestCase):
             # 'magical': [make_rdset('IN', 'NS', 3600, ['foo.bar.'])],
             # '*': [make_rdset('IN', 'LUA', 3600, ["NS \"; return 'foo.bar.';\""])],
         }))
-        await self.stdtask.run(self.dig.args('@'+str(magic_addr), 'NS', 'magical'))
+        await self.thread.run(self.dig.args('@'+str(magic_addr), 'NS', 'magical'))
 
     async def test_powerdns(self) -> None:
         user_addr = await self.start_authoritative(make_zone('user.1.magic', {
@@ -238,19 +233,19 @@ class TestPowerdns(TrioTestCase):
             'a.root-servers.net': [make_rdset('IN', 'A', 3600000, [str(root_addr)])],
         }))
 
-        self.host = await self.stdtask.environ.which("host")
+        self.host = await self.thread.environ.which("host")
         # oh hmm we want to return an NS record for something else though
         # that's awkward to do with lua records.
         # or... maybe this is fine? can we return NS record for this domain at all levels?
         # in any case, now we have this thing working.
         # so... we can write a better test.
-        # await self.stdtask.run(dig.args('@127.0.0.2', 'NS', 'a.root-servers.net'))
-        # await self.stdtask.run(self.dig.args('@'+str(user_addr), 'A', 'a.user.1.magic'))
-        # await self.stdtask.run(self.dig.args('@'+str(recursor_addr), '+trace', 'NS', 'user'))
-        # await self.stdtask.run(self.dig.args('@'+str(recursor_addr), 'A', 'a.user.1.magic'))
-        await self.stdtask.run(self.dig.args('@'+str(magic_addr), 'NS', 'a.user.1.magic'))
-        # await self.stdtask.run(self.dig.args('@'+str(recursor_addr), 'A', 'user'))
-        # await self.stdtask.run(self.dig.args('@'+str(recursor_addr), 'A', 'a.user.1.magic'))
-        # await self.stdtask.run(self.host.args('-v', '-a', 'a.user.1.magic', str(recursor_addr)))
-        # await self.stdtask.run(self.host.args('-a', 'a.user.1.magic', str(magic_addr)))
+        # await self.thread.run(dig.args('@127.0.0.2', 'NS', 'a.root-servers.net'))
+        # await self.thread.run(self.dig.args('@'+str(user_addr), 'A', 'a.user.1.magic'))
+        # await self.thread.run(self.dig.args('@'+str(recursor_addr), '+trace', 'NS', 'user'))
+        # await self.thread.run(self.dig.args('@'+str(recursor_addr), 'A', 'a.user.1.magic'))
+        await self.thread.run(self.dig.args('@'+str(magic_addr), 'NS', 'a.user.1.magic'))
+        # await self.thread.run(self.dig.args('@'+str(recursor_addr), 'A', 'user'))
+        # await self.thread.run(self.dig.args('@'+str(recursor_addr), 'A', 'a.user.1.magic'))
+        # await self.thread.run(self.host.args('-v', '-a', 'a.user.1.magic', str(recursor_addr)))
+        # await self.thread.run(self.host.args('-a', 'a.user.1.magic', str(magic_addr)))
         # raise Exception('hi')
