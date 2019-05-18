@@ -80,7 +80,7 @@ class Thread(UnixThread):
         """
         if isinstance(path, Path):
             out: t.Optional[Path] = path
-            fd = await self.task.base.open(await self.ram.to_pointer(path), O.WRONLY|O.TRUNC|O.CREAT, mode=mode)
+            fd = await self.task.open(await self.ram.to_pointer(path), O.WRONLY|O.TRUNC|O.CREAT, mode=mode)
         else:
             out = None
             fd = path
@@ -114,7 +114,7 @@ class Thread(UnixThread):
                 sem.to_pointer(Arg(data)),
             )
         source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.ram.perform_batch(op)
-        await self.task.base.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
+        await self.task.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
 
     async def fork(self, newuser=False, newpid=False, fs=True, sighand=True) -> ChildThread:
         thread = await super().fork(newuser=newuser, newpid=newpid, fs=fs, sighand=sighand)
@@ -151,20 +151,20 @@ class Thread(UnixThread):
         TODO maybe this should return an object that lets us unset CLOEXEC on things?
 
         """
-        await self.task.base.unshare_files()
+        await self.task.unshare_files()
         if not going_to_exec:
-            await do_cloexec_except(self, set([fd.near for fd in self.task.base.fd_handles]))
+            await do_cloexec_except(self, set([fd.near for fd in self.task.fd_handles]))
 
     async def unshare_files_and_replace(self, mapping: t.Dict[FileDescriptor, FileDescriptor],
                                         disable_cloexec: t.List[FileDescriptor]=[]) -> None:
         mapping = {
             # we maybe_copy the key because we need to have the only handle to it in the task,
             # which we'll then consume through dup3.
-            key.maybe_copy(self.task.base):
+            key.maybe_copy(self.task):
             # we for_task the value so that we get a copy of it, which we then explicitly invalidate;
             # this means if we had the only reference to the fd passed into us as an expression,
             # we will close that fd - nice.
-            val.for_task(self.task.base)
+            val.for_task(self.task)
             for key, val in mapping.items()}
         disable_cloexec = [fd.maybe_copy(self.task) for fd in disable_cloexec]
         await self.unshare_files()
@@ -176,41 +176,41 @@ class Thread(UnixThread):
 
     async def unshare_user(self,
                            in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
-        uid = await self.task.base.getuid()
-        gid = await self.task.base.getgid()
-        await self.task.base.unshare_user()
+        uid = await self.task.getuid()
+        gid = await self.task.getgid()
+        await self.task.unshare_user()
         await write_user_mappings(self, uid, gid,
                                   in_namespace_uid=in_namespace_uid, in_namespace_gid=in_namespace_gid)
 
     async def unshare_net(self) -> None:
-        await self.task.base.unshare_net()
+        await self.task.unshare_net()
 
     async def setns_user(self, fd: FileDescriptor) -> None:
-        await self.task.base.setns_user(fd)
+        await self.task.setns_user(fd)
 
     async def unshare_mount(self) -> None:
         await self.task.unshare_mount()
 
     async def setns_mount(self, fd: FileDescriptor) -> None:
-        fd.check_is_for(self.task.base)
+        fd.check_is_for(self.task)
         await fd.setns(UnshareFlag.NEWNS)
 
     async def exit(self, status) -> None:
-        await self.task.base.exit(0)
+        await self.task.exit(0)
 
     async def close(self) -> None:
-        await self.task.base.close_task()
+        await self.task.close_task()
 
-    async def __aenter__(self) -> 'StandardTask':
-        return self
+    async def __aenter__(self) -> None:
+        pass
 
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 StandardTask = Thread
 
-class ChildThread(StandardTask, ChildUnixThread):
+class ChildThread(Thread, ChildUnixThread):
     @property
-    def stdtask(self) -> StandardTask:
+    def stdtask(self) -> Thread:
         return self
 
     async def exec_run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
@@ -222,10 +222,10 @@ class ChildThread(StandardTask, ChildUnixThread):
         return exit_event
 
     async def close(self) -> None:
-        await self.stdtask.task.base.close_task()
+        await self.task.close_task()
 
-    async def __aenter__(self) -> StandardTask:
-        return self.stdtask
+    async def __aenter__(self) -> None:
+        pass
 
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
