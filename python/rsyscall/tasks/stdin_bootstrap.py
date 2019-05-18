@@ -56,10 +56,10 @@ async def rsyscall_stdin_bootstrap(
     stdin_pair = await (await stdtask.task.socketpair(
         AF.UNIX, SOCK.STREAM, 0, await stdtask.ram.malloc_struct(FDPair))).read()
     parent_sock = stdin_pair.first
-    child_sock = stdin_pair.second.move(thread.stdtask.task)
+    child_sock = stdin_pair.second.move(thread.task)
     # set up stdin with socketpair
-    await thread.stdtask.unshare_files(going_to_exec=True)
-    await thread.stdtask.stdin.replace_with(child_sock)
+    await thread.unshare_files(going_to_exec=True)
+    await thread.stdin.replace_with(child_sock)
     # exec
     child_task = await thread.exec(bootstrap_command)
     #### set up all the fds we'll want to pass over

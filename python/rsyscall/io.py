@@ -209,10 +209,6 @@ class Thread(UnixThread):
 StandardTask = Thread
 
 class ChildThread(Thread, ChildUnixThread):
-    @property
-    def stdtask(self) -> Thread:
-        return self
-
     async def exec_run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
         child = await self.exec(command)
         task_status.started(child)

@@ -59,14 +59,14 @@ class ConsoleGenie(WishGranter):
             async_to_term = await self.stdtask.make_afd(to_term_pipe.write)
             try:
                 cat_stdin_thread = await self.stdtask.fork()
-                cat_stdin = to_term_pipe.read.move(cat_stdin_thread.stdtask.task)
-                await cat_stdin_thread.stdtask.unshare_files(going_to_exec=True)
-                await cat_stdin_thread.stdtask.stdin.replace_with(cat_stdin)
+                cat_stdin = to_term_pipe.read.move(cat_stdin_thread.task)
+                await cat_stdin_thread.unshare_files(going_to_exec=True)
+                await cat_stdin_thread.stdin.replace_with(cat_stdin)
                 async with await cat_stdin_thread.exec(self.cat):
                     cat_stdout_thread = await self.stdtask.fork()
-                    cat_stdout = from_term_pipe.write.move(cat_stdout_thread.stdtask.task)
-                    await cat_stdout_thread.stdtask.unshare_files(going_to_exec=True)
-                    await cat_stdout_thread.stdtask.stdout.replace_with(cat_stdout)
+                    cat_stdout = from_term_pipe.write.move(cat_stdout_thread.task)
+                    await cat_stdout_thread.unshare_files(going_to_exec=True)
+                    await cat_stdout_thread.stdout.replace_with(cat_stdout)
                     async with await cat_stdout_thread.exec(self.cat):
                         ret = await run_repl(async_from_term, async_to_term, {
                             '__repl_stdin__': async_from_term,

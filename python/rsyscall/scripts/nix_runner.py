@@ -21,7 +21,7 @@ async def deploy_nix_daemon(remote_stdtask: rsc.StandardTask,
 async def make_container(root: Path, stdtask: StandardTask) -> StandardTask:
     # TODO do we need to keep track of this thread?
     thread = await stdtask.fork()
-    container_stdtask = thread.stdtask
+    container_stdtask = thread
     await container_stdtask.task.unshare_fs()
     await container_stdtask.task.chdir(root)
     # make the container in cwd

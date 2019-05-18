@@ -84,7 +84,7 @@ async def rsyscall_exec(
         executable: RsyscallServerExecutable,
     ) -> None:
     "Exec into the standalone rsyscall_server executable"
-    stdtask = rsyscall_thread.stdtask
+    stdtask = rsyscall_thread
     [(access_data_sock, passed_data_sock)] = await stdtask.open_async_channels(1)
     # create this guy and pass him down to the new thread
     child_futex_memfd = await stdtask.task.memfd_create(
@@ -96,8 +96,8 @@ async def rsyscall_exec(
         raise Exception("can only exec in ChildSyscallInterface sysifs, not",
                         stdtask.task.sysif)
     # unshare files so we can unset cloexec on fds to inherit
-    await rsyscall_thread.stdtask.unshare_files(going_to_exec=True)
-    base_task = rsyscall_thread.stdtask.task
+    await rsyscall_thread.unshare_files(going_to_exec=True)
+    base_task = rsyscall_thread.task
     base_task.manipulating_fd_table = True
     # unset cloexec on all the fds we want to copy to the new space
     for fd in base_task.fd_handles:
@@ -117,7 +117,7 @@ async def rsyscall_exec(
     syscall.futex_task = None
     # the old RC would wait forever for the exec to complete; we need to make a new one.
     syscall.rsyscall_connection = SyscallConnection(syscall.rsyscall_connection.tofd, syscall.rsyscall_connection.fromfd)
-    stdtask.task.address_space = far.AddressSpace(rsyscall_thread.stdtask.task.process.near.id)
+    stdtask.task.address_space = far.AddressSpace(rsyscall_thread.task.process.near.id)
     # we mutate the allocator instead of replacing to so that anything that
     # has stored the allocator continues to work
     stdtask.ram.allocator.allocator = memory.Allocator(stdtask.task)

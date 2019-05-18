@@ -146,14 +146,14 @@ async def run_socket_binder(
         await task.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
     async_stdout = await task.make_afd(stdout_pipe.read)
     thread = await task.fork()
-    stdout = stdout_pipe.write.move(thread.stdtask.task)
-    with bootstrap_executable.borrow(thread.stdtask.task) as bootstrap_executable:
-        await thread.stdtask.unshare_files()
+    stdout = stdout_pipe.write.move(thread.task)
+    with bootstrap_executable.borrow(thread.task) as bootstrap_executable:
+        await thread.unshare_files()
         # TODO we are relying here on the fact that replace_with doesn't set cloexec on the new fd.
         # maybe we should explicitly list what we want to pass down...
         # or no, let's tag things as inheritable, maybe?
-        await thread.stdtask.stdout.replace_with(stdout)
-        await thread.stdtask.stdin.replace_with(bootstrap_executable)
+        await thread.stdout.replace_with(stdout)
+        await thread.stdin.replace_with(bootstrap_executable)
     async with thread:
         child = await thread.exec(ssh_command.args(ssh_bootstrap_script_contents))
         # from... local?
@@ -184,9 +184,9 @@ async def ssh_forward(stdtask: StandardTask, ssh_command: SSHCommand,
         await stdtask.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
     async_stdout = await stdtask.make_afd(stdout_pipe.read)
     thread = await stdtask.fork()
-    stdout = stdout_pipe.write.move(thread.stdtask.task)
-    await thread.stdtask.unshare_files()
-    await thread.stdtask.stdout.replace_with(stdout)
+    stdout = stdout_pipe.write.move(thread.task)
+    await thread.unshare_files()
+    await thread.stdout.replace_with(stdout)
     child_task = await thread.exec(ssh_command.local_forward(
         local_path, remote_path,
     # TODO I optimistically assume that I'll have established a
