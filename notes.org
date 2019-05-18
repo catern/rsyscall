@@ -17508,7 +17508,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    otherwise our fds will get inherited if some other task calls exec without first calling unshare_files.
 
    hmm this is kind of security-sensitive too because the fds might be inherited by a network-exposed process.
-** get nix deploy stuff working again
+** DONE get nix deploy stuff working again
    ok so...
 
    I guess the initial thing we want to get working is, bootstrapping the Nix binaries.

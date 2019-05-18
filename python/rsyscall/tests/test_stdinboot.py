@@ -26,7 +26,7 @@ class TestStdinboot(TrioTestCase):
         await do_async_things(self, self.remote.epoller, self.remote)
 
     async def test_nest(self) -> None:
-        child, new_stdtask = await rsyscall_stdin_bootstrap(self.remote, self.command)
+        child, new_thread = await rsyscall_stdin_bootstrap(self.remote, self.command)
         async with child:
-            await do_async_things(self, new_stdtask.epoller, new_stdtask)
+            await do_async_things(self, new_thread.epoller, new_thread)
     

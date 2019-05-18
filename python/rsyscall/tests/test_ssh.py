@@ -14,15 +14,15 @@ from rsyscall.sys.memfd import MFD
 
 import rsyscall.handle as handle
 from rsyscall.path import Path
-from rsyscall.io import StandardTask, Command
+from rsyscall.io import Thread, Command
 from rsyscall.monitor import AsyncChildProcess
 
 # import logging
 # logging.basicConfig(level=logging.DEBUG)
 
-async def start_cat(stdtask: StandardTask, cat: Command,
+async def start_cat(thread: Thread, cat: Command,
                     stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> AsyncChildProcess:
-    thread = await stdtask.fork()
+    thread = await thread.fork()
     await thread.unshare_files_and_replace({
         thread.stdin: stdin,
         thread.stdout: stdout,
@@ -69,8 +69,8 @@ class TestSSH(TrioTestCase):
 
     async def test_fork(self) -> None:
         thread1 = await self.remote.fork()
-        async with thread1 as stdtask1:
-            thread2 = await stdtask1.fork()
+        async with thread1:
+            thread2 = await thread1.fork()
             await thread2.close()
 
     async def test_nest(self) -> None:
