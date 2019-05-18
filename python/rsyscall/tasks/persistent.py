@@ -79,9 +79,9 @@ class PersistentServer:
     thread_process: t.Optional[ThreadProcess] = None
     transport: t.Optional[SocketMemoryTransport] = None
 
-    async def _connect_and_send(self, stdtask: Thread, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
-        sock = await stdtask.make_afd(await stdtask.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK, 0), nonblock=True)
-        sockaddr_un = await SockaddrUn.from_path(stdtask, self.path)
+    async def _connect_and_send(self, thread: Thread, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
+        sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK, 0), nonblock=True)
+        sockaddr_un = await SockaddrUn.from_path(thread, self.path)
         def sendmsg_op(sem: batch.BatchSemantics) -> t.Tuple[
                 WrittenPointer[Address], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
             addr: WrittenPointer[Address] = sem.to_pointer(sockaddr_un)
@@ -91,7 +91,7 @@ class PersistentServer:
             hdr = sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
             response_buf = sem.to_pointer(StructList(Int32, [Int32(0)]*len(fds)))
             return addr, count, hdr, response_buf
-        addr, count, hdr, response = await stdtask.ram.perform_batch(sendmsg_op)
+        addr, count, hdr, response = await thread.ram.perform_batch(sendmsg_op)
         data = None
         async with contextlib.AsyncExitStack() as stack:
             if isinstance(self.task.sysif, ChildSyscallInterface):
@@ -119,7 +119,7 @@ class PersistentServer:
         await self.task.setsid()
         await self.task.prctl(PR.SET_PDEATHSIG, 0)
 
-    async def reconnect(self, stdtask: Thread) -> None:
+    async def reconnect(self, thread: Thread) -> None:
         self.listening_sock.validate()
         await handle.run_fd_table_gc(self.task.fd_table)
         if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
@@ -128,9 +128,9 @@ class PersistentServer:
         # TODO should check that no transport requests are in flight
         if self.transport is not None:
             await self.transport.local.close()
-        [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await stdtask.open_async_channels(2)
+        [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await thread.open_async_channels(2)
         [infd, outfd, remote_data_sock] = await self._connect_and_send(
-            stdtask, [syscall_sock, syscall_sock, data_sock])
+            thread, [syscall_sock, syscall_sock, data_sock])
         await syscall_sock.close()
         await data_sock.close()
         # Fix up Task's sysif with new SyscallConnection
@@ -149,35 +149,35 @@ class PersistentServer:
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def fork_persistent(
-        self: Thread, path: Path,
+        parent: Thread, path: Path,
 ) -> t.Tuple[Thread, PersistentServer]:
-    listening_sock = await self.task.socket(AF.UNIX, SOCK.STREAM)
-    await listening_sock.bind(await self.ram.to_pointer(await SockaddrUn.from_path(self, path)))
+    listening_sock = await parent.task.socket(AF.UNIX, SOCK.STREAM)
+    await listening_sock.bind(await parent.ram.to_pointer(await SockaddrUn.from_path(parent, path)))
     await listening_sock.listen(1)
-    [(access_sock, remote_sock)] = await self.open_async_channels(1)
+    [(access_sock, remote_sock)] = await parent.open_async_channels(1)
     task = await spawn_child_task(
-        self.task, self.ram, self.loader, self.child_monitor,
+        parent.task, parent.ram, parent.loader, parent.child_monitor,
         access_sock, remote_sock,
-        Trampoline(self.loader.persistent_server_func, [remote_sock, remote_sock, listening_sock]),
+        Trampoline(parent.loader.persistent_server_func, [remote_sock, remote_sock, listening_sock]),
         newuser=False, newpid=False, fs=True, sighand=True)
     listening_sock_handle = listening_sock.move(task)
-    ram = RAM(task, self.ram.transport, self.ram.allocator.inherit(task))
+    ram = RAM(task, parent.ram.transport, parent.ram.allocator.inherit(task))
 
     ## create the new persistent task
     epoller = await EpollCenter.make_root(ram, task)
     signal_block = SignalBlock(task, await ram.to_pointer(Sigset({Signals.SIGCHLD})))
     # TODO use an inherited signalfd instead
     child_monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
-    stdtask = Thread(
+    child = Thread(
         task, ram,
-        self.connection.for_task(task, ram),
-        self.loader,
+        parent.connection.for_task(task, ram),
+        parent.loader,
         epoller,
         child_monitor,
-        self.environ.inherit(task, ram),
-        stdin=self.stdin.for_task(task),
-        stdout=self.stdout.for_task(task),
-        stderr=self.stderr.for_task(task),
+        parent.environ.inherit(task, ram),
+        stdin=parent.stdin.for_task(task),
+        stdout=parent.stdout.for_task(task),
+        stderr=parent.stderr.for_task(task),
     )
     persistent_server = PersistentServer(path, task, ram, epoller, listening_sock_handle)
-    return stdtask, persistent_server
+    return child, persistent_server

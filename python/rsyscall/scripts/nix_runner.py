@@ -7,45 +7,45 @@ import typing as t
 import argparse
 import rsyscall.tasks.local as local
 
-async def deploy_nix_daemon(remote_stdtask: rsc.Thread,
-                            container_stdtask: rsc.Thread) -> rsc.Command:
+async def deploy_nix_daemon(remote_thread: rsc.Thread,
+                            container_thread: rsc.Thread) -> rsc.Command:
     "Deploy the Nix daemon from localhost"
     # TODO check if remote_nix_store exists, and skip this stuff if it does
-    remote_tar = await rsc.which(remote_stdtask, b"tar")
+    remote_tar = await rsc.which(remote_thread, b"tar")
     # copy the nix binaries over outside the container
-    nix_bin = await rsc.deploy_nix_bin(local.nix_bin_dir, local.tar, local.stdtask,
-                                       remote_tar, remote_stdtask,
-                                       container_stdtask)
+    nix_bin = await rsc.deploy_nix_bin(local.nix_bin_dir, local.tar, local.thread,
+                                       remote_tar, remote_thread,
+                                       container_thread)
     return rsc.Command(nix_bin/"nix-daemon", [b'nix-daemon'], {})
 
-async def make_container(root: Path, stdtask: Thread) -> Thread:
+async def make_container(root: Path, thread: Thread) -> Thread:
     # TODO do we need to keep track of this thread?
-    thread = await stdtask.fork()
-    container_stdtask = thread
-    await container_stdtask.task.unshare_fs()
-    await container_stdtask.task.chdir(root)
+    thread = await thread.fork()
+    container_thread = thread
+    await container_thread.task.unshare_fs()
+    await container_thread.task.chdir(root)
     # make the container in cwd
-    await (container_stdtask.task.cwd()/"nix").mkdir()
-    await container_stdtask.unshare_user()
-    await container_stdtask.unshare_mount()
+    await (container_thread.task.cwd()/"nix").mkdir()
+    await container_thread.unshare_user()
+    await container_thread.unshare_mount()
     # TODO chroot too I guess
-    await container_stdtask.task.mount(b"nix", b"/nix", b"none", rsc.lib.MS_BIND, b"")
-    return container_stdtask
+    await container_thread.task.mount(b"nix", b"/nix", b"none", rsc.lib.MS_BIND, b"")
+    return container_thread
 
 async def run_nix(host: rsc.SSHHost) -> None:
-    ssh_child, remote_stdtask = await host.ssh(local.stdtask)
-    container_stdtask = await make_container(remote_stdtask.task.cwd(), remote_stdtask)
-    await run_nix_daemon(remote_stdtask, container_stdtask)
+    ssh_child, remote_thread = await host.ssh(local.thread)
+    container_thread = await make_container(remote_thread.task.cwd(), remote_thread)
+    await run_nix_daemon(remote_thread, container_thread)
 
 async def run_nix_in_local_container() -> None:
-    async with (await local.stdtask.mkdtemp()) as tmpdir:
-        container_stdtask = await make_container(tmpdir, local.stdtask)
-        await run_nix_daemon(local.stdtask, container_stdtask)
+    async with (await local.thread.mkdtemp()) as tmpdir:
+        container_thread = await make_container(tmpdir, local.thread)
+        await run_nix_daemon(local.thread, container_thread)
 
-async def run_nix_daemon(remote_stdtask: rsc.Thread, container_stdtask: rsc.Thread) -> None:
-    "Deploys Nix from the local_stdtask to this remote_stdtask and runs nix-daemon there"
+async def run_nix_daemon(remote_thread: rsc.Thread, container_thread: rsc.Thread) -> None:
+    "Deploys Nix from the local_thread to this remote_thread and runs nix-daemon there"
     try:
-        nix_daemon = await deploy_nix_daemon(remote_stdtask, container_stdtask)
+        nix_daemon = await deploy_nix_daemon(remote_thread, container_thread)
     except:
         # TODO hmm we seem to be hitting an issue with,
         # we're running both ssh and cat on the same terminal,
@@ -64,7 +64,7 @@ async def run_nix_daemon(remote_stdtask: rsc.Thread, container_stdtask: rsc.Thre
             if failures > 3:
                 raise Exception("nix-daemon keeps failing for some reason")
             else:
-                thread = await container_stdtask.fork()
+                thread = await container_thread.fork()
                 child = await nix_daemon.exec(thread)
         except:
             # TODO hmm, while working on this you might want to do a child.wait_for_exit,
@@ -92,7 +92,7 @@ async def isolate_exit(f, *args, **kwargs) -> None:
 from rsyscall.tests.test_ssh import LocalSSHHost
 email_address = 'me@example.com'
 hosts = [
-    trio.run(LocalSSHHost.make, local.stdtask)
+    trio.run(LocalSSHHost.make, local.thread)
     # local.ssh.args('localhost').as_host()
 ]
 
