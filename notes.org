@@ -18478,6 +18478,25 @@ And we can have an exec which is not memory-abstracting, I guess.
    two tutorials:
    single-threaded and multi-threaded
 
+   We'll explain rsyscall in two separate tutorials:
+   The single-threaded tutorial and the multi-threaded tutorial.
+
+   The single-threaded tutorial explains how to do things
+   with only a single thread, without creating more.
+   The single-threaded interface is fundamentally similar to normal Python,
+   though with a novel, significantly expanded, and more low-level interface to Linux.
+
+   The multi-threaded tutorial explains the interface to creating and using multiple threads,
+   including explaining exactly what "thread" means in rsyscall,
+   as well as some operations which only make sense with multiple threads.
+
+   Note that this division is purely for convenience;
+   the "multi-threaded" portions of rsyscall
+   are simply useful library functions built on top of "single-threaded" operations.
+   Everything that the "multi-threaded" part of rsyscall uses,
+   is available for you to use in the "single-threaded" part of rsyscall;
+   so if you want to implement new kinds of threads, you are fully able to do so.
+
    take thr: Thread as arg in both
 
    prerequisites:
