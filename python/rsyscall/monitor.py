@@ -55,15 +55,6 @@ class AsyncChildProcess:
                                       await self.monitor.ram.malloc_struct(Siginfo))
         return await self.process.read_siginfo()
 
-    async def wait(self) -> t.List[ChildEvent]:
-        with self.monitor.sigchld_waiter() as waiter:
-            while True:
-                event = await self.waitid_nohang()
-                if event is None:
-                    await waiter.wait_for_sigchld()
-                else:
-                    return [event]
-
     async def waitpid(self, options: W) -> ChildEvent:
         # TODO this is not really the actual behavior...
         if options & W.EXITED and self.process.death_event:
@@ -74,21 +65,15 @@ class AsyncChildProcess:
                 if event is None:
                     await waiter.wait_for_sigchld()
                 else:
-                    if event.status(options):
+                    if event.state(options):
                         return event
                     else:
                         # TODO we shouldn't discard the event here if we're not waiting for it;
                         # but doing it right takes a lot of effort in refactoring waitid
                         pass
 
-    async def wait_for_exit(self) -> ChildEvent:
-        return await self.waitpid(W.EXITED)
-
-    async def wait_for_stop_or_exit(self) -> ChildEvent:
-        return await self.waitpid(W.EXITED|W.STOPPED)
-
     async def check(self) -> ChildEvent:
-        death = await self.wait_for_exit()
+        death = await self.waitpid(W.EXITED)
         death.check()
         return death
 
@@ -106,7 +91,7 @@ class AsyncChildProcess:
             pass
         else:
             await self.kill()
-            await self.wait_for_exit()
+            await self.waitpid(W.EXITED)
 
 @dataclass(eq=False)
 class SigchldWaiter:

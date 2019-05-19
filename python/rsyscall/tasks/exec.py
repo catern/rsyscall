@@ -42,7 +42,7 @@ async def set_singleton_robust_futex(
     await task.set_robust_list(robust_list_head)
     return robust_list_entry
 
-async def make_robust_futex_task(
+async def make_robust_futex_process(
         parent: Thread,
         parent_memfd: FileDescriptor,
         child: Thread,
@@ -63,9 +63,9 @@ async def make_robust_futex_task(
         child.task, child.ram.transport, memory.Arena(remote_mapping))
     local_futex_node = remote_futex_node._with_mapping(local_mapping)
     # now we start the futex monitor
-    futex_task = await launch_futex_monitor(
+    futex_process = await launch_futex_monitor(
         parent.ram, parent.loader, parent.child_monitor, local_futex_node)
-    return futex_task, local_futex_node, remote_mapping
+    return futex_process, local_futex_node, remote_mapping
 
 @dataclass
 class RsyscallServerExecutable:
@@ -112,7 +112,7 @@ async def rsyscall_exec(
     child.loader = NativeLoader.make_from_symbols(child.task, symbol_struct)
     # the futex task we used before is dead now that we've exec'd, have
     # to null it out
-    syscall.futex_task = None
+    syscall.futex_process = None
     # the old RC would wait forever for the exec to complete; we need to make a new one.
     syscall.rsyscall_connection = SyscallConnection(syscall.rsyscall_connection.tofd, syscall.rsyscall_connection.fromfd)
     child.task.address_space = far.AddressSpace(child.task.process.near.id)
@@ -124,10 +124,10 @@ async def rsyscall_exec(
     child.task.manipulating_fd_table = False
 
     #### make new futex task
-    futex_task, local_futex_node, remote_mapping = await make_robust_futex_task(
+    futex_process, local_futex_node, remote_mapping = await make_robust_futex_process(
         parent, parent_futex_memfd, child, child_futex_memfd)
     # TODO how do we unmap the remote mapping?
-    syscall.futex_task = futex_task
+    syscall.futex_process = futex_process
     child.task._add_to_active_fd_table_tasks()
 
 async def spawn_exec(thread: Thread, store: nix.Store) -> ChildThread:

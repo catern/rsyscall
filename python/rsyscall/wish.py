@@ -17,6 +17,7 @@ import typing as t
 
 from rsyscall.sys.socket import SOCK, AF
 from rsyscall.sys.un import SockaddrUn
+from rsyscall.sys.wait import W
 from rsyscall.unistd import Pipe
 
 logger = logging.getLogger(__name__)
@@ -125,7 +126,7 @@ class ConsoleServerGenie(WishGranter):
                         await thread.close()
                         raise
                     async with child:
-                        await child.wait_for_exit()
+                        await child.waitpid(W.EXITED)
             ret = await serve_repls(sockfd, {
                 'wisher_frame': wisher_frame,
                 'wisher_locals': wisher_frame.f_locals,

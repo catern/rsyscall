@@ -16,7 +16,7 @@ from rsyscall.fcntl import O, F, FD_CLOEXEC
 from rsyscall.linux.dirent import DirentList
 from rsyscall.sched import UnCLONE
 from rsyscall.sys.mount import MS
-from rsyscall.sys.wait import ChildEvent
+from rsyscall.sys.wait import ChildEvent, W
 from rsyscall.unistd import Arg
 
 async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
@@ -131,7 +131,7 @@ class Thread(UnixThread):
         thread = await self.fork(fs=False)
         child = await thread.exec(command)
         task_status.started(child)
-        exit_event = await child.wait_for_exit()
+        exit_event = await child.waitpid(W.EXITED)
         if check:
             exit_event.check()
         return exit_event
@@ -215,7 +215,7 @@ class ChildThread(Thread, ChildUnixThread):
     async def exec_run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
         child = await self.exec(command)
         task_status.started(child)
-        exit_event = await child.wait_for_exit()
+        exit_event = await child.waitpid(W.EXITED)
         if check:
             exit_event.check()
         return exit_event

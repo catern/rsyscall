@@ -29,6 +29,7 @@ import typing as t
 from rsyscall.fcntl import O
 from rsyscall.sys.socket import SOCK, AF, Address
 from rsyscall.sys.un import SockaddrUn
+from rsyscall.sys.wait import W
 from rsyscall.unistd import Pipe
 
 __all__ = [
@@ -305,7 +306,7 @@ async def make_local_ssh_from_executables(thread: Thread,
     # ugh, we have to make a directory because ssh-keygen really wants to output to a directory
     async with (await thread.mkdtemp()) as tmpdir:
         await keygen_thread.task.chdir(await keygen_thread.ram.to_pointer(tmpdir))
-        await (await keygen_thread.exec(keygen_command)).wait_for_exit()
+        await (await keygen_thread.exec(keygen_command)).waitpid(W.EXITED)
         privkey_file = await thread.task.open(await thread.ram.to_pointer(tmpdir/'key'), O.RDONLY|O.CLOEXEC)
         pubkey_file = await thread.task.open(await thread.ram.to_pointer(tmpdir/'key.pub'), O.RDONLY|O.CLOEXEC)
     def to_host(ssh: SSHCommand, privkey_file=privkey_file, pubkey_file=pubkey_file) -> SSHCommand:

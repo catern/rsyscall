@@ -55,8 +55,8 @@ class ChildEvent:
                                pid=siginfo.pid, uid=siginfo.uid,
                                status=siginfo.status)
 
-    def status(self, status: W) -> bool:
-        return bool(status & {
+    def state(self, options: W) -> bool:
+        return bool(options & {
             CLD.EXITED: W.EXITED,
             CLD.KILLED: W.EXITED,
             CLD.DUMPED: W.EXITED,
@@ -66,7 +66,7 @@ class ChildEvent:
         }[self.code])
 
     def died(self) -> bool:
-        return self.status(W.EXITED)
+        return self.state(W.EXITED)
 
     def clean(self) -> bool:
         return self.code == CLD.EXITED and self.exit_status == 0

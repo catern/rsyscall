@@ -23,6 +23,7 @@ import contextlib
 from rsyscall.sched import CLONE
 from rsyscall.signal import Signals
 from rsyscall.sys.mman import PROT, MAP
+from rsyscall.sys.wait import W
 
 class ChildExit(RsyscallHangup):
     pass
@@ -49,14 +50,14 @@ class ChildSyscallInterface(near.SyscallInterface):
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
                  rsyscall_connection: SyscallConnection,
-                 server_task: AsyncChildProcess,
-                 futex_task: t.Optional[AsyncChildProcess],
+                 server_process: AsyncChildProcess,
+                 futex_process: t.Optional[AsyncChildProcess],
     ) -> None:
         self.rsyscall_connection = rsyscall_connection
-        self.server_task = server_task
-        self.futex_task = futex_task
-        self.identifier_process = self.server_task.process.near
-        self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{int(self.server_task.process.near)}")
+        self.server_process = server_process
+        self.futex_process = futex_process
+        self.identifier_process = self.server_process.process.near
+        self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{int(self.server_process.process.near)}")
         self.running_read = OneAtATime()
 
     def store_remote_side_handles(self, infd: FileDescriptor, outfd: FileDescriptor) -> None:
@@ -79,13 +80,13 @@ class ChildSyscallInterface(near.SyscallInterface):
         got_result = False
         async with trio.open_nursery() as nursery:
             async def server_exit() -> None:
-                await self.server_task.wait_for_exit()
+                await self.server_process.waitpid(W.EXITED)
                 nonlocal child_exited
                 child_exited = True
                 nursery.cancel_scope.cancel()
             async def futex_exit() -> None:
-                if self.futex_task is not None:
-                    await self.futex_task.wait_for_exit()
+                if self.futex_process is not None:
+                    await self.futex_process.waitpid(W.EXITED)
                     nonlocal futex_exited
                     futex_exited = True
                     nursery.cancel_scope.cancel()
@@ -149,16 +150,16 @@ async def launch_futex_monitor(ram: RAM,
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         return stack
     stack = await ram.perform_async_batch(op)
-    futex_task = await monitor.clone(CLONE.VM|CLONE.FILES, stack)
+    futex_process = await monitor.clone(CLONE.VM|CLONE.FILES, stack)
     # wait for futex helper to SIGSTOP itself,
     # which indicates the trampoline is done and we can deallocate the stack.
-    event = await futex_task.wait_for_stop_or_exit()
-    if event.died():
+    event = await futex_process.waitpid(W.EXITED|W.STOPPED)
+    if event.state(W.EXITED):
         raise Exception("thread internal futex-waiting task died unexpectedly", event)
-    # resume the futex_task so it can start waiting on the futex
-    await futex_task.send_signal(Signals.SIGCONT)
+    # resume the futex_process so it can start waiting on the futex
+    await futex_process.send_signal(Signals.SIGCONT)
     # the stack will be freed as it is no longer needed, but the futex pointer will live on
-    return futex_task
+    return futex_process
 
 async def spawn_child_task(
         task: Task, ram: RAM,
