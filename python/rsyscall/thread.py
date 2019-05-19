@@ -136,8 +136,8 @@ class Thread(UnixThread):
             exit_event.check()
         return exit_event
 
-    async def unshare(self, flags: unCLONE) -> None:
-        if flags & unCLONE.FILES:
+    async def unshare(self, flags: UnCLONE) -> None:
+        if flags & UnCLONE.FILES:
             await self.unshare_files()
 
     async def unshare_files(self, going_to_exec=True) -> None:
