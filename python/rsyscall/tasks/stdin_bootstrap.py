@@ -5,7 +5,7 @@ from rsyscall.command import Command
 from rsyscall.environ import Environment
 from rsyscall.epoller import Epoller, AsyncReadBuffer
 from rsyscall.handle import WrittenPointer, Task
-from rsyscall.io import Thread
+from rsyscall.thread import Thread
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.ram import RAM
 from rsyscall.memory.socket_transport import SocketMemoryTransport

@@ -6,11 +6,11 @@ from rsyscall._raw import ffi # type: ignore
 import os
 import abc
 import trio
-import rsyscall.io as rsc
 import rsyscall.handle as handle
 import rsyscall.near
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.io import Thread, ChildThread, Command
+from rsyscall.thread import Thread, ChildThread
+from rsyscall.command import Command
 from rsyscall.handle import FileDescriptor, Path
 from dataclasses import dataclass
 from rsyscall.struct import Int32, Bytes

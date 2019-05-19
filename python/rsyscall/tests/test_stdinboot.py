@@ -7,7 +7,7 @@ from rsyscall.tasks.stdin_bootstrap import *
 import rsyscall.tasks.local as local
 
 from rsyscall.tests.utils import do_async_things
-from rsyscall.io import Command
+from rsyscall.command import Command
 
 class TestStdinboot(TrioTestCase):
     async def asyncSetUp(self) -> None:

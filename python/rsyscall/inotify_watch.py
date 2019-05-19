@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
-from rsyscall.io import Thread
+from rsyscall.thread import Thread
 from rsyscall.memory.ram import RAM
 from rsyscall.near import WatchDescriptor
 import enum

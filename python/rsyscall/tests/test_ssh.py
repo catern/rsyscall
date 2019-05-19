@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.io
+import rsyscall.thread
 from rsyscall.nix import local_store, enter_nix_container
 from rsyscall.misc import bash_nixdep, coreutils_nixdep, hello_nixdep
 from rsyscall.struct import Bytes
@@ -14,7 +14,8 @@ from rsyscall.sys.memfd import MFD
 
 import rsyscall.handle as handle
 from rsyscall.path import Path
-from rsyscall.io import Thread, Command
+from rsyscall.thread import Thread, Command
+from rsyscall.command import Command
 from rsyscall.monitor import AsyncChildProcess
 
 # import logging
@@ -105,7 +106,7 @@ class TestSSH(TrioTestCase):
     async def test_sigmask_bug(self) -> None:
         thread = await self.remote.fork()
         await thread.unshare_files(going_to_exec=True)
-        await rsyscall.io.do_cloexec_except(
+        await rsyscall.thread.do_cloexec_except(
             thread, set([fd.near for fd in thread.task.fd_handles]))
         await self.remote.task.sigprocmask((HowSIG.SETMASK,
                                             await self.remote.ram.to_pointer(Sigset())),

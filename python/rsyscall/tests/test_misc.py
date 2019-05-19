@@ -7,7 +7,7 @@ from rsyscall.tasks.exec import *
 
 import rsyscall.tasks.local as local
 
-from rsyscall.io import do_cloexec_except
+from rsyscall.thread import do_cloexec_except
 
 from rsyscall.tests.utils import do_async_things
 from rsyscall.fcntl import O

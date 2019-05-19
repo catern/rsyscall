@@ -3774,6 +3774,23 @@ so we don't have to be generic.
 
    our programs are no longer forced to run as DSLs in the process monad.
    instead they can manipulate the process monad and run their own DSLs.
+** it's 1:N threading!
+   1:1 threading is kernel threading;
+   N:1 threading is userspace threads;
+   M:N is hydrid threading scheduler activations magic coolness;
+
+   THis is, kind of, 1:N threading.
+
+   except not really because we do have the ability to multiplex userspace threads, which is cool.
+
+   well even in those userspace threads we can name multiple kernel threads!
+   so it is 1:N threading.
+   M:1:N threading, kinda?
+
+   each userspace thread can explicitly name all the kernel threads.
+
+   might want to talk about there being two distinct concepts?
+   a place where computation happens, and a place where side-effects/syscalls happens.
 * explicitly modeling memory
 how would I do this?
 

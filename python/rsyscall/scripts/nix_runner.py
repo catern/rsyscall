@@ -1,5 +1,6 @@
-import rsyscall.io as rsc
-from rsyscall.io import Thread, wish, Wish, Path
+from rsyscall.thread import Thread
+from rsyscall.path import Path
+from rsyscall.wish import wish, Wish
 import rsyscall.local_executables as local
 import socket
 import trio

@@ -5,7 +5,7 @@ import abc
 import trio
 import socket
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.io import Thread
+from rsyscall.thread import Thread
 from rsyscall.handle import FileDescriptor, Path
 from rsyscall.command import Command
 from dataclasses import dataclass

@@ -1,0 +1,106 @@
+* design
+I guess we talk about fork here?
+And all the different tasks?
+ssh, persistent, etc?
+well maybe not all of them, perhaps just ssh and fork?
+
+no maybe just fork?
+and we can mention ssh?
+
+yeah we'll do some forking, some execing,
+some namespaces,
+and mention ssh and the rest at the end.
+* tutorial
+
+In rsyscall, `Thread` is the name of a class which contains several objects within it,
+together allowing system calls to be executed in the context of a specific process,
+as well as creating new `Thread`s mapping to new processes by various means.
+
+The operations that can be done using a single `Thread` are covered in some detail
+in the [[file:single_threaded.org][single-threaded tutorial]].
+In this tutorial, we consider the creation and use of multiple threads.
+
+Each `Thread` is tied to a separate Linux process which is created and destroyed separately,
+but these processes may share many details,
+including their address space and file descriptor table.
+
+No Python code runs in threads;
+the only place that Python code runs is in the main Python interpreter process.
+Threads are only contexts within which to execute syscalls as Python code wishes.
+* Initial example
+Here is an example program:
+#+BEGIN_SRC python
+from rsyscall.thread import Thread, ChildThread
+
+# GNU hello is a program which prints "Hello, world!"
+async def f(thr: Thread, hello_path: Path) -> None:
+    child_thread = await thr.fork()
+    child_process = await child_thread.execve(hello_path, ['hello'])
+    await child_process.check()
+#+END_SRC
+
+We receive a thread as an argument;
+we'll consider where the original thread comes from later on.
+
+We receive a Path as an argument as well;
+this should be the path to the "hello" binary from the GNU hello package.
+
+We create a new `Thread` using `thr.fork()`.
+What we get back is in fact a `ChildThread`;
+a `ChildThread` is a `Thread` with the additional knowledge that it's the child of one of our other threads.
+Knowing that, we can call `exec` in the `ChildThread` and monitor the resulting child process.
+A bare `Thread` does not have the ability to (safely) call `execve`,
+because there's no other `Thread` that is its parent and is able to monitor it.
+
+`fork` here is not using any special control flow;
+this is a normal Python function, which returns exactly once.
+Remember that Python code does not execute in threads;
+when we call `fork`, we get back a new context to execute syscalls in.
+
+When we call `child.execve(hello)`,
+the kernel stops the code currently running in the `child` thread,
+loads the "hello" binary into the `child` thread,
+and starts running "hello".
+
+The `Thread` interface will no longer work;
+the process is now under the control of GNU hello.
+But, the `Thread` interface helpfully returns, as its final act,
+a `ChildProcess` which we can use to monitor the process,
+even if we can no longer control it.
+
+We call `check()` on the child process, to wait for it to exit,
+receive its return code,
+and throw if the child process exited with a non-zero return code.
+* the initial, local thread
+Where does the first thread come from?
+
+Every rsyscall program starts out with one thread available to it:
+The local thread.
+The local thread can be imported from `rsyscall.tasks.local`, as follows:
+#+BEGIN_SRC python
+from rsyscall.tasks.local import thread as local_thread
+#+END_SRC
+
+Typically, a program will be written taking a `Thread` as a function argument all the way through,
+and only in the main function will the local thread be imported and passed as an argument.
+This allows for programs to work for any thread,
+which allows for substantial flexibility about the process and system that the program actually operates on.
+* namespaces
+  A thread created with `fork` starts out sharing all namespaces with the parent thread.
+  This includes the file descriptor table and the address space.
+  (Yes, this is different from the normal behavior of the `fork` syscall.
+
+  This means we can share file descriptors between tasks.
+* TODO show fd for_task interface maybe?
+  Let's avoid for_task maybe, if we can
+* TODO unshare fds?
+* TODO namespaces/container stuff?
+  pid namespace probably - since that's the most useful one?
+
+  or maybe some net namespace stuff? since it's cool to be able to act as root?
+
+  yeah something with net namespace would be neat.
+  that's a truly powerful thing.
+
+  well I mean let's focus on actually educating, not blowing minds
+* TODO ssh?

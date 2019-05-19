@@ -7,7 +7,7 @@ import trio
 import rsyscall.handle as handle
 import rsyscall.near
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.io import Thread
+from rsyscall.thread import Thread
 from rsyscall.command import Command
 from rsyscall.handle import FileDescriptor, Path
 from dataclasses import dataclass

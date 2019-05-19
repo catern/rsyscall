@@ -2,7 +2,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 from rsyscall.command import Command
 from rsyscall.epoller import AsyncFileDescriptor
-from rsyscall.io import Thread
+from rsyscall.thread import Thread
 from rsyscall.path import Path
 import abc
 import inspect

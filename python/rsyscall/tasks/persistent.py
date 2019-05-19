@@ -2,7 +2,7 @@ import typing as t
 import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.io import Thread
+from rsyscall.thread import Thread
 from rsyscall.path import Path
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface

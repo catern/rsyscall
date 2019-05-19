@@ -6,13 +6,18 @@ rsyscall provides interfaces to all the same functionality as the Python standar
 
 rsyscall also provides interfaces to Linux features which are not in the Python standard library.
 For example, inotify and rtnetlink.
+
+All operations in rsyscall happen through methods on a `Thread` object,
+or one of the objects contained within a `Thread`.
+In this tutorial, we will operate only in terms of a single pre-existing thread, received as an argument;
+read the [[file:multi_threaded.org][multi-threaded tutorial]] for more on creation of `Thread`s.
 * Initial example
 An example rsyscall program is the following:
 #+BEGIN_SRC python
-from rsyscall.tasks.local import thread as thr
+from rsyscall.thread import Thread
 from rsyscall.unistd import Pipe
 
-async def f(pipe: Pipe) -> None:
+async def f(thr: Thread, pipe: Pipe) -> None:
     # write some data to memory
     in_data_ptr = await thr.ram.ptr(b"hello world")
     # write that data to the write-end of the pipe
@@ -25,7 +30,10 @@ async def f(pipe: Pipe) -> None:
     print(await read_ptr.read())
 #+END_SRC
 
-We receive a pipe as an argument, produced elsewhere by a call to the pipe() system call.
+We receive a thread as an argument;
+as stated above, we will only work with a single pre-existing thread in this tutorial.
+
+We also receive a pipe as an argument, produced elsewhere by a call to the pipe() system call.
 The Pipe class contains the two file descriptor ends of the pipe in the "read" and "write" fields.
 
 In rsyscall, syscalls that operate on memory take a Pointer argument.
@@ -167,11 +175,12 @@ Consult the documentation for more details about specific syscalls.
   `SendMsghdr`, `RecvMsghdr`, and `RecvMsghdrOut`.
 
   Consule the rsyscall documentation for specific headers for more details about how to use those headers.
-* TODO classes and helpers on Thread
-  The "Thread" object contains several classes,
-  along with some helper methods.
+* TODO objects and helpers on Thread
+  The "Thread" object contains several objects,
+  along with some helper methods,
+  which are useful in single-threaded operations.
 
-  Some of these classes are only relevant for multi-threaded operation; we won't cover those here.
+  Some of these objects are only relevant for multi-threaded operation; we won't cover those here.
 ** task: Task
    The Task is the low-level representation of a thread,
    and the central place to make most syscalls.
@@ -224,6 +233,9 @@ Consult the documentation for more details about specific syscalls.
   Some syscalls can operate in multiple modes;
   for example, `kill` can operate on a process, but it can also operate on process groups.
   In this case, the syscall will be split across multiple objects.
+* spawning subprocesses
+  Spawning subprocesses is a matter of the multi-threaded API.
+  Read that tutorial for information about that.
 * missing interfaces
 We seek to provide user-accessible low-level interfaces to the entirety of the Linux kernel,
 including all non-obsolete syscalls,

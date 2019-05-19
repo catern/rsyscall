@@ -2,7 +2,7 @@ from __future__ import annotations
 import typing as t
 import os
 import rsyscall.handle as handle
-from rsyscall.io import Thread, ChildThread
+from rsyscall.thread import Thread, ChildThread
 from rsyscall.command import Command
 import rsyscall.tasks.local as local
 import trio

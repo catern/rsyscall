@@ -10,7 +10,7 @@ import requests
 import trio
 import typing as t
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.io import Thread, ChildThread
+from rsyscall.thread import Thread, ChildThread
 from rsyscall.handle import FileDescriptor, Path, WrittenPointer, Pointer
 from rsyscall.command import Command
 from rsyscall.memory.ram import RAM

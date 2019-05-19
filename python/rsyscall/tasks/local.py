@@ -1,10 +1,9 @@
 """Resources in the local Python process
 """
 from __future__ import annotations
-from rsyscall.io import Thread
+from rsyscall.thread import Thread
 from rsyscall.tasks.util import log_syscall, raise_if_error
 from rsyscall._raw import ffi, lib # type: ignore
-import rsyscall.io as rsc
 import trio
 from rsyscall.handle import Task
 import rsyscall.far as far
