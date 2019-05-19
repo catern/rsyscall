@@ -20,7 +20,7 @@ from rsyscall.sys.socket import (
     CmsgList, CmsgSCMRights,
     FDPair,
 )
-from rsyscall.sched import UnshareFlag, CLONE, Stack, Borrowable
+from rsyscall.sched import UnCLONE, CLONE, Stack, Borrowable
 from rsyscall.struct import Serializer, HasSerializer, FixedSerializer, FixedSize, Serializable, Int32, Struct
 from rsyscall.signal import Sigaction, Sigset, Signals, Siginfo, SignalMaskTask
 from rsyscall.fcntl import AT, F, O
@@ -854,7 +854,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             fd_table_to_near_to_handles[self.fd_table].setdefault(fd, [])
         self._add_to_active_fd_table_tasks()
         # perform the actual unshare
-        await rsyscall.near.unshare(self.sysif, UnshareFlag.FILES)
+        await rsyscall.near.unshare(self.sysif, UnCLONE.FILES)
         self.manipulating_fd_table = False
         # We can only remove our handles from the handle lists after the unshare is done
         # and the fds are safely copied, because otherwise someone else running GC on the
@@ -869,30 +869,30 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         old_fs = self.fs
         self.fs = rsyscall.far.FSInformation(self.sysif.identifier_process.id)
         try:
-            await rsyscall.near.unshare(self.sysif, UnshareFlag.FS)
+            await rsyscall.near.unshare(self.sysif, UnCLONE.FS)
         except:
             self.fs = old_fs
 
     async def unshare_user(self) -> None:
         # unsharing the user namespace implicitly unshares CLONE_FS
         await self.unshare_fs()
-        await rsyscall.near.unshare(self.sysif, UnshareFlag.NEWUSER)
+        await rsyscall.near.unshare(self.sysif, UnCLONE.NEWUSER)
 
     async def unshare_net(self) -> None:
-        await rsyscall.near.unshare(self.sysif, UnshareFlag.NEWNET)
+        await rsyscall.near.unshare(self.sysif, UnCLONE.NEWNET)
 
     async def unshare_mount(self) -> None:
-        await rsyscall.near.unshare(self.sysif, UnshareFlag.NEWNS)
+        await rsyscall.near.unshare(self.sysif, UnCLONE.NEWNS)
 
     async def setns_user(self, fd: FileDescriptor) -> None:
         with fd.borrow(self) as fd:
             # can't setns to a user namespace while sharing CLONE_FS
             await self.unshare_fs()
-            await fd.setns(UnshareFlag.NEWUSER)
+            await fd.setns(UnCLONE.NEWUSER)
 
     async def setns_net(self, fd: FileDescriptor) -> None:
         with fd.borrow(self) as fd:
-            await fd.setns(UnshareFlag.NEWNET)
+            await fd.setns(UnCLONE.NEWNET)
 
     async def socket(self, family: AF, type: SOCK, protocol: int=0, cloexec=True) -> FileDescriptor:
         if cloexec:

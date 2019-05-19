@@ -9,7 +9,7 @@ import contextlib
 if t.TYPE_CHECKING:
     from rsyscall.handle import Task, Pointer
 
-class UnshareFlag(enum.IntFlag):
+class UnCLONE(enum.IntFlag):
     NONE = 0
     FILES = lib.CLONE_FILES
     FS = lib.CLONE_FS

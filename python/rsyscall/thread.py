@@ -14,7 +14,7 @@ import typing as t
 
 from rsyscall.fcntl import O, F, FD_CLOEXEC
 from rsyscall.linux.dirent import DirentList
-from rsyscall.sched import UnshareFlag
+from rsyscall.sched import UnCLONE
 from rsyscall.sys.mount import MS
 from rsyscall.sys.wait import ChildEvent
 from rsyscall.unistd import Arg
@@ -136,6 +136,10 @@ class Thread(UnixThread):
             exit_event.check()
         return exit_event
 
+    async def unshare(self, flags: unCLONE) -> None:
+        if flags & unCLONE.FILES:
+            await self.unshare_files()
+
     async def unshare_files(self, going_to_exec=True) -> None:
         """Unshare the file descriptor table.
 
@@ -193,7 +197,7 @@ class Thread(UnixThread):
 
     async def setns_mount(self, fd: FileDescriptor) -> None:
         fd.check_is_for(self.task)
-        await fd.setns(UnshareFlag.NEWNS)
+        await fd.setns(UnCLONE.NEWNS)
 
     async def exit(self, status) -> None:
         await self.task.exit(0)

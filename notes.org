@@ -18482,6 +18482,8 @@ And we can have an exec which is not memory-abstracting, I guess.
 ** DONE finish refactoring to thread
 ** DONE fix up rsysapps
 ** DONE move out repl to separate package
+** TODO change wait on ACP to take W enum
+and rename it to waitpid?
 * DOCUMENTATION!
   Time to write it!
 ** wait actually no

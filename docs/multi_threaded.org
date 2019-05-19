@@ -10,6 +10,42 @@ and we can mention ssh?
 yeah we'll do some forking, some execing,
 some namespaces,
 and mention ssh and the rest at the end.
+** hmm
+   should really show that we have complete generality in,
+   doing things before exec.
+   
+   maybe do a dup3 explicitly?
+   even though I don't really use those...
+   yeah sure dup3 explicitly
+
+   for familiarity's sake
+
+   let's call it dup2 instead of dup3 too lol
+
+   since dup2 is more familiar
+
+   ok so maybe we can do a cat with a pipe?
+   pipes are ugly to create though,
+   I don't want to scare them away...
+
+   oh I could use open_channels, sure let's do that.
+
+   ok that seems good, we'll use which to find cat,
+   open_channels to make a channel,
+   dup2 to set 'em up,
+   and exec away.
+
+   i'll note that the open_channels can happen either in the parent or in the child
+
+   oh that's not strictly true, if we do it in the parent then we need a,
+   um,
+   for_task call so that the handle gets inherited across unshare_files
+
+   hmmmm it would be nice if with unshare_files,
+   we just passed unshare(CLONE.FILES) instead.
+   cuz, naming it unshare_files is annoying.
+
+   I could even call it on the task instead of the thread.
 * tutorial
 
 In rsyscall, `Thread` is the name of a class which contains several objects within it,
@@ -30,7 +66,7 @@ Threads are only contexts within which to execute syscalls as Python code wishes
 * Initial example
 Here is an example program:
 #+BEGIN_SRC python
-from rsyscall.thread import Thread, ChildThread
+from rsyscall import Thread, Path
 
 # GNU hello is a program which prints "Hello, world!"
 async def f(thr: Thread, hello_path: Path) -> None:
@@ -68,7 +104,7 @@ But, the `Thread` interface helpfully returns, as its final act,
 a `ChildProcess` which we can use to monitor the process,
 even if we can no longer control it.
 
-We call `check()` on the child process, to wait for it to exit,
+We call `check()` on the child process, to wait for the child process to exit,
 receive its return code,
 and throw if the child process exited with a non-zero return code.
 * the initial, local thread
@@ -85,6 +121,60 @@ Typically, a program will be written taking a `Thread` as a function argument al
 and only in the main function will the local thread be imported and passed as an argument.
 This allows for programs to work for any thread,
 which allows for substantial flexibility about the process and system that the program actually operates on.
+* fork
+The `fork` method is the normal way to create new threads.
+It is the only high-level way to create a child thread,
+which is a thread that is the child of one of our other existing threads,
+and can therefore be monitored even if we call exec in the child thread.
+
+A thread created with `fork` starts out sharing all namespaces with its parent thread.
+This includes the file descriptor table and the address space.
+Changes in the parent thread affect the child thread, and vice versa.
+(This is not the behavior of the POSIX `fork` function,
+but we reused the name because it's nice to see the fork/exec pattern.)
+
+Since the file descriptor table is shared,
+we can open files in the parent and use them in the child,
+or vice versa.
+
+This is especially useful when the child does not share other namespaces;
+for example, the child and its parent might be in different network namespaces,
+but the child can receive sockets from the parent's network namespace
+since they share the file descriptor table.
+
+If we want to change some open file descriptors only before execing,
+(replace stdin/stdout/stderr or unset CLOEXEC, for example),
+we will typically want to do this only in the child.
+
+To do that, we first call `unshare(UnCLONE.FILES)` in the child.
+(As discussed in the single-threaded tutorial,
+names of constants follow the pattern of Linux headers,
+and are sometimes prefixed to improve type safety
+when subsets of an enum are used by different syscalls)
+
+As documented in [[http://man7.org/linux/man-pages/man2/unshare.2.html][man 2 unshare]], this unshares the file descriptor table,
+so that it's no longer shared with the parent.
+
+
+* more example
+#+BEGIN_SRC python
+from rsyscall import Thread
+
+async def f(thr: Thread) -> None:
+    cat = await thr.environ.which('cat')
+    child = await thr.fork()
+    [(local_fd, child_fd)] = await child.open_async_channel()
+    await child.unshare_files()
+    await child_fd.dup2(child.stdin)
+    await child_fd.dup2(child.stdout)
+    child_process = await child.exec(cat)
+    # write data, close fd, and wait for process to die
+    await local_fd.write_all_bytes(b'hello world')
+    print(await local_fd.read_some_bytes())
+    await local_fd.close()
+    await child_process.check()
+#+END_SRC
+* fd ownership
 * namespaces
   A thread created with `fork` starts out sharing all namespaces with the parent thread.
   This includes the file descriptor table and the address space.
