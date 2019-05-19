@@ -125,7 +125,7 @@ and the other pointer will be freed and its space reused.
 
 After a split,
 the pointers may be merged back together so that the whole buffer may be reused.
-For example (somewhat gratuitously concise):
+For example:
 #+BEGIN_SRC python
 read, rest = await fd.read(await ram.malloc(Bytes, 4096))
 while read.size() > 0:

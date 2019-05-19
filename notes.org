@@ -18500,7 +18500,7 @@ And we can have an exec which is not memory-abstracting, I guess.
 ** DONE finish refactoring to thread
 ** DONE fix up rsysapps
 ** DONE move out repl to separate package
-** TODO pass clone flags to fork instead of kwargs
+** DONE pass clone flags to fork instead of kwargs
    The tricky thing is, I have some defaults I want;
    and sometimes I want to keep most of those defaults and just tweak one thing.
 

@@ -277,11 +277,8 @@ await child.exec(await child.environ.which('hello'))
 #+BEGIN_SRC python
 await (await child.exec(await child.environ.which('hello'))).check()
 #+END_SRC
-
-* TODO ssh? other thread styles?
-  Showing the other kinds of threads might be too much.
-  Might blow their minds a little too much.
-  That might be for a third tutorial.
-
-  And, to prevent people from immediately jumping to "advanced multi-threading",
-  we'll only link it from the end of this tutorial.
+* More thread types
+  The kind of thread created by "fork" is only one kind of thread available in rsyscall.
+  Once you have read this tutorial and understand the approach of rsyscall to threading,
+  you can read the [[file:advanced_threading.org][advanced threading tutorial]] for more information on the other kinds of threads available.
+  Don't try to skip ahead, though.

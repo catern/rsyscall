@@ -1,0 +1,32 @@
+Before reading this, you should read the [[file:multi_threaded.org][multi-threaded tutorial]],
+to get important context on what threads look like in rsyscall.
+
+The "fork" thread described in the multi-threaded tutorial is only one kind of thread:
+A process, started as our direct child, sharing our address space, on the same host as us, and which dies when we do.
+
+But other kinds of threads are also supported by rsyscall.
+Here we'll look at some of the other kinds of threads which can be created in rsyscall.
+
+Note that all thread types can launch any other thread type, in arbitrary combinations.
+
+For more information on any of these thread types,
+see the documentation for that thread type.
+* stdin bootstrap
+  A thread which uses a socketpair passed as stdin to bootstrap its connection back to the main thread.
+  This can be used, for example, with sudo or other programs which start a child in an altered state,
+  so that we can run syscalls in that altered state.
+* stub
+  A stub executable that, when run, connects back to us;
+  we can accept the connection to get a thread which controls the stub executable.
+  This works no matter what process on the system starts the stub executable.
+* persistent
+  A thread which persists on the system even after we exit,
+  and allows us to restart, recover our state, reconnect to the thread,
+  and continue using the resources and monitoring the child processes in the thread.
+* ssh
+  A thread which runs on a remote system, bootstrapped over ssh.
+  Note again that all thread types can be launched through any other thread type, including through an ssh thread.
+* extensibility
+  Users can implement their own thread types freely,
+  so if these available thread types do not meet your needs,
+  you are able to implement a new kind of thread which does.
