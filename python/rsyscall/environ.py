@@ -26,6 +26,7 @@ class ExecutablePathCache:
         self.ram = ram
         self.paths = [Path(path) for path in paths]
         self.fds: t.Dict[Path, t.Optional[FileDescriptor]] = {}
+        self.name_to_path: t.Dict[str, Path] = {}
 
     async def lookup_executable_at_path(self, path: Path, name: str) -> None:
         if path in self.fds:
@@ -57,18 +58,24 @@ class ExecutablePathCache:
                 return True
 
     async def which(self, name: str) -> Command:
-        nameptr = await self.ram.to_pointer(Path(name))
-        # do the lookup for 16 paths at a time, that seems like a good batching number
-        for paths in chunks(self.paths, 64):
-            thunks = [functools.partial(self.check, path, nameptr) for path in paths]
-            results = await run_all(thunks) # type: ignore
-            for path, result in zip(paths, results):
+        try:
+            path = self.name_to_path[name]
+        except KeyError:
+            nameptr = await self.ram.to_pointer(Path(name))
+            # do the lookup for 16 paths at a time, that seems like a good batching number
+            for paths in chunks(self.paths, 64):
+                thunks = [functools.partial(self.check, path, nameptr) for path in paths]
+                results = await run_all(thunks) # type: ignore
+                for path, result in zip(paths, results):
+                    if result:
+                        # path is set as the loop variable; python has no scope
+                        # so we can just break out and use it.
+                        break
                 if result:
                     break
-            if result:
-                break
-        else:
-            raise ExecutableNotFound(name)
+            else:
+                raise ExecutableNotFound(name)
+            self.name_to_path[name] = path
         return Command(path/name, [name], {})
 
 class Environment:

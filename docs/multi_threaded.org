@@ -187,6 +187,7 @@ async def example2(thr: Thread, cat_path: Path, pair: Socketpair) -> None:
     stdinout = pair.first.move(child.task)
     # unshare - only child-owned file descriptors remain in the new fd table
     await child.unshare(UnCLONE.FILES)
+    # dup2 unsets the cloexec flag so these fds are inherited across exec
     await stdinout.dup2(child.stdin)
     await stdinout.dup2(child.stdout)
     ## exec cat on the child thread
@@ -242,65 +243,95 @@ Many child processes will be running programs which don't spawn their own childr
 Some programs spawn children, but correctly clean them up if they die.
 These two classes are fine and will be automatically cleaned up without any effort on our part.
 
-Unfortunately, there are also many programs which spawn children and don't clean them up if they die.
+Unfortunately, there are also many programs which spawn children and don't clean them up if they die,
+leaving them behind as orphans on the system.
 We can clean up after such programs by using pid namespaces.
 
-This is not essential functionality for most users;
-we are examining this as a demonstration of the flexibility of the thread model.
-
 #+BEGIN_SRC python
-async def example3(thr: Thread) -> None:
-    pass
+from rsyscall import Thread, Bytes
+from rsyscall.sched import UnCLONE
+from rsyscall.fcntl import F
+from rsyscall.sys.wait import W, CLD
+
+async def example3(thr: Thread, sh_path: Path, pipe: Pipe) -> None:
+    # create new pid namespace, with init as one of our threads
+    init = await thr.fork(CLONE.NEWUSER|CLONE.NEWPID)
+    # create a new child inside the pid namespace
+    child = await init.fork()
+    # pass down the write-end of the pipe to the child;
+    # the write-end of the pipe will only be open inside the child.
+    child_fd = pipe.write.move(child.task)
+    await child.unshare(UnCLONE.FILES)
+    # unset the cloexec flag so this fd is inherited across exec
+    await child_fd.fcntl(F.SETFD, 0)
+    # exec into sh to leave "sleep inf" running forever as an orphan.
+    # as long as "sleep inf" runs, the write-end of the pipe is kept open.
+    child_process = await child.execve(sh_path, ['sh', '-c', '{ sleep inf & } &'])
+    event = await child_process.waitpid(W.EXITED)
+    if not (event.code == CLD.EXITED and event.exit_status == 0):
+        raise Exception("sh exited uncleanly :(")
+    # there's now a "sleep inf" orphan running forever inside the pid namespace.
+    # exit the init process to shut down the pid namespace 
+    await init.exit(0)
+    # we read the pipe and get an EOF, since the write-end has been closed.
+    read, _ = await pipe.read.read(await thr.ram.malloc(Bytes, 1))
+    if read.size() != 0:
+        raise Exception("unexpectedly actually read something?!??")
 #+END_SRC
 
-* TODO do something fancier to show we're totally without restrictions
-  We can open a socket in a net namespace and pass it out.
+This function creates a pid namespace,
+passes down the write end of a pipe to an orphaned "sleep inf" process,
+shuts down the pid namespace,
+and reads an EOF from the read-end of the pipe, indicating that the "sleep inf" process is dead.
 
-  We can make pid namespaces, mount namespaces, all that stuff.
+We first spawn a new pid namespace by passing CLONE.NEWPID to fork;
+we need to also pass CLONE.NEWUSER to create a user namespace to gain the privileges required to create a pid namespace.
+See [[http://man7.org/linux/man-pages/man7/namespaces.7.html][man 7 namespaces]] for more in-depth documentation about namespaces.
 
-  Hmmm actually I think that's implied maybe?
+The new thread is the init process in the pid namespace.
+We fork again from init to create a useful child in the namespace.
 
-  No, we do need to show something container-y at least.
-  Using namespaces.
-  I think pid namespaces would be a good one.
+We move ownership of the write-end of the pipe to the child thread,
+unshare the file descriptor table,
+and unset the CLOEXEC flag so that the write-end of the pipe will be inherited across exec into "sleep inf".
 
-  It doesn't exploit our fd-table sharedness, 
-  but, in retrospect,
-  maybe the fd table stuff would concern people.
+We exec a sh program from the child thread,
+and wait for the resulting child process to terminate.
+Once it's completed, we know that "sleep inf" is left alive inside the pid namespace.
 
-  OK so yeah pid namespaces.
+We exit the init thread to shut down the pid namespace.
+This kills the "sleep inf" process inside the pid namespace.
 
-  This also gives us a chance to talk about threads dying.
-  ANd getting cleaned up
-* do fancier namespace stuff?
-  Usage of namespaces would be cool.
+Since the "sleep inf" process is dead,
+and it held the only copy of the write-end of the pipe,
+the write-end of the pipe is now closed.
+Since the write-end of the pipe is closed,
+we get an EOF when we read from the read-end of the pipe.
+* TODO helpers
+** exec, Command
+   exec takes Commands;
+   Commands are a name + some args + some environment variables.
+#+BEGIN_SRC python
+await child.exec(sh.args('-c', 'echo $HELLO').env(HELLO="hello world"))
+#+END_SRC
+** environ: Environment
+   sh, which
 
-  ok so one tricky thing is that, actually doing a netns thing requires setting up loopback,
-  which is tricky.
+#+BEGIN_SRC python
+await child.exec(child.environ.sh('-c', 'true'))
+await child.exec(await child.environ.which('hello'))
+#+END_SRC
+** check
+   Waits for the child process to exit, then throws an exception if it didn't exit cleanly.
 
-  pid namespaces are easier
-  and useful too
+#+BEGIN_SRC python
+await (await child.exec(await child.environ.which('hello'))).check()
+#+END_SRC
 
-  ok so we can do, like, an unshare_pid,
-  then start some things in the namespace?
+* TODO ssh? other thread styles?
+  Showing the other kinds of threads might be too much.
+  Might blow their minds a little too much.
+  That might be for a third tutorial.
 
-  hmm that doesn't actually use our power though.
-
-  the tun would do it
-
-  but the tun is too unknown
-
-  what about mount namespaces?
-
-  oh maybe I should just have a function that sets up loopback in the netns.
-* TODO unshare fds?
-* TODO namespaces/container stuff?
-  pid namespace probably - since that's the most useful one?
-
-  or maybe some net namespace stuff? since it's cool to be able to act as root?
-
-  yeah something with net namespace would be neat.
-  that's a truly powerful thing.
-
-  well I mean let's focus on actually educating, not blowing minds
-* TODO ssh?
+  And, to prevent people from immediately jumping to "advanced multi-threading",
+  we'll only link it from the end of this tutorial.
