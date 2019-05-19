@@ -64,26 +64,33 @@ class AsyncChildProcess:
                 else:
                     return [event]
 
-    async def wait_for_exit(self) -> ChildEvent:
-        if self.process.death_event:
+    async def waitpid(self, options: W) -> ChildEvent:
+        # TODO this is not really the actual behavior...
+        if options & W.EXITED and self.process.death_event:
             return self.process.death_event
-        while True:
-            for event in (await self.wait()):
-                if event.died():
-                    return event
+        with self.monitor.sigchld_waiter() as waiter:
+            while True:
+                event = await self.waitid_nohang()
+                if event is None:
+                    await waiter.wait_for_sigchld()
+                else:
+                    if event.status(options):
+                        return event
+                    else:
+                        # TODO we shouldn't discard the event here if we're not waiting for it;
+                        # but doing it right takes a lot of effort in refactoring waitid
+                        pass
+
+    async def wait_for_exit(self) -> ChildEvent:
+        return await self.waitpid(W.EXITED)
+
+    async def wait_for_stop_or_exit(self) -> ChildEvent:
+        return await self.waitpid(W.EXITED|W.STOPPED)
 
     async def check(self) -> ChildEvent:
         death = await self.wait_for_exit()
         death.check()
         return death
-
-    async def wait_for_stop_or_exit(self) -> ChildEvent:
-        while True:
-            for event in (await self.wait()):
-                if event.died():
-                    return event
-                elif event.code == CLD.STOPPED:
-                    return event
 
     async def send_signal(self, sig: Signals) -> None:
         await self.process.kill(sig)
