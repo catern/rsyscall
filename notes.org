@@ -17537,7 +17537,7 @@ And we can have an exec which is not memory-abstracting, I guess.
 
    Ummm that would have the right effect, but does it make sense?
    Well what about exit? I mean right now when we exit, we leave our handles around...
-** TODO abbreviate to_pointer?
+** DONE abbreviate to_pointer?
    to_ptr?
 
    ptr?
@@ -17551,7 +17551,7 @@ And we can have an exec which is not memory-abstracting, I guess.
    since we don't run constructors
 
    maybe to_pointer should be "new"???
-** TODO make an overload for to_pointer which takes regular Python "bytes" directly
+** DONE make an overload for to_pointer which takes regular Python "bytes" directly
 ** cloexec
    we do actually need to cloexec when in a shared fd space, I guess,
    otherwise our fds will get inherited if some other task calls exec without first calling unshare_files.
