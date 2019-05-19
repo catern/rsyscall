@@ -1,7 +1,6 @@
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
 
-from rsyscall.struct import Bytes
 from rsyscall.unistd import Pipe
 from rsyscall.fcntl import O
 
@@ -19,7 +18,7 @@ class TestCat(TrioTestCase):
         self.child = await thread.exec(self.cat)
 
     async def test_cat_pipe(self) -> None:
-        in_data = await self.thr.ram.to_pointer(Bytes(b"hello"))
+        in_data = await self.thr.ram.ptr(b"hello")
         written, _ = await self.pipe_in.write.write(in_data)
         valid, _ = await self.pipe_out.read.read(written)
         self.assertEqual(in_data.value, await valid.read())
@@ -30,7 +29,7 @@ class TestCat(TrioTestCase):
     async def test_cat_async(self) -> None:
         stdin = await self.thr.make_afd(self.pipe_in.write, nonblock=False)
         stdout = await self.thr.make_afd(self.pipe_out.read, nonblock=False)
-        in_data = await self.thr.ram.to_pointer(Bytes(b"hello"))
+        in_data = await self.thr.ram.ptr(b"hello")
         written, _ = await stdin.write(in_data)
         valid, _ = await stdout.read(written)
         self.assertEqual(in_data.value, await valid.read())

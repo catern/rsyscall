@@ -7,7 +7,6 @@ from rsyscall.net.if_ import *
 from rsyscall.linux.netlink import *
 from rsyscall.linux.rtnetlink import *
 from pyroute2 import IPBatch
-from rsyscall.struct import Bytes
 from rsyscall.sched import UnCLONE
 
 class TestNet(TrioTestCase):
@@ -48,7 +47,7 @@ class TestNet(TrioTestCase):
         # this is the second interface in an empty netns
         self.assertEqual((await ptr.read()).ifindex, 2)
 
-        valid, _ = await netsock.read(await self.thr.ram.malloc_type(Bytes, 4096))
+        valid, _ = await netsock.read(await self.thr.ram.malloc(bytes, 4096))
         batch = IPBatch()
         evs = batch.marshal.parse(await valid.read())
         self.assertEqual(len(evs), 1)

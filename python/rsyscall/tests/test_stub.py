@@ -9,7 +9,6 @@ import rsyscall.tasks.local as local
 
 from rsyscall.tests.utils import do_async_things
 from rsyscall.command import Command
-from rsyscall.struct import Bytes
 
 import os
 
@@ -46,6 +45,6 @@ class TestStub(TrioTestCase):
         child = await self.thread.exec(command)
         argv, new_thread = await self.server.accept()
         valid, _ = await new_thread.stdin.read(
-            await new_thread.ram.malloc_type(Bytes, len(data_in)))
+            await new_thread.ram.malloc(bytes, len(data_in)))
         self.assertEqual(data_in, (await valid.read()).decode())
     

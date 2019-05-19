@@ -4,7 +4,6 @@ from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.thread
 from rsyscall.nix import local_store, enter_nix_container
 from rsyscall.misc import bash_nixdep, coreutils_nixdep, hello_nixdep
-from rsyscall.struct import Bytes
 from rsyscall.tasks.ssh import *
 import rsyscall.tasks.local as local
 
@@ -43,9 +42,9 @@ class TestSSH(TrioTestCase):
 
     async def test_read(self) -> None:
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)
-        data = Bytes(b"hello world")
-        await local_sock.write(await self.local.ram.to_pointer(data))
-        valid, _ = await remote_sock.read(await self.remote.ram.malloc_type(Bytes, len(data)))
+        data = b"hello world"
+        await local_sock.write(await self.local.ram.ptr(data))
+        valid, _ = await remote_sock.read(await self.remote.ram.malloc(bytes, len(data)))
         self.assertEqual(len(data), valid.bytesize())
         self.assertEqual(data, await valid.read())
 
@@ -63,7 +62,7 @@ class TestSSH(TrioTestCase):
         })
         child_process = await thread.exec(cat)
 
-        in_data = await self.local.ram.to_pointer(Bytes(b"hello"))
+        in_data = await self.local.ram.ptr(b"hello")
         written, _ = await local_sock.write(in_data)
         valid, _ = await local_sock.read(written)
         self.assertEqual(in_data.value, await valid.read())
@@ -85,7 +84,7 @@ class TestSSH(TrioTestCase):
         remote_file = await self.remote.task.memfd_create(await self.remote.ram.to_pointer(Path("dest")), MFD.CLOEXEC)
 
         data = b'hello world'
-        await local_file.write(await self.local.ram.to_pointer(Bytes(data)))
+        await local_file.write(await self.local.ram.ptr(data))
         await local_file.lseek(0, SEEK.SET)
 
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)
@@ -100,7 +99,7 @@ class TestSSH(TrioTestCase):
         await remote_child.check()
 
         await remote_file.lseek(0, SEEK.SET)
-        read, _ = await remote_file.read(await self.remote.ram.malloc_type(Bytes, len(data)))
+        read, _ = await remote_file.read(await self.remote.ram.malloc(bytes, len(data)))
         self.assertEqual(await read.read(), data)
 
     async def test_sigmask_bug(self) -> None:

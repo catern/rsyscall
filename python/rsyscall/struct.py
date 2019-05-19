@@ -80,6 +80,13 @@ class Bytes(bytes, Serializable):
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         return cls(data)
 
+class BytesSerializer(Serializer[bytes]):
+    def to_bytes(self, val: bytes) -> bytes:
+        return val
+
+    def from_bytes(self, data: bytes) -> bytes:
+        return data
+
 @dataclass
 class StructList(t.Generic[T_struct], HasSerializer):
     cls: t.Type[T_struct]

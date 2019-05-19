@@ -3,7 +3,6 @@ import rsyscall.tasks.local as local
 from rsyscall.tasks.exec import spawn_exec
 from rsyscall.sys.socket import AF, SOCK, Socketpair
 from rsyscall.unistd import Pipe
-from rsyscall.struct import Bytes
 from rsyscall.fcntl import O
 
 from rsyscall.sched import CLONE
@@ -38,7 +37,7 @@ class TestPidns(TrioTestCase):
         child_process = await child.exec(cat)
         await self.init.close()
         # cat dies, get EOF on socket
-        read, _ = await pair.second.read(await self.local.ram.malloc(Bytes, 16))
+        read, _ = await pair.second.read(await self.local.ram.malloc(bytes, 16))
         self.assertEqual(read.size(), 0)
 
     async def test_sleep(self) -> None:
@@ -50,5 +49,5 @@ class TestPidns(TrioTestCase):
         child_process = await child.exec(child.environ.sh.args('-c', '{ sleep inf & } &'))
         await child_process.check()
         await self.init.close()
-        read, _ = await pipe.read.read(await self.local.ram.malloc(Bytes, 1))
+        read, _ = await pipe.read.read(await self.local.ram.malloc(bytes, 1))
         self.assertEqual(read.size(), 0)

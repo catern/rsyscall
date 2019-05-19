@@ -12,7 +12,6 @@ from rsyscall.thread import do_cloexec_except
 from rsyscall.tests.utils import do_async_things
 from rsyscall.fcntl import O
 from rsyscall.unistd import Pipe
-from rsyscall.struct import Bytes
 
 class TestMisc(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -33,7 +32,7 @@ class TestMisc(TrioTestCase):
         close_set.remove(pipe.read.near)
         await do_cloexec_except(self.thr, close_set)
 
-        data = await self.thr.ram.to_pointer(Bytes(b"foo"))
+        data = await self.thr.ram.ptr(b"foo")
         with self.assertRaises(OSError):
             # this side was closed due to being cloexec
             await pipe.read.read(data)

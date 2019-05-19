@@ -4,7 +4,6 @@ import rsyscall.tasks.local as local
 from rsyscall.sys.socket import *
 from rsyscall.sys.un import *
 from rsyscall.sys.uio import IovecList
-from rsyscall.struct import Bytes
 from rsyscall.fcntl import O
 from rsyscall.linux.dirent import DirentList
 
@@ -70,7 +69,7 @@ class TestSocket(TrioTestCase):
             await self.thr.ram.malloc_struct(Socketpair))).read()
         in_data = b"hello"
 
-        iovec = await self.thr.ram.to_pointer(IovecList([await self.thr.ram.to_pointer(Bytes(in_data))]))
+        iovec = await self.thr.ram.to_pointer(IovecList([await self.thr.ram.ptr(in_data)]))
         cmsgs = await self.thr.ram.to_pointer(CmsgList([CmsgSCMRights([fds.second])]))
         [written], [] = await fds.second.sendmsg(
             await self.thr.ram.to_pointer(SendMsghdr(None, iovec, cmsgs)), SendmsgFlags.NONE)

@@ -137,8 +137,28 @@ In general, any two pointers that are adjacent in memory may be merged into a si
 
 This style applies to any syscall that takes a pointer and returns information about what part of that pointer was used.
 Consult the documentation for more details about specific syscalls.
-* TODO explain malloc in more depth
-  Maybe create a pipe or socketpair?
+* malloc and memory management
+  The `pipe` system call, along with many others, is passed a buffer into which it writes its output.
+
+  To alloc such a buffer, we use malloc.
+  Note again that pointers are garbage collected, so manual freeing is unnecessary.
+
+  For example:
+#+BEGIN_SRC python
+async def f(thr: Thread) -> Pipe:
+    buf = await thr.ram.malloc(Pipe)
+    written_buf = await thr.task.pipe(buf)
+    return await written_buf.read()
+
+# or, more concisely:
+async def f(thr: Thread) -> Pipe:
+    return await (await thr.task.pipe(await thr.ram.malloc(Pipe))).read()
+#+END_SRC
+
+The malloc system call takes as its first argument a type to allocate a buffer for.
+If that type needs a fixed-size buffer, no further arguments are needed.
+If the type's buffer can be of variable size, then malloc requires a second argument,
+which is the size in bytes of the buffer to allocate.
 * TODO header organization
   Many constants and structures are involved in the Linux API.
   The layout of these constants in rsyscall follows the headers exported by Linux.

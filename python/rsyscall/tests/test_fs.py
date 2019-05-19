@@ -6,7 +6,6 @@ from rsyscall.handle import Pointer
 from rsyscall.tests.utils import do_async_things
 from rsyscall.fcntl import O
 from rsyscall.unistd import SEEK
-from rsyscall.struct import Bytes
 from rsyscall.path import EmptyPath, Path
 from rsyscall.linux.dirent import *
 from rsyscall.environ import ExecutablePathCache, ExecutableNotFound
@@ -24,7 +23,7 @@ class TestFS(TrioTestCase):
     async def test_copy(self) -> None:
         source_file = await self.thr.task.open(await self.thr.ram.to_pointer(self.path/"source"), O.RDWR|O.CREAT)
         data = b'hello world'
-        buf: Pointer[Bytes] = await self.thr.ram.to_pointer(Bytes(data))
+        buf: Pointer[bytes] = await self.thr.ram.ptr(data)
         valid, rest = await source_file.write(buf)
         buf = valid + rest
         await source_file.lseek(0, SEEK.SET)
@@ -53,7 +52,7 @@ class TestFS(TrioTestCase):
         name = await self.thr.ram.to_pointer(Path("hello"))
 
         write_fd = await dirfd.openat(name, O.WRONLY|O.CREAT)
-        buf = await self.thr.ram.to_pointer(Bytes(text))
+        buf = await self.thr.ram.ptr(text)
         written, _ = await write_fd.write(buf)
 
         read_fd = await dirfd.openat(name, O.RDONLY)

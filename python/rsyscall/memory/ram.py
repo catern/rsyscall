@@ -1,6 +1,6 @@
 from rsyscall.handle import Task, Pointer, WrittenPointer, MemoryTransport
 from rsyscall.memory.allocator import AllocatorClient, AllocatorInterface
-from rsyscall.struct import FixedSize, T_fixed_size, T_has_serializer, T_fixed_serializer, Serializer, Bytes
+from rsyscall.struct import FixedSize, T_fixed_size, T_has_serializer, T_fixed_serializer, Serializer, Bytes, BytesSerializer
 
 import typing as t
 import rsyscall.batch as batch
@@ -22,16 +22,22 @@ class RAM:
         self.allocator = allocator
 
     @t.overload
+    async def malloc(self, cls: t.Type[bytes]) -> Pointer[bytes]: ...
+    @t.overload
     async def malloc(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]: ...
     @t.overload
     async def malloc(self, cls: t.Type[T_fixed_serializer], size: int, alignment: int=1) -> Pointer[T_fixed_serializer]: ...
 
-    async def malloc(self, cls: t.Type[T_fixed_serializer], size: int=None, alignment: int=1
-    ) -> Pointer[T_fixed_serializer]:
+    async def malloc(self, cls: t.Union[t.Type[bytes], t.Type[T_fixed_serializer]],
+                     size: int=None, alignment: int=1
+    ) -> t.Union[Pointer[bytes], Pointer[T_fixed_serializer]]:
         if size is None:
             return await self.malloc_struct(cls) # type: ignore
         else:
-            return await self.malloc_type(cls, size, alignment)
+            if issubclass(cls, bytes):
+                return await self.malloc_serializer(BytesSerializer(), size, alignment)
+            else:
+                return await self.malloc_type(cls, size, alignment)
 
     async def malloc_struct(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]:
         return await self.malloc_type(cls, cls.sizeof())
@@ -50,11 +56,11 @@ class RAM:
             raise
 
     @t.overload
-    async def ptr(self, data: t.Union[bytes], alignment: int=1) -> WrittenPointer[Bytes]: ...
+    async def ptr(self, data: t.Union[bytes], alignment: int=1) -> WrittenPointer[bytes]: ...
     @t.overload
     async def ptr(self, data: T_has_serializer, alignment: int=1) -> WrittenPointer[T_has_serializer]: ...
     async def ptr(self, data: t.Union[bytes, T_has_serializer], alignment: int=1
-    ) -> t.Union[WrittenPointer[Bytes], WrittenPointer[T_has_serializer]]:
+    ) -> t.Union[WrittenPointer[bytes], WrittenPointer[T_has_serializer]]:
         if isinstance(data, bytes):
             return await self.to_pointer(Bytes(data), alignment)
         else:

@@ -4,8 +4,6 @@ from rsyscall.epoller import Epoller, AsyncFileDescriptor, EpollThread
 from rsyscall.memory.ram import RAMThread
 from rsyscall.unistd import Pipe
 
-from rsyscall.struct import Bytes
-
 import logging
 logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.DEBUG)
