@@ -1,56 +1,6 @@
-* design
-I guess we talk about fork here?
-And all the different tasks?
-ssh, persistent, etc?
-well maybe not all of them, perhaps just ssh and fork?
-
-no maybe just fork?
-and we can mention ssh?
-
-yeah we'll do some forking, some execing,
-some namespaces,
-and mention ssh and the rest at the end.
-** hmm
-   should really show that we have complete generality in,
-   doing things before exec.
-   
-   maybe do a dup3 explicitly?
-   even though I don't really use those...
-   yeah sure dup3 explicitly
-
-   for familiarity's sake
-
-   let's call it dup2 instead of dup3 too lol
-
-   since dup2 is more familiar
-
-   ok so maybe we can do a cat with a pipe?
-   pipes are ugly to create though,
-   I don't want to scare them away...
-
-   oh I could use open_channels, sure let's do that.
-
-   ok that seems good, we'll use which to find cat,
-   open_channels to make a channel,
-   dup2 to set 'em up,
-   and exec away.
-
-   i'll note that the open_channels can happen either in the parent or in the child
-
-   oh that's not strictly true, if we do it in the parent then we need a,
-   um,
-   for_task call so that the handle gets inherited across unshare_files
-
-   hmmmm it would be nice if with unshare_files,
-   we just passed unshare(CLONE.FILES) instead.
-   cuz, naming it unshare_files is annoying.
-
-   I could even call it on the task instead of the thread.
-* tutorial
-
 In rsyscall, `Thread` is the name of a class which contains several objects within it,
 together allowing system calls to be executed on the context of a specific process,
-as well as creating new `Thread`s mapping to new processes by various means.
+as well as creating new `Thread`s mapping to new child processes.
 
 The operations that can be done using a single `Thread` are covered in some detail
 in the [[file:single_threaded.org][single-threaded tutorial]].

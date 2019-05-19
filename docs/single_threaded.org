@@ -138,6 +138,7 @@ In general, any two pointers that are adjacent in memory may be merged into a si
 This style applies to any syscall that takes a pointer and returns information about what part of that pointer was used.
 Consult the documentation for more details about specific syscalls.
 * TODO explain malloc in more depth
+  Maybe create a pipe or socketpair?
 * TODO header organization
   Many constants and structures are involved in the Linux API.
   The layout of these constants in rsyscall follows the headers exported by Linux.
