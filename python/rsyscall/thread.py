@@ -116,7 +116,7 @@ class Thread(UnixThread):
         source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.ram.perform_batch(op)
         await self.task.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
 
-    async def fork(self, newuser=False, newpid=False, fs=True, sighand=True) -> ChildThread:
+    async def fork(self, newuser=False, newpid=False, fs=False, sighand=True) -> ChildThread:
         thread = await super().fork(newuser=newuser, newpid=newpid, fs=fs, sighand=sighand)
         if newuser:
             # hack, we should really track the [ug]id ahead of this so we don't have to get it

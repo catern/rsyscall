@@ -159,7 +159,7 @@ async def fork_persistent(
         parent.task, parent.ram, parent.loader, parent.child_monitor,
         access_sock, remote_sock,
         Trampoline(parent.loader.persistent_server_func, [remote_sock, remote_sock, listening_sock]),
-        newuser=False, newpid=False, fs=True, sighand=True)
+        CLONE.FS|CLONE.SIGHAND)
     listening_sock_handle = listening_sock.move(task)
     ram = RAM(task, parent.ram.transport, parent.ram.allocator.inherit(task))
 

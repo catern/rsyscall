@@ -168,18 +168,9 @@ async def spawn_child_task(
         access_sock: AsyncFileDescriptor,
         remote_sock: FileDescriptor,
         trampoline: Trampoline,
-        newuser: bool, newpid: bool, fs: bool, sighand: bool,
+        flags: CLONE,
 ) -> Task:
-    flags = CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM|Signals.SIGCHLD
-    # TODO correctly track the namespaces we're in for all these things
-    if newuser:
-        flags |= CLONE.NEWUSER
-    if newpid:
-        flags |= CLONE.NEWPID
-    if fs:
-        flags |= CLONE.FS
-    if sighand:
-        flags |= CLONE.SIGHAND
+    flags |= CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM|Signals.SIGCHLD
     # TODO it is unclear why we sometimes need to make a new mapping here, instead of allocating with our normal
     # allocator; all our memory is already MAP.SHARED, I think.
     # We should resolve this so we can use the stock allocator.
@@ -199,11 +190,12 @@ async def spawn_child_task(
     futex_process = await launch_futex_monitor(ram, loader, monitor, futex_pointer)
 
     syscall = ChildSyscallInterface(SyscallConnection(access_sock, access_sock), child_process, futex_process)
-    if fs:
+    # TODO correctly track all the namespaces we're in for all these things
+    if flags & CLONE.FS:
         fs_information = task.fs
     else:
         fs_information = far.FSInformation(child_process.process.near.id)
-    if newpid:
+    if flags & CLONE.NEWPID:
         pidns = far.PidNamespace(child_process.process.near.id)
     else:
         pidns = task.pidns
@@ -223,10 +215,18 @@ async def spawn_rsyscall_thread(
         loader: NativeLoader,
         newuser: bool, newpid: bool, fs: bool, sighand: bool,
 ) -> Task:
+    flags = CLONE.NONE
+    if newuser:
+        flags |= CLONE.NEWUSER
+    if newpid:
+        flags |= CLONE.NEWPID
+    if fs:
+        flags |= CLONE.FS
+    if sighand:
+        flags |= CLONE.SIGHAND
     return await spawn_child_task(
         task, ram, loader, monitor, access_sock, remote_sock,
-        Trampoline(loader.server_func, [remote_sock, remote_sock]),
-        newuser=newuser, newpid=newpid, fs=fs, sighand=sighand)
+        Trampoline(loader.server_func, [remote_sock, remote_sock]), flags)
 
 from rsyscall.epoller import Epoller
 from rsyscall.network.connection import Connection, ConnectionThread
