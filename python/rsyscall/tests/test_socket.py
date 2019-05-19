@@ -67,7 +67,7 @@ class TestSocket(TrioTestCase):
     async def test_pass_fd(self) -> None:
         fds = await (await self.thr.task.socketpair(
             AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC, 0,
-            await self.thr.ram.malloc_struct(FDPair))).read()
+            await self.thr.ram.malloc_struct(Socketpair))).read()
         in_data = b"hello"
 
         iovec = await self.thr.ram.to_pointer(IovecList([await self.thr.ram.to_pointer(Bytes(in_data))]))

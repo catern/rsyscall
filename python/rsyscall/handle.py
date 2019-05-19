@@ -18,7 +18,7 @@ from rsyscall.sys.socket import (
     AF, SOCK, SOL, SCM, Address, Sockbuf, SendmsgFlags, RecvmsgFlags, MsghdrFlags, T_addr,
     SendMsghdr, RecvMsghdr, RecvMsghdrOut,
     CmsgList, CmsgSCMRights,
-    FDPair,
+    Socketpair,
 )
 from rsyscall.sched import UnCLONE, CLONE, Stack, Borrowable
 from rsyscall.struct import Serializer, HasSerializer, FixedSerializer, FixedSize, Serializable, Int32, Struct
@@ -840,6 +840,15 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         self.fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
         self._setup_fd_table_handles()
 
+    async def unshare(self, flags: UnCLONE) -> None:
+        if flags & UnCLONE.FILES:
+            await self.unshare_files()
+            flags ^= UnCLONE.FILES
+        if flags & UnCLONE.FS:
+            await self.unshare_fs()
+            flags ^= UnCLONE.FS
+        await rsyscall.near.unshare(self.sysif, flags)
+
     async def unshare_files(self) -> None:
         if self.manipulating_fd_table:
             raise Exception("can't unshare_files while manipulating_fd_table==True")
@@ -872,17 +881,6 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             await rsyscall.near.unshare(self.sysif, UnCLONE.FS)
         except:
             self.fs = old_fs
-
-    async def unshare_user(self) -> None:
-        # unsharing the user namespace implicitly unshares CLONE_FS
-        await self.unshare_fs()
-        await rsyscall.near.unshare(self.sysif, UnCLONE.NEWUSER)
-
-    async def unshare_net(self) -> None:
-        await rsyscall.near.unshare(self.sysif, UnCLONE.NEWNET)
-
-    async def unshare_mount(self) -> None:
-        await rsyscall.near.unshare(self.sysif, UnCLONE.NEWNS)
 
     async def setns_user(self, fd: FileDescriptor) -> None:
         with fd.borrow(self) as fd:
@@ -1015,7 +1013,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             await rsyscall.near.pipe2(self.sysif, buf.near, flags)
             return buf
 
-    async def socketpair(self, domain: AF, type: SOCK, protocol: int, sv: Pointer[FDPair]) -> Pointer[FDPair]:
+    async def socketpair(self, domain: AF, type: SOCK, protocol: int, sv: Pointer[Socketpair]) -> Pointer[Socketpair]:
         with sv.borrow(self) as sv_b:
             await rsyscall.near.socketpair(self.sysif, domain, type, protocol, sv_b.near)
             return sv

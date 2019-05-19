@@ -18482,8 +18482,52 @@ And we can have an exec which is not memory-abstracting, I guess.
 ** DONE finish refactoring to thread
 ** DONE fix up rsysapps
 ** DONE move out repl to separate package
+** TODO pass clone flags to fork instead of kwargs
+   The tricky thing is, I have some defaults I want;
+   and sometimes I want to keep most of those defaults and just tweak one thing.
+
+   hm.
+
+   maybe I can just or-in the default-true ones?
+   and have a second argument which is, defaults=those_defaults?
 ** TODO change wait on ACP to take W enum
 and rename it to waitpid?
+** TODO revamp wait so we can issue multiple waitids for subsets of events
+   i.e. so we can have one person waiting for EXITED and another for STOPPED|CONTINUED
+
+   hmm that doesn't make sense though?
+   er, yes it does I guess, we'll send the event to the person waiting for it,
+   and we can only have one person waiting for a type of event at a time?
+
+   and we still serialize waitids,
+   because if we don't then it's racy;
+
+   and if we get a new waitid call for a new event type,
+   while one is already happening,
+   then we send the second one?
+
+   oh wait but it's actually blocking.
+   I guess we just throw an exception then?
+*** comment
+# hmm this is not strictly right, hmm.
+# can we narrow our wait without discarding events?
+# what happens if we call waitid(W.STOPPED) and simultaneously call waitid(W.EXITED) and get an exit event?
+# well, better yet - we're waiting for sigchlds here, innit?
+# we'll get woken up and call the nohang,
+# and get no event,
+# and go back to sleep - not good!
+# cuz someone else could then collect the death event!
+# well, we could set up some kind of wakeup event thing, mmm...
+# well yeah wouldn't that work fine?
+# we just, um.
+
+# oh, no, it's racy.
+# if we're actually sending waitids in parallel,
+# then the second waitid could pick up events for another child.
+# so we do need to serialize them.
+# and, I guess, if we're currently making a blocking waitid,
+# we need to send a new waitid to update the mask we're waiting for?
+# okaaaay.
 * DOCUMENTATION!
   Time to write it!
 ** wait actually no
@@ -18529,6 +18573,25 @@ and rename it to waitpid?
    from rsyscall.local import thread as thr
 ** multi-threaded
    tasks
+
+   Hmm should I say "called *on*" instead of "called *in*"?
+   To emphasize the method-based stuff?
+   Yes.
+
+   Hmm should we maybe just not use open_async_channel?
+   Maybe just create a socketpair?
+   Well - I'm afraid of what they'll think of the burdensome code to create a socketpair.
+
+   Yeah let's use open_async_channel it's fine.
+
+   ummmmmm maybe not.
+
+   if we do socketpair that will still work.
+   hm.
+
+   oh I'll just take it pre-existing
+
+   actually, let's change FDPair to Socketpair.
 ** ooh, make a choose your own explanation
    will need to split up categories of programmers, I guess.
 *** are you enthusiastic about capability security?

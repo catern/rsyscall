@@ -8,13 +8,13 @@ from rsyscall.linux.netlink import *
 from rsyscall.linux.rtnetlink import *
 from pyroute2 import IPBatch
 from rsyscall.struct import Bytes
+from rsyscall.sched import UnCLONE
 
 class TestNet(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
         self.thr = await self.local.fork()
-        await self.thr.unshare_user()
-        await self.thr.unshare_net()
+        await self.thr.unshare(UnCLONE.NEWUSER|UnCLONE.NEWNET)
 
     async def asyncTearDown(self) -> None:
         await self.thr.close()

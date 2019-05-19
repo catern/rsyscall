@@ -59,8 +59,8 @@ class AsyncChildProcess:
         # TODO this is not really the actual behavior...
         if options & W.EXITED and self.process.death_event:
             return self.process.death_event
-        with self.monitor.sigchld_waiter() as waiter:
-            while True:
+        while True:
+            with self.monitor.sigchld_waiter() as waiter:
                 event = await self.waitid_nohang()
                 if event is None:
                     await waiter.wait_for_sigchld()

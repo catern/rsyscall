@@ -21,7 +21,7 @@ __all__ = [
     "SOCK",
     "SOL",
     "SO",
-    "FDPair",
+    "Socketpair",
     "Sockbuf",
     "CmsgSCMRights",
     "CmsgList",
@@ -145,9 +145,9 @@ class SockbufSerializer(t.Generic[T], Serializer[Sockbuf[T]]):
 
 #### socketpair stuff
 
-T_fdpair = t.TypeVar('T_fdpair', bound='FDPair')
+T_socketpair = t.TypeVar('T_socketpair', bound='Socketpair')
 @dataclass
-class FDPair(FixedSize):
+class Socketpair(FixedSize):
     first: FileDescriptor
     second: FileDescriptor
 
@@ -156,19 +156,19 @@ class FDPair(FixedSize):
         return ffi.sizeof('struct fdpair')
 
     @classmethod
-    def get_serializer(cls: t.Type[T_fdpair], task: Task) -> Serializer[T_fdpair]:
-        return FDPairSerializer(cls, task)
+    def get_serializer(cls: t.Type[T_socketpair], task: Task) -> Serializer[T_socketpair]:
+        return SocketpairSerializer(cls, task)
 
 @dataclass
-class FDPairSerializer(Serializer[T_fdpair]):
-    cls: t.Type[T_fdpair]
+class SocketpairSerializer(Serializer[T_socketpair]):
+    cls: t.Type[T_socketpair]
     task: Task
 
-    def to_bytes(self, pair: T_fdpair) -> bytes:
+    def to_bytes(self, pair: T_socketpair) -> bytes:
         struct = ffi.new('struct fdpair*', (pair.first, pair.second))
         return bytes(ffi.buffer(struct))
 
-    def from_bytes(self, data: bytes) -> T_fdpair:
+    def from_bytes(self, data: bytes) -> T_socketpair:
         struct = ffi.cast('struct fdpair const*', ffi.from_buffer(data))
         def make(n: int) -> FileDescriptor:
             return self.task.make_fd_handle(near.FileDescriptor(int(n)))

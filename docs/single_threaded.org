@@ -30,6 +30,10 @@ async def f(thr: Thread, pipe: Pipe) -> None:
     print(await read_ptr.read())
 #+END_SRC
 
+This function writes "hello world" to a pipe,
+reads that same data back out from the pipe,
+and prints that data.
+
 We receive a thread as an argument;
 as stated above, we will only work with a single pre-existing thread in this tutorial.
 

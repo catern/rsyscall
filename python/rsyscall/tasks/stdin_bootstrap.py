@@ -25,7 +25,7 @@ from rsyscall.path import Path
 from rsyscall.sched import CLONE
 from rsyscall.signal import Signals, SignalBlock
 from rsyscall.sys.memfd import MFD
-from rsyscall.sys.socket import SOCK, AF, SendmsgFlags, FDPair, SendMsghdr, CmsgList, CmsgSCMRights
+from rsyscall.sys.socket import SOCK, AF, SendmsgFlags, Socketpair, SendMsghdr, CmsgList, CmsgSCMRights
 from rsyscall.sys.uio import IovecList
 
 __all__ = [
@@ -53,7 +53,7 @@ async def rsyscall_stdin_bootstrap(
     child = await parent.fork()
     # create the socketpair that will be used as stdin
     stdin_pair = await (await parent.task.socketpair(
-        AF.UNIX, SOCK.STREAM, 0, await parent.ram.malloc_struct(FDPair))).read()
+        AF.UNIX, SOCK.STREAM, 0, await parent.ram.malloc_struct(Socketpair))).read()
     parent_sock = stdin_pair.first
     child_sock = stdin_pair.second.move(child.task)
     # set up stdin with socketpair

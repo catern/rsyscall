@@ -9,15 +9,22 @@ from rsyscall.struct import Bytes
 from rsyscall.batch import BatchSemantics
 from rsyscall.concurrency import make_n_in_parallel
 
-from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, RecvmsgFlags, SendMsghdr, RecvMsghdr, CmsgList, CmsgSCMRights
+from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, RecvmsgFlags, SendMsghdr, RecvMsghdr, CmsgList, CmsgSCMRights, Socketpair
 from rsyscall.sys.uio import IovecList
-from rsyscall.handle import FDPair
 
 class Connection:
     @abc.abstractmethod
     async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]: ...
+    async def open_async_channel(self) -> t.Tuple[AsyncFileDescriptor, FileDescriptor]:
+        [pair] = await self.open_async_channels(1)
+        return pair
+
     @abc.abstractmethod
     async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]: ...
+    async def open_channel(self) -> t.Tuple[FileDescriptor, FileDescriptor]:
+        [pair] = await self.open_channels(1)
+        return pair
+
     @abc.abstractmethod
     async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, RAM, FileDescriptor], Connection]]: ...
     @abc.abstractmethod
@@ -26,7 +33,7 @@ class Connection:
 class FDPassConnection(Connection):
     @staticmethod
     async def make(task: Task, ram: RAM, epoller: Epoller) -> FDPassConnection:
-        pair = await (await task.socketpair(AF.UNIX, SOCK.STREAM, 0, await ram.malloc_struct(FDPair))).read()
+        pair = await (await task.socketpair(AF.UNIX, SOCK.STREAM, 0, await ram.malloc_struct(Socketpair))).read()
         return FDPassConnection(task, ram, epoller, pair.first, task, ram, pair.second)
 
     def __init__(self, access_task: Task, access_ram: RAM, access_epoller: Epoller, access_fd: FileDescriptor,
@@ -69,9 +76,9 @@ class FDPassConnection(Connection):
         return passed_socks
 
     async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
-        async def make() -> FDPair:
+        async def make() -> Socketpair:
             return await (await self.access_task.socketpair(
-                AF.UNIX, SOCK.STREAM, 0, await self.access_ram.malloc_struct(FDPair))).read()
+                AF.UNIX, SOCK.STREAM, 0, await self.access_ram.malloc_struct(Socketpair))).read()
         pairs = await make_n_in_parallel(make, count)
         if self.access_task.fd_table == self.task.fd_table:
             fds = [pair.second.move(self.task) for pair in pairs]

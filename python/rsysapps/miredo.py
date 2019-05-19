@@ -26,7 +26,7 @@ from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.netinet.ip import IP, IPPROTO
 from rsyscall.linux.netlink import SockaddrNl, NETLINK
 from rsyscall.linux.rtnetlink import RTMGRP
-from rsyscall.handle import FDPair
+from rsyscall.handle import Socketpair
 import rsyscall.net.if_ as netif
 
 import rsyscall.nix as nix
@@ -123,7 +123,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) 
     tun_index = (await ptr.read()).ifindex
     # create socketpair for communication between privileged process and teredo client
     privproc_pair = await (await ns_thread.task.socketpair(
-        AF.UNIX, SOCK.STREAM, 0, await ns_thread.ram.malloc_struct(FDPair))).read()
+        AF.UNIX, SOCK.STREAM, 0, await ns_thread.ram.malloc_struct(Socketpair))).read()
 
     privproc_thread = await ns_thread.fork()
     await add_to_ambient(privproc_thread, {CAP.NET_ADMIN})

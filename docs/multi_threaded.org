@@ -49,7 +49,7 @@ and mention ssh and the rest at the end.
 * tutorial
 
 In rsyscall, `Thread` is the name of a class which contains several objects within it,
-together allowing system calls to be executed in the context of a specific process,
+together allowing system calls to be executed on the context of a specific process,
 as well as creating new `Thread`s mapping to new processes by various means.
 
 The operations that can be done using a single `Thread` are covered in some detail
@@ -67,13 +67,20 @@ Threads are only contexts within which to execute syscalls as Python code wishes
 Here is an example program:
 #+BEGIN_SRC python
 from rsyscall import Thread, Path
+from rsyscall.sys.wait import W, CLD
 
 # GNU hello is a program which prints "Hello, world!"
-async def f(thr: Thread, hello_path: Path) -> None:
-    child_thread = await thr.fork()
-    child_process = await child_thread.execve(hello_path, ['hello'])
-    await child_process.check()
+async def example1(thr: Thread, hello_path: Path) -> None:
+    child = await thr.fork()
+    child_process = await child.execve(hello_path, ['hello'])
+    event = await child_process.waitpid(W.EXITED)
+    if not (event.code == CLD.EXITED and event.exit_status == 0):
+        raise Exception("GNU hello exited uncleanly :(")
 #+END_SRC
+
+This function creates a child process running GNU hello,
+waits for hello to exit,
+and throws if it exited uncleanly. 
 
 We receive a thread as an argument;
 we'll consider where the original thread comes from later on.
@@ -84,7 +91,7 @@ this should be the path to the "hello" binary from the GNU hello package.
 We create a new `Thread` using `thr.fork()`.
 What we get back is in fact a `ChildThread`;
 a `ChildThread` is a `Thread` with the additional knowledge that it's the child of one of our other threads.
-Knowing that, we can call `exec` in the `ChildThread` and monitor the resulting child process.
+Knowing that, we can call `exec` on the `ChildThread` and monitor the resulting child process.
 A bare `Thread` does not have the ability to (safely) call `execve`,
 because there's no other `Thread` that is its parent and is able to monitor it.
 
@@ -104,9 +111,10 @@ But, the `Thread` interface helpfully returns, as its final act,
 a `ChildProcess` which we can use to monitor the process,
 even if we can no longer control it.
 
-We call `check()` on the child process, to wait for the child process to exit,
-receive its return code,
-and throw if the child process exited with a non-zero return code.
+We call `waitpid(W.EXITED)` on the child process,
+to wait for the child process to exit and receive its exit event.
+
+Then we check that the child process exited cleanly, and throw if it did not.
 * the initial, local thread
 Where does the first thread come from?
 
@@ -125,7 +133,7 @@ which allows for substantial flexibility about the process and system that the p
 The `fork` method is the normal way to create new threads.
 It is the only high-level way to create a child thread,
 which is a thread that is the child of one of our other existing threads,
-and can therefore be monitored even if we call exec in the child thread.
+and can therefore be monitored even if we call exec on the child thread.
 
 A thread created with `fork` starts out sharing all namespaces with its parent thread.
 This includes the file descriptor table and the address space.
@@ -146,43 +154,145 @@ If we want to change some open file descriptors only before execing,
 (replace stdin/stdout/stderr or unset CLOEXEC, for example),
 we will typically want to do this only in the child.
 
-To do that, we first call `unshare(UnCLONE.FILES)` in the child.
+To do that, we first call `unshare(UnCLONE.FILES)` on the child.
 (As discussed in the single-threaded tutorial,
 names of constants follow the pattern of Linux headers,
 and are sometimes prefixed to improve type safety
 when subsets of an enum are used by different syscalls)
 
-As documented in [[http://man7.org/linux/man-pages/man2/unshare.2.html][man 2 unshare]], this unshares the file descriptor table,
-so that it's no longer shared with the parent.
+As documented in [[http://man7.org/linux/man-pages/man2/unshare.2.html][man 2 unshare]], this creates a new file descriptor table for the thread it's called on.
 
+Only file descriptors owned by the thread are copied into the new file descriptor table.
+File descriptors are owned by the thread that first created them,
+and ownership can be transferred between threads in the same file descriptor table using `fd.move(thread.task)`.
+Note that since `move` is purely a Python-level bookkeeping operation,
+`move` is not an async operation and does not need to be awaited.
+`move` invalidates the file descriptor object it is called on,
+and returns a new file descriptor object with the new ownership,
+which should be used afterwards.
 
-* more example
+After the unshare,
+we're free to mutate the file descriptors as we wish
+without interfering with other threads.
+* unshare example
 #+BEGIN_SRC python
 from rsyscall import Thread
+from rsyscall.sched import UnCLONE
 
-async def f(thr: Thread) -> None:
-    cat = await thr.environ.which('cat')
+async def example2(thr: Thread, cat_path: Path, pair: Socketpair) -> None:
+    ## launch a child thread
     child = await thr.fork()
-    [(local_fd, child_fd)] = await child.open_async_channel()
-    await child.unshare_files()
-    await child_fd.dup2(child.stdin)
-    await child_fd.dup2(child.stdout)
-    child_process = await child.exec(cat)
-    # write data, close fd, and wait for process to die
-    await local_fd.write_all_bytes(b'hello world')
-    print(await local_fd.read_some_bytes())
-    await local_fd.close()
-    await child_process.check()
+    ## replace the child's stdin and stdout with pair.first
+    # move ownership of pair.first to the child task
+    stdinout = pair.first.move(child.task)
+    # unshare - only child-owned file descriptors remain in the new fd table
+    await child.unshare(UnCLONE.FILES)
+    await stdinout.dup2(child.stdin)
+    await stdinout.dup2(child.stdout)
+    ## exec cat on the child thread
+    child_process = await child.execve(cat_path, ['cat'])
+    ## write and read some data sent through cat
+    written, _ = await pair.second.write(await thr.ram.ptr(b"hello world"))
+    read, _ = await pair.second.read(written)
+    print(await read.read())
+    ## wait for cat to exit
+    # close the other end of cat's stdin/stdout
+    await pair.second.close()
+    # cat gets EOF and exits cleanly.
+    event = await child_process.waitpid(W.EXITED)
+    if not (event.code == CLD.EXITED and event.exit_status == 0):
+        raise Exception("cat exited uncleanly :(")
 #+END_SRC
-* fd ownership
-* namespaces
-  A thread created with `fork` starts out sharing all namespaces with the parent thread.
-  This includes the file descriptor table and the address space.
-  (Yes, this is different from the normal behavior of the `fork` syscall.
 
-  This means we can share file descriptors between tasks.
-* TODO show fd for_task interface maybe?
-  Let's avoid for_task maybe, if we can
+This function creates a subprocess running cat,
+writes "hello world" to cat,
+reads that same data back from cat,
+waits for cat to exit,
+and throws if it exited uncleanly.
+
+As in our original example, we receive a thread and path as arguments,
+and immediately fork off a child.
+
+We also receive a Socketpair, produced elsewhere by a call to the socketpair() system call.
+The Socketpair class contains the two file descriptor ends of the socketpair in the "first" and "second" fields.
+Note that a socketpair is bidirectional, unlike a pipe,
+so we can use just one end for both stdin and stdout.
+
+We move ownership of pair.first into the child thread with `pair.first.move(child.task)`;
+this invalidates `pair.first` and returns a new file descriptor object to use, `stdinout`.
+
+We unshare the file descriptor table,
+so that we can overwrite the child's stdin and stdout without having effects on anyone else.
+
+We use `dup2` to actually do the replacement of stdin and stdout;
+`dup2` replaces the file descriptor passed as its argument (`child.stdin` and `child.stdout`)
+with a copy of the file descriptor it's called as a method on (`stdinout`).
+
+We perform the exec, getting back a child process we can monitor.
+
+We read and write from `pair.second` as explained in the [[file:single_threaded.org][single-threaded tutorial]].
+
+We close `pair.second` so that cat gets EOF,
+and wait for it to exit cleanly.
+* process cleanup and pid namespaces
+Our direct children will be killed on our death,
+which includes all our threads and any child processes we've exec'd.
+
+Many child processes will be running programs which don't spawn their own children.
+Some programs spawn children, but correctly clean them up if they die.
+These two classes are fine and will be automatically cleaned up without any effort on our part.
+
+Unfortunately, there are also many programs which spawn children and don't clean them up if they die.
+We can clean up after such programs by using pid namespaces.
+
+This is not essential functionality for most users;
+we are examining this as a demonstration of the flexibility of the thread model.
+
+#+BEGIN_SRC python
+async def example3(thr: Thread) -> None:
+    pass
+#+END_SRC
+
+* TODO do something fancier to show we're totally without restrictions
+  We can open a socket in a net namespace and pass it out.
+
+  We can make pid namespaces, mount namespaces, all that stuff.
+
+  Hmmm actually I think that's implied maybe?
+
+  No, we do need to show something container-y at least.
+  Using namespaces.
+  I think pid namespaces would be a good one.
+
+  It doesn't exploit our fd-table sharedness, 
+  but, in retrospect,
+  maybe the fd table stuff would concern people.
+
+  OK so yeah pid namespaces.
+
+  This also gives us a chance to talk about threads dying.
+  ANd getting cleaned up
+* do fancier namespace stuff?
+  Usage of namespaces would be cool.
+
+  ok so one tricky thing is that, actually doing a netns thing requires setting up loopback,
+  which is tricky.
+
+  pid namespaces are easier
+  and useful too
+
+  ok so we can do, like, an unshare_pid,
+  then start some things in the namespace?
+
+  hmm that doesn't actually use our power though.
+
+  the tun would do it
+
+  but the tun is too unknown
+
+  what about mount namespaces?
+
+  oh maybe I should just have a function that sets up loopback in the netns.
 * TODO unshare fds?
 * TODO namespaces/container stuff?
   pid namespace probably - since that's the most useful one?

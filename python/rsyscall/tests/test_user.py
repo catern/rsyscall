@@ -4,12 +4,13 @@ from rsyscall.path import Path
 from rsyscall.fcntl import O
 from rsyscall.sys.prctl import *
 from rsyscall.sys.capability import *
+from rsyscall.sched import UnCLONE
 
 class TestUser(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
         self.thr = await self.local.fork()
-        await self.thr.unshare_user()
+        await self.thr.unshare(UnCLONE.NEWUSER)
 
     async def asyncTearDown(self) -> None:
         await self.thr.close()

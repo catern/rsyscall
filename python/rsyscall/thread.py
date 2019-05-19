@@ -139,6 +139,32 @@ class Thread(UnixThread):
     async def unshare(self, flags: UnCLONE) -> None:
         if flags & UnCLONE.FILES:
             await self.unshare_files()
+            flags ^= UnCLONE.FILES
+        if flags & UnCLONE.NEWUSER:
+            await self.unshare_user()
+            flags ^= UnCLONE.NEWUSER
+            if flags & UnCLONE.FS:
+                flags ^= UnCLONE.FS
+        if flags & UnCLONE.NEWPID:
+            await self.unshare_pid()
+            flags ^= UnCLONE.NEWPID
+        await self.task.unshare(flags)
+
+    async def unshare_pid(self) -> None:
+        # epoller = await Epoller.make_root(self.ram, self.task)
+        # # this signal is already blocked, we inherited the block, um... I guess...
+        # # TODO handle this more formally
+        # signal_block = SignalBlock(task, await self.ram.to_pointer(Sigset({Signals.SIGCHLD})))
+        # # we're not a reaper, we just can't use CLONE_PARENT anymore
+        # self.monitor = await ChildProcessMonitor.make(self.ram, self.task,
+        #                                               epoller, signal_block=signal_block, is_reaper=False)
+        await self.task.unshare(UnCLONE.NEWPID)
+
+    async def unshare_net(self) -> None:
+        await self.unshare(UnCLONE.NEWNET)
+
+    async def unshare_mount(self) -> None:
+        await self.unshare(UnCLONE.NEWNS)
 
     async def unshare_files(self, going_to_exec=True) -> None:
         """Unshare the file descriptor table.
@@ -182,18 +208,12 @@ class Thread(UnixThread):
                            in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
         uid = await self.task.getuid()
         gid = await self.task.getgid()
-        await self.task.unshare_user()
+        await self.task.unshare(UnCLONE.FS|UnCLONE.NEWUSER)
         await write_user_mappings(self, uid, gid,
                                   in_namespace_uid=in_namespace_uid, in_namespace_gid=in_namespace_gid)
 
-    async def unshare_net(self) -> None:
-        await self.task.unshare_net()
-
     async def setns_user(self, fd: FileDescriptor) -> None:
         await self.task.setns_user(fd)
-
-    async def unshare_mount(self) -> None:
-        await self.task.unshare_mount()
 
     async def setns_mount(self, fd: FileDescriptor) -> None:
         fd.check_is_for(self.task)
