@@ -192,8 +192,11 @@ async def spawn_child_task(
         futex_pointer = sem.to_pointer(FutexNode(None, Int32(0)))
         return stack, futex_pointer
     stack, futex_pointer = await perform_async_batch(task, ram.transport, arena, op)
-    futex_process = await launch_futex_monitor(ram, loader, monitor, futex_pointer)
+    # it's important to start the processes in this order, so that the thread process
+    # is the first process started if we unshare NEWPID, and therefore becomes pid 1.
+    # rather than the futex process becoming pid 1...
     child_process = await monitor.clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
+    futex_process = await launch_futex_monitor(ram, loader, monitor, futex_pointer)
 
     syscall = ChildSyscallInterface(SyscallConnection(access_sock, access_sock), child_process, futex_process)
     if fs:

@@ -15,7 +15,7 @@ import abc
 logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import (
-    AF, SOCK, SOL, SCM, Address, Sockbuf, SendmsgFlags, RecvmsgFlags, MsghdrFlags, T_addr,
+    AF, SOCK, SOL, SCM, SHUT, Address, Sockbuf, SendmsgFlags, RecvmsgFlags, MsghdrFlags, T_addr,
     SendMsghdr, RecvMsghdr, RecvMsghdrOut,
     CmsgList, CmsgSCMRights,
     Socketpair,
@@ -689,6 +689,10 @@ class FileDescriptor:
                     fd = await rsyscall.near.accept4(self.task.sysif, self.near, addr.value.buf.near, addr.near, flags)
                     return self.task.make_fd_handle(fd), addr
 
+    async def shutdown(self, how: SHUT) -> None:
+        self.validate()
+        await rsyscall.near.shutdown(self.task.sysif, self.near, how)
+
     async def readlinkat(self, path: t.Union[WrittenPointer[Path], WrittenPointer[EmptyPath]],
                          buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self.validate()
@@ -847,7 +851,8 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         if flags & UnCLONE.FS:
             await self.unshare_fs()
             flags ^= UnCLONE.FS
-        await rsyscall.near.unshare(self.sysif, flags)
+        if flags:
+            await rsyscall.near.unshare(self.sysif, flags)
 
     async def unshare_files(self) -> None:
         if self.manipulating_fd_table:

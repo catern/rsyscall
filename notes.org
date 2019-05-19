@@ -3473,8 +3473,24 @@ hmm, actually it just occurred to me that this question is essentially the same 
    that allows me to conveniently do additional typechecking of my accept.
 
    similar to nsenter.
+
+   Then I can make sure that the address buffer is the right size, without oversizing it,
+   and also know how to parse it.
 ** at-functions should operate on the fd when a null pointer is passed for the pathname
    That way I don't have to allocate memory for them :(
+** for processes in a pidns, if the parent is outside the pidns, don't reap the zombie when init dies
+   This is useful when using unshare(CLONE_NEWPID).
+   In that situation, we can make init as one of our children,
+   and then keep forking children into the pidns.
+
+   But, if init dies, then all of our children die - that's good,
+   except we don't get their death event, because their zombies are automatically reaped!
+
+   So our naive program that was just starting children in a pid namespace without being modified,
+   now is faced with a terrible surprise when it starts getting ECHILD from all its waitpids,
+   or never otherwise gets notified of child death.
+
+   This doesn't work!
 * possible kernel bugs
 ** MMAP_GROWSDOWN doesn't seem to work
    It doesn't grow.
@@ -17493,8 +17509,10 @@ And we can have an exec which is not memory-abstracting, I guess.
     woo it works!!
 ** TODO still getting EINTR or something from resizing terminal
    HmMmMmMm ugh
-** fix fd leaks in tests
+** TODO fix fd leaks in tests
    We close some fds, but we still gradually increase in number of fds.
+
+   I think part of it is which(). it opens a lot of fds...
 ** pass in single flags: CLONE argument to spawn_child_task
    rather than a bunch of different keyword arguments.
 
@@ -18490,7 +18508,7 @@ And we can have an exec which is not memory-abstracting, I guess.
 
    maybe I can just or-in the default-true ones?
    and have a second argument which is, defaults=those_defaults?
-** TODO change wait on ACP to take W enum
+** DONE change wait on ACP to take W enum
 and rename it to waitpid?
 ** TODO revamp wait so we can issue multiple waitids for subsets of events
    i.e. so we can have one person waiting for EXITED and another for STOPPED|CONTINUED
@@ -18528,6 +18546,14 @@ and rename it to waitpid?
 # and, I guess, if we're currently making a blocking waitid,
 # we need to send a new waitid to update the mask we're waiting for?
 # okaaaay.
+** DONE newpid weirdness
+   oh.. lol... the futex task is starting first, isn't it.
+
+   so it's becoming pid 1, lol, and is not able to sigstop itself.
+
+   alas.
+
+   ok i gave up on unshare(NEWPID)
 * DOCUMENTATION!
   Time to write it!
 ** wait actually no

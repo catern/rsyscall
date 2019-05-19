@@ -137,6 +137,9 @@ class Thread(UnixThread):
         return exit_event
 
     async def unshare(self, flags: UnCLONE) -> None:
+        # Note: unsharing NEWPID causes us to not get zombies for our children if init dies. That
+        # means we'll get ECHILDs, and various races can happen. It's not possible to robustly
+        # unshare NEWPID.
         if flags & UnCLONE.FILES:
             await self.unshare_files()
             flags ^= UnCLONE.FILES
@@ -145,20 +148,7 @@ class Thread(UnixThread):
             flags ^= UnCLONE.NEWUSER
             if flags & UnCLONE.FS:
                 flags ^= UnCLONE.FS
-        if flags & UnCLONE.NEWPID:
-            await self.unshare_pid()
-            flags ^= UnCLONE.NEWPID
         await self.task.unshare(flags)
-
-    async def unshare_pid(self) -> None:
-        # epoller = await Epoller.make_root(self.ram, self.task)
-        # # this signal is already blocked, we inherited the block, um... I guess...
-        # # TODO handle this more formally
-        # signal_block = SignalBlock(task, await self.ram.to_pointer(Sigset({Signals.SIGCHLD})))
-        # # we're not a reaper, we just can't use CLONE_PARENT anymore
-        # self.monitor = await ChildProcessMonitor.make(self.ram, self.task,
-        #                                               epoller, signal_block=signal_block, is_reaper=False)
-        await self.task.unshare(UnCLONE.NEWPID)
 
     async def unshare_net(self) -> None:
         await self.unshare(UnCLONE.NEWNET)

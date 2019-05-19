@@ -14,6 +14,7 @@ from rsyscall.sys.wait import IdType
 if t.TYPE_CHECKING:
     from rsyscall.sys.epoll import EPOLL_CTL
     from rsyscall.sys.prctl import PR
+    from rsyscall.sys.socket import SHUT
     from rsyscall.sys.uio import RWF
     from rsyscall.sched import UnCLONE
     from rsyscall.signal import HowSIG, Signals
@@ -30,6 +31,7 @@ class SYS(enum.IntEnum):
     recvmsg = lib.SYS_recvmsg
     dup3 = lib.SYS_dup3
     accept4 = lib.SYS_accept4
+    shutdown = lib.SYS_shutdown
     memfd_create = lib.SYS_memfd_create
     ftruncate = lib.SYS_ftruncate
     mmap = lib.SYS_mmap
@@ -246,6 +248,9 @@ async def accept4(sysif: SyscallInterface, sockfd: FileDescriptor,
     if addrlen is None:
         addrlen = 0 # type: ignore
     return FileDescriptor(await sysif.syscall(SYS.accept4, sockfd, addr, addrlen, flags))
+
+async def shutdown(sysif: SyscallInterface, sockfd: FileDescriptor, how: SHUT) -> None:
+    await sysif.syscall(SYS.shutdown, sockfd, how)
 
 async def memfd_create(sysif: SyscallInterface, name: Pointer, flags: int) -> FileDescriptor:
     ret = await sysif.syscall(SYS.memfd_create, name, flags)

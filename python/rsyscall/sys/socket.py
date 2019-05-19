@@ -39,6 +39,11 @@ class AF(enum.IntEnum):
     INET = socket.AF_INET
     INET6 = socket.AF_INET6
 
+class SHUT(enum.IntEnum):
+    RD = socket.SHUT_RD
+    WR = socket.SHUT_WR
+    RDWR = socket.SHUT_RDWR
+
 class Address(Struct):
     """This is just an interface to indicate different kinds of sockaddrs.
 

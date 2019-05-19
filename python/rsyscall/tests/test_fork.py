@@ -6,10 +6,6 @@ from rsyscall.monitor import SignalQueue
 
 from rsyscall.signal import Signals, Sigset
 from rsyscall.sys.signalfd import SignalfdSiginfo
-from rsyscall.sched import UnCLONE
-from rsyscall.sys.wait import W
-
-import trio
 
 class TestFork(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -61,26 +57,3 @@ class TestFork(TrioTestCase):
         buf = await self.thr.ram.malloc_struct(SignalfdSiginfo)
         sigdata = await sigqueue.read(buf)
         self.assertEqual((await sigdata.read()).signo, Signals.SIGINT)
-
-    async def test_newpid(self) -> None:
-        sleep = await self.local.environ.which('sleep')
-        print("er")
-        # ah we need to take over monitoring now that we did NEWPID.
-        await self.thr.unshare(UnCLONE.NEWUSER|UnCLONE.NEWPID)
-        print("er 2")
-        # hmm how do we set up the newuser
-        # well it's set up for me, I guess it's fine
-        init = await self.thr.fork()
-        print("um")
-        # dumb-init or what?
-        # oh, just do nothing! nice.
-        # and... maybe fork-bomb?
-        # sure, sure.
-        child = await self.thr.fork()
-        print("uder")
-        # child_process = await child.exec(child.environ.sh.args('-c', '{ sleep inf & } &'))
-        child_process = await child.exec(sleep.args('inf'))
-        await trio.sleep(1)
-        await init.exit(0)
-        print("hi")
-        await child_process.waitpid(W.EXITED)
