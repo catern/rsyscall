@@ -213,17 +213,8 @@ async def spawn_rsyscall_thread(
         access_sock: AsyncFileDescriptor, remote_sock: FileDescriptor,
         monitor: ChildProcessMonitor,
         loader: NativeLoader,
-        newuser: bool, newpid: bool, fs: bool, sighand: bool,
+        flags: CLONE,
 ) -> Task:
-    flags = CLONE.NONE
-    if newuser:
-        flags |= CLONE.NEWUSER
-    if newpid:
-        flags |= CLONE.NEWPID
-    if fs:
-        flags |= CLONE.FS
-    if sighand:
-        flags |= CLONE.SIGHAND
     return await spawn_child_task(
         task, ram, loader, monitor, access_sock, remote_sock,
         Trampoline(loader.server_func, [remote_sock, remote_sock]), flags)
@@ -248,13 +239,13 @@ class ForkThread(ConnectionThread):
         self.loader = thr.loader
         self.child_monitor = thr.child_monitor
 
-    async def _fork_task(self, newuser=False, newpid=False, fs=True, sighand=True) -> Task:
+    async def _fork_task(self, flags: CLONE) -> Task:
         [(access_sock, remote_sock)] = await self.connection.open_async_channels(1)
         base_task = await spawn_rsyscall_thread(
             self.ram, self.task,
             access_sock, remote_sock,
             self.child_monitor, self.loader,
-            newuser=newuser, newpid=newpid, fs=fs, sighand=sighand,
+            flags,
         )
         await remote_sock.invalidate()
         return base_task

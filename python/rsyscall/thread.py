@@ -14,7 +14,7 @@ import typing as t
 
 from rsyscall.fcntl import O, F, FD_CLOEXEC
 from rsyscall.linux.dirent import DirentList
-from rsyscall.sched import UnCLONE
+from rsyscall.sched import UnCLONE, CLONE
 from rsyscall.sys.mount import MS
 from rsyscall.sys.wait import ChildEvent, W
 from rsyscall.unistd import Arg
@@ -116,9 +116,9 @@ class Thread(UnixThread):
         source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.ram.perform_batch(op)
         await self.task.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
 
-    async def fork(self, newuser=False, newpid=False, fs=False, sighand=True) -> ChildThread:
-        thread = await super().fork(newuser=newuser, newpid=newpid, fs=fs, sighand=sighand)
-        if newuser:
+    async def fork(self, flags: CLONE=CLONE.NONE) -> ChildThread:
+        thread = await super().fork(flags)
+        if flags & CLONE.NEWUSER:
             # hack, we should really track the [ug]id ahead of this so we don't have to get it
             # we have to get the [ug]id from the parent because it will fail in the child
             uid = await self.task.getuid()
@@ -128,7 +128,7 @@ class Thread(UnixThread):
 
     async def run(self, command: Command, check=True,
                   *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
-        thread = await self.fork(fs=False)
+        thread = await self.fork()
         child = await thread.exec(command)
         task_status.started(child)
         exit_event = await child.waitpid(W.EXITED)

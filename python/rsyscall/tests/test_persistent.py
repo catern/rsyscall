@@ -6,6 +6,7 @@ from rsyscall.tasks.persistent import *
 from rsyscall.tasks.ssh import make_local_ssh
 from rsyscall.tasks.exceptions import RsyscallHangup
 from rsyscall.tests.utils import assert_thread_works
+from rsyscall.sched import CLONE
 
 class TestPersistent(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -61,7 +62,7 @@ class TestPersistent(TrioTestCase):
         await per_thr.exit(0)
 
     async def test_no_make_persistent(self) -> None:
-        pidns_thr = await self.thread.fork(newuser=True, newpid=True, fs=False, sighand=False)
+        pidns_thr = await self.thread.fork(CLONE.NEWUSER|CLONE.NEWPID)
         sacr_thr = await pidns_thr.fork()
         per_thr, connection = await fork_persistent(sacr_thr, self.sock_path)
         # exit sacr_thr, and per_thr will be killed by PDEATHSIG, like a normal thread
@@ -72,7 +73,7 @@ class TestPersistent(TrioTestCase):
 
     async def test_make_persistent(self) -> None:
         # use a pidns so that the persistent task will be killed after all
-        pidns_thr = await self.thread.fork(newuser=True, newpid=True, fs=False, sighand=False)
+        pidns_thr = await self.thread.fork(CLONE.NEWUSER|CLONE.NEWPID)
         sacr_thr = await pidns_thr.fork()
         per_thr, connection = await fork_persistent(sacr_thr, self.sock_path)
         # make the persistent thread, actually persistent.

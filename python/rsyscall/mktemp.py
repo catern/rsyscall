@@ -34,7 +34,7 @@ class TemporaryDirectory:
 
     async def cleanup(self) -> None:
         # TODO would be nice if not sharing the fs information gave us a cap to chdir
-        cleanup = await self.thr.fork(fs=False)
+        cleanup = await self.thr.fork()
         await cleanup.task.chdir(await cleanup.ram.to_pointer(self.parent))
         child = await cleanup.exec(self.thr.environ.sh.args(
             '-c', f"chmod -R +w -- {self.name} && rm -rf -- {self.name}"))

@@ -4,14 +4,15 @@ from rsyscall.tasks.exec import spawn_exec
 from rsyscall.sys.socket import AF, SOCK, Socketpair
 from rsyscall.struct import Bytes
 
+from rsyscall.sched import CLONE
 from rsyscall.nix import local_store
 from rsyscall.tests.utils import assert_thread_works
 
-class TestFork(TrioTestCase):
+class TestPidns(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
         self.store = local_store
-        self.init = await self.local.fork(newuser=True, newpid=True, fs=False, sighand=False)
+        self.init = await self.local.fork(CLONE.NEWUSER|CLONE.NEWPID)
 
     async def asyncTearDown(self) -> None:
         await self.init.close()

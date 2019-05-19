@@ -10,6 +10,7 @@ from rsyscall.epoller import Epoller
 from rsyscall.memory.ram import RAM
 from rsyscall.batch import BatchSemantics
 from rsyscall.command import Command
+from rsyscall.sched import CLONE
 
 from rsyscall.signal import Sigset, Signals, SignalBlock, HowSIG
 import logging
@@ -41,8 +42,8 @@ class UnixThread(ForkThread):
         self.stdout = thr.stdout
         self.stderr = thr.stderr
 
-    async def fork(self, newuser=False, newpid=False, fs=True, sighand=True) -> ChildUnixThread:
-        task = await self._fork_task(newuser=newuser, newpid=newpid, fs=fs, sighand=sighand)
+    async def fork(self, flags: CLONE=CLONE.SIGHAND) -> ChildUnixThread:
+        task = await self._fork_task(flags)
         ram = RAM(task,
                   # We don't inherit the transport because it leads to a deadlock:
                   # If when a child task calls transport.read, it performs a syscall in the child task,
@@ -54,7 +55,7 @@ class UnixThread(ForkThread):
                   self.ram.transport,
                   self.ram.allocator.inherit(task),
         )
-        if newpid or self.child_monitor.is_reaper:
+        if flags & CLONE.NEWPID or self.child_monitor.is_reaper:
             # if the new process is pid 1, then CLONE_PARENT isn't allowed so we can't use inherit_to_child.
             # if we are a reaper, than we don't want our child CLONE_PARENTing to us, so we can't use inherit_to_child.
             # in both cases we just fall back to making a new ChildProcessMonitor for the child.
@@ -62,8 +63,8 @@ class UnixThread(ForkThread):
             # this signal is already blocked, we inherited the block, um... I guess...
             # TODO handle this more formally
             signal_block = SignalBlock(task, await ram.to_pointer(Sigset({Signals.SIGCHLD})))
-            child_monitor = await ChildProcessMonitor.make(ram, task,
-                                                           epoller, signal_block=signal_block, is_reaper=newpid)
+            child_monitor = await ChildProcessMonitor.make(
+                ram, task, epoller, signal_block=signal_block, is_reaper=bool(flags & CLONE.NEWPID))
         else:
             epoller = self.epoller.inherit(ram)
             child_monitor = self.child_monitor.inherit_to_child(task)

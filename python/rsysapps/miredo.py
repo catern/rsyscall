@@ -22,6 +22,7 @@ from rsyscall.sys.capability import CAP, CapHeader, CapData
 from rsyscall.sys.socket import AF, SOCK, SOL
 from rsyscall.sys.prctl import PR, PR_CAP_AMBIENT
 from rsyscall.fcntl import O
+from rsyscall.sched import CLONE
 from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.netinet.ip import IP, IPPROTO
 from rsyscall.linux.netlink import SockaddrNl, NETLINK
@@ -135,7 +136,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) 
     # iterate through / and umount(MNT_DETACH) everything that isn't /nix
     # ummm and let's use UMOUNT_NOFOLLOW too
     # ummm no let's just only umount directories
-    client_thread = await ns_thread.fork(newpid=True)
+    client_thread = await ns_thread.fork(CLONE.NEWPID)
     await client_thread.unshare_net()
     await client_thread.unshare_mount()
     await client_thread.unshare_user()
