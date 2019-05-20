@@ -688,6 +688,7 @@ class FileDescriptor:
     async def accept(self, flags: SOCK, addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
     ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]]:
         self.validate()
+        flags |= SOCK.CLOEXEC
         if addr is None:
             fd = await rsyscall.near.accept4(self.task.sysif, self.near, None, None, flags)
             return self.task.make_fd_handle(fd)
@@ -720,7 +721,7 @@ class FileDescriptor:
             ret = await rsyscall.near.getdents64(self.task.sysif, self.near, dirp_b.near, dirp_b.bytesize())
             return dirp.split(ret)
 
-    async def signalfd(self, mask: Pointer[Sigset], flags: int) -> None:
+    async def signalfd(self, mask: Pointer[Sigset], flags: SFD) -> None:
         self.validate()
         with mask.borrow(self.task) as mask:
             await rsyscall.near.signalfd4(self.task.sysif, self.near, mask.near, mask.bytesize(), flags)
@@ -728,7 +729,7 @@ class FileDescriptor:
     async def openat(self, ptr: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
         self.validate()
         with ptr.borrow(self.task):
-            fd = await rsyscall.near.openat(self.task.sysif, self.near, ptr.near, flags, mode)
+            fd = await rsyscall.near.openat(self.task.sysif, self.near, ptr.near, flags|O.CLOEXEC, mode)
             return self.task.make_fd_handle(fd)
 
     async def fchmod(self, mode: int) -> None:
@@ -905,10 +906,8 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         with fd.borrow(self) as fd:
             await fd.setns(CLONE.NEWNET)
 
-    async def socket(self, family: AF, type: SOCK, protocol: int=0, cloexec=True) -> FileDescriptor:
-        if cloexec:
-            type |= lib.SOCK_CLOEXEC
-        sockfd = await rsyscall.near.socket(self.sysif, family, type, protocol)
+    async def socket(self, family: AF, type: SOCK, protocol: int=0) -> FileDescriptor:
+        sockfd = await rsyscall.near.socket(self.sysif, family, type|SOCK.CLOEXEC, protocol)
         return self.make_fd_handle(sockfd)
 
     async def capset(self, hdrp: Pointer, datap: Pointer) -> None:
