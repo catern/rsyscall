@@ -3809,6 +3809,12 @@ so we don't have to be generic.
 
    might want to talk about there being two distinct concepts?
    a place where computation happens, and a place where side-effects/syscalls happens.
+** new process initialization
+<DrNick> you should just pass a single handle at process creation and then do all the "inheritance" via IPC over that handle
+
+"pass a handle at process creation and do initialization of the new process using IPC"
+
+that's what we're doing
 * explicitly modeling memory
 how would I do this?
 

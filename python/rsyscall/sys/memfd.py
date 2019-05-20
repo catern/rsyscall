@@ -4,5 +4,6 @@ import typing as t
 import enum
 
 class MFD(enum.IntFlag):
+    NONE = 0
     CLOEXEC = lib.MFD_CLOEXEC
     

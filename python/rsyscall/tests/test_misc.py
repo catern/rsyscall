@@ -27,7 +27,7 @@ class TestMisc(TrioTestCase):
         # do_cloexec_except breaks trio when run locally
         await rsyscall_exec(self.local, self.thr, self.executables)
 
-        pipe = await (await self.thr.task.pipe(await self.thr.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
+        pipe = await (await self.thr.task.pipe(await self.thr.ram.malloc_struct(Pipe))).read()
         close_set = set([fd.near for fd in self.thr.task.fd_handles])
         close_set.remove(pipe.read.near)
         await do_cloexec_except(self.thr, close_set)

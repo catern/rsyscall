@@ -1007,7 +1007,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         fd = await rsyscall.near.inotify_init(self.sysif, flags|InotifyFlag.CLOEXEC)
         return self.make_fd_handle(fd)
 
-    async def memfd_create(self, name: WrittenPointer[Path], flags: MFD) -> FileDescriptor:
+    async def memfd_create(self, name: WrittenPointer[Path], flags: MFD=MFD.NONE) -> FileDescriptor:
         with name.borrow(self) as name_b:
             fd = await rsyscall.near.memfd_create(self.sysif, name_b.near, flags|MFD.CLOEXEC)
             return self.make_fd_handle(fd)

@@ -20,12 +20,12 @@ class TestSocket(TrioTestCase):
         await self.tmpdir.cleanup()
 
     async def test_listen(self) -> None:
-        sockfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
+        sockfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM)
         addr = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, self.path/"sock"))
         await sockfd.bind(addr)
         await sockfd.listen(10)
 
-        clientfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
+        clientfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM)
         await clientfd.connect(addr)
         connfd = await sockfd.accept(SOCK.CLOEXEC)
 
@@ -50,10 +50,10 @@ class TestSocket(TrioTestCase):
         await sockfd.handle.listen(10)
 
         clientfd = await self.thr.make_afd(
-            await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+            await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
         await clientfd.connect(addr)
 
-        connfd_h, client_addr = await sockfd.accept_addr(SOCK.CLOEXEC|SOCK.NONBLOCK)
+        connfd_h, client_addr = await sockfd.accept_addr(SOCK.NONBLOCK)
         connfd = await sockfd.thr.make_afd(connfd_h)
         logger.info("%s, %s", addr, client_addr)
         data = b"hello"
@@ -65,7 +65,7 @@ class TestSocket(TrioTestCase):
 
     async def test_pass_fd(self) -> None:
         fds = await (await self.thr.task.socketpair(
-            AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC, 0,
+            AF.UNIX, SOCK.STREAM, 0,
             await self.thr.ram.malloc_struct(Socketpair))).read()
         in_data = b"hello"
 
@@ -90,11 +90,11 @@ class TestSocket(TrioTestCase):
         await self.thr.task.mkdir(longdir)
         addr = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, longdir.value/"sock"))
 
-        sockfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
+        sockfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM)
         await sockfd.bind(addr)
         await sockfd.listen(10)
         
-        clientfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
+        clientfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM)
         await clientfd.connect(addr)
         connfd = await sockfd.accept(SOCK.CLOEXEC)
 

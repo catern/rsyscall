@@ -8,7 +8,7 @@ from rsyscall.fcntl import O
 class TestPipe(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local.thread
-        self.pipe = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe), O.CLOEXEC)).read()
+        self.pipe = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()
 
     async def asyncTearDown(self) -> None:
         await self.pipe.read.close()

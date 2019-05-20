@@ -80,8 +80,8 @@ class TestSSH(TrioTestCase):
     async def test_copy(self) -> None:
         cat = await self.store.bin(coreutils_nixdep, "cat")
 
-        local_file = await self.local.task.memfd_create(await self.local.ram.to_pointer(Path("source")), MFD.CLOEXEC)
-        remote_file = await self.remote.task.memfd_create(await self.remote.ram.to_pointer(Path("dest")), MFD.CLOEXEC)
+        local_file = await self.local.task.memfd_create(await self.local.ram.to_pointer(Path("source")))
+        remote_file = await self.remote.task.memfd_create(await self.remote.ram.to_pointer(Path("dest")))
 
         data = b'hello world'
         await local_file.write(await self.local.ram.ptr(data))

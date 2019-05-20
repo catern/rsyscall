@@ -27,7 +27,7 @@ class TestPidns(TrioTestCase):
     async def test_cat(self) -> None:
         cat = await self.local.environ.which('cat')
         pair = await (await self.local.task.socketpair(
-            AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC, 0, await self.local.ram.malloc(Socketpair))).read()
+            AF.UNIX, SOCK.STREAM, 0, await self.local.ram.malloc(Socketpair))).read()
         child = await self.init.fork()
         await child.unshare_files_and_replace({
             child.stdin: pair.first,
@@ -41,7 +41,7 @@ class TestPidns(TrioTestCase):
         self.assertEqual(read.size(), 0)
 
     async def test_sleep(self) -> None:
-        pipe = await (await self.local.task.pipe(await self.local.ram.malloc(Pipe), O.CLOEXEC)).read()
+        pipe = await (await self.local.task.pipe(await self.local.ram.malloc(Pipe))).read()
         child = await self.init.fork()
         child_fd = pipe.write.move(child.task)
         await child.unshare_files()
