@@ -681,12 +681,12 @@ class FileDescriptor:
         return addr
 
     @t.overload
-    async def accept(self, flags: SOCK) -> FileDescriptor: ...
+    async def accept(self, flags: SOCK=SOCK.NONE) -> FileDescriptor: ...
     @t.overload
     async def accept(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
     ) -> t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]: ...
 
-    async def accept(self, flags: SOCK, addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
+    async def accept(self, flags: SOCK=SOCK.NONE, addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
     ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]]:
         self.validate()
         flags |= SOCK.CLOEXEC

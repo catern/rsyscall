@@ -68,6 +68,7 @@ def _register_sockaddr(sockaddr: t.Type[Address]) -> None:
     family_to_class[sockaddr.family] = sockaddr
 
 class SOCK(enum.IntFlag):
+    NONE = 0
     # socket kinds
     DGRAM = socket.SOCK_DGRAM
     STREAM = socket.SOCK_STREAM
