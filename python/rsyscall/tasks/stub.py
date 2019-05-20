@@ -86,11 +86,11 @@ async def _setup_stub(
         await thread.ram.to_pointer(Path("child_robust_futex_list")), MFD.CLOEXEC)
     # send the fds to the new process
     connection_fd, make_connection = await thread.connection.prep_fd_transfer()
-    def sendmsg_op(sem: batch.BatchSemantics) -> WrittenPointer[SendMsghdr]:
-        iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
-        cmsgs = sem.to_pointer(CmsgList([CmsgSCMRights([
+    async def sendmsg_op(sem: batch.BatchSemantics) -> WrittenPointer[SendMsghdr]:
+        iovec = await sem.to_pointer(IovecList([await sem.malloc_type(Bytes, 1)]))
+        cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([
             passed_syscall_sock, passed_data_sock, futex_memfd, connection_fd])]))
-        return sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
+        return await sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
     _, [] = await bootstrap_sock.sendmsg(await thread.ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
     # close our reference to fds that only the new process needs
     await passed_syscall_sock.invalidate()

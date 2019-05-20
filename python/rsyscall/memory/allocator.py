@@ -89,6 +89,9 @@ class AllocatorInterface:
     @abc.abstractmethod
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, AllocationInterface]: ...
 
+    def inherit(self, task: Task) -> AllocatorInterface:
+        raise Exception("can't be inherited:", self)
+
 class Arena(AllocatorInterface):
     def __init__(self, mapping: MemoryMapping) -> None:
         self.mapping = mapping

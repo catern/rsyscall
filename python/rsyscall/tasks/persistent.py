@@ -82,14 +82,14 @@ class PersistentServer:
     async def _connect_and_send(self, thread: Thread, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
         sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK, 0), nonblock=True)
         sockaddr_un = await SockaddrUn.from_path(thread, self.path)
-        def sendmsg_op(sem: batch.BatchSemantics) -> t.Tuple[
+        async def sendmsg_op(sem: batch.BatchSemantics) -> t.Tuple[
                 WrittenPointer[Address], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
-            addr: WrittenPointer[Address] = sem.to_pointer(sockaddr_un)
-            count = sem.to_pointer(Int32(len(fds)))
-            iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
-            cmsgs = sem.to_pointer(CmsgList([CmsgSCMRights(fds)]))
-            hdr = sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
-            response_buf = sem.to_pointer(StructList(Int32, [Int32(0)]*len(fds)))
+            addr: WrittenPointer[Address] = await sem.to_pointer(sockaddr_un)
+            count = await sem.to_pointer(Int32(len(fds)))
+            iovec = await sem.to_pointer(IovecList([await sem.malloc_type(Bytes, 1)]))
+            cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights(fds)]))
+            hdr = await sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
+            response_buf = await sem.to_pointer(StructList(Int32, [Int32(0)]*len(fds)))
             return addr, count, hdr, response_buf
         addr, count, hdr, response = await thread.ram.perform_batch(sendmsg_op)
         data = None

@@ -17439,6 +17439,8 @@ And we can have an exec which is not memory-abstracting, I guess.
    This applies both in syscall interface, and in connecting to the persistent socket.
 ** implement real dynamic loader so we can get rid of fake mappings for local and remote functions
    If we do a real loader then, I guess, uh, we can know the mappings, both remotely and locally.
+** DONE switch BatchSemantics to just be a RAM?
+   done, painful, but done
 ** DONE use spawn_child_task in persistent?
    the issue is maintaining a reference to the stack stuff
 

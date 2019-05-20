@@ -92,10 +92,17 @@ class Pointer(t.Generic[T]):
     def near(self) -> rsyscall.near.Pointer:
         # TODO hmm should maybe validate that this fits in the bounds of the mapping I guess
         self.validate()
+        return self._get_raw_near()
+
+    def _get_raw_near(self) -> rsyscall.near.Pointer:
+        # only for printing purposes
         return self.mapping.near.as_pointer() + self.allocation.offset()
 
     def __repr__(self) -> str:
-        return f"Pointer({self.near}, {self.serializer})"
+        if self.valid:
+            return f"Pointer({self.near}, {self.serializer})"
+        else:
+            return f"Pointer(invalid, {self._get_raw_near()}, {self.serializer})"
 
     # TODO delete me I guess?
     def bytesize(self) -> int:

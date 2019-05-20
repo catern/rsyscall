@@ -11,7 +11,7 @@ import trio
 
 from rsyscall.struct import Bytes
 from rsyscall.handle import AllocationInterface, Pointer, IovecList, FileDescriptor
-from rsyscall.memory.allocator import AllocatorClient
+from rsyscall.memory.allocator import AllocatorInterface
 
 @dataclass
 class ReadOp:
@@ -227,7 +227,7 @@ class SocketMemoryTransport(MemoryTransport):
     def __init__(self,
                  local: AsyncFileDescriptor,
                  remote: FileDescriptor,
-                 remote_allocator: AllocatorClient,
+                 remote_allocator: AllocatorInterface,
     ) -> None:
         self.local = local
         self.remote = remote

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
-from rsyscall.batch import BatchSemantics, perform_async_batch
+from rsyscall.batch import BatchSemantics
 from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.tasks.exceptions import RsyscallHangup
@@ -146,7 +146,7 @@ async def launch_futex_monitor(ram: RAM,
             loader.futex_helper_func, [
                 int(futex_pointer.near + ffi.offsetof('struct futex_node', 'futex')),
                 futex_pointer.value.futex]))
-        stack_buf = sem.malloc_type(Stack, 4096)
+        stack_buf = await sem.malloc_type(Stack, 4096)
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         return stack
     stack = await ram.perform_async_batch(op)
@@ -178,11 +178,11 @@ async def spawn_child_task(
     async def op(sem: BatchSemantics) -> t.Tuple[t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
                                                        WrittenPointer[FutexNode]]:
         stack_value = loader.make_trampoline_stack(trampoline)
-        stack_buf = sem.malloc_type(Stack, 4096)
+        stack_buf = await sem.malloc_type(Stack, 4096)
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
-        futex_pointer = sem.to_pointer(FutexNode(None, Int32(0)))
+        futex_pointer = await sem.to_pointer(FutexNode(None, Int32(0)))
         return stack, futex_pointer
-    stack, futex_pointer = await perform_async_batch(task, ram.transport, arena, op)
+    stack, futex_pointer = await ram.perform_batch(op, arena)
     # it's important to start the processes in this order, so that the thread process
     # is the first process started if we unshare NEWPID, and therefore becomes pid 1.
     # rather than the futex process becoming pid 1...

@@ -105,13 +105,13 @@ class Thread(UnixThread):
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: MS,
                     data: bytes) -> None:
-        def op(sem: BatchSemantics) -> t.Tuple[
+        async def op(sem: BatchSemantics) -> t.Tuple[
                 WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg]]:
             return (
-                sem.to_pointer(Arg(source)),
-                sem.to_pointer(Arg(target)),
-                sem.to_pointer(Arg(filesystemtype)),
-                sem.to_pointer(Arg(data)),
+                await sem.to_pointer(Arg(source)),
+                await sem.to_pointer(Arg(target)),
+                await sem.to_pointer(Arg(filesystemtype)),
+                await sem.to_pointer(Arg(data)),
             )
         source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.ram.perform_batch(op)
         await self.task.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)

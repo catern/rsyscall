@@ -90,14 +90,14 @@ class ChildUnixThread(UnixThread):
         self.parent_monitor = parent_monitor
 
     async def execveat(self, path: Path, argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> AsyncChildProcess:
-        def op(sem: BatchSemantics) -> t.Tuple[WrittenPointer[Path],
+        async def op(sem: BatchSemantics) -> t.Tuple[WrittenPointer[Path],
                                                WrittenPointer[ArgList],
                                                WrittenPointer[ArgList]]:
-            argv_ptrs = ArgList([sem.to_pointer(Arg(arg)) for arg in argv])
-            envp_ptrs = ArgList([sem.to_pointer(Arg(arg)) for arg in envp])
-            return (sem.to_pointer(path),
-                    sem.to_pointer(argv_ptrs),
-                    sem.to_pointer(envp_ptrs))
+            argv_ptrs = ArgList([await sem.to_pointer(Arg(arg)) for arg in argv])
+            envp_ptrs = ArgList([await sem.to_pointer(Arg(arg)) for arg in envp])
+            return (await sem.to_pointer(path),
+                    await sem.to_pointer(argv_ptrs),
+                    await sem.to_pointer(envp_ptrs))
         filename, argv_ptr, envp_ptr = await self.ram.perform_batch(op)
         child_process = await self.task.execve(filename, argv_ptr, envp_ptr, flags)
         return self.parent_monitor.internal.add_task(child_process)

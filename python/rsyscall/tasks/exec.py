@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from rsyscall.batch import BatchSemantics, perform_batch
+from rsyscall.batch import BatchSemantics
 from rsyscall.command import Command
 from rsyscall.epoller import AsyncReadBuffer
 from rsyscall.handle import WrittenPointer, Pointer, MemoryTransport, Task, FileDescriptor, MemoryMapping
@@ -9,6 +9,7 @@ from rsyscall.loader import NativeLoader
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.monitor import AsyncChildProcess
 from rsyscall.tasks.fork import launch_futex_monitor, ChildSyscallInterface, SyscallConnection
+from rsyscall.memory.ram import RAM
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
 import rsyscall.near as near
@@ -29,16 +30,16 @@ __all__ = [
 ]
 
 async def set_singleton_robust_futex(
-        task: Task, transport: MemoryTransport, allocator: memory.AllocatorInterface,
+        task: Task, ram: RAM, allocator: memory.AllocatorInterface,
 ) -> WrittenPointer[FutexNode]:
     # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
     futex_value = FUTEX_WAITERS|(int(task.process.near) & FUTEX_TID_MASK)
-    def op(sem: BatchSemantics) -> t.Tuple[WrittenPointer[FutexNode],
+    async def op(sem: BatchSemantics) -> t.Tuple[WrittenPointer[FutexNode],
                                                  WrittenPointer[RobustListHead]]:
-        robust_list_entry = sem.to_pointer(FutexNode(None, Int32(futex_value)))
-        robust_list_head = sem.to_pointer(RobustListHead(robust_list_entry))
+        robust_list_entry = await sem.to_pointer(FutexNode(None, Int32(futex_value)))
+        robust_list_head = await sem.to_pointer(RobustListHead(robust_list_entry))
         return robust_list_entry, robust_list_head
-    robust_list_entry, robust_list_head = await perform_batch(task, transport, allocator, op)
+    robust_list_entry, robust_list_head = await ram.perform_batch(op, allocator)
     await task.set_robust_list(robust_list_head)
     return robust_list_entry
 
@@ -59,8 +60,7 @@ async def make_robust_futex_process(
     remote_mapping = await child_memfd.mmap(futex_memfd_size, PROT.READ|PROT.WRITE, MAP.SHARED, file=file)
     await child_memfd.invalidate()
 
-    remote_futex_node = await set_singleton_robust_futex(
-        child.task, child.ram.transport, memory.Arena(remote_mapping))
+    remote_futex_node = await set_singleton_robust_futex(child.task, child.ram, memory.Arena(remote_mapping))
     local_futex_node = remote_futex_node._with_mapping(local_mapping)
     # now we start the futex monitor
     futex_process = await launch_futex_monitor(
@@ -93,6 +93,9 @@ async def rsyscall_exec(
     else:
         raise Exception("can only exec in ChildSyscallInterface sysifs, not",
                         child.task.sysif)
+    if not isinstance(child.ram.allocator, memory.AllocatorClient):
+        raise Exception("can only exec in AllocatorClient RAMs, not",
+                        child.ram.allocator)
     # unshare files so we can unset cloexec on fds to inherit
     await child.unshare_files(going_to_exec=True)
     child.task.manipulating_fd_table = True

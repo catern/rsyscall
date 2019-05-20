@@ -54,15 +54,15 @@ class FDPassConnection(Connection):
         return list(zip(async_access_socks, local_socks))
 
     async def move_fds(self, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
-        def sendmsg_op(sem: BatchSemantics) -> WrittenPointer[SendMsghdr]:
-            iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
-            cmsgs = sem.to_pointer(CmsgList([CmsgSCMRights([fd for fd in fds])]))
-            return sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
+        async def sendmsg_op(sem: BatchSemantics) -> WrittenPointer[SendMsghdr]:
+            iovec = await sem.to_pointer(IovecList([await sem.malloc_type(Bytes, 1)]))
+            cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([fd for fd in fds])]))
+            return await sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
         _, [] = await self.access_fd.sendmsg(await self.access_ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
-        def recvmsg_op(sem: BatchSemantics) -> WrittenPointer[RecvMsghdr]:
-            iovec = sem.to_pointer(IovecList([sem.malloc_type(Bytes, 1)]))
-            cmsgs = sem.to_pointer(CmsgList([CmsgSCMRights([fd for fd in fds])]))
-            return sem.to_pointer(RecvMsghdr(None, iovec, cmsgs))
+        async def recvmsg_op(sem: BatchSemantics) -> WrittenPointer[RecvMsghdr]:
+            iovec = await sem.to_pointer(IovecList([await sem.malloc_type(Bytes, 1)]))
+            cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([fd for fd in fds])]))
+            return await sem.to_pointer(RecvMsghdr(None, iovec, cmsgs))
         _, [], hdr = await self.fd.recvmsg(await self.ram.perform_batch(recvmsg_op), RecvmsgFlags.NONE)
         cmsgs_ptr = (await hdr.read()).control
         if cmsgs_ptr is None:

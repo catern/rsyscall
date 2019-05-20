@@ -25,8 +25,8 @@ class SignalQueue:
                    *, signal_block: SignalBlock=None,
     ) -> SignalQueue:
         if signal_block is None:
-            def op(sem: BatchSemantics) -> t.Tuple[WrittenPointer[Sigset], Pointer[Sigset]]:
-                return sem.to_pointer(mask), sem.malloc_struct(Sigset)
+            async def op(sem: BatchSemantics) -> t.Tuple[WrittenPointer[Sigset], Pointer[Sigset]]:
+                return await sem.to_pointer(mask), await sem.malloc_struct(Sigset)
             sigset_ptr, oldset_ptr = await ram.perform_batch(op)
             signal_block = await task.sigmask_block(sigset_ptr, oldset_ptr)
             await task.read_oldset_and_check()
