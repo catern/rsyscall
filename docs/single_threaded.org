@@ -309,7 +309,7 @@ then call the "open" syscall on that path to get a file descriptor.
    which has a field `path` which is the path to a fresh empty directory.
 
    This is not garbage-collected away,
-   but `TemporaryDirectory` can be used as an async context manager yielding the path,
+   but `TemporaryDirectory` can be used as an async context manager yielding the path and cleaning up on exit,
    or you can explicitly call `await tmp_dir.cleanup()`.
 * Spawning subprocesses
   Spawning subprocesses is a matter of the multi-threaded API.
