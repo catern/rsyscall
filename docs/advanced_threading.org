@@ -22,7 +22,8 @@ see the documentation for that thread type.
 * stub
   A stub executable that, when run, connects back to us;
   we can accept the connection to get a thread which controls the stub executable.
-  This works no matter what process on the system starts the stub executable.
+  This works no matter what process on the system starts the stub executable,
+  even if it's unrelated to us.
 * persistent
   A thread which persists on the system even after we exit,
   and allows us to restart, recover our state, reconnect to the thread,
