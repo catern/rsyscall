@@ -532,6 +532,7 @@ class FileDescriptor:
 
     async def recvmsg(self, msg: WrittenPointer[RecvMsghdr], flags: RecvmsgFlags
     ) -> t.Tuple[IovecList, IovecList, Pointer[RecvMsghdrOut]]:
+        flags |= RecvmsgFlags.CMSG_CLOEXEC
         with contextlib.ExitStack() as stack:
             stack.enter_context(msg.borrow(self.task))
             if msg.value.name:
@@ -1198,11 +1199,6 @@ class ChildProcess(Process):
 
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:
-        # TODO it's important that the Siginfo buffer passed to waitid is stored carefully if waitid returns;
-        # otherwise we could drop events if we're cancelled while trying to read the buffer.
-        # maybe... we should store it ourselves? hm.
-        # Likewise, it's important that this class be informed when the process dies.
-        # which... again, we could do in this class.
         with contextlib.ExitStack() as stack:
             stack.enter_context(self.borrow())
             stack.enter_context(infop.borrow(self.task))

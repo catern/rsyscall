@@ -82,7 +82,7 @@ class TestSocket(TrioTestCase):
         hdrval = await hdr.read()
         [[passed_fd]] = await hdrval.control.read() # type: ignore
         self.assertEqual(hdrval.name, None)
-        self.assertEqual(hdrval.flags, MsghdrFlags.NONE)
+        self.assertEqual(hdrval.flags, MsghdrFlags.CMSG_CLOEXEC)
 
     async def test_long_sockaddr(self) -> None:
         "SockaddrUn.from_path works correctly on long Unix socket paths"

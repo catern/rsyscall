@@ -157,7 +157,7 @@ async def launch_futex_monitor(ram: RAM,
     if event.state(W.EXITED):
         raise Exception("thread internal futex-waiting task died unexpectedly", event)
     # resume the futex_process so it can start waiting on the futex
-    await futex_process.send_signal(Signals.SIGCONT)
+    await futex_process.kill(Signals.SIGCONT)
     # the stack will be freed as it is no longer needed, but the futex pointer will live on
     return futex_process
 

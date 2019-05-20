@@ -77,11 +77,10 @@ class AsyncChildProcess:
         death.check()
         return death
 
-    async def send_signal(self, sig: Signals) -> None:
+    async def kill(self, sig: Signals=Signals.SIGKILL) -> None:
+        if self.process.unread_siginfo:
+            await self.process.read_siginfo()
         await self.process.kill(sig)
-
-    async def kill(self) -> None:
-        await self.process.kill(Signals.SIGKILL)
 
     async def __aenter__(self) -> None:
         pass
