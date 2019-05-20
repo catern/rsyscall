@@ -71,15 +71,6 @@ class Int32(Struct, int): # type: ignore
     def sizeof(cls) -> int:
         return struct.calcsize('i')
 
-class Bytes(bytes, Serializable):
-    def to_bytes(self) -> bytes:
-        return self
-
-    T = t.TypeVar('T', bound='Bytes')
-    @classmethod
-    def from_bytes(cls: t.Type[T], data: bytes) -> T:
-        return cls(data)
-
 class BytesSerializer(Serializer[bytes]):
     def to_bytes(self, val: bytes) -> bytes:
         return val

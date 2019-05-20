@@ -5,7 +5,6 @@ from rsyscall.command import Command
 from rsyscall.handle import FileDescriptor, Path, WrittenPointer, Pointer, Task
 from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.mktemp import mkdtemp, TemporaryDirectory
-from rsyscall.struct import Bytes
 from rsyscall.unix_thread import UnixThread, ChildUnixThread
 import os
 import rsyscall.near as near
@@ -28,15 +27,15 @@ async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
     procself = Path("/proc/self")
 
     uid_map = await thr.task.open(await thr.ram.to_pointer(procself/"uid_map"), O.WRONLY)
-    await uid_map.write(await thr.ram.to_pointer(Bytes(f"{in_namespace_uid} {uid} 1\n".encode())))
+    await uid_map.write(await thr.ram.ptr(f"{in_namespace_uid} {uid} 1\n".encode()))
     await uid_map.close()
 
     setgroups = await thr.task.open(await thr.ram.to_pointer(procself/"setgroups"), O.WRONLY)
-    await setgroups.write(await thr.ram.to_pointer(Bytes(b"deny")))
+    await setgroups.write(await thr.ram.ptr(b"deny"))
     await setgroups.close()
 
     gid_map = await thr.task.open(await thr.ram.to_pointer(procself/"gid_map"), O.WRONLY)
-    await gid_map.write(await thr.ram.to_pointer(Bytes(f"{in_namespace_gid} {gid} 1\n".encode())))
+    await gid_map.write(await thr.ram.ptr(f"{in_namespace_gid} {gid} 1\n".encode()))
     await gid_map.close()
 
 async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescriptor]) -> None:
@@ -84,7 +83,7 @@ class Thread(UnixThread):
         else:
             out = None
             fd = path
-        to_write: Pointer = await self.ram.to_pointer(Bytes(os.fsencode(text)))
+        to_write: Pointer = await self.ram.ptr(os.fsencode(text))
         while to_write.bytesize() > 0:
             _, to_write = await fd.write(to_write)
         await fd.close()

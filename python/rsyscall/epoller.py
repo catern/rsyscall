@@ -10,7 +10,7 @@ from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 import trio
 
-from rsyscall.struct import Bytes, Int32
+from rsyscall.struct import Int32
 from rsyscall.handle import Sockbuf
 from rsyscall.sys.socket import SOCK, SOL, SO, Address, GenericSockaddr, T_addr
 from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EPOLL_CTL, EpollFlag
@@ -227,7 +227,7 @@ class AsyncFileDescriptor:
             written, to_write = await self.handle.write(to_write)
 
     async def write_all_bytes(self, buf: bytes) -> None:
-        ptr = await self.ram.to_pointer(Bytes(buf))
+        ptr = await self.ram.ptr(buf)
         await self.write_all(ptr)
 
 

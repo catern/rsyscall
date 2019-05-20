@@ -1,7 +1,7 @@
 from __future__ import annotations
 from rsyscall.handle import Task, Pointer, WrittenPointer, MemoryTransport, AllocationInterface, MemoryMapping, MemoryGateway
 from rsyscall.memory.allocator import AllocatorInterface
-from rsyscall.struct import FixedSize, T_fixed_size, T_has_serializer, T_fixed_serializer, Serializer, Bytes, BytesSerializer
+from rsyscall.struct import FixedSize, T_fixed_size, T_has_serializer, T_fixed_serializer, Serializer, BytesSerializer
 import rsyscall.near as near
 
 import typing as t
@@ -62,7 +62,8 @@ class RAM:
     async def ptr(self, data: t.Union[bytes, T_has_serializer], alignment: int=1
     ) -> t.Union[WrittenPointer[bytes], WrittenPointer[T_has_serializer]]:
         if isinstance(data, bytes):
-            return await self.to_pointer(Bytes(data), alignment)
+            ptr = await self.malloc(bytes, len(data))
+            return await self._write_to_pointer(ptr, data, data)
         else:
             return await self.to_pointer(data, alignment)
 

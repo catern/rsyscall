@@ -25,7 +25,7 @@ from rsyscall.monitor import ChildProcessMonitor
 from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.sys.epoll import EPOLL
 
-from rsyscall.struct import Bytes, Int32, StructList
+from rsyscall.struct import Int32, StructList
 
 from rsyscall.sched import CLONE
 from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, SendMsghdr, CmsgSCMRights, CmsgList

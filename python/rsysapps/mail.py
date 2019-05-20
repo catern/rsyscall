@@ -10,7 +10,6 @@ from rsyscall.handle import FileDescriptor, Path
 from rsyscall.command import Command
 from dataclasses import dataclass
 from rsyscall.inotify_watch import Inotify
-from rsyscall.struct import Bytes
 from rsyscall.mktemp import update_symlink
 
 from rsyscall.netinet.in_ import SockaddrIn

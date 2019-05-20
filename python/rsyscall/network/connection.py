@@ -5,7 +5,6 @@ import trio
 from rsyscall.epoller import AsyncFileDescriptor, Epoller, EpollThread
 from rsyscall.handle import FileDescriptor, WrittenPointer, Task
 from rsyscall.memory.ram import RAM
-from rsyscall.struct import Bytes
 from rsyscall.batch import BatchSemantics
 from rsyscall.concurrency import make_n_in_parallel
 

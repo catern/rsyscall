@@ -2,7 +2,7 @@ from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
 from rsyscall.handle import Pointer
 from rsyscall.concurrency import OneAtATime
-from rsyscall.struct import T_struct, Struct, Int32, Bytes, StructList
+from rsyscall.struct import T_struct, Struct, Int32, StructList
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.tasks.exceptions import RsyscallException, RsyscallHangup
 import typing as t
@@ -100,7 +100,7 @@ class SyscallConnection:
         self.tofd = tofd
         self.fromfd = fromfd
         self.buffer = ReadBuffer()
-        self.valid: t.Optional[Pointer[Bytes]] = None
+        self.valid: t.Optional[Pointer[bytes]] = None
         self.sending_requests = OneAtATime()
         self.pending_requests: t.List[ConnectionRequest] = []
         self.reading_responses = OneAtATime()

@@ -19,7 +19,6 @@ from rsyscall.command import Command
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 
 import rsyscall.batch as batch
-from rsyscall.struct import Bytes
 import rsyscall.struct
 from rsyscall.environ import Environment
 from rsyscall.handle import WrittenPointer, FileDescriptor, Task

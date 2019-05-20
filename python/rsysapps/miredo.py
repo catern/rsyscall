@@ -13,7 +13,7 @@ from rsyscall.thread import Thread, ChildThread
 from rsyscall.command import Command
 from rsyscall.handle import FileDescriptor, Path
 from dataclasses import dataclass
-from rsyscall.struct import Int32, Bytes
+from rsyscall.struct import Int32
 from rsyscall.monitor import AsyncChildProcess
 from rsyscall.memory.ram import RAMThread
 
@@ -170,7 +170,7 @@ class TestMiredo(TrioTestCase):
         ping6 = (await self.thread.environ.which("ping")).args('-6')
         print("b1.5", time.time())
         # TODO lol actually parse this, don't just read and throw it away
-        await self.netsock.read(await self.miredo.ns_thread.ram.malloc_type(Bytes, 4096))
+        await self.netsock.read(await self.miredo.ns_thread.ram.malloc(bytes, 4096))
         print("b2", time.time())
         thread = await self.miredo.ns_thread.fork()
         print("c", time.time())

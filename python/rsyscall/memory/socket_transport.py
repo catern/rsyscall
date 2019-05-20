@@ -9,7 +9,6 @@ import rsyscall.handle as handle
 import typing as t
 import trio
 
-from rsyscall.struct import Bytes
 from rsyscall.handle import AllocationInterface, Pointer, IovecList, FileDescriptor
 from rsyscall.memory.allocator import AllocatorInterface
 
@@ -172,7 +171,7 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
 
     async def write(self, dest: Pointer, data: bytes) -> None:
         dest = to_span(dest)
-        src = await self.local.ram.to_pointer(Bytes(data))
+        src = await self.local.ram.ptr(data)
         async def write() -> None:
             await self.local.write_all(src)
         async def read() -> None:
@@ -195,7 +194,7 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
                 written, rest = await self.remote.write(rest)
         async with trio.open_nursery() as nursery:
             nursery.start_soon(write)
-            read: t.Optional[Pointer[Bytes]] = None
+            read: t.Optional[Pointer[bytes]] = None
             rest = dest
             while rest.bytesize() > 0:
                 more_read, rest = await self.local.read(rest)
@@ -280,7 +279,7 @@ class SocketMemoryTransport(MemoryTransport):
             await self.primitive.write(dest, data)
         else:
             iovp = await self.primitive_remote_ram.to_pointer(IovecList([ptr for ptr, _ in ops]))
-            datap = await self.local.ram.to_pointer(Bytes(b"".join([data for _, data in ops])))
+            datap = await self.local.ram.ptr(b"".join([data for _, data in ops]))
             async with trio.open_nursery() as nursery:
                 @nursery.start_soon
                 async def write() -> None:

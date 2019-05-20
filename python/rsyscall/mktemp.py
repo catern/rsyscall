@@ -4,7 +4,6 @@ from rsyscall.unix_thread import UnixThread
 from rsyscall.memory.ram import RAMThread
 from rsyscall.path import Path
 from rsyscall.handle import WrittenPointer
-from rsyscall.struct import Bytes
 import os
 import typing as t
 
@@ -15,7 +14,7 @@ async def update_symlink(thr: RAMThread, path: WrittenPointer[Path], target: t.U
     target_bytes = os.fsencode(target)
     tmpname = path.value.name + ".updating." + random_string(k=8)
     tmppath = await thr.ram.to_pointer(path.value.parent/tmpname)
-    await thr.task.symlink(await thr.ram.to_pointer(Bytes(target_bytes)), tmppath)
+    await thr.task.symlink(await thr.ram.ptr(target_bytes), tmppath)
     await thr.task.rename(tmppath, path)
     return path
 

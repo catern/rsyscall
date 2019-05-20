@@ -13,7 +13,6 @@ import logging
 from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.handle import WrittenPointer, Pointer, FileDescriptor
 from rsyscall.path import Path
-from rsyscall.struct import Bytes
 
 from rsyscall.sys.mount import MS
 from rsyscall.fcntl import O
