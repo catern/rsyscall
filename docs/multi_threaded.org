@@ -186,7 +186,7 @@ We read and write from `pair.second` as explained in the [[file:single_threaded.
 We close `pair.second` so that cat gets EOF,
 and wait for it to exit cleanly.
 * process cleanup and pid namespaces
-Our direct children will be killed on our death,
+With rsyscall, our direct children will be killed on our death,
 which includes all our threads and any child processes we've exec'd.
 
 Many child processes will be running programs which don't spawn their own children.
@@ -195,10 +195,13 @@ These two classes are fine and will be automatically cleaned up without any effo
 
 Unfortunately, there are also many programs which spawn children and don't clean them up if they die,
 leaving them behind as orphans on the system.
-We can clean up after such programs by using pid namespaces.
+
+Since this is a common problem faced by many systems,
+it is a particularly good example.
+In rsyscall, we can clean up after such programs by using pid namespaces.
 
 #+BEGIN_SRC python
-from rsyscall import Thread, Bytes
+from rsyscall import Thread
 from rsyscall.sched import UnCLONE
 from rsyscall.fcntl import F
 from rsyscall.sys.wait import W, CLD
@@ -224,7 +227,7 @@ async def example3(thr: Thread, sh_path: Path, pipe: Pipe) -> None:
     # exit the init process to shut down the pid namespace 
     await init.exit(0)
     # we read the pipe and get an EOF, since the write-end has been closed.
-    read, _ = await pipe.read.read(await thr.ram.malloc(Bytes, 1))
+    read, _ = await pipe.read.read(await thr.ram.malloc(bytes, 1))
     if read.size() != 0:
         raise Exception("unexpectedly actually read something?!??")
 #+END_SRC

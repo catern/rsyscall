@@ -127,7 +127,7 @@ After a split,
 the pointers may be merged back together so that the whole buffer may be reused.
 For example:
 #+BEGIN_SRC python
-read, rest = await fd.read(await ram.malloc(Bytes, 4096))
+read, rest = await fd.read(await ram.malloc(bytes, 4096))
 while read.size() > 0:
   print(await read.read())
   read, rest = await fd.read(read.merge(rest))
@@ -140,7 +140,7 @@ Consult the documentation for more details about specific syscalls.
 * malloc and memory management
   The `pipe` system call, along with many others, is passed a buffer into which it writes its output.
 
-  To alloc such a buffer, we use malloc.
+  To alloc such a buffer, we can use malloc.
   Note again that pointers are garbage collected, so manual freeing is unnecessary.
 
   For example:
@@ -155,7 +155,7 @@ async def f(thr: Thread) -> Pipe:
     return await (await thr.task.pipe(await thr.ram.malloc(Pipe))).read()
 #+END_SRC
 
-The malloc system call takes as its first argument a type to allocate a buffer for.
+`malloc` takes as its first argument a type to allocate a buffer for.
 If that type needs a fixed-size buffer, no further arguments are needed.
 If the type's buffer can be of variable size, then malloc requires a second argument,
 which is the size in bytes of the buffer to allocate.
@@ -201,6 +201,29 @@ which is the size in bytes of the buffer to allocate.
   `SendMsghdr`, `RecvMsghdr`, and `RecvMsghdrOut`.
 
   Consule the rsyscall documentation for specific headers for more details about how to use those headers.
+* TODO handle/syscall organization
+  In general, if a syscall takes some thing as its first argument in the POSIX interface to Linux,
+  then in rsyscall it is a method on an object representing and owning that thing.
+
+  - syscalls which operate on file descriptors are methods on file descriptor objects
+  - syscalls which operate on existing memory mappings are methods on memory mapping objects
+  - syscalls which operate on processes are methods on process objects
+
+  These objects are returned from other syscalls that create them, and are garbage collected.
+  For example, when the last reference to a file descriptor goes out of scope, the file descriptor is closed.
+  The same applies for memory mappings, child processes, and other objects.
+  It is also possible to manually close a file descriptor
+  (or unmap a memory mapping, or kill a child process)
+  if you want it to be deterministically closed.
+
+  Syscalls which don't fit into another category are methods on the task object.
+  This notably includes all syscalls operating on paths;
+  we don't yet represent paths as a concrete object.
+  (primarily because the ownership model of a path is not clear)
+
+  Some syscalls can operate in multiple modes;
+  for example, `kill` can operate on a process, but it can also operate on process groups.
+  In this case, the syscall will be split across multiple objects.
 * TODO objects and helpers on Thread
   The "Thread" object contains several objects,
   along with some helper methods,
@@ -236,32 +259,9 @@ which is the size in bytes of the buffer to allocate.
    #+BEGIN_SRC python
    print(thread.environ['USER'])
    #+END_SRC
-* TODO handle/syscall organization
-  In general, if a syscall takes some thing as its first argument in the POSIX interface to Linux,
-  then in rsyscall it is a method on an object representing and owning that thing.
-
-  - syscalls which operate on file descriptors are methods on file descriptor objects
-  - syscalls which operate on existing memory mappings are methods on memory mapping objects
-  - syscalls which operate on processes are methods on process objects
-
-  These objects are returned from other syscalls that create them, and are garbage collected.
-  For example, when the last reference to a file descriptor goes out of scope, the file descriptor is closed.
-  The same applies for memory mappings, child processes, and other objects.
-  It is also possible to manually close a file descriptor
-  (or unmap a memory mapping, or kill a child process)
-  if you want it to be deterministically closed.
-
-  Syscalls which don't fit into another category are methods on the task object.
-  This notably includes all syscalls operating on paths;
-  we don't yet represent paths as a concrete object.
-  (primarily because the ownership model of a path is not clear)
-
-  Some syscalls can operate in multiple modes;
-  for example, `kill` can operate on a process, but it can also operate on process groups.
-  In this case, the syscall will be split across multiple objects.
 * spawning subprocesses
   Spawning subprocesses is a matter of the multi-threaded API.
-  Read that tutorial for information about that.
+  Read the [[file:multi_threaded.org][multi-threaded tutorial]] for information about that.
 * missing interfaces
 We seek to provide user-accessible low-level interfaces to the entirety of the Linux kernel,
 including all non-obsolete syscalls,

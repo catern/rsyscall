@@ -9,6 +9,10 @@ Here we'll look at some of the other kinds of threads which can be created in rs
 
 Note that all thread types can launch any other thread type, in arbitrary combinations.
 
+Note also that users are able to implement their own types of threads,
+so if these available thread types do not meet your needs,
+you can implement a new kind of thread which does.
+
 For more information on any of these thread types,
 see the documentation for that thread type.
 * stdin bootstrap
@@ -26,7 +30,3 @@ see the documentation for that thread type.
 * ssh
   A thread which runs on a remote system, bootstrapped over ssh.
   Note again that all thread types can be launched through any other thread type, including through an ssh thread.
-* extensibility
-  Users can implement their own thread types freely,
-  so if these available thread types do not meet your needs,
-  you are able to implement a new kind of thread which does.
