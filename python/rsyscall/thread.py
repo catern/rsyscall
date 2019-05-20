@@ -13,7 +13,7 @@ import typing as t
 
 from rsyscall.fcntl import O, F, FD_CLOEXEC
 from rsyscall.linux.dirent import DirentList
-from rsyscall.sched import UnCLONE, CLONE
+from rsyscall.sched import CLONE
 from rsyscall.sys.mount import MS
 from rsyscall.sys.wait import ChildEvent, W
 from rsyscall.unistd import Arg
@@ -135,25 +135,25 @@ class Thread(UnixThread):
             exit_event.check()
         return exit_event
 
-    async def unshare(self, flags: UnCLONE) -> None:
+    async def unshare(self, flags: CLONE) -> None:
         # Note: unsharing NEWPID causes us to not get zombies for our children if init dies. That
         # means we'll get ECHILDs, and various races can happen. It's not possible to robustly
         # unshare NEWPID.
-        if flags & UnCLONE.FILES:
+        if flags & CLONE.FILES:
             await self.unshare_files()
-            flags ^= UnCLONE.FILES
-        if flags & UnCLONE.NEWUSER:
+            flags ^= CLONE.FILES
+        if flags & CLONE.NEWUSER:
             await self.unshare_user()
-            flags ^= UnCLONE.NEWUSER
-            if flags & UnCLONE.FS:
-                flags ^= UnCLONE.FS
+            flags ^= CLONE.NEWUSER
+            if flags & CLONE.FS:
+                flags ^= CLONE.FS
         await self.task.unshare(flags)
 
     async def unshare_net(self) -> None:
-        await self.unshare(UnCLONE.NEWNET)
+        await self.unshare(CLONE.NEWNET)
 
     async def unshare_mount(self) -> None:
-        await self.unshare(UnCLONE.NEWNS)
+        await self.unshare(CLONE.NEWNS)
 
     async def unshare_files(self, going_to_exec=True) -> None:
         """Unshare the file descriptor table.
@@ -197,7 +197,7 @@ class Thread(UnixThread):
                            in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
         uid = await self.task.getuid()
         gid = await self.task.getgid()
-        await self.task.unshare(UnCLONE.FS|UnCLONE.NEWUSER)
+        await self.task.unshare(CLONE.FS|CLONE.NEWUSER)
         await write_user_mappings(self, uid, gid,
                                   in_namespace_uid=in_namespace_uid, in_namespace_gid=in_namespace_gid)
 
@@ -206,7 +206,7 @@ class Thread(UnixThread):
 
     async def setns_mount(self, fd: FileDescriptor) -> None:
         fd.check_is_for(self.task)
-        await fd.setns(UnCLONE.NEWNS)
+        await fd.setns(CLONE.NEWNS)
 
     async def exit(self, status) -> None:
         await self.task.exit(0)

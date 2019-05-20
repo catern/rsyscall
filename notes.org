@@ -18258,7 +18258,7 @@ And we can have an exec which is not memory-abstracting, I guess.
 ** support splitting memory mappings
 ** support passing an existing mapping as a target for mmap
    For the address argument, so that we split the mapping and replace part or all of it with a new mapping.
-** rename UnshareFlag to UnCLONE
+** DONE rename UnshareFlag to UnCLONE
    Ha ha yes!!
 ** DONE migrate everything to use robust lists, or not
    Yeah hm, instead of using ctid.
@@ -18556,10 +18556,12 @@ and rename it to waitpid?
    alas.
 
    ok i gave up on unshare(NEWPID)
-** TODO maybe drop UnCLONE and just use CLONE?
+** DONE maybe drop UnCLONE and just use CLONE?
    UnCLONE is fairly ugly.
    
    and, I don't think it gives us all that much type safety wins.
+
+   ok I did it
 * DOCUMENTATION!
   Time to write it!
 ** wait actually no

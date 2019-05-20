@@ -131,12 +131,7 @@ For example, we would want to replace stdin/stdout/stderr,
 or unset CLOEXEC from some file descriptors so that they are inherited across exec.
 We want to make such changes without affecting other threads sharing the file descriptor table.
 
-To do this, we first call `unshare(UnCLONE.FILES)` on the child.
-(As discussed in the single-threaded tutorial,
-names of constants follow the pattern of Linux headers,
-and are sometimes prefixed to improve type safety
-when subsets of an enum are used by different syscalls)
-
+To do this, we first call `unshare(CLONE.FILES)` on the child.
 As documented in [[http://man7.org/linux/man-pages/man2/unshare.2.html][man 2 unshare]], this creates a new file descriptor table for the thread it's called on.
 
 Linux will copy all file descriptors in the old table into the new table.
@@ -158,7 +153,7 @@ without interfering with other threads.
 For example:
 #+BEGIN_SRC python
 from rsyscall import Thread
-from rsyscall.sched import UnCLONE
+from rsyscall.sched import CLONE
 
 async def example2(thr: Thread, cat_path: Path, pair: Socketpair) -> None:
     ## launch a child thread
@@ -167,7 +162,7 @@ async def example2(thr: Thread, cat_path: Path, pair: Socketpair) -> None:
     # move ownership of pair.first to the child task
     stdinout = pair.first.move(child.task)
     # unshare - only child-owned file descriptors remain in the new fd table
-    await child.unshare(UnCLONE.FILES)
+    await child.unshare(CLONE.FILES)
     # dup2 unsets the cloexec flag so these fds are inherited across exec
     await stdinout.dup2(child.stdin)
     await stdinout.dup2(child.stdout)
@@ -194,7 +189,7 @@ and throws if it exited uncleanly.
 
 #+BEGIN_SRC python
 from rsyscall import Thread
-from rsyscall.sched import UnCLONE
+from rsyscall.sched import CLONE
 
 async def example2(thr: Thread, cat_path: Path, pair: Socketpair) -> None:
     ## launch a child thread
@@ -220,7 +215,7 @@ this invalidates `pair.first` and returns a new file descriptor object to use, `
 
 #+BEGIN_SRC python
     # unshare - only child-owned file descriptors remain in the new fd table
-    await child.unshare(UnCLONE.FILES)
+    await child.unshare(CLONE.FILES)
     # dup2 unsets the cloexec flag so these fds are inherited across exec
     await stdinout.dup2(child.stdin)
     await stdinout.dup2(child.stdout)
@@ -279,7 +274,7 @@ In rsyscall, we can clean up after such programs by using pid namespaces.
 For example:
 #+BEGIN_SRC python
 from rsyscall import Thread
-from rsyscall.sched import UnCLONE
+from rsyscall.sched import CLONE
 from rsyscall.fcntl import F
 from rsyscall.sys.wait import W, CLD
 
@@ -291,7 +286,7 @@ async def example3(thr: Thread, sh_path: Path, pipe: Pipe) -> None:
     # pass down the write-end of the pipe to the child;
     # the write-end of the pipe will only be open inside the child.
     child_fd = pipe.write.move(child.task)
-    await child.unshare(UnCLONE.FILES)
+    await child.unshare(CLONE.FILES)
     # unset the cloexec flag so this fd is inherited across exec
     await child_fd.fcntl(F.SETFD, 0)
     # exec into sh to leave "sleep inf" running forever as an orphan.
@@ -316,7 +311,7 @@ and reads an EOF from the read-end of the pipe, indicating that the "sleep inf" 
 
 #+BEGIN_SRC python
 from rsyscall import Thread
-from rsyscall.sched import UnCLONE
+from rsyscall.sched import CLONE
 from rsyscall.fcntl import F
 from rsyscall.sys.wait import W, CLD
 
@@ -340,7 +335,7 @@ We fork again from init to create a useful child in the namespace.
     # pass down the write-end of the pipe to the child;
     # the write-end of the pipe will only be open inside the child.
     child_fd = pipe.write.move(child.task)
-    await child.unshare(UnCLONE.FILES)
+    await child.unshare(CLONE.FILES)
     # unset the cloexec flag so this fd is inherited across exec
     await child_fd.fcntl(F.SETFD, 0)
 #+END_SRC

@@ -16,7 +16,7 @@ if t.TYPE_CHECKING:
     from rsyscall.sys.prctl import PR
     from rsyscall.sys.socket import SHUT
     from rsyscall.sys.uio import RWF
-    from rsyscall.sched import UnCLONE
+    from rsyscall.sched import CLONE
     from rsyscall.signal import HowSIG, Signals
     import rsyscall.handle as handle
 
@@ -287,7 +287,7 @@ async def set_robust_list(sysif: SyscallInterface, head: Pointer, len: int) -> N
 async def getdents64(sysif: SyscallInterface, fd: FileDescriptor, dirp: Pointer, count: int) -> int:
     return (await sysif.syscall(SYS.getdents64, fd, dirp, count))
 
-async def unshare(sysif: SyscallInterface, flags: UnCLONE) -> None:
+async def unshare(sysif: SyscallInterface, flags: CLONE) -> None:
     await sysif.syscall(SYS.unshare, flags)
 
 async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: EPOLL_CTL,

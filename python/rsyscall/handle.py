@@ -20,7 +20,7 @@ from rsyscall.sys.socket import (
     CmsgList, CmsgSCMRights,
     Socketpair,
 )
-from rsyscall.sched import UnCLONE, CLONE, Stack, Borrowable
+from rsyscall.sched import CLONE, Stack, Borrowable
 from rsyscall.struct import Serializer, HasSerializer, FixedSerializer, FixedSize, Serializable, Int32, Struct
 from rsyscall.signal import Sigaction, Sigset, Signals, Siginfo, SignalMaskTask
 from rsyscall.fcntl import AT, F, O
@@ -851,13 +851,13 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         self.fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
         self._setup_fd_table_handles()
 
-    async def unshare(self, flags: UnCLONE) -> None:
-        if flags & UnCLONE.FILES:
+    async def unshare(self, flags: CLONE) -> None:
+        if flags & CLONE.FILES:
             await self.unshare_files()
-            flags ^= UnCLONE.FILES
-        if flags & UnCLONE.FS:
+            flags ^= CLONE.FILES
+        if flags & CLONE.FS:
             await self.unshare_fs()
-            flags ^= UnCLONE.FS
+            flags ^= CLONE.FS
         if flags:
             await rsyscall.near.unshare(self.sysif, flags)
 
@@ -875,7 +875,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             fd_table_to_near_to_handles[self.fd_table].setdefault(fd, [])
         self._add_to_active_fd_table_tasks()
         # perform the actual unshare
-        await rsyscall.near.unshare(self.sysif, UnCLONE.FILES)
+        await rsyscall.near.unshare(self.sysif, CLONE.FILES)
         self.manipulating_fd_table = False
         # We can only remove our handles from the handle lists after the unshare is done
         # and the fds are safely copied, because otherwise someone else running GC on the
@@ -890,7 +890,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         old_fs = self.fs
         self.fs = rsyscall.far.FSInformation(self.sysif.identifier_process.id)
         try:
-            await rsyscall.near.unshare(self.sysif, UnCLONE.FS)
+            await rsyscall.near.unshare(self.sysif, CLONE.FS)
         except:
             self.fs = old_fs
 
@@ -898,11 +898,11 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         with fd.borrow(self) as fd:
             # can't setns to a user namespace while sharing CLONE_FS
             await self.unshare_fs()
-            await fd.setns(UnCLONE.NEWUSER)
+            await fd.setns(CLONE.NEWUSER)
 
     async def setns_net(self, fd: FileDescriptor) -> None:
         with fd.borrow(self) as fd:
-            await fd.setns(UnCLONE.NEWNET)
+            await fd.setns(CLONE.NEWNET)
 
     async def socket(self, family: AF, type: SOCK, protocol: int=0, cloexec=True) -> FileDescriptor:
         if cloexec:
