@@ -19,7 +19,7 @@ class TestSocket(TrioTestCase):
 
         clientfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
         await clientfd.connect(real_addr)
-        connfd = await sockfd.accept(SOCK.CLOEXEC)
+        connfd = await sockfd.accept()
 
         in_data = await self.thr.ram.ptr(b"hello")
         written, _ = await clientfd.write(in_data)

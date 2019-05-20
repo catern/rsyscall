@@ -27,7 +27,7 @@ class TestSocket(TrioTestCase):
 
         clientfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM)
         await clientfd.connect(addr)
-        connfd = await sockfd.accept(SOCK.CLOEXEC)
+        connfd = await sockfd.accept()
 
     async def test_listen_async(self) -> None:
         sockfd = await self.thr.make_afd(await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
@@ -96,7 +96,7 @@ class TestSocket(TrioTestCase):
         
         clientfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM)
         await clientfd.connect(addr)
-        connfd = await sockfd.accept(SOCK.CLOEXEC)
+        connfd = await sockfd.accept()
 
         dirfd = await self.thr.task.open(longdir, O.DIRECTORY)
         valid, rest = await dirfd.getdents(await self.thr.ram.malloc_type(DirentList, 4096))

@@ -130,7 +130,7 @@ class ListeningConnection(Connection):
         # but, since we're just connecting to a unix socket, it's fine I guess.
         await access_sock.connect(self.access_address)
         # TODO this accept should really be async
-        sock = await self.listening_fd.accept(SOCK.CLOEXEC)
+        sock = await self.listening_fd.accept()
         return access_sock, sock
 
     async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:

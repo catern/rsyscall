@@ -69,7 +69,7 @@ RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
     async def accept(self, thread: Thread=None) -> t.Tuple[t.List[str], Thread]:
         if thread is None:
             thread = self.thread
-        conn = await self.listening_sock.accept(SOCK.CLOEXEC)
+        conn = await self.listening_sock.accept()
         argv, new_thread = await _setup_stub(thread, conn)
         # have to drop first argument, which is the unix_stub executable; see make_stub
         return argv[1:], new_thread

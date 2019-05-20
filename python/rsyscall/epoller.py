@@ -83,7 +83,7 @@ class Epoller:
         activity_fd = task.sysif.get_activity_fd()
         if activity_fd is None:
             raise Exception("can't make a root epoll center if we don't have an activity_fd to monitor")
-        epfd = await task.epoll_create(EpollFlag.CLOEXEC)
+        epfd = await task.epoll_create()
         center = Epoller(EpollWaiter(ram, epfd, None, -1), ram, epfd)
         # TODO where should we store this, so that we don't deregister the activity_fd?
         epolled = await center.register(
@@ -257,19 +257,19 @@ class AsyncFileDescriptor:
                     raise
 
     @t.overload
-    async def accept(self, flags: SOCK) -> FileDescriptor: ...
+    async def accept(self, flags: SOCK=SOCK.NONE) -> FileDescriptor: ...
     @t.overload
     async def accept(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
     ) -> t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]: ...
 
-    async def accept(self, flags: SOCK, addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
+    async def accept(self, flags: SOCK=SOCK.NONE, addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
     ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]]:
         if addr is None:
             return await self._accept(flags)
         else:
             return await self._accept_with_addr(flags, addr)
 
-    async def accept_addr(self, flags: SOCK=SOCK.CLOEXEC) -> t.Tuple[FileDescriptor, Address]:
+    async def accept_addr(self, flags: SOCK=SOCK.NONE) -> t.Tuple[FileDescriptor, Address]:
         written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(GenericSockaddr)))
         fd, sockbuf = await self.accept(flags, written_sockbuf)
         addr = (await (await sockbuf.read()).buf.read()).parse()

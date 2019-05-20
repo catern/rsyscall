@@ -126,7 +126,7 @@ async def _make_local_thread() -> Thread:
         trampoline_func=_make_local_function_handle(lib.rsyscall_trampoline),
         futex_helper_func=_make_local_function_handle(lib.rsyscall_futex_helper),
     )
-    epfd = await task.epoll_create(EpollFlag.CLOEXEC)
+    epfd = await task.epoll_create()
     async def wait_readable():
         logger.debug("wait_readable(%s)", epfd.near.number)
         await trio.hazmat.wait_readable(epfd.near.number)
