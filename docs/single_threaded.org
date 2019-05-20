@@ -73,14 +73,14 @@ Pointers know the size (and the type) of the data they point to,
 so we don't provide a size argument to `write`;
 the size is simply pulled out of the Pointer.
 
-Returned to us from `write` is a tuple of two Pointers.
+Returned to us from `write` is a tuple of two Pointers; the original Pointer we passed in, split into two.
 The first element of the tuple is a Pointer to the data that was successfully written;
 the second element of the tuple is a Pointer to any data that was left un-written.
-The two Pointers are, of course, adjacent,
+These two Pointers are adjacent,
 and it's possible for us to combine them again and reuse the larger pointer,
 or continue to use them each separately.
 The original Pointer passed in to `write` is no longer usable,
-since it has been split into to the two Pointers returned back out.
+since it has been split into the two Pointers returned back out.
 
 #+BEGIN_SRC python
     # read that data from the read-end of the pipe
@@ -96,7 +96,7 @@ This is true even if there was a partial write, or if no data was written at all
 This is only marginally useful for this function,
 but it demonstrates the kind of reasoning that can be done with this interface.
 
-Returned to us from `read` is again a tuple of two Pointers.
+Returned to us from `read` is again a tuple of two Pointers, split from the Pointer passed in.
 The first element of the tuple is a Pointer to the part of the buffer that contains data from the pipe;
 the second element of the tuple is a Pointer to the unused portion of the buffer.
 Again, the original pointer is no longer usable,
