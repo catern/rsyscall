@@ -35,6 +35,7 @@ from rsyscall.sys.wait import W, ChildEvent
 from rsyscall.sys.mman import MAP, PROT
 from rsyscall.sys.prctl import PR
 from rsyscall.sys.mount import MS
+from rsyscall.sys.signalfd import SFD
 from rsyscall.sys.uio import RWF, IovecList, split_iovec
 
 class AllocationInterface:
@@ -938,7 +939,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
     async def open(self, ptr: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
         with ptr.borrow(self) as ptr_b:
             try:
-                fd = await rsyscall.near.openat(self.sysif, None, ptr_b.near, flags, mode)
+                fd = await rsyscall.near.openat(self.sysif, None, ptr_b.near, flags|O.CLOEXEC, mode)
             except FileNotFoundError as exn:
                 exn.filename = ptr.value
                 raise
@@ -993,22 +994,22 @@ class Task(SignalMaskTask, rsyscall.far.Task):
                 ret = await rsyscall.near.readlinkat(self.sysif, None, path_b.near, buf_b.near, buf_b.bytesize())
                 return buf.split(ret)
 
-    async def signalfd(self, mask: Pointer[Sigset], flags: int) -> FileDescriptor:
+    async def signalfd(self, mask: Pointer[Sigset], flags: SFD=SFD.NONE) -> FileDescriptor:
         with mask.borrow(self) as mask:
-            fd = await rsyscall.near.signalfd4(self.sysif, None, mask.near, mask.bytesize(), flags)
+            fd = await rsyscall.near.signalfd4(self.sysif, None, mask.near, mask.bytesize(), flags|SFD.CLOEXEC)
             return self.make_fd_handle(fd)
 
-    async def epoll_create(self, flags: EpollFlag) -> FileDescriptor:
-        fd = await rsyscall.near.epoll_create(self.sysif, flags)
+    async def epoll_create(self, flags: EpollFlag=EpollFlag.NONE) -> FileDescriptor:
+        fd = await rsyscall.near.epoll_create(self.sysif, flags|EpollFlag.CLOEXEC)
         return self.make_fd_handle(fd)
 
-    async def inotify_init(self, flags: InotifyFlag) -> FileDescriptor:
-        fd = await rsyscall.near.inotify_init(self.sysif, flags)
+    async def inotify_init(self, flags: InotifyFlag=InotifyFlag.NONE) -> FileDescriptor:
+        fd = await rsyscall.near.inotify_init(self.sysif, flags|InotifyFlag.CLOEXEC)
         return self.make_fd_handle(fd)
 
     async def memfd_create(self, name: WrittenPointer[Path], flags: MFD) -> FileDescriptor:
         with name.borrow(self) as name_b:
-            fd = await rsyscall.near.memfd_create(self.sysif, name_b.near, flags)
+            fd = await rsyscall.near.memfd_create(self.sysif, name_b.near, flags|MFD.CLOEXEC)
             return self.make_fd_handle(fd)
 
     async def waitid(self, options: W, infop: Pointer[Siginfo],
@@ -1020,14 +1021,14 @@ class Task(SignalMaskTask, rsyscall.far.Task):
                 with rusage.borrow(self) as rusage_b:
                     await rsyscall.near.waitid(self.sysif, None, infop_b.near, options, rusage_b.near)
 
-    async def pipe(self, buf: Pointer[Pipe], flags: O=O.CLOEXEC) -> Pointer[Pipe]:
+    async def pipe(self, buf: Pointer[Pipe], flags: O=O.NONE) -> Pointer[Pipe]:
         with buf.borrow(self):
-            await rsyscall.near.pipe2(self.sysif, buf.near, flags)
+            await rsyscall.near.pipe2(self.sysif, buf.near, flags|O.CLOEXEC)
             return buf
 
     async def socketpair(self, domain: AF, type: SOCK, protocol: int, sv: Pointer[Socketpair]) -> Pointer[Socketpair]:
         with sv.borrow(self) as sv_b:
-            await rsyscall.near.socketpair(self.sysif, domain, type, protocol, sv_b.near)
+            await rsyscall.near.socketpair(self.sysif, domain, type|SOCK.CLOEXEC, protocol, sv_b.near)
             return sv
 
     async def execve(self, filename: WrittenPointer[Path],
