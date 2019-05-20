@@ -188,7 +188,7 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
 
     async def read(self, src: Pointer) -> bytes:
         src = to_span(src)
-        dest = await self.local.ram.malloc_type(Bytes, src.bytesize())
+        dest = await self.local.ram.malloc(bytes, src.bytesize())
         async def write() -> None:
             rest = src
             while rest.bytesize() > 0:

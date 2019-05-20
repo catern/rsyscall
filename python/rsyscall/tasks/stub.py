@@ -87,7 +87,7 @@ async def _setup_stub(
     # send the fds to the new process
     connection_fd, make_connection = await thread.connection.prep_fd_transfer()
     async def sendmsg_op(sem: batch.BatchSemantics) -> WrittenPointer[SendMsghdr]:
-        iovec = await sem.to_pointer(IovecList([await sem.malloc_type(Bytes, 1)]))
+        iovec = await sem.to_pointer(IovecList([await sem.malloc(bytes, 1)]))
         cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([
             passed_syscall_sock, passed_data_sock, futex_memfd, connection_fd])]))
         return await sem.to_pointer(SendMsghdr(None, iovec, cmsgs))

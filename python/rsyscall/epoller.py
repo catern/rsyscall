@@ -200,7 +200,7 @@ class AsyncFileDescriptor:
                     raise
 
     async def read_some_bytes(self, count: int=4096) -> bytes:
-        ptr = await self.ram.malloc_type(Bytes, count)
+        ptr = await self.ram.malloc(bytes, count)
         valid, _ = await self.read(ptr)
         return await valid.read()
 

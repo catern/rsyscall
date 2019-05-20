@@ -55,12 +55,12 @@ class FDPassConnection(Connection):
 
     async def move_fds(self, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
         async def sendmsg_op(sem: BatchSemantics) -> WrittenPointer[SendMsghdr]:
-            iovec = await sem.to_pointer(IovecList([await sem.malloc_type(Bytes, 1)]))
+            iovec = await sem.to_pointer(IovecList([await sem.malloc(bytes, 1)]))
             cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([fd for fd in fds])]))
             return await sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
         _, [] = await self.access_fd.sendmsg(await self.access_ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
         async def recvmsg_op(sem: BatchSemantics) -> WrittenPointer[RecvMsghdr]:
-            iovec = await sem.to_pointer(IovecList([await sem.malloc_type(Bytes, 1)]))
+            iovec = await sem.to_pointer(IovecList([await sem.malloc(bytes, 1)]))
             cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([fd for fd in fds])]))
             return await sem.to_pointer(RecvMsghdr(None, iovec, cmsgs))
         _, [], hdr = await self.fd.recvmsg(await self.ram.perform_batch(recvmsg_op), RecvmsgFlags.NONE)

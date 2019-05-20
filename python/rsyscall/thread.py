@@ -97,7 +97,7 @@ class Thread(UnixThread):
     async def read_to_eof(self, fd: FileDescriptor) -> bytes:
         data = b""
         while True:
-            read, rest = await fd.read(await self.ram.malloc_type(Bytes, 4096))
+            read, rest = await fd.read(await self.ram.malloc(bytes, 4096))
             if read.bytesize() == 0:
                 return data
             data += await read.read()

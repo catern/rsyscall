@@ -178,7 +178,7 @@ class SyscallConnection:
         if vals:
             self._got_responses(vals)
             return
-        buf = await self.fromfd.ram.malloc_type(Bytes, 1024)
+        buf = await self.fromfd.ram.malloc(bytes, 1024)
         while not vals:
             if self.valid is None:
                 valid, rest = await self.fromfd.read(buf)

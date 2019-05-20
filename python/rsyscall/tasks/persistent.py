@@ -86,7 +86,7 @@ class PersistentServer:
                 WrittenPointer[Address], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
             addr: WrittenPointer[Address] = await sem.to_pointer(sockaddr_un)
             count = await sem.to_pointer(Int32(len(fds)))
-            iovec = await sem.to_pointer(IovecList([await sem.malloc_type(Bytes, 1)]))
+            iovec = await sem.to_pointer(IovecList([await sem.malloc(bytes, 1)]))
             cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights(fds)]))
             hdr = await sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
             response_buf = await sem.to_pointer(StructList(Int32, [Int32(0)]*len(fds)))
