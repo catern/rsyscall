@@ -58,9 +58,7 @@ before the syscall can be made.
 Pointers are garbage collected, so we don't need to worry about freeing it.
 
 Here we use the "ptr" method, which takes some data,
-allocates memory for it,
-writes the data to memory,
-and returns the resulting Pointer.
+and returns a Pointer to memory containing that data.
 
 #+BEGIN_SRC python
     # write that data to the write-end of the pipe
@@ -198,8 +196,8 @@ which is the size in bytes of the buffer to allocate.
 As `malloc` is the typical way to allocate an unitialized buffer that will be written by a syscall,
 `ptr` is the typical way to get some value into memory as a pointer that can be read by a syscall.
 
-`ptr` takes a value of any of the supported types and serializes it into bytes,
-then allocates sufficient memory and writes those bytes to memory.
+`ptr` takes a value of any of the supported types
+and returns a Pointer to memory containing the serialization of that value.
 
 For example:
 #+BEGIN_SRC python
@@ -209,7 +207,7 @@ from rsyscall.fcntl import O
 fd = await thr.task.open(await thr.ram.ptr(Path("/dev/null")), O.RDONLY)
 #+END_SRC
 
-We write the path "/dev/null" to memory,
+We get a pointer to the path "/dev/null" in memory,
 then call the "open" syscall on that path to get a file descriptor.
 * Header-based organization
   Many constants and structures are involved in the Linux API.

@@ -3491,6 +3491,8 @@ hmm, actually it just occurred to me that this question is essentially the same 
    or never otherwise gets notified of child death.
 
    This doesn't work!
+** prctl to set cloexec for every new fd
+   I'm not sure that I'll get it right.
 * possible kernel bugs
 ** MMAP_GROWSDOWN doesn't seem to work
    It doesn't grow.
@@ -17559,6 +17561,24 @@ And we can have an exec which is not memory-abstracting, I guess.
    otherwise our fds will get inherited if some other task calls exec without first calling unshare_files.
 
    hmm this is kind of security-sensitive too because the fds might be inherited by a network-exposed process.
+
+   Oh, this inheritance happens even if we do call unshare_files, sigh.
+   Because, um, if we opened an fd,
+   but we haven't made a handle for it yet because we haven't gotten the response back,
+   or haven't read the memory containing it,
+   or whatever:
+   Then we'll not close those fds even if we unshare_files.
+
+   OK so I think we should probably force cloexec on everything.
+
+   hmm, a prctl to force cloexec would be good,
+   but we can just simulate that, can't we?
+   with a local setting.
+
+   anyway
+   ok, let's force cloexec for everything.
+   in handle, I think?
+   so that we can still fall back to near.
 ** DONE get nix deploy stuff working again
    ok so...
 
@@ -18562,6 +18582,8 @@ and rename it to waitpid?
    and, I don't think it gives us all that much type safety wins.
 
    ok I did it
+** force cloexec on everything
+** make accept flags argument optional
 * DOCUMENTATION!
   Time to write it!
 ** wait actually no
