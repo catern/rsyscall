@@ -21,7 +21,7 @@ async def f(thr: Thread, pipe: Pipe) -> None:
     # write some data to memory
     in_data_ptr = await thr.ram.ptr(b"hello world")
     # write that data to the write-end of the pipe
-    written_ptr, remaining_ptr = await pipe.write.write(in_data)
+    written_ptr, remaining_ptr = await pipe.write.write(in_data_ptr)
     # read that data from the read-end of the pipe
     read_ptr, unused_ptr = await pipe.read.read(written)
     if read_ptr.bytesize() != in_data_ptr.bytesize():
@@ -34,11 +34,23 @@ This function writes "hello world" to a pipe,
 reads that same data back out from the pipe,
 and prints that data.
 
+#+BEGIN_SRC python
+from rsyscall.thread import Thread
+from rsyscall.unistd import Pipe
+
+async def f(thr: Thread, pipe: Pipe) -> None:
+#+END_SRC
+
 We receive a thread as an argument;
 as stated above, we will only work with a single pre-existing thread in this tutorial.
 
 We also receive a pipe as an argument, produced elsewhere by a call to the pipe() system call.
 The Pipe class contains the two file descriptor ends of the pipe in the "read" and "write" fields.
+
+#+BEGIN_SRC python
+    # write some data to memory
+    in_data_ptr = await thr.ram.ptr(b"hello world")
+#+END_SRC
 
 In rsyscall, syscalls that operate on memory take a Pointer argument.
 Any data that you want to pass to a syscall must be first turned into a Pointer
@@ -49,6 +61,11 @@ Here we use the "ptr" method, which takes some data,
 allocates memory for it,
 writes the data to memory,
 and returns the resulting Pointer.
+
+#+BEGIN_SRC python
+    # write that data to the write-end of the pipe
+    written_ptr, remaining_ptr = await pipe.write.write(in_data_ptr)
+#+END_SRC
 
 We then call the `write` syscall with our new Pointer,
 on the write-end of the pipe.
@@ -65,33 +82,48 @@ or continue to use them each separately.
 The original Pointer passed in to `write` is no longer usable,
 since it has been split into to the two Pointers returned back out.
 
+#+BEGIN_SRC python
+    # read that data from the read-end of the pipe
+    read_ptr, unused_ptr = await pipe.read.read(written)
+#+END_SRC
+
 We then call the `read` syscall on the read-end of the pipe.
 We reuse the `written` pointer as a buffer to read into,
 so we don't have to allocate more memory.
 We know that the `written` pointer is exactly the right size for reading out the data that is currently in the pipe,
 since it in fact points to the original copy of the data that is currently in the pipe.
-This is true even if there was a partial write, or indeed even if no data was written at all.
+This is true even if there was a partial write, or if no data was written at all.
 This is only marginally useful for this function,
 but it demonstrates the kind of reasoning that can be done with this interface.
 
-Returned to use from `read` is again a tuple of two Pointers.
-The first element of the tuple is a Pointer to data that was read from the pipe;
-the second element of the tuple is a Pointer to the unused portion of the buffer we passed in.
+Returned to us from `read` is again a tuple of two Pointers.
+The first element of the tuple is a Pointer to the part of the buffer that contains data from the pipe;
+the second element of the tuple is a Pointer to the unused portion of the buffer.
 Again, the original pointer is no longer usable,
 since it has been split into these two returned Pointers.
 If we tried to use the original pointer,
 we'd get a Python-level exception about an invalid pointer before any syscall is made.
+
+#+BEGIN_SRC python
+    if read_ptr.bytesize() != in_data_ptr.bytesize():
+        raise Exception("unexpected partial write or read happened")
+#+END_SRC
 
 We then check whether the read data is equal in length to the original data we tried to write in.
 If it isn't, then either a partial write or a partial read must have happened;
 we could have retried to write the full amount of data,
 but we choose not to in this example.
 
+#+BEGIN_SRC python
+    # read the data from memory into a Python bytes object
+    print(await read_ptr.read())
+#+END_SRC
+
 Then, finally, we read the pointer returned from the `read` syscall;
 this reads the data from memory into a Python object depending on the type of the pointer.
 In this case, the pointer is a pointer to a bytestring, so we'll get back a bytestring,
 which we then print.
-* read, write, and other similar syscalls return tuples of pointers
+* `read`, `write`, and other similar syscalls return tuples of pointers
 This general pattern of passing one Pointer and returning a pair of Pointers applies to many similar syscalls in rsyscall.
 
 The traditional POSIX interface to Linux returns a number of bytes from `write` and many other syscalls.
@@ -137,10 +169,13 @@ In general, any two pointers that are adjacent in memory may be merged into a si
 
 This style applies to any syscall that takes a pointer and returns information about what part of that pointer was used.
 Consult the documentation for more details about specific syscalls.
-* malloc and memory management
+* `malloc` and memory management
+  An already-created `Pipe` was passed in to our initial example function.
+  It was created using the `pipe` system call.
+
   The `pipe` system call, along with many others, is passed a buffer into which it writes its output.
 
-  To alloc such a buffer, we can use malloc.
+  To allocate such an unitialized buffer, we can use `malloc`.
   Note again that pointers are garbage collected, so manual freeing is unnecessary.
 
   For example:
@@ -159,7 +194,24 @@ async def f(thr: Thread) -> Pipe:
 If that type needs a fixed-size buffer, no further arguments are needed.
 If the type's buffer can be of variable size, then malloc requires a second argument,
 which is the size in bytes of the buffer to allocate.
-* TODO header organization
+* `ptr`
+As `malloc` is the typical way to allocate an unitialized buffer that will be written by a syscall,
+`ptr` is the typical way to get some value into memory as a pointer that can be read by a syscall.
+
+`ptr` takes a value of any of the supported types and serializes it into bytes,
+then allocates sufficient memory and writes those bytes to memory.
+
+For example:
+#+BEGIN_SRC python
+from rsyscall import Path
+from rsyscall.fcntl import O
+
+fd = await thr.task.open(await thr.ram.ptr(Path("/dev/null")), O.RDONLY)
+#+END_SRC
+
+We write the path "/dev/null" to memory,
+then call the "open" syscall on that path to get a file descriptor.
+* Header-based organization
   Many constants and structures are involved in the Linux API.
   The layout of these constants in rsyscall follows the headers exported by Linux.
 
@@ -201,7 +253,7 @@ which is the size in bytes of the buffer to allocate.
   `SendMsghdr`, `RecvMsghdr`, and `RecvMsghdrOut`.
 
   Consule the rsyscall documentation for specific headers for more details about how to use those headers.
-* TODO handle/syscall organization
+* Organization of syscalls
   In general, if a syscall takes some thing as its first argument in the POSIX interface to Linux,
   then in rsyscall it is a method on an object representing and owning that thing.
 
@@ -218,21 +270,25 @@ which is the size in bytes of the buffer to allocate.
 
   Syscalls which don't fit into another category are methods on the task object.
   This notably includes all syscalls operating on paths;
-  we don't yet represent paths as a concrete object.
-  (primarily because the ownership model of a path is not clear)
+  we don't yet represent paths as a concrete object,
+  primarily because the ownership model of a path is not clear.
 
   Some syscalls can operate in multiple modes;
   for example, `kill` can operate on a process, but it can also operate on process groups.
   In this case, the syscall will be split across multiple objects.
-* TODO objects and helpers on Thread
+
+  Consult the documentation for more detail on individual syscalls.
+* Objects and helpers on Thread
   The "Thread" object contains several objects,
   along with some helper methods,
   which are useful in single-threaded operations.
 
-  Some of these objects are only relevant for multi-threaded operation; we won't cover those here.
+  Some of the objects and methods on Thread are only relevant for multi-threaded operation;
+  we won't cover those here.
 ** task: Task
-   The Task is the low-level representation of a thread,
-   and the central place to make most syscalls.
+   The Task is the low-level representation of a thread.
+   All syscalls are either methods on the Task,
+   or methods on objects returned by the Task.
 ** ram: RAM
    The RAM abstracts over memory and allows us to create pointers which can be passed to syscalls.
 ** epoller: Epoller
@@ -241,28 +297,24 @@ which is the size in bytes of the buffer to allocate.
    instead, you use it by passing a file descriptor to `thread.make_afd`,
    which registers that FD on the epoller and returns back an AsyncFileDescriptor
    which you can use to perform reads, writes, and other syscalls without blocking the thread.
+** stdin/stdout/stderr: FileDescriptor
+   These three traditional file descriptors are available as `thread.stdin`, `thread.stdout`, `thread.stderr`.
 ** Filesystem helpers
    There are a few repetitive tasks that crop up a lot in scripting.
    Making directories at some path, reading in an entire file, and writing out a file at some path with specific contents.
 
-   `thread.mkdir`, `thread.read_to_eof` and `thread.write` are here to help!
-** TODO mktemp
-   `thread.mktemp` returns a TemporaryDirectory.
+   `thread.mkdir`, `thread.read_to_eof` and `thread.spit` perform these operations without requiring you to deal with allocating memory.
+** mktemp
+   `thread.mktemp` returns a TemporaryDirectory,
+   which has a field `path` which is the path to a fresh empty directory.
 
-   This is *not* garbage-collected away.
-** stdin/stdout/stderr: FileDescriptor
-   Good old stdin/stdout/stderr!
-   These three file descriptors are available as `thread.stdin`, `thread.stdout`, `thread.stderr`.
-** environ: Environment
-   The Environment contains, of course, environment variables.
-   You can index into it with strings, and get back strings; that's pretty much it.
-   #+BEGIN_SRC python
-   print(thread.environ['USER'])
-   #+END_SRC
-* spawning subprocesses
+   This is not garbage-collected away,
+   but `TemporaryDirectory` can be used as an async context manager yielding the path,
+   or you can explicitly call `await tmp_dir.cleanup()`.
+* Spawning subprocesses
   Spawning subprocesses is a matter of the multi-threaded API.
   Read the [[file:multi_threaded.org][multi-threaded tutorial]] for information about that.
-* missing interfaces
+* Missing interfaces
 We seek to provide user-accessible low-level interfaces to the entirety of the Linux kernel,
 including all non-obsolete syscalls,
 and including things that are typically considered low-level implementation details (for example, futexes).

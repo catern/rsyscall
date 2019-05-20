@@ -18556,6 +18556,10 @@ and rename it to waitpid?
    alas.
 
    ok i gave up on unshare(NEWPID)
+** TODO maybe drop UnCLONE and just use CLONE?
+   UnCLONE is fairly ugly.
+   
+   and, I don't think it gives us all that much type safety wins.
 * DOCUMENTATION!
   Time to write it!
 ** wait actually no

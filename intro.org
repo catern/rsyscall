@@ -11,7 +11,7 @@ a programming language theory fan, an operating systems research fan,
 a distributed systems fan, a capability security fan,
 an RPC fan, an RPC hater,
 an abstraction fan, an abstraction hater,
-or still other perspectives.
+or whatever other perspective.
 
 We're going to write a choose-your-own-adventure to explain rsyscall interactively
 based on your pre-existing knowledge and biases,
@@ -24,7 +24,7 @@ The single-threaded tutorial and the multi-threaded tutorial.
 Note that there's some background knowledge you need for these tutorials.
 We use Python 3 async/await and Python 3 type annotations.
 If you haven't seen those before,
-there's a [[file:docs/prereqs.org][background tutorial]] you can read.
+there's a [[file:docs/background.org][background tutorial]] you can read.
 
 The [[file:docs/single_threaded.org][single-threaded tutorial]] explains how to do things
 with only a single thread, without creating more.
