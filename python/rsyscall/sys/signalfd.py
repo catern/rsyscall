@@ -7,6 +7,7 @@ from rsyscall.signal import Signals
 import enum
 
 class SFD(enum.IntFlag):
+    NONE = 0
     NONBLOCK = lib.SFD_NONBLOCK
     CLOEXEC = lib.SFD_CLOEXEC
 

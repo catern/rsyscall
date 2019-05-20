@@ -12,6 +12,7 @@ class AT(enum.IntFlag):
     SYMLINK_FOLLOW = lib.AT_SYMLINK_FOLLOW
 
 class O(enum.IntFlag):
+    NONE = 0
     RDONLY = os.O_RDONLY
     WRONLY = os.O_WRONLY
     RDWR = os.O_RDWR

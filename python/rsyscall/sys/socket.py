@@ -187,10 +187,12 @@ class SendmsgFlags(enum.IntFlag):
 
 class RecvmsgFlags(enum.IntFlag):
     NONE = 0
+    CMSG_CLOEXEC = lib.MSG_CMSG_CLOEXEC
 
 class MsghdrFlags(enum.IntFlag):
     NONE = 0
     CTRUNC = lib.MSG_CTRUNC
+    CMSG_CLOEXEC = lib.MSG_CMSG_CLOEXEC
 
 T_cmsg = t.TypeVar('T_cmsg', bound='Cmsg')
 class Cmsg(FixedSerializer):

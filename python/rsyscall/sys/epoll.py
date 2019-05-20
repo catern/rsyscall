@@ -8,6 +8,7 @@ import typing as t
 from dataclasses import dataclass
 
 class EpollFlag(enum.IntFlag):
+    NONE = 0
     CLOEXEC = lib.EPOLL_CLOEXEC
 
 class EPOLL_CTL(enum.IntEnum):

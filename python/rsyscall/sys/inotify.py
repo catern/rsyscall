@@ -14,6 +14,7 @@ __all__ = [
 ]
 
 class InotifyFlag(enum.IntFlag):
+    NONE = 0
     CLOEXEC = lib.IN_CLOEXEC
     NONBLOCK = lib.IN_NONBLOCK
 
