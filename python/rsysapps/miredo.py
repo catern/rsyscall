@@ -115,7 +115,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) 
     icmp6_fd = await ns_thread.task.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
 
     # create the TUN interface
-    tun_fd = await ns_thread.task.open(await ns_thread.ram.to_pointer(Path("/dev/net/tun")), O.RDWR|O.CLOEXEC)
+    tun_fd = await ns_thread.task.open(await ns_thread.ram.to_pointer(Path("/dev/net/tun")), O.RDWR)
     ptr = await thread.ram.to_pointer(netif.Ifreq(b'teredo', flags=netif.IFF_TUN))
     await tun_fd.ioctl(netif.TUNSETIFF, ptr)
     # create reqsock for ifreq operations in this network namespace

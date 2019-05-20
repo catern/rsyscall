@@ -35,7 +35,7 @@ class SignalQueue:
             if signal_block.mask != mask:
                 raise Exception("passed-in SignalBlock", signal_block, "has mask", signal_block.mask,
                                 "which does not match the mask for the SignalQueue we're making", mask)
-        sigfd = await task.signalfd(sigset_ptr, SFD.NONBLOCK|SFD.CLOEXEC)
+        sigfd = await task.signalfd(sigset_ptr, SFD.NONBLOCK)
         async_sigfd = await AsyncFileDescriptor.make_handle(epoller, ram, sigfd, is_nonblock=True)
         return cls(signal_block, async_sigfd)
 

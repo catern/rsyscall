@@ -118,7 +118,7 @@ async def start_smtpd(nursery, thread: Thread, path: Path,
     config += "listen on localhost inherit " + str(await smtp_listener.as_argument()) + '\n'
 
     # bind a socket in the parent
-    lmtp_socket = await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC)
+    lmtp_socket = await thread.task.socket(AF.UNIX, SOCK.STREAM)
     lmtp_socket_path = path/"lmtp.sock"
     await lmtp_socket.bind(await thread.ram.ptr(SockaddrUn(os.fsencode(lmtp_socket_path))))
     await lmtp_socket.listen(10)
@@ -159,7 +159,7 @@ class TestMail(TrioTestCase):
         self.tmpdir = await self.thread.mkdtemp("test_mail")
         self.path = self.tmpdir.path
         await update_symlink(self.thread, await self.thread.ram.ptr(self.tmpdir.parent/"test_mail.current"), self.path)
-        smtp_sock = await self.thread.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
+        smtp_sock = await self.thread.task.socket(AF.INET, SOCK.STREAM)
         await smtp_sock.bind(await self.thread.ram.ptr(SockaddrIn(3000, "127.0.0.1")))
         await smtp_sock.listen(10)
         self.smtpd = await start_smtpd(self.nursery, self.thread, await self.thread.mkdir(self.path/"smtpd"), smtp_sock)
@@ -177,7 +177,7 @@ class TestMail(TrioTestCase):
     async def send_email(self, from_: str, to: str, subject: str, msg: str) -> None:
         thread = await self.thread.fork()
         await thread.unshare_files()
-        fd = await thread.task.memfd_create(await thread.ram.ptr(Path('message')), MFD.CLOEXEC)
+        fd = await thread.task.memfd_create(await thread.ram.ptr(Path('message')))
         msg = f'From: {from_}\nSubject: {subject}\nTo: {to}\n\n' + msg
         await thread.spit(fd, msg)
         await fd.lseek(0, SEEK.SET)
@@ -196,7 +196,7 @@ class TestMail(TrioTestCase):
         event = await watch.wait_until_event(IN.MOVED_TO)
         if event.name is None:
             raise Exception("event has no name??")
-        mailfd = await self.thread.task.open(await self.thread.ram.ptr(self.maildir.new()/event.name), O.RDONLY|O.CLOEXEC)
+        mailfd = await self.thread.task.open(await self.thread.ram.ptr(self.maildir.new()/event.name), O.RDONLY)
         data = await self.thread.read_to_eof(mailfd)
         message = email.message_from_bytes(data)
         self.assertEqual(from_,  message['From'])

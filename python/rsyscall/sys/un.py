@@ -38,7 +38,7 @@ class SockaddrUn(Address):
         try:
             return SockaddrUn(os.fsencode(path))
         except PathTooLongError:
-            fd = await thr.task.open(await thr.ram.to_pointer(path.parent), O.PATH|O.CLOEXEC)
+            fd = await thr.task.open(await thr.ram.to_pointer(path.parent), O.PATH)
             return SockaddrUnProcFd(fd, path.name)
 
     T = t.TypeVar('T', bound='SockaddrUn')

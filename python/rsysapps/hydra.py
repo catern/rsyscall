@@ -91,7 +91,7 @@ class HTTPClient:
 
     @staticmethod
     async def connect_unix(thread: Thread, addr: WrittenPointer[SockaddrUn]) -> HTTPClient:
-        sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.CLOEXEC|SOCK.NONBLOCK), nonblock=True)
+        sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
         await sock.connect(addr)
         return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
             ("Host", "localhost"),
@@ -101,7 +101,7 @@ class HTTPClient:
 
     @staticmethod
     async def connect_inet(thread: Thread, addr: SockaddrIn) -> HTTPClient:
-        sock = await thread.make_afd(await thread.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC|SOCK.NONBLOCK), nonblock=True)
+        sock = await thread.make_afd(await thread.task.socket(AF.INET, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
         await sock.connect(await thread.ram.to_pointer(addr))
         return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
             ("Host", "localhost"),
@@ -232,7 +232,7 @@ async def start_postgres(nursery, thread: Thread, path: Path) -> Postgres:
     while True:
         await watch.wait_until_event(IN.CLOSE_WRITE, pid_file_name)
         if pid_file is None:
-            pid_file = await thread.task.open(name, O.RDONLY|O.CLOEXEC)
+            pid_file = await thread.task.open(name, O.RDONLY)
         pid_file_data = await read_completely(thread.ram, pid_file)
         try:
             # the postmaster status is on line 7
@@ -270,7 +270,7 @@ async def start_fresh_nginx(
 ) -> t.Tuple[SockaddrIn, NginxChild]:
     nginx = await parent.environ.which("nginx")
     thread = await parent.fork(CLONE.NEWUSER|CLONE.NEWPID)
-    sock = await thread.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
+    sock = await thread.task.socket(AF.INET, SOCK.STREAM)
     zero_addr = await thread.ram.ptr(SockaddrIn(0, 0x7F_00_00_01))
     await sock.bind(zero_addr)
     addr = await (await (await sock.getsockname(
@@ -291,7 +291,7 @@ http {
 """ % (addr.port, proxy_addr.path)
     await sock.listen(10)
     config_fd = await thread.task.open(await thread.ram.ptr(path/"nginx.conf"),
-                                       O.RDWR|O.CREAT|O.CLOEXEC)
+                                       O.RDWR|O.CREAT)
     remaining: Pointer = await thread.ram.ptr(config)
     while remaining.bytesize() > 0:
         _, remaining = await config_fd.write(remaining)
@@ -316,11 +316,11 @@ http {
   }
 }
 """ % os.fsencode(sockpath)
-    sock = await thread.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
+    sock = await thread.task.socket(AF.INET, SOCK.STREAM)
     await sock.bind(await thread.ram.ptr(SockaddrIn(3000, 0x7F_00_00_01)))
     await sock.listen(10)
     config_fd = await thread.task.open(await thread.ram.ptr(path/"nginx.conf"),
-                                       O.RDWR|O.CREAT|O.CLOEXEC)
+                                       O.RDWR|O.CREAT)
     remaining: Pointer = await thread.ram.ptr(config)
     while remaining.bytesize() > 0:
         _, remaining = await config_fd.write(remaining)

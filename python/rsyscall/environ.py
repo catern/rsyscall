@@ -36,7 +36,7 @@ class ExecutablePathCache:
     async def get_fd_for_path(self, path: Path) -> t.Optional[FileDescriptor]:
         if path not in self.fds:
             try:
-                fd = await self.task.open(await self.ram.to_pointer(path), O.PATH|O.DIRECTORY|O.CLOEXEC)
+                fd = await self.task.open(await self.ram.to_pointer(path), O.PATH|O.DIRECTORY)
             except OSError:
                 self.fds[path] = None
             else:

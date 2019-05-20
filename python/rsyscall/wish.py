@@ -112,7 +112,7 @@ class ConsoleServerGenie(WishGranter):
         sock_path = self.sockdir/sock_name
         cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path))
         sockfd = await self.thread.make_afd(
-            await self.thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+            await self.thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
         await sockfd.bind(await SockaddrUn.from_path(self.thread, sock_path))
         await sockfd.handle.listen(10)
         async with trio.open_nursery() as nursery:

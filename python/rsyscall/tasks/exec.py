@@ -86,7 +86,7 @@ async def rsyscall_exec(
     [(access_data_sock, passed_data_sock)] = await child.open_async_channels(1)
     # create this guy and pass him down to the new thread
     child_futex_memfd = await child.task.memfd_create(
-        await child.ram.to_pointer(Path("child_robust_futex_list")), MFD.CLOEXEC)
+        await child.ram.to_pointer(Path("child_robust_futex_list")))
     parent_futex_memfd = parent.task.make_fd_handle(child_futex_memfd)
     if isinstance(child.task.sysif, ChildSyscallInterface):
         syscall = child.task.sysif

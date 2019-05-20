@@ -45,7 +45,7 @@ class StubServer:
     async def listen_on(cls, thread: Thread, path: Path) -> StubServer:
         "Start listening on the passed-in path for stub connections."
         sockfd = await thread.make_afd(
-            await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK|SOCK.CLOEXEC), nonblock=True)
+            await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
         addr: WrittenPointer[Address] = await thread.ram.to_pointer(await SockaddrUn.from_path(thread, path))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
@@ -82,7 +82,7 @@ async def _setup_stub(
      (access_data_sock, passed_data_sock)] = await thread.open_async_channels(2)
     # memfd for setting up the futex
     futex_memfd = await thread.task.memfd_create(
-        await thread.ram.to_pointer(Path("child_robust_futex_list")), MFD.CLOEXEC)
+        await thread.ram.to_pointer(Path("child_robust_futex_list")))
     # send the fds to the new process
     connection_fd, make_connection = await thread.connection.prep_fd_transfer()
     async def sendmsg_op(sem: batch.BatchSemantics) -> WrittenPointer[SendMsghdr]:

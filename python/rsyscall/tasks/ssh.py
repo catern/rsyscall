@@ -143,7 +143,7 @@ async def run_socket_binder(
         bootstrap_executable: FileDescriptor,
 ) -> t.AsyncGenerator[bytes, None]:
     stdout_pipe = await (await parent.task.pipe(
-        await parent.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
+        await parent.ram.malloc_struct(Pipe))).read()
     async_stdout = await parent.make_afd(stdout_pipe.read)
     child = await parent.fork()
     async with child:
@@ -181,7 +181,7 @@ async def run_socket_binder(
 async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
                       local_path: Path, remote_path: str) -> AsyncChildProcess:
     stdout_pipe = await (await thread.task.pipe(
-        await thread.ram.malloc_struct(Pipe), O.CLOEXEC)).read()
+        await thread.ram.malloc_struct(Pipe))).read()
     async_stdout = await thread.make_afd(stdout_pipe.read)
     child = await thread.fork()
     stdout = stdout_pipe.write.move(child.task)
@@ -307,8 +307,8 @@ async def make_local_ssh_from_executables(thread: Thread,
     async with (await thread.mkdtemp()) as tmpdir:
         await keygen_thread.task.chdir(await keygen_thread.ram.to_pointer(tmpdir))
         await (await keygen_thread.exec(keygen_command)).waitpid(W.EXITED)
-        privkey_file = await thread.task.open(await thread.ram.to_pointer(tmpdir/'key'), O.RDONLY|O.CLOEXEC)
-        pubkey_file = await thread.task.open(await thread.ram.to_pointer(tmpdir/'key.pub'), O.RDONLY|O.CLOEXEC)
+        privkey_file = await thread.task.open(await thread.ram.to_pointer(tmpdir/'key'), O.RDONLY)
+        pubkey_file = await thread.task.open(await thread.ram.to_pointer(tmpdir/'key.pub'), O.RDONLY)
     def to_host(ssh: SSHCommand, privkey_file=privkey_file, pubkey_file=pubkey_file) -> SSHCommand:
         privkey = privkey_file.as_proc_path()
         pubkey = pubkey_file.as_proc_path()

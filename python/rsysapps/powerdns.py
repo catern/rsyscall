@@ -145,9 +145,9 @@ class TestPowerdns(TrioTestCase):
         print("sockaddr", sockaddr)
         path = await self.thread.mkdir(self.path/f"pdns{idx}")
 
-        udp_sock = await self.thread.task.socket(AF.INET, SOCK.DGRAM|SOCK.CLOEXEC)
+        udp_sock = await self.thread.task.socket(AF.INET, SOCK.DGRAM)
         await udp_sock.bind(sockaddr)
-        tcp_sock = await self.thread.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
+        tcp_sock = await self.thread.task.socket(AF.INET, SOCK.STREAM)
         await tcp_sock.bind(sockaddr)
         await tcp_sock.listen(10)
 
@@ -170,9 +170,9 @@ class TestPowerdns(TrioTestCase):
         sockaddr = await self.thread.ram.ptr(SockaddrIn(53, addr))
         path = await self.thread.mkdir(self.path/f"pdns{idx}")
 
-        udp_sock = await self.thread.task.socket(AF.INET, SOCK.DGRAM|SOCK.CLOEXEC)
+        udp_sock = await self.thread.task.socket(AF.INET, SOCK.DGRAM)
         await udp_sock.bind(sockaddr)
-        tcp_sock = await self.thread.task.socket(AF.INET, SOCK.STREAM|SOCK.CLOEXEC)
+        tcp_sock = await self.thread.task.socket(AF.INET, SOCK.STREAM)
         await tcp_sock.bind(sockaddr)
         await tcp_sock.listen(10)
 

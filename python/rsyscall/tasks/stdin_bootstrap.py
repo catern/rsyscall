@@ -66,7 +66,7 @@ async def rsyscall_stdin_bootstrap(
      (access_data_sock, passed_data_sock)] = await parent.open_async_channels(2)
     # memfd for setting up the futex
     futex_memfd = await parent.task.memfd_create(
-        await parent.ram.to_pointer(Path("child_robust_futex_list")), MFD.CLOEXEC)
+        await parent.ram.to_pointer(Path("child_robust_futex_list")))
     # send the fds to the new process
     connection_fd, make_connection = await parent.connection.prep_fd_transfer()
     async def sendmsg_op(sem: BatchSemantics) -> WrittenPointer[SendMsghdr]:
