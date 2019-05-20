@@ -573,6 +573,9 @@ class FileDescriptor:
                                        page_size=page_size)
         return MemoryMapping(self.task, ret, file)
 
+    async def dup2(self, newfd: FileDescriptor) -> FileDescriptor:
+        return await self.dup3(newfd, 0)
+
     # oldfd has to be a valid file descriptor. newfd is not, technically, required to be
     # open, but that's the best practice for avoiding races, so we require it anyway here.
     async def dup3(self, newfd: FileDescriptor, flags: int) -> FileDescriptor:

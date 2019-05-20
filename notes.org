@@ -18588,8 +18588,8 @@ and rename it to waitpid?
    and, I don't think it gives us all that much type safety wins.
 
    ok I did it
-** force cloexec on everything
-** make accept flags argument optional
+** DONE force cloexec on everything
+** DONE make accept flags argument optional
 * DOCUMENTATION!
   Time to write it!
 ** wait actually no
