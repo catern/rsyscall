@@ -19,7 +19,6 @@ from rsyscall.memory.ram import RAM
 from rsyscall.handle import Pointer
 from rsyscall.signal import Signals, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
-import rsyscall.batch as batch
 from rsyscall.network.connection import FDPassConnection
 from rsyscall.environ import Environment
 from rsyscall.loader import NativeLoader

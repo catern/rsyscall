@@ -80,17 +80,12 @@ class RAM:
         ptr = await self.malloc_serializer(serializer, len(data_bytes), alignment=alignment)
         return await self._write_to_pointer(ptr, data, data_bytes)
 
-    async def perform_batch(self, op: t.Callable[[BatchSemantics], t.Awaitable[T]],
+    async def perform_batch(self, op: t.Callable[[RAM], t.Awaitable[T]],
                                   allocator: AllocatorInterface=None,
     ) -> T:
         if allocator is None:
             allocator = self.allocator
         return await perform_batch(self.task, self.transport, allocator, op)
-
-    async def perform_async_batch(self, op: t.Callable[[BatchSemantics], t.Awaitable[T]],
-                                  allocator: AllocatorInterface=None,
-    ) -> T:
-        return await self.perform_batch(op, allocator)
 
 class NullAllocation(AllocationInterface):
     def __init__(self, n: int) -> None:
@@ -141,10 +136,7 @@ class PrefilledAllocator(AllocatorInterface):
                             "allocating different sizes/in different order on second run")
         return mapping, allocation
 
-class BatchSemantics(RAM):
-    pass
-
-class BatchWriteSemantics(BatchSemantics):
+class BatchWriteSemantics(RAM):
     def __init__(self, 
                  task: Task,
                  transport: MemoryTransport,
@@ -164,10 +156,10 @@ async def perform_batch(
         task: Task,
         transport: MemoryTransport,
         allocator: AllocatorInterface,
-        batch: t.Callable[[BatchSemantics], t.Awaitable[T]],
+        batch: t.Callable[[RAM], t.Awaitable[T]],
 ) -> T:
     later_allocator = LaterAllocator()
-    await batch(BatchSemantics(task, NoopTransport(), later_allocator))
+    await batch(RAM(task, NoopTransport(), later_allocator))
     allocations = await allocator.bulk_malloc(later_allocator.allocations)
     sem = BatchWriteSemantics(task, transport, PrefilledAllocator(allocations))
     ret = await batch(sem)

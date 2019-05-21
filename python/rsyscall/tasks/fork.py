@@ -1,7 +1,6 @@
 from __future__ import annotations
 from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
-from rsyscall.batch import BatchSemantics
 from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.tasks.exceptions import RsyscallHangup
@@ -141,7 +140,7 @@ class ChildSyscallInterface(near.SyscallInterface):
 async def launch_futex_monitor(ram: RAM,
                                loader: NativeLoader, monitor: ChildProcessMonitor,
                                futex_pointer: WrittenPointer[FutexNode]) -> AsyncChildProcess:
-    async def op(sem: BatchSemantics) -> t.Tuple[Pointer[Stack], WrittenPointer[Stack]]:
+    async def op(sem: RAM) -> t.Tuple[Pointer[Stack], WrittenPointer[Stack]]:
         stack_value = loader.make_trampoline_stack(Trampoline(
             loader.futex_helper_func, [
                 int(futex_pointer.near + ffi.offsetof('struct futex_node', 'futex')),
@@ -149,7 +148,7 @@ async def launch_futex_monitor(ram: RAM,
         stack_buf = await sem.malloc_type(Stack, 4096)
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         return stack
-    stack = await ram.perform_async_batch(op)
+    stack = await ram.perform_batch(op)
     futex_process = await monitor.clone(CLONE.VM|CLONE.FILES, stack)
     # wait for futex helper to SIGSTOP itself,
     # which indicates the trampoline is done and we can deallocate the stack.
@@ -175,7 +174,7 @@ async def spawn_child_task(
     # allocator; all our memory is already MAP.SHARED, I think.
     # We should resolve this so we can use the stock allocator.
     arena = Arena(await task.mmap(4096*2, PROT.READ|PROT.WRITE, MAP.SHARED))
-    async def op(sem: BatchSemantics) -> t.Tuple[t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
+    async def op(sem: RAM) -> t.Tuple[t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
                                                        WrittenPointer[FutexNode]]:
         stack_value = loader.make_trampoline_stack(trampoline)
         stack_buf = await sem.malloc_type(Stack, 4096)

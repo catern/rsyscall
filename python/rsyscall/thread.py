@@ -1,6 +1,5 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from rsyscall.batch import BatchSemantics
 from rsyscall.command import Command
 from rsyscall.handle import FileDescriptor, Path, WrittenPointer, Pointer, Task
 from rsyscall.memory.ram import RAM, RAMThread
@@ -104,7 +103,7 @@ class Thread(UnixThread):
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: MS,
                     data: bytes) -> None:
-        async def op(sem: BatchSemantics) -> t.Tuple[
+        async def op(sem: RAM) -> t.Tuple[
                 WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg]]:
             return (
                 await sem.to_pointer(Arg(source)),

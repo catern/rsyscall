@@ -17,8 +17,6 @@ import trio
 import struct
 from dataclasses import dataclass
 import logging
-import rsyscall.batch as batch
-
 from rsyscall.memory.ram import RAM
 
 from rsyscall.monitor import ChildProcessMonitor
@@ -82,7 +80,7 @@ class PersistentServer:
     async def _connect_and_send(self, thread: Thread, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
         sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK, 0), nonblock=True)
         sockaddr_un = await SockaddrUn.from_path(thread, self.path)
-        async def sendmsg_op(sem: batch.BatchSemantics) -> t.Tuple[
+        async def sendmsg_op(sem: RAM) -> t.Tuple[
                 WrittenPointer[Address], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
             addr: WrittenPointer[Address] = await sem.to_pointer(sockaddr_un)
             count = await sem.to_pointer(Int32(len(fds)))

@@ -5,7 +5,6 @@ import trio
 from rsyscall.epoller import AsyncFileDescriptor, Epoller, EpollThread
 from rsyscall.handle import FileDescriptor, WrittenPointer, Task
 from rsyscall.memory.ram import RAM
-from rsyscall.batch import BatchSemantics
 from rsyscall.concurrency import make_n_in_parallel
 
 from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, RecvmsgFlags, SendMsghdr, RecvMsghdr, CmsgList, CmsgSCMRights, Socketpair
@@ -53,12 +52,12 @@ class FDPassConnection(Connection):
         return list(zip(async_access_socks, local_socks))
 
     async def move_fds(self, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
-        async def sendmsg_op(sem: BatchSemantics) -> WrittenPointer[SendMsghdr]:
+        async def sendmsg_op(sem: RAM) -> WrittenPointer[SendMsghdr]:
             iovec = await sem.to_pointer(IovecList([await sem.malloc(bytes, 1)]))
             cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([fd for fd in fds])]))
             return await sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
         _, [] = await self.access_fd.sendmsg(await self.access_ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
-        async def recvmsg_op(sem: BatchSemantics) -> WrittenPointer[RecvMsghdr]:
+        async def recvmsg_op(sem: RAM) -> WrittenPointer[RecvMsghdr]:
             iovec = await sem.to_pointer(IovecList([await sem.malloc(bytes, 1)]))
             cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([fd for fd in fds])]))
             return await sem.to_pointer(RecvMsghdr(None, iovec, cmsgs))

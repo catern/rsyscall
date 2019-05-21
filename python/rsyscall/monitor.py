@@ -1,6 +1,5 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from rsyscall.batch import BatchSemantics
 from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Pointer, ChildProcess
@@ -25,7 +24,7 @@ class SignalQueue:
                    *, signal_block: SignalBlock=None,
     ) -> SignalQueue:
         if signal_block is None:
-            async def op(sem: BatchSemantics) -> t.Tuple[WrittenPointer[Sigset], Pointer[Sigset]]:
+            async def op(sem: RAM) -> t.Tuple[WrittenPointer[Sigset], Pointer[Sigset]]:
                 return await sem.to_pointer(mask), await sem.malloc_struct(Sigset)
             sigset_ptr, oldset_ptr = await ram.perform_batch(op)
             signal_block = await task.sigmask_block(sigset_ptr, oldset_ptr)

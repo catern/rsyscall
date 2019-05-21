@@ -1,6 +1,5 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from rsyscall.batch import BatchSemantics
 from rsyscall.command import Command
 from rsyscall.epoller import AsyncReadBuffer
 from rsyscall.handle import WrittenPointer, Pointer, MemoryTransport, Task, FileDescriptor, MemoryMapping
@@ -34,7 +33,7 @@ async def set_singleton_robust_futex(
 ) -> WrittenPointer[FutexNode]:
     # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
     futex_value = FUTEX_WAITERS|(int(task.process.near) & FUTEX_TID_MASK)
-    async def op(sem: BatchSemantics) -> t.Tuple[WrittenPointer[FutexNode],
+    async def op(sem: RAM) -> t.Tuple[WrittenPointer[FutexNode],
                                                  WrittenPointer[RobustListHead]]:
         robust_list_entry = await sem.to_pointer(FutexNode(None, Int32(futex_value)))
         robust_list_head = await sem.to_pointer(RobustListHead(robust_list_entry))

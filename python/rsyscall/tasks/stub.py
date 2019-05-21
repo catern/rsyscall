@@ -18,7 +18,6 @@ from rsyscall.monitor import ChildProcessMonitor
 from rsyscall.command import Command
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 
-import rsyscall.batch as batch
 import rsyscall.struct
 from rsyscall.environ import Environment
 from rsyscall.handle import WrittenPointer, FileDescriptor, Task
@@ -85,7 +84,7 @@ async def _setup_stub(
         await thread.ram.to_pointer(Path("child_robust_futex_list")))
     # send the fds to the new process
     connection_fd, make_connection = await thread.connection.prep_fd_transfer()
-    async def sendmsg_op(sem: batch.BatchSemantics) -> WrittenPointer[SendMsghdr]:
+    async def sendmsg_op(sem: RAM) -> WrittenPointer[SendMsghdr]:
         iovec = await sem.to_pointer(IovecList([await sem.malloc(bytes, 1)]))
         cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([
             passed_syscall_sock, passed_data_sock, futex_memfd, connection_fd])]))

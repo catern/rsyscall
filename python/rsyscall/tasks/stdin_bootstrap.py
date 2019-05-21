@@ -1,6 +1,5 @@
 import typing as t
 from dataclasses import dataclass
-from rsyscall.batch import BatchSemantics
 from rsyscall.command import Command
 from rsyscall.environ import Environment
 from rsyscall.epoller import Epoller, AsyncReadBuffer
@@ -69,7 +68,7 @@ async def rsyscall_stdin_bootstrap(
         await parent.ram.to_pointer(Path("child_robust_futex_list")))
     # send the fds to the new process
     connection_fd, make_connection = await parent.connection.prep_fd_transfer()
-    async def sendmsg_op(sem: BatchSemantics) -> WrittenPointer[SendMsghdr]:
+    async def sendmsg_op(sem: RAM) -> WrittenPointer[SendMsghdr]:
         iovec = await sem.to_pointer(IovecList([await sem.malloc(bytes, 1)]))
         cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([
             passed_syscall_sock, passed_data_sock, futex_memfd, connection_fd])]))

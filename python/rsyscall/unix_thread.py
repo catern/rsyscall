@@ -8,7 +8,6 @@ from rsyscall.environ import Environment
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.epoller import Epoller
 from rsyscall.memory.ram import RAM
-from rsyscall.batch import BatchSemantics
 from rsyscall.command import Command
 from rsyscall.sched import CLONE
 
@@ -90,7 +89,7 @@ class ChildUnixThread(UnixThread):
         self.parent_monitor = parent_monitor
 
     async def execveat(self, path: Path, argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> AsyncChildProcess:
-        async def op(sem: BatchSemantics) -> t.Tuple[WrittenPointer[Path],
+        async def op(sem: RAM) -> t.Tuple[WrittenPointer[Path],
                                                WrittenPointer[ArgList],
                                                WrittenPointer[ArgList]]:
             argv_ptrs = ArgList([await sem.to_pointer(Arg(arg)) for arg in argv])
