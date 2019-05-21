@@ -103,7 +103,6 @@ def _make_local_task() -> Task:
     base_task = handle.Task(
         LocalSyscall(process.near), process.near, None, far.FDTable(pid),
         far.AddressSpace(os.getpid()),
-        far.FSInformation(pid),
         pid_namespace,
     )
     return base_task

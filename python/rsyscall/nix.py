@@ -16,6 +16,7 @@ from rsyscall.path import Path
 
 from rsyscall.sys.mount import MS
 from rsyscall.fcntl import O
+from rsyscall.sched import CLONE
 from rsyscall.unistd import Pipe, OK
 
 __all__ = [
@@ -29,7 +30,7 @@ async def exec_tar_copy_tree(src: ChildThread, src_paths: t.List[Path], src_fd: 
     dest_tar = await dest.environ.which("tar")
     src_tar = await dest.environ.which("tar")
 
-    await dest.task.unshare_fs()
+    await dest.task.unshare(CLONE.FS)
     await dest.task.chdir(await dest.ram.to_pointer(dest_path))
     await dest.unshare_files_and_replace({
         dest.stdin: dest_fd,

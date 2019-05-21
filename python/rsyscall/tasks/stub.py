@@ -106,7 +106,6 @@ async def _setup_stub(
     pid = describe_struct.pid
     fd_table = far.FDTable(pid)
     address_space = far.AddressSpace(pid)
-    fs_information = far.FSInformation(pid)
     # we assume pid namespace is shared
     pidns = thread.task.pidns
     process = far.Process(pidns, near.Process(pid))
@@ -116,7 +115,7 @@ async def _setup_stub(
     # then we can automatically do it right
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
     syscall = NonChildSyscallInterface(SyscallConnection(access_syscall_sock, access_syscall_sock), process.near)
-    base_task = Task(syscall, process.near, None, fd_table, address_space, fs_information, pidns)
+    base_task = Task(syscall, process.near, None, fd_table, address_space, pidns)
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     allocator = memory.AllocatorClient.make_allocator(base_task)

@@ -61,11 +61,6 @@ class FDTableMismatchError(NamespaceMismatchError):
 class AddressSpaceMismatchError(NamespaceMismatchError):
     pass
 
-@dataclass(eq=False)
-class FSInformation:
-    "Filesystem root, current working directory, and umask; controlled by CLONE_FS."
-    creator_pid: int
-
 # This is like a segment register, if a segment register was write-only. Then
 # we'd need to maintain the knowledge of what the segment register was set to,
 # outside the segment register itself. That's what we do here.
@@ -74,7 +69,6 @@ class Task:
     sysif: rsyscall.near.SyscallInterface
     fd_table: FDTable
     address_space: AddressSpace
-    fs: FSInformation
     # at the moment, our own pidns and our child pidns are never different.
     # but they could be different, if we do an unshare(NEWPID).
     # TODO make separate child_pidns and use properly

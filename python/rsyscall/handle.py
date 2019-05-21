@@ -782,7 +782,6 @@ class Task(SignalMaskTask, rsyscall.far.Task):
                  parent_task: t.Optional[Task],
                  fd_table: rsyscall.far.FDTable,
                  address_space: rsyscall.far.AddressSpace,
-                 fs: rsyscall.far.FSInformation,
                  pidns: rsyscall.far.PidNamespace,
     ) -> None:
         self.sysif = sysif
@@ -793,7 +792,6 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         self.parent_task = parent_task
         self.fd_table = fd_table
         self.address_space = address_space
-        self.fs = fs
         self.pidns = pidns
         self.fd_handles: t.List[FileDescriptor] = []
         self.manipulating_fd_table = False
@@ -850,9 +848,6 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         if flags & CLONE.FILES:
             await self.unshare_files()
             flags ^= CLONE.FILES
-        if flags & CLONE.FS:
-            await self.unshare_fs()
-            flags ^= CLONE.FS
         if flags:
             await rsyscall.near.unshare(self.sysif, flags)
 
@@ -881,18 +876,10 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         await run_fd_table_gc(old_fd_table)
         await run_fd_table_gc(self.fd_table)
 
-    async def unshare_fs(self) -> None:
-        old_fs = self.fs
-        self.fs = rsyscall.far.FSInformation(self.sysif.identifier_process.id)
-        try:
-            await rsyscall.near.unshare(self.sysif, CLONE.FS)
-        except:
-            self.fs = old_fs
-
     async def setns_user(self, fd: FileDescriptor) -> None:
         with fd.borrow(self) as fd:
             # can't setns to a user namespace while sharing CLONE_FS
-            await self.unshare_fs()
+            await self.unshare(CLONE.FS)
             await fd.setns(CLONE.NEWUSER)
 
     async def setns_net(self, fd: FileDescriptor) -> None:
