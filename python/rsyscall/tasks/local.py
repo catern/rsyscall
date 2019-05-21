@@ -99,9 +99,9 @@ class LocalMemoryTransport(handle.MemoryTransport):
 def _make_local_task() -> Task:
     pid = os.getpid()
     pid_namespace = far.PidNamespace(pid)
-    process = far.Process(pid_namespace, near.Process(pid))
+    process = near.Process(pid)
     base_task = handle.Task(
-        LocalSyscall(process.near), process.near, None, far.FDTable(pid),
+        LocalSyscall(process), process, None, far.FDTable(pid),
         far.AddressSpace(os.getpid()),
         pid_namespace,
     )

@@ -117,7 +117,7 @@ class Pointer(t.Generic[T]):
         # TODO actual tracking of pointer references is not yet implemented
         self.validate()
         if task.address_space != self.mapping.task.address_space:
-            raise Exception("pointer is in different address space")
+            raise rsyscall.far.AddressSpaceMismatchError(task.address_space, self.mapping.task.address_space)
         yield self
 
     def _with_alloc(self, allocation: AllocationInterface) -> Pointer:

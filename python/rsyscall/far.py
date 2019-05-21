@@ -1,16 +1,25 @@
+"""Definitions of namespaces and identifiers tagged with a namespace
+
+In the analogy to near and far pointers, this file is where we define
+segment ids and far pointers. A far pointer is a near pointer plus a
+segment id. See near.py for more on this analogy.
+
+Note, we don't actually define any far pointers at the moment. We used
+to, but we removed them all in favor of handles; handles are more
+robust.
+
+"""
 from __future__ import annotations
 from dataclasses import dataclass
-import typing as t
-import os
-import signal
-import rsyscall.near
 import contextlib
+import rsyscall.near
+import typing as t
 if t.TYPE_CHECKING:
     from rsyscall.handle import Pointer
 
-# These are like segment ids.
-# They set eq=False because they are identified by their Python object identity,
-# in lieu of a real identifier.
+#### Segment ids
+# These set eq=False because they are identified by their Python
+# object identity, in lieu of a real identifier.
 @dataclass(eq=False)
 class FDTable:
     # this is just for debugging; pids don't uniquely identify fd tables because
@@ -35,23 +44,6 @@ class PidNamespace:
     "The namespace for tasks, processes, process groups, and sessions"
     creator_pid: int
 
-# These are like far pointers.
-@dataclass(eq=False)
-class Process:
-    namespace: PidNamespace
-    near: rsyscall.near.Process
-
-    def __int__(self) -> int:
-        return int(self.near)
-
-@dataclass
-class ProcessGroup:
-    namespace: PidNamespace
-    near: rsyscall.near.ProcessGroup
-
-    def __int__(self) -> int:
-        return int(self.near)
-
 class NamespaceMismatchError(Exception):
     pass
 
@@ -61,6 +53,10 @@ class FDTableMismatchError(NamespaceMismatchError):
 class AddressSpaceMismatchError(NamespaceMismatchError):
     pass
 
+#### Far pointers
+# lol we deleted them all
+
+#### Segment register
 # This is like a segment register, if a segment register was write-only. Then
 # we'd need to maintain the knowledge of what the segment register was set to,
 # outside the segment register itself. That's what we do here.

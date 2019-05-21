@@ -108,14 +108,14 @@ async def _setup_stub(
     address_space = far.AddressSpace(pid)
     # we assume pid namespace is shared
     pidns = thread.task.pidns
-    process = far.Process(pidns, near.Process(pid))
+    process = near.Process(pid)
     # we assume net namespace is shared - that's dubious...
     # we should make it possible to control the namespace sharing more, hmm.
     # TODO maybe the describe should contain the net namespace number? and we can store our own as well?
     # then we can automatically do it right
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
-    syscall = NonChildSyscallInterface(SyscallConnection(access_syscall_sock, access_syscall_sock), process.near)
-    base_task = Task(syscall, process.near, None, fd_table, address_space, pidns)
+    syscall = NonChildSyscallInterface(SyscallConnection(access_syscall_sock, access_syscall_sock), process)
+    base_task = Task(syscall, process, None, fd_table, address_space, pidns)
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     allocator = memory.AllocatorClient.make_allocator(base_task)
