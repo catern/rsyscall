@@ -1,3 +1,13 @@
+"""Functions and classes relating to Unix environment variables
+
+This is always available to us, and we can use it to look up executables in our
+environment and access various other resources.
+
+This will be superseded in many situations, though; for example, if we have
+access to a Nix store, we do not need to look at the environment to find
+executables.
+
+"""
 from __future__ import annotations
 from rsyscall.command import Command
 from rsyscall.concurrency import run_all
@@ -21,6 +31,7 @@ class ExecutableNotFound(Exception):
         self.name = name
 
 class ExecutablePathCache:
+    "A cache of executables looked up on PATH"
     def __init__(self, task: Task, ram: RAM, paths: t.List[str]) -> None:
         self.task = task
         self.ram = ram
@@ -79,6 +90,7 @@ class ExecutablePathCache:
         return Command(path/name, [name], {})
 
 class Environment:
+    "A representation of Unix environment variables."
     def __init__(self, task: Task, ram: RAM, environment: t.Dict[bytes, bytes]) -> None:
         self.data = environment
         self.sh = Command(Path("/bin/sh"), ['sh'], {})

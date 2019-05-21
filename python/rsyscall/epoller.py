@@ -1,3 +1,5 @@
+"""Non-blocking IO operations implemented using epoll
+"""
 from __future__ import annotations
 from rsyscall._raw import ffi # type: ignore
 import errno
@@ -381,28 +383,6 @@ class AsyncReadBuffer:
 
     async def read_line(self) -> t.Optional[bytes]:
         return (await self.read_until_delimiter(b"\n"))
-
-    async def read_keyval(self) -> t.Optional[t.Tuple[bytes, bytes]]:
-        keyval = await self.read_line()
-        if keyval is None:
-            return None
-        key, val = keyval.split(b"=", 1)
-        return key, val
-
-    async def read_known_keyval(self, expected_key: bytes) -> bytes:
-        keyval = await self.read_keyval()
-        if keyval is None:
-            raise EOFException("expected key value pair with key", expected_key, "but got EOF instead")
-        key, val = keyval
-        if key != expected_key:
-            raise EOFException("expected key", expected_key, "but got", key)
-        return val
-
-    async def read_known_int(self, expected_key: bytes) -> int:
-        return int(await self.read_known_keyval(expected_key))
-
-    async def read_known_fd(self, expected_key: bytes) -> near.FileDescriptor:
-        return near.FileDescriptor(await self.read_known_int(expected_key))
 
     async def read_netstring(self) -> t.Optional[bytes]:
         length_bytes = await self.read_until_delimiter(b':')

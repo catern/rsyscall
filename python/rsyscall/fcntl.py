@@ -1,3 +1,4 @@
+"#include <fnctl.h>"
 from rsyscall._raw import lib, ffi # type: ignore
 import fcntl
 import enum
