@@ -1,15 +1,31 @@
-"""Definitions of identifiers only valid within a specific namespace
+"""Definitions of namespace-local identifiers, syscalls, and SyscallInterface
 
-These are like near pointers, in systems with segmented memory. They
-are valid only within a specific segment (namespace).
+These namespace-local identifiers are like near pointers, in systems
+with segmented memory. They are valid only within a specific segment
+(namespace).
+
+The syscalls are instructions, operating on near pointers and other
+arguments.
+
+The SyscallInterface is the segment register override prefix, which is
+used with the instruction to say which segment register to use for the
+syscall.
+
+We don't know from a segment register override prefix alone that the
+near pointers we are passing to an instruction are valid pointers in
+the segment currently contained in the segment register.
+
+In terms of our actual classes: We don't know from a SyscallInterface
+alone that the identifiers we are passing to a syscall match the
+namespaces active in the task behind the SyscallInterface.
+
+(The task is like the segment register, in this analogy.)
 
 """
 
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass
-import struct
-import os
 import enum
 import abc
 import logging

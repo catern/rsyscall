@@ -1,3 +1,5 @@
+"""Classes which own resources and provide the main syscall interfaces
+"""
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass, field
@@ -38,6 +40,9 @@ from rsyscall.sys.mount import MS
 from rsyscall.sys.signalfd import SFD
 from rsyscall.sys.uio import RWF, IovecList, split_iovec
 
+
+################################################################################
+#### Pointers and memory allocation ####
 class AllocationInterface:
     @abc.abstractmethod
     def offset(self) -> int: ...
@@ -263,34 +268,31 @@ class WrittenPointer(Pointer[T_co]):
         self.valid = False
         return type(self)(mapping, self.transport, self.data, self.serializer, self.allocation)
 
-# hmm. so what do we index the second bit with?
-# allocationinterface? does that really make sense?
-file_to_allocation_to_handles: t.Dict[File, t.Dict[AllocationInterface, t.List[Pointer]]] = {}
-
-# This is like a far pointer plus a segment register.
-# It means that, as long as it doesn't throw an exception,
-# we should be able to access the object behind this pointer.
+
+################################################################################
+#### File descriptors ####
+# This is like a near pointer plus a segment register.
+# We guarantee that, as long as this pointer is valid,
+# we're able to access the object behind this pointer.
 # I'll call it... an active pointer.
 # Aha! No, this is something with a precise name, in fact.
 # This is... a handle.
 # In the sense of classic Mac OS/PalmOS/16-bit Windows memory management.
 # It is useful for several reasons:
 
-# 1. When a task changes segments through unshare, existing handles
-# associated with that task can be updated to contain far pointers
-# which point to the same resources in the new segment. Note that the
-# near pointers are unchanged when we use unshare to change segments,
-# because unshare makes a copy of the old segment.
+# 1. When a task changes segments through unshare, which makes a new segment by
+# making a copy of the old segment, the existing handles associated with that
+# task stay valid. Their near pointers point to the same thing in the new
+# segment as they pointed to in the old segment.
 
-# 2. When a task changes segments through setns, existing handles
-# associated with that task can be invalidated, as they are no longer
-# usable in the new namespace. New handles for the task in the new
-# namespace either have to be created from pre-existing handles held
-# by other tasks in the new namespace, or bootstrapped from scratch.
+# 2. When a task changes segments through setns, existing handles associated
+# with that task can be invalidated, as they are no longer usable in the new
+# segment, which is totally unrelated. New handles for the task in the new
+# namespace either have to be created from pre-existing handles held by other
+# tasks in the new namespace, or bootstrapped from scratch.
 
-# 3. When the last remaining valid handle referencing a specific far
-# pointer is invalidated, we can close that far pointer using the task
-# in that handle.
+# 3. When the last remaining valid handle referencing a specific far pointer is
+# invalidated, we can close that far pointer using the task in that handle.
 
 # 4. [Future work] Handles can be automatically invalidated on
 # __del__; if the handle is the last remaining valid one, the close
@@ -769,6 +771,10 @@ async def run_fd_table_gc(fd_table: rsyscall.far.FDTable) -> None:
     async with trio.open_nursery() as nursery:
         for fd in fds_to_close:
             nursery.start_soon(close_fd, fd)
+
+
+################################################################################
+# Task
 
 class RootExecError(Exception):
     pass
