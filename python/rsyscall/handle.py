@@ -319,18 +319,6 @@ class FileDescriptor:
         self.validate()
         if self.task != task:
             raise Exception("this file descriptor is for task", self.task, "not", task)
-    
-    @property
-    def far(self) -> rsyscall.far.FileDescriptor:
-        # TODO delete this property, we should go through handle helper methods
-        # only, which don't check the fd table.
-        # I think the only ill effect of using the "far" property is that
-        # exceptions will be erroneously thrown if you use the resulting "far"
-        # fd at the same time as an unshare is happening; no actual correctness
-        # problems result, and the syscall would be fine if the exception wasn't
-        # thrown.
-        self.validate()
-        return rsyscall.far.FileDescriptor(self.task.fd_table, self.near)
 
     def _invalidate(self) -> bool:
         """Invalidate this reference to this file descriptor
@@ -826,24 +814,27 @@ class Task(SignalMaskTask, rsyscall.far.Task):
     def make_path_handle(self, path: Path) -> Path:
         return path
 
-    def make_fd_handle(self, fd: t.Union[rsyscall.near.FileDescriptor,
-                                         rsyscall.far.FileDescriptor,
-                                         FileDescriptor]) -> FileDescriptor:
+    def _make_fd_handle_from_near(self, fd: rsyscall.near.FileDescriptor) -> FileDescriptor:
         if self.manipulating_fd_table:
             raise Exception("can't make a new FD handle while manipulating_fd_table==True")
-        if isinstance(fd, rsyscall.near.FileDescriptor):
-            near = fd
-        elif isinstance(fd, rsyscall.far.FileDescriptor):
-            near = self.to_near_fd(fd)
-        elif isinstance(fd, FileDescriptor):
-            near = self.to_near_fd(fd.far)
-        else:
-            raise Exception("bad fd type", fd, type(fd))
-        handle = FileDescriptor(self, near)
+        handle = FileDescriptor(self, fd)
         logger.debug("made handle: %s", self)
         self.fd_handles.append(handle)
-        fd_table_to_near_to_handles[self.fd_table].setdefault(near, []).append(handle)
+        fd_table_to_near_to_handles[self.fd_table].setdefault(fd, []).append(handle)
         return handle
+
+    def make_fd_handle(self, fd: t.Union[rsyscall.near.FileDescriptor,
+                                         FileDescriptor]) -> FileDescriptor:
+        if isinstance(fd, rsyscall.near.FileDescriptor):
+            near = fd
+        elif isinstance(fd, FileDescriptor):
+            if fd.task.fd_table == self.fd_table:
+                near = fd.near
+            else:
+                raise rsyscall.far.FDTableMismatchError(fd.task.fd_table, self.fd_table)
+        else:
+            raise Exception("bad fd type", fd, type(fd))
+        return self._make_fd_handle_from_near(near)
 
     def _add_to_active_fd_table_tasks(self) -> None:
         fd_table_to_task.setdefault(self.fd_table, []).append(self)
@@ -1154,11 +1145,6 @@ class Task(SignalMaskTask, rsyscall.far.Task):
 class Process:
     task: Task
     near: rsyscall.near.Process
-
-    @property
-    def far(self) -> rsyscall.far.Process:
-        # TODO delete this property
-        return rsyscall.far.Process(self.task.pidns, self.near)
 
     async def kill(self, sig: Signals) -> None:
         await rsyscall.near.kill(self.task.sysif, self.near, sig)

@@ -234,12 +234,6 @@ async def ssh_bootstrap(
     describe_buf = AsyncReadBuffer(async_local_data_sock)
     describe_struct = await describe_buf.read_cffi('struct rsyscall_bootstrap')
     new_pid = describe_struct.pid
-    new_fd_table = far.FDTable(new_pid)
-    def to_fd(num: int) -> far.FileDescriptor:
-        return far.FileDescriptor(new_fd_table, near.FileDescriptor(num))
-    listening_fd = to_fd(describe_struct.listening_sock)
-    remote_syscall_fd = to_fd(describe_struct.syscall_sock)
-    remote_data_fd = to_fd(describe_struct.data_sock)
     environ = await describe_buf.read_envp(describe_struct.envp_count)
     # Build the new task!
     new_address_space = far.AddressSpace(new_pid)
@@ -252,11 +246,12 @@ async def ssh_bootstrap(
     # TODO we should get this from the SSHHost, this is usually going
     # to be common for all connections and we should express that
     net = far.NetNamespace(new_pid)
-    new_base_task = Task(new_syscall, new_process.near, None, new_fd_table, new_address_space, new_fs_information,
+    new_base_task = Task(new_syscall, new_process.near, None, far.FDTable(new_pid), new_address_space, new_fs_information,
                                 new_pid_namespace, net)
-    handle_remote_syscall_fd = new_base_task.make_fd_handle(remote_syscall_fd)
+    handle_remote_syscall_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_sock))
     new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
-    handle_remote_data_fd = new_base_task.make_fd_handle(remote_data_fd)
+    handle_remote_data_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_sock))
+    handle_listening_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.listening_sock))
     new_allocator = memory.AllocatorClient.make_allocator(new_base_task)
     new_transport = SocketMemoryTransport(async_local_data_sock,
                                           handle_remote_data_fd, new_allocator)
@@ -268,7 +263,7 @@ async def ssh_bootstrap(
         parent.task, parent.ram, parent.epoller,
         local_data_addr,
         new_base_task, new_ram,
-        new_base_task.make_fd_handle(listening_fd),
+        handle_listening_fd,
     )
     new_thread = Thread(
         task=new_base_task,
