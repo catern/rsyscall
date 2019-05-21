@@ -1,8 +1,8 @@
 from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
-from rsyscall.handle import Pointer
+from rsyscall.handle import Pointer, Task
 from rsyscall.concurrency import OneAtATime
-from rsyscall.struct import T_struct, Struct, Int32, StructList
+from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.tasks.exceptions import RsyscallException, RsyscallHangup
 import typing as t
@@ -68,23 +68,26 @@ class ConnectionRequest:
     response: t.Optional[ConnectionResponse] = None
 
 class ReadBuffer:
-    def __init__(self) -> None:
+    def __init__(self, task: Task) -> None:
+        # To read and write structures, we have to know what task
+        # they're coming from.
+        self.task = task
         self.buf = b""
 
     def feed_bytes(self, data: bytes) -> None:
         self.buf += data
 
-    def read_struct(self, cls: t.Type[T_struct]) -> t.Optional[T_struct]:
+    def read_struct(self, cls: t.Type[T_fixed_size]) -> t.Optional[T_fixed_size]:
         length = cls.sizeof()
         if length <= len(self.buf):
             section = self.buf[:length]
             self.buf = self.buf[length:]
-            return cls.from_bytes(section)
+            return cls.get_serializer(self.task).from_bytes(section)
         else:
             return None
 
-    def read_all_structs(self, cls: t.Type[T_struct]) -> t.List[T_struct]:
-        ret: t.List[T_struct] = []
+    def read_all_structs(self, cls: t.Type[T_fixed_size]) -> t.List[T_fixed_size]:
+        ret: t.List[T_fixed_size] = []
         while True:
             x = self.read_struct(cls)
             if x is None:
@@ -99,7 +102,7 @@ class SyscallConnection:
     ) -> None:
         self.tofd = tofd
         self.fromfd = fromfd
-        self.buffer = ReadBuffer()
+        self.buffer = ReadBuffer(self.fromfd.handle.task)
         self.valid: t.Optional[Pointer[bytes]] = None
         self.sending_requests = OneAtATime()
         self.pending_requests: t.List[ConnectionRequest] = []

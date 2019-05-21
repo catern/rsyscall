@@ -60,12 +60,13 @@ class FixedSize(FixedSerializer):
     @abc.abstractmethod
     def sizeof(cls) -> int: ...
 
-T_serializable = t.TypeVar('T_serializable', bound='Serializable')
 class Serializable(FixedSerializer):
     """A helper class for FixedSerializer; the serialization methods are defined directly on the class
     """
     @abc.abstractmethod
     def to_bytes(self) -> bytes: ...
+
+    T_serializable = t.TypeVar('T_serializable', bound='Serializable')
     @classmethod
     def from_bytes(cls: t.Type[T_serializable], data: bytes) -> T_serializable:
         raise NotImplementedError("from_bytes not implemented on", cls)
@@ -77,7 +78,6 @@ class Serializable(FixedSerializer):
         """
         return cls # type: ignore
 
-T_struct = t.TypeVar('T_struct', bound='Struct')
 class Struct(Serializable, FixedSize):
     """A helper class for FixedSize; the serialization methods are defined directly on the class
     """
@@ -108,24 +108,27 @@ class Int32(Struct, int): # type: ignore
         return struct.calcsize('i')
 
 @dataclass
-class StructList(t.Generic[T_struct], HasSerializer):
-    cls: t.Type[T_struct]
-    elems: t.List[T_struct]
+class StructList(t.Generic[T_fixed_size], HasSerializer):
+    "A list of serializable, fixed-size structures"
+    cls: t.Type[T_fixed_size]
+    elems: t.List[T_fixed_size]
 
-    def get_self_serializer(self, task) -> StructListSerializer[T_struct]:
-        return StructListSerializer(self.cls)
+    def get_self_serializer(self, task) -> StructListSerializer[T_fixed_size]:
+        return StructListSerializer(self.cls, self.cls.get_serializer(task))
 
 @dataclass
-class StructListSerializer(t.Generic[T_struct], Serializer[StructList[T_struct]]):
-    cls: t.Type[T_struct]
+class StructListSerializer(t.Generic[T_fixed_size], Serializer[StructList[T_fixed_size]]):
+    "The serializer for a StructList"
+    cls: t.Type[T_fixed_size]
+    ser: Serializer[T_fixed_size]
 
-    def to_bytes(self, val: StructList[T_struct]) -> bytes:
-        return b"".join(ent.to_bytes() for ent in val.elems)
+    def to_bytes(self, val: StructList[T_fixed_size]) -> bytes:
+        return b"".join(self.ser.to_bytes(ent) for ent in val.elems)
 
-    def from_bytes(self, data: bytes) -> StructList[T_struct]:
+    def from_bytes(self, data: bytes) -> StructList[T_fixed_size]:
         entries = []
         while len(data) > 0:
-            ent = self.cls.from_bytes(data)
+            ent = self.ser.from_bytes(data)
             entries.append(ent)
             data = data[self.cls.sizeof():]
         return StructList(self.cls, entries)
