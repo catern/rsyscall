@@ -28,8 +28,13 @@ class OneAtATime:
     will handle waiting for the working coroutine to complete their
     work.
 
-    This is a terrible API, but it's difficult to get anything better
-    with the primitives that we get from trio, and this works for now.
+    This is a terrible API, but it works for now.
+
+    A better API would be a "shared coroutine" which runs whenever any
+    other coroutine is waiting on it, and is suspended if no other
+    coroutine is waiting on it. A shared coroutine also must not
+    require entering a contextmanager to create. We should try to get
+    that kind of API merged into trio/asyncio.
 
     """
     running: t.Optional[trio.Event] = None
