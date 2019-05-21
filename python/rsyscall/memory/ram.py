@@ -1,7 +1,7 @@
 from __future__ import annotations
 from rsyscall.handle import Task, Pointer, WrittenPointer, MemoryTransport, AllocationInterface, MemoryMapping, MemoryGateway
 from rsyscall.memory.allocator import AllocatorInterface
-from rsyscall.struct import FixedSize, T_fixed_size, T_has_serializer, T_fixed_serializer, Serializer, BytesSerializer
+from rsyscall.struct import FixedSize, T_fixed_size, T_has_serializer, T_fixed_serializer, Serializer
 import rsyscall.near as near
 
 import typing as t
@@ -9,6 +9,13 @@ import typing as t
 __all__ = [
     "RAM",
 ]
+
+class BytesSerializer(Serializer[bytes]):
+    def to_bytes(self, val: bytes) -> bytes:
+        return val
+
+    def from_bytes(self, data: bytes) -> bytes:
+        return data
 
 T = t.TypeVar('T')
 class RAM:

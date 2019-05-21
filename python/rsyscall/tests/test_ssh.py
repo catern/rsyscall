@@ -11,7 +11,7 @@ from rsyscall.unistd import SEEK
 from rsyscall.signal import Sigset, HowSIG
 from rsyscall.sys.memfd import MFD
 
-import rsyscall.handle as handle
+from rsyscall.handle import FileDescriptor
 from rsyscall.path import Path
 from rsyscall.thread import Thread, Command
 from rsyscall.command import Command
@@ -21,7 +21,7 @@ from rsyscall.monitor import AsyncChildProcess
 # logging.basicConfig(level=logging.DEBUG)
 
 async def start_cat(thread: Thread, cat: Command,
-                    stdin: handle.FileDescriptor, stdout: handle.FileDescriptor) -> AsyncChildProcess:
+                    stdin: FileDescriptor, stdout: FileDescriptor) -> AsyncChildProcess:
     thread = await thread.fork()
     await thread.unshare_files_and_replace({
         thread.stdin: stdin,

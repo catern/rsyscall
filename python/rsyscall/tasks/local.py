@@ -5,7 +5,6 @@ from rsyscall.thread import Thread
 from rsyscall.tasks.util import log_syscall, raise_if_error
 from rsyscall._raw import ffi, lib # type: ignore
 import trio
-from rsyscall.handle import Task
 import rsyscall.far as far
 import rsyscall.near as near
 import rsyscall.handle as handle
@@ -16,7 +15,7 @@ import typing as t
 from dataclasses import dataclass
 import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM
-from rsyscall.handle import Pointer
+from rsyscall.handle import Pointer, Task, MemoryMapping
 from rsyscall.signal import Signals, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
 from rsyscall.network.connection import FDPassConnection
@@ -77,7 +76,7 @@ class LocalSyscall(near.SyscallInterface):
 task: Task
 class LocalMemoryTransport(handle.MemoryTransport):
     "This is a memory transport that only works on local pointers."
-    def inherit(self, task: handle.Task) -> LocalMemoryTransport:
+    def inherit(self, task: Task) -> LocalMemoryTransport:
         return self
 
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
@@ -99,7 +98,7 @@ def _make_local_task() -> Task:
     pid = os.getpid()
     pid_namespace = far.PidNamespace(pid)
     process = near.Process(pid)
-    base_task = handle.Task(
+    base_task = Task(
         LocalSyscall(process), process, None, far.FDTable(pid),
         far.AddressSpace(os.getpid()),
         pid_namespace,
@@ -109,7 +108,7 @@ def _make_local_function_handle(cffi_ptr) -> Pointer[loader.NativeFunction]:
     pointer_int = int(ffi.cast('ssize_t', cffi_ptr))
     # TODO we're just making up a memory mapping that this pointer is inside;
     # we should figure out the actual mapping, and the size for that matter.
-    mapping = handle.MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
+    mapping = MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
     return Pointer(mapping, loader.NullGateway(), loader.NativeFunctionSerializer(), loader.StaticAllocation())
 
 async def _make_local_thread() -> Thread:

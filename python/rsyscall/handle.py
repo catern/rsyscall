@@ -31,6 +31,7 @@ from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
 from rsyscall.sys.epoll import EpollFlag, EPOLL_CTL, EpollEvent, EpollEventList
 from rsyscall.linux.dirent import DirentList
 from rsyscall.linux.futex import RobustListHead, FutexNode
+from rsyscall.sys.capability import CapHeader, CapData
 from rsyscall.sys.inotify import InotifyFlag, IN
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.wait import W, ChildEvent
@@ -896,14 +897,14 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         sockfd = await rsyscall.near.socket(self.sysif, family, type|SOCK.CLOEXEC, protocol)
         return self.make_fd_handle(sockfd)
 
-    async def capset(self, hdrp: Pointer, datap: Pointer) -> None:
-        with hdrp.borrow(self) as hdrp:
-            with datap.borrow(self) as datap:
+    async def capset(self, hdrp: WrittenPointer[CapHeader], datap: WrittenPointer[CapData]) -> None:
+        with hdrp.borrow(self):
+            with datap.borrow(self):
                 await rsyscall.near.capset(self.sysif, hdrp.near, datap.near)
 
-    async def capget(self, hdrp: Pointer, datap: Pointer) -> None:
-        with hdrp.borrow(self) as hdrp:
-            with datap.borrow(self) as datap:
+    async def capget(self, hdrp: Pointer[CapHeader], datap: Pointer[CapData]) -> None:
+        with hdrp.borrow(self):
+            with datap.borrow(self):
                 await rsyscall.near.capget(self.sysif, hdrp.near, datap.near)
 
     async def sigaction(self, signum: Signals,

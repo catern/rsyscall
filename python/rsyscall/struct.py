@@ -1,3 +1,6 @@
+"""Interfaces and basic functionality for our serialization framework.
+
+"""
 from __future__ import annotations
 import abc
 import typing as t
@@ -6,6 +9,14 @@ from dataclasses import dataclass
 
 T = t.TypeVar('T')
 class Serializer(t.Generic[T]):
+    """An object encapsulating the information required to serialize or deserialize some value of some type.
+
+    This may only work for one specific value of that type; for example, to
+    deserialize a type containing pointers (encoded as addresses), we must have
+    a serializer that knows about those addresses and can return the
+    corresponding Python object Pointers.
+
+    """
     def to_bytes(self, val: T) -> bytes:
         raise NotImplementedError("to_bytes not implemented on", type(self))
 
@@ -14,11 +25,23 @@ class Serializer(t.Generic[T]):
 
 T_has_serializer = t.TypeVar('T_has_serializer', bound='HasSerializer')
 class HasSerializer:
+    """Something which can return a serializer for itself"""
     @abc.abstractmethod
-    def get_self_serializer(self: T_has_serializer, task) -> Serializer[T_has_serializer]: ...
+    def get_self_serializer(self: T_has_serializer, task) -> Serializer[T_has_serializer]:
+        """Return a serializer for this value
+
+        Note that, as discussed in the Serializer docstring, the serializer
+        returned may only work for the specific value that this method was
+        called on, not any other values of the same type.
+
+        """
+        pass
 
 T_fixed_serializer = t.TypeVar('T_fixed_serializer', bound='FixedSerializer')
 class FixedSerializer(HasSerializer):
+    """Something which, if we know its class, can be serialized and deserialized
+
+    """
     @classmethod
     @abc.abstractmethod
     def get_serializer(cls: t.Type[T_fixed_serializer], task) -> Serializer[T_fixed_serializer]: ... # type: ignore
@@ -28,12 +51,19 @@ class FixedSerializer(HasSerializer):
 
 T_fixed_size = t.TypeVar('T_fixed_size', bound='FixedSize')
 class FixedSize(FixedSerializer):
+    """Something which, if we know its class, can be serialized and deserialized to a fixed length bytestring
+
+    These are fixed-size structures; for example, most C structs.
+
+    """
     @classmethod
     @abc.abstractmethod
     def sizeof(cls) -> int: ...
 
 T_serializable = t.TypeVar('T_serializable', bound='Serializable')
 class Serializable(FixedSerializer):
+    """A helper class for FixedSerializer; the serialization methods are defined directly on the class
+    """
     @abc.abstractmethod
     def to_bytes(self) -> bytes: ...
     @classmethod
@@ -41,10 +71,16 @@ class Serializable(FixedSerializer):
         raise NotImplementedError("from_bytes not implemented on", cls)
     @classmethod
     def get_serializer(cls: t.Type[T_serializable], task) -> Serializer[T_serializable]: # type: ignore
+        """Return a "serializer" for this class - it's actually just this class itself.
+
+        Yay, duck typing!
+        """
         return cls # type: ignore
 
 T_struct = t.TypeVar('T_struct', bound='Struct')
 class Struct(Serializable, FixedSize):
+    """A helper class for FixedSize; the serialization methods are defined directly on the class
+    """
     pass
 
 def bits(n: int, one_indexed: bool=True) -> t.Iterator[int]:
@@ -70,13 +106,6 @@ class Int32(Struct, int): # type: ignore
     @classmethod
     def sizeof(cls) -> int:
         return struct.calcsize('i')
-
-class BytesSerializer(Serializer[bytes]):
-    def to_bytes(self, val: bytes) -> bytes:
-        return val
-
-    def from_bytes(self, data: bytes) -> bytes:
-        return data
 
 @dataclass
 class StructList(t.Generic[T_struct], HasSerializer):

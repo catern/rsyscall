@@ -3815,6 +3815,10 @@ so we don't have to be generic.
 "pass a handle at process creation and do initialization of the new process using IPC"
 
 that's what we're doing
+** call in threads/call on threads
+in other threading systems, you call syscalls in threads.
+
+in rsyscall, you call syscalls *on* threads.
 * explicitly modeling memory
 how would I do this?
 
@@ -18590,6 +18594,7 @@ and rename it to waitpid?
    ok I did it
 ** DONE force cloexec on everything
 ** DONE make accept flags argument optional
+** TODO *maybe* reduce the number of waitid calls we make?
 * DOCUMENTATION!
   Time to write it!
 ** wait actually no

@@ -1,3 +1,4 @@
+"A trio-enabled variant of unittest.TestCase"
 import trio
 import unittest
 import functools

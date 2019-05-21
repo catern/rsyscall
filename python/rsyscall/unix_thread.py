@@ -1,18 +1,30 @@
-from __future__ import annotations
-import typing as t
-from rsyscall.tasks.fork import ForkThread
-from rsyscall.handle import FileDescriptor, Task, WrittenPointer
-from rsyscall.network.connection import Connection
-from rsyscall.loader import NativeLoader
-from rsyscall.environ import Environment
-from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
-from rsyscall.epoller import Epoller
-from rsyscall.memory.ram import RAM
-from rsyscall.command import Command
-from rsyscall.sched import CLONE
+"""The core thread class required to fork a new child thread and call exec on it
 
-from rsyscall.signal import Sigset, Signals, SignalBlock, HowSIG
+We keep this separate so that helpers can be defined in terms of this
+interface, and then attached to an omnibus Thread class.  For example,
+mktemp.
+
+"""
+from __future__ import annotations
+from rsyscall.command import Command
+from rsyscall.environ import Environment
+from rsyscall.epoller import Epoller
+from rsyscall.handle import FileDescriptor, Task, WrittenPointer
+from rsyscall.loader import NativeLoader
+from rsyscall.memory.ram import RAM
+from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
+from rsyscall.network.connection import Connection
+from rsyscall.tasks.fork import ForkThread
 import logging
+import typing as t
+import os
+
+from rsyscall.fcntl import AT
+from rsyscall.path import Path
+from rsyscall.sched import CLONE
+from rsyscall.signal import Sigset, Signals, SignalBlock, HowSIG
+from rsyscall.unistd import Arg, ArgList
+
 logger = logging.getLogger(__name__)
 
 class UnixThread(ForkThread):
@@ -78,11 +90,6 @@ class UnixThread(ForkThread):
             stderr=self.stderr.for_task(task),
         ), parent_monitor=self.child_monitor)
 
-
-from rsyscall.unistd import Arg, ArgList
-from rsyscall.fcntl import AT
-from rsyscall.path import Path
-import os
 class ChildUnixThread(UnixThread):
     def __init__(self, thr: UnixThread, parent_monitor: ChildProcessMonitor) -> None:
         super()._init_from(thr)
