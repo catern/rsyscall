@@ -1,3 +1,10 @@
+"""Definitions of identifiers only valid within a specific namespace
+
+These are like near pointers, in systems with segmented memory. They
+are valid only within a specific segment (namespace).
+
+"""
+
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass
@@ -20,81 +27,8 @@ if t.TYPE_CHECKING:
     from rsyscall.signal import HowSIG, Signals
     import rsyscall.handle as handle
 
-class SYS(enum.IntEnum):
-    read = lib.SYS_read
-    write = lib.SYS_write
-    pread64 = lib.SYS_pread64
-    recvfrom = lib.SYS_recvfrom
-    close = lib.SYS_close
-    fcntl = lib.SYS_fcntl
-    sendmsg = lib.SYS_sendmsg
-    recvmsg = lib.SYS_recvmsg
-    dup3 = lib.SYS_dup3
-    accept4 = lib.SYS_accept4
-    shutdown = lib.SYS_shutdown
-    memfd_create = lib.SYS_memfd_create
-    ftruncate = lib.SYS_ftruncate
-    mmap = lib.SYS_mmap
-    munmap = lib.SYS_munmap
-    set_tid_address = lib.SYS_set_tid_address
-    set_robust_list = lib.SYS_set_robust_list
-    getdents64 = lib.SYS_getdents64
-    unshare = lib.SYS_unshare
-    epoll_ctl = lib.SYS_epoll_ctl
-    epoll_wait = lib.SYS_epoll_wait
-    chdir = lib.SYS_chdir
-    fchdir = lib.SYS_fchdir
-    getuid = lib.SYS_getuid
-    getgid = lib.SYS_getgid
-    mount = lib.SYS_mount
-    waitid = lib.SYS_waitid
-    setns = lib.SYS_setns
-    prctl = lib.SYS_prctl
-    setsid = lib.SYS_setsid
-    inotify_init1 = lib.SYS_inotify_init1
-    inotify_add_watch = lib.SYS_inotify_add_watch
-    inotify_rm_watch = lib.SYS_inotify_rm_watch
-    ioctl = lib.SYS_ioctl
-    socket = lib.SYS_socket
-    bind = lib.SYS_bind
-    capget = lib.SYS_capget
-    capset = lib.SYS_capset
-    listen = lib.SYS_listen
-    getsockopt = lib.SYS_getsockopt
-    setsockopt = lib.SYS_setsockopt
-    rt_sigaction = lib.SYS_rt_sigaction
-    rt_sigprocmask = lib.SYS_rt_sigprocmask
-    openat = lib.SYS_openat
-    mkdirat = lib.SYS_mkdirat
-    faccessat = lib.SYS_faccessat
-    unlinkat = lib.SYS_unlinkat
-    linkat = lib.SYS_linkat
-    renameat2 = lib.SYS_renameat2
-    symlinkat = lib.SYS_symlinkat
-    readlinkat = lib.SYS_readlinkat
-    lseek = lib.SYS_lseek
-    signalfd4 = lib.SYS_signalfd4
-    epoll_create1 = lib.SYS_epoll_create1
-    connect = lib.SYS_connect
-    getpeername = lib.SYS_getpeername
-    getsockname = lib.SYS_getsockname
-    pipe2 = lib.SYS_pipe2
-    socketpair = lib.SYS_socketpair
-    execveat = lib.SYS_execveat
-    kill = lib.SYS_kill
-    exit = lib.SYS_exit
-    clone = lib.SYS_clone
-    preadv2 = lib.SYS_preadv2
-    pwritev2 = lib.SYS_pwritev2
-    fchmod = lib.SYS_fchmod
-
+#### SyscallInterface (segment register override prefix)
 # This is like the segment register override prefix, with no awareness of the contents of the register.
-class SyscallResponse:
-    # Throws on negative return value
-    @abc.abstractmethod
-    async def receive(self) -> int:
-        pass
-
 class SyscallInterface:
     # Throws on negative return value
     @abc.abstractmethod
@@ -113,7 +47,13 @@ class SyscallInterface:
     # This is some process which is useful to identify this syscall interface.
     identifier_process: Process
 
-# This is like a near pointer.
+class SyscallResponse:
+    # Throws on negative return value
+    @abc.abstractmethod
+    async def receive(self) -> int:
+        pass
+
+#### Identifiers (near pointers)
 @dataclass(frozen=True)
 class FileDescriptor:
     number: int
@@ -159,14 +99,6 @@ class Pointer:
     def __int__(self) -> int:
         return self.address
 
-# This is like the actual memory. Not sure what to think of this.
-@dataclass(eq=False)
-class File:
-    pass
-
-class DirectoryFile(File):
-    pass
-
 @dataclass
 class MemoryMapping:
     address: int
@@ -204,15 +136,91 @@ class ProcessGroup:
     def __int__(self) -> int:
         return self.id
 
-# This is like an instruction, run with this segment register override prefix and arguments.
+# This is like the actual memory. Not sure what to think of this.
+@dataclass(eq=False)
+class File:
+    pass
+
+#### Syscalls (instructions)
+# These are like instructions, run with this segment register override prefix and arguments.
+import trio
+from rsyscall.tasks.exceptions import RsyscallHangup
+class SYS(enum.IntEnum):
+    accept4 = lib.SYS_accept4
+    bind = lib.SYS_bind
+    capget = lib.SYS_capget
+    capset = lib.SYS_capset
+    chdir = lib.SYS_chdir
+    clone = lib.SYS_clone
+    close = lib.SYS_close
+    connect = lib.SYS_connect
+    dup3 = lib.SYS_dup3
+    epoll_create1 = lib.SYS_epoll_create1
+    epoll_ctl = lib.SYS_epoll_ctl
+    epoll_wait = lib.SYS_epoll_wait
+    execveat = lib.SYS_execveat
+    exit = lib.SYS_exit
+    faccessat = lib.SYS_faccessat
+    fchdir = lib.SYS_fchdir
+    fchmod = lib.SYS_fchmod
+    fcntl = lib.SYS_fcntl
+    ftruncate = lib.SYS_ftruncate
+    getdents64 = lib.SYS_getdents64
+    getgid = lib.SYS_getgid
+    getpeername = lib.SYS_getpeername
+    getsockname = lib.SYS_getsockname
+    getsockopt = lib.SYS_getsockopt
+    getuid = lib.SYS_getuid
+    inotify_add_watch = lib.SYS_inotify_add_watch
+    inotify_init1 = lib.SYS_inotify_init1
+    inotify_rm_watch = lib.SYS_inotify_rm_watch
+    ioctl = lib.SYS_ioctl
+    kill = lib.SYS_kill
+    linkat = lib.SYS_linkat
+    listen = lib.SYS_listen
+    lseek = lib.SYS_lseek
+    memfd_create = lib.SYS_memfd_create
+    mkdirat = lib.SYS_mkdirat
+    mmap = lib.SYS_mmap
+    mount = lib.SYS_mount
+    munmap = lib.SYS_munmap
+    openat = lib.SYS_openat
+    pipe2 = lib.SYS_pipe2
+    prctl = lib.SYS_prctl
+    pread64 = lib.SYS_pread64
+    preadv2 = lib.SYS_preadv2
+    pwritev2 = lib.SYS_pwritev2
+    read = lib.SYS_read
+    readlinkat = lib.SYS_readlinkat
+    recvfrom = lib.SYS_recvfrom
+    recvmsg = lib.SYS_recvmsg
+    renameat2 = lib.SYS_renameat2
+    rt_sigaction = lib.SYS_rt_sigaction
+    rt_sigprocmask = lib.SYS_rt_sigprocmask
+    sendmsg = lib.SYS_sendmsg
+    set_robust_list = lib.SYS_set_robust_list
+    set_tid_address = lib.SYS_set_tid_address
+    setns = lib.SYS_setns
+    setsid = lib.SYS_setsid
+    setsockopt = lib.SYS_setsockopt
+    shutdown = lib.SYS_shutdown
+    signalfd4 = lib.SYS_signalfd4
+    socket = lib.SYS_socket
+    socketpair = lib.SYS_socketpair
+    symlinkat = lib.SYS_symlinkat
+    unlinkat = lib.SYS_unlinkat
+    unshare = lib.SYS_unshare
+    waitid = lib.SYS_waitid
+    write = lib.SYS_write
+
+async def pread(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int, offset: int) -> int:
+    return (await sysif.syscall(SYS.pread64, fd, buf, count, offset))
+
 async def read(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int) -> int:
     return (await sysif.syscall(SYS.read, fd, buf, count))
 
 async def write(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int) -> int:
     return (await sysif.syscall(SYS.write, fd, buf, count))
-
-async def pread(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int, offset: int) -> int:
-    return (await sysif.syscall(SYS.pread64, fd, buf, count, offset))
 
 async def preadv2(sysif: SyscallInterface, fd: FileDescriptor, iov: Pointer, iovcnt: int, offset: int, flags: RWF) -> int:
     return (await sysif.syscall(SYS.preadv2, fd, iov, iovcnt, offset, flags))
@@ -252,12 +260,12 @@ async def accept4(sysif: SyscallInterface, sockfd: FileDescriptor,
 async def shutdown(sysif: SyscallInterface, sockfd: FileDescriptor, how: SHUT) -> None:
     await sysif.syscall(SYS.shutdown, sockfd, how)
 
+async def ftruncate(sysif: SyscallInterface, fd: FileDescriptor, length: int) -> None:
+    await sysif.syscall(SYS.ftruncate, fd, length)
+
 async def memfd_create(sysif: SyscallInterface, name: Pointer, flags: int) -> FileDescriptor:
     ret = await sysif.syscall(SYS.memfd_create, name, flags)
     return FileDescriptor(ret)
-
-async def ftruncate(sysif: SyscallInterface, fd: FileDescriptor, length: int) -> None:
-    await sysif.syscall(SYS.ftruncate, fd, length)
 
 async def mmap(sysif: SyscallInterface, length: int, prot: int, flags: int,
                addr: t.Optional[Pointer]=None, 
@@ -497,8 +505,6 @@ async def pipe2(sysif: SyscallInterface, pipefd: Pointer, flags: int) -> None:
 async def socketpair(sysif: SyscallInterface, domain: int, type: int, protocol: int, sv: Pointer) -> None:
     await sysif.syscall(SYS.socketpair, domain, type, protocol, sv)
 
-import trio
-from rsyscall.tasks.exceptions import RsyscallHangup
 async def execveat(sysif: SyscallInterface,
                    dirfd: t.Optional[FileDescriptor], path: Pointer,
                    argv: Pointer, envp: Pointer, flags: int) -> None:
