@@ -1,3 +1,5 @@
+"""Filesystem-watching implemented using inotify
+"""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from rsyscall._raw import ffi, lib # type: ignore

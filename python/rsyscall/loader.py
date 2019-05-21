@@ -1,3 +1,10 @@
+"""Access to native code functions
+
+At some point we'll implement a loader here which can be used to load
+objects into threads and return the functions inside them. For now, we
+just have skeleton classes that hold pre-loaded functions.
+
+"""
 from __future__ import annotations
 from rsyscall._raw import ffi # type: ignore
 import contextlib

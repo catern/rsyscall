@@ -1,3 +1,4 @@
+"#include <unistd.h>"
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass

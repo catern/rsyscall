@@ -1,3 +1,5 @@
+"""Monitoring child processes in a non-blocking manner
+"""
 from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall.concurrency import OneAtATime

@@ -1,3 +1,5 @@
+"""Making temporary directories
+"""
 import random
 import string
 from rsyscall.unix_thread import UnixThread
