@@ -97,11 +97,10 @@ async def rsyscall_stdin_bootstrap(
     # have a Kernel namespace which tells us which kernel we get those
     # numbers from.
     # oh hey we can conveniently dump the inode numbers with getdents!
-    netns = parent.task.netns
     process = far.Process(pidns, near.Process(pid))
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
     syscall = NonChildSyscallInterface(SyscallConnection(access_syscall_sock, access_syscall_sock), process.near)
-    base_task = Task(syscall, process.near, None, fd_table, address_space, fs_information, pidns, netns)
+    base_task = Task(syscall, process.near, None, fd_table, address_space, fs_information, pidns)
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     allocator = memory.AllocatorClient.make_allocator(base_task)

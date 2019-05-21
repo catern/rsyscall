@@ -199,10 +199,9 @@ async def spawn_child_task(
         pidns = far.PidNamespace(child_process.process.near.id)
     else:
         pidns = task.pidns
-    netns = task.netns
     real_parent_task = task.parent_task if monitor.use_clone_parent else task
     new_base_task = Task(syscall, child_process.process, real_parent_task,
-                                task.fd_table, task.address_space, fs_information, pidns, netns)
+                                task.fd_table, task.address_space, fs_information, pidns)
     new_base_task.sigmask = task.sigmask
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)

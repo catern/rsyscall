@@ -242,12 +242,11 @@ async def ssh_bootstrap(
     new_process = far.Process(new_pid_namespace, near.Process(new_pid))
     new_syscall = NonChildSyscallInterface(SyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                     new_process.near)
-    new_fs_information = far.FSInformation(new_pid)
     # TODO we should get this from the SSHHost, this is usually going
     # to be common for all connections and we should express that
-    net = far.NetNamespace(new_pid)
+    new_fs_information = far.FSInformation(new_pid)
     new_base_task = Task(new_syscall, new_process.near, None, far.FDTable(new_pid), new_address_space, new_fs_information,
-                                new_pid_namespace, net)
+                         new_pid_namespace)
     handle_remote_syscall_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_sock))
     new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     handle_remote_data_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_sock))

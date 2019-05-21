@@ -20,12 +20,6 @@ class FDTable:
     def __str__(self) -> str:
         return f"FDTable({self.creator_pid})"
 
-    def to_near(self, file_descriptor: FileDescriptor) -> rsyscall.near.FileDescriptor:
-        if file_descriptor.fd_table == self:
-            return file_descriptor.near
-        else:
-            raise FDTableMismatchError(file_descriptor.fd_table, self)
-
 @dataclass(eq=False)
 class AddressSpace:
     # the pid for which this address space was created. processes can't change
@@ -36,23 +30,12 @@ class AddressSpace:
     def __str__(self) -> str:
         return f"AddressSpace({self.creator_pid})"
 
-# These are like far pointers.
-@dataclass(frozen=True)
-class FileDescriptor:
-    fd_table: FDTable
-    near: rsyscall.near.FileDescriptor
-
-    def __str__(self) -> str:
-        return f"FD({self.fd_table}, {self.near.number})"
-
-    def __int__(self) -> int:
-        return int(self.near)
-
 @dataclass(eq=False)
 class PidNamespace:
     "The namespace for tasks, processes, process groups, and sessions"
     creator_pid: int
 
+# These are like far pointers.
 @dataclass(eq=False)
 class Process:
     namespace: PidNamespace
@@ -83,14 +66,6 @@ class FSInformation:
     "Filesystem root, current working directory, and umask; controlled by CLONE_FS."
     creator_pid: int
 
-@dataclass(eq=False)
-class NetNamespace:
-    """The namespace for networking resource: devices, routing tables, etc.
-
-    Also controls the abstract namespace for Unix domain sockets.
-    """
-    creator_pid: int
-
 # This is like a segment register, if a segment register was write-only. Then
 # we'd need to maintain the knowledge of what the segment register was set to,
 # outside the segment register itself. That's what we do here.
@@ -104,10 +79,6 @@ class Task:
     # but they could be different, if we do an unshare(NEWPID).
     # TODO make separate child_pidns and use properly
     pidns: PidNamespace
-    netns: NetNamespace
-
-    def to_near_fd(self, file_descriptor: FileDescriptor) -> rsyscall.near.FileDescriptor:
-        return self.fd_table.to_near(file_descriptor)
 
     async def _borrow_optional(self, stack: contextlib.ExitStack, ptr: t.Optional[Pointer]
     ) -> t.Optional[rsyscall.near.Pointer]:

@@ -784,7 +784,6 @@ class Task(SignalMaskTask, rsyscall.far.Task):
                  address_space: rsyscall.far.AddressSpace,
                  fs: rsyscall.far.FSInformation,
                  pidns: rsyscall.far.PidNamespace,
-                 netns: rsyscall.far.NetNamespace,
     ) -> None:
         self.sysif = sysif
         if isinstance(process, Process):
@@ -796,7 +795,6 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         self.address_space = address_space
         self.fs = fs
         self.pidns = pidns
-        self.netns = netns
         self.fd_handles: t.List[FileDescriptor] = []
         self.manipulating_fd_table = False
         self.alive = True

@@ -105,7 +105,6 @@ def _make_local_task() -> Task:
         far.AddressSpace(os.getpid()),
         far.FSInformation(pid),
         pid_namespace,
-        far.NetNamespace(pid),
     )
     return base_task
 def _make_local_function_handle(cffi_ptr) -> Pointer[loader.NativeFunction]:
