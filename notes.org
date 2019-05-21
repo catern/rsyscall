@@ -18904,3 +18904,16 @@ in some sense the dynamic linker is the symantics for things...
   august 5th to 15th
   indianapolis
   early july
+* are there memory jits?
+  there are "instruction jits",
+  which notice that a certain branch always goes the same way,
+  and compile it to skip the branch
+
+  are there memory jits?
+  which notice that two places in memory always have the same value,
+  and optimize them to take less memory?
+  specializing the structure for a given context?
+  
+  or, reducing this from jits, are there memory compilers that do that statically?
+  specializing structures statically for their contexts?
+  that would be cool.
