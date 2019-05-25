@@ -18595,13 +18595,20 @@ and rename it to waitpid?
 ** DONE force cloexec on everything
 ** DONE make accept flags argument optional
 ** TODO *maybe* reduce the number of waitid calls we make?
-** TODO change everything to use malloc/ptr
+   it's a matter of storing state about whether we believe a waitid call has been made
+   since the last sigchld.
+
+   and having that state be updatable...
+
+   we could store the sigchld_waiter I guess?
+   then we'd be good.
+** DONE change everything to use malloc/ptr
    Delete malloc_struct/malloc_type/to_pointer.
 
    This will aid clarity I suppose, because of shorter lines, y'know?
 
    Concise is nice.
-** TODO actually use it?
+** DONE actually use it?
    testing is so much nicer though.
 
    I could use it to launch and monitor public-inbox.
