@@ -107,7 +107,7 @@ async def rsyscall_exec(
     child_process = await child.exec(executable.command.args(
             encode(passed_data_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
             *[encode(fd.near) for fd in child.task.fd_handles],
-    ), [child.child_monitor.internal.sigfd.signal_block])
+    ), [child.child_monitor.sigfd.signal_block])
     #### read symbols from describe fd
     describe_buf = AsyncReadBuffer(access_data_sock)
     symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')

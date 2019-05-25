@@ -106,7 +106,7 @@ class ChildUnixThread(UnixThread):
                     await sem.ptr(envp_ptrs))
         filename, argv_ptr, envp_ptr = await self.ram.perform_batch(op)
         child_process = await self.task.execve(filename, argv_ptr, envp_ptr, flags)
-        return self.parent_monitor.internal.add_task(child_process)
+        return self.parent_monitor.add_child_process(child_process)
 
     async def execve(self, path: Path,
                      argv: t.Sequence[t.Union[str, bytes, os.PathLike]],

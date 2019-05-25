@@ -42,7 +42,7 @@ waitid(P.ALL) and send back an event.
 """
 from __future__ import annotations
 from dataclasses import dataclass
-from rsyscall.concurrency import OneAtATime, MultiplexedEvent
+from rsyscall.concurrency import MultiplexedEvent
 from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Pointer, ChildProcess
 from rsyscall.memory.ram import RAM
@@ -83,47 +83,46 @@ class AsyncSignalfd:
     ) -> None:
         self.afd = afd
         self.signal_block = signal_block
-        self.event = MultiplexedEvent(self._wait_for_some_signal)
+        self.next_event = MultiplexedEvent(self._wait_for_some_signal)
 
     async def _wait_for_some_signal(self):
         # we don't care what information we get from the signal, we
         # just want to sleep until some signal happens
         await self.afd.read(await self.afd.ram.malloc(SignalfdSiginfo))
-        self.event = MultiplexedEvent(self._wait_for_some_signal)
+        self.next_event = MultiplexedEvent(self._wait_for_some_signal)
 
 class AsyncChildProcess:
     "A child process which can be monitored without blocking the thread"
-    def __init__(self, process: ChildProcess,
-                 monitor: ChildProcessMonitorInternal) -> None:
+    def __init__(self, process: ChildProcess, ram: RAM, sigchld_sigfd: AsyncSignalfd) -> None:
         self.process = process
-        self.monitor = monitor
+        self.ram = ram
+        self.sigchld_sigfd = sigchld_sigfd
         self.next_sigchld_event: t.Optional[MultiplexedEvent] = None
 
     async def waitid_nohang(self) -> t.Optional[ChildEvent]:
         if self.process.unread_siginfo is None:
-            await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.ALL|W.NOHANG,
-                                      await self.monitor.ram.malloc(Siginfo))
+            await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.ALL|W.NOHANG, await self.ram.malloc(Siginfo))
         return await self.process.read_siginfo()
 
     async def waitpid(self, options: W) -> ChildEvent:
-        # TODO this is not really the actual behavior...
         if options & W.EXITED and self.process.death_event:
+            # TODO this is not really the actual behavior of waitpid...
+            # if the child is already dead we'd get an ECHLD not the death event again.
             return self.process.death_event
         while True:
             if self.next_sigchld_event:
                 await self.next_sigchld_event.wait()
-            self.next_sigchld_event = self.monitor.sigfd.event
+            self.next_sigchld_event = self.sigchld_sigfd.next_event
             event = await self.waitid_nohang()
             if event is not None:
-                # we shouldn't wait the next time we're called, we
-                # should eagerly wait for an event, since we don't
-                # know that one isn't there.
+                # we shouldn't wait the next time we're called, we should eagerly wait for
+                # an event, since we don't know that one isn't there.
                 self.next_sigchld_event = None
                 if event.state(options):
                     return event
                 else:
                     # TODO we shouldn't discard the event here if we're not waiting for it;
-                    # but doing it right takes a lot of effort in refactoring waitid
+                    # unfortunately doing it right will require a lot of refactoring of waitid
                     pass
 
     async def check(self) -> ChildEvent:
@@ -148,30 +147,10 @@ class AsyncChildProcess:
             await self.kill()
             await self.waitpid(W.EXITED)
 
-class ChildProcessMonitorInternal:
-    def __init__(self, ram: RAM, sigfd: AsyncSignalfd, is_reaper: bool) -> None:
-        self.ram = ram
-        self.sigfd = sigfd
-        self.is_reaper = is_reaper
-        if self.sigfd.signal_block.mask != set([Signals.SIGCHLD]):
-            raise Exception("ChildProcessMonitor should get a AsyncSignalfd only for SIGCHLD")
-
-    def add_task(self, process: ChildProcess) -> AsyncChildProcess:
-        proc = AsyncChildProcess(process, self)
-        # self.processes.append(proc)
-        return proc
-
-    async def clone(self,
-                    clone_task: Task,
-                    flags: CLONE,
-                    child_stack: t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
-                    ctid: t.Optional[Pointer]=None) -> AsyncChildProcess:
-        process = await clone_task.clone(flags|Signals.SIGCHLD, child_stack, None, ctid, None)
-        return self.add_task(process)
-
 @dataclass
 class ChildProcessMonitor:
-    internal: ChildProcessMonitorInternal
+    sigfd: AsyncSignalfd
+    ram: RAM
     cloning_task: Task
     use_clone_parent: bool
     is_reaper: bool
@@ -182,33 +161,31 @@ class ChildProcessMonitor:
                    is_reaper: bool=False,
     ) -> ChildProcessMonitor:
         sigfd = await AsyncSignalfd.make(ram, task, epoller, Sigset({Signals.SIGCHLD}), signal_block=signal_block)
-        monitor = ChildProcessMonitorInternal(ram, sigfd, is_reaper=is_reaper)
-        return ChildProcessMonitor(monitor, task, use_clone_parent=False, is_reaper=is_reaper)
+        return ChildProcessMonitor(sigfd, ram, task, use_clone_parent=False, is_reaper=is_reaper)
 
     def inherit_to_child(self, child_task: Task) -> ChildProcessMonitor:
         if self.is_reaper:
             # TODO we should actually look at something on the Task, I suppose, to determine if we're a reaper
             raise Exception("we're a ChildProcessMonitor for a reaper task, "
                             "we can't be inherited because we can't use CLONE_PARENT")
-        if child_task.parent_task is not self.internal.sigfd.afd.handle.task:
+        if child_task.parent_task is not self.sigfd.afd.handle.task:
             raise Exception("task", child_task, "with parent_task", child_task.parent_task,
-                            "is not our child; we're", self.internal.sigfd.afd.handle.task)
-        # we now know that the cloning task is in a process which is a child process of the waiting task.  so
-        # we know that if use CLONE_PARENT while cloning in the cloning task, the resulting tasks will be
-        # children of the waiting task, so we can use the waiting task to wait on them.
-        return ChildProcessMonitor(self.internal, child_task, use_clone_parent=True, is_reaper=self.is_reaper)
+                            "is not our child; we're", self.sigfd.afd.handle.task)
+        # 1. We know that child_task is a child process of self.sigfd.afd.handle.task.
+        # 2. That means if we use CLONE_PARENT in child_task, the resulting processes will also be
+        # child processes of self.sigfd.afd.handle.task.
+        # 3. Therefore self.sigfd will be notified if and when those future child processes have some event.
+        # 4. Therefore we can use self.sigfd to create AsyncChildProcesses for those future child processes.
+        return ChildProcessMonitor(self.sigfd, self.ram, child_task, use_clone_parent=True, is_reaper=self.is_reaper)
 
-    def inherit_to_thread(self, cloning_task: Task) -> ChildProcessMonitor:
-        if self.internal.sigfd.afd.handle.task.process is not cloning_task.process:
-            raise Exception("waiting task process", self.internal.sigfd.afd.handle.task.process,
-                            "is not the same as cloning task process", cloning_task.process)
-        # we know that the cloning task is in the same process as the waiting task. so any children the
-        # cloning task starts will also be waitable-on by the waiting task.
-        return ChildProcessMonitor(self.internal, cloning_task, use_clone_parent=False, is_reaper=self.is_reaper)
+    def add_child_process(self, process: ChildProcess) -> AsyncChildProcess:
+        proc = AsyncChildProcess(process, self.ram, self.sigfd)
+        return proc
 
     async def clone(self, flags: CLONE,
                     child_stack: t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
                     ctid: t.Optional[Pointer[FutexNode]]=None) -> AsyncChildProcess:
         if self.use_clone_parent:
             flags |= CLONE.PARENT
-        return (await self.internal.clone(self.cloning_task, flags, child_stack, ctid=ctid))
+        process = await self.cloning_task.clone(flags|Signals.SIGCHLD, child_stack, None, ctid, None)
+        return self.add_child_process(process)
