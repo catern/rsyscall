@@ -18647,6 +18647,39 @@ and rename it to waitpid?
    right that was my plan. hm.
    I have enough to receive mail, but.
    it's kind of annoying to carry these patches.
+*** inbox plan
+    i'd use the DNS magic and miredo stuff to dynamically make a mail server,
+    sign it up to mailing lists,
+    then serve them with public-inbox.
+
+    but that's a lot of work.
+    and it's not work related to rsyscall!
+    i want to do it, but not right now.
+*** rsyscall testing work
+    what can we do that's directly rsyscall related?
+
+    blargh, I guess we could just, um.
+    we can't run public-inbox since I don't have the mailing list subscription account set up.
+*** blah
+    ok what if i did do it internal.
+
+    i could do the nix stuff to run rsyscall instead of importing it into vats
+
+    ok shrug, I guess let's still just stick to writing docs and stuff.
+    then the internal story will get better when I have Nix stuff,
+    and maybe even with some more use cases - might run into the desire to run remote stuff.
+
+    and then, I guess, I can just import it in, and iterate there
+
+    so we'll just continue writing trivial tests and stuff? ugh...
+
+    well maybe we can do a big system in test form
+    that's just what we'd do internally, and it's much easier internally.
+
+    ok I guess my goal is to be able to pull it in internally.
+    prerequisite to that is being comfortable doing a 0.0.1 release,
+    whether that's through pypi or a local Nix package or whatever.
+    that's clearly the easy way forward, meh.
 * DOCUMENTATION!
   Time to write it!
 ** wait actually no
