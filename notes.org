@@ -18595,6 +18595,12 @@ and rename it to waitpid?
 ** DONE force cloexec on everything
 ** DONE make accept flags argument optional
 ** TODO *maybe* reduce the number of waitid calls we make?
+** TODO change everything to use malloc/ptr
+   Delete malloc_struct/malloc_type/to_pointer.
+
+   This will aid clarity I suppose, because of shorter lines, y'know?
+
+   Concise is nice.
 * DOCUMENTATION!
   Time to write it!
 ** wait actually no
@@ -18917,3 +18923,16 @@ in some sense the dynamic linker is the symantics for things...
   or, reducing this from jits, are there memory compilers that do that statically?
   specializing structures statically for their contexts?
   that would be cool.
+* one-shot functions
+  so you could model functions/closures with monads,
+  and invocation is an effect.
+
+  is there some value in one-shot functions,
+  that you can only call once?
+
+  i guess you could consider that a stream of instructions that you direct into the core,
+  and then consume.
+** hah
+   it's funny that the implementation of a function using continuations,
+   using shift to get each argument,
+   looks like the implementation of a function in bash, using shift to get each argument

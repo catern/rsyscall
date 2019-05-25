@@ -13,6 +13,7 @@ def random_string(k=8) -> str:
     return ''.join(random.choices(string.ascii_letters + string.digits, k=k))
 
 async def update_symlink(thr: RAMThread, path: WrittenPointer[Path], target: t.Union[str, Path]) -> WrittenPointer[Path]:
+    "Atomically update this path to contain a symlink pointing at this target"
     target_bytes = os.fsencode(target)
     tmpname = path.value.name + ".updating." + random_string(k=8)
     tmppath = await thr.ram.to_pointer(path.value.parent/tmpname)

@@ -1,3 +1,34 @@
+"""Memory transport to a remote address spaced based on reading/writing file descriptors
+
+We need to be able to read and write to the address spaces of our
+threads. We start with the ability to read and write to the address
+space of the local thread; we need to bootstrap that into an ability
+to read and write to other address spaces.
+
+We could have taken a dependency on some means of RDMA, or used
+process_vm_readv/writev, or used other techniques, but these only work
+in certain circumstances and places additional dependencies on
+us. Nevertheless, they might be useful optimizations in the future.
+
+Instead, we make sure that whenever we want to read and write to any
+address space, we have a file descriptor owned by a task in that
+address space, which is connected to a file descriptor owned by a task
+in an address space that we already can read and write.
+
+Then, the problem is reduced to copying bytes between memory and the
+connection underlying the pair of file descriptors. But that's easy:
+We just use the "read" and "write" system calls.
+
+So, to write to memory in some address space B, we write to some
+memory in some address space A that we already can access; then call
+`write` on A's file descriptor to copy the bytes from memory in A into
+the connection; then call `read` on B's file descriptor to copy the
+bytes from the connection to memory in B.
+
+To read memory in address space B, we just perform this in reverse; we
+call `write` on B's file descriptor, and `read` on A's file descriptor.
+
+"""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from rsyscall.concurrency import OneAtATime
@@ -11,6 +42,10 @@ import trio
 
 from rsyscall.handle import AllocationInterface, Pointer, IovecList, FileDescriptor
 from rsyscall.memory.allocator import AllocatorInterface
+
+__all__ = [
+    "SocketMemoryTransport",
+]
 
 @dataclass
 class ReadOp:
@@ -133,7 +168,6 @@ def merge_adjacent_pointers(ptrs: t.List[Pointer]) -> Pointer:
         MergedAllocation([ptr.allocation for ptr in ptrs]))
 
 def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[t.Tuple[Pointer, bytes]]:
-    "Note that this is only effective inasmuch as the list is sorted."
     if len(write_ops) == 0:
         return []
     write_ops = sorted(write_ops, key=lambda op: int(op[0].near))
@@ -161,8 +195,45 @@ def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[
         outputs.append((merged_ptr, merged_data))
     return outputs
 
+def merge_adjacent_reads(read_ops: t.List[ReadOp]) -> t.List[t.Tuple[ReadOp, t.List[ReadOp]]]:
+    if len(read_ops) == 0:
+        return []
+    read_ops = sorted(read_ops, key=lambda op: int(op.src.near))
+
+    groupings: t.List[t.List[ReadOp]] = []
+    ops_to_merge = [read_ops[0]]
+    for prev_op, op in zip(read_ops, read_ops[1:]):
+        if int(prev_op.src.near + prev_op.src.bytesize()) == int(op.src.near):
+            # the current op is adjacent to the previous op, append it to
+            # the list of pending ops to merge together.
+            ops_to_merge.append(op)
+        elif int(prev_op.src.near + prev_op.src.bytesize()) > int(op.src.near):
+            raise Exception("pointers passed to memcpy are overlapping!", prev_op.src, op.src)
+        else:
+            # the current op isn't adjacent to the previous op, so
+            # flush the list of ops_to_merge and start a new one.
+            groupings.append(ops_to_merge)
+            ops_to_merge = [op]
+    groupings.append(ops_to_merge)
+    outputs: t.List[t.Tuple[ReadOp, t.List[ReadOp]]] = []
+    for group in groupings:
+        merged_ptr = merge_adjacent_pointers([op.src for op in group])
+        outputs.append((ReadOp(merged_ptr), group))
+    return outputs
+
 @dataclass
 class PrimitiveSocketMemoryTransport(MemoryTransport):
+    """Like SocketMemoryTransport, but doesn't require a remote_allocator
+
+    This just uses plain `read` and `write` rather than `readv` and
+    `writev`, and thus is less efficient, but doesn't require
+    allocating memory for an iovec on the remote side.
+
+    We use this to transport the memory needed for the iovecs used in
+    SocketMemoryTransport. We also use this as a fallback when using
+    an iovec would be too much overhead.
+
+    """
     local: AsyncFileDescriptor
     remote: FileDescriptor
 
@@ -211,16 +282,28 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
         raise Exception("batch read not supported")
 
 class SocketMemoryTransport(MemoryTransport):
-    """This class wraps a pair of connected file descriptors, one of which is in the local address space.
+    """Read and write bytes from a remote address space, using a connected socketpair
 
-    The task owning the "local" file descriptor is guaranteed to be in the local address space. This
-    means Python runtime memory, such as bytes objects, can be written to it without fear.  The
-    "remote" file descriptor is somewhere else - possibly in the same task, possibly on some other
-    system halfway across the planet.
+    We use the "ram" inside the "local" AsyncFileDescriptor to access
+    pointers in the address space of the "local" fd. We use the
+    socketpair to transport memory from the "local" address space to
+    the address space of the "remote" fd.
 
-    This pair can be used through the helper methods on this class, or borrowed for direct use. When
-    directly used, care must be taken to ensure that at the end of use, the buffer between the pair
-    is empty; otherwise later users will get that stray leftover data when they try to use it.
+    In this way, we turn a transport for the "local" address space,
+    plus the connected socketpair, into a transport for the "remote"
+    address space.
+
+    We also take a remote_allocator; we use this to allocate memory
+    for iovecs in the remote space so we can call `readv` and `writev`
+    instead of regular `read` and `write`, which means less roundtrips
+    for syscalls.
+
+    We provide a batching interface, which is much more
+    efficient. Internally, we also perform batching of multiple
+    unrelated writes or reads happening at a time. This allows for the
+    user to write more naive parallel code which tries to perform
+    several writes or reads at once, and have that code be
+    automatically batched together.
 
     """
     def __init__(self,
@@ -237,35 +320,6 @@ class SocketMemoryTransport(MemoryTransport):
         self.running_write = OneAtATime()
         self.pending_reads: t.List[ReadOp] = []
         self.running_read = OneAtATime()
-
-    @staticmethod
-    def merge_adjacent_reads(read_ops: t.List[ReadOp]) -> t.List[t.Tuple[ReadOp, t.List[ReadOp]]]:
-        "Note that this is only effective inasmuch as the list is sorted."
-        # also note that this is not really useful
-        if len(read_ops) == 0:
-            return []
-        read_ops = sorted(read_ops, key=lambda op: int(op.src.near))
-
-        groupings: t.List[t.List[ReadOp]] = []
-        ops_to_merge = [read_ops[0]]
-        for prev_op, op in zip(read_ops, read_ops[1:]):
-            if int(prev_op.src.near + prev_op.src.bytesize()) == int(op.src.near):
-                # the current op is adjacent to the previous op, append it to
-                # the list of pending ops to merge together.
-                ops_to_merge.append(op)
-            elif int(prev_op.src.near + prev_op.src.bytesize()) > int(op.src.near):
-                raise Exception("pointers passed to memcpy are overlapping!", prev_op.src, op.src)
-            else:
-                # the current op isn't adjacent to the previous op, so
-                # flush the list of ops_to_merge and start a new one.
-                groupings.append(ops_to_merge)
-                ops_to_merge = [op]
-        groupings.append(ops_to_merge)
-        outputs: t.List[t.Tuple[ReadOp, t.List[ReadOp]]] = []
-        for group in groupings:
-            merged_ptr = merge_adjacent_pointers([op.src for op in group])
-            outputs.append((ReadOp(merged_ptr), group))
-        return outputs
 
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
         return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote),
@@ -336,7 +390,7 @@ class SocketMemoryTransport(MemoryTransport):
                 ops = self.pending_reads
                 self.pending_reads = []
                 ops = [op for op in ops if not op.cancelled]
-                merged_ops = self.merge_adjacent_reads(ops)
+                merged_ops = merge_adjacent_reads(ops)
                 # TODO we should not use a cancel scope shield, we should use the SyscallResponse API
                 with trio.CancelScope(shield=True):
                     await self._unlocked_batch_read([op for op, _ in merged_ops])

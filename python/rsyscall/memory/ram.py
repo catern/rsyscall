@@ -1,3 +1,4 @@
+"The high-level interfaces to memory"
 from __future__ import annotations
 from rsyscall.handle import Task, Pointer, WrittenPointer, MemoryTransport, AllocationInterface, MemoryMapping, MemoryGateway
 from rsyscall.memory.allocator import AllocatorInterface
@@ -8,6 +9,8 @@ import typing as t
 
 __all__ = [
     "RAM",
+    "perform_batch",
+    "RAMThread",
 ]
 
 class BytesSerializer(Serializer[bytes]):
@@ -19,6 +22,13 @@ class BytesSerializer(Serializer[bytes]):
 
 T = t.TypeVar('T')
 class RAM:
+    """Central user-friendly class for accessing memory
+
+    Future work: An option to allocate "const" pointers, which we
+    could cache and reuse each time they're requested. This would be
+    useful for small pieces of memory which are very frequently used.
+
+    """
     def __init__(self, 
                  task: Task,
                  transport: MemoryTransport,
@@ -31,48 +41,62 @@ class RAM:
     @t.overload
     async def malloc(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]: ...
     @t.overload
-    async def malloc(self, cls: t.Type[bytes], size: int, alignment: int=1) -> Pointer[bytes]: ...
+    async def malloc(self, cls: t.Type[bytes], size: int) -> Pointer[bytes]: ...
     @t.overload
-    async def malloc(self, cls: t.Type[T_fixed_serializer], size: int, alignment: int=1) -> Pointer[T_fixed_serializer]: ...
+    async def malloc(self, cls: t.Type[T_fixed_serializer], size: int) -> Pointer[T_fixed_serializer]: ...
 
     async def malloc(self, cls: t.Union[t.Type[bytes], t.Type[T_fixed_serializer]],
-                     size: int=None, alignment: int=1
+                     size: int=None,
     ) -> t.Union[Pointer[bytes], Pointer[T_fixed_serializer]]:
+        "Allocate a typed space in memory, sized according to the size of the type or an explicit size argument"
         if size is None:
-            return await self.malloc_struct(cls) # type: ignore
+            if not issubclass(cls, FixedSize):
+                raise Exception("bad cls passed without size", cls)
+            return await self.malloc_struct(cls)
         else:
             if issubclass(cls, bytes):
-                return await self.malloc_serializer(BytesSerializer(), size, alignment)
+                return await self._malloc_serializer(BytesSerializer(), size)
             else:
-                return await self.malloc_type(cls, size, alignment)
+                return await self.malloc_type(cls, size)
+
+    @t.overload
+    async def ptr(self, data: t.Union[bytes]) -> WrittenPointer[bytes]: ...
+    @t.overload
+    async def ptr(self, data: T_has_serializer) -> WrittenPointer[T_has_serializer]: ...
+    async def ptr(self, data: t.Union[bytes, T_has_serializer],
+    ) -> t.Union[WrittenPointer[bytes], WrittenPointer[T_has_serializer]]:
+        "Take some serializable data and return a pointer in memory containing it"
+        if isinstance(data, bytes):
+            ptr = await self.malloc(bytes, len(data))
+            return await self._write_to_pointer(ptr, data, data)
+        else:
+            return await self.to_pointer(data)
+
+    async def perform_batch(self, op: t.Callable[[RAM], t.Awaitable[T]],
+                                  allocator: AllocatorInterface=None,
+    ) -> T:
+        """Batches together memory operations performed by a callable.
+        
+        See the free function of the same name for more documentation.
+
+        """
+        if allocator is None:
+            allocator = self.allocator
+        return await perform_batch(self.task, self.transport, allocator, op)
 
     async def malloc_struct(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]:
         return await self.malloc_type(cls, cls.sizeof())
 
-    async def malloc_type(self, cls: t.Type[T_fixed_serializer], size: int, alignment: int=1) -> Pointer[T_fixed_serializer]:
-        return await self.malloc_serializer(cls.get_serializer(self.task), size)
+    async def malloc_type(self, cls: t.Type[T_fixed_serializer], size: int) -> Pointer[T_fixed_serializer]:
+        return await self._malloc_serializer(cls.get_serializer(self.task), size)
 
-    async def malloc_serializer(self, serializer: Serializer[T], size: int, alignment: int=1) -> Pointer[T]:
-        if alignment == 0:
-            raise Exception("alignment is", alignment, "did you mess up arguments?")
-        mapping, allocation = await self.allocator.malloc(size, alignment=alignment)
+    async def _malloc_serializer(self, serializer: Serializer[T], size: int) -> Pointer[T]:
+        mapping, allocation = await self.allocator.malloc(size, alignment=1)
         try:
             return Pointer(mapping, self.transport, serializer, allocation)
         except:
             allocation.free()
             raise
-
-    @t.overload
-    async def ptr(self, data: t.Union[bytes], alignment: int=1) -> WrittenPointer[bytes]: ...
-    @t.overload
-    async def ptr(self, data: T_has_serializer, alignment: int=1) -> WrittenPointer[T_has_serializer]: ...
-    async def ptr(self, data: t.Union[bytes, T_has_serializer], alignment: int=1
-    ) -> t.Union[WrittenPointer[bytes], WrittenPointer[T_has_serializer]]:
-        if isinstance(data, bytes):
-            ptr = await self.malloc(bytes, len(data))
-            return await self._write_to_pointer(ptr, data, data)
-        else:
-            return await self.to_pointer(data, alignment)
 
     async def _write_to_pointer(self, ptr: Pointer[T], data: T, data_bytes: bytes) -> WrittenPointer[T]:
         try:
@@ -81,20 +105,14 @@ class RAM:
             ptr.free()
             raise
 
-    async def to_pointer(self, data: T_has_serializer, alignment: int=1) -> WrittenPointer[T_has_serializer]:
+    async def to_pointer(self, data: T_has_serializer) -> WrittenPointer[T_has_serializer]:
         serializer = data.get_self_serializer(self.task)
         data_bytes = serializer.to_bytes(data)
-        ptr = await self.malloc_serializer(serializer, len(data_bytes), alignment=alignment)
+        ptr = await self._malloc_serializer(serializer, len(data_bytes))
         return await self._write_to_pointer(ptr, data, data_bytes)
 
-    async def perform_batch(self, op: t.Callable[[RAM], t.Awaitable[T]],
-                                  allocator: AllocatorInterface=None,
-    ) -> T:
-        if allocator is None:
-            allocator = self.allocator
-        return await perform_batch(self.task, self.transport, allocator, op)
-
 class NullAllocation(AllocationInterface):
+    "An fake allocation for a null pointer"
     def __init__(self, n: int) -> None:
         self.n = n
 
@@ -114,6 +132,7 @@ class NullAllocation(AllocationInterface):
         pass
 
 class LaterAllocator(AllocatorInterface):
+    "An allocator which stores allocation requests and returns null pointers"
     def __init__(self) -> None:
         self.allocations: t.List[t.Tuple[int, int]] = []
 
@@ -125,6 +144,7 @@ class LaterAllocator(AllocatorInterface):
         )
 
 class NoopTransport(MemoryTransport):
+    "A memory transport which doesn't do anything"
     async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
         raise Exception("shouldn't try to read")
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
@@ -133,6 +153,7 @@ class NoopTransport(MemoryTransport):
         raise Exception("shouldn't try to inherit")
 
 class PrefilledAllocator(AllocatorInterface):
+    "An allocator which has been prefilled with allocations for an exact sequence of calls to malloc"
     def __init__(self, allocations: t.Sequence[t.Tuple[MemoryMapping, AllocationInterface]]) -> None:
         self.allocations = list(allocations)
 
@@ -144,6 +165,7 @@ class PrefilledAllocator(AllocatorInterface):
         return mapping, allocation
 
 class BatchWriteSemantics(RAM):
+    "A variant of RAM which stores writes to pointers so they can be performed later."
     def __init__(self, 
                  task: Task,
                  transport: MemoryTransport,
@@ -165,6 +187,45 @@ async def perform_batch(
         allocator: AllocatorInterface,
         batch: t.Callable[[RAM], t.Awaitable[T]],
 ) -> T:
+    """Batches together memory operations performed by a callable.
+
+    To use, first define a callable which takes a RAM, and produces
+    some result using only the methods of the passed-in RAM. There are
+    several requirements on this callable, described below. Pass that
+    callable to this function, and we'll magically batch its
+    operations together and return what it returns.
+
+    Requirements on the callable:
+    - Do not have any side-effects other than calling methods on the
+      passed-in RAM.
+    - Do not branch based on the numeric values of pointers; indeed,
+      better that you just don't branch at all.
+
+    Concretely, we'll call the callable twice. Once with a RAM which
+    no-ops all the allocations and writes, so that we can know the
+    size of all the requested allocations. Then we'll batch-allocate
+    all that memory, and call the callable again with a RAM which just
+    returns those batch allocations, and no-ops any writes. After that
+    second call completes, we batch-perform all the writes, and return
+    the result of that second call from this function.
+    
+    This is useful, among other cases, when performing a lot of memory
+    allocation and writes in anticipation of one or more syscalls
+    which will read values from that memory. For example, we can batch
+    together writing the argv and envp arguments to execve, along with
+    all the pointers referenced by them. This is much more efficient.
+
+    This technique is inspired by tagless final style. Unfortunately
+    we can't really implement that in Python, so an interface is all
+    we've got.
+
+    We had a more explicit style before, where you explicitly listed
+    the sizes of the allocations you wanted, but it was far less
+    ergonomic and less robust. This style is nominally less efficient,
+    but it improves robustness by making it not possible to mess up in
+    calculating the size you want to allocate.
+
+    """
     later_allocator = LaterAllocator()
     await batch(RAM(task, NoopTransport(), later_allocator))
     allocations = await allocator.bulk_malloc(later_allocator.allocations)
