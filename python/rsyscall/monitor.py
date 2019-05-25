@@ -42,7 +42,7 @@ waitid(P.ALL) and send back an event.
 """
 from __future__ import annotations
 from dataclasses import dataclass
-from rsyscall.concurrency import OneAtATime
+from rsyscall.concurrency import OneAtATime, MultiplexedEvent
 from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Pointer, ChildProcess
 from rsyscall.memory.ram import RAM
@@ -56,12 +56,8 @@ from rsyscall.signal import SignalBlock
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
 from rsyscall.sys.wait import CLD, ChildEvent, W
 
-@dataclass(frozen=True)
 class AsyncSignalfd:
     "A signalfd, registered on epoll, with a SignalBlock for the appropriate signals"
-    afd: AsyncFileDescriptor
-    signal_block: SignalBlock
-
     @classmethod
     async def make(cls, ram: RAM, task: Task, epoller: Epoller, mask: Sigset,
                    *, signal_block: SignalBlock=None,
@@ -81,6 +77,20 @@ class AsyncSignalfd:
         afd = await AsyncFileDescriptor.make_handle(epoller, ram, fd, is_nonblock=True)
         return cls(afd, signal_block)
 
+    def __init__(self,
+                 afd: AsyncFileDescriptor,
+                 signal_block: SignalBlock,
+    ) -> None:
+        self.afd = afd
+        self.signal_block = signal_block
+        self.event = MultiplexedEvent(self._wait_for_some_signal)
+
+    async def _wait_for_some_signal(self):
+        # we don't care what information we get from the signal, we
+        # just want to sleep until some signal happens
+        await self.afd.read(await self.afd.ram.malloc(SignalfdSiginfo))
+        self.event = MultiplexedEvent(self._wait_for_some_signal)
+
 class AsyncChildProcess:
     "A child process which can be monitored without blocking the thread"
     def __init__(self, process: ChildProcess,
@@ -94,22 +104,41 @@ class AsyncChildProcess:
                                       await self.monitor.ram.malloc(Siginfo))
         return await self.process.read_siginfo()
 
+    async def new_waitpid(self, options: W) -> ChildEvent:
+        # TODO this is not really the actual behavior...
+        if options & W.EXITED and self.process.death_event:
+            return self.process.death_event
+        while True:
+            if self.waiter:
+                await self.waiter.wait()
+            self.waiter = self.monitor.current_waiter
+            event = await self.waitid_nohang()
+            if event is not None:
+                # don't need to wait the next time
+                self.waiter = None
+                if event.state(options):
+                    return event
+                else:
+                    # TODO we shouldn't discard the event here if we're not waiting for it;
+                    # but doing it right takes a lot of effort in refactoring waitid
+                    pass
+
     async def waitpid(self, options: W) -> ChildEvent:
         # TODO this is not really the actual behavior...
         if options & W.EXITED and self.process.death_event:
             return self.process.death_event
         while True:
-            with self.monitor.sigchld_waiter() as waiter:
-                event = await self.waitid_nohang()
-                if event is None:
-                    await waiter.wait_for_sigchld()
+            waiter = self.monitor.sigfd.event
+            event = await self.waitid_nohang()
+            if event is None:
+                await waiter.wait()
+            else:
+                if event.state(options):
+                    return event
                 else:
-                    if event.state(options):
-                        return event
-                    else:
-                        # TODO we shouldn't discard the event here if we're not waiting for it;
-                        # but doing it right takes a lot of effort in refactoring waitid
-                        pass
+                    # TODO we shouldn't discard the event here if we're not waiting for it;
+                    # but doing it right takes a lot of effort in refactoring waitid
+                    pass
 
     async def check(self) -> ChildEvent:
         "Wait for this child to die, and once it does, throw if it didn't exit cleanly"
@@ -133,15 +162,6 @@ class AsyncChildProcess:
             await self.kill()
             await self.waitpid(W.EXITED)
 
-@dataclass(eq=False)
-class SigchldWaiter:
-    monitor: ChildProcessMonitorInternal
-    got_sigchld: bool = False
-
-    async def wait_for_sigchld(self) -> None:
-        if not self.got_sigchld:
-            await self.monitor.do_wait()
-
 class ChildProcessMonitorInternal:
     def __init__(self, ram: RAM, sigfd: AsyncSignalfd, is_reaper: bool) -> None:
         self.ram = ram
@@ -149,20 +169,11 @@ class ChildProcessMonitorInternal:
         self.is_reaper = is_reaper
         if self.sigfd.signal_block.mask != set([Signals.SIGCHLD]):
             raise Exception("ChildProcessMonitor should get a AsyncSignalfd only for SIGCHLD")
-        self.running_wait = OneAtATime()
-        self.waiters: t.List[SigchldWaiter] = []
 
     def add_task(self, process: ChildProcess) -> AsyncChildProcess:
         proc = AsyncChildProcess(process, self)
         # self.processes.append(proc)
         return proc
-
-    @contextlib.contextmanager
-    def sigchld_waiter(self) -> t.Iterator[SigchldWaiter]:
-        waiter = SigchldWaiter(self)
-        self.waiters.append(waiter)
-        yield waiter
-        self.waiters.remove(waiter)
 
     async def clone(self,
                     clone_task: Task,
@@ -171,16 +182,6 @@ class ChildProcessMonitorInternal:
                     ctid: t.Optional[Pointer]=None) -> AsyncChildProcess:
         process = await clone_task.clone(flags|Signals.SIGCHLD, child_stack, None, ctid, None)
         return self.add_task(process)
-
-    async def do_wait(self) -> None:
-        async with self.running_wait.needs_run() as needs_run:
-            if needs_run:
-                buf = await self.ram.malloc(SignalfdSiginfo)
-                # we don't care what information we get from the signal, we just want to
-                # sleep until a SIGCHLD happens
-                await self.sigfd.afd.read(buf)
-                for waiter in self.waiters:
-                    waiter.got_sigchld = True
 
 @dataclass
 class ChildProcessMonitor:

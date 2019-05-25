@@ -18602,6 +18602,40 @@ and rename it to waitpid?
 
    we could store the sigchld_waiter I guess?
    then we'd be good.
+
+   hmm okay so what happens if i get the posedge,
+   and i get a negedge,
+   and I overwrite the posedge with the negedge???
+
+   essentially if I get a posedge while I'm making the syscall,
+   i don't know if it happened after the syscall,
+   and indicates that i can read again.
+
+   so. really if we get any posedges during the syscall we need to accept them.
+   so, maybe we register a negedge *before* making the syscall?
+
+   we say, we've consumed this.
+   then if we get an event, we treat that as a posedge.
+
+   or if we get a sigchld, that's a posedge.
+
+   but we consume always before the syscall.
+
+   ok so...
+
+   that could be a matter of, we wait for the event,
+   when we get it, we make a new event-waiter,
+   but that event-waiter might get triggered,
+   or we might go back to the old event-waiter.
+
+   er, we might not need to wait for an event?
+
+   maybe we just want to be notified on a signal happening?
+   we could have a central multiplexing sigfd thing here.
+
+   ok yeah so we wait for a signal,
+   when we get one we switch to the new signal-waiter then make the syscall,
+   if the syscall returns an event then we don't need to wait for a signal.
 ** DONE change everything to use malloc/ptr
    Delete malloc_struct/malloc_type/to_pointer.
 

@@ -53,6 +53,21 @@ class OneAtATime:
                 self.running = None
                 running.set()
 
+class MultiplexedEvent:
+    def __init__(self, try_running: t.Callable[[], t.Awaitable[None]]) -> None:
+        self.flag = False
+        self.try_running = try_running
+        self.one_at_a_time = OneAtATime()
+
+    async def wait(self) -> None:
+        while not self.flag:
+            async with self.one_at_a_time.needs_run() as needs_run:
+                if needs_run:
+                    # if we successfully complete this call, we set the flag;
+                    # exceptions get propagated up to some arbitrary unlucky caller.
+                    await self.try_running()
+                    self.flag = True
+
 T = t.TypeVar('T')
 async def make_n_in_parallel(make: t.Callable[[], t.Awaitable[T]], count: int) -> t.List[T]:
     "Calls `make` n times in parallel, and returns all the results."
