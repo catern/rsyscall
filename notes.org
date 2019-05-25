@@ -18601,6 +18601,52 @@ and rename it to waitpid?
    This will aid clarity I suppose, because of shorter lines, y'know?
 
    Concise is nice.
+** TODO actually use it?
+   testing is so much nicer though.
+
+   I could use it to launch and monitor public-inbox.
+   and my window manager and other stuff.
+
+   it's just a drag to get things running in a non-testing environment.
+   where I don't throw away state...
+   where the state stays around.
+
+   i have a number of internal use cases,
+   but going internal is hard :(
+
+   there's,
+   running hydra,
+   running offlineimap + other stuff,
+   running the integration tests.
+
+   urgh
+
+   outside, I can do...
+   email
+   bitlbee + znc
+   public-inbox
+
+   probably better to do something localhost at first?
+   also bitlbee + znc is annoying to others.
+   email would be good but so much work.
+
+   public-inbox is good.
+
+   ok, we're not going internal yet,
+   so it's no use thinking about it.
+
+   we need an external use.
+
+   public-inbox is one, so let's just do it.
+
+   oh right public-inbox needs email tho...
+
+   hmm I could set up my desktop to receive mailing lists.
+   and send them into public-inbox
+
+   right that was my plan. hm.
+   I have enough to receive mail, but.
+   it's kind of annoying to carry these patches.
 * DOCUMENTATION!
   Time to write it!
 ** wait actually no

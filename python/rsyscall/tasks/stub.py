@@ -1,3 +1,36 @@
+"""A stub which can be launched by unrelated programs, which connects back to us
+
+We create a StubServer, which listens on a Unix socket.
+
+Then we arrange for other programs to launch rsyscall-unix-stub,
+under an arbitrary executable name and with arbitrary arguments,
+either with the RSYSCALL_UNIX_STUB_SOCK environment variable set or
+through a wrapper shell script which sets RSYSCALL_UNIX_STUB_SOCK.
+
+rsyscall-unix-stub will connect back to us over the Unix socket, and
+we can call accept() to get a Thread which controls the
+rsyscall-unix-stub, along with the command line arguments passed to
+rsyscall-unix-stub, including the executable name.
+
+At no point does the other program need to know that it is launching
+the stub, nor does it have to be related to us in any way, other than
+sharing enough of the mount table for the stub to connect back to the
+Unix socket.
+
+We can use these stubs to "mock" other programs. For example, we
+could mock sendmail by putting a wrapper shell script named "sendmail"
+on the PATH of some other program; then that program will run the stub
+with stdin pointing to some email message and some command line
+arguments. We call accept() and receive those arguments and a Thread
+with that stdin, and we can do whatever we want with it.
+
+We can make an analogy to the concept of a callback. In many
+programming languages, we can pass a callback to other modules, and
+when we're called we have complete control and we can choose what to
+do and what to return. The stub is our way to pass a callback to
+another program.
+
+"""
 from __future__ import annotations
 import typing as t
 import os

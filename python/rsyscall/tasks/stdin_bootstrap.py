@@ -1,3 +1,16 @@
+"""A thread-creating stub which can be exec'd by other programs which pass down stdin
+
+We call rsyscall_stdin_bootstrap with an arbitrary Command; we'll fork
+and exec that Command, passing down a socketpair for stdin, and
+presume that the program specified by the Command will at some point
+call rsyscall_stdin_bootstrap. Once that happens, we'll bootstrap over
+the stdin socketpair and return the new thread.
+
+This is useful for sudo and similar programs; we can pass a Command
+which runs "sudo rsyscall_stdin_bootstrap", and thereby get a Thread
+with different privileges.
+
+"""
 import typing as t
 from dataclasses import dataclass
 from rsyscall.command import Command
