@@ -97,6 +97,7 @@ class AsyncChildProcess:
                  monitor: ChildProcessMonitorInternal) -> None:
         self.process = process
         self.monitor = monitor
+        self.next_sigchld_event: t.Optional[MultiplexedEvent] = None
 
     async def waitid_nohang(self) -> t.Optional[ChildEvent]:
         if self.process.unread_siginfo is None:
@@ -104,35 +105,20 @@ class AsyncChildProcess:
                                       await self.monitor.ram.malloc(Siginfo))
         return await self.process.read_siginfo()
 
-    async def new_waitpid(self, options: W) -> ChildEvent:
-        # TODO this is not really the actual behavior...
-        if options & W.EXITED and self.process.death_event:
-            return self.process.death_event
-        while True:
-            if self.waiter:
-                await self.waiter.wait()
-            self.waiter = self.monitor.current_waiter
-            event = await self.waitid_nohang()
-            if event is not None:
-                # don't need to wait the next time
-                self.waiter = None
-                if event.state(options):
-                    return event
-                else:
-                    # TODO we shouldn't discard the event here if we're not waiting for it;
-                    # but doing it right takes a lot of effort in refactoring waitid
-                    pass
-
     async def waitpid(self, options: W) -> ChildEvent:
         # TODO this is not really the actual behavior...
         if options & W.EXITED and self.process.death_event:
             return self.process.death_event
         while True:
-            waiter = self.monitor.sigfd.event
+            if self.next_sigchld_event:
+                await self.next_sigchld_event.wait()
+            self.next_sigchld_event = self.monitor.sigfd.event
             event = await self.waitid_nohang()
-            if event is None:
-                await waiter.wait()
-            else:
+            if event is not None:
+                # we shouldn't wait the next time we're called, we
+                # should eagerly wait for an event, since we don't
+                # know that one isn't there.
+                self.next_sigchld_event = None
                 if event.state(options):
                     return event
                 else:
