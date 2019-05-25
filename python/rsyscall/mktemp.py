@@ -16,7 +16,7 @@ async def update_symlink(thr: RAMThread, path: WrittenPointer[Path], target: t.U
     "Atomically update this path to contain a symlink pointing at this target"
     target_bytes = os.fsencode(target)
     tmpname = path.value.name + ".updating." + random_string(k=8)
-    tmppath = await thr.ram.to_pointer(path.value.parent/tmpname)
+    tmppath = await thr.ram.ptr(path.value.parent/tmpname)
     await thr.task.symlink(await thr.ram.ptr(target_bytes), tmppath)
     await thr.task.rename(tmppath, path)
     return path
@@ -24,7 +24,7 @@ async def update_symlink(thr: RAMThread, path: WrittenPointer[Path], target: t.U
 async def mkdtemp(thr: UnixThread, prefix: str="mkdtemp") -> 'TemporaryDirectory':
     parent = thr.environ.tmpdir
     name = prefix+"."+random_string(k=8)
-    await thr.task.mkdir(await thr.ram.to_pointer(parent/name), 0o700)
+    await thr.task.mkdir(await thr.ram.ptr(parent/name), 0o700)
     return TemporaryDirectory(thr, parent, name)
 
 class TemporaryDirectory:
@@ -37,7 +37,7 @@ class TemporaryDirectory:
     async def cleanup(self) -> None:
         # TODO would be nice if not sharing the fs information gave us a cap to chdir
         cleanup = await self.thr.fork()
-        await cleanup.task.chdir(await cleanup.ram.to_pointer(self.parent))
+        await cleanup.task.chdir(await cleanup.ram.ptr(self.parent))
         child = await cleanup.exec(self.thr.environ.sh.args(
             '-c', f"chmod -R +w -- {self.name} && rm -rf -- {self.name}"))
         await child.check()

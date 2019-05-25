@@ -25,22 +25,22 @@ async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
         in_namespace_gid = gid
     procself = Path("/proc/self")
 
-    uid_map = await thr.task.open(await thr.ram.to_pointer(procself/"uid_map"), O.WRONLY)
+    uid_map = await thr.task.open(await thr.ram.ptr(procself/"uid_map"), O.WRONLY)
     await uid_map.write(await thr.ram.ptr(f"{in_namespace_uid} {uid} 1\n".encode()))
     await uid_map.close()
 
-    setgroups = await thr.task.open(await thr.ram.to_pointer(procself/"setgroups"), O.WRONLY)
+    setgroups = await thr.task.open(await thr.ram.ptr(procself/"setgroups"), O.WRONLY)
     await setgroups.write(await thr.ram.ptr(b"deny"))
     await setgroups.close()
 
-    gid_map = await thr.task.open(await thr.ram.to_pointer(procself/"gid_map"), O.WRONLY)
+    gid_map = await thr.task.open(await thr.ram.ptr(procself/"gid_map"), O.WRONLY)
     await gid_map.write(await thr.ram.ptr(f"{in_namespace_gid} {gid} 1\n".encode()))
     await gid_map.close()
 
 async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
-    buf = await thr.ram.malloc_type(DirentList, 4096)
-    dirfd = await thr.task.open(await thr.ram.to_pointer(Path("/proc/self/fd")), O.DIRECTORY)
+    buf = await thr.ram.malloc(DirentList, 4096)
+    dirfd = await thr.task.open(await thr.ram.ptr(Path("/proc/self/fd")), O.DIRECTORY)
     async def maybe_close(fd: near.FileDescriptor) -> None:
         flags = await near.fcntl(thr.task.sysif, fd, F.GETFD)
         if (flags & FD_CLOEXEC) and (fd not in excluded_fds):
@@ -78,7 +78,7 @@ class Thread(UnixThread):
         """
         if isinstance(path, Path):
             out: t.Optional[Path] = path
-            fd = await self.task.open(await self.ram.to_pointer(path), O.WRONLY|O.TRUNC|O.CREAT, mode=mode)
+            fd = await self.task.open(await self.ram.ptr(path), O.WRONLY|O.TRUNC|O.CREAT, mode=mode)
         else:
             out = None
             fd = path
@@ -106,10 +106,10 @@ class Thread(UnixThread):
         async def op(sem: RAM) -> t.Tuple[
                 WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg]]:
             return (
-                await sem.to_pointer(Arg(source)),
-                await sem.to_pointer(Arg(target)),
-                await sem.to_pointer(Arg(filesystemtype)),
-                await sem.to_pointer(Arg(data)),
+                await sem.ptr(Arg(source)),
+                await sem.ptr(Arg(target)),
+                await sem.ptr(Arg(filesystemtype)),
+                await sem.ptr(Arg(data)),
             )
         source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.ram.perform_batch(op)
         await self.task.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)

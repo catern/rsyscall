@@ -56,8 +56,8 @@ class ConsoleGenie(WishGranter):
             message = "".join(traceback.format_exception(None, wish, wish.__traceback__))
             wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
 
-            to_term_pipe = await (await self.thread.task.pipe(await self.thread.ram.malloc_struct(Pipe))).read()
-            from_term_pipe = await (await self.thread.task.pipe(await self.thread.ram.malloc_struct(Pipe))).read()
+            to_term_pipe = await (await self.thread.task.pipe(await self.thread.ram.malloc(Pipe))).read()
+            from_term_pipe = await (await self.thread.task.pipe(await self.thread.ram.malloc(Pipe))).read()
             async_from_term = await self.thread.make_afd(from_term_pipe.read)
             async_to_term = await self.thread.make_afd(to_term_pipe.write)
             try:
@@ -133,7 +133,7 @@ class ConsoleServerGenie(WishGranter):
                 'wisher_globals': wisher_frame.f_globals,
             }, wish.return_type, message)
             nursery.cancel_scope.cancel()
-        await self.thread.task.unlink(await self.thread.ram.to_pointer(sock_path))
+        await self.thread.task.unlink(await self.thread.ram.ptr(sock_path))
         return ret
 
 my_wish_granter: ContextVar[WishGranter] = ContextVar('my_wish_granter')

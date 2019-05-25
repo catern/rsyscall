@@ -123,7 +123,7 @@ class SyscallConnection:
         self.pending_requests = []
         syscalls = StructList(Syscall, [request.syscall for request in requests])
         try:
-            ptr = await self.tofd.ram.to_pointer(syscalls)
+            ptr = await self.tofd.ram.ptr(syscalls)
             # TODO should mark the requests complete incrementally as we write them out,
             # instead of only once all requests have been written out
             to_write: Pointer = ptr

@@ -78,7 +78,7 @@ class StubServer:
         "Start listening on the passed-in path for stub connections."
         sockfd = await thread.make_afd(
             await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-        addr: WrittenPointer[Address] = await thread.ram.to_pointer(await SockaddrUn.from_path(thread, path))
+        addr: WrittenPointer[Address] = await thread.ram.ptr(await SockaddrUn.from_path(thread, path))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
         return StubServer(sockfd, thread)
@@ -114,14 +114,14 @@ async def _setup_stub(
      (access_data_sock, passed_data_sock)] = await thread.open_async_channels(2)
     # memfd for setting up the futex
     futex_memfd = await thread.task.memfd_create(
-        await thread.ram.to_pointer(Path("child_robust_futex_list")))
+        await thread.ram.ptr(Path("child_robust_futex_list")))
     # send the fds to the new process
     connection_fd, make_connection = await thread.connection.prep_fd_transfer()
     async def sendmsg_op(sem: RAM) -> WrittenPointer[SendMsghdr]:
-        iovec = await sem.to_pointer(IovecList([await sem.malloc(bytes, 1)]))
-        cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([
+        iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
+        cmsgs = await sem.ptr(CmsgList([CmsgSCMRights([
             passed_syscall_sock, passed_data_sock, futex_memfd, connection_fd])]))
-        return await sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
+        return await sem.ptr(SendMsghdr(None, iovec, cmsgs))
     _, [] = await bootstrap_sock.sendmsg(await thread.ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
     # close our reference to fds that only the new process needs
     await passed_syscall_sock.invalidate()

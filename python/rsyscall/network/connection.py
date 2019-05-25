@@ -31,7 +31,7 @@ class Connection:
 class FDPassConnection(Connection):
     @staticmethod
     async def make(task: Task, ram: RAM, epoller: Epoller) -> FDPassConnection:
-        pair = await (await task.socketpair(AF.UNIX, SOCK.STREAM, 0, await ram.malloc_struct(Socketpair))).read()
+        pair = await (await task.socketpair(AF.UNIX, SOCK.STREAM, 0, await ram.malloc(Socketpair))).read()
         return FDPassConnection(task, ram, epoller, pair.first, task, ram, pair.second)
 
     def __init__(self, access_task: Task, access_ram: RAM, access_epoller: Epoller, access_fd: FileDescriptor,
@@ -53,14 +53,14 @@ class FDPassConnection(Connection):
 
     async def move_fds(self, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
         async def sendmsg_op(sem: RAM) -> WrittenPointer[SendMsghdr]:
-            iovec = await sem.to_pointer(IovecList([await sem.malloc(bytes, 1)]))
-            cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([fd for fd in fds])]))
-            return await sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
+            iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
+            cmsgs = await sem.ptr(CmsgList([CmsgSCMRights([fd for fd in fds])]))
+            return await sem.ptr(SendMsghdr(None, iovec, cmsgs))
         _, [] = await self.access_fd.sendmsg(await self.access_ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
         async def recvmsg_op(sem: RAM) -> WrittenPointer[RecvMsghdr]:
-            iovec = await sem.to_pointer(IovecList([await sem.malloc(bytes, 1)]))
-            cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights([fd for fd in fds])]))
-            return await sem.to_pointer(RecvMsghdr(None, iovec, cmsgs))
+            iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
+            cmsgs = await sem.ptr(CmsgList([CmsgSCMRights([fd for fd in fds])]))
+            return await sem.ptr(RecvMsghdr(None, iovec, cmsgs))
         _, [], hdr = await self.fd.recvmsg(await self.ram.perform_batch(recvmsg_op), RecvmsgFlags.NONE)
         cmsgs_ptr = (await hdr.read()).control
         if cmsgs_ptr is None:
@@ -76,7 +76,7 @@ class FDPassConnection(Connection):
     async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
         async def make() -> Socketpair:
             return await (await self.access_task.socketpair(
-                AF.UNIX, SOCK.STREAM, 0, await self.access_ram.malloc_struct(Socketpair))).read()
+                AF.UNIX, SOCK.STREAM, 0, await self.access_ram.malloc(Socketpair))).read()
         pairs = await make_n_in_parallel(make, count)
         if self.access_task.fd_table == self.task.fd_table:
             fds = [pair.second.move(self.task) for pair in pairs]

@@ -88,8 +88,8 @@ async def exec_miredo_run_client(
     return child
 
 async def add_to_ambient(thr: RAMThread, capset: t.Set[CAP]) -> None:
-    hdr_ptr = await thr.ram.to_pointer(CapHeader())
-    data_ptr = await thr.ram.malloc_struct(CapData)
+    hdr_ptr = await thr.ram.ptr(CapHeader())
+    data_ptr = await thr.ram.malloc(CapData)
     await thr.task.capget(hdr_ptr, data_ptr)
     data = await data_ptr.read()
     data.inheritable.update(capset)
@@ -100,14 +100,14 @@ async def add_to_ambient(thr: RAMThread, capset: t.Set[CAP]) -> None:
 
 async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) -> Miredo:
     inet_sock = await thread.task.socket(AF.INET, SOCK.DGRAM)
-    await inet_sock.bind(await thread.ram.to_pointer(SockaddrIn(0, 0)))
+    await inet_sock.bind(await thread.ram.ptr(SockaddrIn(0, 0)))
     # set a bunch of sockopts
-    one = await thread.ram.to_pointer(Int32(1))
+    one = await thread.ram.ptr(Int32(1))
     await inet_sock.setsockopt(SOL.IP, IP.RECVERR, one)
     await inet_sock.setsockopt(SOL.IP, IP.PKTINFO, one)
     await inet_sock.setsockopt(SOL.IP, IP.MULTICAST_TTL, one)
     # hello fragments my old friend
-    await inet_sock.setsockopt(SOL.IP, IP.MTU_DISCOVER, await thread.ram.to_pointer(Int32(IP.PMTUDISC_DONT)))
+    await inet_sock.setsockopt(SOL.IP, IP.MTU_DISCOVER, await thread.ram.ptr(Int32(IP.PMTUDISC_DONT)))
     ns_thread = await thread.fork()
     await ns_thread.unshare_user()
     await ns_thread.unshare_net()
@@ -115,8 +115,8 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) 
     icmp6_fd = await ns_thread.task.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
 
     # create the TUN interface
-    tun_fd = await ns_thread.task.open(await ns_thread.ram.to_pointer(Path("/dev/net/tun")), O.RDWR)
-    ptr = await thread.ram.to_pointer(netif.Ifreq(b'teredo', flags=netif.IFF_TUN))
+    tun_fd = await ns_thread.task.open(await ns_thread.ram.ptr(Path("/dev/net/tun")), O.RDWR)
+    ptr = await thread.ram.ptr(netif.Ifreq(b'teredo', flags=netif.IFF_TUN))
     await tun_fd.ioctl(netif.TUNSETIFF, ptr)
     # create reqsock for ifreq operations in this network namespace
     reqsock = await ns_thread.task.socket(AF.INET, SOCK.STREAM)
@@ -124,7 +124,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) 
     tun_index = (await ptr.read()).ifindex
     # create socketpair for communication between privileged process and teredo client
     privproc_pair = await (await ns_thread.task.socketpair(
-        AF.UNIX, SOCK.STREAM, 0, await ns_thread.ram.malloc_struct(Socketpair))).read()
+        AF.UNIX, SOCK.STREAM, 0, await ns_thread.ram.malloc(Socketpair))).read()
 
     privproc_thread = await ns_thread.fork()
     await add_to_ambient(privproc_thread, {CAP.NET_ADMIN})
@@ -161,7 +161,7 @@ class TestMiredo(TrioTestCase):
         print("b-1", time.time())
         print("b0", time.time())
         await self.netsock.bind(
-            await self.miredo.ns_thread.ram.to_pointer(SockaddrNl(0, RTMGRP.IPV6_ROUTE)))
+            await self.miredo.ns_thread.ram.ptr(SockaddrNl(0, RTMGRP.IPV6_ROUTE)))
         print("b0.5", time.time())
 
 

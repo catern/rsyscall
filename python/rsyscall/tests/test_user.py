@@ -16,8 +16,8 @@ class TestUser(TrioTestCase):
         await self.thr.close()
 
     async def test_ambient_caps(self) -> None:
-        hdr_ptr = await self.thr.ram.to_pointer(CapHeader())
-        data_ptr = await self.thr.ram.malloc_struct(CapData)
+        hdr_ptr = await self.thr.ram.ptr(CapHeader())
+        data_ptr = await self.thr.ram.malloc(CapData)
         await self.thr.task.capget(hdr_ptr, data_ptr)
         data = await data_ptr.read()
         data.inheritable.add(CAP.SYS_ADMIN)

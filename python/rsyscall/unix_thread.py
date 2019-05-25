@@ -73,7 +73,7 @@ class UnixThread(ForkThread):
             epoller = await Epoller.make_root(ram, task)
             # this signal is already blocked, we inherited the block, um... I guess...
             # TODO handle this more formally
-            signal_block = SignalBlock(task, await ram.to_pointer(Sigset({Signals.SIGCHLD})))
+            signal_block = SignalBlock(task, await ram.ptr(Sigset({Signals.SIGCHLD})))
             child_monitor = await ChildProcessMonitor.make(
                 ram, task, epoller, signal_block=signal_block, is_reaper=bool(flags & CLONE.NEWPID))
         else:
@@ -99,11 +99,11 @@ class ChildUnixThread(UnixThread):
         async def op(sem: RAM) -> t.Tuple[WrittenPointer[Path],
                                                WrittenPointer[ArgList],
                                                WrittenPointer[ArgList]]:
-            argv_ptrs = ArgList([await sem.to_pointer(Arg(arg)) for arg in argv])
-            envp_ptrs = ArgList([await sem.to_pointer(Arg(arg)) for arg in envp])
-            return (await sem.to_pointer(path),
-                    await sem.to_pointer(argv_ptrs),
-                    await sem.to_pointer(envp_ptrs))
+            argv_ptrs = ArgList([await sem.ptr(Arg(arg)) for arg in argv])
+            envp_ptrs = ArgList([await sem.ptr(Arg(arg)) for arg in envp])
+            return (await sem.ptr(path),
+                    await sem.ptr(argv_ptrs),
+                    await sem.ptr(envp_ptrs))
         filename, argv_ptr, envp_ptr = await self.ram.perform_batch(op)
         child_process = await self.task.execve(filename, argv_ptr, envp_ptr, flags)
         return self.parent_monitor.internal.add_task(child_process)
@@ -132,7 +132,7 @@ class ChildUnixThread(UnixThread):
         sigmask: t.Set[Signals] = set()
         for block in inherited_signal_blocks:
             sigmask = sigmask.union(block.mask)
-        await self.task.sigprocmask((HowSIG.SETMASK, await self.ram.to_pointer(Sigset(sigmask))))
+        await self.task.sigprocmask((HowSIG.SETMASK, await self.ram.ptr(Sigset(sigmask))))
         envp: t.Dict[bytes, bytes] = {**self.environ.data}
         for key in env_updates:
             envp[os.fsencode(key)] = os.fsencode(env_updates[key])

@@ -332,7 +332,7 @@ class SocketMemoryTransport(MemoryTransport):
             [(dest, data)] = ops
             await self.primitive.write(dest, data)
         else:
-            iovp = await self.primitive_remote_ram.to_pointer(IovecList([ptr for ptr, _ in ops]))
+            iovp = await self.primitive_remote_ram.ptr(IovecList([ptr for ptr, _ in ops]))
             datap = await self.local.ram.ptr(b"".join([data for _, data in ops]))
             async with trio.open_nursery() as nursery:
                 @nursery.start_soon

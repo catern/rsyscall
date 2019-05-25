@@ -31,7 +31,7 @@ async def exec_tar_copy_tree(src: ChildThread, src_paths: t.List[Path], src_fd: 
     src_tar = await dest.environ.which("tar")
 
     await dest.task.unshare(CLONE.FS)
-    await dest.task.chdir(await dest.ram.to_pointer(dest_path))
+    await dest.task.chdir(await dest.ram.ptr(dest_path))
     await dest.unshare_files_and_replace({
         dest.stdin: dest_fd,
     })
@@ -132,10 +132,10 @@ async def nix_deploy(src: Store, dest: Store, path: StorePath) -> None:
         await dest.thread.fork(), Command(dest.nix.path/'bin/nix-store', ['nix-store'], {}), dest_fd)
 
 async def canonicalize(thr: RAMThread, path: Path) -> Path:
-    f = await thr.task.open(await thr.ram.to_pointer(path), O.PATH)
+    f = await thr.task.open(await thr.ram.ptr(path), O.PATH)
     size = 4096
-    valid, _ = await thr.task.readlink(await thr.ram.to_pointer(f.as_proc_path()),
-                                       await thr.ram.malloc_type(Path, size))
+    valid, _ = await thr.task.readlink(await thr.ram.ptr(f.as_proc_path()),
+                                       await thr.ram.malloc(Path, size))
     if valid.bytesize() == size:
         # 4096 seems like a reasonable value for PATH_MAX
         raise Exception("symlink longer than 4096 bytes, giving up on readlinking it")
@@ -188,7 +188,7 @@ class Store:
     async def realise(self, store_path: StorePath) -> Path:
         if store_path in self.roots:
             return self.roots[store_path]
-        ptr = await self.thread.ram.to_pointer(store_path.path)
+        ptr = await self.thread.ram.ptr(store_path.path)
         try:
             await self.thread.task.access(ptr, OK.R)
         except (PermissionError, FileNotFoundError):

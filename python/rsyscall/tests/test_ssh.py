@@ -80,8 +80,8 @@ class TestSSH(TrioTestCase):
     async def test_copy(self) -> None:
         cat = await self.store.bin(coreutils_nixdep, "cat")
 
-        local_file = await self.local.task.memfd_create(await self.local.ram.to_pointer(Path("source")))
-        remote_file = await self.remote.task.memfd_create(await self.remote.ram.to_pointer(Path("dest")))
+        local_file = await self.local.task.memfd_create(await self.local.ram.ptr(Path("source")))
+        remote_file = await self.remote.task.memfd_create(await self.remote.ram.ptr(Path("dest")))
 
         data = b'hello world'
         await local_file.write(await self.local.ram.ptr(data))
@@ -108,8 +108,8 @@ class TestSSH(TrioTestCase):
         await rsyscall.thread.do_cloexec_except(
             thread, set([fd.near for fd in thread.task.fd_handles]))
         await self.remote.task.sigprocmask((HowSIG.SETMASK,
-                                            await self.remote.ram.to_pointer(Sigset())),
-                                           await self.remote.ram.malloc_struct(Sigset))
+                                            await self.remote.ram.ptr(Sigset())),
+                                           await self.remote.ram.malloc(Sigset))
         await self.remote.task.read_oldset_and_check()
 
     async def test_nix_deploy(self) -> None:

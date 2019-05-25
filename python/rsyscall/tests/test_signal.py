@@ -8,7 +8,7 @@ class TestSignal(TrioTestCase):
 
     async def test_sigaction(self) -> None:
         sa = Sigaction(Sighandler.DFL)
-        ptr = await self.thr.ram.to_pointer(sa)
+        ptr = await self.thr.ram.ptr(sa)
         await self.thr.task.sigaction(Signals.SIGWINCH, ptr, None)
         await self.thr.task.sigaction(Signals.SIGWINCH, None, ptr)
         out_sa = await ptr.read()

@@ -35,8 +35,8 @@ async def set_singleton_robust_futex(
     futex_value = FUTEX_WAITERS|(int(task.process.near) & FUTEX_TID_MASK)
     async def op(sem: RAM) -> t.Tuple[WrittenPointer[FutexNode],
                                                  WrittenPointer[RobustListHead]]:
-        robust_list_entry = await sem.to_pointer(FutexNode(None, Int32(futex_value)))
-        robust_list_head = await sem.to_pointer(RobustListHead(robust_list_entry))
+        robust_list_entry = await sem.ptr(FutexNode(None, Int32(futex_value)))
+        robust_list_head = await sem.ptr(RobustListHead(robust_list_entry))
         return robust_list_entry, robust_list_head
     robust_list_entry, robust_list_head = await ram.perform_batch(op, allocator)
     await task.set_robust_list(robust_list_head)
@@ -85,7 +85,7 @@ async def rsyscall_exec(
     [(access_data_sock, passed_data_sock)] = await child.open_async_channels(1)
     # create this guy and pass him down to the new thread
     child_futex_memfd = await child.task.memfd_create(
-        await child.ram.to_pointer(Path("child_robust_futex_list")))
+        await child.ram.ptr(Path("child_robust_futex_list")))
     parent_futex_memfd = parent.task.make_fd_handle(child_futex_memfd)
     if isinstance(child.task.sysif, ChildSyscallInterface):
         syscall = child.task.sysif

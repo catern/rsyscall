@@ -27,12 +27,12 @@ class SignalQueue:
     ) -> SignalQueue:
         if signal_block is None:
             async def op(sem: RAM) -> t.Tuple[WrittenPointer[Sigset], Pointer[Sigset]]:
-                return await sem.to_pointer(mask), await sem.malloc_struct(Sigset)
+                return await sem.ptr(mask), await sem.malloc(Sigset)
             sigset_ptr, oldset_ptr = await ram.perform_batch(op)
             signal_block = await task.sigmask_block(sigset_ptr, oldset_ptr)
             await task.read_oldset_and_check()
         else:
-            sigset_ptr = await ram.to_pointer(mask)
+            sigset_ptr = await ram.ptr(mask)
             if signal_block.mask != mask:
                 raise Exception("passed-in SignalBlock", signal_block, "has mask", signal_block.mask,
                                 "which does not match the mask for the SignalQueue we're making", mask)
@@ -53,7 +53,7 @@ class AsyncChildProcess:
     async def waitid_nohang(self) -> t.Optional[ChildEvent]:
         if self.process.unread_siginfo is None:
             await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.ALL|W.NOHANG,
-                                      await self.monitor.ram.malloc_struct(Siginfo))
+                                      await self.monitor.ram.malloc(Siginfo))
         return await self.process.read_siginfo()
 
     async def waitpid(self, options: W) -> ChildEvent:
@@ -135,7 +135,7 @@ class ChildProcessMonitorInternal:
     async def do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
-                buf = await self.ram.malloc_struct(SignalfdSiginfo)
+                buf = await self.ram.malloc(SignalfdSiginfo)
                 # we don't care what information we get from the signal, we just want to
                 # sleep until a SIGCHLD happens
                 await self.signal_queue.read(buf)

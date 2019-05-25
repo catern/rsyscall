@@ -2,7 +2,7 @@
 from __future__ import annotations
 from rsyscall.handle import Task, Pointer, WrittenPointer, MemoryTransport, AllocationInterface, MemoryMapping, MemoryGateway
 from rsyscall.memory.allocator import AllocatorInterface
-from rsyscall.struct import FixedSize, T_fixed_size, T_has_serializer, T_fixed_serializer, Serializer
+from rsyscall.struct import FixedSize, T_fixed_size, HasSerializer, T_has_serializer, FixedSerializer, T_fixed_serializer, Serializer
 import rsyscall.near as near
 
 import typing as t
@@ -41,36 +41,46 @@ class RAM:
     @t.overload
     async def malloc(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]: ...
     @t.overload
-    async def malloc(self, cls: t.Type[bytes], size: int) -> Pointer[bytes]: ...
-    @t.overload
     async def malloc(self, cls: t.Type[T_fixed_serializer], size: int) -> Pointer[T_fixed_serializer]: ...
+    @t.overload
+    async def malloc(self, cls: t.Type[bytes], size: int) -> Pointer[bytes]: ...
 
-    async def malloc(self, cls: t.Union[t.Type[bytes], t.Type[T_fixed_serializer]],
+    async def malloc(self, cls: t.Union[t.Type[T_fixed_serializer], t.Type[bytes]],
                      size: int=None,
-    ) -> t.Union[Pointer[bytes], Pointer[T_fixed_serializer]]:
+    ) -> t.Union[Pointer[T_fixed_serializer], Pointer[bytes]]:
         "Allocate a typed space in memory, sized according to the size of the type or an explicit size argument"
         if size is None:
             if not issubclass(cls, FixedSize):
-                raise Exception("bad cls passed without size", cls)
-            return await self.malloc_struct(cls)
+                raise Exception("non-FixedSize cls passed to malloc without specifying size to allocate", cls)
+            ptr: Pointer = await self.malloc_serializer(cls.get_serializer(self.task), cls.sizeof())
+            return ptr
         else:
-            if issubclass(cls, bytes):
-                return await self._malloc_serializer(BytesSerializer(), size)
+            if issubclass(cls, FixedSerializer):
+                ptr = await self.malloc_serializer(cls.get_serializer(self.task), size)
+                return ptr
+            elif issubclass(cls, bytes):
+                return await self.malloc_serializer(BytesSerializer(), size)
             else:
-                return await self.malloc_type(cls, size)
+                raise Exception("don't know how to find serializer for", cls)
+
 
     @t.overload
-    async def ptr(self, data: t.Union[bytes]) -> WrittenPointer[bytes]: ...
-    @t.overload
     async def ptr(self, data: T_has_serializer) -> WrittenPointer[T_has_serializer]: ...
-    async def ptr(self, data: t.Union[bytes, T_has_serializer],
-    ) -> t.Union[WrittenPointer[bytes], WrittenPointer[T_has_serializer]]:
+    @t.overload
+    async def ptr(self, data: t.Union[bytes]) -> WrittenPointer[bytes]: ...
+    async def ptr(self, data: t.Union[T_has_serializer, bytes],
+    ) -> t.Union[WrittenPointer[T_has_serializer], WrittenPointer[bytes]]:
         "Take some serializable data and return a pointer in memory containing it"
-        if isinstance(data, bytes):
+        if isinstance(data, HasSerializer):
+            serializer = data.get_self_serializer(self.task)
+            data_bytes = serializer.to_bytes(data)
+            ptr: Pointer = await self.malloc_serializer(serializer, len(data_bytes))
+            return await self._write_to_pointer(ptr, data, data_bytes)
+        elif isinstance(data, bytes):
             ptr = await self.malloc(bytes, len(data))
             return await self._write_to_pointer(ptr, data, data)
         else:
-            return await self.to_pointer(data)
+            raise Exception("don't know how to serialize data passed to ptr", data)
 
     async def perform_batch(self, op: t.Callable[[RAM], t.Awaitable[T]],
                                   allocator: AllocatorInterface=None,
@@ -84,13 +94,12 @@ class RAM:
             allocator = self.allocator
         return await perform_batch(self.task, self.transport, allocator, op)
 
-    async def malloc_struct(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]:
-        return await self.malloc_type(cls, cls.sizeof())
+    async def malloc_serializer(self, serializer: Serializer[T], size: int) -> Pointer[T]:
+        """Allocate a typed space in memory using an explicitly-specified Serializer
 
-    async def malloc_type(self, cls: t.Type[T_fixed_serializer], size: int) -> Pointer[T_fixed_serializer]:
-        return await self._malloc_serializer(cls.get_serializer(self.task), size)
+        This is useful only in relatively niche situations.
 
-    async def _malloc_serializer(self, serializer: Serializer[T], size: int) -> Pointer[T]:
+        """
         mapping, allocation = await self.allocator.malloc(size, alignment=1)
         try:
             return Pointer(mapping, self.transport, serializer, allocation)
@@ -104,12 +113,6 @@ class RAM:
         except:
             ptr.free()
             raise
-
-    async def to_pointer(self, data: T_has_serializer) -> WrittenPointer[T_has_serializer]:
-        serializer = data.get_self_serializer(self.task)
-        data_bytes = serializer.to_bytes(data)
-        ptr = await self._malloc_serializer(serializer, len(data_bytes))
-        return await self._write_to_pointer(ptr, data, data_bytes)
 
 class NullAllocation(AllocationInterface):
     "An fake allocation for a null pointer"

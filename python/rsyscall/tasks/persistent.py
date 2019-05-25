@@ -82,12 +82,12 @@ class PersistentServer:
         sockaddr_un = await SockaddrUn.from_path(thread, self.path)
         async def sendmsg_op(sem: RAM) -> t.Tuple[
                 WrittenPointer[Address], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
-            addr: WrittenPointer[Address] = await sem.to_pointer(sockaddr_un)
-            count = await sem.to_pointer(Int32(len(fds)))
-            iovec = await sem.to_pointer(IovecList([await sem.malloc(bytes, 1)]))
-            cmsgs = await sem.to_pointer(CmsgList([CmsgSCMRights(fds)]))
-            hdr = await sem.to_pointer(SendMsghdr(None, iovec, cmsgs))
-            response_buf = await sem.to_pointer(StructList(Int32, [Int32(0)]*len(fds)))
+            addr: WrittenPointer[Address] = await sem.ptr(sockaddr_un)
+            count = await sem.ptr(Int32(len(fds)))
+            iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
+            cmsgs = await sem.ptr(CmsgList([CmsgSCMRights(fds)]))
+            hdr = await sem.ptr(SendMsghdr(None, iovec, cmsgs))
+            response_buf = await sem.ptr(StructList(Int32, [Int32(0)]*len(fds)))
             return addr, count, hdr, response_buf
         addr, count, hdr, response = await thread.ram.perform_batch(sendmsg_op)
         data = None
@@ -150,7 +150,7 @@ async def fork_persistent(
         parent: Thread, path: Path,
 ) -> t.Tuple[Thread, PersistentServer]:
     listening_sock = await parent.task.socket(AF.UNIX, SOCK.STREAM)
-    await listening_sock.bind(await parent.ram.to_pointer(await SockaddrUn.from_path(parent, path)))
+    await listening_sock.bind(await parent.ram.ptr(await SockaddrUn.from_path(parent, path)))
     await listening_sock.listen(1)
     [(access_sock, remote_sock)] = await parent.open_async_channels(1)
     task = await spawn_child_task(
@@ -163,7 +163,7 @@ async def fork_persistent(
 
     ## create the new persistent task
     epoller = await Epoller.make_root(ram, task)
-    signal_block = SignalBlock(task, await ram.to_pointer(Sigset({Signals.SIGCHLD})))
+    signal_block = SignalBlock(task, await ram.ptr(Sigset({Signals.SIGCHLD})))
     # TODO use an inherited signalfd instead
     child_monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
     child = Thread(

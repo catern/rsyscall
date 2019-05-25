@@ -47,7 +47,7 @@ class ExecutablePathCache:
     async def get_fd_for_path(self, path: Path) -> t.Optional[FileDescriptor]:
         if path not in self.fds:
             try:
-                fd = await self.task.open(await self.ram.to_pointer(path), O.PATH|O.DIRECTORY)
+                fd = await self.task.open(await self.ram.ptr(path), O.PATH|O.DIRECTORY)
             except OSError:
                 self.fds[path] = None
             else:
@@ -72,7 +72,7 @@ class ExecutablePathCache:
         try:
             path = self.name_to_path[name]
         except KeyError:
-            nameptr = await self.ram.to_pointer(Path(name))
+            nameptr = await self.ram.ptr(Path(name))
             # do the lookup for 16 paths at a time, that seems like a good batching number
             for paths in chunks(self.paths, 64):
                 thunks = [functools.partial(self.check, path, nameptr) for path in paths]

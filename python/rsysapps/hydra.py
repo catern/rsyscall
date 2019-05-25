@@ -102,7 +102,7 @@ class HTTPClient:
     @staticmethod
     async def connect_inet(thread: Thread, addr: SockaddrIn) -> HTTPClient:
         sock = await thread.make_afd(await thread.task.socket(AF.INET, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-        await sock.connect(await thread.ram.to_pointer(addr))
+        await sock.connect(await thread.ram.ptr(addr))
         return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
             ("Host", "localhost"),
             ("Accept", "application/json"),
@@ -228,7 +228,7 @@ async def start_postgres(nursery, thread: Thread, path: Path) -> Postgres:
     # pg_ctl uses the pid file to determine when postgres is up, so we do the same.
     pid_file_name = "postmaster.pid"
     pid_file = None
-    name = await thread.ram.to_pointer(data/pid_file_name)
+    name = await thread.ram.ptr(data/pid_file_name)
     while True:
         await watch.wait_until_event(IN.CLOSE_WRITE, pid_file_name)
         if pid_file is None:

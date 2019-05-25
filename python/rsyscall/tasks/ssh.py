@@ -132,7 +132,7 @@ class SSHHost:
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (hostname+random_suffix+".sock")
         local_socket_path = thread.environ.tmpdir/name
-        fd = await thread.task.open(await thread.ram.to_pointer(self.executables.bootstrap_path), O.RDONLY)
+        fd = await thread.task.open(await thread.ram.ptr(self.executables.bootstrap_path), O.RDONLY)
         async with run_socket_binder(thread, ssh_to_host, fd) as tmp_path_bytes:
             return await ssh_bootstrap(thread, ssh_to_host, local_socket_path, tmp_path_bytes)
 
@@ -143,7 +143,7 @@ async def run_socket_binder(
         bootstrap_executable: FileDescriptor,
 ) -> t.AsyncGenerator[bytes, None]:
     stdout_pipe = await (await parent.task.pipe(
-        await parent.ram.malloc_struct(Pipe))).read()
+        await parent.ram.malloc(Pipe))).read()
     async_stdout = await parent.make_afd(stdout_pipe.read)
     child = await parent.fork()
     async with child:
@@ -181,7 +181,7 @@ async def run_socket_binder(
 async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
                       local_path: Path, remote_path: str) -> AsyncChildProcess:
     stdout_pipe = await (await thread.task.pipe(
-        await thread.ram.malloc_struct(Pipe))).read()
+        await thread.ram.malloc(Pipe))).read()
     async_stdout = await thread.make_afd(stdout_pipe.read)
     child = await thread.fork()
     stdout = stdout_pipe.write.move(child.task)
@@ -210,7 +210,7 @@ async def ssh_bootstrap(
         tmp_path_bytes: bytes,
 ) -> t.Tuple[AsyncChildProcess, Thread]:
     # identify local path
-    local_data_addr: WrittenPointer[Address] = await parent.ram.to_pointer(
+    local_data_addr: WrittenPointer[Address] = await parent.ram.ptr(
         await SockaddrUn.from_path(parent, local_socket_path))
     # start port forwarding; we'll just leak this process, no big deal
     # TODO we shouldn't leak processes; we should be GCing processes at some point
@@ -298,10 +298,10 @@ async def make_local_ssh_from_executables(thread: Thread,
     keygen_thread = await thread.fork()
     # ugh, we have to make a directory because ssh-keygen really wants to output to a directory
     async with (await thread.mkdtemp()) as tmpdir:
-        await keygen_thread.task.chdir(await keygen_thread.ram.to_pointer(tmpdir))
+        await keygen_thread.task.chdir(await keygen_thread.ram.ptr(tmpdir))
         await (await keygen_thread.exec(keygen_command)).waitpid(W.EXITED)
-        privkey_file = await thread.task.open(await thread.ram.to_pointer(tmpdir/'key'), O.RDONLY)
-        pubkey_file = await thread.task.open(await thread.ram.to_pointer(tmpdir/'key.pub'), O.RDONLY)
+        privkey_file = await thread.task.open(await thread.ram.ptr(tmpdir/'key'), O.RDONLY)
+        pubkey_file = await thread.task.open(await thread.ram.ptr(tmpdir/'key.pub'), O.RDONLY)
     def to_host(ssh: SSHCommand, privkey_file=privkey_file, pubkey_file=pubkey_file) -> SSHCommand:
         privkey = privkey_file.as_proc_path()
         pubkey = pubkey_file.as_proc_path()

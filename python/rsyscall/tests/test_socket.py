@@ -21,7 +21,7 @@ class TestSocket(TrioTestCase):
 
     async def test_listen(self) -> None:
         sockfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM)
-        addr = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, self.path/"sock"))
+        addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, self.path/"sock"))
         await sockfd.bind(addr)
         await sockfd.listen(10)
 
@@ -31,7 +31,7 @@ class TestSocket(TrioTestCase):
 
     async def test_listen_async(self) -> None:
         sockfd = await self.thr.make_afd(await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-        addr = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, self.path/"sock"))
+        addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, self.path/"sock"))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
 
@@ -45,7 +45,7 @@ class TestSocket(TrioTestCase):
 
     async def test_listen_async_accept(self) -> None:
         sockfd = await self.thr.make_afd(await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-        addr = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, self.path/"sock"))
+        addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, self.path/"sock"))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
 
@@ -66,16 +66,16 @@ class TestSocket(TrioTestCase):
     async def test_pass_fd(self) -> None:
         fds = await (await self.thr.task.socketpair(
             AF.UNIX, SOCK.STREAM, 0,
-            await self.thr.ram.malloc_struct(Socketpair))).read()
+            await self.thr.ram.malloc(Socketpair))).read()
         in_data = b"hello"
 
-        iovec = await self.thr.ram.to_pointer(IovecList([await self.thr.ram.ptr(in_data)]))
-        cmsgs = await self.thr.ram.to_pointer(CmsgList([CmsgSCMRights([fds.second])]))
+        iovec = await self.thr.ram.ptr(IovecList([await self.thr.ram.ptr(in_data)]))
+        cmsgs = await self.thr.ram.ptr(CmsgList([CmsgSCMRights([fds.second])]))
         [written], [] = await fds.second.sendmsg(
-            await self.thr.ram.to_pointer(SendMsghdr(None, iovec, cmsgs)), SendmsgFlags.NONE)
+            await self.thr.ram.ptr(SendMsghdr(None, iovec, cmsgs)), SendmsgFlags.NONE)
 
         [valid], [], hdr = await fds.first.recvmsg(
-            await self.thr.ram.to_pointer(RecvMsghdr(None, iovec, cmsgs)), RecvmsgFlags.NONE)
+            await self.thr.ram.ptr(RecvMsghdr(None, iovec, cmsgs)), RecvmsgFlags.NONE)
 
         self.assertEqual(in_data, await valid.read())
 
@@ -86,9 +86,9 @@ class TestSocket(TrioTestCase):
 
     async def test_long_sockaddr(self) -> None:
         "SockaddrUn.from_path works correctly on long Unix socket paths"
-        longdir = await self.thr.ram.to_pointer(self.path/("long"*50))
+        longdir = await self.thr.ram.ptr(self.path/("long"*50))
         await self.thr.task.mkdir(longdir)
-        addr = await self.thr.ram.to_pointer(await SockaddrUn.from_path(self.thr, longdir.value/"sock"))
+        addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, longdir.value/"sock"))
 
         sockfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM)
         await sockfd.bind(addr)
@@ -99,5 +99,5 @@ class TestSocket(TrioTestCase):
         connfd = await sockfd.accept()
 
         dirfd = await self.thr.task.open(longdir, O.DIRECTORY)
-        valid, rest = await dirfd.getdents(await self.thr.ram.malloc_type(DirentList, 4096))
+        valid, rest = await dirfd.getdents(await self.thr.ram.malloc(DirentList, 4096))
         self.assertCountEqual([dirent.name for dirent in await valid.read()], ['.', '..', 'sock'])

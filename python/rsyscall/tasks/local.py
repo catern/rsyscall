@@ -149,7 +149,7 @@ async def _initialize_module() -> None:
     # wipe out the SIGWINCH handler that the readline module installs
     import readline
     await thread.task.sigaction(
-        Signals.SIGWINCH, await thread.ram.to_pointer(Sigaction(Sighandler.DFL)), None)
+        Signals.SIGWINCH, await thread.ram.ptr(Sigaction(Sighandler.DFL)), None)
 
 task = _make_local_task()
 trio.run(_initialize_module)

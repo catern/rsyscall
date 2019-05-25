@@ -56,7 +56,7 @@ class EpollWaiter:
             if needs_run:
                 maxevents = 32
                 if self.input_buf is None:
-                    self.input_buf = await self.ram.malloc_type(EpollEventList, maxevents * EpollEvent.sizeof())
+                    self.input_buf = await self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof())
                 if self.syscall_response is None:
                     if self.wait_readable:
                         await self.wait_readable()
@@ -110,10 +110,10 @@ class Epoller:
         return EpolledFileDescriptor(self, fd, receive, number)
 
     async def add(self, fd: FileDescriptor, event: EpollEvent) -> None:
-        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.to_pointer(event))
+        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.ptr(event))
 
     async def modify(self, fd: FileDescriptor, event: EpollEvent) -> None:
-        await self.epfd.epoll_ctl(EPOLL_CTL.MOD, fd, await self.ram.to_pointer(event))
+        await self.epfd.epoll_ctl(EPOLL_CTL.MOD, fd, await self.ram.ptr(event))
 
     async def delete(self, fd: FileDescriptor) -> None:
         await self.epfd.epoll_ctl(EPOLL_CTL.DEL, fd)
@@ -272,13 +272,13 @@ class AsyncFileDescriptor:
             return await self._accept_with_addr(flags, addr)
 
     async def accept_addr(self, flags: SOCK=SOCK.NONE) -> t.Tuple[FileDescriptor, Address]:
-        written_sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(GenericSockaddr)))
+        written_sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(GenericSockaddr)))
         fd, sockbuf = await self.accept(flags, written_sockbuf)
         addr = (await (await sockbuf.read()).buf.read()).parse()
         return fd, addr
 
     async def bind(self, addr: T_addr) -> None:
-        await self.handle.bind(await self.ram.to_pointer(addr))
+        await self.handle.bind(await self.ram.ptr(addr))
 
     async def connect(self, addr: WrittenPointer[Address]) -> None:
         try:
@@ -287,7 +287,7 @@ class AsyncFileDescriptor:
             if e.errno == errno.EINPROGRESS:
                 while not self.is_writable:
                     await self._wait_once()
-                sockbuf = await self.ram.to_pointer(Sockbuf(await self.ram.malloc_struct(Int32)))
+                sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(Int32)))
                 retbuf = await self.handle.getsockopt(SOL.SOCKET, SO.ERROR, sockbuf)
                 err = await (await retbuf.read()).buf.read()
                 if err != 0:
@@ -296,7 +296,7 @@ class AsyncFileDescriptor:
                 raise
 
     async def connect_addr(self, addr: T_addr) -> None:
-        await self.connect(await self.ram.to_pointer(addr))
+        await self.connect(await self.ram.ptr(addr))
 
     async def close(self) -> None:
         await self.epolled.close()

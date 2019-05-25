@@ -54,6 +54,6 @@ class TestFork(TrioTestCase):
         epoller = await Epoller.make_root(self.thr.ram, self.thr.task)
         sigqueue = await SignalQueue.make(self.thr.ram, self.thr.task, epoller, Sigset({Signals.SIGINT}))
         await self.thr.task.process.kill(Signals.SIGINT)
-        buf = await self.thr.ram.malloc_struct(SignalfdSiginfo)
+        buf = await self.thr.ram.malloc(SignalfdSiginfo)
         sigdata = await sigqueue.read(buf)
         self.assertEqual((await sigdata.read()).signo, Signals.SIGINT)

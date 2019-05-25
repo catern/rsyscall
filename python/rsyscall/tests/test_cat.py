@@ -8,8 +8,8 @@ class TestCat(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local.thread
         self.cat = await self.thr.environ.which("cat")
-        self.pipe_in = await (await self.thr.task.pipe(await self.thr.ram.malloc_struct(Pipe))).read()
-        self.pipe_out = await (await self.thr.task.pipe(await self.thr.ram.malloc_struct(Pipe))).read()
+        self.pipe_in = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()
+        self.pipe_out = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()
         thread = await self.thr.fork()
         await thread.unshare_files_and_replace({
             thread.stdin: self.pipe_in.read,
