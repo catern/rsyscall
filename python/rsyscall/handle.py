@@ -364,6 +364,9 @@ class FileDescriptor:
     def for_task(self, task: Task) -> FileDescriptor:
         return task.make_fd_handle(self)
 
+    def copy(self) -> FileDescriptor:
+        return self.for_task(self.task)
+
     @contextlib.contextmanager
     def borrow(self, task: Task) -> t.Iterator[FileDescriptor]:
         if self.task == task:
@@ -506,7 +509,7 @@ class FileDescriptor:
             ret = await rsyscall.near.write(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
             return buf.split(ret)
 
-    async def sendmsg(self, msg: WrittenPointer[SendMsghdr], flags: SendmsgFlags
+    async def sendmsg(self, msg: WrittenPointer[SendMsghdr], flags: SendmsgFlags=SendmsgFlags.NONE
     ) -> t.Tuple[IovecList, IovecList]:
         with contextlib.ExitStack() as stack:
             stack.enter_context(msg.borrow(self.task))
@@ -521,7 +524,7 @@ class FileDescriptor:
             ret = await rsyscall.near.sendmsg(self.task.sysif, self.near, msg.near, flags)
         return msg.value.iov.value.split(ret)
 
-    async def recvmsg(self, msg: WrittenPointer[RecvMsghdr], flags: RecvmsgFlags
+    async def recvmsg(self, msg: WrittenPointer[RecvMsghdr], flags: RecvmsgFlags=RecvmsgFlags.NONE,
     ) -> t.Tuple[IovecList, IovecList, Pointer[RecvMsghdrOut]]:
         flags |= RecvmsgFlags.CMSG_CLOEXEC
         with contextlib.ExitStack() as stack:

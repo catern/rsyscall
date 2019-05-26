@@ -47,7 +47,7 @@ class FDPassConnection(Connection):
     async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
         chans = await self.open_channels(count)
         access_socks, local_socks = zip(*chans)
-        async_access_socks = [await AsyncFileDescriptor.make_handle(self.access_epoller, self.access_ram, sock)
+        async_access_socks = [await AsyncFileDescriptor.make(self.access_epoller, self.access_ram, sock)
                               for sock in access_socks]
         return list(zip(async_access_socks, local_socks))
 
@@ -56,12 +56,12 @@ class FDPassConnection(Connection):
             iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
             cmsgs = await sem.ptr(CmsgList([CmsgSCMRights([fd for fd in fds])]))
             return await sem.ptr(SendMsghdr(None, iovec, cmsgs))
-        _, [] = await self.access_fd.sendmsg(await self.access_ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
+        _, [] = await self.access_fd.sendmsg(await self.access_ram.perform_batch(sendmsg_op))
         async def recvmsg_op(sem: RAM) -> WrittenPointer[RecvMsghdr]:
             iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
             cmsgs = await sem.ptr(CmsgList([CmsgSCMRights([fd for fd in fds])]))
             return await sem.ptr(RecvMsghdr(None, iovec, cmsgs))
-        _, [], hdr = await self.fd.recvmsg(await self.ram.perform_batch(recvmsg_op), RecvmsgFlags.NONE)
+        _, [], hdr = await self.fd.recvmsg(await self.ram.perform_batch(recvmsg_op))
         cmsgs_ptr = (await hdr.read()).control
         if cmsgs_ptr is None:
             raise Exception("cmsgs field of header is, impossibly, None")
@@ -119,7 +119,7 @@ class ListeningConnection(Connection):
     async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
         chans = await self.open_channels(count)
         access_socks, local_socks = zip(*chans)
-        async_access_socks = [await AsyncFileDescriptor.make_handle(self.access_epoller, self.access_ram, sock)
+        async_access_socks = [await AsyncFileDescriptor.make(self.access_epoller, self.access_ram, sock)
                               for sock in access_socks]
         return list(zip(async_access_socks, local_socks))
 

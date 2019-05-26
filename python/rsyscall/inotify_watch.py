@@ -74,7 +74,7 @@ class Inotify:
     @staticmethod
     async def make(thread: Thread) -> Inotify:
         fd = await thread.task.inotify_init(InotifyFlag.NONBLOCK)
-        asyncfd = await AsyncFileDescriptor.make_handle(thread.epoller, thread.ram, fd, is_nonblock=True)
+        asyncfd = await AsyncFileDescriptor.make(thread.epoller, thread.ram, fd, is_nonblock=True)
         return Inotify(asyncfd, thread.ram)
 
     async def add(self, path: handle.Path, mask: IN) -> Watch:

@@ -104,7 +104,7 @@ class AsyncSignalfd:
                 raise Exception("passed-in SignalBlock", signal_block, "has mask", signal_block.mask,
                                 "which does not match the mask for the AsyncSignalfd we're making", mask)
         fd = await task.signalfd(sigset_ptr, SFD.NONBLOCK)
-        afd = await AsyncFileDescriptor.make_handle(epoller, ram, fd, is_nonblock=True)
+        afd = await AsyncFileDescriptor.make(epoller, ram, fd, is_nonblock=True)
         return cls(afd, signal_block)
 
     def __init__(self,

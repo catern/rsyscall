@@ -128,7 +128,7 @@ class EpollWaiter:
 
         self.next_number = 0
         self.number_to_cb: t.Dict[int, t.Callable[[EPOLL], None]] = {}
-        self.pending_remove: t.List[int] = []
+        self.pending_remove: t.Set[int] = set()
         self.running_wait = OneAtATime()
         # resumability
         self.input_buf: t.Optional[Pointer[EpollEventList]] = None
@@ -136,6 +136,14 @@ class EpollWaiter:
         self.valid_events_buf: t.Optional[Pointer[EpollEventList]] = None
 
     def add_and_allocate_number(self, cb: t.Callable[[EPOLL], None]) -> int:
+        """Add a callback which will be called on EpollEvents with data == returned number
+
+        We can then add the returned number to the epollfd with some file descriptor and
+        mask.
+
+        This is not the user-interface for epoll. That's the register method on Epoller.
+
+        """
         number = self.next_number
         # TODO technically we should allocate the lowest unused number
         self.next_number += 1
@@ -143,16 +151,25 @@ class EpollWaiter:
         return number
 
     def remove_number(self, number: int) -> None:
+        "Remove the callback for this number"
         # we mark this number to be removed before we call epoll again; we can't
         # immediately remove it since we might be in the middle of a call right now.
-        self.pending_remove.append(number)
+        self.pending_remove.add(number)
 
     async def do_wait(self) -> None:
+        """Perform an interruptible epoll_wait, calling callbacks with any events.
+
+        We take care to store the running state of this method on the object, so that if
+        we're cancelled, someone else can continue the call without dropping any events.
+        It would be nice if we didn't have to do that manually; see "shared coroutine"
+        notion in the docstring of OneAtATime for what we'd prefer.
+
+        """
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
                 for number in self.pending_remove:
                     del self.number_to_cb[number]
-                self.pending_remove = []
+                self.pending_remove = set()
                 maxevents = 32
                 if self.input_buf is None:
                     self.input_buf = await self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof())
@@ -169,7 +186,8 @@ class EpollWaiter:
                 self.valid_events_buf = None
                 self.syscall_response = None
                 for event in received_events:
-                    self.number_to_cb[event.data](event.events)
+                    if event.data not in self.pending_remove:
+                        self.number_to_cb[event.data](event.events)
 
 class Epoller:
     """Terribly named class that allows registering fds on epoll, and waiting on them
@@ -230,23 +248,34 @@ class Epoller:
         return EpolledFileDescriptor(self, fd, number)
 
 class EpolledFileDescriptor:
+    """Representation of a file descriptor registered on an epollfd
+
+    We have to keep around a reference to the file descriptor to perform
+    EPOLL_CTL.DEL. This is a bit annoying, but whatever.
+
+    """
     def __init__(self,
                  epoller: Epoller,
                  fd: FileDescriptor,
                  number: int) -> None:
         self.epoller = epoller
         self.fd = fd
+        # TODO, we should copy this so it can't be closed out from under us
+        # self.fd = fd.copy()
         self.number = number
         self.in_epollfd = True
 
     async def do_wait(self) -> None:
+        "Perform one epoll_wait, which may call some callbacks"
         await self.epoller.epoll_waiter.do_wait()
 
     async def modify(self, events: EPOLL) -> None:
+        "Change the EPOLL flags that this fd is registered with"
         await self.epoller.epfd.epoll_ctl(
             EPOLL_CTL.MOD, self.fd, await self.epoller.ram.ptr(EpollEvent(self.number, events)))
 
     async def delete(self) -> None:
+        "Delete this fd from the epollfd"
         if self.in_epollfd:
             await self.epoller.epfd.epoll_ctl(EPOLL_CTL.DEL, self.fd)
             self.epoller.epoll_waiter.remove_number(self.number)
@@ -294,8 +323,14 @@ class FDStatus:
         self.mask &= ~event
 
 class AsyncFileDescriptor:
+    """A file descriptor on which IO can be performed without blocking the thread
+
+    Also comes with helpful methods to abstract over memory allocation; please try to
+    avoid using them.
+
+    """
     @staticmethod
-    async def make_handle(epoller: Epoller, ram: RAM, fd: FileDescriptor, is_nonblock=False
+    async def make(epoller: Epoller, ram: RAM, fd: FileDescriptor, is_nonblock=False
     ) -> AsyncFileDescriptor:
         if not is_nonblock:
             await fd.fcntl(F.SETFL, O.NONBLOCK)
@@ -347,8 +382,6 @@ class AsyncFileDescriptor:
                 return await self.handle.write(buf)
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    # TODO this is not really quite right if it's possible to concurrently call methods on this object.
-                    # we really need to lock while we're making the async call, right? maybe...
                     self.status.negedge(EPOLL.OUT)
                 else:
                     raise
@@ -539,4 +572,4 @@ class EpollThread(RAMThread):
         self.epoller = epoller
 
     async def make_afd(self, fd: FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
-        return await AsyncFileDescriptor.make_handle(self.epoller, self.ram, fd, is_nonblock=nonblock)
+        return await AsyncFileDescriptor.make(self.epoller, self.ram, fd, is_nonblock=nonblock)
