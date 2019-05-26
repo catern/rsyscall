@@ -83,13 +83,13 @@ class AsyncSignalfd:
     ) -> None:
         self.afd = afd
         self.signal_block = signal_block
-        self.next_event = MultiplexedEvent(self._wait_for_some_signal)
+        self.next_signal = MultiplexedEvent(self._wait_for_some_signal)
 
     async def _wait_for_some_signal(self):
         # we don't care what information we get from the signal, we
         # just want to sleep until some signal happens
         await self.afd.read(await self.afd.ram.malloc(SignalfdSiginfo))
-        self.next_event = MultiplexedEvent(self._wait_for_some_signal)
+        self.next_signal = MultiplexedEvent(self._wait_for_some_signal)
 
 class AsyncChildProcess:
     "A child process which can be monitored without blocking the thread"
@@ -97,7 +97,7 @@ class AsyncChildProcess:
         self.process = process
         self.ram = ram
         self.sigchld_sigfd = sigchld_sigfd
-        self.next_sigchld_event: t.Optional[MultiplexedEvent] = None
+        self.next_sigchld: t.Optional[MultiplexedEvent] = None
 
     async def waitid_nohang(self) -> t.Optional[ChildEvent]:
         if self.process.unread_siginfo is None:
@@ -110,14 +110,14 @@ class AsyncChildProcess:
             # if the child is already dead we'd get an ECHLD not the death event again.
             return self.process.death_event
         while True:
-            if self.next_sigchld_event:
-                await self.next_sigchld_event.wait()
-            self.next_sigchld_event = self.sigchld_sigfd.next_event
+            if self.next_sigchld:
+                await self.next_sigchld.wait()
+            self.next_sigchld = self.sigchld_sigfd.next_signal
             event = await self.waitid_nohang()
             if event is not None:
                 # we shouldn't wait the next time we're called, we should eagerly wait for
                 # an event, since we don't know that one isn't there.
-                self.next_sigchld_event = None
+                self.next_sigchld = None
                 if event.state(options):
                     return event
                 else:
