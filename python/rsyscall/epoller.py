@@ -263,12 +263,7 @@ class AsyncFileDescriptor:
         self.handle = handle
         self.queue = queue
         self.running_wait = OneAtATime()
-        self.is_readable = False
-        self.is_writable = False
-        self.read_hangup = False
-        self.priority = False
-        self.error = False
-        self.hangup = False
+        self.status = EPOLL.NONE
 
     @property
     def thr(self) -> EpollThread:
@@ -283,25 +278,17 @@ class AsyncFileDescriptor:
                         break
                     except trio.WouldBlock:
                         await self.epolled.epoller.epoll_waiter.do_wait()
-                if event & EPOLL.IN:    self.is_readable = True
-                if event & EPOLL.OUT:   self.is_writable = True
-                if event & EPOLL.RDHUP: self.read_hangup = True
-                if event & EPOLL.PRI:   self.priority = True
-                if event & EPOLL.ERR:   self.error = True
-                if event & EPOLL.HUP:   self.hangup = True
-
-    def could_read(self) -> bool:
-        return self.is_readable or self.read_hangup or self.hangup or self.error
+                self.status |= event
 
     async def read(self, ptr: Pointer) -> t.Tuple[Pointer, Pointer]:
         while True:
-            while not self.could_read():
+            while not self.status & (EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR):
                 await self._wait_once()
             try:
                 return (await self.handle.read(ptr))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    self.is_readable = False
+                    self.status &= ~EPOLL.IN
                 else:
                     raise
 
@@ -311,11 +298,11 @@ class AsyncFileDescriptor:
         return await valid.read()
 
     async def wait_for_rdhup(self) -> None:
-        while not (self.read_hangup or self.hangup):
+        while not self.status & (EPOLL.RDHUP|EPOLL.HUP):
             await self._wait_once()
 
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        while not (self.is_writable or self.error):
+        while not self.status & (EPOLL.OUT|EPOLL.ERR):
             await self._wait_once()
         while True:
             try:
@@ -324,7 +311,7 @@ class AsyncFileDescriptor:
                 if e.errno == errno.EAGAIN:
                     # TODO this is not really quite right if it's possible to concurrently call methods on this object.
                     # we really need to lock while we're making the async call, right? maybe...
-                    self.is_writable = False
+                    self.status &= ~EPOLL.OUT
                 else:
                     raise
 
@@ -340,25 +327,25 @@ class AsyncFileDescriptor:
     async def _accept_with_addr(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
     ) -> t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]:
         while True:
-            while not (self.is_readable or self.hangup):
+            while not self.status & (EPOLL.IN|EPOLL.HUP):
                 await self._wait_once()
             try:
                 return (await self.handle.accept(flags, addr))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    self.is_readable = False
+                    self.status &= ~EPOLL.IN
                 else:
                     raise
 
     async def _accept(self, flags: SOCK) -> FileDescriptor:
         while True:
-            while not (self.is_readable or self.hangup):
+            while not self.status & (EPOLL.IN|EPOLL.HUP):
                 await self._wait_once()
             try:
                 return (await self.handle.accept(flags))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    self.is_readable = False
+                    self.status &= ~EPOLL.IN
                 else:
                     raise
 
@@ -389,7 +376,7 @@ class AsyncFileDescriptor:
             await self.handle.connect(addr)
         except OSError as e:
             if e.errno == errno.EINPROGRESS:
-                while not self.is_writable:
+                while not self.status & EPOLL.OUT:
                     await self._wait_once()
                 sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(Int32)))
                 retbuf = await self.handle.getsockopt(SOL.SOCKET, SO.ERROR, sockbuf)
