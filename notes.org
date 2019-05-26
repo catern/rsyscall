@@ -18731,10 +18731,10 @@ and rename it to waitpid?
 
     though this is all pretty niche...
 *** DONE implement killpg
-** TODO store childprocess in childthread
+** DONE store childprocess in childthread
    a real use case: sending signals to trigger EINTR
    (to cancel syscalls)
-** TODO rename ChildEvent to ChildStateChange or something
+** DONE rename ChildEvent to ChildState
    ChildState would be good actually
 
    ChildStatus??
@@ -18750,6 +18750,8 @@ and rename it to waitpid?
    i also don't like exit_status - it needs to be death_state because it's death, not exit.
 
    hmm
+
+   I'll leave it as ChildState
 ** DONE switch from Signals to SIG
 ** DONE change everything to use malloc/ptr
    Delete malloc_struct/malloc_type/to_pointer.
@@ -18836,6 +18838,22 @@ and rename it to waitpid?
     prerequisite to that is being comfortable doing a 0.0.1 release,
     whether that's through pypi or a local Nix package or whatever.
     that's clearly the easy way forward, meh.
+** TODO rename Trampoline to something
+closure?
+thunk?
+nativefunctioncall?
+all the arguments are provided...
+hmm it should never return, also...
+it's the stuff for starting a thread...
+it's what will be on the stack after the trampoline function...
+trampoline kind of is a good name, actually, it's specific.
+
+well no that specificity is pointless,
+because we could use it some other way.
+
+nativeclosure, nativethunk.
+
+nativecall?
 * DOCUMENTATION!
   Time to write it!
 ** DONE move epoll blocking stuff in module docstring to Epoller docstring

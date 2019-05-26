@@ -1,3 +1,4 @@
+"Types to represent paths, used by many syscalls"
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.struct import Serializable, Struct
@@ -11,9 +12,12 @@ else:
     PathLike = object
 
 class PurePosixPath(pathlib.PurePosixPath):
-    # pathlib does a lot of crazy stuff which makes it hard to inherit
-    # from. this class insulates us from that stuff, so it can just be
-    # inherited from naively.
+    """A version of pathlib.PurePosixPath which is safe to inherit from
+
+    pathlib does a lot of crazy stuff which makes it hard to inherit from.  This
+    class insulates us from that stuff, so it can be inherited from naively.
+
+    """
     def __new__(cls, *args, **kwargs) -> None:
         # pathlib.PurePath inherits from object
         return object.__new__(cls)
@@ -26,6 +30,14 @@ class PurePosixPath(pathlib.PurePosixPath):
         self._parts = parts
 
 class Path(PurePosixPath, Serializable):
+    """A serializable path, with all the methods of pathlib.PurePath.
+
+    It would be nice if we could just use pathlib.PurePosixPath rather than
+    inherit from it; but it's not clear how to make that type-safe. Plus,
+    requiring the user to import pathlib would encourage them to use
+    pathlib.Path; we'd rather they stay within rsyscall.
+
+    """
     def to_bytes(self) -> bytes:
         return bytes(self) + b'\0'
 
@@ -40,6 +52,7 @@ class Path(PurePosixPath, Serializable):
             return cls(os.fsdecode(data[0:nullidx]))
 
 class EmptyPath(Struct):
+    "An empty path; useful for *at syscalls which take this as a sentinel value" 
     def to_bytes(self) -> bytes:
         return b'\0'
 

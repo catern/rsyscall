@@ -23,9 +23,11 @@ __all__ = [
     "Siginfo",
     "Sigset",
     "Sigaction",
+    "SignalBlock",
 ]
 
 class SIG(enum.IntEnum):
+    "All the non-realtime signals, used by many syscalls"
     NONE = 0
     HUP = signal.SIGHUP
     INT = signal.SIGINT
@@ -61,6 +63,7 @@ class SIG(enum.IntEnum):
     SYS = signal.SIGSYS
 
 class SA(enum.IntFlag):
+    "Flags which can be set in a struct sigaction passed to the sigaction syscall"
     NOCLDSTOP = lib.SA_NOCLDSTOP
     NOCLDWAIT = lib.SA_NOCLDWAIT
     NODEFER = lib.SA_NODEFER
@@ -71,16 +74,19 @@ class SA(enum.IntFlag):
     RESTORER = lib.SA_RESTORER
 
 class HowSIG(enum.IntEnum):
+    "The how argument to sigprocmask"
     BLOCK = lib.SIG_BLOCK
     UNBLOCK = lib.SIG_UNBLOCK
     SETMASK = lib.SIG_SETMASK
 
 class Sighandler(enum.IntEnum):
+    "Special-cased signal handler values used by sigaction"
     IGN = signal.Handlers.SIG_IGN
     DFL = signal.Handlers.SIG_DFL
 
 @dataclass
 class Siginfo(Struct):
+    "struct siginfo, returned by many syscalls"
     code: int
     pid: int
     uid: int
@@ -110,7 +116,16 @@ class Siginfo(Struct):
         return ffi.sizeof('struct siginfo')
 
 class Sigset(t.Set[SIG], Struct):
-    "A fixed-size 64-bit sigset"
+    """A fixed-size 64-signal struct sigset
+
+    Technically, at the syscall level, struct sigset is variable size. It was
+    made variable size when the number of signals was increased from 32 to 64
+    and the "rt" variants of many signal syscalls was added, taking as an
+    additional argument the size of struct sigset. But it's unlikely the number
+    of signals will ever be increased again on Linux, and even if that does
+    happen, it will be backwrds-compatible.
+
+    """
     def to_cffi(self) -> t.Any:
         set_integer = 0
         for sig in self:
@@ -136,6 +151,7 @@ class Sigset(t.Set[SIG], Struct):
 
 @dataclass
 class Sigaction(Struct):
+    "struct sigaction, passed to and returned from the sigaction syscall"
     handler: t.Union[Sighandler, near.Pointer]
     flags: SA = SA(0)
     mask: Sigset = field(default_factory=Sigset)
@@ -176,12 +192,30 @@ class Sigaction(Struct):
 #### Signal blocking
 
 class SignalMaskTask(Task):
+    "The subset of functionality of the Task related to blocking signals"
     def __post_init__(self) -> None:
         super().__post_init__()
         self.sigmask = Sigset()
         self.old_sigmask = Sigset()
         self.sigmask_oldset_ptr: t.Optional[Pointer[Sigset]] = None
         self.sigprocmask_running = False
+
+    async def _sigprocmask(self, newset: t.Optional[t.Tuple[HowSIG, WrittenPointer[Sigset]]],
+                           oldset: t.Optional[Pointer[Sigset]]=None) -> t.Optional[Pointer[Sigset]]:
+        "The low-level implementation of sigprocmask, without any tracking of our current sigmask"
+        with contextlib.ExitStack() as stack:
+            newset_n: t.Optional[t.Tuple[HowSIG, near.Pointer]]
+            if newset:
+                stack.enter_context(newset[1].borrow(self))
+                newset_n = newset[0], newset[1].near
+            else:
+                newset_n = None
+            oldset_n = await self._borrow_optional(stack, oldset)
+            await near.rt_sigprocmask(self.sysif, newset_n, oldset_n, Sigset.sizeof())
+        if oldset:
+            return oldset
+        else:
+            return None
 
     @t.overload
     async def sigprocmask(self, newset: t.Tuple[HowSIG, WrittenPointer[Sigset]]) -> None: ...
@@ -191,14 +225,11 @@ class SignalMaskTask(Task):
 
     async def sigprocmask(self, newset: t.Optional[t.Tuple[HowSIG, WrittenPointer[Sigset]]],
                           oldset: t.Optional[Pointer[Sigset]]=None) -> t.Optional[Pointer[Sigset]]:
+        "sigprocmask, with additional tracking of what we believe our sigmask is"
         if self.sigprocmask_running:
-            # this isn't really true. we know exactly the result of multiple sigprocmask calls,
-            # as long as we know which one happened last.
-            # with waitid, we don't know what the result of the previous call will be,
-            # so it's not safe to call again.
-            # but with sigprocmask, we're idempotent.
-            # TODO we can loosen this if we can determine the real order that syscalls are made,
-            # even through the pipelining.
+            # TODO we can remove this restriction if we can determine the real order that
+            # syscalls are made, so we can accurately maintain sigmask; that's currently
+            # tricky due to pipelining.
             raise Exception("sigprocmask is currently being called, "
                             "we disallow multiple simultaneous calls for implementation simplicity")
         self.sigprocmask_running = True
@@ -223,6 +254,7 @@ class SignalMaskTask(Task):
             return ret
 
     async def sigmask_block(self, newset: WrittenPointer[Sigset], oldset: t.Optional[Pointer[Sigset]]=None) -> SignalBlock:
+        "Block some signals and get back a SignalBlock to witness and own those blocked signals"
         if len(newset.value.intersection(self.sigmask)) != 0:
             raise Exception("can't allocate a SignalBlock for a signal that was already blocked",
                             newset.value, self.sigmask)
@@ -232,23 +264,14 @@ class SignalMaskTask(Task):
             await self.sigprocmask((HowSIG.BLOCK, newset))
         return SignalBlock(self, newset)
 
-    async def _sigprocmask(self, newset: t.Optional[t.Tuple[HowSIG, WrittenPointer[Sigset]]],
-                          oldset: t.Optional[Pointer[Sigset]]=None) -> t.Optional[Pointer[Sigset]]:
-        with contextlib.ExitStack() as stack:
-            newset_n: t.Optional[t.Tuple[HowSIG, near.Pointer]]
-            if newset:
-                stack.enter_context(newset[1].borrow(self))
-                newset_n = newset[0], newset[1].near
-            else:
-                newset_n = None
-            oldset_n = await self._borrow_optional(stack, oldset)
-            await near.rt_sigprocmask(self.sysif, newset_n, oldset_n, Sigset.sizeof())
-        if oldset:
-            return oldset
-        else:
-            return None
-
     async def read_oldset_and_check(self) -> None:
+        """Read the most recent oldset buffer passed to sigprocmask and check it matches what we expect
+
+        We do this in a separate method to avoid forcing the user to read memory
+        if they don't want to validate that the oldset buffer contains what they
+        expect. They can call it later if they want to do the check.
+
+        """
         if self.sigmask_oldset_ptr is None:
             raise Exception("can't check our tracking of sigmask "
                             "when we haven't called sigprocmask with an oldset ptr")
@@ -263,6 +286,10 @@ class SignalBlock:
 
     We need this around to use alternative signal handling mechanisms
     such as signalfd.
+
+    This serves as both a witness that we have indeed blocked these signals, and
+    an owner to help us unblock those signals if and when we no longer need to
+    block them.
 
     """
     task: SignalMaskTask

@@ -15,7 +15,7 @@ from rsyscall.handle import (
     Stack, MemoryGateway, MemoryMapping,
 )
 import rsyscall.near as near
-from rsyscall.struct import Serializable, Serializer
+from rsyscall.struct import Serializer
 
 __all__ = [
     "NativeFunction",
@@ -24,14 +24,17 @@ __all__ = [
 ]
 
 class NativeFunction:
-    pass
+    """A native-code function
 
-class NativeFunctionSerializer(Serializer[NativeFunction]):
+    For now, this is just an opaque marker type, but maybe later we'll
+    actually be able to manipulate this as an object.
+
+    """
     pass
 
 @dataclass
-class Trampoline(Serializable, Borrowable):
-    "A Pointer to a native function plus some arguments passed by register"
+class Trampoline(Borrowable):
+    "A pointer to a native function plus some arguments passed by register"
     function: Pointer[NativeFunction]
     args: t.List[t.Union[FileDescriptor, WrittenPointer[Borrowable], Pointer, int]]
 
@@ -39,28 +42,8 @@ class Trampoline(Serializable, Borrowable):
         if len(self.args) > 6:
             raise Exception("only six arguments can be passed via trampoline")
 
-    def to_bytes(self) -> bytes:
-        args: t.List[int] = []
-        for arg in self.args:
-            if isinstance(arg, FileDescriptor):
-                args.append(int(arg.near))
-            elif isinstance(arg, Pointer):
-                args.append(int(arg.near))
-            else:
-                args.append(int(arg))
-        arg1, arg2, arg3, arg4, arg5, arg6 = args + [0]*(6 - len(args))
-        struct = ffi.new('struct rsyscall_trampoline_stack*', {
-            'function': ffi.cast('void*', int(self.function.near)),
-            'rdi': int(arg1),
-            'rsi': int(arg2),
-            'rdx': int(arg3),
-            'rcx': int(arg4),
-            'r8':  int(arg5),
-            'r9':  int(arg6),
-        })
-        return bytes(ffi.buffer(struct))
-
     def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
+        "Borrows the function pointer and the arguments"
         stack.enter_context(self.function.borrow(task))
         for arg in self.args:
             if isinstance(arg, int):
@@ -70,10 +53,27 @@ class Trampoline(Serializable, Borrowable):
             else:
                 stack.enter_context(arg.borrow(task))
 
-    T = t.TypeVar('T', bound='Trampoline')
-    @classmethod
-    def from_bytes(cls: t.Type[T], data: bytes) -> T:
-        raise Exception("not implemented")
+class TrampolineSerializer(Serializer[Trampoline]):
+    def to_bytes(self, val: Trampoline) -> bytes:
+        args: t.List[int] = []
+        for arg in val.args:
+            if isinstance(arg, FileDescriptor):
+                args.append(int(arg.near))
+            elif isinstance(arg, Pointer):
+                args.append(int(arg.near))
+            else:
+                args.append(int(arg))
+        arg1, arg2, arg3, arg4, arg5, arg6 = args + [0]*(6 - len(args))
+        struct = ffi.new('struct rsyscall_trampoline_stack*', {
+            'function': ffi.cast('void*', int(val.function.near)),
+            'rdi': int(arg1),
+            'rsi': int(arg2),
+            'rdx': int(arg3),
+            'rcx': int(arg4),
+            'r8':  int(arg5),
+            'r9':  int(arg6),
+        })
+        return bytes(ffi.buffer(struct))
 
 class StaticAllocation(AllocationInterface):
     def offset(self) -> int:
@@ -96,6 +96,10 @@ class NullGateway(MemoryGateway):
         raise Exception("shouldn't try to read")
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         raise Exception("shouldn't try to write")
+
+class NativeFunctionSerializer(Serializer[NativeFunction]):
+    "Serializes NativeFunctions by throw exceptions if you call to_bytes/from_bytes :)"
+    pass
 
 @dataclass
 class NativeLoader:
@@ -120,4 +124,5 @@ class NativeLoader:
         )
 
     def make_trampoline_stack(self, trampoline: Trampoline) -> Stack[Trampoline]:
-        return Stack(self.trampoline_func, trampoline, trampoline.get_serializer(None))
+        "Make a stack that will invoke the passed trampoline as its immediate action"
+        return Stack(self.trampoline_func, trampoline, TrampolineSerializer())

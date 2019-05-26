@@ -9,8 +9,10 @@ import struct
 import contextlib
 if t.TYPE_CHECKING:
     from rsyscall.handle import Task, Pointer
+    from rsyscall.loader import NativeFunction
 
 class CLONE(enum.IntFlag):
+    "The flag argument to clone, unshare, and setns"
     NONE = 0
     ### other flags for clone
     VFORK = lib.CLONE_VFORK
@@ -34,6 +36,13 @@ class CLONE(enum.IntFlag):
 
 
 class Borrowable:
+    """An interface for objects that can be borrowed.
+
+    This doesn't make much sense in this file, but its primary use is for the
+    generic type argument to Stack; we need to be able to borrow all the values
+    inside the Stack, without knowing concretely what is inside.
+
+    """
     def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
         raise NotImplementedError("borrow_with not implemented on", type(self))
 
@@ -41,7 +50,19 @@ T_borrowable = t.TypeVar('T_borrowable', bound=Borrowable)
 
 @dataclass
 class Stack(Serializable, t.Generic[T_borrowable]):
-    function: Pointer
+    """The stack argument to clone
+
+    All rsyscall threads, after executing the clone syscall, immediately call
+    the "ret" instruction. Thus, the first value on any stack passed to clone
+    must be a function pointer, which ret will pop off and begin executing.
+
+    After that, the stack can hold any arbitrary data which the function can
+    use. That data may include rsyscall types, which will be borrowed at clone
+    time to ensure they are valid at least for the start of the function's
+    execution.
+
+    """
+    function: Pointer[NativeFunction]
     data: T_borrowable
     serializer: Serializer[T_borrowable]
 

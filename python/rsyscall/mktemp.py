@@ -9,7 +9,8 @@ from rsyscall.handle import WrittenPointer
 import os
 import typing as t
 
-def random_string(k=8) -> str:
+def random_string(k: int=8) -> str:
+    "Return a random string - useful for making files that don't conflict with others"
     return ''.join(random.choices(string.ascii_letters + string.digits, k=k))
 
 async def update_symlink(thr: RAMThread, path: WrittenPointer[Path], target: t.Union[str, Path]) -> WrittenPointer[Path]:
@@ -22,6 +23,7 @@ async def update_symlink(thr: RAMThread, path: WrittenPointer[Path], target: t.U
     return path
 
 async def mkdtemp(thr: UnixThread, prefix: str="mkdtemp") -> 'TemporaryDirectory':
+    "Make a temporary directory in thr.environ.tmpdir"
     parent = thr.environ.tmpdir
     name = prefix+"."+random_string(k=8)
     await thr.task.mkdir(await thr.ram.ptr(parent/name), 0o700)
@@ -35,6 +37,13 @@ class TemporaryDirectory:
         self.path = parent/name
 
     async def cleanup(self) -> None:
+        """Delete this temporary directory and everything inside it
+
+        We do this cleanup by execing sh; that's the cheapest way to do it.  We have to
+        chmod -R +w the directory before we rm -rf it, because the directory might contain
+        files without the writable bit set, which would prevent us from deleting it.
+
+        """
         # TODO would be nice if not sharing the fs information gave us a cap to chdir
         cleanup = await self.thr.fork()
         await cleanup.task.chdir(await cleanup.ram.ptr(self.parent))
