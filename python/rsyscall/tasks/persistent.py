@@ -141,7 +141,10 @@ class PersistentServer:
         self.ram.transport = transport
         self.transport = transport
         # Fix up epoller with new activity fd
-        await self.epoller.register(infd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP)
+        def devnull(event: EPOLL) -> None:
+            pass
+        await self.epoller.register(infd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP,
+                                    devnull)
         # close remote fds we don't have handles to; this includes the old interface fds.
         await handle.run_fd_table_gc(self.task.fd_table)
 

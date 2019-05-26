@@ -126,7 +126,7 @@ class EpollWaiter:
         self.timeout = timeout
 
         self.next_number = 0
-        self.number_to_queue: t.Dict[int, trio.abc.SendChannel] = {}
+        self.number_to_cb: t.Dict[int, t.Callable[[EPOLL], None]] = {}
         self.running_wait = OneAtATime()
         # resumability
         self.input_buf: t.Optional[Pointer[EpollEventList]] = None
@@ -134,10 +134,10 @@ class EpollWaiter:
         self.valid_events_buf: t.Optional[Pointer[EpollEventList]] = None
 
     # need to also support removing, I guess!
-    def add_and_allocate_number(self, queue: trio.abc.SendChannel) -> int:
+    def add_and_allocate_number(self, cb: t.Callable[[EPOLL], None]) -> int:
         number = self.next_number
         self.next_number += 1
-        self.number_to_queue[number] = queue
+        self.number_to_cb[number] = cb
         return number
 
     async def do_wait(self) -> None:
@@ -159,8 +159,7 @@ class EpollWaiter:
                 self.valid_events_buf = None
                 self.syscall_response = None
                 for event in received_events:
-                    queue = self.number_to_queue[event.data]
-                    queue.send_nowait(event.events)
+                    self.number_to_cb[event.data](event.events)
 
 class Epoller:
     """Terribly named class that allows registering fds on epoll, and waiting on them
@@ -192,10 +191,12 @@ class Epoller:
             raise Exception("can't make a root epoll center if we don't have an activity_fd to monitor")
         epfd = await task.epoll_create()
         center = Epoller(EpollWaiter(ram, epfd, None, -1), ram, epfd)
+        def devnull(event: EPOLL) -> None:
+            pass
         # TODO where should we store this, so that we don't deregister the activity_fd?
         epolled = await center.register(
             # not edge triggered; we don't want to block if there's anything that can be read.
-            activity_fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP)
+            activity_fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP, devnull)
         return center
 
     def __init__(self, epoll_waiter: EpollWaiter, ram: RAM, epfd: FileDescriptor) -> None:
@@ -212,36 +213,27 @@ class Epoller:
         """
         return Epoller(self.epoll_waiter, ram, ram.task.make_fd_handle(self.epfd))
 
-    async def register(self, fd: FileDescriptor, events: EPOLL=None) -> EpolledFileDescriptor:
+    async def register(self, fd: FileDescriptor, events: EPOLL,
+                       cb: t.Callable[[EPOLL], None]) -> EpolledFileDescriptor:
         if events is None:
             events = EPOLL.NONE
-        send, receive = trio.open_memory_channel(math.inf)
-        number = self.epoll_waiter.add_and_allocate_number(send)
+        number = self.epoll_waiter.add_and_allocate_number(cb)
         await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.ptr(EpollEvent(number, events)))
-        return EpolledFileDescriptor(self, fd, receive, number)
+        return EpolledFileDescriptor(self, fd, number)
 
 class EpolledFileDescriptor:
     def __init__(self,
                  epoller: Epoller,
                  fd: FileDescriptor,
-                 queue: trio.abc.ReceiveChannel,
                  number: int) -> None:
         self.epoller = epoller
         self.fd = fd
-        self.queue = queue
         self.number = number
         self.in_epollfd = True
 
     async def modify(self, events: EPOLL) -> None:
         await self.epoller.epfd.epoll_ctl(
             EPOLL_CTL.MOD, self.fd, await self.epoller.ram.ptr(EpollEvent(self.number, events)))
-
-    async def wait(self) -> t.List[EPOLL]:
-        while True:
-            try:
-                return [self.queue.receive_nowait()]
-            except trio.WouldBlock:
-                await self.epoller.epoll_waiter.do_wait()
 
     async def close(self) -> None:
         if self.in_epollfd:
@@ -251,20 +243,25 @@ class EpolledFileDescriptor:
         await self.fd.invalidate()
 
 class AsyncFileDescriptor:
-    epolled: EpolledFileDescriptor
-
     @staticmethod
     async def make_handle(epoller: Epoller, ram: RAM, fd: FileDescriptor, is_nonblock=False
     ) -> AsyncFileDescriptor:
         if not is_nonblock:
             await fd.fcntl(F.SETFL, O.NONBLOCK)
-        epolled = await epoller.register(fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET)
-        return AsyncFileDescriptor(epolled, ram, fd)
+        send, receive = trio.open_memory_channel(math.inf)
+        epolled = await epoller.register(
+            fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET,
+            send.send_nowait,
+        )
+        return AsyncFileDescriptor(epolled, ram, fd, receive)
 
-    def __init__(self, epolled: EpolledFileDescriptor, ram: RAM, handle: FileDescriptor) -> None:
+    def __init__(self, epolled: EpolledFileDescriptor, ram: RAM, handle: FileDescriptor,
+                 queue: trio.abc.ReceiveChannel,
+    ) -> None:
         self.epolled = epolled
         self.ram = ram
         self.handle = handle
+        self.queue = queue
         self.running_wait = OneAtATime()
         self.is_readable = False
         self.is_writable = False
@@ -280,14 +277,18 @@ class AsyncFileDescriptor:
     async def _wait_once(self):
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
-                events = await self.epolled.wait()
-                for event in events:
-                    if event & EPOLL.IN:    self.is_readable = True
-                    if event & EPOLL.OUT:   self.is_writable = True
-                    if event & EPOLL.RDHUP: self.read_hangup = True
-                    if event & EPOLL.PRI:   self.priority = True
-                    if event & EPOLL.ERR:   self.error = True
-                    if event & EPOLL.HUP:   self.hangup = True
+                while True:
+                    try:
+                        event = self.queue.receive_nowait()
+                        break
+                    except trio.WouldBlock:
+                        await self.epolled.epoller.epoll_waiter.do_wait()
+                if event & EPOLL.IN:    self.is_readable = True
+                if event & EPOLL.OUT:   self.is_writable = True
+                if event & EPOLL.RDHUP: self.read_hangup = True
+                if event & EPOLL.PRI:   self.priority = True
+                if event & EPOLL.ERR:   self.error = True
+                if event & EPOLL.HUP:   self.hangup = True
 
     def could_read(self) -> bool:
         return self.is_readable or self.read_hangup or self.hangup or self.error
