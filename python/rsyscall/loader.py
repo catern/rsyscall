@@ -17,6 +17,12 @@ from rsyscall.handle import (
 import rsyscall.near as near
 from rsyscall.struct import Serializable, Serializer
 
+__all__ = [
+    "NativeFunction",
+    "Trampoline",
+    "NativeLoader",
+]
+
 class NativeFunction:
     pass
 
@@ -25,6 +31,7 @@ class NativeFunctionSerializer(Serializer[NativeFunction]):
 
 @dataclass
 class Trampoline(Serializable, Borrowable):
+    "A Pointer to a native function plus some arguments passed by register"
     function: Pointer[NativeFunction]
     args: t.List[t.Union[FileDescriptor, WrittenPointer[Borrowable], Pointer, int]]
 
@@ -113,6 +120,4 @@ class NativeLoader:
         )
 
     def make_trampoline_stack(self, trampoline: Trampoline) -> Stack[Trampoline]:
-        # ugh okaaaaaaaaaaaaay
-        # need to figure out how to handle these function pointers. hMmMmM
         return Stack(self.trampoline_func, trampoline, trampoline.get_serializer(None))

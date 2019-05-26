@@ -20,10 +20,15 @@ import functools
 from rsyscall.fcntl import O
 from rsyscall.unistd import OK
 
-def chunks(l, n):
-    # thanks stack overflow
-    for i in range(0, len(l), n):
-        yield l[i:i+n]
+T = t.TypeVar('T')
+def chunks(lst: t.List[T], size: int) -> t.Iterator[t.List[T]]:
+    """Yields chunks of `lst`, at most `size` long
+
+    Thanks Stack Overflow
+
+    """
+    for i in range(0, len(lst), size):
+        yield lst[i:i+size]
 
 class ExecutableNotFound(Exception):
     def __init__(self, name: str) -> None:
@@ -39,12 +44,8 @@ class ExecutablePathCache:
         self.fds: t.Dict[Path, t.Optional[FileDescriptor]] = {}
         self.name_to_path: t.Dict[str, Path] = {}
 
-    async def lookup_executable_at_path(self, path: Path, name: str) -> None:
-        if path in self.fds:
-            self.fds
-        pass
-
-    async def get_fd_for_path(self, path: Path) -> t.Optional[FileDescriptor]:
+    async def _get_fd_for_path(self, path: Path) -> t.Optional[FileDescriptor]:
+        "Return a cached file descriptor for this path"
         if path not in self.fds:
             try:
                 fd = await self.task.open(await self.ram.ptr(path), O.PATH|O.DIRECTORY)
@@ -54,8 +55,9 @@ class ExecutablePathCache:
                 self.fds[path] = fd
         return self.fds[path]
 
-    async def check(self, path: Path, name: WrittenPointer[Path]) -> bool:
-        fd = await self.get_fd_for_path(path)
+    async def _check(self, path: Path, name: WrittenPointer[Path]) -> bool:
+        "Return true if there's an executable with this name under this path"
+        fd = await self._get_fd_for_path(path)
         if fd is None:
             return False
         else:
@@ -69,13 +71,14 @@ class ExecutablePathCache:
                 return True
 
     async def which(self, name: str) -> Command:
+        "Locate an executable with this name on PATH; throw ExecutableNotFound on failure"
         try:
             path = self.name_to_path[name]
         except KeyError:
             nameptr = await self.ram.ptr(Path(name))
-            # do the lookup for 16 paths at a time, that seems like a good batching number
+            # do the lookup for 64 paths at a time, that seems like a good batching number
             for paths in chunks(self.paths, 64):
-                thunks = [functools.partial(self.check, path, nameptr) for path in paths]
+                thunks = [functools.partial(self._check, path, nameptr) for path in paths]
                 results = await run_all(thunks) # type: ignore
                 for path, result in zip(paths, results):
                     if result:
@@ -113,6 +116,7 @@ class Environment:
         self.data[os.fsencode(key)] = os.fsencode(val)
 
     def get(self, key: t.Union[str, bytes], default: str) -> str:
+        "Like dict.get; get an environment variable, with a default."
         result = self.data.get(os.fsencode(key))
         if result is None:
             return default
@@ -120,6 +124,7 @@ class Environment:
             return os.fsdecode(result)
 
     async def which(self, name: str) -> Command:
+        "Locate an executable with this name on PATH; throw ExecutableNotFound on failure"
         return await self.path.which(name)
 
     def inherit(self, task: Task, ram: RAM) -> Environment:

@@ -18736,6 +18736,20 @@ and rename it to waitpid?
    (to cancel syscalls)
 ** TODO rename ChildEvent to ChildStateChange or something
    ChildState would be good actually
+
+   ChildStatus??
+
+   It's not clear that that's good.
+
+   because exit_status is a field on it, and that's hideous to do exit_status.exit_status.
+
+   ugh hm.
+
+   yeah I don't like ChildStatus.
+
+   i also don't like exit_status - it needs to be death_state because it's death, not exit.
+
+   hmm
 ** DONE switch from Signals to SIG
 ** DONE change everything to use malloc/ptr
    Delete malloc_struct/malloc_type/to_pointer.

@@ -54,6 +54,15 @@ class OneAtATime:
                 running.set()
 
 class MultiplexedEvent:
+    """A one-shot event which, when waited on, selects one waiter to run a callable until it completes
+
+    The point of this class is that we have multiple callers wanting to wait on the
+    completion of a single callable; there's no dedicated thread to run the callable,
+    instead it's run directly on the stack of one of the callers. The callable might be
+    cancelled, but it will keep being re-run until it successfully completes. Then this
+    event is complete; a new one may be created with a new or same callable.
+
+    """
     def __init__(self, try_running: t.Callable[[], t.Awaitable[None]]) -> None:
         self.flag = False
         self.try_running = try_running

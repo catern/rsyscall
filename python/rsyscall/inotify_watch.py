@@ -1,13 +1,16 @@
 """Filesystem-watching implemented using inotify
+
+Nothing special here, this is just normal inotify usage.
+
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
-from rsyscall.thread import Thread
 from rsyscall.memory.ram import RAM
 from rsyscall.near import WatchDescriptor
+from rsyscall.thread import Thread
 import enum
 import math
 import os
@@ -18,14 +21,21 @@ import typing as t
 from rsyscall.sys.inotify import InotifyFlag, IN, InotifyEvent, InotifyEventList
 from rsyscall.limits import NAME_MAX
 
+__all__ = [
+    'Watch',
+    'Inotify',
+]
+
 @dataclass
 class Watch:
+    "An indidivual inode being watched with an Inotify instance"
     inotify: Inotify
     channel: trio.abc.ReceiveChannel
     wd: WatchDescriptor
     removed: bool = False
 
     async def wait(self) -> t.List[InotifyEvent]:
+        "Wait for some events to happen at this inode"
         if self.removed:
             raise Exception("watch was already removed")
         events: t.List[InotifyEvent] = []
@@ -38,11 +48,16 @@ class Watch:
                 events.append(event)
             except trio.WouldBlock:
                 if len(events) == 0:
-                    await self.inotify.do_wait()
+                    await self.inotify._do_wait()
                 else:
                     return events
 
     async def wait_until_event(self, mask: IN, name: t.Optional[str]=None) -> InotifyEvent:
+        """Wait until an event in this mask, and possibly with this name, happens
+
+        Discards non-matching events.
+
+        """
         while True:
             events = await self.wait()
             for event in events:
@@ -50,7 +65,8 @@ class Watch:
                     return event
 
     async def remove(self) -> None:
-        self.inotify.remove(self.wd)
+        "Remove this watch from inotify"
+        self.inotify._remove(self.wd)
         # we'll mark this Watch as removed once we get the IN_IGNORED event;
         # only after that do we know for sure that there are no more events
         # coming for this Watch.
@@ -78,6 +94,7 @@ class Inotify:
         return Inotify(asyncfd, thread.ram)
 
     async def add(self, path: handle.Path, mask: IN) -> Watch:
+        "Start watching a given path for events in the passed mask"
         wd = await self.asyncfd.handle.inotify_add_watch(await self.ram.ptr(path), mask)
         send, receive = trio.open_memory_channel(math.inf)
         watch = Watch(self, receive, wd)
@@ -88,16 +105,17 @@ class Inotify:
         self.wd_to_channel[wd] = send
         return watch
 
-    async def do_wait(self) -> None:
+    async def _do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
-                valid, _ = await self.asyncfd.read(await self.ram.malloc(InotifyEventList, 4096))
+                valid, _ = await self.asyncfd.read(
+                    await self.ram.malloc(InotifyEventList, _inotify_read_size))
                 if valid.bytesize() == 0:
                     raise Exception('got EOF from inotify fd? what?')
                 for event in await valid.read():
                     self.wd_to_channel[event.wd].send_nowait(event)
 
-    async def remove(self, wd: WatchDescriptor) -> None:
+    async def _remove(self, wd: WatchDescriptor) -> None:
         await self.asyncfd.handle.inotify_rm_watch(wd)
 
     async def close(self) -> None:
