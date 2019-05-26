@@ -66,7 +66,7 @@ class Allocation(AllocationInterface):
         a_idx = arena.allocations.index(self)
         b_idx = arena.allocations.index(other)
         if a_idx + 1 != b_idx:
-            raise Exception("allocations are unexpected at non-adjacent indices", a_idx, b_idx)
+            raise Exception("allocations are unexpectedly at non-adjacent indices", a_idx, b_idx)
         new = Allocation(self.arena, self.start, other.end, valid=False)
         self.free()
         other.free()

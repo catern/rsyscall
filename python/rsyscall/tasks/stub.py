@@ -61,7 +61,7 @@ from rsyscall.sys.socket import SOCK, AF, Address, SendmsgFlags, SendMsghdr, Cms
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.uio import IovecList
 from rsyscall.sys.un import SockaddrUn
-from rsyscall.signal import Signals, Sigset, SignalBlock
+from rsyscall.signal import SIG, Sigset, SignalBlock
 from rsyscall.fcntl import O
 
 __all__ = [
@@ -151,7 +151,7 @@ async def _setup_stub(
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     allocator = memory.AllocatorClient.make_allocator(base_task)
-    base_task.sigmask = Sigset({Signals(bit) for bit in rsyscall.struct.bits(describe_struct.sigmask)})
+    base_task.sigmask = Sigset({SIG(bit) for bit in rsyscall.struct.bits(describe_struct.sigmask)})
     ram = RAM(base_task,
               SocketMemoryTransport(access_data_sock,
                                     base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd)),

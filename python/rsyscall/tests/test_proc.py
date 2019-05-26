@@ -11,6 +11,7 @@ from rsyscall.path import Path
 from rsyscall.handle import Process
 from rsyscall.nix import local_store
 from rsyscall.tests.utils import assert_thread_works
+from rsyscall.signal import SIG
 
 class TestProc(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -43,15 +44,9 @@ class TestProc(TrioTestCase):
         await last_pid.lseek(0, SEEK.SET)
         await self.init.spit(last_pid, b"1\n")
         with self.assertRaises(ProcessLookupError):
-            await self.init.task._make_process(2).kill(0)
-        # we skip right over pid 2!
-        # even though... it's totally exited? hmm have we collected the zombie?
-        # no we haven't
+            await self.init.task._make_process(2).kill(SIG.NONE)
         pg_two = await self.init.fork()
         with self.assertRaises(ProcessLookupError):
-            await self.init.task._make_process(2).kill(0)
-        print(pg_two.task.process.near)
-        # open nr_last_pid and cause a pid wrap,
-        # fork a third process,
-        # and call setpgid.
-        # or better yet setsid.
+            await self.init.task._make_process(2).kill(SIG.NONE)
+        # Linux skips right over process 2, even though it's dead, because it's still used by the process group
+        self.assertEqual(int(pg_two.task.process.near), 3)

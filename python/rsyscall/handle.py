@@ -24,7 +24,7 @@ from rsyscall.sys.socket import (
 )
 from rsyscall.sched import CLONE, Stack, Borrowable
 from rsyscall.struct import Serializer, HasSerializer, FixedSerializer, FixedSize, Serializable, Int32, Struct
-from rsyscall.signal import Sigaction, Sigset, Signals, Siginfo, SignalMaskTask
+from rsyscall.signal import Sigaction, Sigset, SIG, Siginfo, SignalMaskTask
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
 from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
@@ -907,7 +907,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             with datap.borrow(self):
                 await rsyscall.near.capget(self.sysif, hdrp.near, datap.near)
 
-    async def sigaction(self, signum: Signals,
+    async def sigaction(self, signum: SIG,
                         act: t.Optional[Pointer[Sigaction]],
                         oldact: t.Optional[Pointer[Sigaction]]) -> None:
         with contextlib.ExitStack() as stack:
@@ -1154,13 +1154,13 @@ class Process:
     task: Task
     near: rsyscall.near.Process
 
-    async def kill(self, sig: Signals) -> None:
+    async def kill(self, sig: SIG) -> None:
         await rsyscall.near.kill(self.task.sysif, self.near, sig)
 
     def _as_process_group(self) -> rsyscall.near.ProcessGroup:
         return rsyscall.near.ProcessGroup(self.near.id)
 
-    async def killpg(self, sig: Signals) -> None:
+    async def killpg(self, sig: SIG) -> None:
         await rsyscall.near.kill(self.task.sysif, self._as_process_group(), sig)
 
     async def getpgid(self) -> rsyscall.near.ProcessGroup:
@@ -1199,11 +1199,11 @@ class ChildProcess(Process):
         finally:
             self.in_use = False
 
-    async def kill(self, sig: Signals) -> None:
+    async def kill(self, sig: SIG) -> None:
         with self.borrow():
             await super().kill(sig)
 
-    async def killpg(self, sig: Signals) -> None:
+    async def killpg(self, sig: SIG) -> None:
         # This call will throw an error if this child isn't a process group leader, but
         # it's at least guaranteed to not kill some random unrelated process group.
         with self.borrow():

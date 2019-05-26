@@ -47,7 +47,7 @@ from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Pointer, ChildProcess
 from rsyscall.memory.ram import RAM
 from rsyscall.sched import CLONE
-from rsyscall.signal import Signals, Sigset, Siginfo
+from rsyscall.signal import SIG, Sigset, Siginfo
 import trio
 import contextlib
 import typing as t
@@ -131,7 +131,7 @@ class AsyncChildProcess:
         death.check()
         return death
 
-    async def kill(self, sig: Signals=Signals.SIGKILL) -> None:
+    async def kill(self, sig: SIG=SIG.KILL) -> None:
         "Send a signal to this child"
         if self.process.unread_siginfo:
             await self.process.read_siginfo()
@@ -160,7 +160,7 @@ class ChildProcessMonitor:
                    *, signal_block: SignalBlock=None,
                    is_reaper: bool=False,
     ) -> ChildProcessMonitor:
-        sigfd = await AsyncSignalfd.make(ram, task, epoller, Sigset({Signals.SIGCHLD}), signal_block=signal_block)
+        sigfd = await AsyncSignalfd.make(ram, task, epoller, Sigset({SIG.CHLD}), signal_block=signal_block)
         return ChildProcessMonitor(sigfd, ram, task, use_clone_parent=False, is_reaper=is_reaper)
 
     def inherit_to_child(self, child_task: Task) -> ChildProcessMonitor:
@@ -183,5 +183,5 @@ class ChildProcessMonitor:
                     ctid: t.Optional[Pointer[FutexNode]]=None) -> AsyncChildProcess:
         if self.use_clone_parent:
             flags |= CLONE.PARENT
-        process = await self.cloning_task.clone(flags|Signals.SIGCHLD, child_stack, None, ctid, None)
+        process = await self.cloning_task.clone(flags|SIG.CHLD, child_stack, None, ctid, None)
         return self.add_child_process(process)

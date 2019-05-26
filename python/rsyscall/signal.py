@@ -16,7 +16,7 @@ else:
 import signal
 
 __all__ = [
-    "Signals",
+    "SIG",
     "SA",
     "HowSIG",
     "Sighandler",
@@ -25,11 +25,40 @@ __all__ = [
     "Sigaction",
 ]
 
-# re-exported
-from signal import Signals
-
-class SIG(enum.IntFlag):
+class SIG(enum.IntEnum):
     NONE = 0
+    HUP = signal.SIGHUP
+    INT = signal.SIGINT
+    QUIT = signal.SIGQUIT
+    ILL = signal.SIGILL
+    TRAP = signal.SIGTRAP
+    ABRT = signal.SIGABRT
+    IOT = signal.SIGIOT
+    BUS = signal.SIGBUS
+    FPE = signal.SIGFPE
+    KILL = signal.SIGKILL
+    USR1 = signal.SIGUSR1
+    SEGV = signal.SIGSEGV
+    USR2 = signal.SIGUSR2
+    PIPE = signal.SIGPIPE
+    ALRM = signal.SIGALRM
+    TERM = signal.SIGTERM
+    STKFLT = lib.SIGSTKFLT
+    CHLD = signal.SIGCHLD
+    CONT = signal.SIGCONT
+    STOP = signal.SIGSTOP
+    TSTP = signal.SIGTSTP
+    TTIN = signal.SIGTTIN
+    TTOU = signal.SIGTTOU
+    URG = signal.SIGURG
+    XCPU = signal.SIGXCPU
+    XFSZ = signal.SIGXFSZ
+    VTALRM = signal.SIGVTALRM
+    PROF = signal.SIGPROF
+    WINCH = signal.SIGWINCH
+    IO = signal.SIGIO
+    PWR = signal.SIGPWR
+    SYS = signal.SIGSYS
 
 class SA(enum.IntFlag):
     NOCLDSTOP = lib.SA_NOCLDSTOP
@@ -80,7 +109,7 @@ class Siginfo(Struct):
     def sizeof(cls) -> int:
         return ffi.sizeof('struct siginfo')
 
-class Sigset(t.Set[Signals], Struct):
+class Sigset(t.Set[SIG], Struct):
     "A fixed-size 64-bit sigset"
     def to_cffi(self) -> t.Any:
         set_integer = 0
@@ -94,7 +123,7 @@ class Sigset(t.Set[Signals], Struct):
     T = t.TypeVar('T', bound='Sigset')
     @classmethod
     def from_cffi(cls: t.Type[T], struct: t.Any) -> T:
-        return cls({Signals(bit) for bit in bits(struct.val)})
+        return cls({SIG(bit) for bit in bits(struct.val)})
 
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
@@ -268,7 +297,7 @@ class TestSignal(TestCase):
         self.assertEqual(sa.restorer, out_sa.restorer)
 
         sa = Sigaction(Sighandler.DFL, SA.RESTART|SA.RESETHAND,
-                       Sigset({Signals.SIGINT, Signals.SIGTERM}),
+                       Sigset({SIG.INT, SIG.TERM}),
                        near.Pointer(0))
         out_sa = Sigaction.from_bytes(sa.to_bytes())
         self.assertEqual(sa.handler, out_sa.handler)

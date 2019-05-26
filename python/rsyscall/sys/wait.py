@@ -2,7 +2,7 @@ from __future__ import annotations
 import typing as t
 from dataclasses import dataclass
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.signal import Siginfo, Signals
+from rsyscall.signal import Siginfo, SIG
 import enum
 
 class IdType(enum.IntEnum):
@@ -40,14 +40,14 @@ class ChildEvent:
     pid: int
     uid: int
     exit_status: t.Optional[int]
-    sig: t.Optional[Signals]
+    sig: t.Optional[SIG]
 
     @staticmethod
     def make(code: CLD, pid: int, uid: int, status: int) -> ChildEvent:
         if code is CLD.EXITED:
             return ChildEvent(code, pid, uid, status, None)
         else:
-            return ChildEvent(code, pid, uid, None, Signals(status))
+            return ChildEvent(code, pid, uid, None, SIG(status))
 
     @staticmethod
     def make_from_siginfo(siginfo: Siginfo) -> ChildEvent:
@@ -77,7 +77,7 @@ class ChildEvent:
         else:
             raise UncleanExit(self)
 
-    def killed_with(self) -> Signals:
+    def killed_with(self) -> SIG:
         """What signal was the child killed with?
 
         Throws if the child was not killed with a signal.

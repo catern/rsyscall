@@ -20,7 +20,7 @@ from rsyscall.struct import Int32
 import contextlib
 
 from rsyscall.sched import CLONE
-from rsyscall.signal import Signals
+from rsyscall.signal import SIG
 from rsyscall.sys.mman import PROT, MAP
 from rsyscall.sys.wait import W
 
@@ -156,7 +156,7 @@ async def launch_futex_monitor(ram: RAM,
     if event.state(W.EXITED):
         raise Exception("thread internal futex-waiting task died unexpectedly", event)
     # resume the futex_process so it can start waiting on the futex
-    await futex_process.kill(Signals.SIGCONT)
+    await futex_process.kill(SIG.CONT)
     # the stack will be freed as it is no longer needed, but the futex pointer will live on
     return futex_process
 
@@ -169,7 +169,7 @@ async def spawn_child_task(
         trampoline: Trampoline,
         flags: CLONE,
 ) -> Task:
-    flags |= CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM|Signals.SIGCHLD
+    flags |= CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM|SIG.CHLD
     # TODO it is unclear why we sometimes need to make a new mapping here, instead of allocating with our normal
     # allocator; all our memory is already MAP.SHARED, I think.
     # We should resolve this so we can use the stock allocator.

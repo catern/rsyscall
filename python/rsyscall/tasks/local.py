@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM
 from rsyscall.handle import Pointer, Task, MemoryMapping
-from rsyscall.signal import Signals, Sigaction, Sighandler
+from rsyscall.signal import SIG, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
 from rsyscall.network.connection import FDPassConnection
 from rsyscall.environ import Environment
@@ -149,7 +149,7 @@ async def _initialize_module() -> None:
     # wipe out the SIGWINCH handler that the readline module installs
     import readline
     await thread.task.sigaction(
-        Signals.SIGWINCH, await thread.ram.ptr(Sigaction(Sighandler.DFL)), None)
+        SIG.WINCH, await thread.ram.ptr(Sigaction(Sighandler.DFL)), None)
 
 task = _make_local_task()
 trio.run(_initialize_module)

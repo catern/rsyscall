@@ -40,7 +40,7 @@ if t.TYPE_CHECKING:
     from rsyscall.sys.socket import SHUT
     from rsyscall.sys.uio import RWF
     from rsyscall.sched import CLONE
-    from rsyscall.signal import HowSIG, Signals
+    from rsyscall.signal import HowSIG, SIG
     import rsyscall.handle as handle
 
 #### SyscallInterface (segment register override prefix)
@@ -368,7 +368,7 @@ async def ioctl(sysif: SyscallInterface, fd: FileDescriptor, request: int,
         arg = 0
     return (await sysif.syscall(SYS.ioctl, fd, request, arg))
 
-async def kill(sysif: SyscallInterface, pid: t.Union[Process, ProcessGroup], sig: Signals) -> None:
+async def kill(sysif: SyscallInterface, pid: t.Union[Process, ProcessGroup], sig: SIG) -> None:
     if isinstance(pid, ProcessGroup):
         pid = -int(pid) # type: ignore
     await sysif.syscall(SYS.kill, pid, sig)
@@ -477,7 +477,7 @@ async def renameat2(sysif: SyscallInterface,
         newdirfd = AT.FDCWD # type: ignore
     await sysif.syscall(SYS.renameat2, olddirfd, oldpath, newdirfd, newpath, flags)
 
-async def rt_sigaction(sysif: SyscallInterface, signum: Signals,
+async def rt_sigaction(sysif: SyscallInterface, signum: SIG,
                        act: t.Optional[Pointer],
                        oldact: t.Optional[Pointer],
                        size: int) -> None:

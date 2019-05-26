@@ -22,7 +22,7 @@ import os
 from rsyscall.fcntl import AT
 from rsyscall.path import Path
 from rsyscall.sched import CLONE
-from rsyscall.signal import Sigset, Signals, SignalBlock, HowSIG
+from rsyscall.signal import Sigset, SIG, SignalBlock, HowSIG
 from rsyscall.unistd import Arg, ArgList
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ class UnixThread(ForkThread):
             epoller = await Epoller.make_root(ram, task)
             # this signal is already blocked, we inherited the block, um... I guess...
             # TODO handle this more formally
-            signal_block = SignalBlock(task, await ram.ptr(Sigset({Signals.SIGCHLD})))
+            signal_block = SignalBlock(task, await ram.ptr(Sigset({SIG.CHLD})))
             child_monitor = await ChildProcessMonitor.make(
                 ram, task, epoller, signal_block=signal_block, is_reaper=bool(flags & CLONE.NEWPID))
         else:
@@ -129,7 +129,7 @@ class ChildUnixThread(UnixThread):
         allow the user to explicitly pass down additional signal blocks.
 
         """
-        sigmask: t.Set[Signals] = set()
+        sigmask: t.Set[SIG] = set()
         for block in inherited_signal_blocks:
             sigmask = sigmask.union(block.mask)
         await self.task.sigprocmask((HowSIG.SETMASK, await self.ram.ptr(Sigset(sigmask))))

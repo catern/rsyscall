@@ -34,7 +34,7 @@ import trio
 
 from rsyscall.path import Path
 from rsyscall.sched import CLONE
-from rsyscall.signal import Signals, SignalBlock
+from rsyscall.signal import SIG, SignalBlock
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.socket import SOCK, AF, SendmsgFlags, Socketpair, SendMsghdr, CmsgList, CmsgSCMRights
 from rsyscall.sys.uio import IovecList

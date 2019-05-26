@@ -29,7 +29,7 @@ from rsyscall.sched import CLONE
 from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, SendMsghdr, CmsgSCMRights, CmsgList
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.uio import IovecList
-from rsyscall.signal import Signals, Sigset, SignalBlock
+from rsyscall.signal import SIG, Sigset, SignalBlock
 from rsyscall.sys.prctl import PR
 
 __all__ = [
@@ -163,7 +163,7 @@ async def fork_persistent(
 
     ## create the new persistent task
     epoller = await Epoller.make_root(ram, task)
-    signal_block = SignalBlock(task, await ram.ptr(Sigset({Signals.SIGCHLD})))
+    signal_block = SignalBlock(task, await ram.ptr(Sigset({SIG.CHLD})))
     # TODO use an inherited signalfd instead
     child_monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
     child = Thread(
