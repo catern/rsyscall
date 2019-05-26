@@ -190,9 +190,7 @@ class EpollWaiter:
                         self.number_to_cb[event.data](event.events)
 
 class Epoller:
-    """Terribly named class that allows registering fds on epoll, and waiting on them
-
-    """
+    "Terribly named class that allows registering fds on epoll, and waiting on them"
     @staticmethod
     def make_subsidiary(ram: RAM, epfd: FileDescriptor, wait_readable: t.Callable[[], t.Awaitable[None]]) -> Epoller:
         """Make a subsidiary epoller, as described in the module docstring
@@ -243,6 +241,13 @@ class Epoller:
 
     async def register(self, fd: FileDescriptor, events: EPOLL,
                        cb: t.Callable[[EPOLL], None]) -> EpolledFileDescriptor:
+        """Register a file descriptor on this epollfd, for the given events, calling the passed callback
+
+        The return value can be used to wait for callback calls, modify the events
+        registered for this file descriptor, and delete the file descriptor from this
+        epollfd.
+
+        """
         number = self.epoll_waiter.add_and_allocate_number(cb)
         await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.ptr(EpollEvent(number, events)))
         return EpolledFileDescriptor(self, fd, number)
@@ -459,15 +464,29 @@ class AsyncFileDescriptor:
         await self.epolled.delete()
         await self.handle.invalidate()
 
+
+################################################################################
+# Miscellaneous helpers
+
 class EOFException(Exception):
+    "Thrown when AsyncReadBuffer hits an EOF before reading all the requested data"
     pass
 
 class AsyncReadBuffer:
+    """A buffer for parsing variable-length streaming data
+
+    When reading data from a stream such as a pipe or TCP connection, data is not
+    delivered to us from the kernel in nicely-separated records. We need to rebuffer the
+    data so that it can be parsed. That's what this class does; and it provides a few
+    helper methods to make it easier to read and parse such streams.
+
+    """
     def __init__(self, fd: AsyncFileDescriptor) -> None:
         self.fd = fd
         self.buf = b""
 
     async def _read(self) -> t.Optional[bytes]:
+        "Read some bytes; return None on EOF"
         data = await self.fd.read_some_bytes()
         if len(data) == 0:
             if len(self.buf) != 0:
@@ -478,6 +497,7 @@ class AsyncReadBuffer:
             return data
 
     async def read_length(self, length: int) -> t.Optional[bytes]:
+        "Read exactly this many bytes; return None on EOF"
         while len(self.buf) < length:
             data = await self._read()
             if data is None:
@@ -488,6 +508,7 @@ class AsyncReadBuffer:
         return section
 
     async def read_cffi(self, name: str) -> t.Any:
+        "Read, parse, and return this fixed-size cffi type"
         size = ffi.sizeof(name)
         data = await self.read_length(size)
         if data is None:
@@ -500,6 +521,7 @@ class AsyncReadBuffer:
         return dest[0]
 
     async def read_length_prefixed_string(self) -> bytes:
+        "Read a bytestring which is prefixed with a 64-bit native-byte-order size"
         elem_size = await self.read_cffi('size_t')
         elem = await self.read_length(elem_size)
         if elem is None:
@@ -507,22 +529,32 @@ class AsyncReadBuffer:
         return elem
 
     async def read_length_prefixed_array(self, length: int) -> t.List[bytes]:
+        "Read an array, prefixed with its size, of bytestrings, each prefixed with their size"
         ret: t.List[bytes] = []
         for _ in range(length):
             ret.append(await self.read_length_prefixed_string())
         return ret
 
     async def read_envp(self, length: int) -> t.Dict[bytes, bytes]:
+        """Read a size-prefixed array of size-prefixed bytestrings, with each bytestring containing '=', into a dict
+
+        This is the format we expect for envp, which is written to us on startup by
+        non-child threads.
+
+        We assume that the environment is correctly formed; that is, each element contains
+        '='.  If that's not true, we'll throw an exception.  But it would be quite unusual
+        to have an incorrectly formed environment variable, so it's not too concerning.
+
+        """
         raw = await self.read_length_prefixed_array(length)
         environ: t.Dict[bytes, bytes] = {}
         for elem in raw:
-            # if someone passes us a malformed environment element without =,
-            # we'll just break, whatever
             key, val = elem.split(b"=", 1)
             environ[key] = val
         return environ
 
     async def read_until_delimiter(self, delim: bytes) -> t.Optional[bytes]:
+        "Read and return all bytes until the specified delimiter, stripping the delimiter; on EOF, return None"
         while True:
             try:
                 i = self.buf.index(delim)
@@ -539,13 +571,18 @@ class AsyncReadBuffer:
                 return None
             self.buf += data
 
-    async def read_line(self) -> t.Optional[bytes]:
-        return (await self.read_until_delimiter(b"\n"))
+    async def read_line(self) -> bytes:
+        "Read and return a line, stripping the newline character"
+        ret = await self.read_until_delimiter(b"\n")
+        if ret is None:
+            raise EOFException("hangup before reading full line")
+        return ret
 
-    async def read_netstring(self) -> t.Optional[bytes]:
+    async def read_netstring(self) -> bytes:
+        "Read a netstring, as defined by DJB"
         length_bytes = await self.read_until_delimiter(b':')
         if length_bytes is None:
-            return None
+            raise EOFException("hangup before reaching colon at end of netstring size")
         length = int(length_bytes)
         data = await self.read_length(length)
         if data is None:

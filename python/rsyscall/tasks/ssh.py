@@ -168,8 +168,6 @@ async def run_socket_binder(
         # instead have to have a sentinel to tell us when to stop reading.
         lines_buf = AsyncReadBuffer(async_stdout)
         tmp_path_bytes = await lines_buf.read_line()
-        if tmp_path_bytes is None:
-            raise Exception("got EOF from ssh socket binder?")
         done = await lines_buf.read_line()
         if done != b"done":
             raise Exception("socket binder violated protocol, got instead of done:", done)
