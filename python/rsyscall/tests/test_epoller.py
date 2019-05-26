@@ -7,7 +7,7 @@ import trio
 
 from rsyscall.tests.utils import do_async_things
 
-class TestExec(TrioTestCase):
+class TestEpoller(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local.thread
 

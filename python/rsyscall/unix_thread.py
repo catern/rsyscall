@@ -87,12 +87,12 @@ class UnixThread(ForkThread):
             stdin=self.stdin.for_task(task),
             stdout=self.stdout.for_task(task),
             stderr=self.stderr.for_task(task),
-        ), parent_monitor=self.child_monitor)
+        ), process=child_process)
 
 class ChildUnixThread(UnixThread):
-    def __init__(self, thr: UnixThread, parent_monitor: ChildProcessMonitor) -> None:
+    def __init__(self, thr: UnixThread, process: AsyncChildProcess) -> None:
         super()._init_from(thr)
-        self.parent_monitor = parent_monitor
+        self.process = process
 
     async def execveat(self, path: Path, argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> AsyncChildProcess:
         async def op(sem: RAM) -> t.Tuple[WrittenPointer[Path],
@@ -104,8 +104,8 @@ class ChildUnixThread(UnixThread):
                     await sem.ptr(argv_ptrs),
                     await sem.ptr(envp_ptrs))
         filename, argv_ptr, envp_ptr = await self.ram.perform_batch(op)
-        child_process = await self.task.execve(filename, argv_ptr, envp_ptr, flags)
-        return self.parent_monitor.add_child_process(child_process)
+        await self.task.execve(filename, argv_ptr, envp_ptr, flags)
+        return self.process
 
     async def execve(self, path: Path,
                      argv: t.Sequence[t.Union[str, bytes, os.PathLike]],

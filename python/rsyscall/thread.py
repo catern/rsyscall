@@ -122,7 +122,7 @@ class Thread(UnixThread):
             uid = await self.task.getuid()
             gid = await self.task.getgid()
             await write_user_mappings(thread, uid, gid)
-        return ChildThread(thread, thread.parent_monitor)
+        return ChildThread(thread, thread.process)
 
     async def run(self, command: Command, check=True,
                   *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:

@@ -1023,7 +1023,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
     async def execve(self, filename: WrittenPointer[Path],
                      argv: WrittenPointer[ArgList],
                      envp: WrittenPointer[ArgList],
-                     flags: AT) -> ChildProcess:
+                     flags: AT) -> None:
         with contextlib.ExitStack() as stack:
             stack.enter_context(filename.borrow(self))
             for arg in [*argv.data, *envp.data]:
@@ -1037,10 +1037,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             self.manipulating_fd_table = False
             self._make_fresh_fd_table()
             if isinstance(self.process, ChildProcess):
-                return self.process.did_exec()
-            else:
-                raise RootExecError("A task that isn't a ChildProcess called exec, "
-                                    "and now we can't monitor it.")
+                self.process.did_exec()
 
     async def exit(self, status: int) -> None:
         self.manipulating_fd_table = True

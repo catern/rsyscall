@@ -18732,8 +18732,10 @@ and rename it to waitpid?
     though this is all pretty niche...
 *** DONE implement killpg
 ** TODO store childprocess in childthread
-   one real use case: sending signals to trigger EINTR
+   a real use case: sending signals to trigger EINTR
    (to cancel syscalls)
+** TODO rename ChildEvent to ChildStateChange or something
+   ChildState would be good actually
 ** DONE switch from Signals to SIG
 ** DONE change everything to use malloc/ptr
    Delete malloc_struct/malloc_type/to_pointer.

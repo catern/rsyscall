@@ -63,6 +63,8 @@ from rsyscall.signal import SIG, Sigset, Siginfo
 import trio
 import contextlib
 import typing as t
+import logging
+logger = logging.getLogger(__name__)
 
 from rsyscall.signal import SignalBlock
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
@@ -136,30 +138,34 @@ class AsyncChildProcess:
     async def waitpid(self, options: W) -> ChildEvent:
         if options & W.EXITED and self.process.death_event:
             # TODO this is not really the actual behavior of waitpid...
-            # if the child is already dead we'd get an ECHLD not the death event again.
+            # if the child is already dead we'd get an ECHLD not the death state change again.
             return self.process.death_event
         while True:
             # If a previous call has given us a next_sigchld to wait on, then wait we shall.
             if self.next_sigchld:
                 await self.next_sigchld.wait()
-            # We update next_sigchld so that the next call will to waitid will wait for
-            # this event to be set before calling waitid. Note that it's important that we
-            # do this update before calling waitid: If a sigchld is delivered while we're
-            # calling waitid, that means our next call to waitid doesn't need to wait. If
-            # we made the update after calling waitid, then we may drop that sigchld, and
-            # deadlock.
-            self.next_sigchld = self.sigchld_sigfd.next_signal
-            event = await self.waitid_nohang()
-            if event is not None:
-                # we shouldn't wait the next time we're called, we should eagerly wait for
-                # an event, since we don't know that one isn't there.
+                # we shouldn't wait for SIGCHLD the next time we're called, we should eagerly call
+                # waitid, since there may still be state changes to fetch.
                 self.next_sigchld = None
-                if event.state(options):
-                    return event
+            # We have to save this signal event before calling waitid, otherwise we may deadlock: If
+            # a SIGCHLD is delivered while we're calling waitid, then saved_sigchld will be
+            # different from self.sigchld_sigfd.next_signal after the waitid; and if we use the
+            # value of self.sigchld_sigfd.next_signal after the waitid, we'll be waiting for a
+            # SIGCHLD that will never come.
+            saved_sigchld = self.sigchld_sigfd.next_signal
+            state_change = await self.waitid_nohang()
+            if state_change is not None:
+                if state_change.state(options):
+                    return state_change
                 else:
-                    # TODO we shouldn't discard the event here if we're not waiting for it;
+                    # TODO we shouldn't discard the state change here if we're not waiting for it;
                     # unfortunately doing it right will require a lot of refactoring of waitid
                     pass
+            else:
+                # we know for sure that there will only be state changes fetchable by waitid after
+                # waiting for this SIGCHLD event. note that this event may have already happened, if
+                # we received a SIGCHLD while calling waitid.
+                self.next_sigchld = saved_sigchld
 
     async def check(self) -> ChildEvent:
         "Wait for this child to die, and once it does, throw if it didn't exit cleanly"
