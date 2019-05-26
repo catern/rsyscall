@@ -54,7 +54,7 @@ class UnixThread(ForkThread):
         self.stderr = thr.stderr
 
     async def fork(self, flags: CLONE=CLONE.SIGHAND) -> ChildUnixThread:
-        task = await self._fork_task(flags)
+        child_process, task = await self._fork_task(flags)
         ram = RAM(task,
                   # We don't inherit the transport because it leads to a deadlock:
                   # If when a child task calls transport.read, it performs a syscall in the child task,

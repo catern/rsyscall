@@ -168,7 +168,7 @@ async def spawn_child_task(
         remote_sock: FileDescriptor,
         trampoline: Trampoline,
         flags: CLONE,
-) -> Task:
+) -> t.Tuple[AsyncChildProcess, Task]:
     flags |= CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM|SIG.CHLD
     # TODO it is unclear why we sometimes need to make a new mapping here, instead of allocating with our normal
     # allocator; all our memory is already MAP.SHARED, I think.
@@ -200,7 +200,7 @@ async def spawn_child_task(
     new_base_task.sigmask = task.sigmask
     remote_sock_handle = new_base_task.make_fd_handle(remote_sock)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
-    return new_base_task
+    return child_process, new_base_task
 
 async def spawn_rsyscall_thread(
         ram: RAM, task: Task,
@@ -208,7 +208,7 @@ async def spawn_rsyscall_thread(
         monitor: ChildProcessMonitor,
         loader: NativeLoader,
         flags: CLONE,
-) -> Task:
+) -> t.Tuple[AsyncChildProcess, Task]:
     return await spawn_child_task(
         task, ram, loader, monitor, access_sock, remote_sock,
         Trampoline(loader.server_func, [remote_sock, remote_sock]), flags)
@@ -233,15 +233,15 @@ class ForkThread(ConnectionThread):
         self.loader = thr.loader
         self.child_monitor = thr.child_monitor
 
-    async def _fork_task(self, flags: CLONE) -> Task:
+    async def _fork_task(self, flags: CLONE) -> t.Tuple[AsyncChildProcess, Task]:
         [(access_sock, remote_sock)] = await self.connection.open_async_channels(1)
-        base_task = await spawn_rsyscall_thread(
+        child_process, base_task = await spawn_rsyscall_thread(
             self.ram, self.task,
             access_sock, remote_sock,
             self.child_monitor, self.loader,
             flags,
         )
         await remote_sock.invalidate()
-        return base_task
+        return child_process, base_task
 
 

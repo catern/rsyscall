@@ -21,14 +21,6 @@ class TestProc(TrioTestCase):
         # set up proc
 
     async def test_pgid(self) -> None:
-        # init starts out in process group 0. er wait no, this is just an unmapped pid. hm.
-        self.assertEqual(int(await self.init.task.getpgid()), 0)
-        # hM m mmmm we're calling setpgid but.
-        # we don't know our own pid inside our namespace.
-        # ok whatever not that important
-        # print(await self.init.task.setpgid())
-        # print(await self.init.task.getpgid())
-
         pgldr = await self.init.fork()
         await pgldr.task.setpgid()
         pgflr = await self.init.fork()
@@ -38,11 +30,10 @@ class TestProc(TrioTestCase):
         self.assertEqual(pgldr.task.process.death_event.pid, 2)
         self.assertTrue(pgldr.task.process.death_event.died())
         self.assertEqual(int(await pgflr.task.getpgid()), 2)
-        # argh okay so I need to set up proc in the namespace, which means I also need a mount namespace
-        last_pid = await self.init.task.open(await self.init.ram.ptr(Path("/proc/sys/kernel/ns_last_pid")), O.RDWR)
-        print(await self.init.read_to_eof(last_pid))
-        await last_pid.lseek(0, SEEK.SET)
+
+        last_pid = await self.init.task.open(await self.init.ram.ptr(Path("/proc/sys/kernel/ns_last_pid")), O.WRONLY)
         await self.init.spit(last_pid, b"1\n")
+
         with self.assertRaises(ProcessLookupError):
             await self.init.task._make_process(2).kill(SIG.NONE)
         pg_two = await self.init.fork()

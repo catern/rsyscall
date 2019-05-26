@@ -153,7 +153,7 @@ async def fork_persistent(
     await listening_sock.bind(await parent.ram.ptr(await SockaddrUn.from_path(parent, path)))
     await listening_sock.listen(1)
     [(access_sock, remote_sock)] = await parent.open_async_channels(1)
-    task = await spawn_child_task(
+    child_process, task = await spawn_child_task(
         parent.task, parent.ram, parent.loader, parent.child_monitor,
         access_sock, remote_sock,
         Trampoline(parent.loader.persistent_server_func, [remote_sock, remote_sock, listening_sock]),
