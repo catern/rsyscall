@@ -90,8 +90,8 @@ class AsyncSignalfd:
     async def make(cls, ram: RAM, task: Task, epoller: Epoller, mask: Sigset,
                    *, signal_block: SignalBlock=None,
     ) -> AsyncSignalfd:
-        if task is not epoller.epoller.epfd.task:
-            raise Exception("signalfd task and epoller task must be the same")
+        if task is not epoller.epoll_waiter.epfd.task:
+            raise Exception("signalfd task and epoll_waiter task must be the same")
         if signal_block is None:
             async def op(sem: RAM) -> t.Tuple[WrittenPointer[Sigset], Pointer[Sigset]]:
                 return await sem.ptr(mask), await sem.malloc(Sigset)

@@ -109,12 +109,11 @@ __all__ = [
 class EpollWaiter:
     """The core class which reads events from the epollfd and dispatches them.
 
-    Many threads may have a copy of our epollfd, and register fds on
-    it. To actually wait on this epollfd and pull events from it is
-    the responsibility of this class. By sharing this class and
-    epollfd between many threads for registration purposes, but
-    centralizing the actual epoll_wait call, our usage of epoll
-    becomes more efficient.
+    Many threads may have a copy of our epollfd, and register fds on it. To actually wait
+    on this epollfd and pull events from it is the responsibility of this class. By
+    inheriting the epollfd to many threads for registration purposes, but centralizing the
+    actual epoll_wait calls in this shared class, our usage of epoll becomes more
+    efficient.
 
     """
     def __init__(self, ram: RAM, epfd: FileDescriptor,
@@ -199,60 +198,55 @@ class Epoller:
             activity_fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP)
         return center
 
-    def __init__(self, epoller: EpollWaiter, ram: RAM, epfd: FileDescriptor) -> None:
-        self.epoller = epoller
+    def __init__(self, epoll_waiter: EpollWaiter, ram: RAM, epfd: FileDescriptor) -> None:
+        self.epoll_waiter = epoll_waiter
         self.ram = ram
         self.epfd = epfd
 
     def inherit(self, ram: RAM) -> Epoller:
-        """Make a new Epoller which shares the same EpollWaiter thread
+        """Make a new Epoller which shares the same EpollWaiter class
 
         We inherit the epollfd to a new task for the purpose of registering new fds on it;
-        but we share the class and thread which actually calls epoll_wait.
+        but we share the class and task which actually calls epoll_wait.
 
         """
-        return Epoller(self.epoller, ram, ram.task.make_fd_handle(self.epfd))
+        return Epoller(self.epoll_waiter, ram, ram.task.make_fd_handle(self.epfd))
 
     async def register(self, fd: FileDescriptor, events: EPOLL=None) -> EpolledFileDescriptor:
         if events is None:
             events = EPOLL.NONE
         send, receive = trio.open_memory_channel(math.inf)
-        number = self.epoller.add_and_allocate_number(send)
+        number = self.epoll_waiter.add_and_allocate_number(send)
         await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.ptr(EpollEvent(number, events)))
         return EpolledFileDescriptor(self, fd, receive, number)
 
-    async def modify(self, fd: FileDescriptor, event: EpollEvent) -> None:
-        await self.epfd.epoll_ctl(EPOLL_CTL.MOD, fd, await self.ram.ptr(event))
-
-    async def delete(self, fd: FileDescriptor) -> None:
-        await self.epfd.epoll_ctl(EPOLL_CTL.DEL, fd)
-
 class EpolledFileDescriptor:
     def __init__(self,
-                 epoll_center: Epoller,
+                 epoller: Epoller,
                  fd: FileDescriptor,
                  queue: trio.abc.ReceiveChannel,
                  number: int) -> None:
-        self.epoll_center = epoll_center
+        self.epoller = epoller
         self.fd = fd
         self.queue = queue
         self.number = number
         self.in_epollfd = True
 
     async def modify(self, events: EPOLL) -> None:
-        await self.epoll_center.modify(self.fd, EpollEvent(self.number, events))
+        await self.epoller.epfd.epoll_ctl(
+            EPOLL_CTL.MOD, self.fd, await self.epoller.ram.ptr(EpollEvent(self.number, events)))
 
     async def wait(self) -> t.List[EPOLL]:
         while True:
             try:
                 return [self.queue.receive_nowait()]
             except trio.WouldBlock:
-                await self.epoll_center.epoller.do_wait()
+                await self.epoller.epoll_waiter.do_wait()
 
     async def close(self) -> None:
         if self.in_epollfd:
             # TODO hmm, I guess we need to serialize this removal with calls to epoll?
-            await self.epoll_center.delete(self.fd)
+            await self.epoller.epfd.epoll_ctl(EPOLL_CTL.DEL, self.fd)
             self.in_epollfd = False
         await self.fd.invalidate()
 
@@ -281,7 +275,7 @@ class AsyncFileDescriptor:
 
     @property
     def thr(self) -> EpollThread:
-        return EpollThread(self.handle.task, self.ram, self.epolled.epoll_center)
+        return EpollThread(self.handle.task, self.ram, self.epolled.epoller)
 
     async def _wait_once(self):
         async with self.running_wait.needs_run() as needs_run:
