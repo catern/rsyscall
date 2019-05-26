@@ -88,6 +88,7 @@ from rsyscall.concurrency import OneAtATime
 from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 import trio
+from dataclasses import dataclass
 
 from rsyscall.struct import Int32
 from rsyscall.handle import Sockbuf
@@ -127,22 +128,31 @@ class EpollWaiter:
 
         self.next_number = 0
         self.number_to_cb: t.Dict[int, t.Callable[[EPOLL], None]] = {}
+        self.pending_remove: t.List[int] = []
         self.running_wait = OneAtATime()
         # resumability
         self.input_buf: t.Optional[Pointer[EpollEventList]] = None
         self.syscall_response: t.Optional[near.SyscallResponse] = None
         self.valid_events_buf: t.Optional[Pointer[EpollEventList]] = None
 
-    # need to also support removing, I guess!
     def add_and_allocate_number(self, cb: t.Callable[[EPOLL], None]) -> int:
         number = self.next_number
+        # TODO technically we should allocate the lowest unused number
         self.next_number += 1
         self.number_to_cb[number] = cb
         return number
 
+    def remove_number(self, number: int) -> None:
+        # we mark this number to be removed before we call epoll again; we can't
+        # immediately remove it since we might be in the middle of a call right now.
+        self.pending_remove.append(number)
+
     async def do_wait(self) -> None:
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
+                for number in self.pending_remove:
+                    del self.number_to_cb[number]
+                self.pending_remove = []
                 maxevents = 32
                 if self.input_buf is None:
                     self.input_buf = await self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof())
@@ -215,8 +225,6 @@ class Epoller:
 
     async def register(self, fd: FileDescriptor, events: EPOLL,
                        cb: t.Callable[[EPOLL], None]) -> EpolledFileDescriptor:
-        if events is None:
-            events = EPOLL.NONE
         number = self.epoll_waiter.add_and_allocate_number(cb)
         await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.ptr(EpollEvent(number, events)))
         return EpolledFileDescriptor(self, fd, number)
@@ -231,16 +239,59 @@ class EpolledFileDescriptor:
         self.number = number
         self.in_epollfd = True
 
+    async def do_wait(self) -> None:
+        await self.epoller.epoll_waiter.do_wait()
+
     async def modify(self, events: EPOLL) -> None:
         await self.epoller.epfd.epoll_ctl(
             EPOLL_CTL.MOD, self.fd, await self.epoller.ram.ptr(EpollEvent(self.number, events)))
 
-    async def close(self) -> None:
+    async def delete(self) -> None:
         if self.in_epollfd:
-            # TODO hmm, I guess we need to serialize this removal with calls to epoll?
             await self.epoller.epfd.epoll_ctl(EPOLL_CTL.DEL, self.fd)
+            self.epoller.epoll_waiter.remove_number(self.number)
             self.in_epollfd = False
-        await self.fd.invalidate()
+
+@dataclass
+class FDStatus:
+    """Tracks the IO status of a file as an EPOLL mask
+
+    With edge-triggered epoll, we can track whether a file is ready for a given IO in
+    userspace.
+
+    Edge-triggered epoll sends us a stream of posedges for each tracked file: Each time we get
+    an EPOLLET event, it means that the file is ready for the IO operations corresponding
+    to the bits set in the event. We track this by just or-ing in the event's mask into
+    FDStatus's mask.
+
+    We receive negedges by getting EAGAINs (or similar equivalents) when performing
+    operations on file descriptors. Each one tells us that the file is not ready for some
+    specific IO operation. We track this by translating it into the corresponding EPOLL
+    flag and unsetting it in FDStatus's mask.
+
+    By following this discipline and getting every event, we know for sure at any time
+    whether a file *might* be ready for IO, or if instead it's safe to block in a call to
+    epoll_wait to wait for the file to be ready.
+
+    Dropping a negedge decreases our efficiency, but is harmless, since we'll just get an
+    EAGAIN the next time. Dropping a posedge is very bad and means we will deadlock.
+
+    epoll seems to not send us a posedge if we could already know that the file descriptor
+    is readable. So, for example, if we directly read an fd and we haven't already gotten
+    a posedge for it, and we get a full buffer of data, then we won't get a posedge for it
+    from epoll. This would cause various problems, including deadlocks if multiple threads
+    were trying to read from the fd and one was blocked in epoll_wait, waiting for the
+    posedge. Therefore, don't read an fd until you've got the posedge from epoll; only get
+    your posedges from epoll, not by reading optimistically.
+
+    """
+    mask: EPOLL
+
+    def posedge(self, event: EPOLL) -> None:
+        self.mask |= event
+
+    def negedge(self, event: EPOLL) -> None:
+        self.mask &= ~event
 
 class AsyncFileDescriptor:
     @staticmethod
@@ -248,47 +299,34 @@ class AsyncFileDescriptor:
     ) -> AsyncFileDescriptor:
         if not is_nonblock:
             await fd.fcntl(F.SETFL, O.NONBLOCK)
-        send, receive = trio.open_memory_channel(math.inf)
+        status = FDStatus(EPOLL.NONE)
         epolled = await epoller.register(
             fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET,
-            send.send_nowait,
+            status.posedge,
         )
-        return AsyncFileDescriptor(epolled, ram, fd, receive)
+        return AsyncFileDescriptor(ram, fd, status, epolled)
 
-    def __init__(self, epolled: EpolledFileDescriptor, ram: RAM, handle: FileDescriptor,
-                 queue: trio.abc.ReceiveChannel,
+    def __init__(self, ram: RAM, handle: FileDescriptor,
+                 status: FDStatus, epolled: EpolledFileDescriptor,
     ) -> None:
-        self.epolled = epolled
         self.ram = ram
         self.handle = handle
-        self.queue = queue
-        self.running_wait = OneAtATime()
-        self.status = EPOLL.NONE
+        self.status = status
+        self.epolled = epolled
 
     @property
     def thr(self) -> EpollThread:
         return EpollThread(self.handle.task, self.ram, self.epolled.epoller)
 
-    async def _wait_once(self):
-        async with self.running_wait.needs_run() as needs_run:
-            if needs_run:
-                while True:
-                    try:
-                        event = self.queue.receive_nowait()
-                        break
-                    except trio.WouldBlock:
-                        await self.epolled.epoller.epoll_waiter.do_wait()
-                self.status |= event
-
     async def read(self, ptr: Pointer) -> t.Tuple[Pointer, Pointer]:
         while True:
-            while not self.status & (EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR):
-                await self._wait_once()
+            while not self.status.mask & (EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR):
+                await self.epolled.do_wait()
             try:
                 return (await self.handle.read(ptr))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    self.status &= ~EPOLL.IN
+                    self.status.negedge(EPOLL.IN)
                 else:
                     raise
 
@@ -298,12 +336,12 @@ class AsyncFileDescriptor:
         return await valid.read()
 
     async def wait_for_rdhup(self) -> None:
-        while not self.status & (EPOLL.RDHUP|EPOLL.HUP):
-            await self._wait_once()
+        while not self.status.mask & (EPOLL.RDHUP|EPOLL.HUP):
+            await self.epolled.do_wait()
 
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        while not self.status & (EPOLL.OUT|EPOLL.ERR):
-            await self._wait_once()
+        while not self.status.mask & (EPOLL.OUT|EPOLL.ERR):
+            await self.epolled.do_wait()
         while True:
             try:
                 return await self.handle.write(buf)
@@ -311,7 +349,7 @@ class AsyncFileDescriptor:
                 if e.errno == errno.EAGAIN:
                     # TODO this is not really quite right if it's possible to concurrently call methods on this object.
                     # we really need to lock while we're making the async call, right? maybe...
-                    self.status &= ~EPOLL.OUT
+                    self.status.negedge(EPOLL.OUT)
                 else:
                     raise
 
@@ -327,25 +365,25 @@ class AsyncFileDescriptor:
     async def _accept_with_addr(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
     ) -> t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]:
         while True:
-            while not self.status & (EPOLL.IN|EPOLL.HUP):
-                await self._wait_once()
+            while not self.status.mask & (EPOLL.IN|EPOLL.HUP):
+                await self.epolled.do_wait()
             try:
                 return (await self.handle.accept(flags, addr))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    self.status &= ~EPOLL.IN
+                    self.status.negedge(EPOLL.IN)
                 else:
                     raise
 
     async def _accept(self, flags: SOCK) -> FileDescriptor:
         while True:
-            while not self.status & (EPOLL.IN|EPOLL.HUP):
-                await self._wait_once()
+            while not self.status.mask & (EPOLL.IN|EPOLL.HUP):
+                await self.epolled.do_wait()
             try:
                 return (await self.handle.accept(flags))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    self.status &= ~EPOLL.IN
+                    self.status.negedge(EPOLL.IN)
                 else:
                     raise
 
@@ -376,8 +414,8 @@ class AsyncFileDescriptor:
             await self.handle.connect(addr)
         except OSError as e:
             if e.errno == errno.EINPROGRESS:
-                while not self.status & EPOLL.OUT:
-                    await self._wait_once()
+                while not self.status.mask & EPOLL.OUT:
+                    await self.epolled.do_wait()
                 sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(Int32)))
                 retbuf = await self.handle.getsockopt(SOL.SOCKET, SO.ERROR, sockbuf)
                 err = await (await retbuf.read()).buf.read()
@@ -390,7 +428,8 @@ class AsyncFileDescriptor:
         await self.connect(await self.ram.ptr(addr))
 
     async def close(self) -> None:
-        await self.epolled.close()
+        await self.epolled.delete()
+        await self.handle.invalidate()
 
 class EOFException(Exception):
     pass

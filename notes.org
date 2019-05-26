@@ -18822,6 +18822,8 @@ and rename it to waitpid?
     that's clearly the easy way forward, meh.
 * DOCUMENTATION!
   Time to write it!
+** TODO move epoll blocking stuff in module docstring to Epoller docstring
+   That's a better fit, we're spreading the docs over the file, not centralizing it.
 ** wait actually no
    because I need to finish refactoring to Thread instead of stdtask first,
    and also need to fix up the rsysapps.
