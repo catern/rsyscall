@@ -66,7 +66,7 @@ class UnixThread(ForkThread):
                   self.ram.transport,
                   self.ram.allocator.inherit(task),
         )
-        if flags & CLONE.NEWPID or self.child_monitor.is_reaper:
+        if flags & CLONE.NEWPID:
             # if the new process is pid 1, then CLONE_PARENT isn't allowed so we can't use inherit_to_child.
             # if we are a reaper, than we don't want our child CLONE_PARENTing to us, so we can't use inherit_to_child.
             # in both cases we just fall back to making a new ChildProcessMonitor for the child.

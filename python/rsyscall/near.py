@@ -184,6 +184,7 @@ class SYS(enum.IntEnum):
     getdents64 = lib.SYS_getdents64
     getgid = lib.SYS_getgid
     getpeername = lib.SYS_getpeername
+    getpgid = lib.SYS_getpgid
     getsockname = lib.SYS_getsockname
     getsockopt = lib.SYS_getsockopt
     getuid = lib.SYS_getuid
@@ -217,6 +218,7 @@ class SYS(enum.IntEnum):
     set_robust_list = lib.SYS_set_robust_list
     set_tid_address = lib.SYS_set_tid_address
     setns = lib.SYS_setns
+    setpgid = lib.SYS_setpgid
     setsid = lib.SYS_setsid
     setsockopt = lib.SYS_setsockopt
     shutdown = lib.SYS_shutdown
@@ -337,6 +339,11 @@ async def getgid(sysif: SyscallInterface) -> int:
 async def getpeername(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: Pointer) -> None:
     await sysif.syscall(SYS.getpeername, sockfd, addr, addrlen)
 
+async def getpgid(sysif: SyscallInterface, pid: t.Optional[Process]) -> ProcessGroup:
+    if pid is None:
+        pid = 0 # type: ignore
+    return ProcessGroup(await sysif.syscall(SYS.getpgid, pid))
+
 async def getsockname(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: Pointer) -> None:
     await sysif.syscall(SYS.getsockname, sockfd, addr, addrlen)
 
@@ -361,7 +368,9 @@ async def ioctl(sysif: SyscallInterface, fd: FileDescriptor, request: int,
         arg = 0
     return (await sysif.syscall(SYS.ioctl, fd, request, arg))
 
-async def kill(sysif: SyscallInterface, pid: Process, sig: Signals) -> None:
+async def kill(sysif: SyscallInterface, pid: t.Union[Process, ProcessGroup], sig: Signals) -> None:
+    if isinstance(pid, ProcessGroup):
+        pid = -int(pid) # type: ignore
     await sysif.syscall(SYS.kill, pid, sig)
 
 async def linkat(sysif: SyscallInterface,
@@ -501,6 +510,13 @@ async def set_tid_address(sysif: SyscallInterface, ptr: Pointer) -> None:
 
 async def setns(sysif: SyscallInterface, fd: FileDescriptor, nstype: int) -> None:
     await sysif.syscall(SYS.setns, fd, nstype)
+
+async def setpgid(sysif: SyscallInterface, pid: t.Optional[Process], pgid: t.Optional[ProcessGroup]) -> None:
+    if pid is None:
+        pid = 0 # type: ignore
+    if pgid is None:
+        pgid = 0 # type: ignore
+    await sysif.syscall(SYS.setpgid, pid, pgid)
 
 async def setsid(sysif: SyscallInterface) -> int:
     return (await sysif.syscall(SYS.setsid))

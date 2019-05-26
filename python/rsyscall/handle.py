@@ -1129,6 +1129,22 @@ class Task(SignalMaskTask, rsyscall.far.Task):
     async def getgid(self) -> int:
         return (await rsyscall.near.getgid(self.sysif))
 
+    async def getpgid(self) -> rsyscall.near.ProcessGroup:
+        return (await rsyscall.near.getpgid(self.sysif, None))
+
+    async def setpgid(self, pgid: t.Optional[ChildProcess]=None) -> None:
+        if pgid is None:
+            await rsyscall.near.setpgid(self.sysif, None, None)
+        else:
+            if pgid.task.pidns != self.pidns:
+                raise rsyscall.far.NamespaceMismatchError(
+                    "different pid namespaces", pgid.task.pidns, self.pidns)
+            with pgid.borrow():
+                await rsyscall.near.setpgid(self.sysif, None, pgid._as_process_group())
+
+    def _make_process(self, pid: int) -> Process:
+        return Process(self, rsyscall.near.Process(pid))
+
 
 ################################################################################
 # Processes
@@ -1140,6 +1156,15 @@ class Process:
 
     async def kill(self, sig: Signals) -> None:
         await rsyscall.near.kill(self.task.sysif, self.near, sig)
+
+    def _as_process_group(self) -> rsyscall.near.ProcessGroup:
+        return rsyscall.near.ProcessGroup(self.near.id)
+
+    async def killpg(self, sig: Signals) -> None:
+        await rsyscall.near.kill(self.task.sysif, self._as_process_group(), sig)
+
+    async def getpgid(self) -> rsyscall.near.ProcessGroup:
+        return (await rsyscall.near.getpgid(self.task.sysif, self.near))
 
 class ChildProcess(Process):
     def __init__(self, task: Task, near: rsyscall.near.Process, alive=True) -> None:
@@ -1177,6 +1202,30 @@ class ChildProcess(Process):
     async def kill(self, sig: Signals) -> None:
         with self.borrow():
             await super().kill(sig)
+
+    async def killpg(self, sig: Signals) -> None:
+        # This call will throw an error if this child isn't a process group leader, but
+        # it's at least guaranteed to not kill some random unrelated process group.
+        with self.borrow():
+            await super().killpg(sig)
+
+    async def getpgid(self) -> rsyscall.near.ProcessGroup:
+        with self.borrow():
+            return await super().getpgid()
+
+    async def setpgid(self, pgid: t.Optional[ChildProcess]) -> None:
+        # the ownership model of process groups is such that the only way that
+        # it's safe to use setpgid on a child process is if we're setpgid-ing to
+        # the process group of another child process.
+        with self.borrow():
+            if pgid is None:
+                await rsyscall.near.setpgid(self.task.sysif, self.near, None)
+            else:
+                if pgid.task.pidns != self.task.pidns:
+                    raise rsyscall.far.NamespaceMismatchError(
+                        "different pid namespaces", pgid.task.pidns, self.task.pidns)
+                with pgid.borrow():
+                    await rsyscall.near.setpgid(self.task.sysif, self.near, self._as_process_group())
 
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:

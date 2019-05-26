@@ -164,10 +164,6 @@ class ChildProcessMonitor:
         return ChildProcessMonitor(sigfd, ram, task, use_clone_parent=False, is_reaper=is_reaper)
 
     def inherit_to_child(self, child_task: Task) -> ChildProcessMonitor:
-        if self.is_reaper:
-            # TODO we should actually look at something on the Task, I suppose, to determine if we're a reaper
-            raise Exception("we're a ChildProcessMonitor for a reaper task, "
-                            "we can't be inherited because we can't use CLONE_PARENT")
         if child_task.parent_task is not self.sigfd.afd.handle.task:
             raise Exception("task", child_task, "with parent_task", child_task.parent_task,
                             "is not our child; we're", self.sigfd.afd.handle.task)

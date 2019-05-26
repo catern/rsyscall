@@ -28,6 +28,9 @@ __all__ = [
 # re-exported
 from signal import Signals
 
+class SIG(enum.IntFlag):
+    NONE = 0
+
 class SA(enum.IntFlag):
     NOCLDSTOP = lib.SA_NOCLDSTOP
     NOCLDWAIT = lib.SA_NOCLDWAIT

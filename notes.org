@@ -18594,7 +18594,7 @@ and rename it to waitpid?
    ok I did it
 ** DONE force cloexec on everything
 ** DONE make accept flags argument optional
-** TODO *maybe* reduce the number of waitid calls we make?
+** DONE *maybe* reduce the number of waitid calls we make?
    it's a matter of storing state about whether we believe a waitid call has been made
    since the last sigchld.
 
@@ -18636,6 +18636,105 @@ and rename it to waitpid?
    ok yeah so we wait for a signal,
    when we get one we switch to the new signal-waiter then make the syscall,
    if the syscall returns an event then we don't need to wait for a signal.
+
+   ok we at least cleaned up monitor's implementation, though i didn't look if we're actually waitiding less
+** TODO delete is_reaper from monitor
+** TODO track process groups
+   hm so how can we do this
+
+   and sessions also
+
+   what are the proper ownership semantics for process groups and sessions?
+
+   are they owned by the leader?
+   not in reality - they can still exist when the leader is gone.
+
+   ok so we could just have this handle thing, and.
+
+   well hmm we don't know that the process group won't point to something else if the leader is gone.
+
+   yeah okay so here's a race condition,
+   if the child is dead,
+   then we can't signal the process group.
+
+   ok what the heck even happens when this happens though
+
+   i can investigate with a pidns and ns_last_pid! neat
+
+   ok, so. the pid will wrap over.
+   it'll just skip the still-used process group id
+
+   ok so it seems that any process in a process group has ownership;
+   the process group is not freed until the last one leaves.
+
+   but, conversely,
+   an arbitrary child can change its process group!
+   so we don't know that we can signal a process group,
+   except from the inside of a process.
+
+   well, it's at least harmless to signal a group that is created by our child?
+
+   right?
+
+   right, uh, process groups have to be created by the process that is their number thing.
+
+   ok this is fine, let's do it.
+
+   um so. wait.
+
+   we can kill a process group,
+   and we can join it.
+
+   this whole API sucks, is there some easier way to "kill" off the persistent thread?
+
+   well we do setsid and pdeathsig 0. not much we can do there.
+
+   the parent process is set by clone_parent so we can't kill the parent.
+
+   sessions would be just more hassle of the same kind.
+
+   process groups, fine, let's do it.
+*** api
+    kill a process group and join it.
+
+    setpgid is a method on ChildProcess and Task,
+    both taking a process group handle.
+
+    um wait, a process group handle? that doesn't make much sense because,
+    we can only get the handle in the task inside it,
+    and they can only be in one.
+
+    and we're saying we'll have killpg on ChildProcess as well to try to kill the process group inside?
+
+    well wait we can always,
+    set the process group of a child process,
+    to the process group led by any other child process
+
+    yeah and that's by far the more useful ability
+
+    so maybe it's useless to have a processgroup handle?
+    since it can't be owned...
+
+    oh hey we can't even setpgid to Tasks, because if they aren't child processes,
+    then they could die and be collected in the meantime.
+
+    now what can we setpgid to in a Task?
+    A ChildProcess I guess, any ChildProcess.
+
+    ok so we don't have the childprocess hanging around in a thread. that's annoying, hm.
+
+    ok, so. what would we use it for?
+
+    we get childprocess out of execve, hm...
+
+    maybe we should just store the childprocess in the childthread.
+
+    though this is all pretty niche...
+*** TODO implement killpg
+** TODO store childprocess in childthread
+   one real use case: sending signals to trigger EINTR
+   (to cancel syscalls)
+** TODO switch from Signals to SIG
 ** DONE change everything to use malloc/ptr
    Delete malloc_struct/malloc_type/to_pointer.
 

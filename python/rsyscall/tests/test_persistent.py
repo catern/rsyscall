@@ -7,6 +7,7 @@ from rsyscall.tasks.ssh import make_local_ssh
 from rsyscall.tasks.exceptions import RsyscallHangup
 from rsyscall.tests.utils import assert_thread_works
 from rsyscall.sched import CLONE
+from rsyscall.signal import Signals
 
 class TestPersistent(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -64,9 +65,10 @@ class TestPersistent(TrioTestCase):
     async def test_no_make_persistent(self) -> None:
         pidns_thr = await self.thread.fork(CLONE.NEWUSER|CLONE.NEWPID)
         sacr_thr = await pidns_thr.fork()
+        await sacr_thr.task.setpgid()
         per_thr, connection = await fork_persistent(sacr_thr, self.sock_path)
-        # exit sacr_thr, and per_thr will be killed by PDEATHSIG, like a normal thread
-        await sacr_thr.exit(0)
+        # kill sacr_thr's process group to kill per_thr too
+        await sacr_thr.task.process.killpg(Signals.SIGKILL)
         # the persistent thread is dead, we can't reconnect to it
         with self.assertRaises(BaseException): # type: ignore
             await connection.reconnect(self.thread)
@@ -75,11 +77,12 @@ class TestPersistent(TrioTestCase):
         # use a pidns so that the persistent task will be killed after all
         pidns_thr = await self.thread.fork(CLONE.NEWUSER|CLONE.NEWPID)
         sacr_thr = await pidns_thr.fork()
+        await sacr_thr.task.setpgid()
         per_thr, connection = await fork_persistent(sacr_thr, self.sock_path)
         # make the persistent thread, actually persistent.
         await connection.make_persistent()
-        # exit sacr_thr, and per_thr won't be killed
-        await sacr_thr.exit(0)
+        # kill sacr_thr's process group
+        await sacr_thr.task.process.killpg(Signals.SIGKILL)
         # the persistent thread is still around!
         await connection.reconnect(self.thread)
         await assert_thread_works(self, per_thr)
