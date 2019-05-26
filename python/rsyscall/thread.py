@@ -14,7 +14,7 @@ from rsyscall.fcntl import O, F, FD_CLOEXEC
 from rsyscall.linux.dirent import DirentList
 from rsyscall.sched import CLONE
 from rsyscall.sys.mount import MS
-from rsyscall.sys.wait import ChildEvent, W
+from rsyscall.sys.wait import ChildState, W
 from rsyscall.unistd import Arg
 
 async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
@@ -125,14 +125,14 @@ class Thread(UnixThread):
         return ChildThread(thread, thread.process)
 
     async def run(self, command: Command, check=True,
-                  *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
+                  *, task_status=trio.TASK_STATUS_IGNORED) -> ChildState:
         thread = await self.fork()
         child = await thread.exec(command)
         task_status.started(child)
-        exit_event = await child.waitpid(W.EXITED)
+        exit_state = await child.waitpid(W.EXITED)
         if check:
-            exit_event.check()
-        return exit_event
+            exit_state.check()
+        return exit_state
 
     async def unshare(self, flags: CLONE) -> None:
         # Note: unsharing NEWPID causes us to not get zombies for our children if init dies. That
@@ -220,13 +220,13 @@ class Thread(UnixThread):
         await self.close()
 
 class ChildThread(Thread, ChildUnixThread):
-    async def exec_run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildEvent:
+    async def exec_run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildState:
         child = await self.exec(command)
         task_status.started(child)
-        exit_event = await child.waitpid(W.EXITED)
+        exit_state = await child.waitpid(W.EXITED)
         if check:
-            exit_event.check()
-        return exit_event
+            exit_state.check()
+        return exit_state
 
     async def close(self) -> None:
         await self.task.close_task()

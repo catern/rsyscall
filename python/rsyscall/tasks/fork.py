@@ -152,9 +152,9 @@ async def launch_futex_monitor(ram: RAM,
     futex_process = await monitor.clone(CLONE.VM|CLONE.FILES, stack)
     # wait for futex helper to SIGSTOP itself,
     # which indicates the trampoline is done and we can deallocate the stack.
-    event = await futex_process.waitpid(W.EXITED|W.STOPPED)
-    if event.state(W.EXITED):
-        raise Exception("thread internal futex-waiting task died unexpectedly", event)
+    state = await futex_process.waitpid(W.EXITED|W.STOPPED)
+    if state.state(W.EXITED):
+        raise Exception("thread internal futex-waiting task died unexpectedly", state)
     # resume the futex_process so it can start waiting on the futex
     await futex_process.kill(SIG.CONT)
     # the stack will be freed as it is no longer needed, but the futex pointer will live on

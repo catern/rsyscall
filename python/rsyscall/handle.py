@@ -34,7 +34,7 @@ from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.capability import CapHeader, CapData
 from rsyscall.sys.inotify import InotifyFlag, IN
 from rsyscall.sys.memfd import MFD
-from rsyscall.sys.wait import W, ChildEvent
+from rsyscall.sys.wait import W, ChildState
 from rsyscall.sys.mman import MAP, PROT
 from rsyscall.sys.prctl import PR
 from rsyscall.sys.mount import MS
@@ -1170,19 +1170,19 @@ class ChildProcess(Process):
     def __init__(self, task: Task, near: rsyscall.near.Process, alive=True) -> None:
         self.task = task
         self.near = near
-        self.death_event: t.Optional[ChildEvent] = None
+        self.death_state: t.Optional[ChildState] = None
         self.unread_siginfo: t.Optional[Pointer[Siginfo]] = None
         self.in_use = False
 
-    def mark_dead(self, event: ChildEvent) -> None:
-        self.death_event = event
+    def mark_dead(self, state: ChildState) -> None:
+        self.death_state = state
 
     def did_exec(self) -> ChildProcess:
         return self
 
     @contextlib.contextmanager
     def borrow(self) -> t.Iterator[None]:
-        if self.death_event:
+        if self.death_state:
             raise Exception("child process", self.near, "is no longer alive, so we can't wait on it or kill it")
         if self.unread_siginfo:
             raise Exception("for child process", self.near, "waitid or kill was call "
@@ -1242,29 +1242,29 @@ class ChildProcess(Process):
                 raise
         self.unread_siginfo = infop
 
-    def parse_waitid_siginfo(self, siginfo: Siginfo) -> t.Optional[ChildEvent]:
+    def parse_waitid_siginfo(self, siginfo: Siginfo) -> t.Optional[ChildState]:
         self.unread_siginfo = None
         if siginfo.pid == 0:
             return None
         else:
-            event = ChildEvent.make_from_siginfo(siginfo)
-            if event.died():
-                self.mark_dead(event)
-            return event
+            state = ChildState.make_from_siginfo(siginfo)
+            if state.died():
+                self.mark_dead(state)
+            return state
 
     # helpers
-    async def read_siginfo(self) -> t.Optional[ChildEvent]:
+    async def read_siginfo(self) -> t.Optional[ChildState]:
         if self.unread_siginfo is None:
             raise Exception("no siginfo buf to read")
         else:
             siginfo = await self.unread_siginfo.read()
             return self.parse_waitid_siginfo(siginfo)
 
-    async def read_event(self) -> ChildEvent:
-        event = await self.read_siginfo()
-        if event is None:
-            raise Exception("expected an event, but siginfo buf didn't contain one")
-        return event
+    async def read_state_change(self) -> ChildState:
+        state = await self.read_siginfo()
+        if state is None:
+            raise Exception("expected a state change, but siginfo buf didn't contain one")
+        return state
 
 class ThreadProcess(ChildProcess):
     def __init__(self, task: Task, near: rsyscall.near.Process,
@@ -1288,7 +1288,7 @@ class ThreadProcess(ChildProcess):
         if self.tls is not None and self.tls.valid:
             self.tls.free()
 
-    def mark_dead(self, event: ChildEvent) -> None:
+    def mark_dead(self, event: ChildState) -> None:
         self.free_everything()
         return super().mark_dead(event)
 

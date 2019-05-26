@@ -35,7 +35,7 @@ class UncleanExit(Exception):
     pass
 
 @dataclass
-class ChildEvent:
+class ChildState:
     code: CLD
     pid: int
     uid: int
@@ -43,19 +43,25 @@ class ChildEvent:
     sig: t.Optional[SIG]
 
     @staticmethod
-    def make(code: CLD, pid: int, uid: int, status: int) -> ChildEvent:
+    def make(code: CLD, pid: int, uid: int, status: int) -> ChildState:
         if code is CLD.EXITED:
-            return ChildEvent(code, pid, uid, status, None)
+            return ChildState(code, pid, uid, status, None)
         else:
-            return ChildEvent(code, pid, uid, None, SIG(status))
+            return ChildState(code, pid, uid, None, SIG(status))
 
     @staticmethod
-    def make_from_siginfo(siginfo: Siginfo) -> ChildEvent:
-        return ChildEvent.make(CLD(siginfo.code),
+    def make_from_siginfo(siginfo: Siginfo) -> ChildState:
+        return ChildState.make(CLD(siginfo.code),
                                pid=siginfo.pid, uid=siginfo.uid,
                                status=siginfo.status)
 
     def state(self, options: W) -> bool:
+        """Return true if this W option would have returned this state change
+
+        Mainly useful for categorizing state changes into EXITED,
+        STOPPED or CONTINUED.
+
+        """
         return bool(options & {
             CLD.EXITED: W.EXITED,
             CLD.KILLED: W.EXITED,
@@ -94,6 +100,6 @@ class ChildEvent:
 from unittest import TestCase
 
 class TestWait(TestCase):
-    def test_child_event(self) -> None:
-        event = ChildEvent.make_from_siginfo(Siginfo(code=CLD.EXITED, pid=1, uid=13, status=1))
-        self.assertFalse(event.clean())
+    def test_child_state(self) -> None:
+        state = ChildState.make_from_siginfo(Siginfo(code=CLD.EXITED, pid=1, uid=13, status=1))
+        self.assertFalse(state.clean())

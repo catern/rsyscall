@@ -34,10 +34,10 @@ class TestProc(TrioTestCase):
         self.assertEqual(int(await pgflr.task.getpgid()), 2)
         await pgldr.exit(0)
         await pgldr.process.waitpid(W.EXITED)
-        self.assertIsNotNone(pgldr.process.process.death_event)
-        if pgldr.process.process.death_event is None: raise Exception # for mypy
-        self.assertEqual(pgldr.process.process.death_event.pid, 2)
-        self.assertTrue(pgldr.process.process.death_event.died())
+        self.assertIsNotNone(pgldr.process.process.death_state)
+        if pgldr.process.process.death_state is None: raise Exception # for mypy
+        self.assertEqual(pgldr.process.process.death_state.pid, 2)
+        self.assertTrue(pgldr.process.process.death_state.died())
         self.assertEqual(int(await pgflr.task.getpgid()), 2)
 
         await self.init.spit(last_pid, b"1\n")

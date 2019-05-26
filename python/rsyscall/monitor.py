@@ -1,55 +1,51 @@
 """Monitoring child processes in a non-blocking manner
 
-The API for monitoring child processes is one of the worst-designed
-parts of Unix, and Linux inherits that bad design. Still, we've tried
-to provide a usable interface here.
+The API for monitoring child processes is one of the worst-designed parts of
+Unix, and Linux inherits that bad design. Still, we've tried to provide a usable
+interface here.
 
-Our basic approach is to use a signalfd waiting for SIGCHLD to learn
-when an event may have happened, then call waitid until we run out of
-events. This is a common way to handle it, but we have a few changes.
+Our basic approach is to use a signalfd waiting for SIGCHLD to learn when a
+state change may have happened, then call waitid until we run out of state
+changes. This is a common way to handle it, but we have a few changes.
 
-Contrary to the obvious implementation, we don't use
-waitid(P.ALL). Instead, we make an individual waitid(P.PID) call for
-each process we're currently monitoring for events.
+Contrary to the obvious implementation, we don't use waitid(P.ALL).  Instead, we
+make an individual waitid(P.PID) call for each process we're currently
+monitoring for state changes.
 
-P.ALL is unrecoverably broken and racy in many situations. It's
-fundamentally the wrong API: You can't wait for only a subset of
-events, you always have to handle every single event that could
-happen. And worse still: When you handle the death event of a child,
-that child pid is freed and can be reused; so if you use P.ALL you
-must synchronize against anything that wants to operate on child pids,
-to prevent pid wrap races.
+P.ALL is unrecoverably broken and racy in many situations. It's fundamentally
+the wrong API: You can't wait for only a subset of processes, you always have to
+handle every single state change that could happen for any process. And worse:
+When you handle the death state change for a child, that child pid is freed and
+can be reused; so you must synchronize against anything that wants to operate on
+child pids, to prevent pid wrap races.
 
-P.ALL is especially bad when considering the possibility of new
-children appearing. If we call clone in two threads while a third
-calls waitid, and one of the created child processes dies immediately,
-there is no way to prevent a race where waitid gets the death event
-before the second clone completes, the pid wraps, the same pid is
-returned for the second clone, and we don't know which child process
-is alive and which is dead. Similar races can happen if we're pid 1 or
-a subreaper and we call clone.
+P.ALL is especially bad when considering the possibility of new children
+appearing.  If we call clone in two threads while a third calls waitid, and one
+of the created child processes dies immediately, there is no way to prevent a
+race where waitid gets the death state change before the second clone completes,
+the pid wraps, the same pid is returned for the second clone, and we don't know
+which child process is alive and which is dead. Similar races can happen if
+we're pid 1 or a subreaper and we call clone.
 
-Issuing a batch of P.PID calls instead is much better: We can wait for
-a subset of pids, and so all these worries about races go away. We
-still need to synchronize between usage of the pid and calls to
-waitid, but that synchronization happens for the individual child
-process, not globally across all our child processes. And the
-implementation becomes much simpler: Each object monitoring an
-individual child process just calls waitid(P.PID) and checks the
-result, instead of having to wait on some central coordinator to call
-waitid(P.ALL) and send back an event.
+Issuing a batch of P.PID calls instead is much better: We can wait for a subset
+of pids, and so all these worries about races go away.  We still need to
+synchronize between usage of the pid and calls to waitid, but that
+synchronization happens for the individual child process, not globally across
+all our child processes. And the implementation becomes much simpler: Each
+object monitoring an individual child process just calls waitid(P.PID) and
+checks the result, instead of having to wait on some central coordinator to call
+waitid(P.ALL) and send back the state changes.
 
 We also employ another trick: We use CLONE.PARENT to centralize child
-monitoring. When thread A creates child thread B, we want thread B to
-be able to later create children of its own, e.g. process C. Normally,
-we would create a new signalfd in thread B so that it can monitor its
-children. Instead, when thread B clones a new child process C, we use
-CLONE.PARENT so that thread A becomes the parent of new child process
-C, then we monitor process C from thread A instead of thread B. This
-lowers the original creation cost of thread B (since we don't have to
-make a new AsyncSignalfd, which would necessitate a new epoller - see
-the docstring for AsyncSignalfd) and also improves the efficiency of
-child monitoring through centralization into thread A.
+monitoring.  When thread A creates child thread B, we want thread B to be able
+to later create children of its own, e.g. process C.  Normally, we would create
+a new signalfd in thread B so that it can monitor its children. Instead, when
+thread B clones a new child process C, we use CLONE.PARENT so that thread A
+becomes the parent of new child process C, then we monitor process C from thread
+A instead of thread B.  This lowers the original creation cost of thread B
+(since we don't have to make a new AsyncSignalfd, which would necessitate a new
+epoller - see the docstring for AsyncSignalfd) and also improves the efficiency
+of child monitoring through centralization into thread A.
 
 """
 from __future__ import annotations
@@ -68,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 from rsyscall.signal import SignalBlock
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
-from rsyscall.sys.wait import CLD, ChildEvent, W
+from rsyscall.sys.wait import CLD, ChildState, W
 
 class AsyncSignalfd:
     """A signalfd, registered on epoll, with a SignalBlock for the appropriate signals
@@ -130,16 +126,16 @@ class AsyncChildProcess:
         self.sigchld_sigfd = sigchld_sigfd
         self.next_sigchld: t.Optional[MultiplexedEvent] = None
 
-    async def waitid_nohang(self) -> t.Optional[ChildEvent]:
+    async def waitid_nohang(self) -> t.Optional[ChildState]:
         if self.process.unread_siginfo is None:
             await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.ALL|W.NOHANG, await self.ram.malloc(Siginfo))
         return await self.process.read_siginfo()
 
-    async def waitpid(self, options: W) -> ChildEvent:
-        if options & W.EXITED and self.process.death_event:
+    async def waitpid(self, options: W) -> ChildState:
+        if options & W.EXITED and self.process.death_state:
             # TODO this is not really the actual behavior of waitpid...
             # if the child is already dead we'd get an ECHLD not the death state change again.
-            return self.process.death_event
+            return self.process.death_state
         while True:
             # If a previous call has given us a next_sigchld to wait on, then wait we shall.
             if self.next_sigchld:
@@ -167,7 +163,7 @@ class AsyncChildProcess:
                 # we received a SIGCHLD while calling waitid.
                 self.next_sigchld = saved_sigchld
 
-    async def check(self) -> ChildEvent:
+    async def check(self) -> ChildState:
         "Wait for this child to die, and once it does, throw if it didn't exit cleanly"
         death = await self.waitpid(W.EXITED)
         death.check()
@@ -183,7 +179,7 @@ class AsyncChildProcess:
         pass
 
     async def __aexit__(self, *args, **kwargs) -> None:
-        if self.process.death_event:
+        if self.process.death_state:
             pass
         else:
             await self.kill()
@@ -224,7 +220,7 @@ class ChildProcessMonitor:
         # 1. We know that child_task is a child process of self.sigfd.afd.handle.task.
         # 2. That means if we use CLONE_PARENT in child_task, the resulting processes will also be
         # child processes of self.sigfd.afd.handle.task.
-        # 3. Therefore self.sigfd will be notified if and when those future child processes have some event.
+        # 3. Therefore self.sigfd will be notified if and when those future child processes have some state change.
         # 4. Therefore we can use self.sigfd to create AsyncChildProcesses for those future child processes.
         return ChildProcessMonitor(self.sigfd, ram, child_task, use_clone_parent=True)
 
