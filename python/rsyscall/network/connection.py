@@ -9,6 +9,7 @@ from rsyscall.concurrency import make_n_in_parallel
 
 from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, RecvmsgFlags, SendMsghdr, RecvMsghdr, CmsgList, CmsgSCMRights, Socketpair
 from rsyscall.sys.uio import IovecList
+from rsyscall.fcntl import F, O
 
 class Connection:
     @abc.abstractmethod
@@ -44,13 +45,6 @@ class FDPassConnection(Connection):
         self.ram = ram
         self.fd = fd
 
-    async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
-        chans = await self.open_channels(count)
-        access_socks, local_socks = zip(*chans)
-        async_access_socks = [await AsyncFileDescriptor.make(self.access_epoller, self.access_ram, sock)
-                              for sock in access_socks]
-        return list(zip(async_access_socks, local_socks))
-
     async def move_fds(self, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
         async def sendmsg_op(sem: RAM) -> WrittenPointer[SendMsghdr]:
             iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
@@ -84,6 +78,15 @@ class FDPassConnection(Connection):
             fds = await self.move_fds([pair.second for pair in pairs])
         return [(pair.first, fd) for pair, fd in zip(pairs, fds)]
 
+    async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
+        chans = await self.open_channels(count)
+        access_socks, local_socks = zip(*chans)
+        async def make_afd(sock: FileDescriptor) -> AsyncFileDescriptor:
+            await sock.fcntl(F.SETFL, O.NONBLOCK)
+            return await AsyncFileDescriptor.make(self.access_epoller, self.access_ram, sock)
+        async_access_socks = [await make_afd(sock) for sock in access_socks]
+        return list(zip(async_access_socks, local_socks))
+
     async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, RAM, FileDescriptor], FDPassConnection]]:
         return self.fd, self.for_task_with_fd
 
@@ -116,12 +119,17 @@ class ListeningConnection(Connection):
         self.ram = ram
         self.listening_fd = listening_fd
 
+    async def open_async_channel(self) -> t.Tuple[AsyncFileDescriptor, FileDescriptor]:
+        access_sock = await AsyncFileDescriptor.make(
+            self.access_epoller, self.access_ram,
+            await self.access_task.socket(self.access_address.value.family, SOCK.STREAM|SOCK.NONBLOCK))
+        await access_sock.connect(self.access_address)
+        # TODO this accept should really be async
+        sock = await self.listening_fd.accept()
+        return access_sock, sock
+
     async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
-        chans = await self.open_channels(count)
-        access_socks, local_socks = zip(*chans)
-        async_access_socks = [await AsyncFileDescriptor.make(self.access_epoller, self.access_ram, sock)
-                              for sock in access_socks]
-        return list(zip(async_access_socks, local_socks))
+        return await make_n_in_parallel(self.open_async_channel, count)
 
     async def open_channel(self) -> t.Tuple[FileDescriptor, FileDescriptor]:
         access_sock = await self.access_task.socket(self.access_address.value.family, SOCK.STREAM)

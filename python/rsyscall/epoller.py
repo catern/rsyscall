@@ -330,10 +330,14 @@ class AsyncFileDescriptor:
 
     """
     @staticmethod
-    async def make(epoller: Epoller, ram: RAM, fd: FileDescriptor, is_nonblock=False
-    ) -> AsyncFileDescriptor:
-        if not is_nonblock:
-            await fd.fcntl(F.SETFL, O.NONBLOCK)
+    async def make(epoller: Epoller, ram: RAM, fd: FileDescriptor) -> AsyncFileDescriptor:
+        """Make an AsyncFileDescriptor; make sure to call this with only O.NONBLOCK file descriptors
+
+        It won't actually break anything if this is called with file descriptors not in
+        NONBLOCK mode; it just means that they'll block when we go to read, which is
+        probably not what the user wants.
+
+        """
         status = FDStatus(EPOLL.NONE)
         epolled = await epoller.register(
             fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET,
@@ -353,10 +357,19 @@ class AsyncFileDescriptor:
     def thr(self) -> EpollThread:
         return EpollThread(self.handle.task, self.ram, self.epolled.epoller)
 
+    async def _wait_for(self, flags: EPOLL) -> None:
+        "Call epoll_wait until at least one of the passed flags is set in our status"
+        while not self.status.mask & flags:
+            await self.epolled.do_wait()
+
+    async def wait_for_rdhup(self) -> None:
+        "Call epoll_wait until this file descriptor has a hangup"
+        await self._wait_for(EPOLL.RDHUP|EPOLL.HUP)
+
     async def read(self, ptr: Pointer) -> t.Tuple[Pointer, Pointer]:
+        "Call read without blocking the thread"
         while True:
-            while not self.status.mask & (EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR):
-                await self.epolled.do_wait()
+            await self._wait_for(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
             try:
                 return (await self.handle.read(ptr))
             except OSError as e:
@@ -366,17 +379,14 @@ class AsyncFileDescriptor:
                     raise
 
     async def read_some_bytes(self, count: int=4096) -> bytes:
+        "Read at most count bytes; possibly less, if we have a partial read."
         ptr = await self.ram.malloc(bytes, count)
         valid, _ = await self.read(ptr)
         return await valid.read()
 
-    async def wait_for_rdhup(self) -> None:
-        while not self.status.mask & (EPOLL.RDHUP|EPOLL.HUP):
-            await self.epolled.do_wait()
-
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        while not self.status.mask & (EPOLL.OUT|EPOLL.ERR):
-            await self.epolled.do_wait()
+        "Call write without blocking the thread"
+        await self._wait_for(EPOLL.OUT|EPOLL.ERR)
         while True:
             try:
                 return await self.handle.write(buf)
@@ -387,38 +397,14 @@ class AsyncFileDescriptor:
                     raise
 
     async def write_all(self, to_write: Pointer) -> None:
+        "Write all of this pointer to the fd, retrying on partial writes until complete."
         while to_write.bytesize() > 0:
             written, to_write = await self.handle.write(to_write)
 
     async def write_all_bytes(self, buf: bytes) -> None:
+        "Write all these bytes to the fd, retrying on partial writes until complete."
         ptr = await self.ram.ptr(buf)
         await self.write_all(ptr)
-
-
-    async def _accept_with_addr(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
-    ) -> t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]:
-        while True:
-            while not self.status.mask & (EPOLL.IN|EPOLL.HUP):
-                await self.epolled.do_wait()
-            try:
-                return (await self.handle.accept(flags, addr))
-            except OSError as e:
-                if e.errno == errno.EAGAIN:
-                    self.status.negedge(EPOLL.IN)
-                else:
-                    raise
-
-    async def _accept(self, flags: SOCK) -> FileDescriptor:
-        while True:
-            while not self.status.mask & (EPOLL.IN|EPOLL.HUP):
-                await self.epolled.do_wait()
-            try:
-                return (await self.handle.accept(flags))
-            except OSError as e:
-                if e.errno == errno.EAGAIN:
-                    self.status.negedge(EPOLL.IN)
-                else:
-                    raise
 
     @t.overload
     async def accept(self, flags: SOCK=SOCK.NONE) -> FileDescriptor: ...
@@ -428,21 +414,33 @@ class AsyncFileDescriptor:
 
     async def accept(self, flags: SOCK=SOCK.NONE, addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
     ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]]:
-        if addr is None:
-            return await self._accept(flags)
-        else:
-            return await self._accept_with_addr(flags, addr)
+        "Call accept without blocking the thread"
+        while True:
+            await self._wait_for(EPOLL.IN|EPOLL.HUP)
+            try:
+                if addr is None:
+                    return (await self.handle.accept(flags))
+                else:
+                    return (await self.handle.accept(flags, addr))
+            except OSError as e:
+                if e.errno == errno.EAGAIN:
+                    self.status.negedge(EPOLL.IN)
+                else:
+                    raise
 
     async def accept_addr(self, flags: SOCK=SOCK.NONE) -> t.Tuple[FileDescriptor, Address]:
+        "Call accept with a buffer for the address, and return the resulting fd and address"
         written_sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(GenericSockaddr)))
         fd, sockbuf = await self.accept(flags, written_sockbuf)
         addr = (await (await sockbuf.read()).buf.read()).parse()
         return fd, addr
 
     async def bind(self, addr: T_addr) -> None:
+        "Call bind; bind already doesn't block the thread"
         await self.handle.bind(await self.ram.ptr(addr))
 
     async def connect(self, addr: WrittenPointer[Address]) -> None:
+        "Call connect without blocking the thread"
         try:
             await self.handle.connect(addr)
         except OSError as e:
@@ -456,9 +454,6 @@ class AsyncFileDescriptor:
                     raise OSError(err, os.strerror(err))
             else:
                 raise
-
-    async def connect_addr(self, addr: T_addr) -> None:
-        await self.connect(await self.ram.ptr(addr))
 
     async def close(self) -> None:
         await self.epolled.delete()
@@ -572,4 +567,6 @@ class EpollThread(RAMThread):
         self.epoller = epoller
 
     async def make_afd(self, fd: FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
-        return await AsyncFileDescriptor.make(self.epoller, self.ram, fd, is_nonblock=nonblock)
+        if not nonblock:
+            await fd.fcntl(F.SETFL, O.NONBLOCK)
+        return await AsyncFileDescriptor.make(self.epoller, self.ram, fd)

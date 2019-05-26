@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 import unittest
 async def do_async_things(self: unittest.TestCase, epoller: Epoller, thr: RAMThread) -> None:
     pipe = await (await thr.task.pipe(await thr.ram.malloc(Pipe), O.NONBLOCK)).read()
-    async_pipe_rfd = await AsyncFileDescriptor.make(epoller, thr.ram, pipe.read, is_nonblock=True)
-    async_pipe_wfd = await AsyncFileDescriptor.make(epoller, thr.ram, pipe.write, is_nonblock=True)
+    async_pipe_rfd = await AsyncFileDescriptor.make(epoller, thr.ram, pipe.read)
+    async_pipe_wfd = await AsyncFileDescriptor.make(epoller, thr.ram, pipe.write)
     data = b"hello world"
     async def stuff():
         logger.info("async test read: starting")
