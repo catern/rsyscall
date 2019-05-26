@@ -161,7 +161,7 @@ class ChildProcessMonitor:
         sigfd = await AsyncSignalfd.make(ram, task, epoller, Sigset({SIG.CHLD}), signal_block=signal_block)
         return ChildProcessMonitor(sigfd, ram, task, use_clone_parent=False)
 
-    def inherit_to_child(self, child_task: Task) -> ChildProcessMonitor:
+    def inherit_to_child(self, ram: RAM, child_task: Task) -> ChildProcessMonitor:
         if child_task.parent_task is not self.sigfd.afd.handle.task:
             raise Exception("task", child_task, "with parent_task", child_task.parent_task,
                             "is not our child; we're", self.sigfd.afd.handle.task)
@@ -170,7 +170,7 @@ class ChildProcessMonitor:
         # child processes of self.sigfd.afd.handle.task.
         # 3. Therefore self.sigfd will be notified if and when those future child processes have some event.
         # 4. Therefore we can use self.sigfd to create AsyncChildProcesses for those future child processes.
-        return ChildProcessMonitor(self.sigfd, self.ram, child_task, use_clone_parent=True)
+        return ChildProcessMonitor(self.sigfd, ram, child_task, use_clone_parent=True)
 
     def add_child_process(self, process: ChildProcess) -> AsyncChildProcess:
         proc = AsyncChildProcess(process, self.ram, self.sigfd)

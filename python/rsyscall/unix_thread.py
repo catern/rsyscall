@@ -77,7 +77,7 @@ class UnixThread(ForkThread):
             child_monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
         else:
             epoller = self.epoller.inherit(ram)
-            child_monitor = self.child_monitor.inherit_to_child(task)
+            child_monitor = self.child_monitor.inherit_to_child(ram, task)
         return ChildUnixThread(UnixThread(
             task, ram,
             self.connection.for_task(task, ram),
