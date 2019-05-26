@@ -153,15 +153,13 @@ class ChildProcessMonitor:
     ram: RAM
     cloning_task: Task
     use_clone_parent: bool
-    is_reaper: bool
 
     @staticmethod
     async def make(ram: RAM, task: Task, epoller: Epoller,
                    *, signal_block: SignalBlock=None,
-                   is_reaper: bool=False,
     ) -> ChildProcessMonitor:
         sigfd = await AsyncSignalfd.make(ram, task, epoller, Sigset({SIG.CHLD}), signal_block=signal_block)
-        return ChildProcessMonitor(sigfd, ram, task, use_clone_parent=False, is_reaper=is_reaper)
+        return ChildProcessMonitor(sigfd, ram, task, use_clone_parent=False)
 
     def inherit_to_child(self, child_task: Task) -> ChildProcessMonitor:
         if child_task.parent_task is not self.sigfd.afd.handle.task:
@@ -172,7 +170,7 @@ class ChildProcessMonitor:
         # child processes of self.sigfd.afd.handle.task.
         # 3. Therefore self.sigfd will be notified if and when those future child processes have some event.
         # 4. Therefore we can use self.sigfd to create AsyncChildProcesses for those future child processes.
-        return ChildProcessMonitor(self.sigfd, self.ram, child_task, use_clone_parent=True, is_reaper=self.is_reaper)
+        return ChildProcessMonitor(self.sigfd, self.ram, child_task, use_clone_parent=True)
 
     def add_child_process(self, process: ChildProcess) -> AsyncChildProcess:
         proc = AsyncChildProcess(process, self.ram, self.sigfd)

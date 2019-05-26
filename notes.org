@@ -18638,8 +18638,8 @@ and rename it to waitpid?
    if the syscall returns an event then we don't need to wait for a signal.
 
    ok we at least cleaned up monitor's implementation, though i didn't look if we're actually waitiding less
-** TODO delete is_reaper from monitor
-** TODO track process groups
+** DONE delete is_reaper from monitor
+** DONE track process groups
    hm so how can we do this
 
    and sessions also
@@ -18730,11 +18730,11 @@ and rename it to waitpid?
     maybe we should just store the childprocess in the childthread.
 
     though this is all pretty niche...
-*** TODO implement killpg
+*** DONE implement killpg
 ** TODO store childprocess in childthread
    one real use case: sending signals to trigger EINTR
    (to cancel syscalls)
-** TODO switch from Signals to SIG
+** DONE switch from Signals to SIG
 ** DONE change everything to use malloc/ptr
    Delete malloc_struct/malloc_type/to_pointer.
 
