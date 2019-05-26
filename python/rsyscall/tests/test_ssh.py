@@ -113,7 +113,9 @@ class TestSSH(TrioTestCase):
         await self.remote.task.read_oldset_and_check()
 
     async def test_nix_deploy(self) -> None:
-        tmpdir = await self.remote.mkdtemp()
+        # make it locally so that it can be cleaned up even when the
+        # remote enters the container
+        tmpdir = await self.local.mkdtemp()
         async with tmpdir:
             store = await enter_nix_container(local_store, self.remote, tmpdir.path)
             hello = await store.bin(hello_nixdep, "hello")

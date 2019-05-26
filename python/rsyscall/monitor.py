@@ -39,6 +39,18 @@ individual child process just calls waitid(P.PID) and checks the
 result, instead of having to wait on some central coordinator to call
 waitid(P.ALL) and send back an event.
 
+We also employ another trick: We use CLONE.PARENT to centralize child
+monitoring. When thread A creates child thread B, we want thread B to
+be able to later create children of its own, e.g. process C. Normally,
+we would create a new signalfd in thread B so that it can monitor its
+children. Instead, when thread B clones a new child process C, we use
+CLONE.PARENT so that thread A becomes the parent of new child process
+C, then we monitor process C from thread A instead of thread B. This
+lowers the original creation cost of thread B (since we don't have to
+make a new AsyncSignalfd, which would necessitate a new epoller - see
+the docstring for AsyncSignalfd) and also improves the efficiency of
+child monitoring through centralization into thread A.
+
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -57,11 +69,29 @@ from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
 from rsyscall.sys.wait import CLD, ChildEvent, W
 
 class AsyncSignalfd:
-    "A signalfd, registered on epoll, with a SignalBlock for the appropriate signals"
+    """A signalfd, registered on epoll, with a SignalBlock for the appropriate signals
+
+    Note that signalfd and epoll have some quirks when used
+    together. Specifically, a signalfd registered on an epollfd in one
+    process will cause severe breakage, including deadlocks, when
+    calling epoll_wait on that epollfd in another process.
+
+    For us, this means that if we're using a signalfd for some
+    process, we must also use an epoller that will be waited-on in
+    that same process. We take care at call sites of
+    AsyncSignalfd.make so that this is true.
+
+    It would be very nice if this bug in signalfd was fixed, that
+    would allow a single central process to monitor for signals in
+    many other processes.
+
+    """
     @classmethod
     async def make(cls, ram: RAM, task: Task, epoller: Epoller, mask: Sigset,
                    *, signal_block: SignalBlock=None,
     ) -> AsyncSignalfd:
+        if task is not epoller.epoller.epfd.task:
+            raise Exception("signalfd task and epoller task must be the same")
         if signal_block is None:
             async def op(sem: RAM) -> t.Tuple[WrittenPointer[Sigset], Pointer[Sigset]]:
                 return await sem.ptr(mask), await sem.malloc(Sigset)
@@ -110,8 +140,15 @@ class AsyncChildProcess:
             # if the child is already dead we'd get an ECHLD not the death event again.
             return self.process.death_event
         while True:
+            # If a previous call has given us a next_sigchld to wait on, then wait we shall.
             if self.next_sigchld:
                 await self.next_sigchld.wait()
+            # We update next_sigchld so that the next call will to waitid will wait for
+            # this event to be set before calling waitid. Note that it's important that we
+            # do this update before calling waitid: If a sigchld is delivered while we're
+            # calling waitid, that means our next call to waitid doesn't need to wait. If
+            # we made the update after calling waitid, then we may drop that sigchld, and
+            # deadlock.
             self.next_sigchld = self.sigchld_sigfd.next_signal
             event = await self.waitid_nohang()
             if event is not None:
@@ -149,6 +186,11 @@ class AsyncChildProcess:
 
 @dataclass
 class ChildProcessMonitor:
+    """Contains all that is needed to create an AsyncChildProcess from a ChildProcess
+
+    We also know what arguments to pass to clone so that an AsyncChildProcess may be created.
+
+    """
     sigfd: AsyncSignalfd
     ram: RAM
     cloning_task: Task
@@ -162,6 +204,15 @@ class ChildProcessMonitor:
         return ChildProcessMonitor(sigfd, ram, task, use_clone_parent=False)
 
     def inherit_to_child(self, ram: RAM, child_task: Task) -> ChildProcessMonitor:
+        """Create a new instance that will clone children from the passed-in task
+
+        This requires, and checks, that the passed-in task is a child
+        of the process which is used for monitoring in the current
+        instance. Then the functionality is implemented by just using
+        CLONE.PARENT when calling clone in child_task, and thereby
+        delegating responsibility for monitoring to the parent.
+
+        """
         if child_task.parent_task is not self.sigfd.afd.handle.task:
             raise Exception("task", child_task, "with parent_task", child_task.parent_task,
                             "is not our child; we're", self.sigfd.afd.handle.task)
@@ -173,6 +224,9 @@ class ChildProcessMonitor:
         return ChildProcessMonitor(self.sigfd, ram, child_task, use_clone_parent=True)
 
     def add_child_process(self, process: ChildProcess) -> AsyncChildProcess:
+        if process.task is not self.sigfd.afd.handle.task:
+            raise Exception("process", process, "with parent task", process.task,
+                            "is not our child; we're", self.sigfd.afd.handle.task)
         proc = AsyncChildProcess(process, self.ram, self.sigfd)
         return proc
 

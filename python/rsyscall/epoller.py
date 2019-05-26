@@ -1,4 +1,81 @@
 """Non-blocking IO operations implemented using epoll
+
+We use epoll in edge-triggered mode. Our usage is relatively
+straightforward, but there are a few quirks.
+
+
+--------------------------------------------------------------------------------
+
+To avoid blocking a thread in a call to epoll_wait when there is more
+work to be done, there are two options:
+
+1. We can register the epollfd on some higher event loop, and instead
+of blocking in epoll_wait, just wait until that event loop tells us
+there are events to be read. This is the typical way to use most file
+descriptors in a non-blocking way, just applied to an epollfd.
+
+2. Or, we can ensure that all possible pending work is registered on
+our epollfd; anything that might want to do some work needs to
+register a file descriptor that is readable/writable/etc on our
+epollfd.  This is the typical requirement that most event loops place
+on the rest of the program.
+
+In an ideal world, we would do both with every epoll instance.
+Whenever a new epoll E is created, we would register E on all the
+other event loops; and we would register all the other event loops on
+E. Then we could freely block in either E or any other event loop, and
+not miss any events. We could have multiple event loops in our process
+without pain.
+
+Unfortunately, this would necessitate a cycle in epoll registrations
+(i.e. an epoll A registered on an epoll B which is itself registered
+on epoll A). This would necessitate breaking the cycle each time
+epoll_wait is called, which could be non-trivially expensive, and
+Linux doesn't want to do that.
+
+So instead, to prevent cycles, we need to use only one of these two
+approaches at any one time; at any one time, we'll have a single
+"root" event loop which uses approach 2 and can make blocking calls to
+epoll_wait; and the other event loops will be "subsidiary", using
+approach 1, and delegating their blocking to the root event loop.
+Then we can still have multiple event loops in our process.
+
+These two approaches to making an Epoller are implemented in the
+"make_subsidiary" (1) and "make_root" (2) classmethods of Epoller.
+
+We would rather go with 2 - the only one allowed to block in our
+threads should be us. Unfortunately, most event loop libraries don't
+expose a way to function as a subsidiary event loop.  So in the case
+of threads which need to interoperate with another event loop, we are
+forced into 1.
+
+In other cases, there is no other event loop, so we must go with 2.
+We must take care to satisfy the requirements of 2: Anything that
+wants to perform work should cause a wakeup on our epollfd.
+
+The only case where we use 1 is when running on the local Python
+thread.  There, we use the trio async library; and trio does not
+expose its epollfd such that we could use approach 2. Instead, we call
+trio's wait_readable method on the epollfd instead of blocking in
+epoll_wait.
+
+On every thread other than the local Python thread, we use approach
+2. At the moment, the only other source of work that is present in
+every thread is the file descriptor from which the rsyscall server
+reads incoming syscalls. So that other syscalls will not be blocked by
+our calls to epoll_wait, we register that file descriptor (exposed in
+SyscallInterface as the "activity fd") on our epollfd. In this way, if
+a new syscall is received in the thread while already in a call to
+epoll_wait, the epoll_wait will wake up so that the rsyscall server
+can read and perform the unrelated syscalls.
+
+We could straightforwardly support a mode for an Epoller to be
+registered on another of our Epollers; but we haven't done this
+because it's not really useful.
+
+
+--------------------------------------------------------------------------------
+
 """
 from __future__ import annotations
 from rsyscall._raw import ffi # type: ignore
@@ -24,9 +101,22 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "Epoller",
     "AsyncFileDescriptor",
+    "EOFException",
+    "AsyncReadBuffer",
+    "EpollThread",
 ]
 
 class EpollWaiter:
+    """The core class which reads events from the epollfd and dispatches them.
+
+    Many threads may have a copy of our epollfd, and register fds on
+    it. To actually wait on this epollfd and pull events from it is
+    the responsibility of this class. By sharing this class and
+    epollfd between many threads for registration purposes, but
+    centralizing the actual epoll_wait call, our usage of epoll
+    becomes more efficient.
+
+    """
     def __init__(self, ram: RAM, epfd: FileDescriptor,
                  wait_readable: t.Optional[t.Callable[[], t.Awaitable[None]]],
                  timeout: int,
@@ -74,14 +164,30 @@ class EpollWaiter:
                     queue.send_nowait(event.events)
 
 class Epoller:
-    "Terribly named class that allows registering fds on epoll, and waiting on them"
+    """Terribly named class that allows registering fds on epoll, and waiting on them
+
+    """
     @staticmethod
     def make_subsidiary(ram: RAM, epfd: FileDescriptor, wait_readable: t.Callable[[], t.Awaitable[None]]) -> Epoller:
+        """Make a subsidiary epoller, as described in the module docstring
+
+        We delegate responsibility for blocking to wait for new events to some other
+        component. We call the passed-in wait_readable function to block for new events.
+
+        """
         center = Epoller(EpollWaiter(ram, epfd, wait_readable, 0), ram, epfd)
         return center
 
     @staticmethod
     async def make_root(ram: RAM, task: Task) -> Epoller:
+        """Make a root epoller, as described in the module docstring
+
+        We take responsibility for blocking to wait for new events for every other
+        component in this thread. We pull the activity_fd from the SyscallInterface and
+        register it on our epollfd. The activity_fd is readable whenever some other
+        component in the thread wants to work on the thread.
+
+        """
         activity_fd = task.sysif.get_activity_fd()
         if activity_fd is None:
             raise Exception("can't make a root epoll center if we don't have an activity_fd to monitor")
@@ -99,6 +205,12 @@ class Epoller:
         self.epfd = epfd
 
     def inherit(self, ram: RAM) -> Epoller:
+        """Make a new Epoller which shares the same EpollWaiter thread
+
+        We inherit the epollfd to a new task for the purpose of registering new fds on it;
+        but we share the class and thread which actually calls epoll_wait.
+
+        """
         return Epoller(self.epoller, ram, ram.task.make_fd_handle(self.epfd))
 
     async def register(self, fd: FileDescriptor, events: EPOLL=None) -> EpolledFileDescriptor:
@@ -106,11 +218,8 @@ class Epoller:
             events = EPOLL.NONE
         send, receive = trio.open_memory_channel(math.inf)
         number = self.epoller.add_and_allocate_number(send)
-        await self.add(fd, EpollEvent(number, events))
+        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.ptr(EpollEvent(number, events)))
         return EpolledFileDescriptor(self, fd, receive, number)
-
-    async def add(self, fd: FileDescriptor, event: EpollEvent) -> None:
-        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.ptr(event))
 
     async def modify(self, fd: FileDescriptor, event: EpollEvent) -> None:
         await self.epfd.epoll_ctl(EPOLL_CTL.MOD, fd, await self.ram.ptr(event))

@@ -6,8 +6,8 @@ from rsyscall.misc import hello_nixdep
 
 class TestNix(TrioTestCase):
     async def asyncSetUp(self) -> None:
+        self.tmpdir = await local.thread.mkdtemp()
         self.thr = await local.thread.fork()
-        self.tmpdir = await self.thr.mkdtemp()
         self.store = await enter_nix_container(local_store, self.thr, self.tmpdir.path)
 
     async def asyncTearDown(self) -> None:

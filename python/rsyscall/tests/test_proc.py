@@ -1,3 +1,4 @@
+import unittest
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
 from rsyscall.tasks.exec import spawn_exec
@@ -21,6 +22,11 @@ class TestProc(TrioTestCase):
         # set up proc
 
     async def test_pgid(self) -> None:
+        try:
+            last_pid = await self.init.task.open(await self.init.ram.ptr(Path("/proc/sys/kernel/ns_last_pid")), O.WRONLY)
+        except FileNotFoundError:
+            raise unittest.SkipTest("Requires /proc/sys/kernel/ns_last_pid, which requires CONFIG_CHECKPOINT_RESTORE")
+
         pgldr = await self.init.fork()
         await pgldr.task.setpgid()
         pgflr = await self.init.fork()
@@ -31,7 +37,6 @@ class TestProc(TrioTestCase):
         self.assertTrue(pgldr.task.process.death_event.died())
         self.assertEqual(int(await pgflr.task.getpgid()), 2)
 
-        last_pid = await self.init.task.open(await self.init.ram.ptr(Path("/proc/sys/kernel/ns_last_pid")), O.WRONLY)
         await self.init.spit(last_pid, b"1\n")
 
         with self.assertRaises(ProcessLookupError):
