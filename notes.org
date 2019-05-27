@@ -3819,6 +3819,8 @@ that's what we're doing
 in other threading systems, you call syscalls in threads.
 
 in rsyscall, you call syscalls *on* threads.
+** a new operating system, hosted on Linux
+   Like HURD is hosted on Linux.
 * explicitly modeling memory
 how would I do this?
 
@@ -18859,6 +18861,10 @@ nativeclosure, nativethunk.
 
 nativecall?
 ** TODO get rid of allocatorclient
+** TODO maybe rename persistent thread to daemon thread?
+   We do, after all, essentially daemonize them.
+
+   But, daemon threads are already something in Java etc.
 * DOCUMENTATION!
   Time to write it!
 ** DONE move epoll blocking stuff in module docstring to Epoller docstring

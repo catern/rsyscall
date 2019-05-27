@@ -1,3 +1,71 @@
+"""Persistent threads, which live on after their parent thread has died, and to which we can reconnect
+
+These are threads which stick around, holding resources, even if we died or our connection
+to them fails. We can reconnect to the persistent thread and continue to access all the
+old resources.
+
+After we disconnect from a persistent thread for whatever reason, it is left in an inert
+state. It won't make any syscalls until we reconnect to it.
+
+This is useful for fault isolation. To run and monitor long-running processes, we can and
+should ourselves be long-running; but, we might crash at some point. The persistent thread
+provides fault isolation: We may crash, but the thread and all its children will stay
+alive, and we can reconnect to the thread after restarting and resume monitoring the
+long-running processes. The persistent thread provides similar fault isolation for any
+other resource that a thread might hold, such as file descriptors; the persistent thread
+will keep file descriptors open even after we die.
+
+The persistent thread doesn't provide any mechanism to recover information about the state
+of the persistent thread, such as what child processes it has and what file descriptors it
+has open. Therefore, we should arrange to have other state-persistence mechanism so that
+we can recover our state if we crash. For example, we could maintain an on-disk database
+where we log information about what processes we've started in what persistent threads,
+and what the status of each of those processes is. Then we could recover information about
+the state of the persistent thread from that database, reconnect to the persistent thread,
+and resume normal operation.
+
+That being said, a caveat: We don't currently have any logic to support recovering
+information from such a database after a crash in a safe way. Such a database could be
+created, but it would require creating resource handles in a way that is not guaranteed to
+be safe. Determining a clean, generic way to persist information about the state of
+resources in a way that can be safely recovered after a crash is an open question.
+
+
+--------------------------------------------------------------------------------
+CLONE_THREAD
+
+The model we currently use for persistent threads is:
+1. Create this can-be-persistent thread
+2. Do a bunch of things in that thread, allocating whatever resources
+3. Call make_persistent to make the thread actually persistent
+4. Crash or disconnect, and call reconnect to reconnect.
+
+It would be better for the model to be:
+1. Do a bunch of things in whatever thread you like, allocating whatever resources
+2. Create an immediately persistent thread which inherits those resources
+3. Crash or disconnect, and call reconnect to reconnect.
+
+However, the major obstacle is child processes. Child processes can't be inherited to a
+new child process, much less passed around between unrelated processes like file
+descriptors can.
+
+CLONE_THREAD allows creating a new child process which can wait on the child processes of the
+parent; however, CLONE_THREAD also does a bunch of other stuff which is undesirable. Among
+other things, CLONE_THREAD processes:
+- don't send SIGCHLD when exiting, so they can't be waited on without dedicating a thread
+  to monitor them
+- don't leave a zombie when they die
+- block several unshare and setns operations
+- complicate signals and many other system calls
+
+While CLONE_THREAD could allow the better model for persistent threads, it comes with a
+host of other disadvantages and complexities, so we're just biting the bullet and
+accepting the worse model.
+
+The recent feature of pidfds will likely allow a better model, once we're able to wait on
+pidfds, which hasn't yet been added.
+
+"""
 import typing as t
 import rsyscall.near as near
 import rsyscall.far as far
@@ -39,33 +107,6 @@ __all__ = [
 @dataclass
 class PersistentServer:
     """The tracking object for a task which can be made to live on after the main process exits.
-
-    The model we currently use for this is:
-    1. Create this can-be-persistent task
-    2. Do a bunch of things in that task, allocating whatever resources
-    3. Call make_persistent to make the task actually persistent
-    4. Crash or disconnect, and call reconnect to reconnect.
-
-    It would be better for the model to be:
-    1. Do a bunch of things in whatever task you like, allocating whatever resources
-    2. Create an immediately persistent task which inherits those resources
-    3. Crash or disconnect, and call reconnect to reconnect.
-
-    However, the major obstacle is child processes. Child processes can't be inherited to a new
-    child task, much less passed around between unrelated tasks like file descriptors can.
-
-    CLONE_THREAD allows creating a new child task which can wait on the child processes of the
-    parent; however, CLONE_THREAD also does a bunch of other stuff which is undesirable. Among other
-    things, CLONE_THREAD tasks:
-    - don't send SIGCHLD when exiting so they can't be waited on without dedicating a thread to block in wait
-    - don't leave a zombie when they die
-    - block several unshare and setns operations
-    - complicate signals and many other system calls
-
-    While CLONE_THREAD could allow the better model for persistent tasks, it comes with a host of
-    other disadvantages and complexities, so we're just biting the bullet and accepting the worse
-    model. Hopefully some new functionality might come along which allows inheriting or moving child
-    processes without these disadvantages.
 
     """
     path: Path
@@ -152,6 +193,16 @@ class PersistentServer:
 async def fork_persistent(
         parent: Thread, path: Path,
 ) -> t.Tuple[Thread, PersistentServer]:
+    """Create a new not-yet-persistent thread and return the thread and its tracking object
+
+    To make the thread persistent, you must call PersistentServer.make_persistent().
+    This is just to prevent unnecessary resource leakage.
+
+    A persistent thread is essentially the same as a normal thread, just running a
+    different native function. As such, it starts off sharing its file descriptor table
+    and everything else with its parent thread.
+
+    """
     listening_sock = await parent.task.socket(AF.UNIX, SOCK.STREAM)
     await listening_sock.bind(await parent.ram.ptr(await SockaddrUn.from_path(parent, path)))
     await listening_sock.listen(1)
