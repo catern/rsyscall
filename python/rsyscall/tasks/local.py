@@ -121,7 +121,7 @@ class LocalMemoryTransport(handle.MemoryTransport):
 async def _make_local_thread() -> Thread:
     process = near.Process(os.getpid())
     task = Task(
-        LocalSyscall(), process, None, far.FDTable(process.id),
+        LocalSyscall(), process, far.FDTable(process.id),
         far.AddressSpace(process.id),
         far.PidNamespace(process.id),
     )

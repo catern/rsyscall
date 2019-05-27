@@ -116,7 +116,7 @@ async def stdin_bootstrap(
     process = near.Process(pid)
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
     syscall = NonChildSyscallInterface(SyscallConnection(access_syscall_sock, access_syscall_sock), process)
-    base_task = Task(syscall, process, None, fd_table, address_space, pidns)
+    base_task = Task(syscall, process, fd_table, address_space, pidns)
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     allocator = memory.AllocatorClient.make_allocator(base_task)

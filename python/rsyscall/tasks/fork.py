@@ -4,30 +4,38 @@ That is to say, make a new thread the normal way.
 
 """
 from __future__ import annotations
-from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
+from rsyscall._raw import ffi # type: ignore
 from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import AsyncFileDescriptor
-from rsyscall.tasks.exceptions import RsyscallHangup
 from rsyscall.handle import Stack, WrittenPointer, Pointer, FutexNode, FileDescriptor, Task, FutexNode
 from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.memory.allocator import Arena
 from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
-from rsyscall.tasks.util import raise_if_error, log_syscall
-from rsyscall.tasks.connection import ConnectionResponse, SyscallConnection, Syscall
+from rsyscall.struct import Int32
+from rsyscall.tasks.base_sysif import BaseSyscallInterface
+from rsyscall.tasks.connection import SyscallConnection
+from rsyscall.tasks.exceptions import RsyscallHangup
+import contextlib
 import logging
 import rsyscall.far as far
-import rsyscall.near as near
 import trio
 import typing as t
-from rsyscall.struct import Int32
-import contextlib
 
 from rsyscall.sched import CLONE
 from rsyscall.signal import SIG
 from rsyscall.sys.mman import PROT, MAP
 from rsyscall.sys.wait import W
+
+__all__ = [
+    'ChildExit',
+    'MMRelease',
+    'ChildSyscallInterface',
+    'launch_futex_monitor',
+    'clone_child_task',
+    'ForkThread',
+]
 
 class ChildExit(RsyscallHangup):
     "The task we were sending syscalls to has exited"
@@ -42,54 +50,27 @@ class MMRelease(RsyscallHangup):
     """
     pass
 
-@dataclass
-class SyscallResponse(near.SyscallResponse):
-    process_responses: t.Any
-    response: ConnectionResponse
 
-    async def receive(self, logger=None) -> int:
-        while self.response.result is None:
-            if logger:
-                logger.info("no response yet for %s, calling process responses", self.response)
-            await self.process_responses()
-            if logger:
-                logger.info("exited process responses for %s", self.response)
-        raise_if_error(self.response.result)
-        return self.response.result
-
-class ChildSyscallInterface(near.SyscallInterface):
+class ChildSyscallInterface(BaseSyscallInterface):
     "A connection to an rsyscall server that is one of our child processes"
     def __init__(self,
                  rsyscall_connection: SyscallConnection,
                  server_process: AsyncChildProcess,
                  futex_process: t.Optional[AsyncChildProcess],
     ) -> None:
-        self.rsyscall_connection = rsyscall_connection
+        super().__init__(rsyscall_connection)
         self.server_process = server_process
         self.futex_process = futex_process
         self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{int(self.server_process.process.near)}")
         self.running_read = OneAtATime()
 
-    def store_remote_side_handles(self, infd: FileDescriptor, outfd: FileDescriptor) -> None:
-        # these are needed so that we don't close them with garbage collection
-        self.infd = infd
-        self.outfd = outfd
-
-    def get_activity_fd(self) -> FileDescriptor:
-        return self.infd
-
-    async def close_interface(self) -> None:
-        await self.rsyscall_connection.close()
-        self.infd._invalidate()
-        self.outfd._invalidate()
-
     @contextlib.asynccontextmanager
     async def _throw_on_child_exit(self) -> t.AsyncGenerator[None, None]:
         """Monitor the child process and throw if it exits or execs
 
-        Naturally, if the child does exit or while we're in the context manager
-        body, we'll cancel the context manager body so that we don't spend
-        forever waiting on a dead child.
+        Naturally, if the child does exit or exec while we're in the context
+        manager body, we'll cancel the context manager body so that we don't
+        spend forever waiting on a dead child.
 
         This is useful for situations where we can't rely on getting an EOF if
         the other side of a connection dies. Which is exactly the situation
@@ -136,35 +117,12 @@ class ChildSyscallInterface(near.SyscallInterface):
             await self.rsyscall_connection.read_pending_responses()
         self.logger.info("returning after reading some syscall responses")
 
-    async def _read_syscall_responses(self) -> None:
+    async def _read_pending_responses(self) -> None:
         async with self.running_read.needs_run() as needs_run:
             if needs_run:
                 self.logger.info("running read_syscall_responses_direct")
                 await self._read_syscall_responses_direct()
                 self.logger.info("done with read_syscall_responses_direct")
-
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-        conn_response = await self.rsyscall_connection.write_request(Syscall(
-            number,
-            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6)))
-        response = SyscallResponse(self._read_syscall_responses, conn_response)
-        return response
-
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        response = await self.submit_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        try:
-            # we must not be interrupted while reading the response - we need to return
-            # the response so that our parent can deal with the state change we created.
-            with trio.CancelScope(shield=True):
-                result = await response.receive(self.logger)
-        except Exception as exn:
-            self.logger.debug("%s -> %s", number, exn)
-            raise
-        else:
-            self.logger.debug("%s -> %s", number, result)
-            return result
 
 async def launch_futex_monitor(ram: RAM,
                                loader: NativeLoader, monitor: ChildProcessMonitor,
@@ -216,13 +174,15 @@ async def clone_child_task(
     child successfully calls exec, which we otherwise have no way to detect.
 
     """
+    # Open a channel which we'll use for the rsyscall connection
     [(access_sock, remote_sock)] = await parent.connection.open_async_channels(1)
+    # Create a trampoline that will start the new process running an rsyscall server
     trampoline = trampoline_func(remote_sock)
-    # We require that these flags be used
+    # Force these flags to be used
     flags |= CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM
     # TODO it is unclear why we sometimes need to make a new mapping here, instead of
     # allocating with our normal allocator; all our memory is already MAP.SHARED, I think.
-    # We should resolve this so we can use the stock allocator.
+    # We should resolve this so we can use the normal allocator.
     arena = Arena(await parent.task.mmap(4096*2, PROT.READ|PROT.WRITE, MAP.SHARED))
     async def op(sem: RAM) -> t.Tuple[t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
                                                        WrittenPointer[FutexNode]]:
@@ -231,6 +191,7 @@ async def clone_child_task(
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         futex_pointer = await sem.ptr(FutexNode(None, Int32(0)))
         return stack, futex_pointer
+    # Create the stack we'll need, and the zero-initialized futex
     stack, futex_pointer = await parent.ram.perform_batch(op, arena)
     # it's important to start the processes in this order, so that the thread
     # process is the first process started; this is relevant in several
@@ -238,17 +199,20 @@ async def clone_child_task(
     child_process = await parent.monitor.clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
     futex_process = await launch_futex_monitor(
         parent.ram, parent.loader, parent.monitor, futex_pointer)
-
+    # Create the new syscall interface, which needs to use not just the connection,
+    # but also the child process and the futex process.
     syscall = ChildSyscallInterface(SyscallConnection(access_sock, access_sock),
                                     child_process, futex_process)
+    # Set up the new task with appropriately inherited namespaces, tables, etc.
     # TODO correctly track all the namespaces we're in
     if flags & CLONE.NEWPID:
         pidns = far.PidNamespace(child_process.process.near.id)
     else:
         pidns = parent.task.pidns
-    task = Task(syscall, child_process.process, child_process.process.task,
+    task = Task(syscall, child_process.process,
                 parent.task.fd_table, parent.task.address_space, pidns)
     task.sigmask = parent.task.sigmask
+    # Move ownership of the remote sock into the task and store it so it isn't closed
     remote_sock_handle = remote_sock.move(task)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     return child_process, task

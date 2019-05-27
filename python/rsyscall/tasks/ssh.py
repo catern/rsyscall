@@ -242,7 +242,7 @@ async def ssh_bootstrap(
     new_process = near.Process(new_pid)
     new_syscall = NonChildSyscallInterface(SyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
                                     new_process)
-    new_base_task = Task(new_syscall, new_process, None, far.FDTable(new_pid), new_address_space,
+    new_base_task = Task(new_syscall, new_process, far.FDTable(new_pid), new_address_space,
                          new_pid_namespace)
     handle_remote_syscall_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_sock))
     new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)

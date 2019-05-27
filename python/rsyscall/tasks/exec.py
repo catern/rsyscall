@@ -7,7 +7,8 @@ from rsyscall.thread import ChildThread, Thread
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.monitor import AsyncChildProcess
-from rsyscall.tasks.fork import launch_futex_monitor, ChildSyscallInterface, SyscallConnection
+from rsyscall.tasks.fork import launch_futex_monitor, ChildSyscallInterface
+from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.memory.ram import RAM
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
@@ -34,7 +35,7 @@ async def set_singleton_robust_futex(
     # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
     futex_value = FUTEX_WAITERS|(int(task.process.near) & FUTEX_TID_MASK)
     async def op(sem: RAM) -> t.Tuple[WrittenPointer[FutexNode],
-                                                 WrittenPointer[RobustListHead]]:
+                                      WrittenPointer[RobustListHead]]:
         robust_list_entry = await sem.ptr(FutexNode(None, Int32(futex_value)))
         robust_list_head = await sem.ptr(RobustListHead(robust_list_entry))
         return robust_list_entry, robust_list_head

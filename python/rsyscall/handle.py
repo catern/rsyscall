@@ -789,7 +789,6 @@ class Task(SignalMaskTask, rsyscall.far.Task):
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
                  process: t.Union[rsyscall.near.Process, Process],
-                 parent_task: t.Optional[Task],
                  fd_table: rsyscall.far.FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  pidns: rsyscall.far.PidNamespace,
@@ -797,9 +796,10 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         self.sysif = sysif
         if isinstance(process, Process):
             self.process = process
+            self.parent_task: t.Optional[Task] = process.task
         else:
             self.process = Process(self, process)
-        self.parent_task = parent_task
+            self.parent_task = None
         self.fd_table = fd_table
         self.address_space = address_space
         self.pidns = pidns
