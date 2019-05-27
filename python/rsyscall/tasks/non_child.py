@@ -2,6 +2,7 @@ from rsyscall.near import SyscallInterface
 import rsyscall.near as near
 from rsyscall.handle import FileDescriptor
 from rsyscall.tasks.fork import SyscallConnection, SyscallResponse
+from rsyscall.tasks.connection import Syscall
 import logging
 import trio
 from rsyscall.tasks.util import log_syscall
@@ -37,10 +38,10 @@ class NonChildSyscallInterface(SyscallInterface):
 
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-        conn_response = await self.rsyscall_connection.write_request(
+        conn_response = await self.rsyscall_connection.write_request(Syscall(
             number,
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6)))
         response = SyscallResponse(self.rsyscall_connection.read_pending_responses, conn_response)
         return response
 

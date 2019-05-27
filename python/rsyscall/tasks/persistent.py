@@ -6,7 +6,7 @@ from rsyscall.thread import Thread
 from rsyscall.path import Path
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
-from rsyscall.tasks.fork import ChildSyscallInterface, spawn_child_task
+from rsyscall.tasks.fork import ChildSyscallInterface, clone_child_task
 from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.sched import Stack
 from rsyscall.handle import WrittenPointer, ThreadProcess, Pointer, Task, FileDescriptor
@@ -155,12 +155,9 @@ async def fork_persistent(
     listening_sock = await parent.task.socket(AF.UNIX, SOCK.STREAM)
     await listening_sock.bind(await parent.ram.ptr(await SockaddrUn.from_path(parent, path)))
     await listening_sock.listen(1)
-    [(access_sock, remote_sock)] = await parent.open_async_channels(1)
-    child_process, task = await spawn_child_task(
-        parent.task, parent.ram, parent.loader, parent.child_monitor,
-        access_sock, remote_sock,
-        Trampoline(parent.loader.persistent_server_func, [remote_sock, remote_sock, listening_sock]),
-        CLONE.FS|CLONE.SIGHAND)
+    child_process, task = await clone_child_task(
+        parent, CLONE.FS|CLONE.SIGHAND,
+        lambda sock: Trampoline(parent.loader.persistent_server_func, [sock, sock, listening_sock]))
     listening_sock_handle = listening_sock.move(task)
     ram = RAM(task, parent.ram.transport, parent.ram.allocator.inherit(task))
 

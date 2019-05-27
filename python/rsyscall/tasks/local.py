@@ -74,6 +74,13 @@ class LocalSyscall(near.SyscallInterface):
         return LocalSyscallResponse(f)
 
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        """Make a syscall in the local thread
+
+        Linux returns errors as just another kind of syscall return value. A certain range
+        of possible syscall return values (-4095 to 0, not inclusive) indicates an error;
+        we call raise_if_error to check and throw if we're in that range.
+
+        """
         log_syscall(logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         try:
             result = await _direct_syscall(
