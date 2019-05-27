@@ -168,10 +168,10 @@ async def clone_child_task(
     We rely on trampoline_func to take a socket and give us a native function call with
     arguments that will speak the rsyscall protocol over that socket.
 
-    We also start a futex monitor to to monitor the ctid futex. Since we set
-    CLONE.CHILD_CLEARTID, the ctid futex will have a wakeup when the child exits - or,
-    crucially, when the child successfully calls exec. This allows us to know when the
-    child successfully calls exec, which we otherwise have no way to detect.
+    We also create a futex process, which we use to create the ChildSyscallInterface.
+    This process allows us to detect when the child successfully finishes an exec. The
+    futex process will here monitor the ctid futex. Because we set CLONE.CHILD_CLEARTID,
+    the ctid futex will receive a FUTEX_WAKE when the child process exits or execs.
 
     """
     # Open a channel which we'll use for the rsyscall connection

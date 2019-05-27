@@ -854,6 +854,9 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         self.fd_table = rsyscall.far.FDTable(self.process.near.id)
         self._setup_fd_table_handles()
 
+    def _make_fresh_address_space(self) -> None:
+        self.address_space = rsyscall.far.AddressSpace(self.process.near.id)
+
     async def unshare(self, flags: CLONE) -> None:
         if flags & CLONE.FILES:
             await self.unshare_files()
@@ -1036,6 +1039,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
                 raise
             self.manipulating_fd_table = False
             self._make_fresh_fd_table()
+            self._make_fresh_address_space()
             if isinstance(self.process, ChildProcess):
                 self.process.did_exec()
 

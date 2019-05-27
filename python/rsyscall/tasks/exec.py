@@ -112,7 +112,14 @@ async def rsyscall_exec(
         child: ChildThread,
         executable: RsyscallServerExecutable,
     ) -> None:
-    "Exec into the standalone rsyscall_server executable"
+    """exec rsyscall-server and repair the thread to continue working after the exec
+
+    This is of fairly limited use except as a stress-test for our primitives.
+
+    We need to know about our parent thread because we need to create a new futex process
+    to wait for
+
+    """
     [(access_data_sock, passed_data_sock)] = await child.open_async_channels(1)
     # create this guy and pass him down to the new thread
     child_futex_memfd = await child.task.memfd_create(
@@ -121,47 +128,47 @@ async def rsyscall_exec(
     if isinstance(child.task.sysif, ChildSyscallInterface):
         syscall = child.task.sysif
     else:
-        raise Exception("can only exec in ChildSyscallInterface sysifs, not",
-                        child.task.sysif)
-    if not isinstance(child.ram.allocator, memory.AllocatorClient):
-        raise Exception("can only exec in AllocatorClient RAMs, not",
-                        child.ram.allocator)
+        raise Exception("can only exec in ChildSyscallInterface sysifs, not", child.task.sysif)
     # unshare files so we can unset cloexec on fds to inherit
     await child.unshare_files(going_to_exec=True)
-    child.task.manipulating_fd_table = True
     # unset cloexec on all the fds we want to copy to the new space
     for fd in child.task.fd_handles:
         await fd.fcntl(F.SETFD, 0)
-    def encode(fd: near.FileDescriptor) -> bytes:
-        return str(int(fd)).encode()
-    # TODO we're just leaking this, I guess?
-    child_process = await child.exec(executable.command.args(
-            encode(passed_data_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
-            *[encode(fd.near) for fd in child.task.fd_handles],
+    def encode(fd: FileDescriptor) -> bytes:
+        return str(int(fd.near)).encode()
+    #### call exec and set up the new task
+    await child.exec(executable.command.args(
+        encode(passed_data_sock), encode(syscall.infd), encode(syscall.outfd),
+        *[encode(fd) for fd in child.task.fd_handles],
     ), [child.monitor.sigfd.signal_block])
-    #### read symbols from describe fd
-    describe_buf = AsyncReadBuffer(access_data_sock)
-    symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')
-    child.loader = NativeLoader.make_from_symbols(child.task, symbol_struct)
-    # the futex task we used before is dead now that we've exec'd, have
-    # to null it out
-    syscall.futex_process = None
-    # the old RC would wait forever for the exec to complete; we need to make a new one.
-    syscall.rsyscall_connection = SyscallConnection(syscall.rsyscall_connection.tofd, syscall.rsyscall_connection.fromfd)
-    child.task.address_space = far.AddressSpace(child.task.process.near.id)
-    # we mutate the allocator instead of replacing to so that anything that
-    # has stored the allocator continues to work
-    child.ram.allocator.allocator = memory.Allocator(child.task)
-    child.ram.transport = SocketMemoryTransport(access_data_sock,
-                                                  passed_data_sock, child.ram.allocator)
-    child.task.manipulating_fd_table = False
+    if len(syscall.rsyscall_connection.pending_responses) == 1:
+        # remove execve from pending_responses, we're never going to get a response to it
+        syscall.rsyscall_connection.pending_responses = []
+    else:
+        raise Exception("syscall connection in bad state; " +
+                        "expected one pending response for execve, instead got",
+                        syscall.rsyscall_connection.pending_responses)
+    # a new address space needs a new allocator and transport; we mutate the RAM so things
+    # that have stored the RAM continue to work.
+    child.ram.allocator = memory.AllocatorClient.make_allocator(child.task)
+    child.ram.transport = SocketMemoryTransport(
+        access_data_sock, passed_data_sock, child.ram.allocator)
+    # rsyscall-server will write the symbol table to passed_data_sock, and we'll read it
+    # from access_data sock to set up the symbol table for the new address space
+    child.loader = NativeLoader.make_from_symbols(
+        child.task, await AsyncReadBuffer(access_data_sock).read_cffi('struct rsyscall_symbol_table'))
 
-    #### make new futex task
-    # we have to use robust futexes to wait for exec, as outlined in the docstring
+    #### make new futex process
+    # The futex process we used before is dead now that we've exec'd. We need to make some
+    # syscalls in the child to set up the new futex process. ChildSyscallInterface would
+    # throw immediately on seeing the current dead futex_process, so we need to null it out.
+    syscall.futex_process = None
+    # We have to use a robust futex now for our futex_process
     parent_futex_ptr, child_futex_ptr = await setup_shared_memory_robust_futex(
         parent, parent_futex_memfd, child, child_futex_memfd)
     syscall.futex_process = await launch_futex_monitor(
         parent.ram, parent.loader, parent.monitor, parent_futex_ptr)
+    # now we are alive and fully working again, we can be used for GC
     child.task._add_to_active_fd_table_tasks()
 
 async def spawn_exec(thread: Thread, store: nix.Store) -> ChildThread:

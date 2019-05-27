@@ -18858,6 +18858,7 @@ because we could use it some other way.
 nativeclosure, nativethunk.
 
 nativecall?
+** TODO get rid of allocatorclient
 * DOCUMENTATION!
   Time to write it!
 ** DONE move epoll blocking stuff in module docstring to Epoller docstring
