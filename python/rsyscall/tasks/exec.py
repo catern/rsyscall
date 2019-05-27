@@ -32,7 +32,17 @@ __all__ = [
 async def set_singleton_robust_futex(
         task: Task, ram: RAM, allocator: memory.AllocatorInterface,
 ) -> WrittenPointer[FutexNode]:
-    # have to set the futex pointer to this nonsense or the kernel won't wake on it properly
+    """Set the robust list of `task` to a list containing exactly one futex, and return that futex
+
+    The robust_list is, unfortunately, the only truly robust way to get notified
+    of a process calling exec. We use ctid elsewhere, but the kernel has an
+    irritating check where it only does a futex wakeup on ctid if the process's
+    memory space is shared. The kernel always does the robust_list wakeups, so
+    we can rely on the robust list even when we're working with processes that
+    don't share address space.
+
+    """
+    # have to set the futex pointer to this value or the kernel won't wake on it
     futex_value = FUTEX_WAITERS|(int(task.process.near) & FUTEX_TID_MASK)
     async def op(sem: RAM) -> t.Tuple[WrittenPointer[FutexNode],
                                       WrittenPointer[RobustListHead]]:
@@ -43,32 +53,52 @@ async def set_singleton_robust_futex(
     await task.set_robust_list(robust_list_head)
     return robust_list_entry
 
-async def make_robust_futex_process(
+async def setup_shared_memory_robust_futex(
         parent: Thread,
         parent_memfd: FileDescriptor,
         child: Thread,
         child_memfd: FileDescriptor,
-) -> t.Tuple[AsyncChildProcess, Pointer[FutexNode], MemoryMapping]:
-    # resize memfd appropriately
-    futex_memfd_size = 4096
-    await parent_memfd.ftruncate(futex_memfd_size)
-    file = near.File()
-    # set up local mapping
-    local_mapping = await parent_memfd.mmap(futex_memfd_size, PROT.READ|PROT.WRITE, MAP.SHARED, file=file)
-    await parent_memfd.invalidate()
-    # set up remote mapping
-    remote_mapping = await child_memfd.mmap(futex_memfd_size, PROT.READ|PROT.WRITE, MAP.SHARED, file=file)
-    await child_memfd.invalidate()
+) -> t.Tuple[WrittenPointer[FutexNode], WrittenPointer[FutexNode]]:
+    """Setup a robust futex in `child` which is in shared memory with `parent`
 
-    remote_futex_node = await set_singleton_robust_futex(child.task, child.ram, memory.Arena(remote_mapping))
-    local_futex_node = remote_futex_node._with_mapping(local_mapping)
-    # now we start the futex monitor
-    futex_process = await launch_futex_monitor(
-        parent.ram, parent.loader, parent.monitor, local_futex_node)
-    return futex_process, local_futex_node, remote_mapping
+    Since it's in shared memory, that means parent can do a futex_wait on it. To
+    achieve this shared memory behavior, we need to be passed two memfds which
+    should point to the same memory.
+
+    We map the memfds in the parent and child, set up the robust futex in the
+    child, translate the resulting pointer to the parent's address space, and
+    return (parent futex pointer, child futex pointer)
+
+    """
+    # resize memfd appropriately
+    size = 4096
+    await parent_memfd.ftruncate(size)
+    file = near.File()
+    # set up parent mapping
+    parent_mapping = await parent_memfd.mmap(size, PROT.READ|PROT.WRITE, MAP.SHARED, file=file)
+    await parent_memfd.close()
+    # set up child mapping
+    child_mapping = await child_memfd.mmap(size, PROT.READ|PROT.WRITE, MAP.SHARED, file=file)
+    await child_memfd.close()
+
+    # setup the child task's futex list
+    child_futex_node = await set_singleton_robust_futex(
+        child.task, child.ram, memory.Arena(child_mapping))
+    # translate the futex from the child's address space to the parent's address space
+    parent_futex_node = child_futex_node._with_mapping(parent_mapping)
+    return parent_futex_node, child_futex_node
 
 @dataclass
 class RsyscallServerExecutable:
+    """A standalone representation of the rsyscall-server executable
+
+    This is not a user-facing class, it exists just to promote modularity. With
+    this class, rsyscall_exec needs only to take an object of this type, rather
+    than look up the location of rsyscall-server itself; therefore we can add
+    new ways to look up executables and create this class without having to
+    teach rsyscall_exec about them.
+
+    """
     command: Command
 
     @classmethod
@@ -87,7 +117,7 @@ async def rsyscall_exec(
     # create this guy and pass him down to the new thread
     child_futex_memfd = await child.task.memfd_create(
         await child.ram.ptr(Path("child_robust_futex_list")))
-    parent_futex_memfd = parent.task.make_fd_handle(child_futex_memfd)
+    parent_futex_memfd = child_futex_memfd.for_task(parent.task)
     if isinstance(child.task.sysif, ChildSyscallInterface):
         syscall = child.task.sysif
     else:
@@ -127,10 +157,11 @@ async def rsyscall_exec(
     child.task.manipulating_fd_table = False
 
     #### make new futex task
-    futex_process, local_futex_node, remote_mapping = await make_robust_futex_process(
+    # we have to use robust futexes to wait for exec, as outlined in the docstring
+    parent_futex_ptr, child_futex_ptr = await setup_shared_memory_robust_futex(
         parent, parent_futex_memfd, child, child_futex_memfd)
-    # TODO how do we unmap the remote mapping?
-    syscall.futex_process = futex_process
+    syscall.futex_process = await launch_futex_monitor(
+        parent.ram, parent.loader, parent.monitor, parent_futex_ptr)
     child.task._add_to_active_fd_table_tasks()
 
 async def spawn_exec(thread: Thread, store: nix.Store) -> ChildThread:

@@ -18838,6 +18838,10 @@ and rename it to waitpid?
     prerequisite to that is being comfortable doing a 0.0.1 release,
     whether that's through pypi or a local Nix package or whatever.
     that's clearly the easy way forward, meh.
+** TODO rename ChildState to ChildStatus
+   ok i think it's better
+
+   and we can have death_status.exit_status, whatever
 ** TODO rename Trampoline to something
 closure?
 thunk?

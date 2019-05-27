@@ -29,6 +29,7 @@ from dataclasses import dataclass
 import enum
 import abc
 import logging
+import trio
 import typing as t
 logger = logging.getLogger(__name__)
 
@@ -46,10 +47,61 @@ if t.TYPE_CHECKING:
 #### SyscallInterface (segment register override prefix)
 # This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallInterface:
-    # Throws on negative return value
-    @abc.abstractmethod
-    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int: ...
-    # Only implemented for remote syscall interfaces.
+    logger: logging.Logger
+
+    async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        """Send a syscall and wait for it to complete, throwing on error results
+
+        We provide a guarantee that if the syscall was sent to the process, then we will
+        not return until the syscall has completed or our connection has broken.  To
+        achieve this, we shield against Python coroutine cancellation while waiting for
+        the syscall response.
+
+        This guarantee is important so that our caller can deal with state changes caused
+        by the syscall. If our coroutine was cancelled in the middle of a syscall, the
+        result of the syscall would be discarded, and our caller wouldn't be able to
+        guarantee that state changes in the process are reflected in state changes in
+        Python.
+
+        For example, a coroutine calling waitid could be cancelled; if that happened, we
+        could discard a child state change indicating that the child exited. If that
+        happened, future calls to waitid on that child would be invalid, or maybe return
+        events for an unrelated child. We'd be completely confused.
+
+        Instead, thanks to our guarantee, syscalls made through this method can be treated
+        as atomic: They will either be submitted and completed, or not submitted at all.
+        (If they're submitted and not completed due to blocking forever, that just means
+        we'll never return.) There's no possibility of making a syscall, causing a
+        side-effect, and never learning about the side-effect you caused.
+
+        Since most syscalls use this method, this guarantee applies to most syscalls.
+
+        For callers who want to preserve the ability for their coroutine to be cancelled
+        even while waiting for a syscall response, the submit_syscall API can be used.
+
+        Note that this Python-level cancellation protection has nothing to do with
+        actually cancelling a syscall. That ability is still preserved with this
+        interface; just send a signal to trigger an EINTR in the syscalling process, and
+        we'll get back that EINTR as the syscall response. If you just want to be able to
+        cancel deadlocked processes, you should do that.
+
+        Likewise, if the rsyscall server dies, or we get an EOF on the syscall connection,
+        or any other event causes response.receive to throw an exception, we'll still
+        return that exception; so you can always fall back on killing the rsyscall server
+        to stop a deadlock.
+
+        """
+        response = await self.submit_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
+        try:
+            with trio.CancelScope(shield=True):
+                result = await response.receive()
+        except Exception as exn:
+            self.logger.debug("%s -> %s", number, exn)
+            raise
+        else:
+            self.logger.debug("%s -> %s", number, result)
+            return result
+
     @abc.abstractmethod
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse: ...
     # non-syscall operations which we haven't figured out how to get rid of yet
