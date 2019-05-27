@@ -66,6 +66,7 @@ The recent feature of pidfds will likely allow a better model, once we're able t
 pidfds, which hasn't yet been added.
 
 """
+from __future__ import annotations
 import typing as t
 import rsyscall.near as near
 import rsyscall.far as far
@@ -102,105 +103,25 @@ from rsyscall.sys.prctl import PR
 
 __all__ = [
     "fork_persistent",
+    "PersistentThread",
 ]
-
-@dataclass
-class PersistentServer:
-    """The tracking object for a task which can be made to live on after the main process exits.
-
-    """
-    path: Path
-    task: Task
-    ram: RAM
-    epoller: Epoller
-    listening_sock: FileDescriptor
-    # saved to keep the reference to the stack pointer etc alive
-    thread_process: t.Optional[ThreadProcess] = None
-    transport: t.Optional[SocketMemoryTransport] = None
-
-    async def _connect_and_send(self, thread: Thread, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
-        sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK, 0), nonblock=True)
-        sockaddr_un = await SockaddrUn.from_path(thread, self.path)
-        async def sendmsg_op(sem: RAM) -> t.Tuple[
-                WrittenPointer[Address], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
-            addr: WrittenPointer[Address] = await sem.ptr(sockaddr_un)
-            count = await sem.ptr(Int32(len(fds)))
-            iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
-            cmsgs = await sem.ptr(CmsgList([CmsgSCMRights(fds)]))
-            hdr = await sem.ptr(SendMsghdr(None, iovec, cmsgs))
-            response_buf = await sem.ptr(StructList(Int32, [Int32(0)]*len(fds)))
-            return addr, count, hdr, response_buf
-        addr, count, hdr, response = await thread.ram.perform_batch(sendmsg_op)
-        data = None
-        async with contextlib.AsyncExitStack() as stack:
-            if isinstance(self.task.sysif, ChildSyscallInterface):
-                await stack.enter_async_context(self.task.sysif._throw_on_child_exit())
-            await sock.connect(addr)
-            _, _ = await sock.write(count)
-            _, [] = await sock.handle.sendmsg(hdr, SendmsgFlags.NONE)
-            while response.bytesize() > 0:
-                valid, response = await sock.read(response)
-                data += valid
-        if data is None:
-            return []
-        remote_fds = [self.task.make_fd_handle(near.FileDescriptor(int(i)))
-                      for i in (await data.read()).elems]
-        await sock.close()
-        return remote_fds
-
-    async def make_persistent(self) -> None:
-        await self.task.unshare_files()
-        if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
-            raise Exception("self.task.sysif of unexpected type", self.task.sysif)
-        new_sysif = NonChildSyscallInterface(self.task.sysif.rsyscall_connection, self.task.process.near)
-        new_sysif.store_remote_side_handles(self.task.sysif.infd, self.task.sysif.outfd)
-        self.task.sysif = new_sysif
-        await self.task.setsid()
-        await self.task.prctl(PR.SET_PDEATHSIG, 0)
-
-    async def reconnect(self, thread: Thread) -> None:
-        self.listening_sock.validate()
-        await handle.run_fd_table_gc(self.task.fd_table)
-        if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
-            raise Exception("self.task.sysif of unexpected type", self.task.sysif)
-        await self.task.sysif.close_interface()
-        # TODO should check that no transport requests are in flight
-        if self.transport is not None:
-            await self.transport.local.close()
-        [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await thread.open_async_channels(2)
-        [infd, outfd, remote_data_sock] = await self._connect_and_send(
-            thread, [syscall_sock, syscall_sock, data_sock])
-        await syscall_sock.close()
-        await data_sock.close()
-        # Fix up Task's sysif with new SyscallConnection
-        self.task.sysif.rsyscall_connection = SyscallConnection(access_syscall_sock, access_syscall_sock)
-        self.task.sysif.store_remote_side_handles(infd, outfd)
-        # Fix up RAM with new transport
-        # TODO technically this could still be in the same address space - that's the case in our tests.
-        # we should figure out a way to use a LocalMemoryTransport here so it can copy efficiently
-        transport = SocketMemoryTransport(access_data_sock, remote_data_sock, self.ram.allocator)
-        self.ram.transport = transport
-        self.transport = transport
-        # Fix up epoller with new activity fd
-        def devnull(event: EPOLL) -> None:
-            pass
-        await self.epoller.register(infd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP,
-                                    devnull)
-        # close remote fds we don't have handles to; this includes the old interface fds.
-        await handle.run_fd_table_gc(self.task.fd_table)
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def fork_persistent(
         parent: Thread, path: Path,
-) -> t.Tuple[Thread, PersistentServer]:
+) -> PersistentThread:
     """Create a new not-yet-persistent thread and return the thread and its tracking object
 
-    To make the thread persistent, you must call PersistentServer.make_persistent().
-    This is just to prevent unnecessary resource leakage.
+    To make the thread actually persistent, you must call PersistentServer.make_persistent().
+
+    The point of this hoop-jumping is just to prevent unnecessary resource leakage, so you
+    can set up things in a persistent thread and only make it persistent when you're
+    actually ready.
 
     A persistent thread is essentially the same as a normal thread, just running a
-    different native function. As such, it starts off sharing its file descriptor table
-    and everything else with its parent thread.
+    different function. As such, it starts off sharing its file descriptor table and
+    everything else with its parent thread. It's only when we disconnect and reconnect
+    that it changes behavior.
 
     """
     listening_sock = await parent.task.socket(AF.UNIX, SOCK.STREAM)
@@ -217,7 +138,7 @@ async def fork_persistent(
     signal_block = SignalBlock(task, await ram.ptr(Sigset({SIG.CHLD})))
     # TODO use an inherited signalfd instead
     child_monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
-    child = Thread(
+    return PersistentThread(Thread(
         task, ram,
         parent.connection.for_task(task, ram),
         parent.loader,
@@ -227,6 +148,99 @@ async def fork_persistent(
         stdin=parent.stdin.for_task(task),
         stdout=parent.stdout.for_task(task),
         stderr=parent.stderr.for_task(task),
-    )
-    persistent_server = PersistentServer(path, task, ram, epoller, listening_sock_handle)
-    return child, persistent_server
+    ), persistent_path=path, persistent_sock=listening_sock_handle)
+
+async def _connect_and_send(self: PersistentThread, thread: Thread, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
+    """Connect to a persistent thread's socket, send some file descriptors
+
+    This isn't actually a generic function; the persistent thread expects exactly three
+    file descriptors, and uses them in a special way.
+
+    """
+    sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK, 0), nonblock=True)
+    sockaddr_un = await SockaddrUn.from_path(thread, self.persistent_path)
+    async def sendmsg_op(sem: RAM) -> t.Tuple[
+            WrittenPointer[Address], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
+        addr: WrittenPointer[Address] = await sem.ptr(sockaddr_un)
+        count = await sem.ptr(Int32(len(fds)))
+        iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
+        cmsgs = await sem.ptr(CmsgList([CmsgSCMRights(fds)]))
+        hdr = await sem.ptr(SendMsghdr(None, iovec, cmsgs))
+        response_buf = await sem.ptr(StructList(Int32, [Int32(0)]*len(fds)))
+        return addr, count, hdr, response_buf
+    addr, count, hdr, response = await thread.ram.perform_batch(sendmsg_op)
+    data = None
+    async with contextlib.AsyncExitStack() as stack:
+        if isinstance(self.task.sysif, ChildSyscallInterface):
+            await stack.enter_async_context(self.task.sysif._throw_on_child_exit())
+        await sock.connect(addr)
+        _, _ = await sock.write(count)
+        _, [] = await sock.handle.sendmsg(hdr, SendmsgFlags.NONE)
+        while response.bytesize() > 0:
+            valid, response = await sock.read(response)
+            data += valid
+    remote_fds = [self.task.make_fd_handle(near.FileDescriptor(int(i)))
+                  for i in ((await data.read()).elems if data else [])]
+    await sock.close()
+    return remote_fds
+    
+class PersistentThread(Thread):
+    """A thread which can live on even if everything else has exited
+
+    It's not persistent by default - you need to call make_persistent() first to make that
+    happen. After that, this thread will continue living even if its parent dies or our
+    connection to it fails, and you can reconnect to it by calling reconnect(thr), passing
+    the thread you want to initiate the connection from.
+
+    """
+    def __init__(self,
+                 thread: Thread,
+                 persistent_path: Path,
+                 persistent_sock: FileDescriptor,
+    ) -> None:
+        super()._init_from(thread)
+        self.persistent_path = persistent_path
+        self.persistent_sock = persistent_sock
+
+    async def make_persistent(self) -> None:
+        "Make this thread actually persistent"
+        # TODO hmm should we switch the transport?
+        # i guess we aren't actually doing anything but rearranging the file descriptors
+        await self.task.unshare_files()
+        if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
+            raise Exception("self.task.sysif of unexpected type", self.task.sysif)
+        new_sysif = NonChildSyscallInterface(self.task.sysif.rsyscall_connection, self.task.process.near)
+        new_sysif.store_remote_side_handles(self.task.sysif.infd, self.task.sysif.outfd)
+        self.task.sysif = new_sysif
+        await self.task.setsid()
+        await self.task.prctl(PR.SET_PDEATHSIG, 0)
+
+    async def reconnect(self, thread: Thread) -> None:
+        """Using the passed-in thread to establish the connection, reconnect to this PersistentThread
+
+        """
+        await handle.run_fd_table_gc(self.task.fd_table)
+        if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
+            raise Exception("self.task.sysif of unexpected type", self.task.sysif)
+        await self.task.sysif.close_interface()
+        # TODO should check that no transport requests are in flight
+        [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await thread.open_async_channels(2)
+        [infd, outfd, remote_data_sock] = await _connect_and_send(self, thread, [syscall_sock, syscall_sock, data_sock])
+        await syscall_sock.close()
+        await data_sock.close()
+        # Fix up Task's sysif with new SyscallConnection
+        self.task.sysif.rsyscall_connection = SyscallConnection(access_syscall_sock, access_syscall_sock)
+        self.task.sysif.store_remote_side_handles(infd, outfd)
+        # Fix up RAM with new transport
+        # TODO technically this could still be in the same address space - that's the case in our tests.
+        # we should figure out a way to use a LocalMemoryTransport here so it can copy efficiently
+        transport = SocketMemoryTransport(access_data_sock, remote_data_sock, self.ram.allocator)
+        self.ram.transport = transport
+        self.transport = transport
+        # Fix up epoller with new activity fd
+        def devnull(event: EPOLL) -> None:
+            pass
+        await self.epoller.register(
+            infd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP, devnull)
+        # close remote fds we don't have handles to; this includes the old interface fds.
+        await handle.run_fd_table_gc(self.task.fd_table)
