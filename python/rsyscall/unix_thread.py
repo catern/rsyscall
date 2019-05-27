@@ -74,15 +74,15 @@ class UnixThread(ForkThread):
             # this signal is already blocked, we inherited the block, um... I guess...
             # TODO handle this more formally
             signal_block = SignalBlock(task, await ram.ptr(Sigset({SIG.CHLD})))
-            child_monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
+            monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
         else:
             epoller = self.epoller.inherit(ram)
-            child_monitor = self.child_monitor.inherit_to_child(ram, task)
+            monitor = self.monitor.inherit_to_child(ram, task)
         return ChildUnixThread(UnixThread(
             task, ram,
             self.connection.for_task(task, ram),
             self.loader,
-            epoller, child_monitor,
+            epoller, monitor,
             self.environ.inherit(task, ram),
             stdin=self.stdin.for_task(task),
             stdout=self.stdout.for_task(task),

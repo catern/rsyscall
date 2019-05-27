@@ -63,7 +63,7 @@ async def make_robust_futex_process(
     local_futex_node = remote_futex_node._with_mapping(local_mapping)
     # now we start the futex monitor
     futex_process = await launch_futex_monitor(
-        parent.ram, parent.loader, parent.child_monitor, local_futex_node)
+        parent.ram, parent.loader, parent.monitor, local_futex_node)
     return futex_process, local_futex_node, remote_mapping
 
 @dataclass
@@ -107,7 +107,7 @@ async def rsyscall_exec(
     child_process = await child.exec(executable.command.args(
             encode(passed_data_sock.near), encode(syscall.infd.near), encode(syscall.outfd.near),
             *[encode(fd.near) for fd in child.task.fd_handles],
-    ), [child.child_monitor.sigfd.signal_block])
+    ), [child.monitor.sigfd.signal_block])
     #### read symbols from describe fd
     describe_buf = AsyncReadBuffer(access_data_sock)
     symbol_struct = await describe_buf.read_cffi('struct rsyscall_symbol_table')

@@ -200,19 +200,15 @@ async def launch_futex_monitor(ram: RAM,
     # TODO uh we need to actually call something to free the stack
     return futex_process
 
-async def spawn_child_task(
-        task: Task, ram: RAM,
-        loader: NativeLoader,
-        monitor: ChildProcessMonitor,
-        access_sock: AsyncFileDescriptor,
-        remote_sock: FileDescriptor,
-        trampoline: Trampoline,
+async def clone_child_task(
+        parent: ForkThread,
         flags: CLONE,
+        trampoline_func: t.Callable[[FileDescriptor], Trampoline],
 ) -> t.Tuple[AsyncChildProcess, Task]:
-    """Clone a new child process and make a ChildSyscallInterface for it.
+    """Clone a new child process and setup the sysif and task to manage it
 
-    We rely on the Trampoline passed in to specify a function with arguments
-    that will have the desired effect.
+    We rely on trampoline_func to take a socket and give us a native function call with
+    arguments that will speak the rsyscall protocol over that socket.
 
     We also start a futex monitor to to monitor the ctid futex. Since we set
     CLONE.CHILD_CLEARTID, the ctid futex will have a wakeup when the child exits - or,
@@ -220,54 +216,41 @@ async def spawn_child_task(
     child successfully calls exec, which we otherwise have no way to detect.
 
     """
+    [(access_sock, remote_sock)] = await parent.connection.open_async_channels(1)
+    trampoline = trampoline_func(remote_sock)
     # We require that these flags be used
     flags |= CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM
     # TODO it is unclear why we sometimes need to make a new mapping here, instead of
     # allocating with our normal allocator; all our memory is already MAP.SHARED, I think.
     # We should resolve this so we can use the stock allocator.
-    arena = Arena(await task.mmap(4096*2, PROT.READ|PROT.WRITE, MAP.SHARED))
+    arena = Arena(await parent.task.mmap(4096*2, PROT.READ|PROT.WRITE, MAP.SHARED))
     async def op(sem: RAM) -> t.Tuple[t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
                                                        WrittenPointer[FutexNode]]:
-        stack_value = loader.make_trampoline_stack(trampoline)
+        stack_value = parent.loader.make_trampoline_stack(trampoline)
         stack_buf = await sem.malloc(Stack, 4096)
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
         futex_pointer = await sem.ptr(FutexNode(None, Int32(0)))
         return stack, futex_pointer
-    stack, futex_pointer = await ram.perform_batch(op, arena)
+    stack, futex_pointer = await parent.ram.perform_batch(op, arena)
     # it's important to start the processes in this order, so that the thread
     # process is the first process started; this is relevant in several
     # situations, including unshare(NEWPID) and manipulation of ns_last_pid
-    child_process = await monitor.clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
-    futex_process = await launch_futex_monitor(ram, loader, monitor, futex_pointer)
+    child_process = await parent.monitor.clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
+    futex_process = await launch_futex_monitor(
+        parent.ram, parent.loader, parent.monitor, futex_pointer)
 
-    syscall = ChildSyscallInterface(SyscallConnection(access_sock, access_sock), child_process, futex_process)
+    syscall = ChildSyscallInterface(SyscallConnection(access_sock, access_sock),
+                                    child_process, futex_process)
     # TODO correctly track all the namespaces we're in
     if flags & CLONE.NEWPID:
         pidns = far.PidNamespace(child_process.process.near.id)
     else:
-        pidns = task.pidns
-    real_parent_task = task.parent_task if monitor.use_clone_parent else task
-    new_task = Task(syscall, child_process.process, real_parent_task,
-                         task.fd_table, task.address_space, pidns)
-    new_task.sigmask = task.sigmask
-    remote_sock_handle = new_task.make_fd_handle(remote_sock)
+        pidns = parent.task.pidns
+    task = Task(syscall, child_process.process, child_process.process.task,
+                parent.task.fd_table, parent.task.address_space, pidns)
+    task.sigmask = parent.task.sigmask
+    remote_sock_handle = remote_sock.move(task)
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
-    return child_process, new_task
-
-async def clone_child_task(
-        parent: ForkThread,
-        flags: CLONE,
-        trampoline_func: t.Callable[[FileDescriptor], Trampoline],
-) -> t.Tuple[AsyncChildProcess, Task]:
-    [(access_sock, remote_sock)] = await parent.connection.open_async_channels(1)
-    child_process, task = await spawn_child_task(
-        parent.task, parent.ram,
-        parent.loader, parent.child_monitor,
-        access_sock, remote_sock,
-        trampoline_func(remote_sock),
-        flags,
-    )
-    await remote_sock.invalidate()
     return child_process, task
 
 from rsyscall.epoller import Epoller
@@ -279,16 +262,16 @@ class ForkThread(ConnectionThread):
                  epoller: Epoller,
                  connection: Connection,
                  loader: NativeLoader,
-                 child_monitor: ChildProcessMonitor,
+                 monitor: ChildProcessMonitor,
     ) -> None:
         super().__init__(task, ram, epoller, connection)
         self.loader = loader
-        self.child_monitor = child_monitor
+        self.monitor = monitor
 
     def _init_from(self, thr: ForkThread) -> None: # type: ignore
         super()._init_from(thr)
         self.loader = thr.loader
-        self.child_monitor = thr.child_monitor
+        self.monitor = thr.monitor
 
     async def _fork_task(self, flags: CLONE) -> t.Tuple[AsyncChildProcess, Task]:
         return await clone_child_task(
