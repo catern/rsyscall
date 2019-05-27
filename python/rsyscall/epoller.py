@@ -460,6 +460,9 @@ class AsyncFileDescriptor:
             else:
                 raise
 
+    def with_handle(self, fd: FileDescriptor) -> AsyncFileDescriptor:
+        return AsyncFileDescriptor(self.ram, fd, self.status, self.epolled)
+
     async def close(self) -> None:
         await self.epolled.delete()
         await self.handle.invalidate()

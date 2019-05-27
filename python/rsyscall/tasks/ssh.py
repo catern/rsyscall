@@ -28,7 +28,7 @@ import rsyscall.nix as nix
 import string
 import typing as t
 
-from rsyscall.fcntl import O
+from rsyscall.fcntl import O, F
 from rsyscall.sys.socket import SOCK, AF, Address
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.wait import W
@@ -290,11 +290,12 @@ async def ssh_bootstrap(
     new_ram = RAM(new_base_task, new_transport, new_allocator)
     epoller = await Epoller.make_root(new_ram, new_base_task)
     child_monitor = await ChildProcessMonitor.make(new_ram, new_base_task, epoller)
+    await handle_listening_fd.fcntl(F.SETFL, O.NONBLOCK)
     connection = ListeningConnection(
         parent.task, parent.ram, parent.epoller,
         local_data_addr,
         new_base_task, new_ram,
-        handle_listening_fd,
+        await AsyncFileDescriptor.make(epoller, new_ram, handle_listening_fd),
     )
     new_thread = Thread(
         task=new_base_task,

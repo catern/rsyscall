@@ -18840,6 +18840,8 @@ and rename it to waitpid?
    ok i think it's better
 
    and we can have death_status.exit_status, whatever
+
+   Don't forget to change it in the tutorial too...
 ** TODO rename Trampoline to something
 closure?
 thunk?
