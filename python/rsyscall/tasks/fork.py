@@ -52,7 +52,38 @@ class MMRelease(RsyscallHangup):
 
 
 class ChildSyscallInterface(BaseSyscallInterface):
-    "A connection to an rsyscall server that is one of our child processes"
+    """A connection to an rsyscall server that is one of our child processes
+
+    We take as arguments here not only a SyscallConnection, but also an
+    AsyncChildProcess monitoring the child process to which we will send
+    syscalls.
+
+    This is useful for situations where we can't rely on getting an EOF if the
+    other side of a connection dies. That will happen, for example, whenever the
+    child process is sharing a file descriptor table with us. In those
+    situations, we need some other means to detect that a syscall will never be
+    responded to, and signal it to the caller by throwing RsyscallHangup.
+
+    In this class, we detect a hangup while waiting for a syscall response by
+    simultaneously monitoring the child process. If the child process exits, we
+    stop waiting for the syscall response and throw RsyscallHangup back to the
+    caller.
+
+    This is not just a matter of failure cases, it's also important for normal
+    functionality. Detecting a hangup is our only way to discern whether a call
+    to exit() was successful, and rsyscall.near.exit treats receiving an
+    RsycallHangup as successful.
+
+    We also take a futex_process: AsyncChildProcess. This is also used for
+    normal functionality: futex_process should exit when the process has
+    successfully called exec. This is again our only way of detecting a
+    successful call to exec, and rsyscall.near.execve treats receiving an
+    RsycallHangup as successful. (Concretely, futex_process will also exit when
+    the process exits, not just when it execs, but that's harmless)
+
+    A better way of detecting exec success would be great...
+
+    """
     def __init__(self,
                  rsyscall_connection: SyscallConnection,
                  server_process: AsyncChildProcess,
@@ -72,16 +103,13 @@ class ChildSyscallInterface(BaseSyscallInterface):
         manager body, we'll cancel the context manager body so that we don't
         spend forever waiting on a dead child.
 
-        This is useful for situations where we can't rely on getting an EOF if
-        the other side of a connection dies. Which is exactly the situation
-        we're in with SyscallConnection in ChildSyscallInterface, i.e. right
-        here and now, since we will usually be sharing the fd table with our
-        threads, so the thread dying doesn't cause the other end of the
-        connection to close.
+        This is useful for detecting a situation where we've sent a request and
+        will never receive a response, particularly for syscalls as documented
+        in the module docstring.
 
-        That is by far the most important application of this method; but this
-        method is also useful for some other thread implementations, so we
-        exposing it as a generic method.
+        The application to syscalls is the primary purpose of this method; but
+        this method is also useful for some other thread implementations, so we
+        expose it with this relatively generic interface.
 
         """
         child_exited = False
@@ -129,6 +157,10 @@ async def launch_futex_monitor(ram: RAM,
                                futex_pointer: WrittenPointer[FutexNode]) -> AsyncChildProcess:
     """Launch a process to wait on a futex; then we monitor the process to monitor the futex
 
+    This process calls futex(futex_pointer, FUTEX_WAIT, futex_pointer.value) and
+    then exits, so this process will exit if and when the futex has FUTEX_WAKE
+    called on it.
+
     Sadly, this is the best we can do with integrating futexes into our event
     loop. There used to be a way to get a file descriptor to represent a futex,
     but it was removed because it was racy.
@@ -168,10 +200,11 @@ async def clone_child_task(
     We rely on trampoline_func to take a socket and give us a native function call with
     arguments that will speak the rsyscall protocol over that socket.
 
-    We also create a futex process, which we use to create the ChildSyscallInterface.
-    This process allows us to detect when the child successfully finishes an exec. The
-    futex process will here monitor the ctid futex. Because we set CLONE.CHILD_CLEARTID,
-    the ctid futex will receive a FUTEX_WAKE when the child process exits or execs.
+    We also create a futex process, which we use to monitor the ctid futex.
+    This process allows us to detect when the child successfully finishes an
+    exec; see the docstring of ChildSyscallInterface.  Because we set
+    CLONE.CHILD_CLEARTID, the ctid futex will receive a FUTEX_WAKE when the
+    child process exits or execs, and the futex process will accordingly exit.
 
     """
     # Open a channel which we'll use for the rsyscall connection

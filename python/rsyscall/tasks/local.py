@@ -131,7 +131,12 @@ async def _make_local_thread() -> Thread:
 
 async def _initialize() -> Thread:
     thr = await _make_local_thread()
-    # wipe out the SIGWINCH handler that the readline module installs
+    # Wipe out the SIGWINCH handler that the readline module installs.
+    # We do this because otherwise this handler will be inherited down to our
+    # children, where it will segfault on run due to the environment being
+    # totally different (lacking TLS for one). I'm not sure if there's any
+    # alternative; wiping out the signal handlers from within the children after
+    # they've been created still leaves a window for the signal handler to run.
     import readline
     await thr.task.sigaction(SIG.WINCH, await thr.ram.ptr(Sigaction(Sighandler.DFL)), None)
     return thr
