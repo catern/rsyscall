@@ -1,3 +1,5 @@
+"""Functions and classes for a connection between two threads, with which we can open channels for data transfer
+"""
 from __future__ import annotations
 import abc
 import typing as t
@@ -12,6 +14,26 @@ from rsyscall.sys.uio import IovecList
 from rsyscall.fcntl import F, O
 
 class Connection:
+    """A connection between two threads in which more channels can be opened
+
+    The use of this is in creating channels for data transfer.
+
+    TODO explain that we need this to establish child taskss
+
+    This is not necessarily a connection in the style of TCP as such; it merely
+    represents that there is a way to open channels between two threads, not
+    that there is any active transfer between them at the moment.
+
+    In terms of TCP/IP, the Connection might represent that the two threads are
+    on the same network, and that new TCP connections can be initiated between
+    them, but doesn't represent a specific TCP connection.
+
+    Of course, with more flexible systems like QUIC or SCTP, the Connection
+    would indeed represent an established, heartbeating connection; new channels
+    for data transfer can be established in such systems given an existing
+    network-level connection.
+
+    """
     @abc.abstractmethod
     async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]: ...
     async def open_async_channel(self) -> t.Tuple[AsyncFileDescriptor, FileDescriptor]:
