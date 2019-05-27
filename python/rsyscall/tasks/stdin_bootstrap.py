@@ -1,14 +1,11 @@
 """A thread-creating stub which can be exec'd by other programs which pass down stdin
 
-We call rsyscall_stdin_bootstrap with an arbitrary Command; we'll fork
-and exec that Command, passing down a socketpair for stdin, and
-presume that the program specified by the Command will at some point
-call rsyscall_stdin_bootstrap. Once that happens, we'll bootstrap over
-the stdin socketpair and return the new thread.
+The user creates an arbitrary Command which eventually execs rsyscall-stdin-bootstrap, and
+calls stdin_bootstrap with it; stdin_bootstrap runs the command and returns a thread
+created from the eventually-exec'd rsyscall-stdin-bootstrap.
 
-This is useful for sudo and similar programs; we can pass a Command
-which runs "sudo rsyscall_stdin_bootstrap", and thereby get a Thread
-with different privileges.
+This is useful for sudo and similar programs; we can pass a Command which runs "sudo
+rsyscall-stdin-bootstrap", and thereby get a Thread with different privileges.
 
 """
 import typing as t
@@ -41,7 +38,7 @@ from rsyscall.sys.uio import IovecList
 
 __all__ = [
     "stdin_bootstrap_path_from_store",
-    "rsyscall_stdin_bootstrap",
+    "stdin_bootstrap",
 ]
 
 async def stdin_bootstrap_path_from_store(store: nix.Store) -> Path:
@@ -55,11 +52,20 @@ async def stdin_bootstrap_path_from_store(store: nix.Store) -> Path:
     rsyscall_path = await store.realise(nix.rsyscall)
     return rsyscall_path/"libexec"/"rsyscall"/"rsyscall-stdin-bootstrap"
 
-async def rsyscall_stdin_bootstrap(
+async def stdin_bootstrap(
         parent: Thread,
         bootstrap_command: Command,
 ) -> t.Tuple[AsyncChildProcess, Thread]:
-    """Fork and run an arbitrary Command which will start rsyscall_stdin_bootstrap"""
+    """Create a thread from running an arbitrary command which must run rsyscall-stdin-bootstrap
+
+    bootstrap_command can be any arbitrary command, but it must eventually exec
+    rsyscall-stdin-bootstrap, and pass down stdin when it does.
+
+    We'll fork and exec bootstrap_command, passing down a socketpair for stdin, and try to
+    bootstrap over the other end of the socketpair. Once rsyscall-stdin-bootstrap starts,
+    it will respond to our bootstrap and we'll create a new thread.
+
+    """
     #### fork and exec into the bootstrap command
     child = await parent.fork()
     # create the socketpair that will be used as stdin

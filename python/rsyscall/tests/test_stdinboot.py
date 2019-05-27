@@ -14,7 +14,7 @@ class TestStdinboot(TrioTestCase):
         self.local = local.thread
         path = await stdin_bootstrap_path_from_store(local_store)
         self.command = Command(path, ['rsyscall-stdin-bootstrap'], {})
-        self.local_child, self.remote = await rsyscall_stdin_bootstrap(self.local, self.command)
+        self.local_child, self.remote = await stdin_bootstrap(self.local, self.command)
 
     async def asyncTearDown(self) -> None:
         await self.local_child.kill()
@@ -26,7 +26,7 @@ class TestStdinboot(TrioTestCase):
         await do_async_things(self, self.remote.epoller, self.remote)
 
     async def test_nest(self) -> None:
-        child, new_thread = await rsyscall_stdin_bootstrap(self.remote, self.command)
+        child, new_thread = await stdin_bootstrap(self.remote, self.command)
         async with child:
             await do_async_things(self, new_thread.epoller, new_thread)
     

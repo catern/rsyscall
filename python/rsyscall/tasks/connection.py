@@ -1,3 +1,14 @@
+"""The rsyscall protocol implementation
+
+That's a bit grandiose, because the rsyscall protocol is extremely simple: Write
+a syscall request out as a fixed-size struct containing a syscall number and the
+arguments, read the syscall response in as a 64-bit long.
+
+Still, it's not completely trivial, because we do pipelining of syscall
+requests, and we also batch together multiple requests so they can be written
+out all at once.
+
+"""
 from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
 from rsyscall.handle import Pointer, Task
@@ -15,6 +26,7 @@ __all__ = [
 
 @dataclass
 class Syscall(Struct):
+    "The struct representing a syscall request"
     number: int
     arg1: int
     arg2: int
@@ -43,6 +55,7 @@ class Syscall(Struct):
 
 @dataclass
 class SyscallResponse(Struct):
+    "The struct representing a syscall response"
     value: int
 
     def to_bytes(self) -> bytes:
@@ -118,6 +131,25 @@ class SyscallConnection:
         await self.tofd.close()
         await self.fromfd.close()
 
+    async def write_request(self, number: int,
+                            arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int
+    ) -> ConnectionResponse:
+        """Write a syscall request, returning a ConnectionResponse
+
+        The ConnectionResponse will eventually have .result set to contain the
+        syscall return value; you can call read_pending_responses to do work on
+        the connection until that happens.
+
+        """
+        syscall = Syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
+        return (await self._write_request(syscall))
+
+    async def read_pending_responses(self) -> None:
+        "Process some syscall responses, setting their values on the appropriate ConnectionResponse"
+        async with self.reading_responses.needs_run() as needs_run:
+            if needs_run:
+                await self._read_pending_responses_direct()
+
     async def _write_pending_requests_direct(self) -> None:
         requests = self.pending_requests
         self.pending_requests = []
@@ -157,19 +189,6 @@ class SyscallConnection:
                 await self._write_pending_requests()
         return request.response
 
-    async def write_request(self, number: int,
-                            arg1: int, arg2: int, arg3: int, arg4: int, arg5: int, arg6: int
-    ) -> ConnectionResponse:
-        syscall = Syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        return (await self._write_request(syscall))
-
-    def poll_response(self) -> t.Optional[int]:
-        val = self.buffer.read_struct(SyscallResponse)
-        if val:
-            return val.value
-        else:
-            return None
-
     def _got_responses(self, vals: t.List[SyscallResponse]) -> None:
         responses = self.pending_responses[:len(vals)]
         self.pending_responses = self.pending_responses[len(vals):]
@@ -194,8 +213,3 @@ class SyscallConnection:
             buf = valid.merge(rest)
             vals = self.buffer.read_all_structs(SyscallResponse)
         self._got_responses(vals)
-
-    async def read_pending_responses(self) -> None:
-        async with self.reading_responses.needs_run() as needs_run:
-            if needs_run:
-                await self._read_pending_responses_direct()

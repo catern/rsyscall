@@ -55,7 +55,6 @@ class ChildSyscallInterface(near.SyscallInterface):
         self.rsyscall_connection = rsyscall_connection
         self.server_process = server_process
         self.futex_process = futex_process
-        self.identifier_process = self.server_process.process.near
         self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{int(self.server_process.process.near)}")
         self.running_read = OneAtATime()
 

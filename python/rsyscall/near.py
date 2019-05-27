@@ -60,8 +60,6 @@ class SyscallInterface:
     # Typically, this is in fact the fd which the rsyscall server reads for incoming system calls!
     @abc.abstractmethod
     def get_activity_fd(self) -> t.Optional[handle.FileDescriptor]: ...
-    # This is some process which is useful to identify this syscall interface.
-    identifier_process: Process
 
 class SyscallResponse:
     # Throws on negative return value

@@ -70,6 +70,7 @@ __all__ = [
 
 @dataclass
 class StubServer:
+    "A server which can be connected back to by rsyscall-unix-stub."
     listening_sock: AsyncFileDescriptor
     thread: Thread
 
@@ -99,17 +100,24 @@ RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
         return server
 
     async def accept(self, thread: Thread=None) -> t.Tuple[t.List[str], Thread]:
+        """Accept new connection and bootstrap over it; returns the stub's argv and the new thread
+
+        The optional argument "thread" allows choosing what thread handles the bootstrap;
+        by default we'll use the thread embedded in the StubServer.
+
+        """
         if thread is None:
             thread = self.thread
         conn = await self.listening_sock.accept()
         argv, new_thread = await _setup_stub(thread, conn)
-        # have to drop first argument, which is the unix_stub executable; see make_stub
+        # have to drop first argument, which is the unix_stub executable; see StubServer.make
         return argv[1:], new_thread
 
 async def _setup_stub(
         thread: Thread,
         bootstrap_sock: FileDescriptor,
 ) -> t.Tuple[t.List[str], Thread]:
+    "Setup a stub thread"
     [(access_syscall_sock, passed_syscall_sock),
      (access_data_sock, passed_data_sock)] = await thread.open_async_channels(2)
     # memfd for setting up the futex

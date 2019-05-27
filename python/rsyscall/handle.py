@@ -851,7 +851,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             near_to_handles.setdefault(handle.near, []).append(handle)
 
     def _make_fresh_fd_table(self) -> None:
-        self.fd_table = rsyscall.far.FDTable(self.sysif.identifier_process.id)
+        self.fd_table = rsyscall.far.FDTable(self.process.near.id)
         self._setup_fd_table_handles()
 
     async def unshare(self, flags: CLONE) -> None:
