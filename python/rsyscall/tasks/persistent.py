@@ -192,6 +192,11 @@ class PersistentThread(Thread):
     connection to it fails, and you can reconnect to it by calling reconnect(thr), passing
     the thread you want to initiate the connection from.
 
+    A great name for this would be "daemon thread", but that's already taken by more
+    conventional thread systems to refer to a much more conventional kind of thread.  I
+    wistfully recall the name I gave to a previous attempt at making a hosting system for
+    long-running tasks: daemon engines. That was a great name.
+
     """
     def __init__(self,
                  thread: Thread,

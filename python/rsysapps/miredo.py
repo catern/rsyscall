@@ -109,8 +109,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) 
     # hello fragments my old friend
     await inet_sock.setsockopt(SOL.IP, IP.MTU_DISCOVER, await thread.ram.ptr(Int32(IP.PMTUDISC_DONT)))
     ns_thread = await thread.fork()
-    await ns_thread.unshare_user()
-    await ns_thread.unshare_net()
+    await ns_thread.unshare(CLONE.NEWNET|CLONE.NEWUSER)
     # create icmp6 fd so miredo can relay pings
     icmp6_fd = await ns_thread.task.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
 
@@ -137,8 +136,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) 
     # ummm and let's use UMOUNT_NOFOLLOW too
     # ummm no let's just only umount directories
     client_thread = await ns_thread.fork(CLONE.NEWPID)
-    await client_thread.unshare_net()
-    await client_thread.unshare_mount()
+    await client_thread.unshare(CLONE.NEWNET|CLONE.NEWNS)
     await client_thread.unshare_user()
     client_child = await exec_miredo_run_client(
         miredo_exec, client_thread, inet_sock, tun_fd, reqsock, icmp6_fd, privproc_pair.second, "teredo.remlab.net")

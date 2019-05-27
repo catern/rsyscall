@@ -54,6 +54,7 @@ class UnixThread(ForkThread):
         self.stderr = thr.stderr
 
     async def fork(self, flags: CLONE=CLONE.SIGHAND) -> ChildUnixThread:
+        "Fork off a new child thread"
         child_process, task = await self._fork_task(flags)
         ram = RAM(task,
                   # We don't inherit the transport because it leads to a deadlock:
@@ -94,7 +95,8 @@ class ChildUnixThread(UnixThread):
         super()._init_from(thr)
         self.process = process
 
-    async def execveat(self, path: Path, argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> AsyncChildProcess:
+    async def _execve(self, path: Path, argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> AsyncChildProcess:
+        "A memory-abstracted helper for calling execveat; self.{exec,execve} are probably preferable"
         async def op(sem: RAM) -> t.Tuple[WrittenPointer[Path],
                                                WrittenPointer[ArgList],
                                                WrittenPointer[ArgList]]:
@@ -113,6 +115,9 @@ class ChildUnixThread(UnixThread):
                      inherited_signal_blocks: t.List[SignalBlock]=[],
     ) -> AsyncChildProcess:
         """Replace the running executable in this thread with another.
+
+        self.exec is probably preferable; it takes a nice Command object which
+        is easier to work with.
 
         We take inherited_signal_blocks as an argument so that we can default it
         to "inheriting" an empty signal mask. Most programs expect the signal
@@ -139,10 +144,15 @@ class ChildUnixThread(UnixThread):
         for key_bytes, value in envp.items():
             raw_envp.append(b''.join([key_bytes, b'=', value]))
         logger.info("execveat(%s, %s, %s)", path, argv, env_updates)
-        return await self.execveat(path, [os.fsencode(arg) for arg in argv], raw_envp, AT.NONE)
+        return await self._execve(path, [os.fsencode(arg) for arg in argv], raw_envp, AT.NONE)
 
     async def exec(self, command: Command,
                    inherited_signal_blocks: t.List[SignalBlock]=[],
     ) -> AsyncChildProcess:
+        """Replace the running executable in this thread with what's specified in `command`
+
+        See self.execve's docstring for an explanation of inherited_signal_blocks.
+
+        """
         return (await self.execve(command.executable_path, command.arguments, command.env_updates,
                                   inherited_signal_blocks=inherited_signal_blocks))

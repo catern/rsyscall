@@ -17427,19 +17427,6 @@ And we can have an exec which is not memory-abstracting, I guess.
 ** remove syscall eof message
    Hmm, what's the clean way to shut down a thread?
    Exit it?
-** switch ssh to use multiplexing
-   ssh is annoyingly slow. 100 milliseconds! And I run it three times for each ssh!
-
-   The obvious optimization is multiplexing.
-
-   I was reluctant before, but, really, always multiplexing simplifies so many things.
-   The current level of customizability is abnormal, let's abandon it.
-   And anyone we don't lose that much, I don't think, by forcing multiplexing.
-
-   Note that we'll still need the separate SSHHost thing,
-   so that we can track when namespaces are shared across ssh connections.
-
-   Though we don't really use those namespaces at the moment anyway...
 ** DONE remove need for careful use of unshare_files with persistent thread
    In fact there's a ton of crazy unshare_files stuff going on here.
 
@@ -18840,6 +18827,15 @@ and rename it to waitpid?
     prerequisite to that is being comfortable doing a 0.0.1 release,
     whether that's through pypi or a local Nix package or whatever.
     that's clearly the easy way forward, meh.
+** DONE maybe rename persistent thread to daemon thread?
+   We do, after all, essentially daemonize them.
+
+   But, daemon threads are already something in Java etc.
+
+   No we won't do this
+
+   ah, remember the daemon engines?
+   what a good name
 ** TODO rename ChildState to ChildStatus
    ok i think it's better
 
@@ -18861,10 +18857,25 @@ nativeclosure, nativethunk.
 
 nativecall?
 ** TODO get rid of allocatorclient
-** TODO maybe rename persistent thread to daemon thread?
-   We do, after all, essentially daemonize them.
+** TODO switch ssh to use multiplexing
+   ssh is annoyingly slow. 100 milliseconds! And I run it three times for each ssh!
 
-   But, daemon threads are already something in Java etc.
+   The obvious optimization is multiplexing.
+
+   I was reluctant before, but, really, always multiplexing simplifies so many things.
+   The current level of customizability is abnormal, let's abandon it.
+   And anyone we don't lose that much, I don't think, by forcing multiplexing.
+
+   Note that we'll still need the separate SSHHost thing,
+   so that we can track when namespaces are shared across ssh connections.
+
+   Though we don't really use those namespaces at the moment anyway...
+
+   Also using multiplexing would simplify the implementation I think.
+
+   Vastly so.
+** TODO change mount to take Path for target
+   I guess?
 * DOCUMENTATION!
   Time to write it!
 ** DONE move epoll blocking stuff in module docstring to Epoller docstring

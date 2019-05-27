@@ -19,6 +19,7 @@ dns.rdata.register_type(rsysapps.dnspython_LUA, 65402, 'LUA')
 
 from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.sys.socket import AF, SOCK
+from rsyscall.sched import CLONE
 
 @dataclass
 class Powerdns:
@@ -121,7 +122,7 @@ class TestPowerdns(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thread = await local.thread.fork()
         await self.thread.unshare_user(0, 0)
-        await self.thread.unshare_net()
+        await self.thread.unshare(CLONE.NEWNET)
         # set loopback up
         ip = await self.thread.environ.which("ip")
         # TODO blah this requires root and we don't want to have to run as root because it's a hassle

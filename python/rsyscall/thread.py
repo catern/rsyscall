@@ -1,3 +1,6 @@
+"""Central thread class, with helper methods to ease a number of common tasks
+
+"""
 from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall.command import Command
@@ -19,6 +22,10 @@ from rsyscall.unistd import Arg
 
 async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
                               in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
+    """Set up a new user namespace with single-user {uid,gid}_map
+
+    These are the only valid mappings for unprivileged user namespaces.
+    """
     if in_namespace_uid is None:
         in_namespace_uid = uid
     if in_namespace_gid is None:
@@ -61,6 +68,7 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
 
 class Thread(UnixThread):
     async def mkdtemp(self, prefix: str="mkdtemp") -> TemporaryDirectory:
+        "Make a temporary directory by calling rsyscall.mktemp.mkdtemp"
         return await mkdtemp(self, prefix)
 
     @t.overload
@@ -89,10 +97,12 @@ class Thread(UnixThread):
         return out
 
     async def mkdir(self, path: Path, mode=0o755) -> Path:
+        "Make a directory at this path"
         await self.task.mkdir(await self.ram.ptr(path))
         return path
 
     async def read_to_eof(self, fd: FileDescriptor) -> bytes:
+        "Read this file descriptor until we get EOF, then return all the bytes read"
         data = b""
         while True:
             read, rest = await fd.read(await self.ram.malloc(bytes, 4096))
@@ -103,6 +113,7 @@ class Thread(UnixThread):
     async def mount(self, source: bytes, target: bytes,
                     filesystemtype: bytes, mountflags: MS,
                     data: bytes) -> None:
+        "Call mount with these args"
         async def op(sem: RAM) -> t.Tuple[
                 WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg]]:
             return (
@@ -147,12 +158,6 @@ class Thread(UnixThread):
             if flags & CLONE.FS:
                 flags ^= CLONE.FS
         await self.task.unshare(flags)
-
-    async def unshare_net(self) -> None:
-        await self.unshare(CLONE.NEWNET)
-
-    async def unshare_mount(self) -> None:
-        await self.unshare(CLONE.NEWNS)
 
     async def unshare_files(self, going_to_exec=True) -> None:
         """Unshare the file descriptor table.
@@ -200,13 +205,6 @@ class Thread(UnixThread):
         await write_user_mappings(self, uid, gid,
                                   in_namespace_uid=in_namespace_uid, in_namespace_gid=in_namespace_gid)
 
-    async def setns_user(self, fd: FileDescriptor) -> None:
-        await self.task.setns_user(fd)
-
-    async def setns_mount(self, fd: FileDescriptor) -> None:
-        fd.check_is_for(self.task)
-        await fd.setns(CLONE.NEWNS)
-
     async def exit(self, status) -> None:
         await self.task.exit(0)
 
@@ -220,14 +218,6 @@ class Thread(UnixThread):
         await self.close()
 
 class ChildThread(Thread, ChildUnixThread):
-    async def exec_run(self, command: Command, check=True, *, task_status=trio.TASK_STATUS_IGNORED) -> ChildState:
-        child = await self.exec(command)
-        task_status.started(child)
-        exit_state = await child.waitpid(W.EXITED)
-        if check:
-            exit_state.check()
-        return exit_state
-
     async def close(self) -> None:
         await self.task.close_task()
 

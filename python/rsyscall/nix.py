@@ -1,3 +1,17 @@
+"""Functions and classes for working with filesystem paths deployed with Nix
+
+We use the nixdeps module to create build-time dependencies on Nix
+derivations; setuptools will write out the paths and closures of the
+Nix derivations we depend on.
+
+We can use those dependencies through import_nix_dep, which returns
+StorePath instances, which are independent of any specific thread.  To
+turn a StorePath into a usable path, we can pass it to Store.realise,
+which checks if the path is already deployed in that specific store,
+and returns the path if so. If the path isn't deployed already,
+Store.realise will deploy it for us.
+
+"""
 from __future__ import annotations
 import typing as t
 import os
@@ -20,13 +34,16 @@ from rsyscall.sched import CLONE
 from rsyscall.unistd import Pipe, OK
 
 __all__ = [
+    "copy_tree",
     "enter_nix_container",
     "local_store",
     "nix",
+    "Store"
 ]
 
-async def exec_tar_copy_tree(src: ChildThread, src_paths: t.List[Path], src_fd: FileDescriptor,
-                             dest: ChildThread, dest_path: Path, dest_fd: FileDescriptor) -> None:
+async def _exec_tar_copy_tree(src: ChildThread, src_paths: t.List[Path], src_fd: FileDescriptor,
+                              dest: ChildThread, dest_path: Path, dest_fd: FileDescriptor) -> None:
+    "Exec tar to copy files between two paths"
     dest_tar = await dest.environ.which("tar")
     src_tar = await dest.environ.which("tar")
 
@@ -51,15 +68,21 @@ async def exec_tar_copy_tree(src: ChildThread, src_paths: t.List[Path], src_fd: 
     await dest_child.check()
 
 async def copy_tree(src: Thread, src_paths: t.List[Path], dest: Thread, dest_path: Path) -> None:
+    """Copy all the listed `src_paths` to subdirectories of `dest_path`
+
+    Example: if we pass src_paths=['/a/b', 'c'], dest_path='dest',
+    then paths ['dest/b', 'dest/c'] will be created.
+    """
     [(local_fd, dest_fd)] = await dest.connection.open_channels(1)
     src_fd = local_fd.move(src.task)
-    await exec_tar_copy_tree(await src.fork(), src_paths, src_fd,
-                             await dest.fork(), dest_path, dest_fd)
+    await _exec_tar_copy_tree(await src.fork(), src_paths, src_fd,
+                              await dest.fork(), dest_path, dest_fd)
 
 async def exec_nix_store_transfer_db(
         src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor, closure: t.List[Path],
         dest: ChildThread, dest_nix_store: Command, dest_fd: FileDescriptor,
 ) -> None:
+    "Exec nix-store to copy the Nix database for a closure between two stores"
     await dest.unshare_files_and_replace({
         dest.stdin: dest_fd,
     })
@@ -78,20 +101,26 @@ async def bootstrap_nix_database(
         src: Thread, src_nix_store: Command, closure: t.List[Path],
         dest: Thread, dest_nix_store: Command,
 ) -> None:
+    "Bootstrap the store used by `dest` with the necessary database entries for `closure`, coming from `src`'s store"
     [(local_fd, dest_fd)] = await dest.open_channels(1)
     src_fd = local_fd.move(src.task)
     await exec_nix_store_transfer_db(await src.fork(), src_nix_store, src_fd, closure,
                                      await dest.fork(), dest_nix_store, dest_fd)
 
 async def enter_nix_container(store: Store, dest: Thread, dest_dir: Path) -> Store:
+    """Move `dest` into a container in `dest_dir`, deploying Nix inside and returning the Store thus-created
+
+    We can then use Store.realise to deploy other things into this container,
+    which we can use from the `dest` thread or any of its children.
+
+    """
     # we want to use our own container Nix store, not the global one on the system
     if 'NIX_REMOTE' in dest.environ:
         del dest.environ['NIX_REMOTE']
     # copy the binaries over
     await copy_tree(store.thread, store.nix.closure, dest, dest_dir)
     # enter the container
-    await dest.unshare_user()
-    await dest.unshare_mount()
+    await dest.unshare(CLONE.NEWNS|CLONE.NEWUSER)
     await dest.mount(os.fsencode(dest_dir/"nix"), b"/nix", b"none", MS.BIND, b"")
     # init the database
     nix_store = Command(store.nix.path/'bin/nix-store', ['nix-store'], {})
@@ -99,6 +128,7 @@ async def enter_nix_container(store: Store, dest: Thread, dest_dir: Path) -> Sto
     return Store(dest, store.nix)
 
 async def deploy_nix_bin(store: Store, dest: Thread) -> Store:
+    "Deploy the Nix binaries from `store` to /nix through `dest`"
     # copy the binaries over
     await copy_tree(store.thread, store.nix.closure, dest, Path("/nix"))
     # init the database
@@ -110,6 +140,7 @@ async def exec_nix_store_import_export(
         src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor, closure: t.List[Path],
         dest: ChildThread, dest_nix_store: Command, dest_fd: FileDescriptor,
 ) -> None:
+    "Exec nix-store to copy a closure of paths between two stores"
     await dest.unshare_files_and_replace({
         dest.stdin: dest_fd,
     })
@@ -125,6 +156,7 @@ async def exec_nix_store_import_export(
     await dest_child.check()
 
 async def nix_deploy(src: Store, dest: Store, path: StorePath) -> None:
+    "Deploy a StorePath from the src Store to the dest Store"
     [(local_fd, dest_fd)] = await dest.thread.open_channels(1)
     src_fd = local_fd.move(src.thread.task)
     await exec_nix_store_import_export(
@@ -132,6 +164,7 @@ async def nix_deploy(src: Store, dest: Store, path: StorePath) -> None:
         await dest.thread.fork(), Command(dest.nix.path/'bin/nix-store', ['nix-store'], {}), dest_fd)
 
 async def canonicalize(thr: RAMThread, path: Path) -> Path:
+    "Resolve all symlinks in this path, and return the resolved path"
     f = await thr.task.open(await thr.ram.ptr(path), O.PATH)
     size = 4096
     valid, _ = await thr.task.readlink(await thr.ram.ptr(f.as_proc_path()),
@@ -179,13 +212,14 @@ class Store:
     def _add_root(self, store_path: StorePath, path: Path) -> None:
         self.roots[store_path] = path
 
-    async def create_root(self, store_path: StorePath, path: WrittenPointer[Path]) -> Path:
+    async def _create_root(self, store_path: StorePath, path: WrittenPointer[Path]) -> Path:
         # TODO create a Nix temp root pointing to this path
         self._add_root(store_path, path.value)
         # TODO would be cool to store and return a WrittenPointer[Path]
         return path.value
 
     async def realise(self, store_path: StorePath) -> Path:
+        "Turn a StorePath into a Path, deploying it to this store if necessary"
         if store_path in self.roots:
             return self.roots[store_path]
         ptr = await self.thread.ram.ptr(store_path.path)
@@ -193,22 +227,29 @@ class Store:
             await self.thread.task.access(ptr, OK.R)
         except (PermissionError, FileNotFoundError):
             await nix_deploy(local_store, self, store_path)
-            return await self.create_root(store_path, ptr)
+            return await self._create_root(store_path, ptr)
         else:
-            return await self.create_root(store_path, ptr)
+            return await self._create_root(store_path, ptr)
 
     async def bin(self, store_path: StorePath, name: str) -> Command:
+        """Realise this StorePath, then return a Command for the binary named "name"
+        """
         path = await self.realise(store_path)
         return Command(path/"bin"/name, [name], {})
 
 nix = StorePath._load_without_registering("nix")
 local_store = Store(local.thread, nix)
 
+_imported_store_paths: t.Dict[str, StorePath] = {"nix": nix}
 def import_nix_dep(name: str) -> StorePath:
+    "Import the Nixdep with this name, returning it as a StorePath"
+    if name in _imported_store_paths:
+        return _imported_store_paths[name]
     store_path = StorePath._load_without_registering(name)
     # the local store has a root for every StorePath; that's where the
     # paths actually originally are.
     local_store._add_root(store_path, store_path.path)
+    _imported_store_paths[name] = store_path
     return store_path
 
 rsyscall = import_nix_dep("rsyscall")

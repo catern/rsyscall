@@ -30,6 +30,7 @@ async def mkdtemp(thr: UnixThread, prefix: str="mkdtemp") -> 'TemporaryDirectory
     return TemporaryDirectory(thr, parent, name)
 
 class TemporaryDirectory:
+    "A temporary directory we've created and are responsible for cleaning up"
     def __init__(self, thr: UnixThread, parent: Path, name: str) -> None:
         self.thr = thr
         self.parent = parent

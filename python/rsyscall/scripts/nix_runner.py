@@ -8,6 +8,8 @@ import typing as t
 import argparse
 import rsyscall.tasks.local as local
 
+from rsyscall.sched import CLONE
+
 async def deploy_nix_daemon(remote_thread: rsc.Thread,
                             container_thread: rsc.Thread) -> rsc.Command:
     "Deploy the Nix daemon from localhost"
@@ -23,12 +25,10 @@ async def make_container(root: Path, thread: Thread) -> Thread:
     # TODO do we need to keep track of this thread?
     thread = await thread.fork()
     container_thread = thread
-    await container_thread.task.unshare_fs()
+    await container_thread.unshare(CLONE.NEWUSER|CLONE.NEWNS|CLONE.FS)
     await container_thread.task.chdir(root)
     # make the container in cwd
     await (container_thread.task.cwd()/"nix").mkdir()
-    await container_thread.unshare_user()
-    await container_thread.unshare_mount()
     # TODO chroot too I guess
     await container_thread.task.mount(b"nix", b"/nix", b"none", rsc.lib.MS_BIND, b"")
     return container_thread

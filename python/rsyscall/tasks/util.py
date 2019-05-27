@@ -1,11 +1,13 @@
 import os
 
 def raise_if_error(response: int) -> None:
+    "Raise an OSError if this integer is in the error range for syscall return values"
     if -4095 < response < 0:
         err = -response
         raise OSError(err, os.strerror(err))
 
 def log_syscall(logger, number, arg1, arg2, arg3, arg4, arg5, arg6) -> None:
+    "Log this syscall prettily"
     if arg6 == 0:
         if arg5 == 0:
             if arg4 == 0:

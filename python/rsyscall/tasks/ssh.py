@@ -1,3 +1,5 @@
+"""A thread on a remote host, bootstrapped over ssh
+"""
 from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall.command import Command
@@ -49,6 +51,7 @@ openssh = nix.import_nix_dep("openssh")
 
 T_ssh_command = t.TypeVar('T_ssh_command', bound="SSHCommand")
 class SSHCommand(Command):
+    "The 'ssh' executable provided by OpenSSH, plus some arguments and special methods"
     def ssh_options(self, config: t.Mapping[str, t.Union[str, bytes, os.PathLike]]) -> SSHCommand:
         option_list: t.List[str] = []
         for key, value in config.items():
@@ -66,6 +69,7 @@ class SSHCommand(Command):
         return cls(executable_path, [b"ssh"], {})
 
 class SSHDCommand(Command):
+    "The 'sshd' executable provided by OpenSSH, plus some arguments and special methods"
     def sshd_options(self, config: t.Mapping[str, t.Union[str, bytes, os.PathLike]]) -> SSHDCommand:
         option_list: t.List[str] = []
         for key, value in config.items():
@@ -78,6 +82,14 @@ class SSHDCommand(Command):
 
 @dataclass
 class SSHExecutables:
+    """A standalone representation of the executables needed to create an SSH thread
+
+    This is not really a user-facing class, it exists just to promote modularity. With
+    this class, our functions need only take an object of this type, rather than look up
+    the location of the executables themselves; therefore we can add new ways to look up
+    executables and create this class without having to teach our functions about them.
+
+    """
     base_ssh: SSHCommand
     bootstrap_path: Path
 
@@ -116,10 +128,20 @@ class SSHExecutables:
         """
         return SSHHost(self, to_host)
 
-@dataclass
 class SSHHost:
-    executables: SSHExecutables
-    to_host: t.Any[t.Callable[[SSHCommand], SSHCommand]]
+    """A host we can ssh to, based on some ssh command
+
+    We don't actually know what host we're going to ssh to - that's entirely determined by
+    the user-provided to_host function. Presumably that function is deterministic, so
+    we'll ssh to the same host each time...
+
+    """
+    def __init__(self,
+                 executables: SSHExecutables,
+                 to_host: t.Callable[[SSHCommand], SSHCommand]) -> None:
+        self.executables = executables
+        self.to_host = to_host
+
     async def ssh(self, thread: Thread) -> t.Tuple[AsyncChildProcess, Thread]:
         # we could get rid of the need to touch the local filesystem by directly
         # speaking the openssh multiplexer protocol. or directly speaking the ssh
@@ -133,15 +155,26 @@ class SSHHost:
         name = (hostname+random_suffix+".sock")
         local_socket_path = thread.environ.tmpdir/name
         fd = await thread.task.open(await thread.ram.ptr(self.executables.bootstrap_path), O.RDONLY)
-        async with run_socket_binder(thread, ssh_to_host, fd) as tmp_path_bytes:
+        async with make_bootstrap_dir(thread, ssh_to_host, fd) as tmp_path_bytes:
             return await ssh_bootstrap(thread, ssh_to_host, local_socket_path, tmp_path_bytes)
 
 @contextlib.asynccontextmanager
-async def run_socket_binder(
+async def make_bootstrap_dir(
         parent: Thread,
         ssh_command: SSHCommand,
         bootstrap_executable: FileDescriptor,
 ) -> t.AsyncGenerator[bytes, None]:
+    """Over ssh, make a temporary directory containing the bootstrap executable, and start the socket bootstrap server
+
+    The socket bootstrap server listens on two sockets in this temporary directory. One of
+    them, we'll ssh forward back to the local host. The other, the main bootstrap process
+    will connect to, to grab the listening socket fd for the former, so we can accept
+    connections.
+
+    We'll also use the bootstrap executable left in the temporary directory in
+    ssh_bootstrap: we'll executed it to start the main bootstrap process.
+
+    """
     stdout_pipe = await (await parent.task.pipe(
         await parent.ram.malloc(Pipe))).read()
     async_stdout = await parent.make_afd(stdout_pipe.read)
@@ -178,6 +211,7 @@ async def run_socket_binder(
 
 async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
                       local_path: Path, remote_path: str) -> AsyncChildProcess:
+    "Forward Unix socket connections to local_path to the socket at remote_path, over ssh"
     stdout_pipe = await (await thread.task.pipe(
         await thread.ram.malloc(Pipe))).read()
     async_stdout = await thread.make_afd(stdout_pipe.read)
@@ -207,6 +241,7 @@ async def ssh_bootstrap(
         # the directory we're bootstrapping out of
         tmp_path_bytes: bytes,
 ) -> t.Tuple[AsyncChildProcess, Thread]:
+    "Over ssh, run the bootstrap executable, "
     # identify local path
     local_data_addr: WrittenPointer[Address] = await parent.ram.ptr(
         await SockaddrUn.from_path(parent, local_socket_path))
@@ -277,6 +312,11 @@ async def ssh_bootstrap(
 
 @dataclass
 class SSHDExecutables:
+    """A standalone representation of the executables needed to run sshd
+
+    This is not really a user-facing class; see SSHExecutables.
+
+    """
     ssh_keygen: Command
     sshd: SSHDCommand
 
@@ -289,6 +329,7 @@ class SSHDExecutables:
 
 async def make_local_ssh_from_executables(thread: Thread,
                                           executables: SSHExecutables, sshd_executables: SSHDExecutables) -> SSHHost:
+    "Make an SSHHost which just sshs to localhost; useful for testing"
     ssh_keygen = sshd_executables.ssh_keygen
     sshd = sshd_executables.sshd
 
@@ -333,6 +374,7 @@ async def make_ssh_host(store: nix.Store, to_host: t.Callable[[SSHCommand], SSHC
     return ssh.host(to_host)
 
 async def make_local_ssh(thread: Thread, store: nix.Store) -> SSHHost:
+    "Look up the ssh executables and return an SSHHost which sshs to localhost; useful for testing"
     ssh = await SSHExecutables.from_store(store)
     sshd = await SSHDExecutables.from_store(store)
     return (await make_local_ssh_from_executables(thread, ssh, sshd))
