@@ -134,10 +134,6 @@ class Pointer(t.Generic[T]):
         else:
             return f"Pointer(invalid, {self._get_raw_near()}, {self.serializer})"
 
-    # TODO delete me I guess?
-    def bytesize(self) -> int:
-        return self.size()
-
     def size(self) -> int:
         return self.allocation.size()
 
@@ -229,6 +225,8 @@ class Pointer(t.Generic[T]):
         # But, that will only happen when *all* pointers referring to the allocation are collected;
         # not just the valid one.
         # So, this ensures GC is a bit more prompt.
+        # Oh, wait. The real reason we need this is because the Arena stores references to the allocation.
+        # TODO We should fix that.
         self.free()
 
     def _wrote(self, data: T) -> WrittenPointer[T]:
@@ -238,15 +236,15 @@ class Pointer(t.Generic[T]):
     async def write(self, data: T) -> WrittenPointer[T]:
         self.validate()
         data_bytes = self.serializer.to_bytes(data)
-        if len(data_bytes) > self.bytesize():
+        if len(data_bytes) > self.size():
             raise Exception("data is too long", len(data_bytes),
-                            "for this typed pointer of size", self.bytesize())
+                            "for this typed pointer of size", self.size())
         await self.transport.write(self, data_bytes)
         return self._wrote(data)
 
     def split_from_end(self, size: int, alignment: int) -> t.Tuple[Pointer, Pointer]:
         extra_to_remove = (int(self.near) + size) % alignment
-        return self.split(self.bytesize() - size - extra_to_remove)
+        return self.split(self.size() - size - extra_to_remove)
 
     async def write_to_end(self, data: T, alignment: int) -> t.Tuple[Pointer[T], WrittenPointer[T]]:
         """Write a piece of data to the end of the range of this pointer
@@ -284,30 +282,25 @@ class WrittenPointer(Pointer[T_co]):
     def __init__(self,
                  mapping: MemoryMapping,
                  transport: MemoryGateway,
-                 data: T_co,
+                 value: T_co,
                  serializer: Serializer[T_co],
                  allocation: AllocationInterface,
     ) -> None:
         super().__init__(mapping, transport, serializer, allocation)
-        self.data = data
+        self.value = value
 
     def __repr__(self) -> str:
-        return f"WrittenPointer({self.near}, {self.data})"
-
-    @property
-    def value(self) -> T_co:
-        # can't decide what to call this field
-        return self.data
+        return f"WrittenPointer({self.near}, {self.value})"
 
     def _with_mapping(self, mapping: MemoryMapping) -> WrittenPointer:
         if type(self) is not WrittenPointer:
             raise Exception("subclasses of WrittenPointer must override _with_mapping")
         if mapping.file is not self.mapping.file:
             raise Exception("can only move pointer between two mappings of the same file")
-        # see notes in Pointer
+        # see notes in Pointer._with_mapping
         self.validate()
         self.valid = False
-        return type(self)(mapping, self.transport, self.data, self.serializer, self.allocation)
+        return type(self)(mapping, self.transport, self.value, self.serializer, self.allocation)
 
 
 ################################################################################
@@ -517,13 +510,13 @@ class FileDescriptor:
     async def read(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self.validate()
         with buf.borrow(self.task) as buf_b:
-            ret = await rsyscall.near.read(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
+            ret = await rsyscall.near.read(self.task.sysif, self.near, buf_b.near, buf_b.size())
             return buf.split(ret)
 
     async def pread(self, buf: Pointer, offset: int) -> t.Tuple[Pointer, Pointer]:
         self.validate()
         with buf.borrow(self.task):
-            ret = await rsyscall.near.pread(self.task.sysif, self.near, buf.near, buf.bytesize(), offset)
+            ret = await rsyscall.near.pread(self.task.sysif, self.near, buf.near, buf.size(), offset)
             return buf.split(ret)
 
     async def readv(self, iov: WrittenPointer[IovecList], flags: RWF=RWF.NONE
@@ -546,7 +539,7 @@ class FileDescriptor:
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self.validate()
         with buf.borrow(self.task) as buf_b:
-            ret = await rsyscall.near.write(self.task.sysif, self.near, buf_b.near, buf_b.bytesize())
+            ret = await rsyscall.near.write(self.task.sysif, self.near, buf_b.near, buf_b.size())
             return buf.split(ret)
 
     async def sendmsg(self, msg: WrittenPointer[SendMsghdr], flags: SendmsgFlags=SendmsgFlags.NONE
@@ -583,7 +576,7 @@ class FileDescriptor:
     async def recv(self, buf: Pointer, flags: int) -> t.Tuple[Pointer, Pointer]:
         self.validate()
         with buf.borrow(self.task) as buf_b:
-            ret = await rsyscall.near.recv(self.task.sysif, self.near, buf_b.near, buf_b.bytesize(), flags)
+            ret = await rsyscall.near.recv(self.task.sysif, self.near, buf_b.near, buf_b.size(), flags)
             return buf.split(ret)
 
     async def lseek(self, offset: int, whence: SEEK) -> int:
@@ -648,7 +641,7 @@ class FileDescriptor:
         self.validate()
         with events.borrow(self.task) as events_b:
             num = await rsyscall.near.epoll_wait(
-                self.task.sysif, self.near, events_b.near, events_b.bytesize()//EpollEvent.sizeof(), timeout)
+                self.task.sysif, self.near, events_b.near, events_b.size()//EpollEvent.sizeof(), timeout)
             valid_size = num * EpollEvent.sizeof()
             return events.split(valid_size)
 
@@ -656,8 +649,8 @@ class FileDescriptor:
         self.validate()
         with fd.borrow(self.task) as fd:
             if event is not None:
-                if event.bytesize() < EpollEvent.sizeof():
-                    raise Exception("pointer is too small", event.bytesize(), "to be an EpollEvent", EpollEvent.sizeof())
+                if event.size() < EpollEvent.sizeof():
+                    raise Exception("pointer is too small", event.size(), "to be an EpollEvent", EpollEvent.sizeof())
                 with event.borrow(self.task) as eventp:
                     return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near, eventp.near))
             else:
@@ -676,7 +669,7 @@ class FileDescriptor:
         self.validate()
         with addr.borrow(self.task):
             try:
-                await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addr.bytesize())
+                await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addr.size())
             except PermissionError as exn:
                 exn.filename = addr.value
                 raise
@@ -684,7 +677,7 @@ class FileDescriptor:
     async def connect(self, addr: WrittenPointer[Address]) -> None:
         self.validate()
         with addr.borrow(self.task):
-            await rsyscall.near.connect(self.task.sysif, self.near, addr.near, addr.bytesize())
+            await rsyscall.near.connect(self.task.sysif, self.near, addr.near, addr.size())
 
     async def listen(self, backlog: int) -> None:
         self.validate()
@@ -701,7 +694,7 @@ class FileDescriptor:
     async def setsockopt(self, level: int, optname: int, optval: Pointer) -> None:
         self.validate()
         with optval.borrow(self.task) as optval_b:
-            await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval_b.near, optval_b.bytesize())
+            await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval_b.near, optval_b.size())
 
     async def getsockname(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
         self.validate()
@@ -745,7 +738,7 @@ class FileDescriptor:
         self.validate()
         with path.borrow(self.task):
             with buf.borrow(self.task):
-                ret = await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, buf.near, buf.bytesize())
+                ret = await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, buf.near, buf.size())
                 return buf.split(ret)
 
     async def faccessat(self, ptr: WrittenPointer[Path], mode: OK, flags: AT=AT.NONE) -> None:
@@ -756,13 +749,13 @@ class FileDescriptor:
     async def getdents(self, dirp: Pointer[DirentList]) -> t.Tuple[Pointer[DirentList], Pointer]:
         self.validate()
         with dirp.borrow(self.task) as dirp_b:
-            ret = await rsyscall.near.getdents64(self.task.sysif, self.near, dirp_b.near, dirp_b.bytesize())
+            ret = await rsyscall.near.getdents64(self.task.sysif, self.near, dirp_b.near, dirp_b.size())
             return dirp.split(ret)
 
     async def signalfd(self, mask: Pointer[Sigset], flags: SFD) -> None:
         self.validate()
         with mask.borrow(self.task) as mask:
-            await rsyscall.near.signalfd4(self.task.sysif, self.near, mask.near, mask.bytesize(), flags)
+            await rsyscall.near.signalfd4(self.task.sysif, self.near, mask.near, mask.size(), flags)
 
     async def openat(self, ptr: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
         self.validate()
@@ -1023,12 +1016,12 @@ class Task(SignalMaskTask, rsyscall.far.Task):
     async def readlink(self, path: WrittenPointer[Path], buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         with path.borrow(self) as path_b:
             with buf.borrow(self) as buf_b:
-                ret = await rsyscall.near.readlinkat(self.sysif, None, path_b.near, buf_b.near, buf_b.bytesize())
+                ret = await rsyscall.near.readlinkat(self.sysif, None, path_b.near, buf_b.near, buf_b.size())
                 return buf.split(ret)
 
     async def signalfd(self, mask: Pointer[Sigset], flags: SFD=SFD.NONE) -> FileDescriptor:
         with mask.borrow(self) as mask:
-            fd = await rsyscall.near.signalfd4(self.sysif, None, mask.near, mask.bytesize(), flags|SFD.CLOEXEC)
+            fd = await rsyscall.near.signalfd4(self.sysif, None, mask.near, mask.size(), flags|SFD.CLOEXEC)
             return self.make_fd_handle(fd)
 
     async def epoll_create(self, flags: EpollFlag=EpollFlag.NONE) -> FileDescriptor:
@@ -1069,7 +1062,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
                      flags: AT) -> None:
         with contextlib.ExitStack() as stack:
             stack.enter_context(filename.borrow(self))
-            for arg in [*argv.data, *envp.data]:
+            for arg in [*argv.value, *envp.value]:
                 stack.enter_context(arg.borrow(self))
             self.manipulating_fd_table = True
             try:
@@ -1117,7 +1110,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             stack_alloc, stack_data = child_stack
             if (int(stack_data.near) % 16) != 0:
                 raise Exception("child stack must have 16-byte alignment, so says Intel")
-            stack_alloc_end = stack_alloc.near + stack_alloc.bytesize()
+            stack_alloc_end = stack_alloc.near + stack_alloc.size()
             if stack_alloc_end != stack_data.near:
                 raise Exception("the end of the stack allocation pointer", stack_alloc_end,
                                 "and the beginning of the stack data pointer", stack_data.near,
@@ -1145,7 +1138,7 @@ class Task(SignalMaskTask, rsyscall.far.Task):
 
     async def set_robust_list(self, head: WrittenPointer[RobustListHead]) -> None:
         with head.borrow(self):
-            await rsyscall.near.set_robust_list(self.sysif, head.near, head.bytesize())
+            await rsyscall.near.set_robust_list(self.sysif, head.near, head.size())
 
     async def setsid(self) -> int:
         return (await rsyscall.near.setsid(self.sysif))

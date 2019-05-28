@@ -55,7 +55,7 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
     async with trio.open_nursery() as nursery:
         while True:
             valid, rest = await dirfd.getdents(buf)
-            if valid.bytesize() == 0:
+            if valid.size() == 0:
                 break
             dents = await valid.read()
             for dent in dents:
@@ -91,7 +91,7 @@ class Thread(UnixThread):
             out = None
             fd = path
         to_write: Pointer = await self.ram.ptr(os.fsencode(text))
-        while to_write.bytesize() > 0:
+        while to_write.size() > 0:
             _, to_write = await fd.write(to_write)
         await fd.close()
         return out
@@ -106,7 +106,7 @@ class Thread(UnixThread):
         data = b""
         while True:
             read, rest = await fd.read(await self.ram.malloc(bytes, 4096))
-            if read.bytesize() == 0:
+            if read.size() == 0:
                 return data
             # TODO this would be more efficient if we batched our memory-reads at the end
             data += await read.read()

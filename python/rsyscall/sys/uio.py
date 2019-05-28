@@ -28,7 +28,7 @@ class IovecList(t.List[Pointer], Serializable):
         middle: t.Optional[t.Tuple[Pointer, Pointer]] = None
         invalid: t.List[Pointer] = []
         for ptr in self:
-            size = ptr.bytesize()
+            size = ptr.size()
             if n >= size:
                 valid.append(ptr)
                 n -= size
@@ -44,7 +44,7 @@ class IovecList(t.List[Pointer], Serializable):
         for ptr in self:
             ret += bytes(ffi.buffer(ffi.new('struct iovec const*', {
                 "iov_base": ffi.cast('void*', int(ptr.near)),
-                "iov_len": ptr.bytesize(),
+                "iov_len": ptr.size(),
             })))
         return ret
 

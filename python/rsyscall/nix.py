@@ -169,7 +169,7 @@ async def canonicalize(thr: RAMThread, path: Path) -> Path:
     size = 4096
     valid, _ = await thr.task.readlink(await thr.ram.ptr(f.as_proc_path()),
                                        await thr.ram.malloc(Path, size))
-    if valid.bytesize() == size:
+    if valid.size() == size:
         # 4096 seems like a reasonable value for PATH_MAX
         raise Exception("symlink longer than 4096 bytes, giving up on readlinking it")
     return await valid.read()

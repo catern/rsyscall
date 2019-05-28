@@ -99,7 +99,7 @@ class LocalMemoryTransport(handle.MemoryTransport):
         for src in ops:
             if src.mapping.task.address_space != self.local_task.address_space:
                 raise Exception("trying to read from pointer", src, "not in local address space")
-            buf = ffi.buffer(ffi.cast('void*', int(src.near)), src.bytesize())
+            buf = ffi.buffer(ffi.cast('void*', int(src.near)), src.size())
             ret.append(bytes(buf))
         return ret
 

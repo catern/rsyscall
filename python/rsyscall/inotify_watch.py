@@ -110,7 +110,7 @@ class Inotify:
             if needs_run:
                 valid, _ = await self.asyncfd.read(
                     await self.ram.malloc(InotifyEventList, _inotify_read_size))
-                if valid.bytesize() == 0:
+                if valid.size() == 0:
                     raise Exception('got EOF from inotify fd? what?')
                 for event in await valid.read():
                     self.wd_to_channel[event.wd].send_nowait(event)

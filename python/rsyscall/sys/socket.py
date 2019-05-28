@@ -138,12 +138,12 @@ class SockbufSerializer(t.Generic[T], Serializer[Sockbuf[T]]):
         self.buf = buf
 
     def to_bytes(self, val: Sockbuf) -> bytes:
-        return bytes(ffi.buffer(ffi.new('socklen_t*', val.buf.bytesize())))
+        return bytes(ffi.buffer(ffi.new('socklen_t*', val.buf.size())))
 
     def from_bytes(self, data: bytes) -> Sockbuf[T]:
         struct = ffi.cast('socklen_t*', ffi.from_buffer(data))
         socklen = struct[0]
-        if socklen > self.buf.bytesize():
+        if socklen > self.buf.size():
             raise Exception("not enough buffer space to read socket, need", socklen)
         valid, rest = self.buf.split(socklen)
         return Sockbuf(valid, rest)
@@ -308,11 +308,11 @@ class SendMsghdr(Serializable):
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct msghdr*', {
             "msg_name": ffi.cast('void*', int(self.name.near)) if self.name else ffi.NULL,
-            "msg_namelen": self.name.bytesize() if self.name else 0,
+            "msg_namelen": self.name.size() if self.name else 0,
             "msg_iov": ffi.cast('void*', int(self.iov.near)),
             "msg_iovlen": len(self.iov.value),
             "msg_control": ffi.cast('void*', int(self.control.near)) if self.control else ffi.NULL,
-            "msg_controllen": self.control.bytesize() if self.control else 0,
+            "msg_controllen": self.control.size() if self.control else 0,
             "msg_flags": 0,
         })))
 
@@ -330,11 +330,11 @@ class RecvMsghdr(Serializable):
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct msghdr*', {
             "msg_name": ffi.cast('void*', int(self.name.near)) if self.name else ffi.NULL,
-            "msg_namelen": self.name.bytesize() if self.name else 0,
+            "msg_namelen": self.name.size() if self.name else 0,
             "msg_iov": ffi.cast('void*', int(self.iov.near)),
             "msg_iovlen": len(self.iov.value),
             "msg_control": ffi.cast('void*', int(self.control.near)) if self.control else ffi.NULL,
-            "msg_controllen": self.control.bytesize() if self.control else 0,
+            "msg_controllen": self.control.size() if self.control else 0,
             "msg_flags": 0,
         })))
 

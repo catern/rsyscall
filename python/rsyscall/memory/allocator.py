@@ -94,6 +94,7 @@ class Allocation(AllocationInterface):
         return new
 
     def __del__(self) -> None:
+        # TODO this is actually not going to work, because the Arena stores references to the allocation
         self.free()
 
 class OutOfSpaceError(Exception):

@@ -197,7 +197,7 @@ async def read_completely(ram: RAM, fd: FileDescriptor) -> bytes:
     while True:
         buf = await ram.malloc(bytes, 4096)
         valid, rest = await fd.pread(buf, offset=len(data))
-        if valid.bytesize() == 0:
+        if valid.size() == 0:
             return data
         data += await valid.read()
 
@@ -293,7 +293,7 @@ http {
     config_fd = await thread.task.open(await thread.ram.ptr(path/"nginx.conf"),
                                        O.RDWR|O.CREAT)
     remaining: Pointer = await thread.ram.ptr(config)
-    while remaining.bytesize() > 0:
+    while remaining.size() > 0:
         _, remaining = await config_fd.write(remaining)
     child = await exec_nginx(thread, nginx, path, config_fd, [sock])
     nursery.start_soon(child.check)
@@ -322,7 +322,7 @@ http {
     config_fd = await thread.task.open(await thread.ram.ptr(path/"nginx.conf"),
                                        O.RDWR|O.CREAT)
     remaining: Pointer = await thread.ram.ptr(config)
-    while remaining.bytesize() > 0:
+    while remaining.size() > 0:
         _, remaining = await config_fd.write(remaining)
     child = await exec_nginx(thread, nginx, path, config_fd, [sock])
     nursery.start_soon(child.check)

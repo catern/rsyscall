@@ -236,11 +236,11 @@ def merge_adjacent_reads(read_ops: t.List[ReadOp]) -> t.List[t.Tuple[ReadOp, t.L
     groupings: t.List[t.List[ReadOp]] = []
     ops_to_merge = [read_ops[0]]
     for prev_op, op in zip(read_ops, read_ops[1:]):
-        if int(prev_op.src.near + prev_op.src.bytesize()) == int(op.src.near):
+        if int(prev_op.src.near + prev_op.src.size()) == int(op.src.near):
             # the current op is adjacent to the previous op, append it to
             # the list of pending ops to merge together.
             ops_to_merge.append(op)
-        elif int(prev_op.src.near + prev_op.src.bytesize()) > int(op.src.near):
+        elif int(prev_op.src.near + prev_op.src.size()) > int(op.src.near):
             raise Exception("pointers passed to memcpy are overlapping!", prev_op.src, op.src)
         else:
             # the current op isn't adjacent to the previous op, so
@@ -280,7 +280,7 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
             await self.local.write_all(src)
         async def read() -> None:
             rest = dest
-            while rest.bytesize() > 0:
+            while rest.size() > 0:
                 read, rest = await self.remote.read(rest)
         async with trio.open_nursery() as nursery:
             nursery.start_soon(read)
@@ -291,16 +291,16 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
 
     async def read(self, src: Pointer) -> bytes:
         src = to_span(src)
-        dest = await self.local.ram.malloc(bytes, src.bytesize())
+        dest = await self.local.ram.malloc(bytes, src.size())
         async def write() -> None:
             rest = src
-            while rest.bytesize() > 0:
+            while rest.size() > 0:
                 written, rest = await self.remote.write(rest)
         async with trio.open_nursery() as nursery:
             nursery.start_soon(write)
             read: t.Optional[Pointer[bytes]] = None
             rest = dest
-            while rest.bytesize() > 0:
+            while rest.size() > 0:
                 more_read, rest = await self.local.read(rest)
                 if read is None:
                     read = more_read
@@ -372,11 +372,11 @@ class SocketMemoryTransport(MemoryTransport):
                 async def write() -> None:
                     await self.local.write_all(datap)
                 rest = iovp
-                while rest.bytesize() > 0:
+                while rest.size() > 0:
                     _, split, rest = await self.remote.readv(rest)
                     if split:
                         _, split_rest = split
-                        while split_rest.bytesize() > 0:
+                        while split_rest.size() > 0:
                             _, split_rest = await self.remote.read(split_rest)
 
     def _start_single_write(self, dest: Pointer, data: bytes) -> WriteOp:
@@ -430,7 +430,7 @@ class SocketMemoryTransport(MemoryTransport):
                 for op, orig_ops in merged_ops:
                     data = op.data
                     for orig_op in orig_ops:
-                        orig_size = orig_op.src.bytesize()
+                        orig_size = orig_op.src.size()
                         if len(data) < orig_size:
                             raise Exception("insufficient data for original operation", len(data), orig_size)
                         orig_op.done, data = data[:orig_size], data[orig_size:]

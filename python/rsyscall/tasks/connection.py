@@ -172,7 +172,7 @@ class SyscallConnection:
         while not vals:
             if self.valid is None:
                 valid, rest = await self.fromfd.read(buf)
-                if valid.bytesize() == 0:
+                if valid.size() == 0:
                     raise RsyscallHangup()
                 self.valid = valid
             data = await self.valid.read()
@@ -203,7 +203,7 @@ class SyscallConnection:
             # TODO should mark the requests complete incrementally as we write them out,
             # instead of only once all requests have been written out
             to_write: Pointer = ptr
-            while to_write.bytesize() > 0:
+            while to_write.size() > 0:
                 written, to_write = await self.tofd.write(to_write)
         except OSError as e:
             # we raise a different exception so that users can distinguish syscall errors from

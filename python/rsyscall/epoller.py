@@ -403,7 +403,7 @@ class AsyncFileDescriptor:
 
     async def write_all(self, to_write: Pointer) -> None:
         "Write all of this pointer to the fd, retrying on partial writes until complete."
-        while to_write.bytesize() > 0:
+        while to_write.size() > 0:
             written, to_write = await self.handle.write(to_write)
 
     async def write_all_bytes(self, buf: bytes) -> None:

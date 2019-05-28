@@ -45,7 +45,7 @@ class TestSSH(TrioTestCase):
         data = b"hello world"
         await local_sock.write(await self.local.ram.ptr(data))
         valid, _ = await remote_sock.read(await self.remote.ram.malloc(bytes, len(data)))
-        self.assertEqual(len(data), valid.bytesize())
+        self.assertEqual(len(data), valid.size())
         self.assertEqual(data, await valid.read())
 
     async def test_exec_true(self) -> None:

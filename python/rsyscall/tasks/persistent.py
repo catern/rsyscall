@@ -176,7 +176,7 @@ async def _connect_and_send(self: PersistentThread, thread: Thread, fds: t.List[
         await sock.connect(addr)
         _, _ = await sock.write(count)
         _, [] = await sock.handle.sendmsg(hdr, SendmsgFlags.NONE)
-        while response.bytesize() > 0:
+        while response.size() > 0:
             valid, response = await sock.read(response)
             data += valid
     remote_fds = [self.task.make_fd_handle(near.FileDescriptor(int(i)))
