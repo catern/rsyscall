@@ -72,6 +72,18 @@ class WriteOp:
 
 @dataclass
 class SpanAllocation(AllocationInterface):
+    """An allocation which is a subspan of some other allocation, and can be split freely
+
+    This should be built into our allocation system. In fact, it is: This is what split is
+    for. But the ownership is tricky: Splitting an allocation consumes it. We aren't
+    supposed to take ownership of the pointers passed to us for batch_write/batch_read, so
+    we can't naively split the pointers.  Instead, we use to_span, below, to make them use
+    SpanAllocation, so we can split them freely without taking ownership.
+
+    We should make it possible to split an allocation without consuming it, or otherwise
+    have multiple references to the same allocation, then we can get rid of this.
+
+    """
     alloc: AllocationInterface
     _offset: int
     _size: int
@@ -108,6 +120,7 @@ class SpanAllocation(AllocationInterface):
         pass
 
 def to_span(ptr: Pointer) -> Pointer:
+    "Wraps the pointer's allocation in SpanAllocation so it can be split freely"
     return Pointer(
         ptr.mapping,
         ptr.transport,
@@ -116,6 +129,17 @@ def to_span(ptr: Pointer) -> Pointer:
 
 @dataclass
 class MergedAllocation(AllocationInterface):
+    """One big allocation created from zero or more smaller allocations, which can be merged freely
+
+    This is the same issue as with SpanAllocation. Our allocation system allows us to
+    merge adjacent allocations, but that consumes the allocation, which we aren't allowed
+    to do with the pointers passed to us for batch_write/batch_read. So we wrap the
+    allocations in MergedAllocation to merge them together.
+
+    We should make it possible to merge an allocation without consuming it, or otherwise
+    have multiple references to the same allocation, then we can get rid of this.
+
+    """
     allocs: t.List[AllocationInterface]
 
     def __post_init__(self) -> None:
@@ -161,6 +185,7 @@ class MergedAllocation(AllocationInterface):
         pass
 
 def merge_adjacent_pointers(ptrs: t.List[Pointer]) -> Pointer:
+    "Merges these pointers together by wrapping the allocation in a MergedAllocation"
     return Pointer(
         ptrs[0].mapping,
         ptrs[0].transport,
@@ -168,6 +193,7 @@ def merge_adjacent_pointers(ptrs: t.List[Pointer]) -> Pointer:
         MergedAllocation([ptr.allocation for ptr in ptrs]))
 
 def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[t.Tuple[Pointer, bytes]]:
+    "Combine writes to adjacent memory, to reduce the number of operations needed"
     if len(write_ops) == 0:
         return []
     write_ops = sorted(write_ops, key=lambda op: int(op[0].near))
@@ -196,6 +222,13 @@ def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[
     return outputs
 
 def merge_adjacent_reads(read_ops: t.List[ReadOp]) -> t.List[t.Tuple[ReadOp, t.List[ReadOp]]]:
+    """Combine reads to adjacent memory, to reduce the number of operations needed
+
+    We return a list of pairs: A combined ReadOp, paired with the list of ReadOps that
+    went into it. We need to perform the combined ReadOp, then split the read data between
+    the list of constituent ReadOps.
+
+    """
     if len(read_ops) == 0:
         return []
     read_ops = sorted(read_ops, key=lambda op: int(op.src.near))

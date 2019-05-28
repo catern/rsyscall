@@ -14,33 +14,60 @@ from rsyscall.sys.uio import IovecList
 from rsyscall.fcntl import F, O
 
 class Connection:
-    """A connection between two threads in which more channels can be opened
+    """A connection between two threads through which more bidirectional channels can be opened
 
-    This is not necessarily a connection in the style of TCP as such; it merely
-    represents that there is a way to open channels between two threads, not
-    that there is any active transfer between them at the moment.
+    You could think of this as a pre-established route between two threads; or a cable
+    between them; these are connections which can be multiplexed over to create multiple
+    bidirectional channels for data transfer.
 
-    In terms of TCP/IP, the Connection might represent that the two threads are
-    on the same network, and that new TCP connections can be initiated between
-    them, but doesn't represent a specific TCP connection.
-
-    Of course, with more flexible systems like QUIC or SCTP, the Connection
-    would indeed represent an established, heartbeating connection; new channels
-    for data transfer can be established in such systems given an existing
-    network-level connection.
+    This is not necessarily a connection in the style of TCP as such; it merely represents
+    that there is a way to open channels between two threads, not that there is any active
+    transfer between them at the moment. TCP doesn't support opening new channels, so
+    merely having an open TCP connection isn't enough to implement this interface. On the
+    other hand, SCTP and QUIC do support opening new channels, so a SCTP or QUIC
+    connection would be enough to implement this interface.
 
     """
     @abc.abstractmethod
-    async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]: ...
-    async def open_async_channel(self) -> t.Tuple[AsyncFileDescriptor, FileDescriptor]:
-        [pair] = await self.open_async_channels(1)
+    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
+        "Batched version of open_channel"
+        pass
+
+    async def open_channel(self) -> t.Tuple[FileDescriptor, FileDescriptor]:
+        """Open a bidirectional channel between the two threads inside this connection
+
+        The left side of a channel is the "local" side, and the right side is the "remote"
+        side. Accesses to the local side are typically more efficient than accesses to the
+        right side. Typically, in fact, the left side of the channel is in the local
+        thread, although this is not required to be true.
+
+        """
+        [pair] = await self.open_channels(1)
         return pair
 
     @abc.abstractmethod
-    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]: ...
-    async def open_channel(self) -> t.Tuple[FileDescriptor, FileDescriptor]:
-        [pair] = await self.open_channels(1)
+    async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
+        "Batched version of open_async_channel"
+        pass
+
+    async def open_async_channel(self) -> t.Tuple[AsyncFileDescriptor, FileDescriptor]:
+        """Like open_channel, but returns the left side as an AsyncFileDescriptor
+
+        As discussed in open_channel's docstring, the left side is the "local" side, and
+        is more efficient to access. Here we take that further: Since an AFD comes with a
+        RAM, we can immediately read and write Python bytes to the left side of this
+        channel. This provides an efficient way to transfer data between Python and things
+        which operate on file descriptors, such as subprocesses.
+
+        This is how we establish all our syscall or data connections for new threads;
+        open_async_channel returns the most direct path possible, so we know that when
+        we're sending syscalls to a thread, that data is being efficiently transferred; in
+        most cases, directly between the local thread and the syscall server.
+
+        """
+        [pair] = await self.open_async_channels(1)
         return pair
+
 
     @abc.abstractmethod
     async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, RAM, FileDescriptor], Connection]]:
@@ -65,10 +92,12 @@ class Connection:
         pass
 
 class FDPassConnection(Connection):
-    """A Connection based on using SCM_RIGHTS to pass socketpairs around
+    """A socketpair between two threads over which we can pass fds to establish new channels
 
-    If the two threads are in the same fd table, then we'll skip using
-    SCM_RIGHTS to pass the socketpair around.
+    If the two threads are in the same fd table, then we'll skip using SCM_RIGHTS to pass
+    the new socketpairs around and instead just change the fd owner.
+
+    See Connnection for more details on this interface.
 
     """
     @staticmethod
@@ -143,8 +172,10 @@ class FDPassConnection(Connection):
         return self.for_task_with_fd(task, ram, self.fd.for_task(task))
 
 class ListeningConnection(Connection):
-    """A Connection based on an (address, listening socket) pair
+    """An (address, listening socket) pair with which we can do connect(); accept(); to establish a new channel
     
+    See Connnection for more details on this interface.
+
     """
     def __init__(self,
                  access_task: Task,

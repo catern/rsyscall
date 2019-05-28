@@ -1,3 +1,8 @@
+"""#include <net/if.h>
+
+The associated manpage is netdevice(7)
+
+"""
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.netinet.ip import SockaddrIn
@@ -49,8 +54,15 @@ class AddressField:
                     ffi.from_buffer(data_bytes), len(data_bytes))
 
 class Ifreq(Struct):
-    # I'm doing it this way because this struct is just one big
-    # union. Might be a better way though.
+    """Representation of "struct ifreq"
+
+    We have to be somewhat careful in how we represent this, since this struct
+    is one big union, plus ifr_name which can be unset anyway.
+
+    The way we handle this is, all the fields on this class are properties which
+    extract some specific field from the union, stored as a cffi type.
+
+    """
     name = BytesField("ifr_name")
     addr = AddressField("ifr_addr")
     ifindex = IntField("ifr_ifindex")

@@ -18842,6 +18842,11 @@ and rename it to waitpid?
    and we can have death_status.exit_status, whatever
 
    Don't forget to change it in the tutorial too...
+
+   or maybe WaitidSiginfo?
+   death_siginfo???
+
+   hm.
 ** TODO rename Trampoline to something
 closure?
 thunk?

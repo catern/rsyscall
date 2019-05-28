@@ -1,3 +1,4 @@
+"#include <netinet/in.h>"
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.sys.socket import Address, AF, _register_sockaddr
 import ipaddress
@@ -11,6 +12,7 @@ __all__ = [
 ]
 
 class SockaddrIn(Address):
+    "Representation of struct sockaddr_in"
     family = AF.INET
     def __init__(self, port: int, addr: t.Union[str, int, ipaddress.IPv4Address]) -> None:
         # these are in host byte order, of course
@@ -44,6 +46,7 @@ _register_sockaddr(SockaddrIn)
 
 
 class SockaddrIn6(Address):
+    "Representation of struct sockaddr_in6"
     family = AF.INET6
     def __init__(self, port: int, addr: t.Union[str, int, ipaddress.IPv6Address],
                  flowinfo: int=0, scope_id: int=0) -> None:
