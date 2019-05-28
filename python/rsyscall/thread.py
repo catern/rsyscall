@@ -108,6 +108,7 @@ class Thread(UnixThread):
             read, rest = await fd.read(await self.ram.malloc(bytes, 4096))
             if read.bytesize() == 0:
                 return data
+            # TODO this would be more efficient if we batched our memory-reads at the end
             data += await read.read()
 
     async def mount(self, source: bytes, target: bytes,

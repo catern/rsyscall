@@ -1,3 +1,14 @@
+"""Allocators and allocations of memory
+
+None of this is actually specific to memory; it would be a good project to make the
+allocators indifferent to whether they are allocating memory or allocating something else
+- sub-ranges of files, for example.
+
+It would also be nice to provide an allocator that can grow its memory mapping when it
+needs new space. That would require us to pin allocations when making use of pointers
+using them.
+
+"""
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.far import AddressSpace
@@ -19,6 +30,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Allocation(AllocationInterface):
+    """An allocation from some Arena
+
+    We have a reference back to our Arena so that we can do free(), split(), and merge().
+    When __del__ is called on this allocation, we'll free ourselves out of our Arena.
+
+    See AllocationInterface for more about this interface.
+
+    """
     arena: Arena
     start: int
     end: int
@@ -77,14 +96,14 @@ class Allocation(AllocationInterface):
     def __del__(self) -> None:
         self.free()
 
+class OutOfSpaceError(Exception):
+    pass
+
 class AllocatorInterface:
+    "A memory allocator; raises OutOfSpaceError if there's no more space"
     async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, AllocationInterface]]:
         # A naive bulk allocator
-        allocs: t.List[t.Tuple[MemoryMapping, AllocationInterface]] = []
-        with contextlib.ExitStack() as stack:
-            for size, alignment in sizes:
-                allocs.append(await self.malloc(size, alignment))
-            return allocs
+        return [await self.malloc(size, alignment) for size, alignment in sizes]
 
     @abc.abstractmethod
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, AllocationInterface]: ...
@@ -93,17 +112,15 @@ class AllocatorInterface:
         raise Exception("can't be inherited:", self)
 
 class Arena(AllocatorInterface):
+    "A single memory mapping and allocations within it"
     def __init__(self, mapping: MemoryMapping) -> None:
         self.mapping = mapping
         self.allocations: t.List[Allocation] = []
 
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, Allocation]:
-        alloc_opt = self.maybe_malloc(size, alignment)
-        if alloc_opt is None:
-            raise Exception("out of space!")
-        return self.mapping, alloc_opt
+        return self.mapping, self.allocate(size, alignment)
 
-    def maybe_malloc(self, size: int, alignment: int) -> t.Optional[Allocation]:
+    def allocate(self, size: int, alignment: int) -> Allocation:
         newstart = 0
         for i, alloc in enumerate(self.allocations):
             if (newstart+size) <= alloc.start:
@@ -115,7 +132,7 @@ class Arena(AllocatorInterface):
             newalloc = Allocation(self, newstart, newstart+size)
             self.allocations.append(newalloc)
             return newalloc
-        return None
+        raise OutOfSpaceError()
 
     async def close(self) -> None:
         if self.allocations:
@@ -123,18 +140,24 @@ class Arena(AllocatorInterface):
         await self.mapping.munmap()
 
 def align(num: int, alignment: int) -> int:
+    """Return the lowest value greater than `num` that is cleanly divisible by `alignment`
+
+    When applied to an address, this returns the next address that is aligned to this
+    alignment. When applied to a size, this returns a size that is sufficient to produce
+    an aligned value no matter what its starting address is.
+
+    """
     # TODO this is ugly, isn't there an easier way to do this?
-    # we do it this way so that we don't overallocate when overhang is 0;
+    # we do it this way so that we don't overallocate when overhang is 0.
     overhang = (num % alignment)
     if overhang > 0:
         return num + (alignment - overhang)
     else:
         return num
 
-class Allocator:
-    """A somewhat-efficient memory allocator.
+class UnlimitedAllocator:
+    """An allocator which just calls mmap to request more memory when it runs out
 
-    Perfect in its foresight, but not so bright.
     """
     def __init__(self, task: Task) -> None:
         self.task = task
@@ -142,17 +165,20 @@ class Allocator:
         self.arenas: t.List[Arena] = []
 
     async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, Allocation]]:
+        "Try to allocate all these requests; if we run out of space, make one big mmap call for the rest"
         allocations: t.List[t.Tuple[MemoryMapping, Allocation]] = []
-        # TODO should coalesce together multiple pending mallocs waiting on the lock
+        # TODO we should coalesce together multiple pending mallocs waiting on the lock
         async with self.lock:
             size_index = 0
             for arena in self.arenas:
                 size, alignment = sizes[size_index]
                 if alignment > 4096:
                     raise Exception("can't handle alignments of more than 4096 bytes", alignment)
-                alloc = arena.maybe_malloc(size, alignment)
-                if alloc:
-                    allocations.append((arena.mapping, alloc))
+                try:
+                    allocations.append((arena.mapping, arena.allocate(size, alignment)))
+                except OutOfSpaceError:
+                    pass
+                else:
                     size_index += 1
                     if size_index == len(sizes):
                         # we finished all the allocations, stop allocating
@@ -170,12 +196,11 @@ class Allocator:
                 for size, alignment in rest_sizes:
                     if alignment > 4096:
                         raise Exception("can't handle alignments of more than 4096 bytes", alignment)
-                    alloc = arena.maybe_malloc(size, alignment)
-                    if alloc is None:
+                    try:
+                        allocations.append((arena.mapping, arena.allocate(size, alignment)))
+                    except OutOfSpaceError:
                         raise Exception("some kind of internal error caused a freshly created memory arena",
                                         " to return null for an allocation, size", size, "alignment", alignment)
-                    else:
-                        allocations.append((arena.mapping, alloc))
         return allocations
 
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, Allocation]:
@@ -187,28 +212,33 @@ class Allocator:
             await arena.close()
 
 class AllocatorClient(AllocatorInterface):
-    def __init__(self, task: Task, allocator: Allocator) -> None:
+    """A task-specific allocator, to protect us from getting memory back for the wrong address space
+
+    We share a single allocator between multiple AllocatorClients; we call inherit to make
+    a new AllocatorClient. Before returning an allocation, we switch the memory mapping
+    handle to be owned by self.task. This checks that the task's address space and the
+    mapping's address space match, and ensures that the ownership for the mapping is
+    correct.
+
+    """
+    def __init__(self, task: Task, shared_allocator: UnlimitedAllocator) -> None:
         self.task = task
-        self.allocator = allocator
-        if self.task.address_space != self.allocator.task.address_space:
+        self.shared_allocator = shared_allocator
+        if self.task.address_space != self.shared_allocator.task.address_space:
             raise Exception("task and allocator are in different address spaces",
-                            self.task.address_space, self.allocator.task.address_space)
+                            self.task.address_space, self.shared_allocator.task.address_space)
 
     @staticmethod
     def make_allocator(task: Task) -> AllocatorClient:
-        return AllocatorClient(task, Allocator(task))
+        return AllocatorClient(task, UnlimitedAllocator(task))
 
     def inherit(self, task: Task) -> AllocatorClient:
-        return AllocatorClient(task, self.allocator)
+        return AllocatorClient(task, self.shared_allocator)
 
     async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, AllocationInterface]]:
-        if self.task.address_space != self.allocator.task.address_space:
-            raise Exception("task and allocator are in different address spaces",
-                            self.task.address_space, self.allocator.task.address_space)
-        return await self.allocator.bulk_malloc(sizes)
+        seq = await self.shared_allocator.bulk_malloc(sizes)
+        return [(mapping.for_task(self.task), alloc) for mapping, alloc in seq]
 
-    async def malloc(self, size: int, alignment: int=1) -> t.Tuple[MemoryMapping, Allocation]:
-        if self.task.address_space != self.allocator.task.address_space:
-            raise Exception("task and allocator are in different address spaces",
-                            self.task.address_space, self.allocator.task.address_space)
-        return await self.allocator.malloc(size, alignment)
+    async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, AllocationInterface]:
+        [ret] = await self.bulk_malloc([(size, alignment)])
+        return ret

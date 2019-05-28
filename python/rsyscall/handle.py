@@ -46,15 +46,38 @@ from rsyscall.sys.uio import RWF, IovecList, split_iovec
 #### Pointers and memory allocation ####
 class AllocationInterface:
     @abc.abstractmethod
-    def offset(self) -> int: ...
+    def offset(self) -> int:
+        "Get the offset of this allocation in its memory mapping; throws if this allocation has been invalidated"
+        pass
     @abc.abstractmethod
-    def size(self) -> int: ...
+    def size(self) -> int:
+        "Get the size of this allocation"
+        pass
     @abc.abstractmethod
-    def split(self, size: int) -> t.Tuple[AllocationInterface, AllocationInterface]: ...
+    def split(self, size: int) -> t.Tuple[AllocationInterface, AllocationInterface]:
+        """Invalidate this allocation and split it into two adjacent allocations
+
+        These two allocations can be independently freed, or split again, ad infinitum;
+        they can also be merged back together with merge.
+
+        """
+        pass
     @abc.abstractmethod
-    def merge(self, other: AllocationInterface) -> AllocationInterface: ...
+    def merge(self, other: AllocationInterface) -> AllocationInterface:
+        """Invalidate these two adjacent allocations and merge them into one; only works if they came from split
+
+        Call this on the left allocation returned from split, and pass the right allocation.
+
+        Depending on the characteristics of the underlying allocator, this may also work
+        for two unrelated allocations rather than just ones that came from split, but you
+        certainly shouldn't try.
+
+        """
+        pass
     @abc.abstractmethod
-    def free(self) -> None: ...
+    def free(self) -> None:
+        "Invalidate this allocation and return its range for re-allocation; also called automatically on __del__"
+        pass
 
 class MemoryGateway:
     @abc.abstractmethod
@@ -146,6 +169,10 @@ class Pointer(t.Generic[T]):
         return type(self)(mapping, self.transport, self.serializer, self.allocation)
 
     def split(self, size: int) -> t.Tuple[Pointer, Pointer]:
+        """Invalidate this pointer and split it into two adjacent pointers
+
+        This is primarily used by syscalls that use only part of a buffer.
+        """
         self.validate()
         # TODO uhhhh if split throws an exception... don't we need to free... or something...
         self.valid = False
@@ -157,6 +184,11 @@ class Pointer(t.Generic[T]):
         return first, second
 
     def merge(self, ptr: Pointer) -> Pointer:
+        """Merge two pointers produced by split back into a single pointer
+
+        This is used by the user to re-assemble a buffer which was split by a syscall.
+
+        """
         self.validate()
         ptr.validate()
         # TODO should assert that these two pointers both serialize the same thing
@@ -167,9 +199,17 @@ class Pointer(t.Generic[T]):
         return self._with_alloc(alloc)
 
     def __add__(self, right: Pointer[T]) -> Pointer[T]:
+        "left + right desugars to left.merge(right)"
         return self.merge(right)
 
     def __radd__(self, left: t.Optional[Pointer[T]]) -> Pointer[T]:
+        """"left += right" desugars to "left = (left + right) if left is not None else right"
+
+        With this, you can initialize a variable to None, then merge pointers into it in a
+        loop. This is especially useful when trying to write an entire buffer, or fill an
+        entire buffer by reading.
+
+        """
         if left is None:
             return self
         else:
@@ -1312,3 +1352,8 @@ class MemoryMapping:
 
     async def munmap(self) -> None:
         await rsyscall.near.munmap(self.task.sysif, self.near)
+
+    def for_task(self, task: Task) -> MemoryMapping:
+        if task.address_space != self.task.address_space:
+            raise rsyscall.far.AddressSpaceMismatchError()
+        return MemoryMapping(task, self.near, self.file)
