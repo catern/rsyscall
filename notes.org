@@ -18881,8 +18881,13 @@ nativecall?
    Also using multiplexing would simplify the implementation I think.
 
    Vastly so.
+
+   yeah we should just do this.
+   this would be a good thing to do, it would simplify stuff a lot.
 ** TODO change mount to take Path for target
    I guess?
+** TODO stop storing references to allocations in the arena
+   so that gc works right.
 * DOCUMENTATION!
   Time to write it!
 ** DONE move epoll blocking stuff in module docstring to Epoller docstring

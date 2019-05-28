@@ -30,6 +30,7 @@ __all__ = [
 class Watch:
     "An indidivual inode being watched with an Inotify instance"
     inotify: Inotify
+    send_channel: trio.abc.SendChannel
     channel: trio.abc.ReceiveChannel
     wd: WatchDescriptor
     removed: bool = False
@@ -43,7 +44,7 @@ class Watch:
             try:
                 event = self.channel.receive_nowait()
                 if event.mask & IN.IGNORED:
-                    # the name is a bit confusing - getting IGNORED means this watch was removed
+                    # the name is confusing - getting IN.IGNORED means this watch was removed
                     self.removed = True
                 events.append(event)
             except trio.WouldBlock:
@@ -66,7 +67,7 @@ class Watch:
 
     async def remove(self) -> None:
         "Remove this watch from inotify"
-        self.inotify._remove(self.wd)
+        await self.inotify.asyncfd.handle.inotify_rm_watch(self.wd)
         # we'll mark this Watch as removed once we get the IN_IGNORED event;
         # only after that do we know for sure that there are no more events
         # coming for this Watch.
@@ -80,13 +81,9 @@ class Inotify:
     def __init__(self, asyncfd: AsyncFileDescriptor, ram: RAM) -> None:
         self.asyncfd = asyncfd
         self.ram = ram
-        self.wd_to_channel: t.Dict[WatchDescriptor, trio.abc.SendChannel] = {}
+        self.wd_to_watch: t.Dict[WatchDescriptor, Watch] = {}
         self.running_wait = OneAtATime()
 
-    # note that if we monitor the same path twice we... might overwrite earlier watches?
-    # ugh yeah we will. including if we have multiple links to the same thing. hmm.
-    # I guess the unit here is the inode.
-    # and we can only have a single watch for an inode.
     @staticmethod
     async def make(thread: Thread) -> Inotify:
         asyncfd = await AsyncFileDescriptor.make(
@@ -94,15 +91,23 @@ class Inotify:
         return Inotify(asyncfd, thread.ram)
 
     async def add(self, path: handle.Path, mask: IN) -> Watch:
-        "Start watching a given path for events in the passed mask"
+        """Start watching a given path for events in the passed mask
+
+        Note that if we monitor the same inode twice (whether at the same path or not),
+        we'll return the same Watch object. Not sure how to make this usable.
+
+        """
         wd = await self.asyncfd.handle.inotify_add_watch(await self.ram.ptr(path), mask)
-        send, receive = trio.open_memory_channel(math.inf)
-        watch = Watch(self, receive, wd)
-        # if we wrap, this could overwrite a removed watch that still
-        # has events in the inotify queue unknown to us. but as the
-        # manpage says, that bug is very unlikely, so the kernel has
-        # no mitigation for it; so we won't worry either.
-        self.wd_to_channel[wd] = send
+        # if watch descriptors wrap, we could get back a watch descriptor that has been
+        # freed and reallocated but for which we haven't yet read the IN.IGNORED event, so
+        # we'd return the wrong Watch. but as the manpage says, that bug is very unlikely,
+        # so the kernel has no mitigation for it; so we won't worry either.
+        try:
+            watch = self.wd_to_watch[wd]
+        except KeyError:
+            send, receive = trio.open_memory_channel(math.inf)
+            watch = Watch(self, send, receive, wd)
+            self.wd_to_watch[wd] = watch
         return watch
 
     async def _do_wait(self) -> None:
@@ -113,10 +118,11 @@ class Inotify:
                 if valid.size() == 0:
                     raise Exception('got EOF from inotify fd? what?')
                 for event in await valid.read():
-                    self.wd_to_channel[event.wd].send_nowait(event)
+                    self.wd_to_watch[event.wd].send_channel.send_nowait(event)
+                    if event.mask & IN.IGNORED:
+                        # the name is confusing - getting IN.IGNORED means this watch was removed
+                        del self.wd_to_watch[event.wd]
 
-    async def _remove(self, wd: WatchDescriptor) -> None:
-        await self.asyncfd.handle.inotify_rm_watch(wd)
 
     async def close(self) -> None:
         await self.asyncfd.close()
