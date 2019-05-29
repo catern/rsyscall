@@ -3821,6 +3821,10 @@ in other threading systems, you call syscalls in threads.
 in rsyscall, you call syscalls *on* threads.
 ** a new operating system, hosted on Linux
    Like HURD is hosted on Linux.
+** a model for interaction with Linux that can be implemented by new languages
+   it's much better for languages than older models
+
+   new languages can implement this, instead of wrapping glibc!
 * explicitly modeling memory
 how would I do this?
 
