@@ -31,6 +31,7 @@ def chunks(lst: t.List[T], size: int) -> t.Iterator[t.List[T]]:
         yield lst[i:i+size]
 
 class ExecutableNotFound(Exception):
+    "No executable with this name can be found"
     def __init__(self, name: str) -> None:
         super().__init__(name)
         self.name = name
@@ -128,6 +129,12 @@ class Environment:
         return await self.path.which(name)
 
     def inherit(self, task: Task, ram: RAM) -> Environment:
-        # TODO hmm this is a bit wasteful of the path cache, maybe we should share it?
-        # though if we unshare the mount namespace or chroot or chdir, it won't be valid anymore...
-        return Environment(task, ram, self.data)
+        """Return a new Environment instance for this Task and RAM
+
+        We share the existing ExecutablePathCache. This centralizes path lookups so that
+        they're shared between all threads.
+
+        """
+        env = Environment(task, ram, dict(self.data))
+        env.path = self.path
+        return env

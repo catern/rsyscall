@@ -1,4 +1,5 @@
 """Classes which own resources and provide the main syscall interfaces
+
 """
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
@@ -14,6 +15,8 @@ import typing as t
 import logging
 import contextlib
 import abc
+from rsyscall.memory.allocation_interface import AllocationInterface
+from rsyscall.memory.transport import MemoryGateway, MemoryTransport
 logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import (
@@ -43,131 +46,96 @@ from rsyscall.sys.uio import RWF, IovecList, split_iovec
 
 
 ################################################################################
-#### Pointers and memory allocation ####
-class AllocationInterface:
-    @abc.abstractmethod
-    def offset(self) -> int:
-        "Get the offset of this allocation in its memory mapping; throws if this allocation has been invalidated"
-        pass
-    @abc.abstractmethod
-    def size(self) -> int:
-        "Get the size of this allocation"
-        pass
-    @abc.abstractmethod
-    def split(self, size: int) -> t.Tuple[AllocationInterface, AllocationInterface]:
-        """Invalidate this allocation and split it into two adjacent allocations
+#### Pointers ####
 
-        These two allocations can be independently freed, or split again, ad infinitum;
-        they can also be merged back together with merge.
-
-        """
-        pass
-    @abc.abstractmethod
-    def merge(self, other: AllocationInterface) -> AllocationInterface:
-        """Invalidate these two adjacent allocations and merge them into one; only works if they came from split
-
-        Call this on the left allocation returned from split, and pass the right allocation.
-
-        Depending on the characteristics of the underlying allocator, this may also work
-        for two unrelated allocations rather than just ones that came from split, but you
-        certainly shouldn't try.
-
-        """
-        pass
-    @abc.abstractmethod
-    def free(self) -> None:
-        "Invalidate this allocation and return its range for re-allocation; also called automatically on __del__"
-        pass
-
-class MemoryGateway:
-    @abc.abstractmethod
-    async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]: ...
-
-    async def read(self, src: Pointer) -> bytes:
-        [data] = await self.batch_read([src])
-        return data
-
-    @abc.abstractmethod
-    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None: ...
-
-    async def write(self, dest: Pointer, data: bytes) -> None:
-        await self.batch_write([(dest, data)])
-
-class MemoryTransport(MemoryGateway):
-    @abc.abstractmethod
-    def inherit(self, task: Task) -> MemoryTransport: ...
-
-# With handle.Pointer, we know the length of the region of memory
-# we're pointing to.  If we didn't know that, then this pointer
-# wouldn't make any sense as an owning handle that can be passed
-# around.  And as a further development, we don't just know the size
-# of the region of memory, but instead we actually know the "type" of
-# the region of memory; the struct that will be written there. The
-# size is merely a consequence of the type of the memory region, so
-# there's no point in having something that knows the size but not the
-# type.
 T = t.TypeVar('T')
 T_co = t.TypeVar('T_co', covariant=True)
 U = t.TypeVar('U')
 T_pointer = t.TypeVar('T_pointer', bound='Pointer')
 @dataclass(eq=False)
 class Pointer(t.Generic[T]):
+    """An owning handle for some piece of memory.
+
+    More precisely, this is an owning handle for an allocation in some memory mapping.  We're
+    explicitly representing memory mappings, rather than glossing over them and pretending that the
+    address space is flat and uniform. If we have two mappings for the same file, we can translate
+    this Pointer between them.
+
+    As an implication of owning an allocation, we also know the length of that allocation, which is
+    the length of the range of memory that it's valid to operate on through this pointer. We
+    retrieve this through Pointer.size and use it in many places; anywhere we take a Pointer, if
+    there's some question about what size to operate on, we operate on the full size of the
+    pointer. Reducing the amount of memory to operate on can be done through Pointer.split.
+
+    We also know the type of the region of memory; that is, how to interpret this region of
+    memory. This is useful at type-checking time to check that we aren't passing pointers to memory
+    of the wrong type. At runtime, the type is reified as a serializer, which allows us to translate
+    a value of the type to and from bytes.
+
+    We also hold a transport which will allow us to read and write the memory we own. Combined with
+    the serializer, this allows us to write and read values of the appropriate type to and from
+    memory using the Pointer.write and Pointer.read methods.
+
+    Finally, pointers have a "valid" bit which says whether the Pointer can be used. We say that a
+    method "consumes" a pointer if it will invalidate that pointer.
+
+    Most of the methods manipulating the pointer are "linear". That is, they consume the pointer
+    object they're called on and return a new pointer object to use. This forces the user to be more
+    careful with tracking the state of the pointer; and also allows us to represent some state
+    changes with by changing the type of the pointer, in particular Pointer.write.
+
+    """
     mapping: MemoryMapping
     transport: MemoryGateway
     serializer: Serializer[T]
     allocation: AllocationInterface
     valid: bool = True
 
+    async def write(self, value: T) -> WrittenPointer[T]:
+        "Write this value to this pointer, consuming it and returning a new WrittenPointer"
+        self.validate()
+        value_bytes = self.serializer.to_bytes(value)
+        if len(value_bytes) > self.size():
+            raise Exception("value_bytes is too long", len(value_bytes),
+                            "for this typed pointer of size", self.size())
+        await self.transport.write(self, value_bytes)
+        return self._wrote(value)
+
+    async def read(self) -> T:
+        "Read the value pointed to by this pointer"
+        self.validate()
+        value = await self.transport.read(self)
+        return self.serializer.from_bytes(value)
+
     @property
     def near(self) -> rsyscall.near.Pointer:
+        """Return the raw memory address referred to by this Pointer
+
+        This is mostly used by syscalls and passed to the kernel, so that the kernel knows the start
+        of the buffer to read to or write from.
+
+        """
         # TODO hmm should maybe validate that this fits in the bounds of the mapping I guess
         self.validate()
         return self._get_raw_near()
 
-    def _get_raw_near(self) -> rsyscall.near.Pointer:
-        # only for printing purposes
-        return self.mapping.near.as_pointer() + self.allocation.offset()
-
-    def __repr__(self) -> str:
-        if self.valid:
-            return f"Pointer({self.near}, {self.serializer})"
-        else:
-            return f"Pointer(invalid, {self._get_raw_near()}, {self.serializer})"
-
     def size(self) -> int:
+        """Return the size of this pointer's allocation in bytes
+
+        This is mostly used by syscalls and passed to the kernel, so that the kernel knows the size
+        of the buffer that it's been passed. To reduce the size of a buffer passed to the kernel,
+        use Pointer.split.
+
+        """
         return self.allocation.size()
-
-    @contextlib.contextmanager
-    def borrow(self, task: rsyscall.far.Task) -> t.Iterator[Pointer]:
-        # TODO actual tracking of pointer references is not yet implemented
-        self.validate()
-        if task.address_space != self.mapping.task.address_space:
-            raise rsyscall.far.AddressSpaceMismatchError(task.address_space, self.mapping.task.address_space)
-        yield self
-
-    def _with_alloc(self, allocation: AllocationInterface) -> Pointer:
-        return Pointer(self.mapping, self.transport, self.serializer, allocation)
-
-    def _with_mapping(self: T_pointer, mapping: MemoryMapping) -> T_pointer:
-        if type(self) is not Pointer:
-            raise Exception("subclasses of Pointer must override _with_mapping")
-        if mapping.file is not self.mapping.file:
-            raise Exception("can only move pointer between two mappings of the same file")
-        # we don't have a clean model for referring to the same object through multiple mappings.
-        # this is a major TODO.
-        # at least two ways to achieve it:
-        # - have Pointers become multi-mapping super-pointers, which can be valid in multiple address spaces
-        # - break our linearity constraint on pointers, allowing multiple pointers for the same allocation;
-        #   this is difficult because split() is only easy due to linearity.
-        # right here, we just linearly move the pointer to a new mapping
-        self.validate()
-        self.valid = False
-        return type(self)(mapping, self.transport, self.serializer, self.allocation)
 
     def split(self, size: int) -> t.Tuple[Pointer, Pointer]:
         """Invalidate this pointer and split it into two adjacent pointers
 
-        This is primarily used by syscalls that use only part of a buffer.
+        This is primarily used by syscalls that write to one contiguous part of a buffer and leave
+        the rest unused.  They split the pointer into a "used" part and an "unused" part, and return
+        both parts.
+
         """
         self.validate()
         # TODO uhhhh if split throws an exception... don't we need to free... or something...
@@ -211,6 +179,18 @@ class Pointer(t.Generic[T]):
         else:
             return left + self
 
+    @contextlib.contextmanager
+    def borrow(self, task: rsyscall.far.Task) -> t.Iterator[Pointer]:
+        # TODO actual tracking of pointer references is not yet implemented
+        # we should have a flag or lock to indicate that this pointer shouldn't be moved or deleted,
+        # while it's being borrowed.
+        # maybe "pinned" is a better word.
+        # and we should probably make this the only way to get .near
+        self.validate()
+        if task.address_space != self.mapping.task.address_space:
+            raise rsyscall.far.AddressSpaceMismatchError(task.address_space, self.mapping.task.address_space)
+        yield self
+
     def validate(self) -> None:
         if not self.valid:
             raise Exception("handle is no longer valid")
@@ -229,40 +209,52 @@ class Pointer(t.Generic[T]):
         # TODO We should fix that.
         self.free()
 
-    def _wrote(self, data: T) -> WrittenPointer[T]:
-        self.valid = False
-        return WrittenPointer(self.mapping, self.transport, data, self.serializer, self.allocation)
-
-    async def write(self, data: T) -> WrittenPointer[T]:
-        self.validate()
-        data_bytes = self.serializer.to_bytes(data)
-        if len(data_bytes) > self.size():
-            raise Exception("data is too long", len(data_bytes),
-                            "for this typed pointer of size", self.size())
-        await self.transport.write(self, data_bytes)
-        return self._wrote(data)
-
     def split_from_end(self, size: int, alignment: int) -> t.Tuple[Pointer, Pointer]:
         extra_to_remove = (int(self.near) + size) % alignment
         return self.split(self.size() - size - extra_to_remove)
 
-    async def write_to_end(self, data: T, alignment: int) -> t.Tuple[Pointer[T], WrittenPointer[T]]:
-        """Write a piece of data to the end of the range of this pointer
+    async def write_to_end(self, value: T, alignment: int) -> t.Tuple[Pointer[T], WrittenPointer[T]]:
+        """Write a value to the end of the range of this pointer
 
         Splits the pointer, and returns both parts.  This function is only useful for preparing
         stacks. Would be nice to figure out either a more generic way to prep stacks, or to figure
         out more things that write_to_end could be used for.
 
         """
-        data_bytes = self.serializer.to_bytes(data)
-        rest, write_buf = self.split_from_end(len(data_bytes), alignment)
-        written = await write_buf.write(data)
+        value_bytes = self.serializer.to_bytes(value)
+        rest, write_buf = self.split_from_end(len(value_bytes), alignment)
+        written = await write_buf.write(value)
         return rest, written
 
-    async def read(self) -> T:
+    def _get_raw_near(self) -> rsyscall.near.Pointer:
+        # only for printing purposes
+        return self.mapping.near.as_pointer() + self.allocation.offset()
+
+    def __repr__(self) -> str:
+        if self.valid:
+            return f"Pointer({self.near}, {self.serializer})"
+        else:
+            return f"Pointer(invalid, {self._get_raw_near()}, {self.serializer})"
+
+    #### Various ways to create new Pointers by changing one thing about the old pointer. 
+    def _with_mapping(self: T_pointer, mapping: MemoryMapping) -> T_pointer:
+        if type(self) is not Pointer:
+            raise Exception("subclasses of Pointer must override _with_mapping")
+        if mapping.file is not self.mapping.file:
+            raise Exception("can only move pointer between two mappings of the same file")
+        # we don't have a clean model for referring to the same object through multiple mappings.
+        # this is a major TODO.
+        # at least two ways to achieve it:
+        # - have Pointers become multi-mapping super-pointers, which can be valid in multiple address spaces
+        # - break our linearity constraint on pointers, allowing multiple pointers for the same allocation;
+        #   this is difficult because split() is only easy due to linearity.
+        # right here, we just linearly move the pointer to a new mapping
         self.validate()
-        data = await self.transport.read(self)
-        return self.serializer.from_bytes(data)
+        self.valid = False
+        return type(self)(mapping, self.transport, self.serializer, self.allocation)
+
+    def _with_alloc(self, allocation: AllocationInterface) -> Pointer:
+        return Pointer(self.mapping, self.transport, self.serializer, allocation)
 
     def _reinterpret(self, serializer: Serializer[U]) -> Pointer[U]:
         # TODO how can we check to make sure we don't reinterpret in wacky ways?
@@ -272,11 +264,10 @@ class Pointer(t.Generic[T]):
         self.valid = False
         return Pointer(self.mapping, self.transport, serializer, self.allocation)
 
-    def __enter__(self) -> Pointer:
-        return self
-
-    def __exit__(self, *args) -> None:
-        self.free()
+    def _wrote(self, value: T) -> WrittenPointer[T]:
+        "Assert we wrote this value to this pointer, and return the appropriate new WrittenPointer"
+        self.valid = False
+        return WrittenPointer(self.mapping, self.transport, value, self.serializer, self.allocation)
 
 class WrittenPointer(Pointer[T_co]):
     def __init__(self,

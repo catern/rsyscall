@@ -121,6 +121,7 @@ class EpollWaiter:
                  wait_readable: t.Optional[t.Callable[[], t.Awaitable[None]]],
                  timeout: int,
     ) -> None:
+        "To make this, use one of the constructor methods of Epoller: make_subsidiary or make_root"
         self.ram = ram
         self.epfd = epfd
         self.wait_readable = wait_readable
@@ -226,6 +227,7 @@ class Epoller:
         return center
 
     def __init__(self, epoll_waiter: EpollWaiter, ram: RAM, epfd: FileDescriptor) -> None:
+        "Use one of the constructor methods, make_subsidiary or make_root"
         self.epoll_waiter = epoll_waiter
         self.ram = ram
         self.epfd = epfd
@@ -461,6 +463,12 @@ class AsyncFileDescriptor:
                 raise
 
     def with_handle(self, fd: FileDescriptor) -> AsyncFileDescriptor:
+        """Return a new AFD using this new FD handle for making syscalls
+
+        This is useful when we want to change what task we're making syscalls in when
+        using this AFD.
+
+        """
         return AsyncFileDescriptor(self.ram, fd, self.status, self.epolled)
 
     async def close(self) -> None:
