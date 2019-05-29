@@ -107,18 +107,6 @@ class Pointer(t.Generic[T]):
         value = await self.transport.read(self)
         return self.serializer.from_bytes(value)
 
-    @property
-    def near(self) -> rsyscall.near.Pointer:
-        """Return the raw memory address referred to by this Pointer
-
-        This is mostly used by syscalls and passed to the kernel, so that the kernel knows the start
-        of the buffer to read to or write from.
-
-        """
-        # TODO hmm should maybe validate that this fits in the bounds of the mapping I guess
-        self.validate()
-        return self._get_raw_near()
-
     def size(self) -> int:
         """Return the size of this pointer's allocation in bytes
 
@@ -179,13 +167,34 @@ class Pointer(t.Generic[T]):
         else:
             return left + self
 
+    @property
+    def near(self) -> rsyscall.near.Pointer:
+        """Return the raw memory address referred to by this Pointer
+
+        This is mostly used by syscalls and passed to the kernel, so that the kernel knows the start
+        of the buffer to read to or write from.
+
+        """
+        # TODO hmm should maybe validate that this fits in the bounds of the mapping I guess
+        self.validate()
+        return self._get_raw_near()
+
     @contextlib.contextmanager
     def borrow(self, task: rsyscall.far.Task) -> t.Iterator[rsyscall.near.Pointer]:
+        """Pin the address of this pointer, and yield the pointer's raw memory address
+
+        We validate this pointer, and pin it in memory so that it can't be moved or deleted while
+        it's being used.
+
+        This is mostly used by syscalls and passed to the kernel, so that the kernel knows the start
+        of the buffer to read to or write from.
+
+        """
         # TODO actual tracking of pointer references is not yet implemented
         # we should have a flag or lock to indicate that this pointer shouldn't be moved or deleted,
         # while it's being borrowed.
-        # maybe "pinned" is a better word.
-        # and we should probably make this the only way to get .near
+        # TODO rename this to pinned
+        # TODO make this the only way to get .near
         self.validate()
         if task.address_space != self.mapping.task.address_space:
             raise rsyscall.far.AddressSpaceMismatchError(task.address_space, self.mapping.task.address_space)
@@ -210,6 +219,11 @@ class Pointer(t.Generic[T]):
         self.free()
 
     def split_from_end(self, size: int, alignment: int) -> t.Tuple[Pointer, Pointer]:
+        """Split from the end of this pointer, such that the right pointer is aligned to `alignment`
+
+        Used by write_to_end; mostly only useful for preparing stacks.
+
+        """
         extra_to_remove = (int(self.near) + size) % alignment
         return self.split(self.size() - size - extra_to_remove)
 
@@ -342,11 +356,6 @@ class FileDescriptor:
         if not self.valid:
             raise Exception("handle is no longer valid")
 
-    def check_is_for(self, task: Task) -> None:
-        self.validate()
-        if self.task != task:
-            raise Exception("this file descriptor is for task", self.task, "not", task)
-
     def _invalidate(self) -> bool:
         """Invalidate this reference to this file descriptor
 
@@ -361,9 +370,9 @@ class FileDescriptor:
             return False
 
     async def invalidate(self) -> bool:
-        """Invalidate this reference to this file descriptor
+        """Invalidate this reference to this file descriptor, closing it if necessary
 
-        Returns true if we remove the last reference, and close the FD.
+        Returns true if we removed the last reference, and closed the FD.
 
         """
         if self._invalidate():
@@ -393,6 +402,8 @@ class FileDescriptor:
 
     @contextlib.contextmanager
     def borrow(self, task: Task) -> t.Iterator[FileDescriptor]:
+        # TODO we should revamp borrow to yield near.FileDescriptor
+        # and be the only means of getting FD.near
         if self.task == task:
             yield self
         else:
