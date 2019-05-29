@@ -401,15 +401,15 @@ class FileDescriptor:
         return self.for_task(self.task)
 
     @contextlib.contextmanager
-    def borrow(self, task: Task) -> t.Iterator[FileDescriptor]:
+    def borrow(self, task: Task) -> t.Iterator[rsyscall.near.FileDescriptor]:
         # TODO we should revamp borrow to yield near.FileDescriptor
         # and be the only means of getting FD.near
         if self.task == task:
-            yield self
+            yield self.near
         else:
             borrowed = self.for_task(task)
             try:
-                yield borrowed
+                yield borrowed.near
             finally:
                 # we can't call invalidate since we can't actually close this fd since that would
                 # require more syscalls. we should really make it so that if the user tries to
@@ -635,10 +635,6 @@ class FileDescriptor:
         arg.validate()
         return (await rsyscall.near.ioctl(self.task.sysif, self.near, request, arg.near))
 
-    async def setns(self, nstype: int) -> None:
-        self.validate()
-        await rsyscall.near.setns(self.task.sysif, self.near, nstype)
-
     async def epoll_wait(self, events: Pointer[EpollEventList], timeout: int) -> t.Tuple[Pointer[EpollEventList], Pointer]:
         self.validate()
         with events.borrow(self.task) as events_n:
@@ -649,14 +645,14 @@ class FileDescriptor:
 
     async def epoll_ctl(self, op: EPOLL_CTL, fd: FileDescriptor, event: t.Optional[Pointer[EpollEvent]]=None) -> None:
         self.validate()
-        with fd.borrow(self.task) as fd:
+        with fd.borrow(self.task) as fd_n:
             if event is not None:
                 if event.size() < EpollEvent.sizeof():
                     raise Exception("pointer is too small", event.size(), "to be an EpollEvent", EpollEvent.sizeof())
                 with event.borrow(self.task) as event_n:
-                    return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near, event_n))
+                    return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd_n, event_n))
             else:
-                return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near))
+                return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd_n))
 
     async def inotify_add_watch(self, pathname: WrittenPointer[Path], mask: IN) -> rsyscall.near.WatchDescriptor:
         self.validate()
@@ -924,15 +920,14 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         await run_fd_table_gc(old_fd_table)
         await run_fd_table_gc(self.fd_table)
 
-    async def setns_user(self, fd: FileDescriptor) -> None:
-        with fd.borrow(self) as fd:
-            # can't setns to a user namespace while sharing CLONE_FS
-            await self.unshare(CLONE.FS)
-            await fd.setns(CLONE.NEWUSER)
+    async def setns(self, fd: FileDescriptor, nstype: CLONE) -> None:
+        with fd.borrow(self) as fd_n:
+            await rsyscall.near.setns(self.sysif, fd_n, nstype)
 
-    async def setns_net(self, fd: FileDescriptor) -> None:
-        with fd.borrow(self) as fd:
-            await fd.setns(CLONE.NEWNET)
+    async def setns_user(self, fd: FileDescriptor) -> None:
+        # can't setns to a user namespace while sharing CLONE_FS
+        await self.unshare(CLONE.FS)
+        await self.setns(fd, CLONE.NEWUSER)
 
     async def socket(self, family: AF, type: SOCK, protocol: int=0) -> FileDescriptor:
         sockfd = await rsyscall.near.socket(self.sysif, family, type|SOCK.CLOEXEC, protocol)
@@ -1007,8 +1002,8 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             await rsyscall.near.chdir(self.sysif, path_n)
 
     async def fchdir(self, fd: FileDescriptor) -> None:
-        with fd.borrow(self) as fd:
-            await rsyscall.near.fchdir(self.sysif, fd.near)
+        with fd.borrow(self) as fd_n:
+            await rsyscall.near.fchdir(self.sysif, fd_n)
 
     async def readlink(self, path: WrittenPointer[Path], buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         with path.borrow(self) as path_n:

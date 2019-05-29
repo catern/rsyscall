@@ -24,7 +24,7 @@ class TestNet(TrioTestCase):
         await thread.unshare_user()
         with self.assertRaises(PermissionError):
             # we can't setns to a namespace that we don't own, which is fairly lame
-            await thread.task.setns_net(netnsfd)
+            await thread.task.setns(netnsfd, CLONE.NEWNET)
 
     async def test_make_tun(self) -> None:
         tun_fd = await self.thr.task.open(await self.thr.ram.ptr(Path("/dev/net/tun")), O.RDWR)

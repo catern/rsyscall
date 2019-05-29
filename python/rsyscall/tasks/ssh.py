@@ -180,14 +180,10 @@ async def make_bootstrap_dir(
     async_stdout = await parent.make_afd(stdout_pipe.read)
     child = await parent.fork()
     async with child:
-        stdout = stdout_pipe.write.move(child.task)
-        with bootstrap_executable.borrow(child.task) as bootstrap_executable:
-            await child.unshare_files()
-            # TODO we are relying here on the fact that replace_with doesn't set cloexec on the new fd.
-            # maybe we should explicitly list what we want to pass down...
-            # or no, let's tag things as inheritable, maybe?
-            await child.stdout.replace_with(stdout)
-            await child.stdin.replace_with(bootstrap_executable)
+        await child.unshare_files_and_replace({
+            child.stdout: stdout_pipe.write,
+            child.stdin: bootstrap_executable,
+        })
         child_process = await child.exec(ssh_command.args(ssh_bootstrap_script_contents))
         # from... local?
         # I guess this throws into sharper relief the distinction between core and module.
