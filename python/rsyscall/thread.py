@@ -127,6 +127,7 @@ class Thread(UnixThread):
         await self.task.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
 
     async def fork(self, flags: CLONE=CLONE.NONE) -> ChildThread:
+        "Create a new child thread"
         thread = await super().fork(flags)
         if flags & CLONE.NEWUSER:
             # hack, we should really track the [ug]id ahead of this so we don't have to get it
@@ -138,6 +139,11 @@ class Thread(UnixThread):
 
     async def run(self, command: Command, check=True,
                   *, task_status=trio.TASK_STATUS_IGNORED) -> ChildState:
+        """Run the passed command to completion and return its end state, throwing if unclean
+
+        If check is False, we won't throw if the end state is unclean.
+
+        """
         thread = await self.fork()
         child = await thread.exec(command)
         task_status.started(child)
@@ -219,6 +225,7 @@ class Thread(UnixThread):
         await self.close()
 
 class ChildThread(Thread, ChildUnixThread):
+    "A thread that we know is also a direct child process of another thread"
     async def close(self) -> None:
         await self.task.close_task()
 

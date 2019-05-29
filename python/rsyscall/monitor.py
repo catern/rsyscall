@@ -88,6 +88,12 @@ class AsyncSignalfd:
     async def make(cls, ram: RAM, task: Task, epoller: Epoller, mask: Sigset,
                    *, signal_block: SignalBlock=None,
     ) -> AsyncSignalfd:
+        """Make a signalfd and register it on the epoller, possibly blocking signals
+
+        If the signals are already blocked, the user can pass in a SignalBlock to
+        represent that, and save the need to make the SignalBlock.
+
+        """
         if task is not epoller.epoll_waiter.epfd.task:
             raise Exception("signalfd task and epoll_waiter task must be the same")
         if signal_block is None:
@@ -97,10 +103,7 @@ class AsyncSignalfd:
             signal_block = await task.sigmask_block(sigset_ptr, oldset_ptr)
             await task.read_oldset_and_check()
         else:
-            sigset_ptr = await ram.ptr(mask)
-            if signal_block.mask != mask:
-                raise Exception("passed-in SignalBlock", signal_block, "has mask", signal_block.mask,
-                                "which does not match the mask for the AsyncSignalfd we're making", mask)
+            sigset_ptr = signal_block.newset
         afd = await AsyncFileDescriptor.make(epoller, ram, await task.signalfd(sigset_ptr, SFD.NONBLOCK))
         return cls(afd, signal_block)
 
@@ -108,13 +111,18 @@ class AsyncSignalfd:
                  afd: AsyncFileDescriptor,
                  signal_block: SignalBlock,
     ) -> None:
+        "Use the constructor method AsyncSignalfd.make"
         self.afd = afd
         self.signal_block = signal_block
         self.next_signal = MultiplexedEvent(self._wait_for_some_signal)
 
     async def _wait_for_some_signal(self):
-        # we don't care what information we get from the signal, we
-        # just want to sleep until some signal happens
+        """Wait for a signal, discarding the information received from it
+
+        We don't care about the information from the signal, we just want to sleep until
+        some signal happens.
+
+        """
         await self.afd.read(await self.afd.ram.malloc(SignalfdSiginfo))
         self.next_signal = MultiplexedEvent(self._wait_for_some_signal)
 
@@ -132,6 +140,8 @@ class AsyncChildProcess:
         return await self.process.read_siginfo()
 
     async def waitpid(self, options: W) -> ChildState:
+        """Wait for a child state change in this child, like waitid(P.PID)
+        """
         if options & W.EXITED and self.process.death_state:
             # TODO this is not really the actual behavior of waitpid...
             # if the child is already dead we'd get an ECHLD not the death state change again.
@@ -191,6 +201,8 @@ class ChildProcessMonitor:
 
     We also know what arguments to pass to clone so that an AsyncChildProcess may be created.
 
+    Use ChildProcessMonitor.make to create.
+
     """
     sigfd: AsyncSignalfd
     ram: RAM
@@ -201,6 +213,12 @@ class ChildProcessMonitor:
     async def make(ram: RAM, task: Task, epoller: Epoller,
                    *, signal_block: SignalBlock=None,
     ) -> ChildProcessMonitor:
+        """Make a ChildProcessMonitor, possibly blocking signals
+
+        If the signals are already blocked, the user can pass in a SignalBlock to
+        represent that, and save the need to make the SignalBlock.
+
+        """
         sigfd = await AsyncSignalfd.make(ram, task, epoller, Sigset({SIG.CHLD}), signal_block=signal_block)
         return ChildProcessMonitor(sigfd, ram, task, use_clone_parent=False)
 

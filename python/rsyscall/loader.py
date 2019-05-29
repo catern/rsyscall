@@ -110,6 +110,12 @@ class NativeLoader:
 
     @staticmethod
     def make_from_symbols(task: Task, symbols: t.Any) -> NativeLoader:
+        """Create a NativeLoader by pulling functions from this "symbols" object by attribute
+
+        This symbols object is either rsyscall._raw.lib, or a cffi struct;
+        either way, the attributes are named as we expect in this function.
+
+        """
         def to_handle(cffi_ptr) -> Pointer[NativeFunction]:
             pointer_int = int(ffi.cast('ssize_t', cffi_ptr))
             # TODO we're just making up a memory mapping that this pointer is inside;

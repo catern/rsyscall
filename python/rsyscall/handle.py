@@ -84,6 +84,8 @@ class Pointer(t.Generic[T]):
     careful with tracking the state of the pointer; and also allows us to represent some state
     changes with by changing the type of the pointer, in particular Pointer.write.
 
+    See also the inheriting class WrittenPointer
+
     """
     mapping: MemoryMapping
     transport: MemoryGateway
@@ -138,7 +140,9 @@ class Pointer(t.Generic[T]):
     def merge(self, ptr: Pointer) -> Pointer:
         """Merge two pointers produced by split back into a single pointer
 
-        This is used by the user to re-assemble a buffer which was split by a syscall.
+        The two pointers passed in are invalidated.
+
+        This is primarily used by the user to re-assemble a buffer that was split by a syscall.
 
         """
         self.validate()
@@ -146,6 +150,7 @@ class Pointer(t.Generic[T]):
         # TODO should assert that these two pointers both serialize the same thing
         # although they could be different types of serializers...
         self.valid = False
+        ptr.valid = False
         # TODO we should only allow merge if we are the only reference to this allocation
         alloc = self.allocation.merge(ptr.allocation)
         return self._with_alloc(alloc)
@@ -261,7 +266,7 @@ class Pointer(t.Generic[T]):
         # at least two ways to achieve it:
         # - have Pointers become multi-mapping super-pointers, which can be valid in multiple address spaces
         # - break our linearity constraint on pointers, allowing multiple pointers for the same allocation;
-        #   this is difficult because split() is only easy due to linearity.
+        #   this is difficult because split() is only easy to implement due to linearity.
         # right here, we just linearly move the pointer to a new mapping
         self.validate()
         self.valid = False
@@ -284,6 +289,29 @@ class Pointer(t.Generic[T]):
         return WrittenPointer(self.mapping, self.transport, value, self.serializer, self.allocation)
 
 class WrittenPointer(Pointer[T_co]):
+    """A Pointer with some known value written to it
+
+    We have all the normal functionality of a Pointer (see that class for more information), but we
+    also know that we've had some value written to us, and we know what that value is, and it's
+    immediately accessible in Python.
+
+    We can also view this with an emphasis on the value: This is some known value, that has been
+    written to some memory location. The value and the pointer are equally important in this class,
+    and both are used by most uses of this class.
+
+    We use inheritance so that a WrittenPointer gracefully degrades back to a Pointer, and is
+    invalidated whenever a pointer is invalidated. Specifically, we want anything that writes to a
+    pointer to invalidate this pointer. The invalidation lets us know that this value is no longer
+    necessarily written to this pointer.
+
+    For example, syscalls that write to pointers will typically call split. A call to
+    WrittenPointer.split will invalidate the WrittenPointer and return regular Pointers; that's
+    desirable because the syscall likely overwrote whatever value was previously written here.
+
+    TODO: We should fix syscalls that write to memory but don't call split so that they invalidate
+    the WrittenPointer. That's mostly syscalls using Sockbufs...
+
+    """
     def __init__(self,
                  mapping: MemoryMapping,
                  transport: MemoryGateway,
@@ -402,8 +430,14 @@ class FileDescriptor:
 
     @contextlib.contextmanager
     def borrow(self, task: Task) -> t.Iterator[rsyscall.near.FileDescriptor]:
-        # TODO we should revamp borrow to yield near.FileDescriptor
-        # and be the only means of getting FD.near
+        # TODO we should be the only means of getting FD.near
+        # TODO we should just set an in_use flag or something
+        # oh argh, what about borrow_with, though?
+        # hmm that's fine I guess... there's references inside...
+        # ok, the thing is, we already can't move fds or pointers around
+        # because we have references in memory
+        # maybe borrowing should be another, more strong reference?
+        # well, the point of this that we won't be freed during a syscall
         if self.task == task:
             yield self.near
         else:

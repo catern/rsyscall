@@ -191,6 +191,7 @@ import importlib.resources
 import json
 
 class StorePath:
+    "Some Nix derivation which we can use and deploy"
     def __init__(self, path: Path, closure: t.List[Path]) -> None:
         self.path = path
         self.closure = closure
@@ -203,6 +204,7 @@ class StorePath:
         return StorePath(path, closure)
 
 class Store:
+    "Some Nix store, containing some derivations, and capable of realising new derivations"
     def __init__(self, thread: Thread, nix: StorePath) -> None:
         self.thread = thread
         self.nix = nix

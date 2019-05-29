@@ -5,6 +5,7 @@ import functools
 from trio._core._run import Nursery
 
 class TrioTestCase(unittest.TestCase):
+    "A trio-enabled variant of unittest.TestCase"
     nursery: Nursery
 
     async def asyncSetUp(self) -> None:
