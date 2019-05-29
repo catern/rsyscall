@@ -180,7 +180,7 @@ class Pointer(t.Generic[T]):
             return left + self
 
     @contextlib.contextmanager
-    def borrow(self, task: rsyscall.far.Task) -> t.Iterator[Pointer]:
+    def borrow(self, task: rsyscall.far.Task) -> t.Iterator[rsyscall.near.Pointer]:
         # TODO actual tracking of pointer references is not yet implemented
         # we should have a flag or lock to indicate that this pointer shouldn't be moved or deleted,
         # while it's being borrowed.
@@ -189,7 +189,7 @@ class Pointer(t.Generic[T]):
         self.validate()
         if task.address_space != self.mapping.task.address_space:
             raise rsyscall.far.AddressSpaceMismatchError(task.address_space, self.mapping.task.address_space)
-        yield self
+        yield self.near
 
     def validate(self) -> None:
         if not self.valid:
@@ -500,8 +500,8 @@ class FileDescriptor:
 
     async def read(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self.validate()
-        with buf.borrow(self.task) as buf_b:
-            ret = await rsyscall.near.read(self.task.sysif, self.near, buf_b.near, buf_b.size())
+        with buf.borrow(self.task) as buf_n:
+            ret = await rsyscall.near.read(self.task.sysif, self.near, buf_n, buf.size())
             return buf.split(ret)
 
     async def pread(self, buf: Pointer, offset: int) -> t.Tuple[Pointer, Pointer]:
@@ -529,8 +529,8 @@ class FileDescriptor:
 
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self.validate()
-        with buf.borrow(self.task) as buf_b:
-            ret = await rsyscall.near.write(self.task.sysif, self.near, buf_b.near, buf_b.size())
+        with buf.borrow(self.task) as buf_n:
+            ret = await rsyscall.near.write(self.task.sysif, self.near, buf_n, buf.size())
             return buf.split(ret)
 
     async def sendmsg(self, msg: WrittenPointer[SendMsghdr], flags: SendmsgFlags=SendmsgFlags.NONE
@@ -566,8 +566,8 @@ class FileDescriptor:
 
     async def recv(self, buf: Pointer, flags: int) -> t.Tuple[Pointer, Pointer]:
         self.validate()
-        with buf.borrow(self.task) as buf_b:
-            ret = await rsyscall.near.recv(self.task.sysif, self.near, buf_b.near, buf_b.size(), flags)
+        with buf.borrow(self.task) as buf_n:
+            ret = await rsyscall.near.recv(self.task.sysif, self.near, buf_n, buf.size(), flags)
             return buf.split(ret)
 
     async def lseek(self, offset: int, whence: SEEK) -> int:
@@ -630,9 +630,9 @@ class FileDescriptor:
 
     async def epoll_wait(self, events: Pointer[EpollEventList], timeout: int) -> t.Tuple[Pointer[EpollEventList], Pointer]:
         self.validate()
-        with events.borrow(self.task) as events_b:
+        with events.borrow(self.task) as events_n:
             num = await rsyscall.near.epoll_wait(
-                self.task.sysif, self.near, events_b.near, events_b.size()//EpollEvent.sizeof(), timeout)
+                self.task.sysif, self.near, events_n, events.size()//EpollEvent.sizeof(), timeout)
             valid_size = num * EpollEvent.sizeof()
             return events.split(valid_size)
 
@@ -642,15 +642,15 @@ class FileDescriptor:
             if event is not None:
                 if event.size() < EpollEvent.sizeof():
                     raise Exception("pointer is too small", event.size(), "to be an EpollEvent", EpollEvent.sizeof())
-                with event.borrow(self.task) as eventp:
-                    return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near, eventp.near))
+                with event.borrow(self.task) as event_n:
+                    return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near, event_n))
             else:
                 return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd.near))
 
     async def inotify_add_watch(self, pathname: WrittenPointer[Path], mask: IN) -> rsyscall.near.WatchDescriptor:
         self.validate()
-        with pathname.borrow(self.task) as pathname_b:
-            return (await rsyscall.near.inotify_add_watch(self.task.sysif, self.near, pathname_b.near, mask))
+        with pathname.borrow(self.task) as pathname_n:
+            return (await rsyscall.near.inotify_add_watch(self.task.sysif, self.near, pathname_n, mask))
 
     async def inotify_rm_watch(self, wd: rsyscall.near.WatchDescriptor) -> None:
         self.validate()
@@ -684,21 +684,21 @@ class FileDescriptor:
 
     async def setsockopt(self, level: int, optname: int, optval: Pointer) -> None:
         self.validate()
-        with optval.borrow(self.task) as optval_b:
-            await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval_b.near, optval_b.size())
+        with optval.borrow(self.task) as optval_n:
+            await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval_n, optval.size())
 
     async def getsockname(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
         self.validate()
-        with addr.borrow(self.task):
-            with addr.value.buf.borrow(self.task):
-                await rsyscall.near.getsockname(self.task.sysif, self.near, addr.value.buf.near, addr.near)
+        with addr.borrow(self.task) as addr_n:
+            with addr.value.buf.borrow(self.task) as addrbuf_n:
+                await rsyscall.near.getsockname(self.task.sysif, self.near, addrbuf_n, addr_n)
         return addr
 
     async def getpeername(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
         self.validate()
-        with addr.borrow(self.task):
-            with addr.value.buf.borrow(self.task):
-                await rsyscall.near.getpeername(self.task.sysif, self.near, addr.value.buf.near, addr.near)
+        with addr.borrow(self.task) as addr_n:
+            with addr.value.buf.borrow(self.task) as addrbuf_n:
+                await rsyscall.near.getpeername(self.task.sysif, self.near, addrbuf_n, addr_n)
         return addr
 
     @t.overload
@@ -739,19 +739,19 @@ class FileDescriptor:
 
     async def getdents(self, dirp: Pointer[DirentList]) -> t.Tuple[Pointer[DirentList], Pointer]:
         self.validate()
-        with dirp.borrow(self.task) as dirp_b:
-            ret = await rsyscall.near.getdents64(self.task.sysif, self.near, dirp_b.near, dirp_b.size())
+        with dirp.borrow(self.task) as dirp_n:
+            ret = await rsyscall.near.getdents64(self.task.sysif, self.near, dirp_n, dirp.size())
             return dirp.split(ret)
 
     async def signalfd(self, mask: Pointer[Sigset], flags: SFD) -> None:
         self.validate()
-        with mask.borrow(self.task) as mask:
-            await rsyscall.near.signalfd4(self.task.sysif, self.near, mask.near, mask.size(), flags)
+        with mask.borrow(self.task) as mask_n:
+            await rsyscall.near.signalfd4(self.task.sysif, self.near, mask_n, mask.size(), flags)
 
-    async def openat(self, ptr: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
+    async def openat(self, path: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
         self.validate()
-        with ptr.borrow(self.task):
-            fd = await rsyscall.near.openat(self.task.sysif, self.near, ptr.near, flags|O.CLOEXEC, mode)
+        with path.borrow(self.task) as path_n:
+            fd = await rsyscall.near.openat(self.task.sysif, self.near, path_n, flags|O.CLOEXEC, mode)
             return self.task.make_fd_handle(fd)
 
     async def fchmod(self, mode: int) -> None:
@@ -941,78 +941,73 @@ class Task(SignalMaskTask, rsyscall.far.Task):
                         act: t.Optional[Pointer[Sigaction]],
                         oldact: t.Optional[Pointer[Sigaction]]) -> None:
         with contextlib.ExitStack() as stack:
-            if act:
-                act = stack.enter_context(act.borrow(self))
-            if oldact:
-                oldact = stack.enter_context(oldact.borrow(self))
+            act_n = self._borrow_optional(stack, act)
+            oldact_n = self._borrow_optional(stack, oldact)
             # rt_sigaction takes the size of the sigset, not the size of the sigaction;
             # and sigset is a fixed size.
-            await rsyscall.near.rt_sigaction(self.sysif, signum,
-                                             act.near if act else None,
-                                             oldact.near if oldact else None,
-                                             Sigset.sizeof())
+            await rsyscall.near.rt_sigaction(self.sysif, signum, act_n, oldact_n, Sigset.sizeof())
 
-    async def open(self, ptr: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
-        with ptr.borrow(self) as ptr_b:
+    async def open(self, path: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
+        with path.borrow(self) as path_n:
             try:
-                fd = await rsyscall.near.openat(self.sysif, None, ptr_b.near, flags|O.CLOEXEC, mode)
+                fd = await rsyscall.near.openat(self.sysif, None, path_n, flags|O.CLOEXEC, mode)
             except FileNotFoundError as exn:
-                exn.filename = ptr.value
+                exn.filename = path.value
                 raise
             return self.make_fd_handle(fd)
 
-    async def mkdir(self, ptr: WrittenPointer[Path], mode=0o755) -> None:
-        with ptr.borrow(self) as ptr_b:
-            await rsyscall.near.mkdirat(self.sysif, None, ptr_b.near, mode)
+    async def mkdir(self, path: WrittenPointer[Path], mode=0o755) -> None:
+        with path.borrow(self) as path_n:
+            await rsyscall.near.mkdirat(self.sysif, None, path_n, mode)
 
-    async def access(self, ptr: WrittenPointer[Path], mode: int, flags: int=0) -> None:
-        with ptr.borrow(self) as ptr_b:
+    async def access(self, path: WrittenPointer[Path], mode: int, flags: int=0) -> None:
+        with path.borrow(self) as path_n:
             try:
-                await rsyscall.near.faccessat(self.sysif, None, ptr_b.near, mode, flags)
+                await rsyscall.near.faccessat(self.sysif, None, path_n, mode, flags)
             except FileNotFoundError as exn:
-                exn.filename = ptr.value
+                exn.filename = path.value
                 raise
 
-    async def unlink(self, ptr: WrittenPointer[Path]) -> None:
-        with ptr.borrow(self) as ptr_b:
-            await rsyscall.near.unlinkat(self.sysif, None, ptr_b.near, 0)
+    async def unlink(self, path: WrittenPointer[Path]) -> None:
+        with path.borrow(self) as path_n:
+            await rsyscall.near.unlinkat(self.sysif, None, path_n, 0)
 
-    async def rmdir(self, ptr: WrittenPointer[Path]) -> None:
-        with ptr.borrow(self) as ptr_b:
-            await rsyscall.near.unlinkat(self.sysif, None, ptr_b.near, AT.REMOVEDIR)
+    async def rmdir(self, path: WrittenPointer[Path]) -> None:
+        with path.borrow(self) as path_n:
+            await rsyscall.near.unlinkat(self.sysif, None, path_n, AT.REMOVEDIR)
 
     async def link(self, oldpath: WrittenPointer[Path], newpath: WrittenPointer[Path]) -> None:
-        with oldpath.borrow(self) as oldpath_b:
-            with newpath.borrow(self) as newpath_b:
-                await rsyscall.near.linkat(self.sysif, None, oldpath_b.near, None, newpath_b.near, 0)
+        with oldpath.borrow(self) as oldpath_n:
+            with newpath.borrow(self) as newpath_n:
+                await rsyscall.near.linkat(self.sysif, None, oldpath_n, None, newpath_n, 0)
 
     async def rename(self, oldpath: WrittenPointer[Path], newpath: WrittenPointer[Path]) -> None:
-        with oldpath.borrow(self) as oldpath_b:
-            with newpath.borrow(self) as newpath_b:
-                await rsyscall.near.renameat2(self.sysif, None, oldpath_b.near, None, newpath_b.near, 0)
+        with oldpath.borrow(self) as oldpath_n:
+            with newpath.borrow(self) as newpath_n:
+                await rsyscall.near.renameat2(self.sysif, None, oldpath_n, None, newpath_n, 0)
 
     async def symlink(self, target: WrittenPointer, linkpath: WrittenPointer[Path]) -> None:
-        with target.borrow(self) as target_b:
-            with linkpath.borrow(self) as linkpath_b:
-                await rsyscall.near.symlinkat(self.sysif, target_b.near, None, linkpath_b.near)
+        with target.borrow(self) as target_n:
+            with linkpath.borrow(self) as linkpath_n:
+                await rsyscall.near.symlinkat(self.sysif, target_n, None, linkpath_n)
 
     async def chdir(self, path: WrittenPointer[Path]) -> None:
-        with path.borrow(self) as path_b:
-            await rsyscall.near.chdir(self.sysif, path_b.near)
+        with path.borrow(self) as path_n:
+            await rsyscall.near.chdir(self.sysif, path_n)
 
     async def fchdir(self, fd: FileDescriptor) -> None:
         with fd.borrow(self) as fd:
             await rsyscall.near.fchdir(self.sysif, fd.near)
 
     async def readlink(self, path: WrittenPointer[Path], buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        with path.borrow(self) as path_b:
-            with buf.borrow(self) as buf_b:
-                ret = await rsyscall.near.readlinkat(self.sysif, None, path_b.near, buf_b.near, buf_b.size())
+        with path.borrow(self) as path_n:
+            with buf.borrow(self) as buf_n:
+                ret = await rsyscall.near.readlinkat(self.sysif, None, path_n, buf_n, buf.size())
                 return buf.split(ret)
 
     async def signalfd(self, mask: Pointer[Sigset], flags: SFD=SFD.NONE) -> FileDescriptor:
-        with mask.borrow(self) as mask:
-            fd = await rsyscall.near.signalfd4(self.sysif, None, mask.near, mask.size(), flags|SFD.CLOEXEC)
+        with mask.borrow(self) as mask_n:
+            fd = await rsyscall.near.signalfd4(self.sysif, None, mask_n, mask.size(), flags|SFD.CLOEXEC)
             return self.make_fd_handle(fd)
 
     async def epoll_create(self, flags: EpollFlag=EpollFlag.NONE) -> FileDescriptor:
@@ -1024,18 +1019,18 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         return self.make_fd_handle(fd)
 
     async def memfd_create(self, name: WrittenPointer[Path], flags: MFD=MFD.NONE) -> FileDescriptor:
-        with name.borrow(self) as name_b:
-            fd = await rsyscall.near.memfd_create(self.sysif, name_b.near, flags|MFD.CLOEXEC)
+        with name.borrow(self) as name_n:
+            fd = await rsyscall.near.memfd_create(self.sysif, name_n, flags|MFD.CLOEXEC)
             return self.make_fd_handle(fd)
 
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:
-        with infop.borrow(self) as infop_b:
+        with infop.borrow(self) as infop_n:
             if rusage is None:
-                await rsyscall.near.waitid(self.sysif, None, infop_b.near, options, None)
+                await rsyscall.near.waitid(self.sysif, None, infop_n, options, None)
             else:
-                with rusage.borrow(self) as rusage_b:
-                    await rsyscall.near.waitid(self.sysif, None, infop_b.near, options, rusage_b.near)
+                with rusage.borrow(self) as rusage_n:
+                    await rsyscall.near.waitid(self.sysif, None, infop_n, options, rusage_n)
 
     async def pipe(self, buf: Pointer[Pipe], flags: O=O.NONE) -> Pointer[Pipe]:
         with buf.borrow(self):
@@ -1043,8 +1038,8 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             return buf
 
     async def socketpair(self, domain: AF, type: SOCK, protocol: int, sv: Pointer[Socketpair]) -> Pointer[Socketpair]:
-        with sv.borrow(self) as sv_b:
-            await rsyscall.near.socketpair(self.sysif, domain, type|SOCK.CLOEXEC, protocol, sv_b.near)
+        with sv.borrow(self) as sv_n:
+            await rsyscall.near.socketpair(self.sysif, domain, type|SOCK.CLOEXEC, protocol, sv_n)
             return sv
 
     async def execve(self, filename: WrittenPointer[Path],
@@ -1108,9 +1103,9 @@ class Task(SignalMaskTask, rsyscall.far.Task):
                                 "must be the same")
             stack.enter_context(stack_alloc.borrow(self))
             stack.enter_context(stack_data.borrow(self))
-            ptid_n = await self._borrow_optional(stack, ptid)
-            ctid_n = await self._borrow_optional(stack, ctid)
-            newtls_n = await self._borrow_optional(stack, newtls)
+            ptid_n = self._borrow_optional(stack, ptid)
+            ctid_n = self._borrow_optional(stack, ctid)
+            newtls_n = self._borrow_optional(stack, newtls)
             process = await rsyscall.near.clone(self.sysif, flags, stack_data.near, ptid_n,
                                                 ctid_n + ffi.offsetof('struct futex_node', 'futex') if ctid_n else None,
                                                 newtls_n)

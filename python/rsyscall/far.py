@@ -70,7 +70,7 @@ class Task:
     # TODO make separate child_pidns and use properly
     pidns: PidNamespace
 
-    async def _borrow_optional(self, stack: contextlib.ExitStack, ptr: t.Optional[Pointer]
+    def _borrow_optional(self, stack: contextlib.ExitStack, ptr: t.Optional[Pointer]
     ) -> t.Optional[rsyscall.near.Pointer]:
         if ptr is None:
             return None

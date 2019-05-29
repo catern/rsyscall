@@ -206,11 +206,11 @@ class SignalMaskTask(Task):
         with contextlib.ExitStack() as stack:
             newset_n: t.Optional[t.Tuple[HowSIG, near.Pointer]]
             if newset:
-                stack.enter_context(newset[1].borrow(self))
-                newset_n = newset[0], newset[1].near
+                newset_ptr_n = stack.enter_context(newset[1].borrow(self))
+                newset_n = newset[0], newset_ptr_n
             else:
                 newset_n = None
-            oldset_n = await self._borrow_optional(stack, oldset)
+            oldset_n = self._borrow_optional(stack, oldset)
             await near.rt_sigprocmask(self.sysif, newset_n, oldset_n, Sigset.sizeof())
         if oldset:
             return oldset
