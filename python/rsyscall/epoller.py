@@ -317,8 +317,11 @@ class FDStatus:
     a posedge for it, and we get a full buffer of data, then we won't get a posedge for it
     from epoll. This would cause various problems, including deadlocks if multiple threads
     were trying to read from the fd and one was blocked in epoll_wait, waiting for the
-    posedge. Therefore, don't read an fd until you've got the posedge from epoll; only get
-    your posedges from epoll, not by reading optimistically.
+    posedge.
+
+    Therefore, if you optimistically read an fd before getting a posedge from epoll, and
+    you successfully read some data, make sure to treat that as a posedge for EPOLL.IN.
+    Likewise with write and EPOLL.OUT, and any other event and the appropriate EPOLL bit.
 
     """
     mask: EPOLL
@@ -334,6 +337,10 @@ class AsyncFileDescriptor:
 
     Also comes with helpful methods to abstract over memory allocation; please try to
     avoid using them.
+
+    We always wait for a posedge to come back from epoll before trying to read. This is
+    not necessarily too pessimistic, because as soon as we have a single posedge, we will
+    keep reading in a loop, as long as data keeps coming through.
 
     """
     @staticmethod
