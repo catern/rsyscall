@@ -3825,6 +3825,10 @@ in rsyscall, you call syscalls *on* threads.
    it's much better for languages than older models
 
    new languages can implement this, instead of wrapping glibc!
+** hmmm, hmm, paper?
+   we could write a paper about this.
+   and submit it to a conference even.
+   it seems pretty novel.
 * explicitly modeling memory
 how would I do this?
 
