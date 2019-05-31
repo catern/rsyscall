@@ -98,6 +98,7 @@ class ReadBuffer:
         self.buf += data
 
     def read_struct(self, cls: t.Type[T_fixed_size]) -> t.Optional[T_fixed_size]:
+        "Read one fixed-size struct from the buffer, or return None if that's not possible"
         length = cls.sizeof()
         if length <= len(self.buf):
             section = self.buf[:length]
@@ -107,6 +108,7 @@ class ReadBuffer:
             return None
 
     def read_all_structs(self, cls: t.Type[T_fixed_size]) -> t.List[T_fixed_size]:
+        "Read as many fixed-size structs from the buffer as possible"
         ret: t.List[T_fixed_size] = []
         while True:
             x = self.read_struct(cls)
