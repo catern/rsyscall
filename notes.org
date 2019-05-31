@@ -19235,3 +19235,53 @@ in some sense the dynamic linker is the symantics for things...
    it's funny that the implementation of a function using continuations,
    using shift to get each argument,
    looks like the implementation of a function in bash, using shift to get each argument
+* interactivity thoughts
+> new theory about why shell is popular
+> I think it's a combination of 1. a good interactive interface that 2. has support for running everything (since everything has to be runnable as a program)
+> in support of this, I make the analogy to keyboard macros in vim or emacs
+> people use keyboard macros because they are fast to write
+> and they are already very familiar with the interactive interface, which is all they need to "write" a keyboard macro
+> the same reason they start to write shell scripts
+> if everything you could want to do had a keyboard shortcut in vim or emacs, I expect we would be seeing people scripting things by writing keyboard macros!
+> so from that standpoint, the thing to do isn't to add a really good interface for creating pipes or whatever in Python or Racket or whatever
+> the thing to do is to make a really good interactive interface that then is directly the same way you write automated scripts
+> (the thing to do if you want to supplant shell, I mean)
+> from this standpoint, the fact that shell is good at pipelines is ultimately irrelevant; it's that shell is good at being interactive that's most important
+> (pipelines, or whatever other shell feature you want to highlight)
+> you might want to also be good at pipelines because they have wide support, but you could also define your own new features, *as long as they're easily usable interactively*, and are widely supported (somehow)
+** more
+when you yank from a register, that's a variable read?
+no, better: yanking values from the kill ring, and moving in the kill ring, is stack programming
+kill ring is your stack
+maybe add lisp values to kill ring?
+
+one rsyscall thread per buffer?
+you create a buffer and maybe it has rsyscall-thread-mode,
+and you get a UI for mutating the thread
+and you have a keyboard shortcut for making those threads,
+and when you use it from a buffer you get a child.
+so you have a shortcut for making an ssh thread.
+(basically replace tramp)
+
+decompliing actions like tab to next into actual action
+like when i tab around the ui and then do something,
+i just want to get the actual something i did at the end.
+you could view it as a datastructure that i call next on,
+and eventually activate? does that let you decompile it?
+
+nice emacs interface with pipes and everything
+
+conditionals maybe could be, a sub-macro,
+where if the bell rings or there's an abort or whatever,
+it's false.
+
+try catch instead of conditional, basically
+you'd need a clever way to get the result out.
+
+yeah really you want to case.
+so you can get the value out.
+reducing to a boolean is absurd! boolean blindness..
+** callcc
+what would continuations be in this emacs interactive programming land?
+
+not even sure
