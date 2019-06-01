@@ -44,11 +44,17 @@ if t.TYPE_CHECKING:
     from rsyscall.signal import HowSIG, SIG
     import rsyscall.handle as handle
 
-#### SyscallInterface (segment register override prefix)
-# This is like the segment register override prefix, with no awareness of the contents of the register.
 class SyscallInterface:
-    logger: logging.Logger
+    """The lowest-level interface for an object which lets us send syscalls to some process
 
+    We send syscalls to a process, but nothing in this interface tells us anything about
+    the process to which we're sending syscalls; that information is maintained in the
+    Task, which contains an object matching this interface.
+
+    This is like the segment register override prefix, with no awareness of the contents
+    of the register.
+
+    """
     async def syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         """Send a syscall and wait for it to complete, throwing on error results
 
@@ -77,7 +83,7 @@ class SyscallInterface:
         Since most syscalls use this method, this guarantee applies to most syscalls.
 
         For callers who want to preserve the ability for their coroutine to be cancelled
-        even while waiting for a syscall response, the submit_syscall API can be used.
+        even while waiting for a syscall response, the `submit_syscall` API can be used.
 
         Note that this Python-level cancellation protection has nothing to do with
         actually cancelling a syscall. That ability is still preserved with this
@@ -103,25 +109,63 @@ class SyscallInterface:
             return result
 
     @abc.abstractmethod
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse: ...
+    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
+        """Submit a syscall without immediately waiting for its response to come back
+
+        By calling `receive` on SyscallResponse, the caller can wait for the response.
+
+        The primary purpose of this interface is to allow for cancellation. The `syscall`
+        method doesn't allow cancellation while waiting for a syscall response. This
+        method doesn't wait for the syscall response, and so can be used in scenarios
+        where we want to avoid blocking for unneeded syscall responses.
+
+        This interface is not for parallelization or concurrency. The `syscall` method can
+        already be called concurrently from multiple coroutines; using this method does
+        not give any improved performance characteristics compared to just spinning up
+        multiple coroutines to call `syscall` in parallel.
+
+        While this interface does allow the user to avoid blocking for the syscall
+        response, using that as an optimization is obviously a bad idea. For correctness,
+        you must eventually block for the syscall response to make sure the syscall
+        succeeded. Appropriate usage of coroutines allows continuing operation without
+        waiting for the syscall response even with `syscall`, while still enforcing that
+        eventually we will examine the response.
+
+        """
+        pass
+
     # non-syscall operations which we haven't figured out how to get rid of yet
+    logger: logging.Logger
+
     @abc.abstractmethod
-    async def close_interface(self) -> None: ...
-    # when this file descriptor is readable, it means other things want to run on this thread.
-    # Users of the SyscallInterface should ensure that when they block, they are monitoring this fd as well.
-    # Typically, this is in fact the fd which the rsyscall server reads for incoming system calls!
+    async def close_interface(self) -> None:
+        "Close this syscall interface, shutting down the connection to the remote process"
+        pass
+
     @abc.abstractmethod
-    def get_activity_fd(self) -> t.Optional[handle.FileDescriptor]: ...
+    def get_activity_fd(self) -> t.Optional[handle.FileDescriptor]:
+        """When this file descriptor is readable, it means other things want to run on this thread
+
+        Users of the SyscallInterface should ensure that when they block, they are
+        monitoring this fd as well.
+
+        Typically, this is the file descriptor which the rsyscall server reads for
+        incoming syscalls.
+
+        """
+        pass
 
 class SyscallResponse:
-    # Throws on negative return value
+    "A representation of the pending response to some syscall submitted through `submit_syscall`"
     @abc.abstractmethod
     async def receive(self) -> int:
+        "Wait for the corresponding syscall to complete and return its result, throwing on error results"
         pass
 
 #### Identifiers (near pointers)
 @dataclass(frozen=True)
 class FileDescriptor:
+    "The integer identifier for a file descriptor taken by many syscalls"
     number: int
 
     def __str__(self) -> str:
@@ -135,6 +179,7 @@ class FileDescriptor:
 
 @dataclass(frozen=True)
 class WatchDescriptor:
+    "The integer identifier for an inotify watch descriptor taken by inotify syscalls"
     number: int
 
     def __str__(self) -> str:
@@ -147,17 +192,18 @@ class WatchDescriptor:
         return self.number
 
 @dataclass
-class Pointer:
+class Address:
+    "The integer identifier for"
     address: int
 
-    def __add__(self, other: int) -> 'Pointer':
-        return Pointer(self.address + other)
+    def __add__(self, other: int) -> 'Address':
+        return Address(self.address + other)
 
-    def __sub__(self, other: int) -> 'Pointer':
-        return Pointer(self.address - other)
+    def __sub__(self, other: int) -> 'Address':
+        return Address(self.address - other)
 
     def __str__(self) -> str:
-        return f"Pointer({hex(self.address)})"
+        return f"Address({hex(self.address)})"
 
     def __repr__(self) -> str:
         return str(self)
@@ -176,8 +222,8 @@ class MemoryMapping:
         assert (self.address % self.page_size) == 0
         assert (self.length % self.page_size) == 0
 
-    def as_pointer(self) -> Pointer:
-        return Pointer(self.address)
+    def as_address(self) -> Address:
+        return Address(self.address)
 
     def __str__(self) -> str:
         if self.page_size == 4096:
@@ -282,28 +328,28 @@ class SYS(enum.IntEnum):
     write = lib.SYS_write
 
 async def accept4(sysif: SyscallInterface, sockfd: FileDescriptor,
-                  addr: t.Optional[Pointer], addrlen: t.Optional[Pointer], flags: int) -> FileDescriptor:
+                  addr: t.Optional[Address], addrlen: t.Optional[Address], flags: int) -> FileDescriptor:
     if addr is None:
         addr = 0 # type: ignore
     if addrlen is None:
         addrlen = 0 # type: ignore
     return FileDescriptor(await sysif.syscall(SYS.accept4, sockfd, addr, addrlen, flags))
 
-async def bind(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: int) -> None:
+async def bind(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Address, addrlen: int) -> None:
     await sysif.syscall(SYS.bind, sockfd, addr, addrlen)
 
-async def capget(sysif: SyscallInterface, hdrp: Pointer, datap: Pointer) -> None:
+async def capget(sysif: SyscallInterface, hdrp: Address, datap: Address) -> None:
     await sysif.syscall(SYS.capget, hdrp, datap)
 
-async def capset(sysif: SyscallInterface, hdrp: Pointer, datap: Pointer) -> None:
+async def capset(sysif: SyscallInterface, hdrp: Address, datap: Address) -> None:
     await sysif.syscall(SYS.capset, hdrp, datap)
 
-async def chdir(sysif: SyscallInterface, path: Pointer) -> None:
+async def chdir(sysif: SyscallInterface, path: Address) -> None:
     await sysif.syscall(SYS.chdir, path)
 
-async def clone(sysif: SyscallInterface, flags: int, child_stack: Pointer,
-                ptid: t.Optional[Pointer], ctid: t.Optional[Pointer],
-                newtls: t.Optional[Pointer]) -> Process:
+async def clone(sysif: SyscallInterface, flags: int, child_stack: Address,
+                ptid: t.Optional[Address], ctid: t.Optional[Address],
+                newtls: t.Optional[Address]) -> Process:
     # I don't use CLONE_THREAD, so I can say without confusion, that clone returns a Process.
     if child_stack is None:
         child_stack = 0 # type: ignore
@@ -318,7 +364,7 @@ async def clone(sysif: SyscallInterface, flags: int, child_stack: Pointer,
 async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
     await sysif.syscall(SYS.close, fd)
 
-async def connect(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: int) -> None:
+async def connect(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Address, addrlen: int) -> None:
     await sysif.syscall(SYS.connect, sockfd, addr, addrlen)
 
 async def dup3(sysif: SyscallInterface, oldfd: FileDescriptor, newfd: FileDescriptor, flags: int) -> None:
@@ -328,17 +374,17 @@ async def epoll_create(sysif: SyscallInterface, flags: int) -> FileDescriptor:
     return FileDescriptor(await sysif.syscall(SYS.epoll_create1, flags))
 
 async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: EPOLL_CTL,
-                    fd: FileDescriptor, event: t.Optional[Pointer]=None) -> None:
+                    fd: FileDescriptor, event: t.Optional[Address]=None) -> None:
     if event is None:
         event = 0 # type: ignore
     await sysif.syscall(SYS.epoll_ctl, epfd, op, fd, event)
 
-async def epoll_wait(sysif: SyscallInterface, epfd: FileDescriptor, events: Pointer, maxevents: int, timeout: int) -> int:
+async def epoll_wait(sysif: SyscallInterface, epfd: FileDescriptor, events: Address, maxevents: int, timeout: int) -> int:
     return (await sysif.syscall(SYS.epoll_wait, epfd, events, maxevents, timeout))
 
 async def execveat(sysif: SyscallInterface,
-                   dirfd: t.Optional[FileDescriptor], path: Pointer,
-                   argv: Pointer, envp: Pointer, flags: int) -> None:
+                   dirfd: t.Optional[FileDescriptor], path: Address,
+                   argv: Address, envp: Address, flags: int) -> None:
     logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
     if dirfd is None:
         dirfd = AT.FDCWD # type: ignore
@@ -360,7 +406,7 @@ async def exit(sysif: SyscallInterface, status: int) -> None:
         await sysif.syscall(SYS.exit, status)
 
 async def faccessat(sysif: SyscallInterface,
-                    dirfd: t.Optional[FileDescriptor], path: Pointer, flags: int, mode: int) -> None:
+                    dirfd: t.Optional[FileDescriptor], path: Address, flags: int, mode: int) -> None:
     if dirfd is None:
         dirfd = AT.FDCWD # type: ignore
     await sysif.syscall(SYS.faccessat, dirfd, path, flags, mode)
@@ -371,7 +417,7 @@ async def fchdir(sysif: SyscallInterface, fd: FileDescriptor) -> None:
 async def fchmod(sysif: SyscallInterface, fd: FileDescriptor, mode: int) -> None:
     await sysif.syscall(SYS.fchmod, fd, mode)
 
-async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: F, arg: t.Optional[t.Union[int, Pointer]]=None) -> int:
+async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: F, arg: t.Optional[t.Union[int, Address]]=None) -> int:
     logger.debug("fcntl(%s, %s, %s)", fd, cmd, arg)
     if arg is None:
         arg = 0
@@ -380,13 +426,13 @@ async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: F, arg: t.Opti
 async def ftruncate(sysif: SyscallInterface, fd: FileDescriptor, length: int) -> None:
     await sysif.syscall(SYS.ftruncate, fd, length)
 
-async def getdents64(sysif: SyscallInterface, fd: FileDescriptor, dirp: Pointer, count: int) -> int:
+async def getdents64(sysif: SyscallInterface, fd: FileDescriptor, dirp: Address, count: int) -> int:
     return (await sysif.syscall(SYS.getdents64, fd, dirp, count))
 
 async def getgid(sysif: SyscallInterface) -> int:
     return (await sysif.syscall(SYS.getgid))
 
-async def getpeername(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: Pointer) -> None:
+async def getpeername(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Address, addrlen: Address) -> None:
     await sysif.syscall(SYS.getpeername, sockfd, addr, addrlen)
 
 async def getpgid(sysif: SyscallInterface, pid: t.Optional[Process]) -> ProcessGroup:
@@ -394,16 +440,16 @@ async def getpgid(sysif: SyscallInterface, pid: t.Optional[Process]) -> ProcessG
         pid = 0 # type: ignore
     return ProcessGroup(await sysif.syscall(SYS.getpgid, pid))
 
-async def getsockname(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Pointer, addrlen: Pointer) -> None:
+async def getsockname(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Address, addrlen: Address) -> None:
     await sysif.syscall(SYS.getsockname, sockfd, addr, addrlen)
 
-async def getsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int, optname: int, optval: Pointer, optlen: Pointer) -> None:
+async def getsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int, optname: int, optval: Address, optlen: Address) -> None:
     await sysif.syscall(SYS.getsockopt, sockfd, level, optname, optval, optlen)
 
 async def getuid(sysif: SyscallInterface) -> int:
     return (await sysif.syscall(SYS.getuid))
 
-async def inotify_add_watch(sysif: SyscallInterface, fd: FileDescriptor, pathname: Pointer, mask: int) -> WatchDescriptor:
+async def inotify_add_watch(sysif: SyscallInterface, fd: FileDescriptor, pathname: Address, mask: int) -> WatchDescriptor:
     return WatchDescriptor(await sysif.syscall(SYS.inotify_add_watch, fd, pathname, mask))
 
 async def inotify_init(sysif: SyscallInterface, flags: int) -> FileDescriptor:
@@ -413,7 +459,7 @@ async def inotify_rm_watch(sysif: SyscallInterface, fd: FileDescriptor, wd: Watc
     await sysif.syscall(SYS.inotify_rm_watch, fd, wd)
 
 async def ioctl(sysif: SyscallInterface, fd: FileDescriptor, request: int,
-                arg: t.Optional[t.Union[int, Pointer]]=None) -> int:
+                arg: t.Optional[t.Union[int, Address]]=None) -> int:
     if arg is None:
         arg = 0
     return (await sysif.syscall(SYS.ioctl, fd, request, arg))
@@ -424,8 +470,8 @@ async def kill(sysif: SyscallInterface, pid: t.Union[Process, ProcessGroup], sig
     await sysif.syscall(SYS.kill, pid, sig)
 
 async def linkat(sysif: SyscallInterface,
-                 olddirfd: t.Optional[FileDescriptor], oldpath: Pointer,
-                 newdirfd: t.Optional[FileDescriptor], newpath: Pointer,
+                 olddirfd: t.Optional[FileDescriptor], oldpath: Address,
+                 newdirfd: t.Optional[FileDescriptor], newpath: Address,
                  flags: int) -> None:
     if olddirfd is None:
         olddirfd = AT.FDCWD # type: ignore
@@ -439,18 +485,18 @@ async def listen(sysif: SyscallInterface, sockfd: FileDescriptor, backlog: int) 
 async def lseek(sysif: SyscallInterface, fd: FileDescriptor, offset: int, whence: int) -> int:
     return (await sysif.syscall(SYS.lseek, fd, offset, whence))
 
-async def memfd_create(sysif: SyscallInterface, name: Pointer, flags: int) -> FileDescriptor:
+async def memfd_create(sysif: SyscallInterface, name: Address, flags: int) -> FileDescriptor:
     ret = await sysif.syscall(SYS.memfd_create, name, flags)
     return FileDescriptor(ret)
 
 async def mkdirat(sysif: SyscallInterface,
-                  dirfd: t.Optional[FileDescriptor], path: Pointer, mode: int) -> None:
+                  dirfd: t.Optional[FileDescriptor], path: Address, mode: int) -> None:
     if dirfd is None:
         dirfd = AT.FDCWD # type: ignore
     await sysif.syscall(SYS.mkdirat, dirfd, path, mode)
 
 async def mmap(sysif: SyscallInterface, length: int, prot: int, flags: int,
-               addr: t.Optional[Pointer]=None, 
+               addr: t.Optional[Address]=None, 
                fd: t.Optional[FileDescriptor]=None, offset: int=0,
                page_size: int=4096) -> MemoryMapping:
     if addr is None:
@@ -465,21 +511,21 @@ async def mmap(sysif: SyscallInterface, length: int, prot: int, flags: int,
     ret = await sysif.syscall(SYS.mmap, addr, length, prot, flags, fd, offset)
     return MemoryMapping(address=ret, length=length, page_size=page_size)
 
-async def mount(sysif: SyscallInterface, source: Pointer, target: Pointer,
-                filesystemtype: Pointer, mountflags: int,
-                data: Pointer) -> None:
+async def mount(sysif: SyscallInterface, source: Address, target: Address,
+                filesystemtype: Address, mountflags: int,
+                data: Address) -> None:
     await sysif.syscall(SYS.mount, source, target, filesystemtype, mountflags, data)
 
 async def munmap(sysif: SyscallInterface, mapping: MemoryMapping) -> None:
     await sysif.syscall(SYS.munmap, mapping.address, mapping.length)
 
 async def openat(sysif: SyscallInterface, dirfd: t.Optional[FileDescriptor],
-                 path: Pointer, flags: int, mode: int) -> FileDescriptor:
+                 path: Address, flags: int, mode: int) -> FileDescriptor:
     if dirfd is None:
         dirfd = AT.FDCWD # type: ignore
     return FileDescriptor(await sysif.syscall(SYS.openat, dirfd, path, flags, mode))
 
-async def pipe2(sysif: SyscallInterface, pipefd: Pointer, flags: int) -> None:
+async def pipe2(sysif: SyscallInterface, pipefd: Address, flags: int) -> None:
     await sysif.syscall(SYS.pipe2, pipefd, flags)
 
 async def prctl(sysif: SyscallInterface, option: PR, arg2: int,
@@ -492,34 +538,34 @@ async def prctl(sysif: SyscallInterface, option: PR, arg2: int,
         arg5 = 0
     return (await sysif.syscall(SYS.prctl, option, arg2, arg3, arg4, arg5))
 
-async def pread(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int, offset: int) -> int:
+async def pread(sysif: SyscallInterface, fd: FileDescriptor, buf: Address, count: int, offset: int) -> int:
     return (await sysif.syscall(SYS.pread64, fd, buf, count, offset))
 
-async def preadv2(sysif: SyscallInterface, fd: FileDescriptor, iov: Pointer, iovcnt: int, offset: int, flags: RWF) -> int:
+async def preadv2(sysif: SyscallInterface, fd: FileDescriptor, iov: Address, iovcnt: int, offset: int, flags: RWF) -> int:
     return (await sysif.syscall(SYS.preadv2, fd, iov, iovcnt, offset, flags))
 
-async def pwritev2(sysif: SyscallInterface, fd: FileDescriptor, iov: Pointer, iovcnt: int, offset: int, flags: RWF) -> int:
+async def pwritev2(sysif: SyscallInterface, fd: FileDescriptor, iov: Address, iovcnt: int, offset: int, flags: RWF) -> int:
     return (await sysif.syscall(SYS.pwritev2, fd, iov, iovcnt, offset, flags))
 
-async def read(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int) -> int:
+async def read(sysif: SyscallInterface, fd: FileDescriptor, buf: Address, count: int) -> int:
     return (await sysif.syscall(SYS.read, fd, buf, count))
 
 async def readlinkat(sysif: SyscallInterface,
-                     dirfd: t.Optional[FileDescriptor], path: Pointer,
-                     buf: Pointer, bufsiz: int) -> int:
+                     dirfd: t.Optional[FileDescriptor], path: Address,
+                     buf: Address, bufsiz: int) -> int:
     if dirfd is None:
         dirfd = AT.FDCWD # type: ignore
     return (await sysif.syscall(SYS.readlinkat, dirfd, path, buf, bufsiz))
 
-async def recv(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int, flags: int) -> int:
+async def recv(sysif: SyscallInterface, fd: FileDescriptor, buf: Address, count: int, flags: int) -> int:
     return (await sysif.syscall(SYS.recvfrom, fd, buf, count, flags))
 
-async def recvmsg(sysif: SyscallInterface, fd: FileDescriptor, msg: Pointer, flags: int) -> int:
+async def recvmsg(sysif: SyscallInterface, fd: FileDescriptor, msg: Address, flags: int) -> int:
     return (await sysif.syscall(SYS.recvmsg, fd, msg, flags))
 
 async def renameat2(sysif: SyscallInterface,
-                    olddirfd: t.Optional[FileDescriptor], oldpath: Pointer,
-                    newdirfd: t.Optional[FileDescriptor], newpath: Pointer,
+                    olddirfd: t.Optional[FileDescriptor], oldpath: Address,
+                    newdirfd: t.Optional[FileDescriptor], newpath: Address,
                     flags: int) -> None:
     if olddirfd is None:
         olddirfd = AT.FDCWD # type: ignore
@@ -528,8 +574,8 @@ async def renameat2(sysif: SyscallInterface,
     await sysif.syscall(SYS.renameat2, olddirfd, oldpath, newdirfd, newpath, flags)
 
 async def rt_sigaction(sysif: SyscallInterface, signum: SIG,
-                       act: t.Optional[Pointer],
-                       oldact: t.Optional[Pointer],
+                       act: t.Optional[Address],
+                       oldact: t.Optional[Address],
                        size: int) -> None:
     if act is None:
         act = 0 # type: ignore
@@ -538,8 +584,8 @@ async def rt_sigaction(sysif: SyscallInterface, signum: SIG,
     await sysif.syscall(SYS.rt_sigaction, signum, act, oldact, size)
 
 async def rt_sigprocmask(sysif: SyscallInterface,
-                         newset: t.Optional[t.Tuple[HowSIG, Pointer]],
-                         oldset: t.Optional[Pointer],
+                         newset: t.Optional[t.Tuple[HowSIG, Address]],
+                         oldset: t.Optional[Address],
                          sigsetsize: int) -> None:
     if newset is not None:
         how, set = newset
@@ -549,13 +595,13 @@ async def rt_sigprocmask(sysif: SyscallInterface,
         oldset = 0 # type: ignore
     await sysif.syscall(SYS.rt_sigprocmask, how, set, oldset, sigsetsize)
 
-async def sendmsg(sysif: SyscallInterface, fd: FileDescriptor, msg: Pointer, flags: int) -> int:
+async def sendmsg(sysif: SyscallInterface, fd: FileDescriptor, msg: Address, flags: int) -> int:
     return (await sysif.syscall(SYS.sendmsg, fd, msg, flags))
 
-async def set_robust_list(sysif: SyscallInterface, head: Pointer, len: int) -> None:
+async def set_robust_list(sysif: SyscallInterface, head: Address, len: int) -> None:
     await sysif.syscall(SYS.set_robust_list, head, len)
 
-async def set_tid_address(sysif: SyscallInterface, ptr: Pointer) -> None:
+async def set_tid_address(sysif: SyscallInterface, ptr: Address) -> None:
     await sysif.syscall(SYS.set_tid_address, ptr)
 
 async def setns(sysif: SyscallInterface, fd: FileDescriptor, nstype: int) -> None:
@@ -572,14 +618,14 @@ async def setsid(sysif: SyscallInterface) -> int:
     return (await sysif.syscall(SYS.setsid))
 
 async def setsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int, optname: int,
-                     optval: Pointer, optlen: int) -> None:
+                     optval: Address, optlen: int) -> None:
     await sysif.syscall(SYS.setsockopt, sockfd, level, optname, optval, optlen)
 
 async def shutdown(sysif: SyscallInterface, sockfd: FileDescriptor, how: SHUT) -> None:
     await sysif.syscall(SYS.shutdown, sockfd, how)
 
 async def signalfd4(sysif: SyscallInterface, fd: t.Optional[FileDescriptor],
-                    mask: Pointer, sizemask: int, flags: int) -> FileDescriptor:
+                    mask: Address, sizemask: int, flags: int) -> FileDescriptor:
     if fd is None:
         fd = -1 # type: ignore
     return FileDescriptor(await sysif.syscall(SYS.signalfd4, fd, mask, sizemask, flags))
@@ -587,17 +633,17 @@ async def signalfd4(sysif: SyscallInterface, fd: t.Optional[FileDescriptor],
 async def socket(sysif: SyscallInterface, domain: int, type: int, protocol: int) -> FileDescriptor:
     return FileDescriptor(await sysif.syscall(SYS.socket, domain, type, protocol))
 
-async def socketpair(sysif: SyscallInterface, domain: int, type: int, protocol: int, sv: Pointer) -> None:
+async def socketpair(sysif: SyscallInterface, domain: int, type: int, protocol: int, sv: Address) -> None:
     await sysif.syscall(SYS.socketpair, domain, type, protocol, sv)
 
 async def symlinkat(sysif: SyscallInterface,
-                    target: Pointer, newdirfd: t.Optional[FileDescriptor], linkpath: Pointer) -> None:
+                    target: Address, newdirfd: t.Optional[FileDescriptor], linkpath: Address) -> None:
     if newdirfd is None:
         newdirfd = AT.FDCWD # type: ignore
     await sysif.syscall(SYS.symlinkat, target, newdirfd, linkpath)
 
 async def unlinkat(sysif: SyscallInterface,
-                   dirfd: t.Optional[FileDescriptor], path: Pointer, flags: int) -> None:
+                   dirfd: t.Optional[FileDescriptor], path: Address, flags: int) -> None:
     if dirfd is None:
         dirfd = AT.FDCWD # type: ignore
     await sysif.syscall(SYS.unlinkat, dirfd, path, flags)
@@ -606,8 +652,8 @@ async def unshare(sysif: SyscallInterface, flags: CLONE) -> None:
     await sysif.syscall(SYS.unshare, flags)
 
 async def waitid(sysif: SyscallInterface,
-                 id: t.Union[Process, ProcessGroup, None], infop: t.Optional[Pointer], options: int,
-                 rusage: t.Optional[Pointer]) -> int:
+                 id: t.Union[Process, ProcessGroup, None], infop: t.Optional[Address], options: int,
+                 rusage: t.Optional[Address]) -> int:
     logger.debug("waitid(%s, %s, %s, %s)", id, infop, options, rusage)
     if isinstance(id, Process):
         idtype = IdType.PID
@@ -624,6 +670,6 @@ async def waitid(sysif: SyscallInterface,
         rusage = 0 # type: ignore
     return (await sysif.syscall(SYS.waitid, idtype, id, infop, options, rusage))
 
-async def write(sysif: SyscallInterface, fd: FileDescriptor, buf: Pointer, count: int) -> int:
+async def write(sysif: SyscallInterface, fd: FileDescriptor, buf: Address, count: int) -> int:
     return (await sysif.syscall(SYS.write, fd, buf, count))
 

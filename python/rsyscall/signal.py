@@ -152,10 +152,10 @@ class Sigset(t.Set[SIG], Struct):
 @dataclass
 class Sigaction(Struct):
     "struct sigaction, passed to and returned from the sigaction syscall"
-    handler: t.Union[Sighandler, near.Pointer]
+    handler: t.Union[Sighandler, near.Address]
     flags: SA = SA(0)
     mask: Sigset = field(default_factory=Sigset)
-    restorer: t.Optional[near.Pointer] = None
+    restorer: t.Optional[near.Address] = None
 
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct kernel_sigaction const*', {
@@ -169,18 +169,18 @@ class Sigaction(Struct):
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct kernel_sigaction const*', ffi.from_buffer(data))
-        handler: t.Union[Sighandler, near.Pointer]
+        handler: t.Union[Sighandler, near.Address]
         int_handler = int(ffi.cast('long int', struct.ksa_handler))
         try:
             handler = Sighandler(int_handler)
         except ValueError:
-            handler = near.Pointer(int_handler)
+            handler = near.Address(int_handler)
         int_restorer = int(ffi.cast('long int', struct.ksa_restorer))
         return cls(
             handler=handler,
             flags=SA(struct.ksa_flags),
             mask=Sigset.from_cffi(struct.ksa_mask),
-            restorer=near.Pointer(int_restorer) if int_restorer else None,
+            restorer=near.Address(int_restorer) if int_restorer else None,
         )
 
     @classmethod
@@ -204,7 +204,7 @@ class SignalMaskTask(Task):
                            oldset: t.Optional[Pointer[Sigset]]=None) -> t.Optional[Pointer[Sigset]]:
         "The low-level implementation of sigprocmask, without any tracking of our current sigmask"
         with contextlib.ExitStack() as stack:
-            newset_n: t.Optional[t.Tuple[HowSIG, near.Pointer]]
+            newset_n: t.Optional[t.Tuple[HowSIG, near.Address]]
             if newset:
                 newset_ptr_n = stack.enter_context(newset[1].borrow(self))
                 newset_n = newset[0], newset_ptr_n
@@ -316,7 +316,7 @@ class TestSignal(TestCase):
         self.assertEqual(initial, output)
 
     def test_sigaction(self) -> None:
-        sa = Sigaction(Sighandler.IGN, SA(0), Sigset(), near.Pointer(0x42))
+        sa = Sigaction(Sighandler.IGN, SA(0), Sigset(), near.Address(0x42))
         out_sa = Sigaction.from_bytes(sa.to_bytes())
         self.assertEqual(sa.handler, out_sa.handler)
         self.assertEqual(sa.flags, out_sa.flags)
@@ -325,7 +325,7 @@ class TestSignal(TestCase):
 
         sa = Sigaction(Sighandler.DFL, SA.RESTART|SA.RESETHAND,
                        Sigset({SIG.INT, SIG.TERM}),
-                       near.Pointer(0))
+                       near.Address(0))
         out_sa = Sigaction.from_bytes(sa.to_bytes())
         self.assertEqual(sa.handler, out_sa.handler)
         self.assertEqual(sa.flags, out_sa.flags)

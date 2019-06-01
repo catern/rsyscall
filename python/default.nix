@@ -32,6 +32,7 @@ buildPythonPackage {
   src = ./.;
   # doCheck = false;
   checkInputs = [
+  pydocstyle
   (mypy.overrideAttrs (_: { src = /home/sbaugh/.local/src/mypy; }))
   typing-extensions
 pytest ];

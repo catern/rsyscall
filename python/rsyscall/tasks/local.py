@@ -104,6 +104,13 @@ class LocalMemoryTransport(handle.MemoryTransport):
         return ret
 
 async def _make_local_thread() -> Thread:
+    """Create the local thread, allocating various resources locally
+
+    For the most part, the local thread is like any other thread; it just bootstraps
+    differently, and uses syscall and memory interfaces which are specialized to the local
+    thread.
+
+    """
     process = near.Process(os.getpid())
     task = Task(
         LocalSyscall(), process, far.FDTable(process.id),
@@ -142,3 +149,4 @@ async def _initialize() -> Thread:
     return thr
 
 thread: Thread = trio.run(_initialize)
+"The local thread, fully initialized at import time"

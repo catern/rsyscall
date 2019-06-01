@@ -71,7 +71,7 @@ class Task:
     pidns: PidNamespace
 
     def _borrow_optional(self, stack: contextlib.ExitStack, ptr: t.Optional[Pointer]
-    ) -> t.Optional[rsyscall.near.Pointer]:
+    ) -> t.Optional[rsyscall.near.Address]:
         if ptr is None:
             return None
         else:

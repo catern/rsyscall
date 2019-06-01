@@ -9,9 +9,11 @@ class TrioTestCase(unittest.TestCase):
     nursery: Nursery
 
     async def asyncSetUp(self) -> None:
+        "Asynchronously set up resources for tests in this TestCase"
         pass
 
     async def asyncTearDown(self) -> None:
+        "Asynchronously clean up resources for tests in this TestCase"
         pass
 
     def __init__(self, methodName='runTest') -> None:

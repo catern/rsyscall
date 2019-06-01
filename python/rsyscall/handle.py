@@ -173,7 +173,7 @@ class Pointer(t.Generic[T]):
             return left + self
 
     @property
-    def near(self) -> rsyscall.near.Pointer:
+    def near(self) -> rsyscall.near.Address:
         """Return the raw memory address referred to by this Pointer
 
         This is mostly used by syscalls and passed to the kernel, so that the kernel knows the start
@@ -185,7 +185,7 @@ class Pointer(t.Generic[T]):
         return self._get_raw_near()
 
     @contextlib.contextmanager
-    def borrow(self, task: rsyscall.far.Task) -> t.Iterator[rsyscall.near.Pointer]:
+    def borrow(self, task: rsyscall.far.Task) -> t.Iterator[rsyscall.near.Address]:
         """Pin the address of this pointer, and yield the pointer's raw memory address
 
         We validate this pointer, and pin it in memory so that it can't be moved or deleted while
@@ -245,9 +245,9 @@ class Pointer(t.Generic[T]):
         written = await write_buf.write(value)
         return rest, written
 
-    def _get_raw_near(self) -> rsyscall.near.Pointer:
+    def _get_raw_near(self) -> rsyscall.near.Address:
         # only for printing purposes
-        return self.mapping.near.as_pointer() + self.allocation.offset()
+        return self.mapping.near.as_address() + self.allocation.offset()
 
     def __repr__(self) -> str:
         if self.valid:

@@ -43,7 +43,7 @@ class Trampoline(Borrowable):
             raise Exception("only six arguments can be passed via trampoline")
 
     def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
-        "Borrows the function pointer and the arguments"
+        "Borrow the function pointer and the arguments"
         stack.enter_context(self.function.borrow(task))
         for arg in self.args:
             if isinstance(arg, int):
@@ -103,6 +103,12 @@ class NativeFunctionSerializer(Serializer[NativeFunction]):
 
 @dataclass
 class NativeLoader:
+    """Loads native code object into memory where they can be called
+
+    At the moment we don't actually load though - we just hardcode a
+    set of available symbols that we use.
+
+    """
     server_func: Pointer[NativeFunction]
     persistent_server_func: Pointer[NativeFunction]
     trampoline_func: Pointer[NativeFunction]

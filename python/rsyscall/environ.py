@@ -22,7 +22,7 @@ from rsyscall.unistd import OK
 
 T = t.TypeVar('T')
 def chunks(lst: t.List[T], size: int) -> t.Iterator[t.List[T]]:
-    """Yields chunks of `lst`, at most `size` long
+    """Yield chunks of `lst`, at most `size` long
 
     Thanks Stack Overflow
 

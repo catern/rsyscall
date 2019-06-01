@@ -9,6 +9,7 @@ import typing as t
 
 @dataclass
 class BaseSyscallResponse(SyscallResponse):
+    "A pending response to a syscall, which polls for the actual response by repeatedly calling a function"
     process_responses: t.Any
     response: ConnectionResponse
 
