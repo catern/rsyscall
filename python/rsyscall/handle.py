@@ -1,4 +1,21 @@
-"Classes which own resources and provide the main syscall interfaces"
+"""Classes which own resources and provide the main syscall interfaces
+
+We have several resource-owning classes in this file: FileDescriptor, Pointer, Process,
+MemoryMapping, etc.
+
+In the analogy to near and far pointers, they are like a near pointer plus a segment
+register. A more useful analogy is to "handles" from classic Mac OS/PalmOS/16-bit Windows
+memory management. Like handles, these classes are locked on use with the "borrow" context
+manager, and they are weakly "relocatable", in that they continue to be valid as the
+task's segment ids (namespaces) change. See:
+https://en.wikipedia.org/wiki/Mac_OS_memory_management
+
+However, unlike the MacOS handles that are the origin of the name of this module, these
+resource-owning classes are garbage collected. Garbage collection should be relied on and
+preferred over context managers or explicit closing, which are both far too inflexible for
+large scale resource management.
+
+"""
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass, field
@@ -93,7 +110,7 @@ class Pointer(t.Generic[T]):
 
     async def write(self, value: T) -> WrittenPointer[T]:
         "Write this value to this pointer, consuming it and returning a new WrittenPointer"
-        self.validate()
+        self._validate()
         value_bytes = self.serializer.to_bytes(value)
         if len(value_bytes) > self.size():
             raise Exception("value_bytes is too long", len(value_bytes),
@@ -103,7 +120,7 @@ class Pointer(t.Generic[T]):
 
     async def read(self) -> T:
         "Read the value pointed to by this pointer"
-        self.validate()
+        self._validate()
         value = await self.transport.read(self)
         return self.serializer.from_bytes(value)
 
@@ -125,7 +142,7 @@ class Pointer(t.Generic[T]):
         both parts.
 
         """
-        self.validate()
+        self._validate()
         # TODO uhhhh if split throws an exception... don't we need to free... or something...
         self.valid = False
         # TODO we should only allow split if we are the only reference to this allocation
@@ -143,8 +160,8 @@ class Pointer(t.Generic[T]):
         This is primarily used by the user to re-assemble a buffer that was split by a syscall.
 
         """
-        self.validate()
-        ptr.validate()
+        self._validate()
+        ptr._validate()
         # TODO should assert that these two pointers both serialize the same thing
         # although they could be different types of serializers...
         self.valid = False
@@ -179,7 +196,7 @@ class Pointer(t.Generic[T]):
 
         """
         # TODO hmm should maybe validate that this fits in the bounds of the mapping I guess
-        self.validate()
+        self._validate()
         return self._get_raw_near()
 
     @contextlib.contextmanager
@@ -198,16 +215,23 @@ class Pointer(t.Generic[T]):
         # while it's being borrowed.
         # TODO rename this to pinned
         # TODO make this the only way to get .near
-        self.validate()
+        self._validate()
         if task.address_space != self.mapping.task.address_space:
             raise rsyscall.far.AddressSpaceMismatchError(task.address_space, self.mapping.task.address_space)
         yield self.near
 
-    def validate(self) -> None:
+    def _validate(self) -> None:
         if not self.valid:
             raise Exception("handle is no longer valid")
 
     def free(self) -> None:
+        """Free this pointer, invalidating it and releasing the underlying allocation.
+
+        It isn't necessary to explicitly call this, because the pointer will be freed on
+        GC. But you can call it anyway if, for example, the pointer will be referenced for
+        long after it is done being used.
+
+        """
         if self.valid:
             self.valid = False
             self.allocation.free()
@@ -266,7 +290,7 @@ class Pointer(t.Generic[T]):
         # - break our linearity constraint on pointers, allowing multiple pointers for the same allocation;
         #   this is difficult because split() is only easy to implement due to linearity.
         # right here, we just linearly move the pointer to a new mapping
-        self.validate()
+        self._validate()
         self.valid = False
         return type(self)(mapping, self.transport, self.serializer, self.allocation)
 
@@ -277,7 +301,7 @@ class Pointer(t.Generic[T]):
         # TODO how can we check to make sure we don't reinterpret in wacky ways?
         # maybe we should only be able to reinterpret in ways that are allowed by the serializer?
         # so maybe it's a method on the Serializer? cast_to(Type)?
-        self.validate()
+        self._validate()
         self.valid = False
         return Pointer(self.mapping, self.transport, serializer, self.allocation)
 
@@ -329,56 +353,73 @@ class WrittenPointer(Pointer[T_co]):
         if mapping.file is not self.mapping.file:
             raise Exception("can only move pointer between two mappings of the same file")
         # see notes in Pointer._with_mapping
-        self.validate()
+        self._validate()
         self.valid = False
         return type(self)(mapping, self.transport, self.value, self.serializer, self.allocation)
 
 
 ################################################################################
 #### File descriptors ####
-# This is like a near pointer plus a segment register.
-# We guarantee that, as long as this pointer is valid,
-# we're able to access the object behind this pointer.
-# I'll call it... an active pointer.
-# Aha! No, this is something with a precise name, in fact.
-# This is... a handle.
-# In the sense of classic Mac OS/PalmOS/16-bit Windows memory management.
-# It is useful for several reasons:
-
-# 1. When a task changes segments through unshare, which makes a new segment by
-# making a copy of the old segment, the existing handles associated with that
-# task stay valid. Their near pointers point to the same thing in the new
-# segment as they pointed to in the old segment.
-
-# 2. When a task changes segments through setns, existing handles associated
-# with that task can be invalidated, as they are no longer usable in the new
-# segment, which is totally unrelated. New handles for the task in the new
-# namespace either have to be created from pre-existing handles held by other
-# tasks in the new namespace, or bootstrapped from scratch.
-
-# 3. When the last remaining valid handle referencing a specific far pointer is
-# invalidated, we can close that far pointer using the task in that handle.
-
-# 4. [Future work] Handles can be automatically invalidated on
-# __del__; if the handle is the last remaining valid one, the close
-# action mentioned above would be added to a queue and performed
-# asynchronously by a periodic garbage collection coroutine. This
-# queue would be flushed whenever a task changes segments or exits.
-
-# 5. Instead of passing both a task and a far pointer as two arguments
-# to a function, a handle (which contains both) can be passed, which
-# is much more convenient.
-
-# We don't want elementwise equality, because each instance of this
-# should be treated as a separate reference to the file descriptor;
-# only if all the instances are invalid can we close the fd.
 @dataclass(eq=False)
 class FileDescriptor:
+    """A file descriptor accessed through some Task, with most FD-based syscalls as methods
+
+    A FileDescriptor represents the ability to use some open file through some task.  When
+    an open file is created by some task, the syscall will return a FileDescriptor which
+    allows accessing that open file through that task. Pipes, sockets, and many other
+    entities on Linux are represented as files.
+
+    A FileDescriptor has many methods to make syscalls; most syscalls which take a file
+    descriptor as their first argument are present as a method on FileDescriptor. These
+    syscalls will be made through the Task in the FileDescriptor's `task` field.
+
+    After we have opened the file and performed some operations on it, we can call the
+    close method to immediately close the FileDescriptor and free its resources. The
+    FileDescriptor will also be automatically closed in the background after the
+    FileDescriptor has been garbage collected. Garbage collection should be relied on and
+    preferred over context managers or explicit closing, which are both too inflexible for
+    large scale resource management.
+
+    If we want to access the file from another task, we may call the for_task method on
+    the FileDescriptor, passing the other task from which we want to access the file.
+    This will return another FileDescriptor referencing that file.  This will only work if
+    the two tasks are in the same file descriptor table; that is typically the case for
+    most scenarios and most kinds of threads. If the tasks are not in the same file
+    descriptor table, more complicated methods must be used to pass the FileDescriptor to
+    the other task; for example, CmsgSCMRights.
+
+    Once we've called for_task at least once, we'll have multiple FileDescriptors all
+    referencing the same file. Assuming the tasks have not exited, exec'd, or otherwise
+    unshared their file descriptor table, these FileDescriptors will be sharing the same
+    underlying near.FileDescriptor in the same file descriptor table. If that's the case,
+    then we can no longer call the close method on any one FileDescriptor, because that
+    would close the underlying near.FileDescriptor, and break the other FileDescriptors
+    using it.
+
+    Instead, we must use the invalidate method to invalidate just our FileDescriptor
+    without affecting any others. Only when invalidate is called on the last
+    FileDescriptor will the file be closed. We can also still rely on the garbage
+    collector to close the underlying near.FileDescriptor once all the FileDescriptors
+    using it have been garbage collected.
+
+    If a task calls unshare(CLONE.FILES) to change its file descriptor table, all the
+    FileDescriptors which access files through that task remain valid. Linux will copy all
+    the file descriptors from the old file descriptor table to the new file descriptor
+    table, keeping the same numbers. The FileDescriptors for that task will still be
+    referencing the same file, but through different file descriptors in a new file
+    descriptor table. Since the file descriptor numbers do not change, near.FileDescriptor
+    will not change either, and no actual change is required in the FileDescriptors. See
+    Task.unshare_files for more details.
+
+    Garbage collection is currently run when we change file descriptor tables, as well as
+    on-demand when run_fd_table_gc is run.
+
+    """
     task: Task
     near: rsyscall.near.FileDescriptor
     valid: bool = True
 
-    def validate(self) -> None:
+    def _validate(self) -> None:
         if not self.valid:
             raise Exception("handle is no longer valid")
 
@@ -400,6 +441,8 @@ class FileDescriptor:
 
         Returns true if we removed the last reference, and closed the FD.
 
+        We'll use the task inside the last file descriptor to be invalidated to actually
+        do the close.
         """
         if self._invalidate():
             # we were the last handle for this fd, we should close it
@@ -439,6 +482,9 @@ class FileDescriptor:
         if self.task == task:
             yield self.near
         else:
+            # note that we can't immediately change this to not use for_task,
+            # because we need to get an FD which stays in the same fd table as task,
+            # even if the task owning the FD we're borrowing switches fd tables
             borrowed = self.for_task(task)
             try:
                 yield borrowed.near
@@ -498,7 +544,7 @@ class FileDescriptor:
         return fd_table_to_near_to_handles[self.task.fd_table][self.near]
 
     def is_only_handle(self) -> bool:
-        self.validate()
+        self._validate()
         return len(self._get_global_handles()) == 1
 
     def _remove_from_tracking(self) -> t.List[FileDescriptor]:
@@ -544,13 +590,13 @@ class FileDescriptor:
         return int(self.near)
 
     async def read(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        self.validate()
+        self._validate()
         with buf.borrow(self.task) as buf_n:
             ret = await rsyscall.near.read(self.task.sysif, self.near, buf_n, buf.size())
             return buf.split(ret)
 
     async def pread(self, buf: Pointer, offset: int) -> t.Tuple[Pointer, Pointer]:
-        self.validate()
+        self._validate()
         with buf.borrow(self.task):
             ret = await rsyscall.near.pread(self.task.sysif, self.near, buf.near, buf.size(), offset)
             return buf.split(ret)
@@ -573,7 +619,7 @@ class FileDescriptor:
             return split_iovec(iov, ret)
 
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        self.validate()
+        self._validate()
         with buf.borrow(self.task) as buf_n:
             ret = await rsyscall.near.write(self.task.sysif, self.near, buf_n, buf.size())
             return buf.split(ret)
@@ -610,17 +656,17 @@ class FileDescriptor:
         return valid, invalid, msg.value.to_out(msg)
 
     async def recv(self, buf: Pointer, flags: int) -> t.Tuple[Pointer, Pointer]:
-        self.validate()
+        self._validate()
         with buf.borrow(self.task) as buf_n:
             ret = await rsyscall.near.recv(self.task.sysif, self.near, buf_n, buf.size(), flags)
             return buf.split(ret)
 
     async def lseek(self, offset: int, whence: SEEK) -> int:
-        self.validate()
+        self._validate()
         return (await rsyscall.near.lseek(self.task.sysif, self.near, offset, whence))
 
     async def ftruncate(self, length: int) -> None:
-        self.validate()
+        self._validate()
         await rsyscall.near.ftruncate(self.task.sysif, self.near, length)
 
     async def mmap(self, length: int, prot: PROT, flags: MAP,
@@ -628,7 +674,7 @@ class FileDescriptor:
                    page_size: int=4096,
                    file: File=None,
     ) -> MemoryMapping:
-        self.validate()
+        self._validate()
         if file is None:
             file = File()
         ret = await rsyscall.near.mmap(self.task.sysif, length, prot, flags,
@@ -642,7 +688,7 @@ class FileDescriptor:
     # oldfd has to be a valid file descriptor. newfd is not, technically, required to be
     # open, but that's the best practice for avoiding races, so we require it anyway here.
     async def dup3(self, newfd: FileDescriptor, flags: int) -> FileDescriptor:
-        self.validate()
+        self._validate()
         if not newfd.is_only_handle():
             raise Exception("can't dup over newfd, there are more handles to it than just ours")
         with newfd.borrow(self.task):
@@ -661,16 +707,16 @@ class FileDescriptor:
         await source.invalidate()
 
     async def fcntl(self, cmd: F, arg: t.Optional[int]=None) -> int:
-        self.validate()
+        self._validate()
         return (await rsyscall.near.fcntl(self.task.sysif, self.near, cmd, arg))
 
     async def ioctl(self, request: int, arg: Pointer) -> int:
-        self.validate()
-        arg.validate()
+        self._validate()
+        arg._validate()
         return (await rsyscall.near.ioctl(self.task.sysif, self.near, request, arg.near))
 
     async def epoll_wait(self, events: Pointer[EpollEventList], timeout: int) -> t.Tuple[Pointer[EpollEventList], Pointer]:
-        self.validate()
+        self._validate()
         with events.borrow(self.task) as events_n:
             num = await rsyscall.near.epoll_wait(
                 self.task.sysif, self.near, events_n, events.size()//EpollEvent.sizeof(), timeout)
@@ -678,7 +724,7 @@ class FileDescriptor:
             return events.split(valid_size)
 
     async def epoll_ctl(self, op: EPOLL_CTL, fd: FileDescriptor, event: t.Optional[Pointer[EpollEvent]]=None) -> None:
-        self.validate()
+        self._validate()
         with fd.borrow(self.task) as fd_n:
             if event is not None:
                 if event.size() < EpollEvent.sizeof():
@@ -689,16 +735,16 @@ class FileDescriptor:
                 return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd_n))
 
     async def inotify_add_watch(self, pathname: WrittenPointer[Path], mask: IN) -> rsyscall.near.WatchDescriptor:
-        self.validate()
+        self._validate()
         with pathname.borrow(self.task) as pathname_n:
             return (await rsyscall.near.inotify_add_watch(self.task.sysif, self.near, pathname_n, mask))
 
     async def inotify_rm_watch(self, wd: rsyscall.near.WatchDescriptor) -> None:
-        self.validate()
+        self._validate()
         await rsyscall.near.inotify_rm_watch(self.task.sysif, self.near, wd)
 
     async def bind(self, addr: WrittenPointer[Address]) -> None:
-        self.validate()
+        self._validate()
         with addr.borrow(self.task):
             try:
                 await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addr.size())
@@ -707,16 +753,16 @@ class FileDescriptor:
                 raise
 
     async def connect(self, addr: WrittenPointer[Address]) -> None:
-        self.validate()
+        self._validate()
         with addr.borrow(self.task):
             await rsyscall.near.connect(self.task.sysif, self.near, addr.near, addr.size())
 
     async def listen(self, backlog: int) -> None:
-        self.validate()
+        self._validate()
         await rsyscall.near.listen(self.task.sysif, self.near, backlog)
 
     async def getsockopt(self, level: int, optname: int, optval: WrittenPointer[Sockbuf[T]]) -> Pointer[Sockbuf[T]]:
-        self.validate()
+        self._validate()
         with optval.borrow(self.task):
             with optval.value.buf.borrow(self.task):
                 await rsyscall.near.getsockopt(self.task.sysif, self.near,
@@ -724,19 +770,19 @@ class FileDescriptor:
         return optval
 
     async def setsockopt(self, level: int, optname: int, optval: Pointer) -> None:
-        self.validate()
+        self._validate()
         with optval.borrow(self.task) as optval_n:
             await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval_n, optval.size())
 
     async def getsockname(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
-        self.validate()
+        self._validate()
         with addr.borrow(self.task) as addr_n:
             with addr.value.buf.borrow(self.task) as addrbuf_n:
                 await rsyscall.near.getsockname(self.task.sysif, self.near, addrbuf_n, addr_n)
         return addr
 
     async def getpeername(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
-        self.validate()
+        self._validate()
         with addr.borrow(self.task) as addr_n:
             with addr.value.buf.borrow(self.task) as addrbuf_n:
                 await rsyscall.near.getpeername(self.task.sysif, self.near, addrbuf_n, addr_n)
@@ -750,7 +796,7 @@ class FileDescriptor:
 
     async def accept(self, flags: SOCK=SOCK.NONE, addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
     ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]]:
-        self.validate()
+        self._validate()
         flags |= SOCK.CLOEXEC
         if addr is None:
             fd = await rsyscall.near.accept4(self.task.sysif, self.near, None, None, flags)
@@ -762,41 +808,41 @@ class FileDescriptor:
                     return self.task.make_fd_handle(fd), addr
 
     async def shutdown(self, how: SHUT) -> None:
-        self.validate()
+        self._validate()
         await rsyscall.near.shutdown(self.task.sysif, self.near, how)
 
     async def readlinkat(self, path: t.Union[WrittenPointer[Path], WrittenPointer[EmptyPath]],
                          buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        self.validate()
+        self._validate()
         with path.borrow(self.task):
             with buf.borrow(self.task):
                 ret = await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, buf.near, buf.size())
                 return buf.split(ret)
 
     async def faccessat(self, ptr: WrittenPointer[Path], mode: OK, flags: AT=AT.NONE) -> None:
-        self.validate()
+        self._validate()
         with ptr.borrow(self.task):
             await rsyscall.near.faccessat(self.task.sysif, self.near, ptr.near, mode, flags)
 
     async def getdents(self, dirp: Pointer[DirentList]) -> t.Tuple[Pointer[DirentList], Pointer]:
-        self.validate()
+        self._validate()
         with dirp.borrow(self.task) as dirp_n:
             ret = await rsyscall.near.getdents64(self.task.sysif, self.near, dirp_n, dirp.size())
             return dirp.split(ret)
 
     async def signalfd(self, mask: Pointer[Sigset], flags: SFD) -> None:
-        self.validate()
+        self._validate()
         with mask.borrow(self.task) as mask_n:
             await rsyscall.near.signalfd4(self.task.sysif, self.near, mask_n, mask.size(), flags)
 
     async def openat(self, path: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
-        self.validate()
+        self._validate()
         with path.borrow(self.task) as path_n:
             fd = await rsyscall.near.openat(self.task.sysif, self.near, path_n, flags|O.CLOEXEC, mode)
             return self.task.make_fd_handle(fd)
 
     async def fchmod(self, mode: int) -> None:
-        self.validate()
+        self._validate()
         await rsyscall.near.fchmod(self.task.sysif, self.near, mode)
 
 fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
@@ -930,6 +976,17 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             await rsyscall.near.unshare(self.sysif, flags)
 
     async def unshare_files(self) -> None:
+        """Unshare this task's file descriptor table.
+
+        When such an unshare is done, the new file descriptor table may contain file
+        descriptors which were copied from the old file descriptor table but are not now
+        referenced by any FileDescriptor. Likewise, the old file descriptor table may
+        contain file descriptors which are no longer referenced by any FileDescriptor,
+        since the FileDescriptors that referenced them were all for the task that unshared
+        its table.  To remove such garbage, run_fd_table_gc is called for both the new and
+        old fd tables after the unshare is complete.
+
+        """
         if self.manipulating_fd_table:
             raise Exception("can't unshare_files while manipulating_fd_table==True")
         # do a GC now to improve efficiency when GCing both tables after the unshare

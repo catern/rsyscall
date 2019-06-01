@@ -18896,6 +18896,48 @@ nativecall?
    I guess?
 ** TODO stop storing references to allocations in the arena
    so that gc works right.
+** file descriptors are for tasks
+   We take a task-centric view.
+   We don't provide services for an fd table, we provide them for a task.
+
+   We wouldn't ever need a service which owns a file descriptor,
+   which automatically gets updated with new tasks as the old ones leave the fd table,
+   because we don't ever want to have services that are oriented towards fd tables.
+
+   Instead we are oriented on tasks.
+   We have a filedescriptor which means we can access some thing through some task,
+   and we use that to provide some service *for some task*.
+   We never provide services that aren't for a specific task.
+
+   Or... yeah, yeah, that's true.
+   Because, we take references to the things.
+   We can *share* stuff underneath those services,
+   like the shared epoller.
+
+   But we wouldn't expect them to update to new tasks in the same fd table if the tasks underlying the shared stuff died.
+   That would be a level of failover that we aren't interested in, at this moment.
+
+   ok so yeah, so this is why our fd is for a task:
+   that's actually important that it's for a task,
+   it means we can provide X service for that task even if it changes fd table.
+
+   oh blargh.
+   ok. FileDescriptor is not FileDescriptor.
+
+   it's open-file-description. flugh.
+
+   because, we're getting different fds when we go in different fd tables!
+
+   like, the file descriptor it references, changes.
+   it gets copied into the new table.
+*** lol
+    i'm trying to say something deep and it's coming out as a tutorial about file descriptors
+
+    file descriptors are a way to access an open file from some task!
+
+    well, heh, that is literally true
+
+    I guess I needed this tutorial myself.
 * DOCUMENTATION!
   Time to write it!
 ** DONE move epoll blocking stuff in module docstring to Epoller docstring
