@@ -178,12 +178,12 @@ class ConsoleGenie(WishGranter):
             try:
                 cat_stdin_thread = await self.thread.fork()
                 cat_stdin_thread.unshare_files_and_replace({
-                    cat_stdin_thread.stdin: cat_stdin,
+                    cat_stdin_thread.stdin: to_term_pipe.read,
                 })
                 async with await cat_stdin_thread.exec(self.cat):
                     cat_stdout_thread = await self.thread.fork()
                     cat_stdout_thread.unshare_files_and_replace({
-                        cat_stdout_thread.stdout: cat_stdout,
+                        cat_stdout_thread.stdout: from_term_pipe.write,
                     })
                     async with await cat_stdout_thread.exec(self.cat):
                         ret = await run_repl(async_from_term, async_to_term, {
