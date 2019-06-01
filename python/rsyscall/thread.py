@@ -1,6 +1,4 @@
-"""Central thread class, with helper methods to ease a number of common tasks
-
-"""
+"Central thread class, with helper methods to ease a number of common tasks"
 from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall.command import Command
@@ -67,14 +65,18 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
             buf = valid.merge(rest)
 
 class Thread(UnixThread):
+    "A central class holding everything necessary to work with some thread, along with various helpers"
     async def mkdtemp(self, prefix: str="mkdtemp") -> TemporaryDirectory:
         "Make a temporary directory by calling rsyscall.mktemp.mkdtemp"
         return await mkdtemp(self, prefix)
 
     @t.overload
-    async def spit(self, path: FileDescriptor, text: t.Union[str, bytes]) -> None: ...
+    async def spit(self, path: FileDescriptor, text: t.Union[str, bytes]) -> None:
+        pass
+
     @t.overload
-    async def spit(self, path: Path, text: t.Union[str, bytes], mode=0o644) -> Path: ...
+    async def spit(self, path: Path, text: t.Union[str, bytes], mode=0o644) -> Path:
+        pass
 
     async def spit(self, path: t.Union[Path, FileDescriptor], text: t.Union[str, bytes], mode=0o644) -> t.Optional[Path]:
         """Open a file, creating and truncating it, and write the passed text to it
@@ -153,6 +155,7 @@ class Thread(UnixThread):
         return exit_state
 
     async def unshare(self, flags: CLONE) -> None:
+        "Call the unshare syscall, appropriately updating values on this class"
         # Note: unsharing NEWPID causes us to not get zombies for our children if init dies. That
         # means we'll get ECHILDs, and various races can happen. It's not possible to robustly
         # unshare NEWPID.
@@ -187,6 +190,13 @@ class Thread(UnixThread):
 
     async def unshare_files_and_replace(self, mapping: t.Dict[FileDescriptor, FileDescriptor],
                                         disable_cloexec: t.List[FileDescriptor]=[]) -> None:
+        """Unshare the file descriptor table, replacing some file descriptors according to the arguments
+
+        This is a useful helper method. `mapping` is a map from the fd to replace, to the fd to
+        replace it with.  disable_cloexec is just a list of fds to disable cloexec on, so that they
+        will be inherited without changing fd number.
+
+        """
         mapping = {
             # we maybe_copy the key because we need to have the only handle to it in the task,
             # which we'll then consume through dup3.
@@ -206,16 +216,40 @@ class Thread(UnixThread):
 
     async def unshare_user(self,
                            in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
+        """Unshare the user namespace.
+
+        We automatically set up the user namespace in the unprivileged way using a single user
+        mapping line.  You can pass `in_namespace_uid` and `in_namespace_gid` to control what user
+        id and group id we'll observe inside the namespace.  If you want further control, call
+        task.unshare(CLONE.NEWUSER) directly.
+
+        We also automatically do unshare(CLONE.FS); that's required by CLONE.NEWUSER.
+
+        """
         uid = await self.task.getuid()
         gid = await self.task.getgid()
         await self.task.unshare(CLONE.FS|CLONE.NEWUSER)
         await write_user_mappings(self, uid, gid,
                                   in_namespace_uid=in_namespace_uid, in_namespace_gid=in_namespace_gid)
 
-    async def exit(self, status) -> None:
-        await self.task.exit(0)
+    async def exit(self, status: int) -> None:
+        """Exit this thread
+
+        Currently we just forward through to exit the task.
+
+        I feel suspicious that this method will at some point require more heavy lifting with
+        namespaces and monitored children, so I'm leaving it on Thread to prepare for that
+        eventuality.
+
+        """
+        await self.task.exit(status)
 
     async def close(self) -> None:
+        """Close this thread
+
+        Currently we just forward through to close the task.
+
+        """
         await self.task.close_task()
 
     async def __aenter__(self) -> None:
@@ -226,9 +260,6 @@ class Thread(UnixThread):
 
 class ChildThread(Thread, ChildUnixThread):
     "A thread that we know is also a direct child process of another thread"
-    async def close(self) -> None:
-        await self.task.close_task()
-
     async def __aenter__(self) -> None:
         pass
 

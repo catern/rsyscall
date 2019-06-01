@@ -234,8 +234,7 @@ class Store:
             return await self._create_root(store_path, ptr)
 
     async def bin(self, store_path: StorePath, name: str) -> Command:
-        """Realise this StorePath, then return a Command for the binary named "name"
-        """
+        "Realise this StorePath, then return a Command for the binary named `name`"
         path = await self.realise(store_path)
         return Command(path/"bin"/name, [name], {})
 

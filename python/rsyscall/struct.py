@@ -1,6 +1,4 @@
-"""Interfaces and basic functionality for our serialization framework.
-
-"""
+"Interfaces and basic functionality for our serialization framework."
 from __future__ import annotations
 import abc
 import typing as t
@@ -18,14 +16,16 @@ class Serializer(t.Generic[T]):
 
     """
     def to_bytes(self, val: T) -> bytes:
+        "Serialize this value `val` to bytes"
         raise NotImplementedError("to_bytes not implemented on", type(self))
 
     def from_bytes(self, data: bytes) -> T:
+        "Deserialize a value from `data`"
         raise NotImplementedError("from_bytes not implemented on", type(self))
 
 T_has_serializer = t.TypeVar('T_has_serializer', bound='HasSerializer')
 class HasSerializer:
-    """Something which can return a serializer for itself"""
+    "Something which can return a serializer for itself"
     @abc.abstractmethod
     def get_self_serializer(self: T_has_serializer, task) -> Serializer[T_has_serializer]:
         """Return a serializer for this value
@@ -39,14 +39,20 @@ class HasSerializer:
 
 T_fixed_serializer = t.TypeVar('T_fixed_serializer', bound='FixedSerializer')
 class FixedSerializer(HasSerializer):
-    """Something which, if we know its class, can be serialized and deserialized
-
-    """
+    "Something which, if we know its class, can be serialized and deserialized"
     @classmethod
     @abc.abstractmethod
-    def get_serializer(cls: t.Type[T_fixed_serializer], task) -> Serializer[T_fixed_serializer]: ... # type: ignore
+    def get_serializer(cls: t.Type[T_fixed_serializer], task) -> Serializer[T_fixed_serializer]:
+        "Return a Serializer for this class"
+        pass
 
     def get_self_serializer(self: T_fixed_serializer, task) -> Serializer[T_fixed_serializer]:
+        """Return a Serializer for this value
+
+        Since this class is a FixedSerializer, we can return a serializer that is
+        independent of any specific value by calling get_serializer. Which we do.
+
+        """
         return type(self).get_serializer(task)
 
 T_fixed_size = t.TypeVar('T_fixed_size', bound='FixedSize')
@@ -54,21 +60,29 @@ class FixedSize(FixedSerializer):
     """Something which, if we know its class, can be serialized and deserialized to a fixed length bytestring
 
     These are fixed-size structures; for example, most C structs.
-
     """
     @classmethod
     @abc.abstractmethod
-    def sizeof(cls) -> int: ...
+    def sizeof(cls) -> int:
+        "Return the length of the bytestring that the serializer for this class will return"
+        pass
 
 class Serializable(FixedSerializer):
-    """A helper class for FixedSerializer; the serialization methods are defined directly on the class
-    """
+    "A helper class for FixedSerializer; the serialization methods are defined directly on the class"
     @abc.abstractmethod
-    def to_bytes(self) -> bytes: ...
+    def to_bytes(self) -> bytes:
+        """Directly serialize the value `self` as bytes
+
+        We use this as the Serializer.to_bytes method through the magic of duck typing;
+        using this function from the underlying class gives us a function which takes a
+        value (which it calls `self`) and does serialization for that value.
+        """
+        pass
 
     T_serializable = t.TypeVar('T_serializable', bound='Serializable')
     @classmethod
     def from_bytes(cls: t.Type[T_serializable], data: bytes) -> T_serializable:
+        "Return a value of type `cls` deserialized from `data`"
         raise NotImplementedError("from_bytes not implemented on", cls)
     @classmethod
     def get_serializer(cls: t.Type[T_serializable], task) -> Serializer[T_serializable]: # type: ignore
@@ -79,12 +93,11 @@ class Serializable(FixedSerializer):
         return cls # type: ignore
 
 class Struct(Serializable, FixedSize):
-    """A helper class for FixedSize; the serialization methods are defined directly on the class
-    """
+    "A helper class for FixedSize; the serialization methods are defined directly on the class"
     pass
 
 def bits(n: int, one_indexed: bool=True) -> t.Iterator[int]:
-    "Yields the bit indices that are set in this integer"
+    "Yield the bit indices that are set in this integer"
     while n:
         b = n & (~n+1)
         yield (b.bit_length() - (0 if one_indexed else 1))
@@ -92,6 +105,7 @@ def bits(n: int, one_indexed: bool=True) -> t.Iterator[int]:
 
 # mypy is very upset with me for inheriting from int and overriding int's methods in an incompatible way
 class Int32(Struct, int): # type: ignore
+    "A 32-bit integer, as used by many syscalls"
     def to_bytes(self) -> bytes: # type: ignore
         return struct.pack('i', self)
 

@@ -1,6 +1,4 @@
-"""Classes which own resources and provide the main syscall interfaces
-
-"""
+"Classes which own resources and provide the main syscall interfaces"
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass, field
@@ -8,7 +6,7 @@ import copy
 import gc
 import rsyscall.far
 import rsyscall.near
-from rsyscall.near import File
+from rsyscall.far import File
 import trio
 import os
 import typing as t
@@ -535,6 +533,8 @@ class FileDescriptor:
         return Path(f"/proc/self/fd/{num}")
 
     async def disable_cloexec(self) -> None:
+        # TODO this doesn't make any sense. we shouldn't allow cloexec if there are multiple people in our fd table;
+        # whether or not there are multiple handles to the fd is irrelevant.
         if not self.is_only_handle():
             raise Exception("shouldn't disable cloexec when there are multiple handles to this fd")
         await self.fcntl(F.SETFD, 0)

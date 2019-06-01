@@ -22,6 +22,7 @@ from rsyscall.memory.ram import RAM
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
 import rsyscall.near as near
+import rsyscall.far as far
 import rsyscall.nix as nix
 import typing as t
 
@@ -73,7 +74,7 @@ async def setup_shared_memory_robust_futex(
     # resize memfd appropriately
     size = 4096
     await parent_memfd.ftruncate(size)
-    file = near.File()
+    file = far.File()
     # set up parent mapping
     parent_mapping = await parent_memfd.mmap(size, PROT.READ|PROT.WRITE, MAP.SHARED, file=file)
     await parent_memfd.close()

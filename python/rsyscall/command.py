@@ -1,6 +1,4 @@
-"""Provides the Command class, which is a convenient representation of the arguments to execve
-
-"""
+"Provides the Command class, which is a convenient representation of the arguments to execve"
 import typing as t
 from rsyscall.handle import Path
 import os

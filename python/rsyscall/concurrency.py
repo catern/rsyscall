@@ -1,5 +1,4 @@
-"""Miscellaneous concurrency-management utilities.
-"""
+"Miscellaneous concurrency-management utilities."
 import trio
 import contextlib
 from dataclasses import dataclass
@@ -41,6 +40,7 @@ class OneAtATime:
 
     @contextlib.asynccontextmanager
     async def needs_run(self) -> t.AsyncGenerator[bool, None]:
+        "Yield a bool indiciating whether the caller should perform the actual work controlled by this OneAtATime."
         if self.running is not None:
             yield False
             await self.running.wait()
@@ -54,7 +54,7 @@ class OneAtATime:
                 running.set()
 
 class MultiplexedEvent:
-    """A one-shot event which, when waited on, selects one waiter to run a callable until it completes
+    """A one-shot event which, when waited on, selects one waiter to run a callable until it completes.
 
     The point of this class is that we have multiple callers wanting to wait on the
     completion of a single callable; there's no dedicated thread to run the callable,
@@ -69,6 +69,7 @@ class MultiplexedEvent:
         self.one_at_a_time = OneAtATime()
 
     async def wait(self) -> None:
+        "Wait until this event is done, possibly performing work on the event if necessary."
         while not self.flag:
             async with self.one_at_a_time.needs_run() as needs_run:
                 if needs_run:
@@ -79,7 +80,7 @@ class MultiplexedEvent:
 
 T = t.TypeVar('T')
 async def make_n_in_parallel(make: t.Callable[[], t.Awaitable[T]], count: int) -> t.List[T]:
-    "Calls `make` n times in parallel, and returns all the results."
+    "Call `make` n times in parallel, and return all the results."
     pairs: t.List[t.Any] = [None]*count
     async with trio.open_nursery() as nursery:
         async def open_nth(n: int) -> None:
@@ -89,7 +90,7 @@ async def make_n_in_parallel(make: t.Callable[[], t.Awaitable[T]], count: int) -
     return pairs
 
 async def run_all(callables: t.List[t.Callable[[], t.Awaitable[T]]]) -> t.List[T]:
-    "Calls all the functions passed to it, and returns all the results."
+    "Call all the functions passed to it, and return all the results."
     count = len(callables)
     results: t.List[t.Any] = [None]*count
     async with trio.open_nursery() as nursery:

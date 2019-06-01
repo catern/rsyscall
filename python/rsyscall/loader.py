@@ -15,6 +15,7 @@ from rsyscall.handle import (
     Stack, MemoryGateway, MemoryMapping,
 )
 import rsyscall.near as near
+import rsyscall.far as far
 from rsyscall.struct import Serializer
 
 __all__ = [
@@ -126,7 +127,7 @@ class NativeLoader:
             pointer_int = int(ffi.cast('ssize_t', cffi_ptr))
             # TODO we're just making up a memory mapping that this pointer is inside;
             # we should figure out the actual mapping, and the size for that matter.
-            mapping = MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), near.File())
+            mapping = MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), far.File())
             return Pointer(mapping, NullGateway(), NativeFunctionSerializer(), StaticAllocation())
         return NativeLoader(
             server_func=to_handle(symbols.rsyscall_server),

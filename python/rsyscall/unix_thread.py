@@ -96,7 +96,7 @@ class ChildUnixThread(UnixThread):
         self.process = process
 
     async def _execve(self, path: Path, argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> AsyncChildProcess:
-        "A memory-abstracted helper for calling execveat; self.{exec,execve} are probably preferable"
+        "Call execve, abstracting over memory; self.{exec,execve} are probably preferable"
         async def op(sem: RAM) -> t.Tuple[WrittenPointer[Path],
                                                WrittenPointer[ArgList],
                                                WrittenPointer[ArgList]]:

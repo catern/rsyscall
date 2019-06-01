@@ -78,7 +78,9 @@ _inotify_minimum_size_to_read_one_event = (ffi.sizeof('struct inotify_event') + 
 assert _inotify_read_size > _inotify_minimum_size_to_read_one_event
 
 class Inotify:
+    "An inotify file descriptor, which allows monitoring filesystem paths for events."
     def __init__(self, asyncfd: AsyncFileDescriptor, ram: RAM) -> None:
+        "Private; use Inotify.make instead."
         self.asyncfd = asyncfd
         self.ram = ram
         self.wd_to_watch: t.Dict[WatchDescriptor, Watch] = {}
@@ -86,6 +88,7 @@ class Inotify:
 
     @staticmethod
     async def make(thread: Thread) -> Inotify:
+        "Create an Inotify file descriptor in `thread`."
         asyncfd = await AsyncFileDescriptor.make(
             thread.epoller, thread.ram, await thread.task.inotify_init(InotifyFlag.NONBLOCK))
         return Inotify(asyncfd, thread.ram)
@@ -125,4 +128,5 @@ class Inotify:
 
 
     async def close(self) -> None:
+        "Close this inotify file descriptor."
         await self.asyncfd.close()

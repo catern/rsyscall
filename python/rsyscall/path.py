@@ -19,11 +19,18 @@ class PurePosixPath(pathlib.PurePosixPath):
 
     """
     def __new__(cls, *args, **kwargs) -> None:
-        # pathlib.PurePath inherits from object
+        """Override pathlib.PurePath.__new__ to restore default behavior
+
+        pathlib.PurePath inherits from object, so we just use object's __new__.
+        """
         return object.__new__(cls)
 
     def __init__(self, *args) -> None:
-        # copied from pathlib.PurePath._from_parts
+        """Override pathlib.PurePath.__init__ to create more sane behavior
+
+        We copy a small amount of code from pathlib.PurePath._from_parts to implement this
+        method.
+        """
         drv, root, parts = self._parse_args(args) # type: ignore
         self._drv = drv
         self._root = root

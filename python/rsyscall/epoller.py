@@ -369,6 +369,7 @@ class AsyncFileDescriptor:
 
     @property
     def thr(self) -> EpollThread:
+        "Synthesizes an EpollThread from the resources in this AsyncFD; useful for calling make_afd."
         return EpollThread(self.handle.task, self.ram, self.epolled.epoller)
 
     async def _wait_for(self, flags: EPOLL) -> None:
@@ -622,6 +623,7 @@ class EpollThread(RAMThread):
         self.epoller = epoller
 
     async def make_afd(self, fd: FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
+        "Make an AsyncFileDescriptor; set `nonblock` to True if the fd is already nonblocking"
         if not nonblock:
             await fd.fcntl(F.SETFL, O.NONBLOCK)
         return await AsyncFileDescriptor.make(self.epoller, self.ram, fd)

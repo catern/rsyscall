@@ -118,7 +118,9 @@ class WishGranter:
 
     """
     @abc.abstractmethod
-    async def wish(self, wish: Wish[T]) -> T: ...
+    async def wish(self, wish: Wish[T]) -> T:
+        "Satisfy this wish, returning a value of the type requested by the wish"
+        pass
 
 def _frames_to_traceback(frames: t.List[types.FrameType]) -> t.Optional[types.TracebackType]:
     "Translate a list of frames (which can be obtained from the inspect module) to a traceback"
@@ -155,9 +157,10 @@ async def wish(wish: Wish[T], *, from_exn: t.Union[BaseException, None, bool]=Fa
     return ret
 
 class ConsoleGenie(WishGranter):
-    "On wish, starts serving a REPL on `thread`'s stdin/stdout. Uses cat as a hack to be async"
+    "A WishGranter which satisfies wishes by starting a REPL on stdin/stdout for human intervention"
     @classmethod
     async def make(self, thread: Thread):
+        "Create a ConsoleGenie that will serve using `thread`'s stdin/stdout"
         cat = await thread.environ.which("cat")
         return ConsoleGenie(thread, cat)
 
@@ -167,6 +170,14 @@ class ConsoleGenie(WishGranter):
         self.lock = trio.Lock()
 
     async def wish(self, wish: Wish[T]) -> T:
+        """Serve a REPL on stdin/stdout and returns the value returned from it; throws on REPL hangup
+
+        We use cat as a hack to be async; we can't robustly turn stdin/stdout into
+        AsyncFDs, because setting them to NONBLOCK will be inherited by other processes
+        using the same terminal. Instead, we just start two cats to do blocking
+        reads/writes of stdin/stdout, then do async reads/writes to the cats.
+
+        """
         async with self.lock:
             message = "".join(traceback.format_exception(None, wish, wish.__traceback__))
             wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
@@ -288,7 +299,7 @@ async def run_repl(infd: AsyncFileDescriptor,
 async def serve_repls(listenfd: AsyncFileDescriptor,
                       initial_vars: t.Dict[str, t.Any],
                       wanted_type: t.Type[T], message: str) -> T:
-    """Serves REPLs on a socket until someone gives us the type we want
+    """Serve REPLs on a socket until someone gives us the type we want
 
     Multiple connections to the socket can be active simultaneously, with REPLs being
     served to all.

@@ -4,6 +4,7 @@ from rsyscall.handle import Task, Pointer, WrittenPointer, MemoryTransport, Allo
 from rsyscall.memory.allocator import AllocatorInterface
 from rsyscall.struct import FixedSize, T_fixed_size, HasSerializer, T_has_serializer, FixedSerializer, T_fixed_serializer, Serializer
 import rsyscall.near as near
+import rsyscall.far as far
 
 import typing as t
 
@@ -142,7 +143,7 @@ class LaterAllocator(AllocatorInterface):
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, AllocationInterface]:
         self.allocations.append((size, alignment))
         return (
-            MemoryMapping(t.cast(Task, None), near.MemoryMapping(0, size, 4096), near.File()),
+            MemoryMapping(t.cast(Task, None), near.MemoryMapping(0, size, 4096), far.File()),
             NullAllocation(size),
         )
 

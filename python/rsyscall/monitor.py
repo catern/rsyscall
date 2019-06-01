@@ -134,14 +134,13 @@ class AsyncChildProcess:
         self.sigchld_sigfd = sigchld_sigfd
         self.next_sigchld: t.Optional[MultiplexedEvent] = None
 
-    async def waitid_nohang(self) -> t.Optional[ChildState]:
+    async def _waitid_nohang(self) -> t.Optional[ChildState]:
         if self.process.unread_siginfo is None:
             await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.ALL|W.NOHANG, await self.ram.malloc(Siginfo))
         return await self.process.read_siginfo()
 
     async def waitpid(self, options: W) -> ChildState:
-        """Wait for a child state change in this child, like waitid(P.PID)
-        """
+        "Wait for a child state change in this child, like waitid(P.PID)"
         if options & W.EXITED and self.process.death_state:
             # TODO this is not really the actual behavior of waitpid...
             # if the child is already dead we'd get an ECHLD not the death state change again.
@@ -159,7 +158,7 @@ class AsyncChildProcess:
             # value of self.sigchld_sigfd.next_signal after the waitid, we'll be waiting for a
             # SIGCHLD that will never come.
             saved_sigchld = self.sigchld_sigfd.next_signal
-            state_change = await self.waitid_nohang()
+            state_change = await self._waitid_nohang()
             if state_change is not None:
                 if state_change.state(options):
                     return state_change
@@ -225,11 +224,10 @@ class ChildProcessMonitor:
     def inherit_to_child(self, ram: RAM, child_task: Task) -> ChildProcessMonitor:
         """Create a new instance that will clone children from the passed-in task
 
-        This requires, and checks, that the passed-in task is a child
-        of the process which is used for monitoring in the current
-        instance. Then the functionality is implemented by just using
-        CLONE.PARENT when calling clone in child_task, and thereby
-        delegating responsibility for monitoring to the parent.
+        This requires, and checks, that the passed-in task is a child of the process which
+        is used for monitoring in the current instance. Then the functionality is
+        implemented by just using CLONE.PARENT when calling clone in child_task, and
+        thereby delegating responsibility for monitoring to the parent.
 
         """
         if child_task.parent_task is not self.sigfd.afd.handle.task:
@@ -243,6 +241,14 @@ class ChildProcessMonitor:
         return ChildProcessMonitor(self.sigfd, ram, child_task, use_clone_parent=True)
 
     def add_child_process(self, process: ChildProcess) -> AsyncChildProcess:
+        """Create an AsyncChildProcess which monitors the passed-in ChildProcess.
+
+        We check that the passed-in process is in fact a child of the task associated with
+        this ChildProcessMonitor before returning the AsyncChildProcess; otherwise the
+        AsyncChildProcess wouldn't be woken up at the correct times to read child status
+        changes.
+
+        """
         if process.task is not self.sigfd.afd.handle.task:
             raise Exception("process", process, "with parent task", process.task,
                             "is not our child; we're", self.sigfd.afd.handle.task)
@@ -252,6 +258,12 @@ class ChildProcessMonitor:
     async def clone(self, flags: CLONE,
                     child_stack: t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
                     ctid: t.Optional[Pointer[FutexNode]]=None) -> AsyncChildProcess:
+        """Call `clone` with these arguments and return an AsyncChildProcess monitoring the resulting child
+
+        We'll use CLONE.PARENT if necessary to create a ChildProcess that is monitorable
+        by this ChildProcessMonitor.
+
+        """
         if self.use_clone_parent:
             flags |= CLONE.PARENT
         process = await self.cloning_task.clone(flags|SIG.CHLD, child_stack, None, ctid, None)

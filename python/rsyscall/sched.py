@@ -44,6 +44,7 @@ class Borrowable:
 
     """
     def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
+        "Borrow this value in this `task` on this `stack`, so that this value is valid while the borrow lives"
         raise NotImplementedError("borrow_with not implemented on", type(self))
 
 T_borrowable = t.TypeVar('T_borrowable', bound=Borrowable)
