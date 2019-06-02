@@ -1,9 +1,7 @@
-Nothing in this document is specific to rsyscall.
-
 * async
+In the tutorials, you can safely ignore the presence of the "async" and "await" keywords.
 We don't use any actual async features in the tutorials,
-so you can just completely ignore the presence of the "async" and "await" keywords;
-everything we're doing is equivalent to regular, non-async Python.
+so everything we're doing is equivalent to regular, non-async Python.
 
 Python 3 async/await syntax looks like this:
 #+BEGIN_SRC python
@@ -14,6 +12,16 @@ async def main():
     print(await f("hello"))
 #+END_SRC
 
+Any async function =f= (one defined with =async def f(args)=) has to be called with =await f(args)=.
+=await= can only be used in an =async= function.
+The main async function is run by a special non-async function provided by the async library in use.
+
+Async functions are, from the user perspective, totally equivalent to normal functions.
+Only when using async library features do they actually become different,
+which, as previously mentioned,
+we don't do in the tutorials.
+rsyscall uses Python async/await primarily so that users can use async/await,
+not because rsyscall gets much utility out of it.
 
 For more information on async/await syntax in Python,
 check out the [[https://trio.readthedocs.io/en/latest/tutorial.html][trio tutorial]].
@@ -23,13 +31,17 @@ As shown in the [[file:single_threaded.org][single-threaded tutorial]],
 rsyscall provides its own interfaces for IO,
 and makes no use of trio's interfaces for IO.
 * types
-Likewise, you can ignore the Python 3 type annotations in the tutorials;
+You can safely ignore the Python 3 type annotations, both in the tutorials and in general;
 in Python, type annotations are purely for use by static analyzers, and have no runtime significance.
 
 Python 3 type annotations appear in function declarations like this:
 #+BEGIN_SRC python
 def f(x: int, y: str, z: t.List[str]) -> str: ...
 #+END_SRC
+
+This function =f= takes three arguments,
+an int (=x: int=), a string (=y: str=), and a list of strings (=z: t.List[str]=),
+and returns another string (=-> str=).
 
 For more information on type annotations in Python,
 check out the [[https://mypy.readthedocs.io/en/stable/getting_started.html][mypy manual]].
