@@ -1,6 +1,72 @@
-There are several ways to view rsyscall from a conceptual point of view.
-We'll just blitz through all of them quickly.
-These are sorted in order of least novel to most novel,
-so just stop reading when you start to feel like you're reading a crank explaining their perpetual motion machine.
+#+title: Conceptual Introduction
+In most operating system APIs, when you run a syscall,
+you implicitly operate on the current process.
+In rsyscall, we explicitly specify the process in which we want to run a syscall.
 
-TODO: sort these
+We refer to the processes in which we can run syscalls as "threads".
+For rsyscall to create a new thread in which the user can run syscalls,
+it starts a process running the "rsyscall server stub",
+which reads syscall requests from a file descriptor and sends back responses.
+
+Several parts of the Linux API are non-trivial to use in such an environment;
+fork/clone and exec, among others.
+We have implemented clean approaches to using the syscalls,
+and make them all available to the user.
+
+The rsyscall API allows us to initialize new processes in a new way.
+Some other systems specify all the characteristics of the new process up front,
+like NT's =CreateProcess= or POSIX's =posix_spawn=.
+Still other systems copy the attributes for the process from the current process,
+and run a different branch of your program in it to set it up, like [[https://lwn.net/Articles/785430/][=fork=]].
+
+rsyscall allows you to create a new process which shares everything
+(address space, file descriptor tables, etc)
+with the current process, and so is cheap to create, as with traditional threading models.
+Then, you can mutate this process by calling arbitrary syscalls inside of it,
+and gradually unshare things through calls to =execve= and =unshare=.
+This is more efficient than =fork=, and more powerful than =posix_spawn=.
+
+Besides the efficiency benefit, there's also a comprehensibility benefit relative to =fork=.
+Rather than a single system call which returns twice,
+and splits your program into two running contexts of execution,
+in rsyscall there is a single running program,
+which is a completely conventional straight-line program.
+This single running program acts on both processes in a "single-threaded" manner.
+For example, one line can open a file in the child process,
+then the next line can use that file in the parent,
+since the file descriptor table is shared.
+
+In the classification of threading systems as [[https://en.wikipedia.org/wiki/Thread_(computing)#Models]["1:1", "N:1", and "M:N"]],
+rsyscall is in a new category: "1:N".
+A single "application-level thread" maps on to multiple "kernel-level entities".
+This is possible and useful because
+we explicitly denote which "kernel-level entity" (which process)
+we want to run a syscall in.
+
+In addition to the process creation and manipulation benefits,
+we also provide robust, wide-ranging, low-level support for many Linux features.
+rsyscall is useful for writing many kinds of scripts and applications
+which make heavy use of the Linux API.
+Such programs don't have to give up on high-level language features and use C,
+nor do they have to use certain other languages 
+with complex runtimes that silently interfere with features like =unshare= and =clone=.
+
+We've implemented the rsyscall API initially in Python,
+along with a limited C API,
+to maximize its usability.
+
+In Python, we treat each syscall as a method on some object,
+such as Thread or FileDescriptor or ChildProcess.
+We've also used the type annotation features of Python 3.
+This is idiomatic for Python,
+but we'd love to support other lanaguages.
+Other languages will likely have different approaches to the API.
+If you'd like to work on supporting other languages, just file an issue.
+Any language is interesting, but particularly interesting would be
+strongly typed languages like Haskell and OCaml,
+and languages that currently have poor APIs for interacting with Linux,
+like Java and other JVM languages.
+
+To learn more about the specifics of the API,
+and see what it looks like in action,
+return to the [[file:~/.local/src/rsyscall/intro.org][introduction]] and read on.

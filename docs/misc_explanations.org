@@ -1,0 +1,178 @@
+These are just explanations and motivating use-cases for rsyscall.
+* basic local explanations
+** Making low level functionality generally available
+   There are things that are easy at a low level,
+   but become hard with layers upon layers of abstraction.
+
+   rsyscall is an abstraction over Linux which is much lower level and much thinner than usual,
+   to make those things easy again.
+** Low-abstraction process supervisor
+   Here are some keywords: daemontools, ucspi, inetd, runit, s6, socket activation, systemd.
+
+   These things provide nice abstractions over passing down resources to processes, 
+   starting up processes, monitoring them for exit, all that stuff.
+   And, they're pretty good at it! Well, some of them are.
+
+   But it would be nice to be able to just call "fork" and "exec" and supervise my processes myself,
+   instead of having to delegate that responsibility to some abstracted thing,
+   which might not set up the processes the way I want, with the fds I want.
+   Instead of writing a bunch of grody configuration,
+   or shell scripting with a ton of non-standard programs,
+   I'll just write a C program!
+   Although... while I want full control over process launching,
+   I don't really want to have to deal with the hassle of writing C for all this.
+
+   rsyscall gives you low level control over process startup,
+   while letting you write Python instead of C.
+** A language which uses other processes for most of its functionality
+   rsyscall is intended to allow robust use of other processes.
+   Instead of writing a webserver,
+   we just start and run nginx.
+* more extreme local explanations
+** An alternative non-POSIX API for Linux
+   Clearly this is not POSIX, POSIX doesn't explicitly run syscalls in processes,
+   and we're using a lot of Linux-specific features.
+   Oh well, good riddance, POSIX is garbage anyway!
+** Don't make syscalls in threads, make syscalls *on* threads
+ In other threading systems, you call syscalls in threads.
+
+ In rsyscall, you call syscalls *on* threads.
+ Like, as objects.
+** A model for interaction with Linux that can be implemented by new languages
+   It's much better for languages than older models,
+   since it reduces the Linux API to a simple library interface with zero fancy runtime shenanigans required for things like fork.
+
+   New languages can provide the rsyscall API, instead of using the POSIX interfaces provided by libc.
+** Escape the Process monad
+   Normally we run our programs inside a single instance of the Process monad,
+   but monads have a major limitation:
+   you can't manipulate multiple monads of the same type at once.
+   (That's a simplification! Please don't hurt me)
+
+   To do that, we need to... Escape the Process Monad!
+   In theaters this summer.
+
+   That's what rsyscall does.
+   No more are our programs are no longer forced to run as DSLs in the Process monad.
+   instead they can manipulate the Process monad and run their own DSLs.
+** Complete separation of Python interpreter and operating system interaction
+   Typically, the interaction between the language and the operating system
+   is closely tied to how language itself works.
+   Python objects, like "bytes", are implemented as buffers in memory,
+   so the OS API works in terms of Python objects,
+   just assuming under the hood that objects exist in memory and that reading from and writing to memory is cheap.
+
+   But rsyscall doesn't care how Python runs at all.
+   rsyscall provides its own interfaces to memory, and everything else.
+   It's an interface to Linux, but the interpreter doesn't have to run on Linux.
+   With a bit of glue, you could run it on any operating system: BSD, Windows, even Emacs, probably.
+** A new microkernel core, hosted on Linux
+   Like HURD and other microkernels can be hosted on Linux.
+
+   Except we're backwards-compatible; we can run legacy programs.
+
+   And most of the system calls are the same.
+
+   Ok, it's a bit of a stretch.
+
+   But the API is definitely quite novel.
+
+   We just use some things in an unusual way that is highly non-POSIX.
+   We're very clearly not POSIX.
+** A library for writing Linux-hosted microkernels
+   Actually it's beyond a microkernel, it's a library for writing Linux-hosted microkernels!
+   Well, I think "library for writing microkernels" just means
+   "process supervision library", in a pretty deep way.
+   But, the former sounds cooler!
+* remote explanations
+** Direct style deployment
+    Instead of "declaratively" building up a program/model of our deployment/distributed system,
+    which we then submit to a runtime to be deployed,
+    instead we just directly deploy each component as we describe it.
+** A distributed thread library
+   rsyscall is a thread library that lets you start threads on remote systems.
+** A framework for building distributed systems
+   rsyscall is a framework for writing single-program distributed systems.
+** A hack around the reduced expressiveness of IPC/RPC
+ Typical RPC frameworks are much less expressive than language-based abstractions.
+ Haskell's typeclasses,
+ Rust's borrowing and ownership systems,
+ even simple things like lambdas and callbacks:
+ All of these are nearly impossible to replicate with today's RPC systems.
+ Capnproto RPC does much better than others (such as GRPC), but it's still far behind.
+
+ Splitting your program across multiple processes and hosts means giving up on many nice abstractions.
+ But it allows you to access far more resources than are available on a single process or host.
+
+ Well, there's one immediate hack to avoid splitting your system across multiple processes.
+ Don't!
+ Write everything in a single program,
+ running in a single language interpreter,
+ which is able to access resources through other processes and other hosts.
+
+ That might be less efficient and less parallel.
+ But if we want to increase efficiency for some task,
+ we can explicitly describe some limited protocol or program for performing some constrained task,
+ and run just *that* instead of making a full system of independent units talking over RPC.
+** Integrated thread library and container deployment system
+   Since we can deploy things through Nix, I guess?
+** Distributed system scheduling service? That should be a library
+   There are various things called
+   "automation server" and
+   "container-orchestration system" and
+   "cluster management software".
+
+   In all of them, you upload some hyper-complicated configuration to some service
+   which executes it for you,
+   and provides a bunch of mechanisms for checking on the status.
+
+   Often they claim this is good because it's clearly separating code and data.
+   I guess I must have missed the part where hyper-complicated configuration
+   that specifies some general-purpose logic
+   and is interpreted by a big complicated runtime
+   is not "code".
+
+   It's all very silly!
+   Instead, these programs should be written as libraries,
+   which provide their features,
+   like retrying after failure,
+   or distributing across multiple hosts,
+   or running a fancy web UI,
+   to normal programs written in a normal language.
+
+   Then instead of uploading some massive amount of configuration,
+   or writing in some DSL,
+   one can just write a normal Python script that uses this library,
+   and just run it.
+
+   rsyscall is the basis for such libraries.
+** Canonical API for starting processes on Linux
+   In some sense, the canonical API for starting processes on Linux is the one that Linux gives you:
+   fork/clone and exec.
+
+   There's nothing wrong with this API.
+   But you can't use it when starting a process on a remote system.
+   So lots of different APIs have been developed for starting remote processes,
+   specialized to various things and various systems,
+   and providing various fancy features, with associated fancy support burden.
+
+   With rsyscall, you can use the canonical API, even remotely.
+   The API is already there, now it's possible to use it.
+** Minimizing mobile code
+   Mobile code is a classic problem in programming language design and implementation.
+   How do we send code and state to execute on a different system?
+   How do we move it from one system to another?
+
+   With rsyscall, we solve the mobile code problem by minimizing the need for it.
+   You write a single program that stays in one place,
+   instead of sending code to run elsewhere, or moving it from place to place.
+   Your single program uses the same APIs that your mobile code would have,
+   just all from one place.
+** A return to Python's distributed systems roots
+   Python was created for the Amoeba operating system.
+   From Wikpedia:
+ #+BEGIN_QUOTE
+ The aim of the Amoeba project was to build a timesharing system that makes an entire network of computers appear to the user as a single machine.
+ #+END_QUOTE
+
+ Well, now that's possible again with rsyscall.

@@ -6,6 +6,7 @@ Or, you can dive right in and see some examples in the tutorials.
 
 We'll explain rsyscall in two separate tutorials:
 The single-threaded tutorial and the multi-threaded tutorial.
+We recommend reading the former before the latter.
 
 Note that there's some background knowledge you need for these tutorials.
 We use Python 3 async/await and Python 3 type annotations.
