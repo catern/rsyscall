@@ -24,11 +24,12 @@ rsyscall allows you to create a new process which shares everything
 (address space, file descriptor tables, etc)
 with the current process, and so is cheap to create, as with traditional threading models.
 Then, you can mutate this process by calling arbitrary syscalls inside of it,
-and gradually unshare things through calls to =execve= and =unshare=.
+and gradually unshare things through calls to =unshare= and =execve=.
 This is more efficient than =fork=, and more powerful than =posix_spawn=.
 
 Besides the efficiency benefit,
-there's also a comprehensibility benefit relative to =fork= (and similar calls like =vfork=).
+there's also a comprehensibility benefit of rsyscall
+relative to =fork= (and similar calls like =vfork=).
 =fork= is a single system call which returns twice,
 and splits your program into two contexts of execution;
 among other things, this makes it difficult to coordinate actions between both contexts.
@@ -39,7 +40,7 @@ This single running program explicitly acts on both processes in a "single-threa
 freely interleaving actions in either process.
 For example, 
 one line can open a file in the child process,
-then the next line can use that file in the parent,
+then the next line can use that file in the parent process,
 since the file descriptor table is shared.
 
 In the classification of threading systems as [[https://en.wikipedia.org/wiki/Thread_(computing)#Models]["1:1", "N:1", and "M:N"]],
@@ -55,7 +56,7 @@ rsyscall is useful for writing many kinds of scripts and applications
 which make heavy use of the Linux API.
 Such programs don't have to give up on high-level language features and use C,
 nor do they have to use other languages 
-with complex runtimes that silently interfere with features like =unshare= and =clone=.
+with complex runtimes that can silently interfere with features like =unshare= and =clone=.
 
 We've implemented the rsyscall API initially in Python,
 along with a limited C API,
