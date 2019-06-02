@@ -3468,6 +3468,12 @@ hmm, actually it just occurred to me that this question is essentially the same 
    since I can maybe avoid process child waiting raciness by just having,
    when I waitid,
    everything is from orphans.
+
+   Although, if CLONE_PARENT will cause our parent to have children that are immediately killed on pidns collapse,
+   without leaving a zombie to detect it,
+   maybe we don't want that.
+   So that's another feature: Don't have processes in a pidns be killed without leaving a zombie,
+   if their parent is outside the pidns!
 ** put additional flags in accept4(flags) to accept only specific sock types
    If I can just put additional flags in accept4,
    that allows me to conveniently do additional typechecking of my accept.

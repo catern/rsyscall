@@ -73,7 +73,7 @@ Any language is interesting, but particularly interesting would be
 languages with rich type systems,
 like Haskell and OCaml,
 and languages that currently have poor APIs for interacting with Linux,
-like Java and other JVM languages.
+like Java.
 
 To learn more about the specifics of the API,
 and see what it looks like in action,
@@ -92,4 +92,4 @@ which implements each thread with a separate process, without using CLONE_THREAD
 
 rsyscall's threads do not use CLONE_THREAD, so it's more like LinuxThreads;
 although unlike LinuxThreads, we are not constrained by compatibility with the pthreads API;
-we don't, e.g., need to hide the fact that each of our threads has a different pid.
+for example, we don't need to hide the fact that each of our threads has a different pid.
