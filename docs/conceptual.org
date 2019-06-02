@@ -3,7 +3,7 @@ In most operating system APIs, when you run a syscall,
 you implicitly operate on the current process.
 In rsyscall, we explicitly specify the process in which we want to run a syscall.
 
-We refer to the processes in which we can run syscalls as "threads".[fn:clonethread]
+We refer to the processes in which we can run syscalls as "threads".[fn:1]
 For rsyscall to create a new thread in which the user can run syscalls,
 it starts a process running the "rsyscall server stub",
 which reads syscall requests from a file descriptor and sends back responses.
@@ -81,7 +81,7 @@ return to the [[file:~/.local/src/rsyscall/intro.org][introduction]] and read on
 
 * Footnotes
 
-[fn:clonethread]
+[fn:1]
 With most threading implementations on Linux,
 such as glibc's current pthreads implementation NPTL,
 each "thread" is really a separate process.
