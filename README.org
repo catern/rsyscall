@@ -1,17 +1,16 @@
 rsyscall is a thread library for Linux.
 
-It's somewhat conceptually novel;
-before reading further, you may want to read the [[file:docs/conceptual.org][conceptual introduction]] to understand the motivations.
-Or, you can dive right in and see some examples in the tutorials.
+For a short introduction to the concepts and motivation behind rsyscall,
+read the [[file:docs/conceptual.org][conceptual introduction]].
+If you want to learn more, or want to immediately see examples,
+continue on to read the tutorials.
 
 We'll explain rsyscall in two separate tutorials:
 The single-threaded tutorial and the multi-threaded tutorial.
-We recommend reading the former before the latter.
 
-Note that there's some background knowledge you need for these tutorials.
-We use Python 3 async/await and Python 3 type annotations.
-If you haven't seen those before,
-there's a [[file:docs/background.org][background tutorial]] you can read.
+Note that rsyscall uses some recent Python 3 features:
+async/await and type annotations.
+If you haven't seen those before, read the [[file:docs/background.org][background tutorial]].
 
 The [[file:docs/single_threaded.org][single-threaded tutorial]] explains how to do things
 with only a single thread, without creating more.
@@ -24,7 +23,4 @@ as well as some operations which only make sense with multiple threads.
 
 Note that this division is purely for convenience;
 the "multi-threaded" portions of rsyscall
-are simply useful library functions built on top of "single-threaded" operations.
-Everything that the "multi-threaded" part of rsyscall uses,
-is available for you to use in the "single-threaded" part of rsyscall;
-so if you want to implement new kinds of threads, you are fully able to do so.
+are not really distinct from the "single-threaded" portions.
