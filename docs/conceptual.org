@@ -66,7 +66,7 @@ In Python, we treat each syscall as a method on some object,
 such as Thread or FileDescriptor or ChildProcess.
 We've also used the type annotation features of Python 3.
 This is idiomatic for Python,
-but we'd love to support other lanaguages.
+but we'd love to support other languages.
 Other languages will likely have different approaches to the API.
 If you'd like to work on supporting other languages, just file an issue.
 Any language is interesting, but particularly interesting would be
