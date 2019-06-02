@@ -1,7 +1,5 @@
 from setuptools import setup
 
-# can we find the thing on the path? hm.
-# no we want the references graph too. hm.
 setup(name='rsyscall',
       version='0.1.0',
       description='A library for making system calls remotely, through another process, which may be located on a remote host',
@@ -13,7 +11,7 @@ setup(name='rsyscall',
       keywords='linux syscall distributed',
       url='https://github.com/catern/rsyscall',
       author='catern',
-      author_email='sbaugh@catern.com',
+      author_email='spencerbaugh@gmail.com',
       license='MIT',
       cffi_modules=["ffibuilder.py:ffibuilder"],
       packages=['rsyscall', 'rsyscall.tests', 'nixdeps', 'arepl', 'arepl.tests', 'rsysapps'],
