@@ -9,15 +9,16 @@ it starts a process running the "rsyscall server stub",
 which reads syscall requests from a file descriptor and sends back responses.
 
 Several parts of the Linux API are non-trivial to use in such an environment;
-fork/clone and exec, among others.
-We have implemented clean approaches to using the syscalls,
+fork, clone and exec, among others.
+We have designed and implemented clean methods for using such syscalls,
 and make them all available to the user.
 
 The rsyscall API allows us to initialize new processes in a new way.
 Some other systems specify all the characteristics of the new process up front,
-like NT's =CreateProcess= or POSIX's =posix_spawn=.
-Still other systems copy the attributes for the process from the current process,
-and run a different branch of your program in it to set it up, like [[https://lwn.net/Articles/785430/][=fork=]].
+like NT's =CreateProcess= or POSIX's =posix_spawn=;
+but that requires explicit support for everything we want to change about the new process.
+Still other systems copy the attributes for the new process from the current process, like =fork=;
+but [[https://lwn.net/Articles/785430/][that's inefficient]].
 
 rsyscall allows you to create a new process which shares everything
 (address space, file descriptor tables, etc)
@@ -26,13 +27,18 @@ Then, you can mutate this process by calling arbitrary syscalls inside of it,
 and gradually unshare things through calls to =execve= and =unshare=.
 This is more efficient than =fork=, and more powerful than =posix_spawn=.
 
-Besides the efficiency benefit, there's also a comprehensibility benefit relative to =fork=.
-Rather than a single system call which returns twice,
-and splits your program into two running contexts of execution,
-in rsyscall there is a single running program,
+Besides the efficiency benefit,
+there's also a comprehensibility benefit relative to =fork= (and similar calls like =vfork=).
+=fork= is a single system call which returns twice,
+and splits your program into two contexts of execution;
+among other things, this makes it difficult to coordinate actions between both contexts.
+
+In rsyscall there is a single running program,
 which is a completely conventional straight-line program.
-This single running program acts on both processes in a "single-threaded" manner.
-For example, one line can open a file in the child process,
+This single running program explicitly acts on both processes in a "single-threaded" manner,
+freely interleaving actions in either process.
+For example, 
+one line can open a file in the child process,
 then the next line can use that file in the parent,
 since the file descriptor table is shared.
 
@@ -48,7 +54,7 @@ we also provide robust, wide-ranging, low-level support for many Linux features.
 rsyscall is useful for writing many kinds of scripts and applications
 which make heavy use of the Linux API.
 Such programs don't have to give up on high-level language features and use C,
-nor do they have to use certain other languages 
+nor do they have to use other languages 
 with complex runtimes that silently interfere with features like =unshare= and =clone=.
 
 We've implemented the rsyscall API initially in Python,
@@ -63,7 +69,8 @@ but we'd love to support other lanaguages.
 Other languages will likely have different approaches to the API.
 If you'd like to work on supporting other languages, just file an issue.
 Any language is interesting, but particularly interesting would be
-strongly typed languages like Haskell and OCaml,
+languages with rich type systems,
+like Haskell and OCaml,
 and languages that currently have poor APIs for interacting with Linux,
 like Java and other JVM languages.
 
