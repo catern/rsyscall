@@ -1,3 +1,4 @@
+/* Just an exploration of what using rsyscall in C looks like */
 #define _GNU_SOURCE
 #include <unistd.h>
 #include <stdlib.h>
