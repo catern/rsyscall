@@ -8,7 +8,7 @@ continue on to read the tutorials.
 We'll explain rsyscall in two separate tutorials:
 The single-threaded tutorial and the multi-threaded tutorial.
 
-Note that rsyscall uses some recent Python 3 features:
+Note that the rsyscall Python API uses some recent Python 3 features:
 async/await and type annotations.
 If you haven't seen those before, read the [[file:docs/background.org][background tutorial]].
 
