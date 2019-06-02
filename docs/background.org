@@ -12,12 +12,15 @@ async def main():
     print(await f("hello"))
 #+END_SRC
 
-Any async function =f= (one defined with =async def f(args)=) has to be called with =await f(args)=.
-=await= can only be used in an =async= function.
-The main async function is run by a special non-async function provided by the async library in use.
+Any async function =f= (a function defined with =async def f(args)=)
+has to be called with =await f(args)=.
+=await= can only be used in an async function,
+so async functions can only be called by async functions.
+The main async function is run by a special non-async function provided by the async library,
+such as trio or asyncio.
 
-Async functions are, from the user perspective, totally equivalent to normal functions.
-Only when using async library features do they actually become different,
+Async functions are, from the user perspective, equivalent to normal functions.
+Only when using async library features does a difference appear,
 which, as previously mentioned,
 we don't do in the tutorials.
 rsyscall uses Python async/await primarily so that users can use async/await,
