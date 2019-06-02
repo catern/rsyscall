@@ -1,22 +1,8 @@
-What is rsyscall?
-Unfortunately, no-one can be told what rsyscall is;
-you have to see it for yourself.
+rsyscall is a thread library for Linux.
 
-More prosaically:
-There are many different perspectives in software engineering,
-and rsyscall fits into different places depending on your favored perspective.
-There are at least 10 different explanations,
-depending on whether you're a Python fan, a Unix fan, a Linux fan, a DJB fan, a containers fan,
-a programming language theory fan, an operating systems research fan,
-a distributed systems fan, a capability security fan,
-an RPC fan, an RPC hater,
-an abstraction fan, an abstraction hater,
-or whatever other perspective.
-
-We're going to write a choose-your-own-adventure to explain rsyscall interactively
-based on your pre-existing knowledge and biases,
-but we haven't gotten around to it yet,
-so in the meantime, you can just read these tutorials.
+It's somewhat conceptually novel;
+before reading further, you may want to read the [[file:docs/conceptual.org][conceptual introduction]] to understand the motivations.
+Or, you can dive right in and see some examples in the tutorials.
 
 We'll explain rsyscall in two separate tutorials:
 The single-threaded tutorial and the multi-threaded tutorial.

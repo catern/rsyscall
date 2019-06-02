@@ -454,6 +454,7 @@ class FileDescriptor:
             return False
 
     async def close(self) -> None:
+        "Close this file descriptor if it's the only handle to it; throwing if there's other handles"
         if not self.is_only_handle():
             raise Exception("can't close this fd, there are handles besides this one to it")
         if not self.valid:
@@ -464,13 +465,12 @@ class FileDescriptor:
                             "maybe some race condition where there are still handles left around?")
 
     def for_task(self, task: Task) -> FileDescriptor:
+        "Make another FileDescriptor referencing the same file but using `task` for syscalls"
         return task.make_fd_handle(self)
-
-    def copy(self) -> FileDescriptor:
-        return self.for_task(self.task)
 
     @contextlib.contextmanager
     def borrow(self, task: Task) -> t.Iterator[rsyscall.near.FileDescriptor]:
+        "Validate that this FD can be accessed from this Task, and yield the near.FD to use for syscalls"
         # TODO we should be the only means of getting FD.near
         # TODO we should just set an in_use flag or something
         # oh argh, what about borrow_with, though?
@@ -524,11 +524,14 @@ class FileDescriptor:
             return self.for_task(task)
 
     def move(self, task: Task) -> FileDescriptor:
-        """This is an optimized version of borrowing then invalidating
+        """Return the output of self.for_task(task), and also invalidate `self`.
 
-        We know that invalidate won't be removing the last handle and
-        need to close the fd, so we don't need to do the invalidate as
-        async. We assert to make sure this is true.
+        This is useful for more precisely expressing intent, if we don't intend to use
+        `self` after getting the new FileDescriptor for the other task.
+
+        This is also somewhat optimized relative to just calling self.for_task then
+        calling self.invalidate; the latter call will have to be async, but this call
+        doesn't have to be async, since we know we won't be invalidating the last handle.
 
         """
         new = self.for_task(task)
@@ -552,11 +555,6 @@ class FileDescriptor:
         handles = self._get_global_handles()
         handles.remove(self)
         return handles
-
-    def _invalidate_all_existing_handles(self) -> None:
-        for handle in fd_table_to_near_to_handles[self.task.fd_table][self.near]:
-            handle.valid = False
-        del fd_table_to_near_to_handles[self.task.fd_table][self.near]
 
     def __del__(self) -> None:
         if self.valid:
@@ -890,9 +888,6 @@ async def run_fd_table_gc(fd_table: rsyscall.far.FDTable) -> None:
 
 ################################################################################
 # Task
-
-class RootExecError(Exception):
-    pass
 
 class Task(SignalMaskTask, rsyscall.far.Task):
     # work around breakage in mypy - it doesn't understand dataclass inheritance

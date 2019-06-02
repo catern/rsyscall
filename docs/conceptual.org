@@ -1,0 +1,6 @@
+There are several ways to view rsyscall from a conceptual point of view.
+We'll just blitz through all of them quickly.
+These are sorted in order of least novel to most novel,
+so just stop reading when you start to feel like you're reading a crank explaining their perpetual motion machine.
+
+TODO: sort these
