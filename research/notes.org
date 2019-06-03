@@ -19058,3 +19058,15 @@ reducing to a boolean is absurd! boolean blindness..
 what would continuations be in this emacs interactive programming land?
 
 not even sure
+* fixing mail
+  ok so i'll set up mail on earth.
+
+  i'll leave znc on caerus because IRC isn't store-and-forward
+
+  i'll set up the mail then switch over the mail records to earth
+
+  i'll upgrade earth so it can handle the serving,
+  it's hanging way too much right now.
+
+  nah maybe I don't need to do that
+  but ugh why is my desktop so slow
