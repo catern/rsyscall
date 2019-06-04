@@ -19147,3 +19147,112 @@ not even sure
    why don't I just buy a dedicated IP and proxy into it?
 
    like, with a vpn or something?
+** static IP thing
+   I have a home server on which I want to host things - DNS, email, etc.
+   But my residential ISP blocks ports, and I don't have a guaranteed-static IP.
+   So, it would be nice to buy/rent a static IPv4 address and assign it to my home server,
+   through whatever mechanism.
+   I've previously gotten an IPv6 delegation from HE, but I want IPv4.
+   What's the best way to do this?
+   Are there any reputable, not-scammy services to do this?
+   I'm fine with going with a complicated way that depends less on third-party sellers
+** hmm
+   it sounds like having a VPS tunnel traffic back is the easiest way
+
+   I can get an IPv6 and stick it on my desktop and host over that
+
+   then additionally tunnel an IPv4 to my desktop from a VM,
+   and also host over that.
+
+   (though I could proxy v4 onto v6 instead)
+   (rather than being dual stack)
+
+   then if my IPv4 provider dies or scams me or something,
+   it's just IPv4 that goes down,
+   not a huge deal.
+
+so, any suggestions on reasonably priced delegated IPv6 space that I can feel confident won't be taken away?
+just so I can feel more stable than going through free HE
+
+so, any suggestions on where to get a delegated IPv6 space that I have to pay for?
+so I can feel more stable than going through free HE :)
+
+
+and maybe can even use a more performan
+
+running DNS on these servers
+
+hmmmmm okaaaay soooooo seems good I guess.
+
+all this advanced networking stuff is tricky though
+
+maybe I should just use a static IP VPN
+
+maybe I should just use google apps for your domain instead of hosting my email, sigh
+
+then I could experiment more freely...
+
+ugh I can't bear to do that
+
+i need to know how to do these things so I can demo them for rsyscall
+** hm hm vm
+   so in terms of running everything via rsyscall.
+
+   it would be cool if we actually did have rsyscall manage the bootup of the thing
+
+   oh, hm, we could give them an image,
+   and boot that image,
+   and that image will contain a key,
+   or grab a key from config I guess,
+   and allow us to connect in, I guess? somehow.
+
+   we want a bootstrapped safe connection, proxied by AWS
+
+   hey ##aws, I don't know much about AWS, I'm wondering if 
+
+   right so what would be ideal is if we could, um.
+
+   oh, we can stick it on a VPN, maybe?
+
+   give it an interface that is safe.
+
+   then we join that VPN.
+
+   right so that's a sensible thing.
+
+   is it? have the network be safe, not the host.
+
+   each host is listening
+
+   is it possible to set things up so only inbound connections are possible?
+
+   well, we can have a dedicated VPN for each host?
+
+   then at most, a compromised host can try and connect back out to us over the trusted VPN,
+   but it'll get ignored.
+
+   so I want a trusted VPN,
+   but I want to minimize the level of trust by only authorizing certain routes.
+   is that possible in AWS?
+
+
+   ooh neat and I could have the image contain only Nix and the bootstrap binary,
+   and start up in an inert state,
+   and wait for an incoming connection,
+   and that connection could bootstrap stuff into it,
+   pulling from a local Nix cache,
+   possibly a network filesystem,
+   and maybe pulling that into a stateful persistent store, or maybe not.
+
+   hmm okay yeah so when it comes up it should connect out to the rsyscall host,
+   and then get further instructions from there...
+
+   that's kinda like the unix socket stub :)
+
+   so I kinda wanna do SDN stuff, hmm, don't I?
+   I want to establish connections between nodes in AWS
+
+   I guess that's a matter of poking the AWS API?
+
+   I guess I need to know the APIs
+   hm.
