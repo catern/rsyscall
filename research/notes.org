@@ -18627,6 +18627,59 @@ nativecall?
 ** TODO stop storing references to allocations in the arena
    so that gc works right.
 ** TODO go through all the todos
+* deployment
+  hmm I could include rsyscall.c directly into the python package
+
+  and even put the pkglibexec things in the python package?
+
+  hmm
+
+  i could just have that be the only way of doing rsyscall even on nix
+
+  i could just get rid of the separate library
+
+  but, the problem is that getting it through python, doesn't work remotely.
+
+  it's a matter of making it useful for people to install through pypi.
+  if we include the library and pkglibexec on pypi,
+  we're good.
+
+  except again we don't really work over ssh.
+  that requires nix I guess?
+  we deploy the binaries when we realise rsyscall on the remote host
+
+  well, we can have the binaries locally,
+  and require nix to deploy them remotely.
+** wheel pypi whatever
+   OK so, right, I want to inline the rsyscall source into what I upload to pypi,
+   so that it can be built directly on whatever platform.
+
+   I won't bother providing binary wheels, because they might not work right, and laziness.
+   I use Nix anyway.
+
+   So I'll inline it, on the stuff uploaded to pypi.
+
+   Then in the Nix version, I want it to be a separate package.
+
+   so that it can be distributed on remote hosts.
+
+   and we can use the binaries. hm hm.
+
+   ok yeah we could even auto-deploy it. er right that's the whole point.
+
+   we can't auto-deploy it if we're not using Nix though,
+   because we don't have the nix deps locally.
+
+   so we need some other means.
+
+   it's a nice feature of nix that,
+   if i want to write a program which deploys something remotely,
+   i can just depend on it locally,
+   and deploy it over.
+
+   and yeah so if I installed by pypi, I can use whatever means to find the nix packages.
+
+   including, I guess, just providing them ad-hoc.
 * DOCUMENTATION!
   Time to write it!
 ** DONE move epoll blocking stuff in module docstring to Epoller docstring
@@ -19070,3 +19123,27 @@ not even sure
 
   nah maybe I don't need to do that
   but ugh why is my desktop so slow
+** things to do
+   go to sosp
+
+   buy that laptop
+
+   run mailserver on desktop
+   run catern.com on desktop
+   run irc on server
+
+   upgrade computer with new bits
+
+   need to set up mail before releasing rsyscall so i can participate with email
+
+   hmm it's tricky to host with my desktop because spectrum won't delegate rdns,
+   and might block ports and stuff.
+
+   having a server to do this is annoying because they have limited space and stuff
+
+   what if I just have a server that sends the data immediately back to my big disks?
+
+   or better yet...
+   why don't I just buy a dedicated IP and proxy into it?
+
+   like, with a vpn or something?
