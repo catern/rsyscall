@@ -19256,3 +19256,30 @@ i need to know how to do these things so I can demo them for rsyscall
 
    I guess I need to know the APIs
    hm.
+** OOH NEATO
+   I can run the mailserver without privileges!
+
+   because of the tunnel
+   giving me ownership of the address
+
+   v. cool friendo!
+
+   call pnc so i can get my new credit card
+** vms bah
+   instead of vms we should all just be on one big machine
+
+   and use tunneled IP addresses or something in network namespaces
+   so we all just share this big machine andhost multiple things on it
+
+   and we can even load-balance the IPs by having multiple machines connect to the tunnel or somethin
+   and thereby serve services on those ips from multiple places
+
+   would be nice with ipv6 to just get a delegation of one of the many IPs
+
+   or, wait, hm, that's flat addressing, but can we SDN something up?
+   explicit routes
+
+   well, flat addressing is cool for now,
+   most of these nodes will want to talk on the internet
+** figure out vpn thing
+   
