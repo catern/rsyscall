@@ -19282,4 +19282,18 @@ i need to know how to do these things so I can demo them for rsyscall
    well, flat addressing is cool for now,
    most of these nodes will want to talk on the internet
 ** figure out vpn thing
-   
+   Or... I could just put my mailserver elsewhere.
+   meh, meh, meh.
+
+   yeesh! VPSs are expensive
+
+   I'm surprised no-one has wanted to do this before.
+   I can't see stuff hm hm
+
+   maybe I should use a static IP VPN thing
+
+   a service
+
+   because, lol, aws charges quite a lot for IPs!
+
+   OK no I'll just put it on a normal VPS.
