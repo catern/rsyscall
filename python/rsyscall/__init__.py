@@ -1,1 +1,1 @@
-"rsyscall is a library for Linux"
+"rsyscall is a library for Linux."

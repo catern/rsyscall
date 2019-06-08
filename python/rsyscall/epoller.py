@@ -1,4 +1,4 @@
-"""Non-blocking IO operations implemented using epoll
+"""Non-blocking IO operations implemented using epoll.
 
 We use epoll in edge-triggered mode. Our usage is relatively
 straightforward, but there are a few quirks.
@@ -137,7 +137,7 @@ class EpollWaiter:
         self.valid_events_buf: t.Optional[Pointer[EpollEventList]] = None
 
     def add_and_allocate_number(self, cb: t.Callable[[EPOLL], None]) -> int:
-        """Add a callback which will be called on EpollEvents with data == returned number
+        """Add a callback which will be called on EpollEvents with data == returned number.
 
         We can then add the returned number to the epollfd with some file descriptor and
         mask.
@@ -152,7 +152,7 @@ class EpollWaiter:
         return number
 
     def remove_number(self, number: int) -> None:
-        "Remove the callback for this number"
+        "Remove the callback for this number."
         # we mark this number to be removed before we call epoll again; we can't
         # immediately remove it since we might be in the middle of a call right now.
         self.pending_remove.add(number)
@@ -191,10 +191,10 @@ class EpollWaiter:
                         self.number_to_cb[event.data](event.events)
 
 class Epoller:
-    "Terribly named class that allows registering fds on epoll, and waiting on them"
+    "Terribly named class that allows registering fds on epoll, and waiting on them."
     @staticmethod
     def make_subsidiary(ram: RAM, epfd: FileDescriptor, wait_readable: t.Callable[[], t.Awaitable[None]]) -> Epoller:
-        """Make a subsidiary epoller, as described in the module docstring
+        """Make a subsidiary epoller, as described in the module docstring.
 
         We delegate responsibility for blocking to wait for new events to some other
         component. We call the passed-in wait_readable function to block for new events.
@@ -205,7 +205,7 @@ class Epoller:
 
     @staticmethod
     async def make_root(ram: RAM, task: Task) -> Epoller:
-        """Make a root epoller, as described in the module docstring
+        """Make a root epoller, as described in the module docstring.
 
         We take responsibility for blocking to wait for new events for every other
         component in this thread. We pull the activity_fd from the SyscallInterface and
@@ -227,13 +227,13 @@ class Epoller:
         return center
 
     def __init__(self, epoll_waiter: EpollWaiter, ram: RAM, epfd: FileDescriptor) -> None:
-        "Use one of the constructor methods, make_subsidiary or make_root"
+        "Don't construct directly; use one of the constructor methods, make_subsidiary or make_root."
         self.epoll_waiter = epoll_waiter
         self.ram = ram
         self.epfd = epfd
 
     def inherit(self, ram: RAM) -> Epoller:
-        """Make a new Epoller which shares the same EpollWaiter class
+        """Make a new Epoller which shares the same EpollWaiter class.
 
         We inherit the epollfd to a new task for the purpose of registering new fds on it;
         but we share the class and task which actually calls epoll_wait.
@@ -243,7 +243,7 @@ class Epoller:
 
     async def register(self, fd: FileDescriptor, events: EPOLL,
                        cb: t.Callable[[EPOLL], None]) -> EpolledFileDescriptor:
-        """Register a file descriptor on this epollfd, for the given events, calling the passed callback
+        """Register a file descriptor on this epollfd, for the given events, calling the passed callback.
 
         The return value can be used to wait for callback calls, modify the events
         registered for this file descriptor, and delete the file descriptor from this
@@ -255,7 +255,7 @@ class Epoller:
         return EpolledFileDescriptor(self, fd, number)
 
 class EpolledFileDescriptor:
-    """Representation of a file descriptor registered on an epollfd
+    """Representation of a file descriptor registered on an epollfd.
 
     We have to keep around a reference to the file descriptor to perform
     EPOLL_CTL.DEL. This is a bit annoying, but whatever.
@@ -273,16 +273,16 @@ class EpolledFileDescriptor:
         self.in_epollfd = True
 
     async def do_wait(self) -> None:
-        "Perform one epoll_wait, which may call some callbacks"
+        "Perform one epoll_wait, which may call some callbacks."
         await self.epoller.epoll_waiter.do_wait()
 
     async def modify(self, events: EPOLL) -> None:
-        "Change the EPOLL flags that this fd is registered with"
+        "Change the EPOLL flags that this fd is registered with."
         await self.epoller.epfd.epoll_ctl(
             EPOLL_CTL.MOD, self.fd, await self.epoller.ram.ptr(EpollEvent(self.number, events)))
 
     async def delete(self) -> None:
-        "Delete this fd from the epollfd"
+        "Delete this fd from the epollfd."
         if self.in_epollfd:
             await self.epoller.epfd.epoll_ctl(EPOLL_CTL.DEL, self.fd)
             self.epoller.epoll_waiter.remove_number(self.number)
@@ -290,7 +290,7 @@ class EpolledFileDescriptor:
 
 @dataclass
 class FDStatus:
-    """Tracks the IO status of a file as an EPOLL mask
+    """Tracks the IO status of a file as an EPOLL mask.
 
     With edge-triggered epoll, we can track whether a file is ready for a given IO in
     userspace.
@@ -333,7 +333,7 @@ class FDStatus:
         self.mask &= ~event
 
 class AsyncFileDescriptor:
-    """A file descriptor on which IO can be performed without blocking the thread
+    """A file descriptor on which IO can be performed without blocking the thread.
 
     Also comes with helpful methods to abstract over memory allocation; please try to
     avoid using them.
@@ -345,7 +345,7 @@ class AsyncFileDescriptor:
     """
     @staticmethod
     async def make(epoller: Epoller, ram: RAM, fd: FileDescriptor) -> AsyncFileDescriptor:
-        """Make an AsyncFileDescriptor; make sure to call this with only O.NONBLOCK file descriptors
+        """Make an AsyncFileDescriptor; make sure to call this with only O.NONBLOCK file descriptors.
 
         It won't actually break anything if this is called with file descriptors not in
         NONBLOCK mode; it just means that they'll block when we go to read, which is
@@ -362,6 +362,7 @@ class AsyncFileDescriptor:
     def __init__(self, ram: RAM, handle: FileDescriptor,
                  status: FDStatus, epolled: EpolledFileDescriptor,
     ) -> None:
+        "Don't construct directly; use the AsyncFileDescriptor.make constructor instead."
         self.ram = ram
         self.handle = handle
         self.status = status
@@ -373,16 +374,16 @@ class AsyncFileDescriptor:
         return EpollThread(self.handle.task, self.ram, self.epolled.epoller)
 
     async def _wait_for(self, flags: EPOLL) -> None:
-        "Call epoll_wait until at least one of the passed flags is set in our status"
+        "Call epoll_wait until at least one of the passed flags is set in our status."
         while not self.status.mask & flags:
             await self.epolled.do_wait()
 
     async def wait_for_rdhup(self) -> None:
-        "Call epoll_wait until this file descriptor has a hangup"
+        "Call epoll_wait until this file descriptor has a hangup."
         await self._wait_for(EPOLL.RDHUP|EPOLL.HUP)
 
     async def read(self, ptr: Pointer) -> t.Tuple[Pointer, Pointer]:
-        "Call read without blocking the thread"
+        "Call read without blocking the thread."
         while True:
             await self._wait_for(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
             try:
@@ -400,7 +401,7 @@ class AsyncFileDescriptor:
         return await valid.read()
 
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        "Call write without blocking the thread"
+        "Call write without blocking the thread."
         await self._wait_for(EPOLL.OUT|EPOLL.ERR)
         while True:
             try:
@@ -429,7 +430,7 @@ class AsyncFileDescriptor:
 
     async def accept(self, flags: SOCK=SOCK.NONE, addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
     ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]]:
-        "Call accept without blocking the thread"
+        "Call accept without blocking the thread."
         while True:
             await self._wait_for(EPOLL.IN|EPOLL.HUP)
             try:
@@ -444,18 +445,18 @@ class AsyncFileDescriptor:
                     raise
 
     async def accept_addr(self, flags: SOCK=SOCK.NONE) -> t.Tuple[FileDescriptor, Address]:
-        "Call accept with a buffer for the address, and return the resulting fd and address"
+        "Call accept with a buffer for the address, and return the resulting fd and address."
         written_sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(GenericSockaddr)))
         fd, sockbuf = await self.accept(flags, written_sockbuf)
         addr = (await (await sockbuf.read()).buf.read()).parse()
         return fd, addr
 
     async def bind(self, addr: T_addr) -> None:
-        "Call bind; bind already doesn't block the thread"
+        "Call bind; bind already doesn't block the thread."
         await self.handle.bind(await self.ram.ptr(addr))
 
     async def connect(self, addr: WrittenPointer[Address]) -> None:
-        "Call connect without blocking the thread"
+        "Call connect without blocking the thread."
         try:
             await self.handle.connect(addr)
         except OSError as e:
@@ -471,7 +472,7 @@ class AsyncFileDescriptor:
                 raise
 
     def with_handle(self, fd: FileDescriptor) -> AsyncFileDescriptor:
-        """Return a new AFD using this new FD handle for making syscalls
+        """Return a new AFD using this new FD handle for making syscalls.
 
         This is useful when we want to change what task we're making syscalls in when
         using this AFD.
@@ -480,6 +481,7 @@ class AsyncFileDescriptor:
         return AsyncFileDescriptor(self.ram, fd, self.status, self.epolled)
 
     async def close(self) -> None:
+        "Remove this FD from Epoll and invalidate the FD handle."
         await self.epolled.delete()
         await self.handle.invalidate()
 
@@ -488,11 +490,11 @@ class AsyncFileDescriptor:
 # Miscellaneous helpers
 
 class EOFException(Exception):
-    "Thrown when AsyncReadBuffer hits an EOF before reading all the requested data"
+    "Thrown when AsyncReadBuffer hits an EOF before reading all the requested data."
     pass
 
 class AsyncReadBuffer:
-    """A buffer for parsing variable-length streaming data
+    """A buffer for parsing variable-length streaming data.
 
     When reading data from a stream such as a pipe or TCP connection, data is not
     delivered to us from the kernel in nicely-separated records. We need to rebuffer the
@@ -505,7 +507,7 @@ class AsyncReadBuffer:
         self.buf = b""
 
     async def _read(self) -> t.Optional[bytes]:
-        "Read some bytes; return None on EOF"
+        "Read some bytes; return None on EOF."
         data = await self.fd.read_some_bytes()
         if len(data) == 0:
             if len(self.buf) != 0:
@@ -516,7 +518,7 @@ class AsyncReadBuffer:
             return data
 
     async def read_length(self, length: int) -> t.Optional[bytes]:
-        "Read exactly this many bytes; return None on EOF"
+        "Read exactly this many bytes; return None on EOF."
         while len(self.buf) < length:
             data = await self._read()
             if data is None:
@@ -527,7 +529,7 @@ class AsyncReadBuffer:
         return section
 
     async def read_cffi(self, name: str) -> t.Any:
-        "Read, parse, and return this fixed-size cffi type"
+        "Read, parse, and return this fixed-size cffi type."
         size = ffi.sizeof(name)
         data = await self.read_length(size)
         if data is None:
@@ -540,7 +542,7 @@ class AsyncReadBuffer:
         return dest[0]
 
     async def read_length_prefixed_string(self) -> bytes:
-        "Read a bytestring which is prefixed with a 64-bit native-byte-order size"
+        "Read a bytestring which is prefixed with a 64-bit native-byte-order size."
         elem_size = await self.read_cffi('size_t')
         elem = await self.read_length(elem_size)
         if elem is None:
@@ -548,14 +550,14 @@ class AsyncReadBuffer:
         return elem
 
     async def read_length_prefixed_array(self, length: int) -> t.List[bytes]:
-        "Read an array, prefixed with its size, of bytestrings, each prefixed with their size"
+        "Read an array, prefixed with its size, of bytestrings, each prefixed with their size."
         ret: t.List[bytes] = []
         for _ in range(length):
             ret.append(await self.read_length_prefixed_string())
         return ret
 
     async def read_envp(self, length: int) -> t.Dict[bytes, bytes]:
-        """Read a size-prefixed array of size-prefixed bytestrings, with each bytestring containing '=', into a dict
+        """Read a size-prefixed array of size-prefixed bytestrings, with each bytestring containing '=', into a dict.
 
         This is the format we expect for envp, which is written to us on startup by
         non-child threads.
@@ -573,7 +575,7 @@ class AsyncReadBuffer:
         return environ
 
     async def read_until_delimiter(self, delim: bytes) -> t.Optional[bytes]:
-        "Read and return all bytes until the specified delimiter, stripping the delimiter; on EOF, return None"
+        "Read and return all bytes until the specified delimiter, stripping the delimiter; on EOF, return None."
         while True:
             try:
                 i = self.buf.index(delim)
@@ -591,14 +593,14 @@ class AsyncReadBuffer:
             self.buf += data
 
     async def read_line(self) -> bytes:
-        "Read and return a line, stripping the newline character"
+        "Read and return a line, stripping the newline character."
         ret = await self.read_until_delimiter(b"\n")
         if ret is None:
             raise EOFException("hangup before reading full line")
         return ret
 
     async def read_netstring(self) -> bytes:
-        "Read a netstring, as defined by DJB"
+        "Read a netstring, as defined by DJB."
         length_bytes = await self.read_until_delimiter(b':')
         if length_bytes is None:
             raise EOFException("hangup before reaching colon at end of netstring size")
@@ -623,7 +625,7 @@ class EpollThread(RAMThread):
         self.epoller = epoller
 
     async def make_afd(self, fd: FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
-        "Make an AsyncFileDescriptor; set `nonblock` to True if the fd is already nonblocking"
+        "Make an AsyncFileDescriptor; set `nonblock` to True if the fd is already nonblocking."
         if not nonblock:
             await fd.fcntl(F.SETFL, O.NONBLOCK)
         return await AsyncFileDescriptor.make(self.epoller, self.ram, fd)

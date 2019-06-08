@@ -1,4 +1,4 @@
-"#include <unistd.h>"
+"Modeled after unistd.h."
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass
@@ -22,18 +22,18 @@ __all__ = [
 ]
 
 class SEEK(enum.IntEnum):
-    "The whence argument to lseek"
+    "The whence argument to lseek."
     SET = os.SEEK_SET
 
 class OK(enum.IntFlag):
-    "The mode argument to access, faccessat"
+    "The mode argument to access, faccessat."
     R = os.R_OK
     W = os.W_OK
     X = os.X_OK
     F = os.F_OK
 
 class Arg(bytes, Serializable):
-    "A null-terminated string, as passed to execve"
+    "A null-terminated string, as passed to execve."
     def to_bytes(self) -> bytes:
         return self + b'\0'
 
@@ -49,7 +49,7 @@ class Arg(bytes, Serializable):
 
 T_arglist = t.TypeVar('T_arglist', bound='ArgList')
 class ArgList(t.List[Pointer[Arg]], FixedSerializer):
-    "A null-terminated list of null-terminated strings, as passed to execve"
+    "A null-terminated list of null-terminated strings, as passed to execve."
     @classmethod
     def get_serializer(cls, task: Task) -> Serializer[T_arglist]:
         return ArgListSerializer()
@@ -72,7 +72,7 @@ class ArgListSerializer(Serializer[T_arglist]):
 T_pipe = t.TypeVar('T_pipe', bound='Pipe')
 @dataclass
 class Pipe(FixedSize):
-    "A pair of file descriptors, as written by pipe"
+    "A pair of file descriptors, as written by pipe."
     read: FileDescriptor
     write: FileDescriptor
 

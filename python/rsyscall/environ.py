@@ -1,4 +1,4 @@
-"""Functions and classes relating to Unix environment variables
+"""Functions and classes relating to Unix environment variables.
 
 This is always available to us, and we can use it to look up executables in our
 environment and access various other resources.
@@ -22,7 +22,7 @@ from rsyscall.unistd import OK
 
 T = t.TypeVar('T')
 def chunks(lst: t.List[T], size: int) -> t.Iterator[t.List[T]]:
-    """Yield chunks of `lst`, at most `size` long
+    """Yield chunks of `lst`, at most `size` long.
 
     Thanks Stack Overflow
 
@@ -31,13 +31,13 @@ def chunks(lst: t.List[T], size: int) -> t.Iterator[t.List[T]]:
         yield lst[i:i+size]
 
 class ExecutableNotFound(Exception):
-    "No executable with this name can be found"
+    "No executable with this name can be found."
     def __init__(self, name: str) -> None:
         super().__init__(name)
         self.name = name
 
 class ExecutablePathCache:
-    "A cache of executables looked up on PATH"
+    "A cache of executables looked up on PATH."
     def __init__(self, task: Task, ram: RAM, paths: t.List[str]) -> None:
         self.task = task
         self.ram = ram
@@ -46,7 +46,7 @@ class ExecutablePathCache:
         self.name_to_path: t.Dict[str, Path] = {}
 
     async def _get_fd_for_path(self, path: Path) -> t.Optional[FileDescriptor]:
-        "Return a cached file descriptor for this path"
+        "Return a cached file descriptor for this path."
         if path not in self.fds:
             try:
                 fd = await self.task.open(await self.ram.ptr(path), O.PATH|O.DIRECTORY)
@@ -125,11 +125,11 @@ class Environment:
             return os.fsdecode(result)
 
     async def which(self, name: str) -> Command:
-        "Locate an executable with this name on PATH; throw ExecutableNotFound on failure"
+        "Locate an executable with this name on PATH; throw ExecutableNotFound on failure."
         return await self.path.which(name)
 
     def inherit(self, task: Task, ram: RAM) -> Environment:
-        """Return a new Environment instance for this Task and RAM
+        """Return a new Environment instance for this Task and RAM.
 
         We share the existing ExecutablePathCache. This centralizes path lookups so that
         they're shared between all threads.

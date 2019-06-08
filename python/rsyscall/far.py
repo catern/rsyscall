@@ -1,4 +1,4 @@
-"""Definitions of namespaces and identifiers tagged with a namespace
+"""Definitions of namespaces and identifiers tagged with a namespace.
 
 In the analogy to near and far pointers, this file is where we define
 segment ids and far pointers. A far pointer is a near pointer plus a
@@ -19,7 +19,7 @@ if t.TYPE_CHECKING:
 
 @dataclass(eq=False)
 class File:
-    """An opaque representation of a file, possibly referenced by file descriptors or memory mappings
+    """An opaque representation of a file, possibly referenced by file descriptors or memory mappings.
 
     Specifically, this represents what in POSIXese is called an "open file description".
 
@@ -37,7 +37,7 @@ class File:
 #### Segment ids
 @dataclass(eq=False)
 class FDTable:
-    """An opaque representation of an existing file descriptor table, compared with "is"
+    """An opaque representation of an existing file descriptor table, compared with "is".
 
     This is the namespace in which a near.FileDescriptor is valid.
 
@@ -57,7 +57,7 @@ class FDTable:
 
 @dataclass(eq=False)
 class AddressSpace:
-    """An opaque representation of an existing address space, compared with "is"
+    """An opaque representation of an existing address space, compared with "is".
 
     This is the namespace in which a near.Address or near.MemoryMapping is valid.
 
