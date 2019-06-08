@@ -24,14 +24,8 @@ namespaces active in the task behind the SyscallInterface.
 """
 
 from __future__ import annotations
-from rsyscall._raw import ffi, lib # type: ignore
-from dataclasses import dataclass
-import enum
-import abc
-import logging
 import trio
 import typing as t
-logger = logging.getLogger(__name__)
 
 from rsyscall.fcntl import AT, F
 from rsyscall.sys.wait import IdType
@@ -42,354 +36,21 @@ if t.TYPE_CHECKING:
     from rsyscall.sys.uio import RWF
     from rsyscall.sched import CLONE
     from rsyscall.signal import HowSIG, SIG
-    import rsyscall.handle as handle
 
-class SyscallInterface:
-    """The lowest-level interface for an object which lets us send syscalls to some process
-
-    We send syscalls to a process, but nothing in this interface tells us anything about
-    the process to which we're sending syscalls; that information is maintained in the
-    Task, which contains an object matching this interface.
-
-    This is like the segment register override prefix, with no awareness of the contents
-    of the register.
-
-    """
-    async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        """Send a syscall and wait for it to complete, throwing on error results
-
-        We provide a guarantee that if the syscall was sent to the process, then we will
-        not return until the syscall has completed or our connection has broken.  To
-        achieve this, we shield against Python coroutine cancellation while waiting for
-        the syscall response.
-
-        This guarantee is important so that our caller can deal with state changes caused
-        by the syscall. If our coroutine was cancelled in the middle of a syscall, the
-        result of the syscall would be discarded, and our caller wouldn't be able to
-        guarantee that state changes in the process are reflected in state changes in
-        Python.
-
-        For example, a coroutine calling waitid could be cancelled; if that happened, we
-        could discard a child state change indicating that the child exited. If that
-        happened, future calls to waitid on that child would be invalid, or maybe return
-        events for an unrelated child. We'd be completely confused.
-
-        Instead, thanks to our guarantee, syscalls made through this method can be treated
-        as atomic: They will either be submitted and completed, or not submitted at all.
-        (If they're submitted and not completed due to blocking forever, that just means
-        we'll never return.) There's no possibility of making a syscall, causing a
-        side-effect, and never learning about the side-effect you caused.
-
-        Since most syscalls use this method, this guarantee applies to most syscalls.
-
-        For callers who want to preserve the ability for their coroutine to be cancelled
-        even while waiting for a syscall response, the `submit_syscall` API can be used.
-
-        Note that this Python-level cancellation protection has nothing to do with
-        actually cancelling a syscall. That ability is still preserved with this
-        interface; just send a signal to trigger an EINTR in the syscalling process, and
-        we'll get back that EINTR as the syscall response. If you just want to be able to
-        cancel deadlocked processes, you should do that.
-
-        Likewise, if the rsyscall server dies, or we get an EOF on the syscall connection,
-        or any other event causes response.receive to throw an exception, we'll still
-        return that exception; so you can always fall back on killing the rsyscall server
-        to stop a deadlock.
-
-        """
-        response = await self.submit_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        try:
-            with trio.CancelScope(shield=True):
-                result = await response.receive()
-        except Exception as exn:
-            self.logger.debug("%s -> %s", number, exn)
-            raise
-        else:
-            self.logger.debug("%s -> %s", number, result)
-            return result
-
-    @abc.abstractmethod
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
-        """Submit a syscall without immediately waiting for its response to come back
-
-        By calling `receive` on SyscallResponse, the caller can wait for the response.
-
-        The primary purpose of this interface is to allow for cancellation. The `syscall`
-        method doesn't allow cancellation while waiting for a syscall response. This
-        method doesn't wait for the syscall response, and so can be used in scenarios
-        where we want to avoid blocking for unneeded syscall responses.
-
-        This interface is not for parallelization or concurrency. The `syscall` method can
-        already be called concurrently from multiple coroutines; using this method does
-        not give any improved performance characteristics compared to just spinning up
-        multiple coroutines to call `syscall` in parallel.
-
-        While this interface does allow the user to avoid blocking for the syscall
-        response, using that as an optimization is obviously a bad idea. For correctness,
-        you must eventually block for the syscall response to make sure the syscall
-        succeeded. Appropriate usage of coroutines allows continuing operation without
-        waiting for the syscall response even with `syscall`, while still enforcing that
-        eventually we will examine the response.
-
-        """
-        pass
-
-    # non-syscall operations which we haven't figured out how to get rid of yet
-    logger: logging.Logger
-
-    @abc.abstractmethod
-    async def close_interface(self) -> None:
-        "Close this syscall interface, shutting down the connection to the remote process"
-        pass
-
-    @abc.abstractmethod
-    def get_activity_fd(self) -> t.Optional[handle.FileDescriptor]:
-        """When this file descriptor is readable, it means other things want to run on this thread
-
-        Users of the SyscallInterface should ensure that when they block, they are
-        monitoring this fd as well.
-
-        Typically, this is the file descriptor which the rsyscall server reads for
-        incoming syscalls.
-
-        """
-        pass
-
-class SyscallResponse:
-    "A representation of the pending response to some syscall submitted through `submit_syscall`"
-    @abc.abstractmethod
-    async def receive(self) -> int:
-        "Wait for the corresponding syscall to complete and return its result, throwing on error results"
-        pass
-
-#### Identifiers (near pointers)
-@dataclass(frozen=True)
-class FileDescriptor:
-    """The integer identifier for a file descriptor taken by many syscalls
-
-    This is a file descriptor in a specific file descriptor table, but we don't with this
-    object know what file descriptor table that is.
-
-    """
-    number: int
-
-    def __str__(self) -> str:
-        return f"FD({self.number})"
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __int__(self) -> int:
-        return self.number
-
-@dataclass(frozen=True)
-class WatchDescriptor:
-    """The integer identifier for an inotify watch descriptor taken by inotify syscalls
-
-    This is a watch descriptor for a specific inotify instance, but we don't with this
-    object know what inotify instance that is.
-
-    """
-    number: int
-
-    def __str__(self) -> str:
-        return f"WD({self.number})"
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __int__(self) -> int:
-        return self.number
-
-@dataclass
-class Address:
-    """The integer identifier for a virtual memory address as taken by many syscalls
-
-    This is an address in a specific address space, but we don't with this object know
-    what address space that is.
-
-    """
-    address: int
-
-    def __add__(self, other: int) -> 'Address':
-        return Address(self.address + other)
-
-    def __sub__(self, other: int) -> 'Address':
-        return Address(self.address - other)
-
-    def __str__(self) -> str:
-        return f"Address({hex(self.address)})"
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __int__(self) -> int:
-        return self.address
-
-@dataclass
-class MemoryMapping:
-    """The integer identifiers for a virtual memory mapping as taken by many syscalls
-
-    This is a mapping in a specific address space, but we don't with this object know what
-    address space that is.
-
-    We require three pieces of information to describe a memory mapping. 
-    - Address is the start address of the memory mapping
-    - Length is the length in bytes of the memory mapped region
-
-    Page size is unusual, but required for robustness: While the syscalls related to
-    memory mappings don't appear to depend on page size, that's an illusion. They seem to
-    deal in sizes in terms of bytes, but if you provide a size which is not a multiple of
-    the page size, silent failures or misbehaviors will occur. Misbehavior include the
-    sizes being rounded up to the page size, including in munmap, thus unmapping more
-    memory than expected.
-
-    As long as we ensure that the original length we pass to mmap is a multiple of the
-    page size that will be used for the mapping, then we could get by with just storing
-    the length and not the page size. However, the memory mapping API allows unmapping
-    only part of a mapping, or in general performing operations on only part of a
-    mapping. These splits must happen at page boundaries, and therefore to support
-    specifying these splits without allowing silent rounding errors, we need to know the
-    page size of the mapping.
-
-    This is especially troubling when mmaping files with an unknown page size, such as
-    those passed to us from another program. memfd_create or hugetlbfs can be used to
-    create files with an unknown page size, which cannot be robust unmapped. At this time,
-    we don't know of a way to learn the page size of such a file. One good solution would
-    be for mmap to be taught a new MAP_ENFORCE_PAGE_SIZE flag which requires MAP_HUGE_* to
-    be passed when mapping files with nonstandard page size. In this way, we could assert
-    the page size of the file and protect against attackers sending us files with
-    unexpected page sizes.
-
-    """
-    address: int
-    length: int
-    page_size: int
-
-    def __post_init_(self) -> None:
-        if (self.address % self.page_size) != 0:
-            raise Exception("the address for this memory-mapping is not page-aligned", self)
-        if (self.length % self.page_size) != 0:
-            raise Exception("the length for this memory-mapping is not page-aligned", self)
-
-    def as_address(self) -> Address:
-        "Return the starting address of this memory mapping"
-        return Address(self.address)
-
-    def __str__(self) -> str:
-        if self.page_size == 4096:
-            return f"MMap({hex(self.address)}, {self.length})"
-        else:
-            return f"MMap(pgsz={self.page_size}, {hex(self.address)}, {self.length})"
-
-    def __repr__(self) -> str:
-        return str(self)
-
-@dataclass
-class Process:
-    """The integer identifier for a process taken by many syscalls
-
-    This is a process in a specific pid namespace, but we don't with this object know what
-    pid namespace that is.
-
-    """
-    id: int
-
-    def __int__(self) -> int:
-        return self.id
-
-@dataclass
-class ProcessGroup:
-    """The integer identifier for a process group taken by many syscalls
-
-    This is a process group in a specific pid namespace, but we don't with this object
-    know what pid namespace that is.
-
-    """
-    id: int
-
-    def __int__(self) -> int:
-        return self.id
+from rsyscall.near.types import (
+    FileDescriptor,
+    WatchDescriptor,
+    Address,
+    MemoryMapping,
+    Process,
+    ProcessGroup,
+)
+from rsyscall.near.sys import SYS
+from rsyscall.near.sysif import SyscallInterface, SyscallResponse, SyscallHangup
 
 #### Syscalls (instructions)
 # These are like instructions, run with this segment register override prefix and arguments.
 import trio
-from rsyscall.tasks.exceptions import RsyscallHangup
-class SYS(enum.IntEnum):
-    """The syscall number argument passed to the low-level `syscall` method and underlying instruction
-
-    Passing one of these numbers is how a userspace program indicates to the kernel which
-    syscall it wants to call.
-
-    """
-    accept4 = lib.SYS_accept4
-    bind = lib.SYS_bind
-    capget = lib.SYS_capget
-    capset = lib.SYS_capset
-    chdir = lib.SYS_chdir
-    clone = lib.SYS_clone
-    close = lib.SYS_close
-    connect = lib.SYS_connect
-    dup3 = lib.SYS_dup3
-    epoll_create1 = lib.SYS_epoll_create1
-    epoll_ctl = lib.SYS_epoll_ctl
-    epoll_wait = lib.SYS_epoll_wait
-    execveat = lib.SYS_execveat
-    exit = lib.SYS_exit
-    faccessat = lib.SYS_faccessat
-    fchdir = lib.SYS_fchdir
-    fchmod = lib.SYS_fchmod
-    fcntl = lib.SYS_fcntl
-    ftruncate = lib.SYS_ftruncate
-    getdents64 = lib.SYS_getdents64
-    getgid = lib.SYS_getgid
-    getpeername = lib.SYS_getpeername
-    getpgid = lib.SYS_getpgid
-    getsockname = lib.SYS_getsockname
-    getsockopt = lib.SYS_getsockopt
-    getuid = lib.SYS_getuid
-    inotify_add_watch = lib.SYS_inotify_add_watch
-    inotify_init1 = lib.SYS_inotify_init1
-    inotify_rm_watch = lib.SYS_inotify_rm_watch
-    ioctl = lib.SYS_ioctl
-    kill = lib.SYS_kill
-    linkat = lib.SYS_linkat
-    listen = lib.SYS_listen
-    lseek = lib.SYS_lseek
-    memfd_create = lib.SYS_memfd_create
-    mkdirat = lib.SYS_mkdirat
-    mmap = lib.SYS_mmap
-    mount = lib.SYS_mount
-    munmap = lib.SYS_munmap
-    openat = lib.SYS_openat
-    pipe2 = lib.SYS_pipe2
-    prctl = lib.SYS_prctl
-    pread64 = lib.SYS_pread64
-    preadv2 = lib.SYS_preadv2
-    pwritev2 = lib.SYS_pwritev2
-    read = lib.SYS_read
-    readlinkat = lib.SYS_readlinkat
-    recvfrom = lib.SYS_recvfrom
-    recvmsg = lib.SYS_recvmsg
-    renameat2 = lib.SYS_renameat2
-    rt_sigaction = lib.SYS_rt_sigaction
-    rt_sigprocmask = lib.SYS_rt_sigprocmask
-    sendmsg = lib.SYS_sendmsg
-    set_robust_list = lib.SYS_set_robust_list
-    set_tid_address = lib.SYS_set_tid_address
-    setns = lib.SYS_setns
-    setpgid = lib.SYS_setpgid
-    setsid = lib.SYS_setsid
-    setsockopt = lib.SYS_setsockopt
-    shutdown = lib.SYS_shutdown
-    signalfd4 = lib.SYS_signalfd4
-    socket = lib.SYS_socket
-    socketpair = lib.SYS_socketpair
-    symlinkat = lib.SYS_symlinkat
-    unlinkat = lib.SYS_unlinkat
-    unshare = lib.SYS_unshare
-    waitid = lib.SYS_waitid
-    write = lib.SYS_write
 
 async def accept4(sysif: SyscallInterface, sockfd: FileDescriptor,
                   addr: t.Optional[Address], addrlen: t.Optional[Address], flags: int) -> FileDescriptor:
@@ -449,11 +110,10 @@ async def epoll_wait(sysif: SyscallInterface, epfd: FileDescriptor, events: Addr
 async def execveat(sysif: SyscallInterface,
                    dirfd: t.Optional[FileDescriptor], path: Address,
                    argv: Address, envp: Address, flags: int) -> None:
-    logger.debug("execveat(%s, %s, %s, %s)", dirfd, path, argv, flags)
     if dirfd is None:
         dirfd = AT.FDCWD # type: ignore
     def handle(exn):
-        if isinstance(exn, RsyscallHangup):
+        if isinstance(exn, SyscallHangup):
             return None
         else:
             return exn
@@ -462,7 +122,7 @@ async def execveat(sysif: SyscallInterface,
 
 async def exit(sysif: SyscallInterface, status: int) -> None:
     def handle(exn):
-        if isinstance(exn, RsyscallHangup):
+        if isinstance(exn, SyscallHangup):
             return None
         else:
             return exn
@@ -482,7 +142,6 @@ async def fchmod(sysif: SyscallInterface, fd: FileDescriptor, mode: int) -> None
     await sysif.syscall(SYS.fchmod, fd, mode)
 
 async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: F, arg: t.Optional[t.Union[int, Address]]=None) -> int:
-    logger.debug("fcntl(%s, %s, %s)", fd, cmd, arg)
     if arg is None:
         arg = 0
     return (await sysif.syscall(SYS.fcntl, fd, cmd, arg))
@@ -718,7 +377,6 @@ async def unshare(sysif: SyscallInterface, flags: CLONE) -> None:
 async def waitid(sysif: SyscallInterface,
                  id: t.Union[Process, ProcessGroup, None], infop: t.Optional[Address], options: int,
                  rusage: t.Optional[Address]) -> int:
-    logger.debug("waitid(%s, %s, %s, %s)", id, infop, options, rusage)
     if isinstance(id, Process):
         idtype = IdType.PID
     elif isinstance(id, ProcessGroup):
