@@ -15,7 +15,7 @@ from rsyscall.handle import Pointer, Task
 from rsyscall.concurrency import OneAtATime
 from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
 from rsyscall.epoller import AsyncFileDescriptor
-from rsyscall.tasks.exceptions import RsyscallHangup
+from rsyscall.near.sysif import SyscallHangup
 import typing as t
 import trio
 
@@ -175,7 +175,7 @@ class SyscallConnection:
             if self.valid is None:
                 valid, rest = await self.fromfd.read(buf)
                 if valid.size() == 0:
-                    raise RsyscallHangup()
+                    raise SyscallHangup()
                 self.valid = valid
             data = await self.valid.read()
             self.valid = None

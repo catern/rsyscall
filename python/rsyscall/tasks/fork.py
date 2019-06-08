@@ -16,7 +16,7 @@ from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.struct import Int32
 from rsyscall.tasks.base_sysif import BaseSyscallInterface
 from rsyscall.tasks.connection import SyscallConnection
-from rsyscall.tasks.exceptions import RsyscallHangup
+from rsyscall.near.sysif import SyscallHangup
 import contextlib
 import logging
 import rsyscall.far as far
@@ -37,11 +37,11 @@ __all__ = [
     'ForkThread',
 ]
 
-class ChildExit(RsyscallHangup):
+class ChildExit(SyscallHangup):
     "The task we were sending syscalls to has exited"
     pass
 
-class MMRelease(RsyscallHangup):
+class MMRelease(SyscallHangup):
     """The task we were sending syscalls to has either exited or exec'd; either way it can no longer respond
 
     More concretely, the task has left its old address space - it has called the
@@ -62,11 +62,11 @@ class ChildSyscallInterface(BaseSyscallInterface):
     other side of a connection dies. That will happen, for example, whenever the
     child process is sharing a file descriptor table with us. In those
     situations, we need some other means to detect that a syscall will never be
-    responded to, and signal it to the caller by throwing RsyscallHangup.
+    responded to, and signal it to the caller by throwing SyscallHangup.
 
     In this class, we detect a hangup while waiting for a syscall response by
     simultaneously monitoring the child process. If the child process exits, we
-    stop waiting for the syscall response and throw RsyscallHangup back to the
+    stop waiting for the syscall response and throw SyscallHangup back to the
     caller.
 
     This is not just a matter of failure cases, it's also important for normal

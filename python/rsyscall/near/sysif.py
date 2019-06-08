@@ -2,13 +2,10 @@ from __future__ import annotations
 import logging
 import trio
 import abc
-from rsyscall.tasks.exceptions import RsyscallHangup
 from rsyscall.sys.syscall import SYS
 import typing as t
 if t.TYPE_CHECKING:
     import rsyscall.handle as handle
-
-SyscallHangup = RsyscallHangup
 
 __all__ = [
     "SyscallInterface",
@@ -133,3 +130,10 @@ class SyscallResponse:
     async def receive(self) -> int:
         "Wait for the corresponding syscall to complete and return its result, throwing on error results"
         pass
+
+class SyscallHangup(Exception):
+    """The task we were sending syscalls to, has changed state in a way that prevents it from responding to future syscalls.
+
+    This may be thrown by SyscallInterface.
+    """
+    pass

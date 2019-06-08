@@ -4,7 +4,7 @@ from rsyscall.nix import local_store
 import rsyscall.tasks.local as local
 from rsyscall.tasks.persistent import *
 from rsyscall.tasks.ssh import make_local_ssh
-from rsyscall.tasks.exceptions import RsyscallHangup
+from rsyscall.near.sysif import SyscallHangup
 from rsyscall.tests.utils import assert_thread_works
 from rsyscall.sched import CLONE
 from rsyscall.signal import SIG
@@ -31,7 +31,7 @@ class TestPersistent(TrioTestCase):
         per_thr = await fork_persistent(self.thread, self.sock_path)
         await per_thr.exit(0)
         # when we try to reconnect, we'll fail
-        with self.assertRaises(RsyscallHangup):
+        with self.assertRaises(SyscallHangup):
             await per_thr.reconnect(self.thread)
 
     async def test_nest_exit(self) -> None:

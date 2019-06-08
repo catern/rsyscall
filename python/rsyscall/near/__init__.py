@@ -306,18 +306,6 @@ async def rt_sigaction(sysif: SyscallInterface, signum: SIG,
         oldact = 0 # type: ignore
     await sysif.syscall(SYS.rt_sigaction, signum, act, oldact, size)
 
-async def rt_sigprocmask(sysif: SyscallInterface,
-                         newset: t.Optional[t.Tuple[HowSIG, Address]],
-                         oldset: t.Optional[Address],
-                         sigsetsize: int) -> None:
-    if newset is not None:
-        how, set = newset
-    else:
-        how, set = 0, 0 # type: ignore
-    if oldset is None:
-        oldset = 0 # type: ignore
-    await sysif.syscall(SYS.rt_sigprocmask, how, set, oldset, sigsetsize)
-
 async def sendmsg(sysif: SyscallInterface, fd: FileDescriptor, msg: Address, flags: int) -> int:
     return (await sysif.syscall(SYS.sendmsg, fd, msg, flags))
 

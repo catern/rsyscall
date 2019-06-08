@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 import enum
 import contextlib
 import rsyscall.near.types as near
-import rsyscall.near as syscalls
 if t.TYPE_CHECKING:
     from rsyscall.far import Task
     from rsyscall.handle import Pointer, WrittenPointer
@@ -191,6 +190,21 @@ class Sigaction(Struct):
 
 
 #### Signal blocking
+from rsyscall.near.sysif import SyscallInterface
+from rsyscall.sys.syscall import SYS
+
+async def _rt_sigprocmask(sysif: SyscallInterface,
+                          newset: t.Optional[t.Tuple[HowSIG, near.Address]],
+                          oldset: t.Optional[near.Address],
+                          sigsetsize: int) -> None:
+    "The raw, near, rt_sigprocmask syscall."
+    if newset is not None:
+        how, set = newset
+    else:
+        how, set = 0, 0 # type: ignore
+    if oldset is None:
+        oldset = 0 # type: ignore
+    await sysif.syscall(SYS.rt_sigprocmask, how, set, oldset, sigsetsize)
 
 class SignalMaskTask(Task):
     "The subset of functionality of the Task related to blocking signals"
@@ -203,7 +217,7 @@ class SignalMaskTask(Task):
 
     async def _sigprocmask(self, newset: t.Optional[t.Tuple[HowSIG, WrittenPointer[Sigset]]],
                            oldset: t.Optional[Pointer[Sigset]]=None) -> t.Optional[Pointer[Sigset]]:
-        "The low-level implementation of sigprocmask, without any tracking of our current sigmask"
+        "The low-level implementation of sigprocmask, without any tracking of our current sigmask."
         with contextlib.ExitStack() as stack:
             newset_n: t.Optional[t.Tuple[HowSIG, near.Address]]
             if newset:
@@ -212,7 +226,7 @@ class SignalMaskTask(Task):
             else:
                 newset_n = None
             oldset_n = self._borrow_optional(stack, oldset)
-            await syscalls.rt_sigprocmask(self.sysif, newset_n, oldset_n, Sigset.sizeof())
+            await _rt_sigprocmask(self.sysif, newset_n, oldset_n, Sigset.sizeof())
         if oldset:
             return oldset
         else:
@@ -235,7 +249,7 @@ class SignalMaskTask(Task):
                             "we disallow multiple simultaneous calls for implementation simplicity")
         self.sigprocmask_running = True
         if newset is None:
-            ret = await self._sigprocmask(None, oldset)
+            ret = await sigprocmask(self, None, oldset)
             self.sigprocmask_running = False
             return ret
         else:
@@ -246,7 +260,7 @@ class SignalMaskTask(Task):
                 new_sigmask = Sigset(self.sigmask - set.value)
             elif how == HowSIG.SETMASK:
                 new_sigmask = Sigset(set.value)
-            ret = await self._sigprocmask(newset, oldset)
+            ret = await sigprocmask(self, newset, oldset)
             self.sigprocmask_running = False
             if oldset is not None:
                 self.old_sigmask = self.sigmask

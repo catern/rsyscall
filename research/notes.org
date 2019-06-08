@@ -18633,6 +18633,11 @@ nativecall?
    Hmm. Or maybe just make the near versions prefixed with _?
 
    That would be nicer.
+
+   hmm in many cases we don't want the user to call the non-task version
+
+   should we just define the handle.Task version as a method,
+   and just have the free function call it?
 * deployment
   hmm I could include rsyscall.c directly into the python package
 
