@@ -68,7 +68,7 @@ pidfds, which hasn't yet been added.
 """
 from __future__ import annotations
 import typing as t
-import rsyscall.near as near
+import rsyscall.near.types as near
 import rsyscall.far as far
 import rsyscall.handle as handle
 from rsyscall.thread import Thread

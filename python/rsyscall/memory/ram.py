@@ -3,7 +3,7 @@ from __future__ import annotations
 from rsyscall.handle import Task, Pointer, WrittenPointer, MemoryTransport, AllocationInterface, MemoryMapping, MemoryGateway
 from rsyscall.memory.allocator import AllocatorInterface
 from rsyscall.struct import FixedSize, T_fixed_size, HasSerializer, T_has_serializer, FixedSerializer, T_fixed_serializer, Serializer
-import rsyscall.near as near
+import rsyscall.near.types as near
 import rsyscall.far as far
 
 import typing as t

@@ -18627,6 +18627,12 @@ nativecall?
 ** TODO stop storing references to allocations in the arena
    so that gc works right.
 ** TODO go through all the todos
+** TODO move all the syscall definitions into the appropriate headers
+   Use overloads to provide both handle.Task-based and sysif-based versions.
+
+   Hmm. Or maybe just make the near versions prefixed with _?
+
+   That would be nicer.
 * deployment
   hmm I could include rsyscall.c directly into the python package
 

@@ -9,7 +9,7 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.memory.ram import RAM
-from rsyscall.near import WatchDescriptor
+from rsyscall.near.types import WatchDescriptor
 from rsyscall.thread import Thread
 import enum
 import math

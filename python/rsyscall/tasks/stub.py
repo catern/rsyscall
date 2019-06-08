@@ -34,7 +34,7 @@ another program.
 from __future__ import annotations
 import typing as t
 import os
-import rsyscall.near as near
+import rsyscall.near.types as near
 import rsyscall.far as far
 from rsyscall.thread import Thread
 from rsyscall.tasks.connection import SyscallConnection

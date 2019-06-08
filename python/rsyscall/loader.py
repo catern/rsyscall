@@ -14,7 +14,7 @@ from rsyscall.handle import (
     Borrowable, Pointer, WrittenPointer, FileDescriptor, Task, AllocationInterface,
     Stack, MemoryGateway, MemoryMapping,
 )
-import rsyscall.near as near
+import rsyscall.near.types as near
 import rsyscall.far as far
 from rsyscall.struct import Serializer
 

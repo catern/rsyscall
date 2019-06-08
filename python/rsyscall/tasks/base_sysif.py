@@ -1,5 +1,5 @@
 import abc
-from rsyscall.near import SyscallInterface, SyscallResponse
+from rsyscall.near.sysif import SyscallInterface, SyscallResponse
 from rsyscall.tasks.connection import Syscall, SyscallConnection, ConnectionResponse
 from rsyscall.tasks.util import log_syscall, raise_if_error
 from rsyscall.handle import FileDescriptor

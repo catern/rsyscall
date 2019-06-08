@@ -1,6 +1,6 @@
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.near import WatchDescriptor
+from rsyscall.near.types import WatchDescriptor
 from rsyscall.struct import Serializable
 import typing as t
 from dataclasses import dataclass

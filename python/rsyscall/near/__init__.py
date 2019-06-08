@@ -27,16 +27,6 @@ from __future__ import annotations
 import trio
 import typing as t
 
-from rsyscall.fcntl import AT, F
-from rsyscall.sys.wait import IdType
-if t.TYPE_CHECKING:
-    from rsyscall.sys.epoll import EPOLL_CTL
-    from rsyscall.sys.prctl import PR
-    from rsyscall.sys.socket import SHUT
-    from rsyscall.sys.uio import RWF
-    from rsyscall.sched import CLONE
-    from rsyscall.signal import HowSIG, SIG
-
 from rsyscall.near.types import (
     FileDescriptor,
     WatchDescriptor,
@@ -45,8 +35,18 @@ from rsyscall.near.types import (
     Process,
     ProcessGroup,
 )
-from rsyscall.near.sys import SYS
 from rsyscall.near.sysif import SyscallInterface, SyscallResponse, SyscallHangup
+
+from rsyscall.sys.syscall import SYS
+
+from rsyscall.fcntl import AT, F
+from rsyscall.sys.wait import IdType
+from rsyscall.sys.epoll import EPOLL_CTL
+from rsyscall.sys.prctl import PR
+from rsyscall.sys.socket import SHUT
+from rsyscall.sys.uio import RWF
+from rsyscall.sched import CLONE
+from rsyscall.signal import HowSIG, SIG
 
 #### Syscalls (instructions)
 # These are like instructions, run with this segment register override prefix and arguments.

@@ -82,16 +82,17 @@ from rsyscall._raw import ffi # type: ignore
 import errno
 import os
 import math
-import rsyscall.near as near
 import typing as t
 from rsyscall.concurrency import OneAtATime
 from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 import trio
 from dataclasses import dataclass
+from rsyscall.near.sysif import SyscallResponse
 
 from rsyscall.struct import Int32
 from rsyscall.handle import Sockbuf
+from rsyscall.sys.syscall import SYS
 from rsyscall.sys.socket import SOCK, SOL, SO, Address, GenericSockaddr, T_addr
 from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EPOLL_CTL, EpollFlag
 from rsyscall.fcntl import O, F
@@ -133,7 +134,7 @@ class EpollWaiter:
         self.running_wait = OneAtATime()
         # resumability
         self.input_buf: t.Optional[Pointer[EpollEventList]] = None
-        self.syscall_response: t.Optional[near.SyscallResponse] = None
+        self.syscall_response: t.Optional[SyscallResponse] = None
         self.valid_events_buf: t.Optional[Pointer[EpollEventList]] = None
 
     def add_and_allocate_number(self, cb: t.Callable[[EPOLL], None]) -> int:
@@ -178,7 +179,7 @@ class EpollWaiter:
                     if self.wait_readable:
                         await self.wait_readable()
                     self.syscall_response = await self.epfd.task.sysif.submit_syscall(
-                        near.SYS.epoll_wait, self.epfd.near, self.input_buf.near, maxevents, self.timeout)
+                        SYS.epoll_wait, self.epfd.near, self.input_buf.near, maxevents, self.timeout)
                 if self.valid_events_buf is None:
                     count = await self.syscall_response.receive()
                     self.valid_events_buf, _ = self.input_buf.split(count * EpollEvent.sizeof())

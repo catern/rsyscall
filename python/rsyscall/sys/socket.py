@@ -8,7 +8,7 @@ from rsyscall.struct import Struct, FixedSerializer, Serializable, Serializer, H
 import contextlib
 import abc
 import struct
-import rsyscall.near as near
+import rsyscall.near.types as near
 if t.TYPE_CHECKING:
     from rsyscall.handle import Pointer, WrittenPointer, FileDescriptor, Task
 else:

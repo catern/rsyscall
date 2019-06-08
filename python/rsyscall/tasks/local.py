@@ -10,7 +10,8 @@ from rsyscall.tasks.util import log_syscall, raise_if_error
 from rsyscall._raw import ffi, lib # type: ignore
 import trio
 import rsyscall.far as far
-import rsyscall.near as near
+from rsyscall.near.sysif import SyscallInterface, SyscallResponse
+import rsyscall.near.types as near
 import rsyscall.handle as handle
 import rsyscall.loader as loader
 import logging
@@ -40,7 +41,7 @@ async def _direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0
     "Make a syscall directly in the current thread."
     return lib.rsyscall_raw_syscall(arg1, arg2, arg3, arg4, arg5, arg6, number)
 
-class LocalSyscallResponse(near.SyscallResponse):
+class LocalSyscallResponse(SyscallResponse):
     "Dummy SyscallResponse for local syscalls"
     def __init__(self, result_func: t.Callable[[], int]) -> None:
         self.result_func = result_func
@@ -48,7 +49,7 @@ class LocalSyscallResponse(near.SyscallResponse):
     async def receive(self) -> int:
         return self.result_func()
 
-class LocalSyscall(near.SyscallInterface):
+class LocalSyscall(SyscallInterface):
     "Makes syscalls in the local, Python interpreter thread"
     def __init__(self) -> None:
         self.logger = logger
@@ -59,7 +60,7 @@ class LocalSyscall(near.SyscallInterface):
     async def close_interface(self) -> None:
         pass
 
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> near.SyscallResponse:
+    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> LocalSyscallResponse:
         """Make a syscall in the local thread; return SyscallResponse already containing the result
 
         We can't actually implement the submit_syscall API for local syscalls, so we just

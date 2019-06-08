@@ -6,7 +6,8 @@ from rsyscall.struct import Struct, bits
 from dataclasses import dataclass, field
 import enum
 import contextlib
-import rsyscall.near as near
+import rsyscall.near.types as near
+import rsyscall.near as syscalls
 if t.TYPE_CHECKING:
     from rsyscall.far import Task
     from rsyscall.handle import Pointer, WrittenPointer
@@ -211,7 +212,7 @@ class SignalMaskTask(Task):
             else:
                 newset_n = None
             oldset_n = self._borrow_optional(stack, oldset)
-            await near.rt_sigprocmask(self.sysif, newset_n, oldset_n, Sigset.sizeof())
+            await syscalls.rt_sigprocmask(self.sysif, newset_n, oldset_n, Sigset.sizeof())
         if oldset:
             return oldset
         else:

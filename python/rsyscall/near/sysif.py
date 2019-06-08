@@ -3,7 +3,7 @@ import logging
 import trio
 import abc
 from rsyscall.tasks.exceptions import RsyscallHangup
-from rsyscall.near.sys import SYS
+from rsyscall.sys.syscall import SYS
 import typing as t
 if t.TYPE_CHECKING:
     import rsyscall.handle as handle

@@ -21,7 +21,6 @@ from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.memory.ram import RAM
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
-import rsyscall.near as near
 import rsyscall.far as far
 import rsyscall.nix as nix
 import typing as t

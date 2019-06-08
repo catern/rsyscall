@@ -7,7 +7,8 @@ from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.mktemp import mkdtemp, TemporaryDirectory
 from rsyscall.unix_thread import UnixThread, ChildUnixThread
 import os
-import rsyscall.near as near
+import rsyscall.near.types as near
+import rsyscall.near as syscalls
 import trio
 import typing as t
 
@@ -47,9 +48,9 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
     buf = await thr.ram.malloc(DirentList, 4096)
     dirfd = await thr.task.open(await thr.ram.ptr(Path("/proc/self/fd")), O.DIRECTORY)
     async def maybe_close(fd: near.FileDescriptor) -> None:
-        flags = await near.fcntl(thr.task.sysif, fd, F.GETFD)
+        flags = await syscalls.fcntl(thr.task.sysif, fd, F.GETFD)
         if (flags & FD_CLOEXEC) and (fd not in excluded_fds):
-            await near.close(thr.task.sysif, fd)
+            await syscalls.close(thr.task.sysif, fd)
     async with trio.open_nursery() as nursery:
         while True:
             valid, rest = await dirfd.getdents(buf)

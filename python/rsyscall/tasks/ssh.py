@@ -23,7 +23,7 @@ import os
 import random
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
-import rsyscall.near as near
+import rsyscall.near.types as near
 import rsyscall.nix as nix
 import string
 import typing as t

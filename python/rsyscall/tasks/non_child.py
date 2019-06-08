@@ -1,6 +1,6 @@
 from rsyscall.tasks.base_sysif import BaseSyscallInterface
 from rsyscall.tasks.connection import SyscallConnection
-import rsyscall.near as near
+import rsyscall.near.types as near
 import logging
 
 class NonChildSyscallInterface(BaseSyscallInterface):

@@ -35,7 +35,6 @@ from rsyscall.concurrency import OneAtATime
 from rsyscall.memory.ram import RAM
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.handle import MemoryTransport
-import rsyscall.near as near
 import rsyscall.handle as handle
 import typing as t
 import trio
