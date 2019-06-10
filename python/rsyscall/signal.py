@@ -249,7 +249,7 @@ class SignalMaskTask(Task):
                             "we disallow multiple simultaneous calls for implementation simplicity")
         self.sigprocmask_running = True
         if newset is None:
-            ret = await sigprocmask(self, None, oldset)
+            ret = await self._sigprocmask(None, oldset)
             self.sigprocmask_running = False
             return ret
         else:
@@ -260,7 +260,7 @@ class SignalMaskTask(Task):
                 new_sigmask = Sigset(self.sigmask - set.value)
             elif how == HowSIG.SETMASK:
                 new_sigmask = Sigset(set.value)
-            ret = await sigprocmask(self, newset, oldset)
+            ret = await self._sigprocmask(newset, oldset)
             self.sigprocmask_running = False
             if oldset is not None:
                 self.old_sigmask = self.sigmask

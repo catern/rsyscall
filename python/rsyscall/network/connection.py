@@ -172,7 +172,7 @@ class FDPassConnection(Connection):
         return self.for_task_with_fd(task, ram, self.fd.for_task(task))
 
 class ListeningConnection(Connection):
-    """An (address, listening socket) pair with which we can do connect(); accept(); to establish a new channel
+    """An (address, listening socket) pair with which we can do connect(); accept(); to establish a new channel.
     
     See Connnection for more details on this interface.
 
@@ -246,8 +246,10 @@ class ConnectionThread(EpollThread):
         self.connection = thr.connection
 
     async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
+        "Calls self.connection.open_async_channels; see Connection.open_async_channels"
         return (await self.connection.open_async_channels(count))
 
     async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
+        "Calls self.connection.open_channels; see Connection.open_channels"
         return (await self.connection.open_channels(count))
 

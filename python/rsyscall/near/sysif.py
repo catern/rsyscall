@@ -1,3 +1,19 @@
+"""The lowest-level interface for making syscalls
+
+The SyscallInterface is the segment register override prefix, which is used with the
+instruction to say which segment register to use for the syscall.
+
+In terms of this metaphor: We don't know from a segment register override prefix alone
+that the near pointers we are passing to an instruction are valid pointers in the segment
+currently contained in the segment register.
+
+Translating that into concrete terms: We don't know from a SyscallInterface alone that the
+identifiers we are passing to a syscall match the namespaces active in the task behind the
+SyscallInterface.
+
+(The task is like the segment register, in this analogy.)
+
+"""
 from __future__ import annotations
 import logging
 import trio
@@ -14,7 +30,7 @@ __all__ = [
 ]
 
 class SyscallInterface:
-    """The lowest-level interface for an object which lets us send syscalls to some process
+    """The lowest-level interface for an object which lets us send syscalls to some process.
 
     We send syscalls to a process, but nothing in this interface tells us anything about
     the process to which we're sending syscalls; that information is maintained in the
@@ -25,7 +41,7 @@ class SyscallInterface:
 
     """
     async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        """Send a syscall and wait for it to complete, throwing on error results
+        """Send a syscall and wait for it to complete, throwing on error results.
 
         We provide a guarantee that if the syscall was sent to the process, then we will
         not return until the syscall has completed or our connection has broken.  To
@@ -79,7 +95,7 @@ class SyscallInterface:
 
     @abc.abstractmethod
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
-        """Submit a syscall without immediately waiting for its response to come back
+        """Submit a syscall without immediately waiting for its response to come back.
 
         By calling `receive` on SyscallResponse, the caller can wait for the response.
 
@@ -108,12 +124,12 @@ class SyscallInterface:
 
     @abc.abstractmethod
     async def close_interface(self) -> None:
-        "Close this syscall interface, shutting down the connection to the remote process"
+        "Close this syscall interface, shutting down the connection to the remote process."
         pass
 
     @abc.abstractmethod
     def get_activity_fd(self) -> t.Optional[handle.FileDescriptor]:
-        """When this file descriptor is readable, it means other things want to run on this thread
+        """When this file descriptor is readable, it means other things want to run on this thread.
 
         Users of the SyscallInterface should ensure that when they block, they are
         monitoring this fd as well.
@@ -125,10 +141,10 @@ class SyscallInterface:
         pass
 
 class SyscallResponse:
-    "A representation of the pending response to some syscall submitted through `submit_syscall`"
+    "A representation of the pending response to some syscall submitted through `submit_syscall`."
     @abc.abstractmethod
     async def receive(self) -> int:
-        "Wait for the corresponding syscall to complete and return its result, throwing on error results"
+        "Wait for the corresponding syscall to complete and return its result, throwing on error results."
         pass
 
 class SyscallHangup(Exception):

@@ -182,7 +182,7 @@ async def rsyscall_exec(
     child.task._add_to_active_fd_table_tasks()
 
 async def spawn_exec(thread: Thread, store: nix.Store) -> ChildThread:
-    "Fork off a new ChildThread and immediately call rsyscall_exec in it"
+    "Fork off a new ChildThread and immediately call rsyscall_exec in it."
     executable = await RsyscallServerExecutable.from_store(store)
     child = await thread.fork()
     await rsyscall_exec(thread, child, executable)

@@ -42,7 +42,7 @@ async def _direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0
     return lib.rsyscall_raw_syscall(arg1, arg2, arg3, arg4, arg5, arg6, number)
 
 class LocalSyscallResponse(SyscallResponse):
-    "Dummy SyscallResponse for local syscalls"
+    "Dummy SyscallResponse for local syscalls."
     def __init__(self, result_func: t.Callable[[], int]) -> None:
         self.result_func = result_func
 
@@ -50,7 +50,7 @@ class LocalSyscallResponse(SyscallResponse):
         return self.result_func()
 
 class LocalSyscall(SyscallInterface):
-    "Makes syscalls in the local, Python interpreter thread"
+    "Makes syscalls in the local, Python interpreter thread."
     def __init__(self) -> None:
         self.logger = logger
 
@@ -61,7 +61,7 @@ class LocalSyscall(SyscallInterface):
         pass
 
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> LocalSyscallResponse:
-        """Make a syscall in the local thread; return SyscallResponse already containing the result
+        """Make a syscall in the local thread; return SyscallResponse already containing the result.
 
         We can't actually implement the submit_syscall API for local syscalls, so we just
         immediately make the syscall and pack the response into a dummy SyscallResponse.
@@ -105,7 +105,7 @@ class LocalMemoryTransport(handle.MemoryTransport):
         return ret
 
 async def _make_local_thread() -> Thread:
-    """Create the local thread, allocating various resources locally
+    """Create the local thread, allocating various resources locally.
 
     For the most part, the local thread is like any other thread; it just bootstraps
     differently, and uses syscall and memory interfaces which are specialized to the local

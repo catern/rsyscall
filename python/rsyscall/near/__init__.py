@@ -27,6 +27,7 @@ from __future__ import annotations
 import trio
 import typing as t
 
+# re-exported namepsace-local identifiers
 from rsyscall.near.types import (
     FileDescriptor,
     WatchDescriptor,
@@ -35,6 +36,7 @@ from rsyscall.near.types import (
     Process,
     ProcessGroup,
 )
+# re-exported SyscallInterface
 from rsyscall.near.sysif import SyscallInterface, SyscallResponse, SyscallHangup
 
 from rsyscall.sys.syscall import SYS

@@ -1,4 +1,4 @@
-"""Allocators and allocations of memory
+"""Allocators and allocations of memory.
 
 None of this is actually specific to memory; it would be a good project to make the
 allocators indifferent to whether they are allocating memory or allocating something else
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Allocation(AllocationInterface):
-    """An allocation from some Arena
+    """An allocation from some Arena.
 
     We have a reference back to our Arena so that we can do free(), split(), and merge().
     When __del__ is called on this allocation, we'll free ourselves out of our Arena.
@@ -97,10 +97,11 @@ class Allocation(AllocationInterface):
         self.free()
 
 class OutOfSpaceError(Exception):
+    "Raised by malloc if the allocation request couldn't be satisfied."
     pass
 
 class AllocatorInterface:
-    "A memory allocator; raises OutOfSpaceError if there's no more space"
+    "A memory allocator; raises OutOfSpaceError if there's no more space."
     async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, AllocationInterface]]:
         # A naive bulk allocator
         return [await self.malloc(size, alignment) for size, alignment in sizes]
@@ -112,7 +113,7 @@ class AllocatorInterface:
         raise Exception("can't be inherited:", self)
 
 class Arena(AllocatorInterface):
-    "A single memory mapping and allocations within it"
+    "A single memory mapping and allocations within it."
     def __init__(self, mapping: MemoryMapping) -> None:
         self.mapping = mapping
         self.allocations: t.List[Allocation] = []
@@ -140,7 +141,7 @@ class Arena(AllocatorInterface):
         await self.mapping.munmap()
 
 def align(num: int, alignment: int) -> int:
-    """Return the lowest value greater than `num` that is cleanly divisible by `alignment`
+    """Return the lowest value greater than `num` that is cleanly divisible by `alignment`.
 
     When applied to an address, this returns the next address that is aligned to this
     alignment. When applied to a size, this returns a size that is sufficient to produce
@@ -156,7 +157,7 @@ def align(num: int, alignment: int) -> int:
         return num
 
 class UnlimitedAllocator:
-    """An allocator which just calls mmap to request more memory when it runs out
+    """An allocator which just calls mmap to request more memory when it runs out.
 
     """
     def __init__(self, task: Task) -> None:
@@ -165,7 +166,7 @@ class UnlimitedAllocator:
         self.arenas: t.List[Arena] = []
 
     async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, Allocation]]:
-        "Try to allocate all these requests; if we run out of space, make one big mmap call for the rest"
+        "Try to allocate all these requests; if we run out of space, make one big mmap call for the rest."
         allocations: t.List[t.Tuple[MemoryMapping, Allocation]] = []
         # TODO we should coalesce together multiple pending mallocs waiting on the lock
         async with self.lock:
@@ -208,11 +209,12 @@ class UnlimitedAllocator:
         return ret
 
     async def close(self) -> None:
+        "Unmap all the mappings owned by this Allocator."
         for arena in self.arenas:
             await arena.close()
 
 class AllocatorClient(AllocatorInterface):
-    """A task-specific allocator, to protect us from getting memory back for the wrong address space
+    """A task-specific allocator, to protect us from getting memory back for the wrong address space.
 
     We share a single allocator between multiple AllocatorClients; we call inherit to make
     a new AllocatorClient. Before returning an allocation, we switch the memory mapping

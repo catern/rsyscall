@@ -18691,6 +18691,15 @@ nativecall?
    and yeah so if I installed by pypi, I can use whatever means to find the nix packages.
 
    including, I guess, just providing them ad-hoc.
+* PR
+** website?
+** mailing list
+   it can be public inbox - and the git repo can be stored on github!
+
+   maybe in a github organization?
+   mebbe not
+
+   meh at first I can just accept personal emails
 * DOCUMENTATION!
   Time to write it!
 ** DONE move epoll blocking stuff in module docstring to Epoller docstring

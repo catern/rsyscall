@@ -1,4 +1,4 @@
-"""Definitions of namespace-local identifiers
+"""Definitions of namespace-local identifiers.
 
 These namespace-local identifiers are like near pointers, in systems
 with segmented memory. They are valid only within a specific segment
@@ -20,7 +20,7 @@ __all__  = [
 
 @dataclass(frozen=True)
 class FileDescriptor:
-    """The integer identifier for a file descriptor taken by many syscalls
+    """The integer identifier for a file descriptor taken by many syscalls.
 
     This is a file descriptor in a specific file descriptor table, but we don't with this
     object know what file descriptor table that is.
@@ -39,7 +39,7 @@ class FileDescriptor:
 
 @dataclass(frozen=True)
 class WatchDescriptor:
-    """The integer identifier for an inotify watch descriptor taken by inotify syscalls
+    """The integer identifier for an inotify watch descriptor taken by inotify syscalls.
 
     This is a watch descriptor for a specific inotify instance, but we don't with this
     object know what inotify instance that is.
@@ -58,7 +58,7 @@ class WatchDescriptor:
 
 @dataclass
 class Address:
-    """The integer identifier for a virtual memory address as taken by many syscalls
+    """The integer identifier for a virtual memory address as taken by many syscalls.
 
     This is an address in a specific address space, but we don't with this object know
     what address space that is.
@@ -83,7 +83,7 @@ class Address:
 
 @dataclass
 class MemoryMapping:
-    """The integer identifiers for a virtual memory mapping as taken by many syscalls
+    """The integer identifiers for a virtual memory mapping as taken by many syscalls.
 
     This is a mapping in a specific address space, but we don't with this object know what
     address space that is.
@@ -128,7 +128,7 @@ class MemoryMapping:
             raise Exception("the length for this memory-mapping is not page-aligned", self)
 
     def as_address(self) -> Address:
-        "Return the starting address of this memory mapping"
+        "Return the starting address of this memory mapping."
         return Address(self.address)
 
     def __str__(self) -> str:
@@ -142,7 +142,7 @@ class MemoryMapping:
 
 @dataclass
 class Process:
-    """The integer identifier for a process taken by many syscalls
+    """The integer identifier for a process taken by many syscalls.
 
     This is a process in a specific pid namespace, but we don't with this object know what
     pid namespace that is.
@@ -155,7 +155,7 @@ class Process:
 
 @dataclass
 class ProcessGroup:
-    """The integer identifier for a process group taken by many syscalls
+    """The integer identifier for a process group taken by many syscalls.
 
     This is a process group in a specific pid namespace, but we don't with this object
     know what pid namespace that is.

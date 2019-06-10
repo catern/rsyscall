@@ -23,7 +23,7 @@ class BytesSerializer(Serializer[bytes]):
 
 T = t.TypeVar('T')
 class RAM:
-    """Central user-friendly class for accessing memory
+    """Central user-friendly class for accessing memory.
 
     Future work: An option to allocate "const" pointers, which we
     could cache and reuse each time they're requested. This would be
@@ -71,7 +71,7 @@ class RAM:
     async def ptr(self, data: t.Union[bytes]) -> WrittenPointer[bytes]: ...
     async def ptr(self, data: t.Union[T_has_serializer, bytes],
     ) -> t.Union[WrittenPointer[T_has_serializer], WrittenPointer[bytes]]:
-        "Take some serializable data and return a pointer in memory containing it"
+        "Take some serializable data and return a pointer in memory containing it."
         if isinstance(data, HasSerializer):
             serializer = data.get_self_serializer(self.task)
             data_bytes = serializer.to_bytes(data)
@@ -96,7 +96,7 @@ class RAM:
         return await perform_batch(self.task, self.transport, allocator, op)
 
     async def malloc_serializer(self, serializer: Serializer[T], size: int) -> Pointer[T]:
-        """Allocate a typed space in memory using an explicitly-specified Serializer
+        """Allocate a typed space in memory using an explicitly-specified Serializer.
 
         This is useful only in relatively niche situations.
 
@@ -116,7 +116,7 @@ class RAM:
             raise
 
 class NullAllocation(AllocationInterface):
-    "An fake allocation for a null pointer"
+    "An fake allocation for a null pointer."
     def __init__(self, n: int) -> None:
         self.n = n
 
@@ -136,7 +136,7 @@ class NullAllocation(AllocationInterface):
         pass
 
 class LaterAllocator(AllocatorInterface):
-    "An allocator which stores allocation requests and returns null pointers"
+    "An allocator which stores allocation requests and returns null pointers."
     def __init__(self) -> None:
         self.allocations: t.List[t.Tuple[int, int]] = []
 
@@ -148,7 +148,7 @@ class LaterAllocator(AllocatorInterface):
         )
 
 class NoopTransport(MemoryTransport):
-    "A memory transport which doesn't do anything"
+    "A memory transport which doesn't do anything."
     async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
         raise Exception("shouldn't try to read")
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
@@ -157,7 +157,7 @@ class NoopTransport(MemoryTransport):
         raise Exception("shouldn't try to inherit")
 
 class PrefilledAllocator(AllocatorInterface):
-    "An allocator which has been prefilled with allocations for an exact sequence of calls to malloc"
+    "An allocator which has been prefilled with allocations for an exact sequence of calls to malloc."
     def __init__(self, allocations: t.Sequence[t.Tuple[MemoryMapping, AllocationInterface]]) -> None:
         self.allocations = list(allocations)
 

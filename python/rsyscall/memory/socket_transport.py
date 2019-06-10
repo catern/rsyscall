@@ -1,4 +1,4 @@
-"""Memory transport to a remote address spaced based on reading/writing file descriptors
+"""Memory transport to a remote address space based on reading/writing file descriptors.
 
 We need to be able to read and write to the address spaces of our
 threads. We start with the ability to read and write to the address
