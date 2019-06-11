@@ -1,3 +1,39 @@
+"""A setuptools entrypoint to register Nix dependencies for import_nixdep
+
+setuptools automatically registers this entry-point when you have the
+nixdeps module on your PYTHONPATH. Then you can provide the following
+keyword argument to `setup`:
+```
+nix_deps = {'mypkg._whatever': ['hello', 'goodbye']}
+```
+and then, if you have dependencies on the 'hello' and 'goodbye' Nix
+packages, after a setuptools build, you will be able to use:
+```
+import_nixdep('mypkgs._whatever', 'hello')
+import_nixdep('mypkgs._whatever', 'goodbye')
+```
+
+BUG: Note that we currently require you depend on packages by
+explicitly setting environment variables containing the paths of those
+packages. This can be done by, e.g.:
+```
+buildPythonPackage {
+  hello = pkgs.hello;
+  goodbye = pkgs.goodbye;
+  ...
+}
+```
+Merely having your dependencies in buildInputs will not work,
+i.e. this is not sufficient:
+```
+buildPythonPackage {
+  buildInputs = [ pkgs.hello pkgs.goodbye ];
+}
+```
+This will be fixed later, so all you have to do is have the packages
+in buildInputs; this means propagatedBuildInputs etc. will also work.
+
+"""
 import setuptools
 import os
 import os.path
@@ -19,6 +55,7 @@ def write_init(output: Path) -> None:
         pass
 
 def build_deps_module(self, output_dir: Path, deps: t.List[str]) -> None:
+    "Write out to `output_dir` the .json files containing the specification for `deps`"
     in_nix_shell = os.environ.get('IN_NIX_SHELL')
     nix_build_top = Path(os.environ['NIX_BUILD_TOP'])
     log.info("generating Nix deps module in %s" % output_dir)
@@ -85,6 +122,7 @@ def add_deps_module(dist, module_name: str, deps: t.List[str]) -> None:
     dist.cmdclass['build_ext'] = build_ext_make_mod
 
 def nix_deps(dist, attr: str, value) -> None:
+    "The main setuptools entry point"
     assert attr == 'nix_deps'
     for module_name, deps in value.items():
         add_deps_module(dist, module_name, deps)
