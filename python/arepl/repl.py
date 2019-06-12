@@ -1,163 +1,19 @@
-"""A cool async REPL and astcodeop thing.
+"""A pure asynchronous REPL, capable of parsing and running async code given as input
 
-This lacks functionality equivalent to codeop.Compile or
-codeop.CommandCompiler, because the AST object returned from
-compile(ONLY_AST) doesn't expose the information to us about what
-__future__ statements the compile process has seen. To properly
-implement those classes, either the return value of compile(ONLY_AST)
-needs to contain that information, or we need to reimplement the
-simple __future__ statement scanner contained in the Python core.
+PureREPL is a basic async REPL. It's pure in the sense that it doesn't itself read input;
+the user must pass input to it as strings.
 
 """
-import typeguard
-import traceback
-import ast
-import typing as t
-import codeop
-import ast
-import __future__
-import types
-import inspect
-import builtins
 from dataclasses import dataclass
-
-import abc
-
-T = t.TypeVar('T')
-def _ast_compile(source, filename, symbol):
-    return compile(source, filename, symbol, ast.PyCF_ONLY_AST|codeop.PyCF_DONT_IMPLY_DEDENT) # type: ignore
-
-def ast_compile_command(source: str, filename="<input>", symbol="single"):
-    """Like codeop.compile_command, but returns an AST instead.
-
-    """
-    return codeop._maybe_compile(_ast_compile, source, filename, symbol) # type: ignore
-
-def ast_compile_interactive(source: str) -> t.Optional[ast.Interactive]:
-    return ast_compile_command(source, "<input>", "single")
-
-class LineBuffer:
-    def __init__(self) -> None:
-        self.buf: str = ""
-
-    def add(self, data: str) -> t.List[str]:
-        self.buf += data
-        *lines, self.buf = self.buf.split('\n')
-        return [line + '\n' for line in lines]
-
-def without_co_newlocals(code: types.CodeType) -> types.CodeType:
-    """Return a copy of this code object with the CO_NEWLOCALS flag unset.
-
-    This code object, when executed, will not create a new scope; this is useful for
-    functions running in REPLs, I suppose.
-
-    """
-    return types.CodeType(
-        code.co_argcount,
-        code.co_kwonlyargcount,
-        code.co_nlocals,
-        code.co_stacksize,
-        code.co_flags & ~inspect.CO_NEWLOCALS,
-        code.co_code,
-        code.co_consts,
-        code.co_names,
-        code.co_varnames,
-        code.co_filename if code.co_filename is not None else "<without_co_newlocals>",
-        code.co_name,
-        code.co_firstlineno,
-        code.co_lnotab,
-        code.co_freevars,
-        code.co_cellvars
-    )
-
-@dataclass
-class _InternalResult(Exception):
-    is_expression: bool
-    value: t.Any
-
-__result_exception__ = _InternalResult
-
-def compile_to_awaitable(astob: ast.Interactive,
-                         global_vars: t.Dict[str, t.Any]) -> t.Awaitable:
-    """Compile this AST, which may contain await statements, to an awaitable.
-
-    - If the AST calls return, then a value is returned from the awaitable.
-    - If the AST raises an exception, then the awaitable raises that exception.
-    - If the AST neither returns a value nor raises an exception, then __result_exception__ is
-      raised.
-    - If the last statement in the AST is an expression, then on the __result_exception__
-      exception, is_expression is set and value contains the value of the expression.
-    - If the last statement in the AST is not an expression, then on the __result_exception__
-      exception, is_expression is False and value contains None.
-
-    """
-    wrapper_name = "__toplevel__"
-    # we rely on the user not messing with __builtins__ in the REPL; that's something you
-    # really aren't supposed to do, so I think that's fine.
-    wrapper = ast.parse(f"""
-async def {wrapper_name}():
-    try:
-        pass
-    finally:
-        __builtins__.locals()
-""", filename="<internal_wrapper>", mode="single")
-    try_block = wrapper.body[0].body[0] # type: ignore
-    try_block.body = astob.body
-    if isinstance(try_block.body[-1], (ast.Expr, ast.Await)):
-        # if the last statement in the AST is an expression, then have its value be
-        # propagated up by throwing it from the __result_exception__ exception.
-        wrapper_raise = ast.parse("raise __result_exception__(True, None)", filename="<internal_wrapper>", mode="single").body[0] # type: ignore
-        wrapper_raise.exc.args[1] = try_block.body[-1].value # type: ignore
-        try_block.body[-1] = wrapper_raise
-    else:
-        wrapper_raise = ast.parse("raise __result_exception__(False, None)", filename="<internal_wrapper>", mode="single").body[0] # type: ignore
-        try_block.body.append(wrapper_raise)
-    global_vars.update({
-        '__builtins__': builtins,
-        '__result_exception__': __result_exception__,
-    })
-    exec(compile(wrapper, '<input>', 'single'), global_vars)
-    func = global_vars[wrapper_name]
-    del global_vars[wrapper_name]
-    # don't create a new local variable scope
-    func.__code__ = without_co_newlocals(func.__code__)
-    return func()
-
-class BaseResult:
-    pass
-
-@dataclass
-class ReturnResult(BaseResult):
-    value: t.Any
-
-@dataclass
-class ExceptionResult(BaseResult):
-    exception: BaseException
-
-@dataclass
-class ExpressionResult(BaseResult):
-    value: t.Any
-
-@dataclass
-class FallthroughResult(BaseResult):
-    pass
-Result = t.Union[ReturnResult, ExceptionResult, ExpressionResult, FallthroughResult]
-
-async def eval_single(astob: ast.Interactive, global_vars: t.Dict[str, t.Any]) -> Result:
-    awaitable = compile_to_awaitable(astob, global_vars)
-    try:
-        val = await awaitable
-    except __result_exception__ as e:
-        if e.is_expression:
-            return ExpressionResult(e.value)
-        else:
-            return FallthroughResult()
-    except BaseException as e:
-        # We want to skip the innermost frame of the traceback, which shows "await awaitable".
-        e.__traceback__ = e.__traceback__.tb_next # type: ignore
-        return ExceptionResult(e)
-    else:
-        return ReturnResult(val)
+import ast
+import traceback
+import typeguard
+import typing as t
+from arepl.astcodeop import ast_compile_interactive
+from arepl.aeval import (
+    ReturnResult, ExceptionResult, ExpressionResult, FallthroughResult, Result, eval_single,
+)
+from arepl.help import help_to_str
 
 class FromREPL(Exception):
     def __init__(self, exn: Exception) -> None:
@@ -194,22 +50,20 @@ class PureREPL:
                 return (await self.eval_single(astob))
             return None
 
-import pydoc # type: ignore
-class Output:
-  def __init__(self) -> None:
-    self.results: t.List[str] = []
+class LineBuffer:
+    "A simple character buffer to split data into lines"
+    def __init__(self) -> None:
+        self.buf: str = ""
 
-  def write(self, s):
-    self.results.append(s)
-
-def help_to_str(request) -> str:
-    out = Output()
-    pydoc.Helper(None, out).help(request) # type: ignore
-    return "".join(out.results)
+    def add(self, data: str) -> t.List[str]:
+        self.buf += data
+        *lines, self.buf = self.buf.split('\n')
+        return [line + '\n' for line in lines]
 
 # TODO I should also be able to pass in a predicate function which I call on the return value.
 # That way I can represent constraints on the returned value at a value level.
 # (I still do the wanted_type so that mypy type checking is correct)
+T = t.TypeVar('T')
 async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
                    write: t.Callable[[bytes], t.Awaitable[None]],
                    global_vars: t.Dict[str, t.Any], wanted_type: t.Type[T]) -> T:
