@@ -18691,6 +18691,14 @@ nativecall?
    and yeah so if I installed by pypi, I can use whatever means to find the nix packages.
 
    including, I guess, just providing them ad-hoc.
+** just compile library and build against it
+   OK, I don't care for now about making it too easy to deploy;
+   I still need to battle-test it!
+
+   So let's just require having the library already built and available.
+   That works for both Nix and VATS.
+
+   Later we can streamline it.
 * PR
 ** website?
 ** mailing list
