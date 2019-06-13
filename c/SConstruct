@@ -1,0 +1,15 @@
+# SConstruct for rsyscall
+# build with scons
+
+env = Environment(
+    LDFLAGS="-Wl,-znow  -O0 -g", CFLAGS="-Wall -Werror -Wl,-znow -fno-plt -g -O0"
+)
+
+lib = env.Library("rsyscall", ["src/rsyscall.c", "src/rsyscall_x86_64.S"])
+
+shared = env.SharedLibrary("rsyscall", ["src/rsyscall.c", "src/rsyscall_x86_64.S"])
+
+env.Program("rsyscall-server", ["src/rsyscall_server_main.c", lib])
+env.Program("rsyscall-bootstrap", ["src/rsyscall_bootstrap.c", lib])
+env.Program("rsyscall-unix-stub", ["src/rsyscall_unix_stub.c", lib])
+env.Program("remote-cat", ["src/remote_cat.c"], lib)
