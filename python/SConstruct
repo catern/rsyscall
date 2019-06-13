@@ -1,0 +1,90 @@
+# SConstruct for rsyscall
+# build with scons
+
+env = Environment(
+    LDFLAGS="-Wl,-znow  -O0 -g", CFLAGS="-Wall -Werror -Wl,-znow -fno-plt -g -O0"
+)
+
+shared = env.SharedLibrary(
+    "rsyscall", ["../c/src/rsyscall.c", "../c/src/rsyscall_x86_64.S"]
+)
+
+# Starter SConstruct for enscons
+# (filled by enscons.setup2toml)
+
+import os
+import sys
+import enscons, enscons.cpyext
+import pytoml as toml
+
+# use distutils to get compiler flags etc.
+from distutils import dist
+from distutils.command.build_ext import build_ext
+
+dummy_ext = build_ext(dist.Distribution({"name": ""}))
+dummy_ext.finalize_options()
+
+metadata = dict(toml.load(open("pyproject.toml")))["tool"]["enscons"]
+
+full_tag = enscons.get_binary_tag()
+
+pyenv = Environment(
+    tools=["default", "packaging", enscons.generate, enscons.cpyext.generate],
+    PACKAGE_METADATA=metadata,
+    WHEEL_TAG=full_tag,
+    ROOT_IS_PURELIB=False,
+)
+
+pyenv.Append(LINKFLAGS=Split("-z origin"))
+pyenv.Append(RPATH=pyenv.Literal(os.path.join("\\$$ORIGIN", os.pardir)))
+pyenv.Append(CPPPATH="../c/src")
+
+ffi_source = pyenv.Command(
+    "_raw.c",
+    ["ffibuilder.py"],
+    sys.executable
+    + " -c \"import ffibuilder; ffibuilder.ffibuilder.emit_c_code('$TARGET')\"",
+)
+
+module = pyenv.LoadableModule(
+    dummy_ext.get_ext_filename("rsyscall._raw"),
+    ffi_source + shared,
+    LIBPREFIX="",
+    LIBS=shared,
+)
+
+# Only *.py is included automatically by setup2toml.
+# Add extra 'purelib' files or package_data here.
+packages = [
+    "rsyscall",
+    "rsyscall/tasks",
+    "rsyscall/near",
+    "rsyscall/netinet",
+    "rsyscall/tests",
+    "rsyscall/scripts",
+    "rsyscall/net",
+    "rsyscall/memory",
+    "rsyscall/sys",
+    "rsyscall/network",
+    "rsyscall/linux",
+    "nixdeps",
+    "arepl",
+    "arepl/tests",
+    "rsysapps",
+]
+py_source = [Glob(package.replace(".", "/") + "/*.py") for package in packages]
+
+lib = pyenv.Whl("platlib", py_source + [shared] + module, root=".")
+whl = pyenv.WhlFile(lib)
+
+# Add automatic source files, plus any other needed files.
+# Makes odd paths for the "../c/*" files... use Copy first?
+sdist_source = FindSourceFiles() + ["PKG-INFO", "setup.py"]
+
+sdist = pyenv.SDist(source=sdist_source)
+
+pyenv.NoClean(sdist)
+pyenv.Alias("sdist", sdist)
+
+# needed for pep517 / enscons.api to work
+pyenv.Default(whl, sdist)

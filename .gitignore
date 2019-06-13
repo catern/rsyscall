@@ -13,10 +13,15 @@
 *.a
 *.lo
 *.o
+*.os
 *.so
+*~
 .libs
 .deps
 .dirstamp
+.mypy_cache
+.sconsign.dblite
+_raw.c
 /c/libtool
 /c/rsyscall.pc
 c/stamp-h1

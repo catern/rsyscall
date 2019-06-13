@@ -4,8 +4,9 @@ import pathlib
 import shutil
 
 ffibuilder = FFI()
-ffibuilder.set_source_pkgconfig(
-    "rsyscall._raw", ["rsyscall"], """
+ffibuilder.set_source(
+    "rsyscall._raw",
+    """
 #include <asm/types.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -77,19 +78,26 @@ struct futex_node {
   struct robust_list list;
   uint32_t futex;
 };
-""")
-ffibuilder.cdef("""
+""",
+)
+ffibuilder.cdef(
+    """
 typedef union epoll_data {
     uint64_t u64;
 } epoll_data_t;
-""")
-ffibuilder.cdef("""
+"""
+)
+ffibuilder.cdef(
+    """
 struct epoll_event {
   uint32_t     events;
   epoll_data_t data;
 };
-""", packed=True)
-ffibuilder.cdef("""
+""",
+    packed=True,
+)
+ffibuilder.cdef(
+    """
 struct fdpair {
     int first;
     int second;
@@ -688,4 +696,6 @@ struct robust_list_head {
 #define FUTEX_WAITERS ...
 #define FUTEX_TID_MASK ...
 
-""")
+"""
+)
+

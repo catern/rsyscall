@@ -1,0 +1,21 @@
+[tool]
+
+[tool.enscons]
+name = "rsyscall"
+version = "0.1.0"
+description = "A library for making system calls remotely, through another process, which may be located on a remote host"
+classifiers = ["Programming Language :: Python :: 3", "License :: OSI Approved :: MIT License", "Operating System :: POSIX :: Linux"]
+keywords = ["linux", "syscall", "distributed"]
+author = "catern"
+author_email = "spencerbaugh@gmail.com"
+url = "https://github.com/catern/rsyscall"
+license = "MIT"
+packages = ["rsyscall", "rsyscall.tests", "nixdeps", "arepl", "arepl.tests", "rsysapps"]
+src_root = ""
+
+[tool.enscons.entry_points]
+"distutils.setup_keywords" = ["nix_deps = nixdeps.setuptools:nix_deps"]
+
+[build-system]
+requires = ["pytoml>=0.1", "enscons"]
+build-backend = "enscons.api"
