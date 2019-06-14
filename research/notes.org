@@ -18699,6 +18699,19 @@ nativecall?
    That works for both Nix and VATS.
 
    Later we can streamline it.
+** TODO get working on Debian
+*** TODO make Nix deps optional
+    So, hm. HmMmMm.
+
+    Let's just make fake JSONs for the missing deps.
+
+    OK... so...
+
+    If we're not in a Nix environment, then...
+
+    We don't want to require building with Nix. Hm. Hm hm hm.
+
+    
 * PR
 ** website?
 ** mailing list
