@@ -30,12 +30,14 @@ class TestStub(TrioTestCase):
     async def test_exit(self) -> None:
         command = Command(self.path/self.stub_name, [self.stub_name], {})
         child = await self.thread.exec(command)
+        self.nursery.start_soon(child.check)
         argv, new_thread = await self.server.accept()
         await new_thread.exit(0)
 
     async def test_async(self) -> None:
         command = Command(self.path/self.stub_name, [self.stub_name], {})
         child = await self.thread.exec(command)
+        self.nursery.start_soon(child.check)
         argv, new_thread = await self.server.accept()
         await do_async_things(self, new_thread.epoller, new_thread)
 
@@ -43,6 +45,7 @@ class TestStub(TrioTestCase):
         data_in = "hello"
         command = self.thread.environ.sh.args("-c", f"printf {data_in} | {self.stub_name}").env(PATH=os.fsdecode(self.path))
         child = await self.thread.exec(command)
+        self.nursery.start_soon(child.check)
         argv, new_thread = await self.server.accept()
         valid, _ = await new_thread.stdin.read(
             await new_thread.ram.malloc(bytes, len(data_in)))
