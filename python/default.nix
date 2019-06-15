@@ -49,6 +49,7 @@ pytest ];
       pkgs.s6
       miredo
       pkgs.postgresql_11
+      pkgs.iproute
       opensmtpd
       pkgs.dovecot
       hydra
