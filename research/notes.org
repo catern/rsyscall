@@ -18638,6 +18638,18 @@ nativecall?
 
    should we just define the handle.Task version as a method,
    and just have the free function call it?
+** TODO make ssh tests work in Nix store by overriding NSS
+   sigh ssh fails with
+
+User nixbld not allowed because shell /noshell does not exist
+
+so. . .
+
+i could use a container but i hate those :)
+
+let's figure out how to override NSS once and for all.
+
+we could even modify NSS and include the patch in nixpkgs
 * deployment
   hmm I could include rsyscall.c directly into the python package
 
