@@ -60,9 +60,9 @@ pytest ];
       cffi
   ];
   propagatedBuildInputs = [
-      trio python-prctl typeguard
+      trio typeguard
+      h11
       dnspython
-      requests h11
       pyroute2
   ];
   miredo = miredo;

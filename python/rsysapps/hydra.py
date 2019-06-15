@@ -6,7 +6,6 @@ import h11
 import socket
 import time
 import os
-import requests
 import trio
 import typing as t
 from rsyscall.trio_test_case import TrioTestCase

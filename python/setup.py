@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(name='rsyscall',
       version='0.1.0',
@@ -14,7 +14,7 @@ setup(name='rsyscall',
       author_email='spencerbaugh@gmail.com',
       license='MIT',
       cffi_modules=["ffibuilder.py:ffibuilder"],
-      packages=['rsyscall', 'rsyscall.tests', 'nixdeps', 'arepl', 'arepl.tests', 'rsysapps'],
+      packages=find_packages(),
       nix_deps={'rsyscall._nixdeps': ['miredo', 'nix', 'rsyscall', 'openssh', 'bash', 'coreutils', 'hello']},
       entry_points={
           'distutils.setup_keywords': [
