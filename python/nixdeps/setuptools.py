@@ -54,31 +54,44 @@ def write_init(output: Path) -> None:
     with output.open('w') as f:
         pass
 
+def get_dep_with_nix_store(dep: str) -> t.Tuple[str, t.List[str]]:
+    if dep not in os.environ:
+        raise Exception("couldn't find dep", dep, "in environment")
+    path = os.environ[dep]
+    # use nix-store to dump the closure
+    closure_text = subprocess.run(["nix-store", "--query", "--requisites", path],
+                                  capture_output=True, check=True).stdout
+    closure = [line.decode() for line in closure_text.split()]
+    return path, closure
+
+def get_dep_from_exported_graph(nix_build_top: Path, dep: str) -> t.Tuple[str, t.List[str]]:
+    # we're in a real build, use output of exportReferencesGraph
+    closure_path = nix_build_top/dep
+    with open(closure_path, 'r') as f:
+        raw_db = f.read()
+    raise NotImplementedError("don't know how to parse raw db")
+
+def get_fake_dep(dep: str) -> t.Tuple[str, t.List[str]]:
+    # just fake it
+    log.info("making up fake dep for %s" % dep)
+    return "/dev/null/" + dep, ["/dev/null/" + dep + "/closure"]
+
 def build_deps_module(self, output_dir: Path, deps: t.List[str]) -> None:
     "Write out to `output_dir` the .json files containing the specification for `deps`"
-    in_nix_shell = os.environ.get('IN_NIX_SHELL')
-    nix_build_top = Path(os.environ['NIX_BUILD_TOP'])
+    nix_build_top = os.environ.get('NIX_BUILD_TOP')
+    if 'IN_NIX_SHELL' in os.environ:
+        get_dep = get_dep_with_nix_store
+    elif nix_build_top:
+        get_dep = functools.partial(get_dep_from_exported_graph, Path(nix_build_top))
+    else:
+        get_dep = get_fake_dep
     log.info("generating Nix deps module in %s" % output_dir)
     self.mkpath(str(output_dir))
     self.execute(write_init, [output_dir/"__init__.py"])
     for dep in deps:
         log.info("writing Nix dep %s" % dep)
-        output_path = output_dir/(dep + '.json')
-        if dep not in os.environ:
-            raise Exception("couldn't find dep", dep, "in environment")
-        path = os.environ[dep]
-        if in_nix_shell:
-            # use nix-store to dump the closure
-            closure_text = subprocess.run(["nix-store", "--query", "--requisites", path],
-                                          capture_output=True, check=True).stdout
-            closure = [line.decode() for line in closure_text.split()]
-        else:
-            # we're in a real build, use output of exportReferencesGraph
-            closure_path = nix_build_top/dep
-            with open(closure_path, 'r') as f:
-                raw_db = f.read()
-            raise NotImplementedError("don't know how to parse raw db")
-        self.execute(write_json, [output_path, path, closure])
+        path, closure = get_dep(dep)
+        self.execute(write_json, [output_dir/(dep + '.json'), path, closure])
 
 def add_deps_module(dist, module_name: str, deps: t.List[str]) -> None:
     # This function is heavily cribbed from cffi's setuptools_ext.py
