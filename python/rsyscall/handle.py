@@ -1151,6 +1151,9 @@ class Task(SignalMaskTask, rsyscall.far.Task):
             except FileNotFoundError as exn:
                 exn.filename = filename.value
                 raise
+            except NotADirectoryError as exn:
+                exn.filename = filename.value
+                raise
             self.manipulating_fd_table = False
             self._make_fresh_fd_table()
             self._make_fresh_address_space()
