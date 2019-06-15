@@ -35,6 +35,7 @@ in buildInputs; this means propagatedBuildInputs etc. will also work.
 
 """
 import setuptools
+import functools
 import os
 import os.path
 import json
@@ -64,12 +65,32 @@ def get_dep_with_nix_store(dep: str) -> t.Tuple[str, t.List[str]]:
     closure = [line.decode() for line in closure_text.split()]
     return path, closure
 
+def parse_references_graph(lines: t.List[str]) -> t.Dict[str, t.List[str]]:
+    it = iter(lines)
+    ret: t.Dict[str, t.List[str]] = {}
+    while True:
+        try:
+            path = next(it)
+        except StopIteration:
+            return ret
+        number = int(next(it))
+        refs = [next(it) for _ in range(number)]
+        ret[path] = refs
+
+def closure_of(path: str, refs: t.Dict[str, t.List[str]]) -> t.Set[str]:
+    return frozenset().union(*[
+        {path} if ref == path else closure_of(ref, refs)
+        for ref in refs[path]])
+
 def get_dep_from_exported_graph(nix_build_top: Path, dep: str) -> t.Tuple[str, t.List[str]]:
     # we're in a real build, use output of exportReferencesGraph
     closure_path = nix_build_top/dep
     with open(closure_path, 'r') as f:
         raw_db = f.read()
-    raise NotImplementedError("don't know how to parse raw db")
+    lines = raw_db.split()
+    path = lines[0]
+    refs = parse_references_graph(lines)
+    return path, list(closure_of(path, refs))
 
 def get_fake_dep(dep: str) -> t.Tuple[str, t.List[str]]:
     # just fake it
