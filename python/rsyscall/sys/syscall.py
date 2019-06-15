@@ -21,6 +21,7 @@ class SYS(enum.IntEnum):
     epoll_create1 = lib.SYS_epoll_create1
     epoll_ctl = lib.SYS_epoll_ctl
     epoll_wait = lib.SYS_epoll_wait
+    execve = lib.SYS_execve
     execveat = lib.SYS_execveat
     exit = lib.SYS_exit
     faccessat = lib.SYS_faccessat

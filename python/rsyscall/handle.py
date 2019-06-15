@@ -1137,14 +1137,17 @@ class Task(SignalMaskTask, rsyscall.far.Task):
     async def execve(self, filename: WrittenPointer[Path],
                      argv: WrittenPointer[ArgList],
                      envp: WrittenPointer[ArgList],
-                     flags: AT) -> None:
+                     flags: AT=AT.NONE) -> None:
         with contextlib.ExitStack() as stack:
             stack.enter_context(filename.borrow(self))
             for arg in [*argv.value, *envp.value]:
                 stack.enter_context(arg.borrow(self))
             self.manipulating_fd_table = True
             try:
-                await rsyscall.near.execveat(self.sysif, None, filename.near, argv.near, envp.near, flags)
+                if flags == AT.NONE:
+                    await rsyscall.near.execve(self.sysif, filename.near, argv.near, envp.near)
+                else:
+                    await rsyscall.near.execveat(self.sysif, None, filename.near, argv.near, envp.near, flags)
             except FileNotFoundError as exn:
                 exn.filename = filename.value
                 raise

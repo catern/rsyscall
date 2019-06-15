@@ -95,7 +95,7 @@ class ChildUnixThread(UnixThread):
         super()._init_from(thr)
         self.process = process
 
-    async def _execve(self, path: Path, argv: t.List[bytes], envp: t.List[bytes], flags: AT) -> AsyncChildProcess:
+    async def _execve(self, path: Path, argv: t.List[bytes], envp: t.List[bytes]) -> AsyncChildProcess:
         "Call execve, abstracting over memory; self.{exec,execve} are probably preferable"
         async def op(sem: RAM) -> t.Tuple[WrittenPointer[Path],
                                                WrittenPointer[ArgList],
@@ -106,7 +106,7 @@ class ChildUnixThread(UnixThread):
                     await sem.ptr(argv_ptrs),
                     await sem.ptr(envp_ptrs))
         filename, argv_ptr, envp_ptr = await self.ram.perform_batch(op)
-        await self.task.execve(filename, argv_ptr, envp_ptr, flags)
+        await self.task.execve(filename, argv_ptr, envp_ptr)
         return self.process
 
     async def execve(self, path: Path,
@@ -144,7 +144,7 @@ class ChildUnixThread(UnixThread):
         for key_bytes, value in envp.items():
             raw_envp.append(b''.join([key_bytes, b'=', value]))
         logger.info("execveat(%s, %s, %s)", path, argv, env_updates)
-        return await self._execve(path, [os.fsencode(arg) for arg in argv], raw_envp, AT.NONE)
+        return await self._execve(path, [os.fsencode(arg) for arg in argv], raw_envp)
 
     async def exec(self, command: Command,
                    inherited_signal_blocks: t.List[SignalBlock]=[],

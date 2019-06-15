@@ -109,6 +109,16 @@ async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: EPOLL_CTL
 async def epoll_wait(sysif: SyscallInterface, epfd: FileDescriptor, events: Address, maxevents: int, timeout: int) -> int:
     return (await sysif.syscall(SYS.epoll_wait, epfd, events, maxevents, timeout))
 
+async def execve(sysif: SyscallInterface,
+                 path: Address, argv: Address, envp: Address) -> None:
+    def handle(exn):
+        if isinstance(exn, SyscallHangup):
+            return None
+        else:
+            return exn
+    with trio.MultiError.catch(handle):
+        await sysif.syscall(SYS.execve, path, argv, envp)
+
 async def execveat(sysif: SyscallInterface,
                    dirfd: t.Optional[FileDescriptor], path: Address,
                    argv: Address, envp: Address, flags: int) -> None:
