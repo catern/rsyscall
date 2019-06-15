@@ -185,6 +185,7 @@ async def make_bootstrap_dir(
             child.stdin: bootstrap_executable,
         })
         child_process = await child.exec(ssh_command.args(ssh_bootstrap_script_contents))
+        await stdout_pipe.write.close()
         # from... local?
         # I guess this throws into sharper relief the distinction between core and module.
         # The ssh bootstrapping stuff should come from a different class,
