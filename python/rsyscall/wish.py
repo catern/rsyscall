@@ -198,12 +198,12 @@ class ConsoleGenie(WishGranter):
                     })
                     async with await cat_stdout_thread.exec(self.cat):
                         ret = await run_repl(async_from_term, async_to_term, {
+                            **wisher_frame.f_locals,
+                            **wisher_frame.f_globals,
                             '__repl_stdin__': async_from_term,
                             '__repl_stdout__': async_to_term,
                             'wish': wish,
                             'wisher_frame': wisher_frame,
-                            'wisher_locals': wisher_frame.f_locals,
-                            'wisher_globals': wisher_frame.f_globals,
                         }, wish.return_type, message)
                         return ret
             finally:
@@ -266,9 +266,9 @@ class ConsoleServerGenie(WishGranter):
                     async with child:
                         await child.waitpid(W.EXITED)
             ret = await serve_repls(sockfd, {
+                **wisher_frame.f_locals,
+                **wisher_frame.f_globals,
                 'wisher_frame': wisher_frame,
-                'wisher_locals': wisher_frame.f_locals,
-                'wisher_globals': wisher_frame.f_globals,
             }, wish.return_type, message)
             nursery.cancel_scope.cancel()
         await self.thread.task.unlink(await self.thread.ram.ptr(sock_path))
