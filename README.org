@@ -1,10 +1,11 @@
+* Summary
 rsyscall is a thread library for Linux.
 
 For a short introduction to the concepts and motivation behind rsyscall,
 read the [[file:docs/conceptual.org][conceptual introduction]].
 If you want to learn more, or want to immediately see examples,
 continue on to read the tutorials.
-
+* Tutorial
 We'll explain rsyscall in two separate tutorials:
 The single-threaded tutorial and the multi-threaded tutorial.
 
@@ -24,3 +25,22 @@ as well as some operations which only make sense with multiple threads.
 Note that this division is purely for convenience;
 the "multi-threaded" portions of rsyscall
 are not really distinct from the "single-threaded" portions.
+* Installation
+We have not yet made an official release of rsyscall,
+so we haven't put any effort into streamlining the installation or packaging it for various distros.
+
+But, if you still want to try it, it should work;
+it passes our test suite, anyway.
+** Manual installation
+*** C library
+ The C library builds and installs with autotools.
+*** Python library
+ The Python library requires at least Python 3.7.
+
+ It depends on the C library, which it locates via pkgconfig.
+
+ It builds and installs with setuptools.
+** Nix package
+rsyscall is developed using the Nix package definitions in this repository,
+and they should work,
+or at least serve as a reference for installing or packaging rsyscall for other distributions.
