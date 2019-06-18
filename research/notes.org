@@ -19350,3 +19350,52 @@ i need to know how to do these things so I can demo them for rsyscall
    because, lol, aws charges quite a lot for IPs!
 
    OK no I'll just put it on a normal VPS.
+* mtl
+so it's a matter of having a single instance with multiple implemenetations
+
+the haskell mtl approach requires a single instance
+
+but others don't
+
+hm
+
+a single argument that follows multiple interfaces?
+
+so yeah mtl is just a big list of typeclasses (which are our tagless-final symantics),
+and we instantiate it with a concrete monad/interpreter which satisfies all those
+
+and it enforces monad laws by only having a single interpreter,
+but you could do that also by just passing a single interpreter for TFS style.
+
+https://www.reddit.com/r/haskell/comments/36e45c/mtl_is_not_a_monad_transformer_library/
+thing which finally made me understand:
+https://typelevel.org/cats-mtl/getting-started.html
+
+to post:
+oh today I learned that tagless final style, which I like a lot and use a lot,
+is used widely in Haskell in the form of MTL
+
+I feel like I'm learning all these things in a really weird order :)
+** manipulating tfs trees
+   hmm
+
+   well it's awkward cuz you have to reify state
+
+   but wait, could continuations help here,
+   so we can keep the stack real?
+
+   maybe we can manipulate tfs trees by using tfs trees :)
+** ah
+   I see, the typeclass limitation is the reason for freer monads.
+
+   Typeclasses don't allow passing multiple instances of the typeclass!
+
+   Haskell so limited!
+
+   yeah so it seems like this whole debate is just dancing around limitations of haskell
+
+   just pass in your effect caps explicitly!
+
+   (ofc you need first class continuations to do that right, but whatever)
+
+   ok so let's think about manipulating tfs trees?
