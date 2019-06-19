@@ -19399,3 +19399,34 @@ I feel like I'm learning all these things in a really weird order :)
    (ofc you need first class continuations to do that right, but whatever)
 
    ok so let's think about manipulating tfs trees?
+** hm
+   pattern matching over method calls...
+
+   advanced manipulation...
+
+   we get a call, we block until we get another call,
+   if the calls aren't as we expect we go to a default case...
+
+   instead of... manually...
+
+   dunno. do we have a single stream...?
+
+   remember, when a two-sided stream is passed down to a server on one side,
+   we pass down both sides,
+   and return back one of them.
+   that's how we can transform the type!
+
+   do we have a single stream of method calls . . .?
+
+   well what are we doing really?
+
+   we're saying, someone else can call back into us.
+   then we can pattern match on that? that's, like, a library kinda thing.
+
+   we get a certain kind of method call.
+
+   well what are multiple entry points in an object? data? sum types? something?
+** merging do notation and pattern matching
+   hmm
+
+   so 
