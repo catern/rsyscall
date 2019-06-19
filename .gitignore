@@ -9,6 +9,11 @@
 /c/config.h
 /c/config.log
 /c/config.status
+/c/remote_cat
+/c/rsyscall-bootstrap
+/c/rsyscall-server
+/c/rsyscall-stdin-bootstrap
+/c/rsyscall-unix-stub
 *.la
 *.a
 *.lo
