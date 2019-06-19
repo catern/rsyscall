@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(name='rsyscall',
-      version='0.1.0',
+      version='0.0.1',
       description='A library for making system calls remotely, through another process, which may be located on a remote host',
       classifiers=[
           "Programming Language :: Python :: 3",
