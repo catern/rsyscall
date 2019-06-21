@@ -19472,3 +19472,67 @@ also another intuition/motivation here is that desugaring pattern matches in tha
 hmmm what was my other thought about this
 oh yeah! Frank! by conor mcbride! in do be do be do!
 that language has pattern matching on effects
+** extensible visitor
+   OK so Dog is a kind of effect
+
+   the awkwardness is just that you can't say,
+
+   Union[Dog, Cat, Fish]?
+
+   so do.
+
+   OK so if I have a Dog.
+
+   I want to be able to 
+
+   ok so the mammalcat and animalcat stuff are just injectors, is that what we're saying?
+
+   so. hm.
+
+   does haskell have subtyping between 
+   If I have a value : A x => x -> y, can I pass it as an argument to something expecting a value : (A x, B x) => x -> y?
+
+   so yeah it's some row subtyping I guess
+** ok so what did I do wrong
+   I need row subtyping
+
+   that's really what I'm trying to reproduce here
+
+   because otherwise they are just different types, indeed
+
+   ok so if I have a thing, which takes an argument which is all its effects,
+
+   and I pass it something with more effects,
+
+   I can just do that with inheritance.
+
+   so. how...
+
+   if I store that thing,
+
+   can I pass it as something that expects more effects?
+
+   like.
+
+   the type is *smaller* anyway,
+   but I don't know how to do it...
+
+   so in Haskell, I have of course the first kind of subtyping,
+   where I can pass something with more typeclasses to something wanting fewer.
+
+   and I probably have the other kind of subtyping.
+
+   where if something has less demands, I can pass it as something with more demands
+
+   but...
+
+   right so the first mistake is that I don't need MammalToAnimal
+
+   so okay, that works fine.
+
+   but then I need a way to encode the other kind of subtyping.
+
+   um which is where I pass it as something that expects more effects...
+
+   like, the functions are backwards-compatible,
+   but the objects aren't.
