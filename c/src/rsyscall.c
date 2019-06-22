@@ -25,7 +25,6 @@ struct options {
 
 char hello[] = "hello world, I am the syscall server!\n";
 char read_failed[] = "rsyscall: read(infd, &request, sizeof(request)) failed\n";
-char read_eof[] = "rsyscall: read(infd, &request, sizeof(request)) returned EOF\n";
 char write_failed[] = "rsyscall: write(outfd, &response, sizeof(response)) failed\n";
 const int EINTR = 4;
 
@@ -48,7 +47,6 @@ static int read_request(const int infd, struct rsyscall_syscall *request)
 	    return ret;
 	}
         if (ret == 0) {
-            write(2, read_eof, sizeof(read_eof) - 1);
 	    return 0;
         }
         remaining -= ret;
