@@ -13,7 +13,6 @@ from rsyscall.near.types import WatchDescriptor
 from rsyscall.thread import Thread
 import enum
 import math
-import os
 import rsyscall.handle as handle
 import trio
 import typing as t

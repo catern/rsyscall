@@ -3,7 +3,6 @@ from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass
 import typing as t
 import enum
-import socket
 from rsyscall.struct import Struct, FixedSerializer, Serializable, Serializer, HasSerializer, FixedSize
 import contextlib
 import abc
@@ -34,15 +33,15 @@ __all__ = [
 
 T = t.TypeVar('T')
 class AF(enum.IntEnum):
-    UNIX = socket.AF_UNIX
-    NETLINK = socket.AF_NETLINK
-    INET = socket.AF_INET
-    INET6 = socket.AF_INET6
+    UNIX = lib.AF_UNIX
+    NETLINK = lib.AF_NETLINK
+    INET = lib.AF_INET
+    INET6 = lib.AF_INET6
 
 class SHUT(enum.IntEnum):
-    RD = socket.SHUT_RD
-    WR = socket.SHUT_WR
-    RDWR = socket.SHUT_RDWR
+    RD = lib.SHUT_RD
+    WR = lib.SHUT_WR
+    RDWR = lib.SHUT_RDWR
 
 class Address(Struct):
     """This is just an interface to indicate different kinds of sockaddrs.
@@ -70,12 +69,12 @@ def _register_sockaddr(sockaddr: t.Type[Address]) -> None:
 class SOCK(enum.IntFlag):
     NONE = 0
     # socket kinds
-    DGRAM = socket.SOCK_DGRAM
-    STREAM = socket.SOCK_STREAM
-    RAW = socket.SOCK_RAW
+    DGRAM = lib.SOCK_DGRAM
+    STREAM = lib.SOCK_STREAM
+    RAW = lib.SOCK_RAW
     # flags that can be or'd in
-    CLOEXEC = socket.SOCK_CLOEXEC
-    NONBLOCK = socket.SOCK_NONBLOCK
+    CLOEXEC = lib.SOCK_CLOEXEC
+    NONBLOCK = lib.SOCK_NONBLOCK
 
 class SOL(enum.IntEnum):
     """Stands for Sock Opt Level
@@ -91,7 +90,7 @@ class SO(enum.IntEnum):
     ERROR = lib.SO_ERROR
 
 class SCM(enum.IntEnum):
-    RIGHTS = socket.SCM_RIGHTS
+    RIGHTS = lib.SCM_RIGHTS
 
 @dataclass
 class GenericSockaddr(Address):

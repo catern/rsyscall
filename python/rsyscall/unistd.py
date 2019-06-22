@@ -3,7 +3,6 @@ from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 from dataclasses import dataclass
 import enum
-import os
 from rsyscall.struct import Serializer, FixedSerializer, Serializable, FixedSize
 import struct
 import typing as t
@@ -23,14 +22,18 @@ __all__ = [
 
 class SEEK(enum.IntEnum):
     "The whence argument to lseek."
-    SET = os.SEEK_SET
+    SET = lib.SEEK_SET
+    CUR = lib.SEEK_CUR
+    END = lib.SEEK_END
+    DATA = lib.SEEK_DATA
+    HOLE = lib.SEEK_HOLE
 
 class OK(enum.IntFlag):
     "The mode argument to access, faccessat."
-    R = os.R_OK
-    W = os.W_OK
-    X = os.X_OK
-    F = os.F_OK
+    R = lib.R_OK
+    W = lib.W_OK
+    X = lib.X_OK
+    F = lib.F_OK
 
 class Arg(bytes, Serializable):
     "A null-terminated string, as passed to execve."

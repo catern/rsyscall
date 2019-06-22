@@ -2,8 +2,6 @@ from __future__ import annotations
 from rsyscall._raw import lib, ffi # type: ignore
 from rsyscall.struct import Struct, Serializable
 import enum
-import os
-import select
 import typing as t
 from dataclasses import dataclass
 
@@ -18,14 +16,14 @@ class EPOLL_CTL(enum.IntEnum):
 
 class EPOLL(enum.IntFlag):
     NONE = 0
-    IN = select.EPOLLIN
-    OUT = select.EPOLLOUT
-    RDHUP = select.EPOLLRDHUP # type: ignore
-    PRI = select.EPOLLPRI
-    ERR = select.EPOLLERR
-    HUP = select.EPOLLHUP
+    IN = lib.EPOLLIN
+    OUT = lib.EPOLLOUT
+    RDHUP = lib.EPOLLRDHUP # type: ignore
+    PRI = lib.EPOLLPRI
+    ERR = lib.EPOLLERR
+    HUP = lib.EPOLLHUP
     # options
-    ET = select.EPOLLET
+    ET = lib.EPOLLET
 
 @dataclass
 class EpollEvent(Struct):

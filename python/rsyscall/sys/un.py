@@ -51,10 +51,6 @@ class SockaddrUn(Address):
         cls.check_family(AF(struct.sun_family))
         if len(data) == header:
             # unnamed socket, name is empty
-            # fffffff FFFFFFFFFFF FUUUUUUUUUUUUUUUUUUUUUUUU
-            # UFCK
-            # okay so... is there a way to figure this out without looking at socklen
-            # fuuuu
             length = 0
         elif struct.sun_path[0] == b'\0':
             # abstract socket, entire buffer is part of path

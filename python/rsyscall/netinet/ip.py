@@ -1,7 +1,6 @@
 "#include <netinet/ip.h>"
 from rsyscall._raw import ffi, lib # type: ignore
 import enum
-import socket
 
 # ip.h is a superset of in.h
 from rsyscall.netinet.in_ import SockaddrIn, SockaddrIn6
@@ -14,7 +13,7 @@ __all__ = [
 
 class IPPROTO(enum.IntEnum):
     "Used for a variety of things"
-    ICMPV6 = socket.IPPROTO_ICMPV6
+    ICMPV6 = lib.IPPROTO_ICMPV6
 
 class IP(enum.IntEnum):
     "Mostly for socket options"
