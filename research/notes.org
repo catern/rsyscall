@@ -18647,10 +18647,10 @@ i could use a container but i hate those :)
 let's figure out how to override NSS once and for all.
 
 we could even modify NSS and include the patch in nixpkgs
-** TODO remove syscall eof message
+** DONE remove syscall eof message
    Hmm, what's the clean way to shut down a thread?
    Exit it?
-** TODO stop using noplt?
+** DONE stop using noplt?
 * deployment
   hmm I could include rsyscall.c directly into the python package
 
@@ -18712,8 +18712,8 @@ we could even modify NSS and include the patch in nixpkgs
    That works for both Nix and VATS.
 
    Later we can streamline it.
-** TODO get working on Debian
-*** TODO make Nix deps optional
+** DONE get working on Debian
+*** DONE make Nix deps optional
     So, hm. HmMmMm.
 
     Let's just make fake JSONs for the missing deps.
@@ -18723,7 +18723,7 @@ we could even modify NSS and include the patch in nixpkgs
     If we're not in a Nix environment, then...
 
     We don't want to require building with Nix. Hm. Hm hm hm.
-** TODO stop using python O flags and EPOLL flags
+** DONE stop using python O flags and EPOLL flags
    They are buggy/wrong?
 * PR
 ** website?
@@ -19536,3 +19536,13 @@ that language has pattern matching on effects
 
    like, the functions are backwards-compatible,
    but the objects aren't.
+** using same conventions for stack switch and function call
+   calling conventions
+
+   swapping conventions
+
+   caller-saved registers
+
+   call with a stack and with a function pointer
+
+   or just a stack, and ret immediately as the next instruction?
