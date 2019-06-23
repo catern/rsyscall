@@ -1,6 +1,8 @@
 "The high-level interfaces to memory"
 from __future__ import annotations
-from rsyscall.handle import Task, Pointer, WrittenPointer, MemoryTransport, AllocationInterface, MemoryMapping, MemoryGateway
+from rsyscall.handle import Task, Pointer, WrittenPointer, MemoryMapping
+from rsyscall.memory.transport import MemoryTransport, MemoryGateway
+from rsyscall.memory.allocation_interface import AllocationInterface
 from rsyscall.memory.allocator import AllocatorInterface
 from rsyscall.struct import FixedSize, T_fixed_size, HasSerializer, T_has_serializer, FixedSerializer, T_fixed_serializer, Serializer
 import rsyscall.near.types as near

@@ -1,6 +1,6 @@
 """Classes which own resources and provide the main syscall interfaces
 
-We have several resource-owning classes in this file: FileDescriptor, Pointer, Process,
+We have several resource-owning classes in this module: FileDescriptor, Pointer, Process,
 MemoryMapping, etc.
 
 In the analogy to near and far pointers, they are like a near pointer plus a segment
@@ -18,13 +18,10 @@ large scale resource management.
 """
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
-from dataclasses import dataclass, field
-import copy
-import gc
+from dataclasses import dataclass
 import rsyscall.far
 import rsyscall.near
 from rsyscall.far import File
-import trio
 import os
 import typing as t
 import logging
@@ -41,8 +38,7 @@ from rsyscall.sys.socket import (
     CmsgList, CmsgSCMRights,
     Socketpair,
 )
-from rsyscall.sched import CLONE, Stack, Borrowable
-from rsyscall.struct import Serializer, HasSerializer, FixedSerializer, FixedSize, Serializable, Int32, Struct
+from rsyscall.sched import CLONE, Stack
 from rsyscall.signal import Sigaction, Sigset, SIG, Siginfo, SignalMaskTask
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
@@ -53,7 +49,7 @@ from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.capability import CapHeader, CapData
 from rsyscall.sys.inotify import InotifyFlag, IN
 from rsyscall.sys.memfd import MFD
-from rsyscall.sys.wait import W, ChildState
+from rsyscall.sys.wait import W
 from rsyscall.sys.mman import MAP, PROT
 from rsyscall.sys.prctl import PR
 from rsyscall.sys.mount import MS
@@ -61,6 +57,10 @@ from rsyscall.sys.signalfd import SFD
 from rsyscall.sys.uio import RWF, IovecList, split_iovec
 
 from rsyscall.sys.eventfd import EventfdTask, EventFileDescriptor
+
+# re-exported
+from rsyscall.sched import Borrowable
+
 
 
 ################################################################################

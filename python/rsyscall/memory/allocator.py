@@ -15,7 +15,8 @@ from rsyscall.far import AddressSpace
 from rsyscall.near.sysif import SyscallInterface
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.handle import AllocationInterface, MemoryMapping, Task
+from rsyscall.memory.allocation_interface import AllocationInterface
+from rsyscall.handle import MemoryMapping, Task
 import trio
 import abc
 import enum

@@ -20,6 +20,7 @@ import typing as t
 from dataclasses import dataclass
 import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM
+from rsyscall.memory.transport import MemoryTransport
 from rsyscall.handle import Pointer, Task, MemoryMapping
 from rsyscall.signal import SIG, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
@@ -81,7 +82,7 @@ class LocalSyscall(SyscallInterface):
             return result
         return LocalSyscallResponse(f)
 
-class LocalMemoryTransport(handle.MemoryTransport):
+class LocalMemoryTransport(MemoryTransport):
     "This is a memory transport that only works on local pointers."
     def __init__(self, local_task: Task) -> None:
         self.local_task = local_task

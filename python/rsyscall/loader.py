@@ -11,9 +11,11 @@ import contextlib
 from dataclasses import dataclass
 import typing as t
 from rsyscall.handle import (
-    Borrowable, Pointer, WrittenPointer, FileDescriptor, Task, AllocationInterface,
-    Stack, MemoryGateway, MemoryMapping,
+    Borrowable, Pointer, WrittenPointer, FileDescriptor, Task,
+    Stack, MemoryMapping,
 )
+from rsyscall.memory.allocation_interface import AllocationInterface
+from rsyscall.memory.transport import MemoryGateway
 import rsyscall.near.types as near
 import rsyscall.far as far
 from rsyscall.struct import Serializer

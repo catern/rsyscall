@@ -34,12 +34,13 @@ from dataclasses import dataclass, field
 from rsyscall.concurrency import OneAtATime
 from rsyscall.memory.ram import RAM
 from rsyscall.epoller import AsyncFileDescriptor
-from rsyscall.handle import MemoryTransport
+from rsyscall.memory.transport import MemoryTransport
+from rsyscall.memory.allocation_interface import AllocationInterface
 import rsyscall.handle as handle
 import typing as t
 import trio
 
-from rsyscall.handle import AllocationInterface, Pointer, IovecList, FileDescriptor
+from rsyscall.handle import Pointer, IovecList, FileDescriptor
 from rsyscall.memory.allocator import AllocatorInterface
 
 __all__ = [

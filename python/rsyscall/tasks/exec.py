@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall.command import Command
 from rsyscall.epoller import AsyncReadBuffer
-from rsyscall.handle import WrittenPointer, Pointer, MemoryTransport, Task, FileDescriptor, MemoryMapping
+from rsyscall.handle import WrittenPointer, Pointer, Task, FileDescriptor, MemoryMapping
 from rsyscall.thread import ChildThread, Thread
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.socket_transport import SocketMemoryTransport
