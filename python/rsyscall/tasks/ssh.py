@@ -202,7 +202,7 @@ async def make_bootstrap_dir(
         if done != b"done":
             raise Exception("socket binder violated protocol, got instead of done:", done)
         await async_stdout.close()
-        logger.info("socket bootstrap done, got tmp path %s", tmp_path_bytes)
+        logger.debug("socket bootstrap done, got tmp path %s", tmp_path_bytes)
         yield tmp_path_bytes
         await child_process.check()
 

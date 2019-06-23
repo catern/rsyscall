@@ -143,7 +143,7 @@ class ChildUnixThread(UnixThread):
         raw_envp: t.List[bytes] = []
         for key_bytes, value in envp.items():
             raw_envp.append(b''.join([key_bytes, b'=', value]))
-        logger.info("execveat(%s, %s, %s)", path, argv, env_updates)
+        logger.debug("execveat(%s, %s, %s)", path, argv, env_updates)
         return await self._execve(path, [os.fsencode(arg) for arg in argv], raw_envp)
 
     async def exec(self, command: Command,

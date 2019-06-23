@@ -143,14 +143,14 @@ class ChildSyscallInterface(BaseSyscallInterface):
     async def _read_syscall_responses_direct(self) -> None:
         async with self._throw_on_child_exit():
             await self.rsyscall_connection.read_pending_responses()
-        self.logger.info("returning after reading some syscall responses")
+        self.logger.debug("returning after reading some syscall responses")
 
     async def _read_pending_responses(self) -> None:
         async with self.running_read.needs_run() as needs_run:
             if needs_run:
-                self.logger.info("running read_syscall_responses_direct")
+                self.logger.debug("running read_syscall_responses_direct")
                 await self._read_syscall_responses_direct()
-                self.logger.info("done with read_syscall_responses_direct")
+                self.logger.debug("done with read_syscall_responses_direct")
 
 async def launch_futex_monitor(ram: RAM,
                                loader: NativeLoader, monitor: ChildProcessMonitor,

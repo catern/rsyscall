@@ -16,10 +16,10 @@ class BaseSyscallResponse(SyscallResponse):
     async def receive(self, logger=None) -> int:
         while self.response.result is None:
             if logger:
-                logger.info("no response yet for %s, calling process responses", self.response)
+                logger.debug("no response yet for %s, calling process responses", self.response)
             await self.process_responses()
             if logger:
-                logger.info("exited process responses for %s", self.response)
+                logger.debug("exited process responses for %s", self.response)
         raise_if_error(self.response.result)
         return self.response.result
 
