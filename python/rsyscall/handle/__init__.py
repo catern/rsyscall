@@ -32,6 +32,7 @@ import contextlib
 import abc
 from rsyscall.memory.allocation_interface import AllocationInterface
 from rsyscall.memory.transport import MemoryGateway, MemoryTransport
+from rsyscall.handle.mmap import MemoryMapping, MemoryMappingTask
 logger = logging.getLogger(__name__)
 
 from rsyscall.sys.socket import (
@@ -889,7 +890,7 @@ async def run_fd_table_gc(fd_table: rsyscall.far.FDTable) -> None:
 ################################################################################
 # Task
 
-class Task(SignalMaskTask, rsyscall.far.Task):
+class Task(MemoryMappingTask, SignalMaskTask, rsyscall.far.Task):
     # work around breakage in mypy - it doesn't understand dataclass inheritance
     # TODO delete this
     def __init__(self,
@@ -1212,14 +1213,6 @@ class Task(SignalMaskTask, rsyscall.far.Task):
         merged_stack = stack_alloc.merge(stack_data)
         return ThreadProcess(owning_task, process, merged_stack, stack_data.value, ctid, newtls)
 
-    async def mmap(self, length: int, prot: PROT, flags: MAP,
-                   page_size: int=4096,
-    ) -> MemoryMapping:
-        # a mapping without a file descriptor, is an anonymous mapping
-        flags |= MAP.ANONYMOUS
-        ret = await rsyscall.near.mmap(self.sysif, length, prot, flags, page_size=page_size)
-        return MemoryMapping(self, ret, File())
-
     async def set_robust_list(self, head: WrittenPointer[RobustListHead]) -> None:
         with head.borrow(self):
             await rsyscall.near.set_robust_list(self.sysif, head.near, head.size())
@@ -1416,21 +1409,3 @@ class ThreadProcess(ChildProcess):
     def did_exec(self) -> ChildProcess:
         self.free_everything()
         return super().did_exec()
-
-
-################################################################################
-# Memory mappings
-
-@dataclass
-class MemoryMapping:
-    task: Task
-    near: rsyscall.near.MemoryMapping
-    file: File
-
-    async def munmap(self) -> None:
-        await rsyscall.near.munmap(self.task.sysif, self.near)
-
-    def for_task(self, task: Task) -> MemoryMapping:
-        if task.address_space != self.task.address_space:
-            raise rsyscall.far.AddressSpaceMismatchError()
-        return MemoryMapping(task, self.near, self.file)
