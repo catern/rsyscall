@@ -75,6 +75,9 @@ class SYS(enum.IntEnum):
     socket = lib.SYS_socket
     socketpair = lib.SYS_socketpair
     symlinkat = lib.SYS_symlinkat
+    timerfd_create = lib.SYS_timerfd_create
+    timerfd_gettime = lib.SYS_timerfd_gettime
+    timerfd_settime = lib.SYS_timerfd_settime
     unlinkat = lib.SYS_unlinkat
     unshare = lib.SYS_unshare
     waitid = lib.SYS_waitid

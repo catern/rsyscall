@@ -57,6 +57,7 @@ from rsyscall.sys.signalfd import SFD
 from rsyscall.sys.uio import RWF, IovecList, split_iovec
 
 from rsyscall.sys.eventfd import EventfdTask, EventFileDescriptor
+from rsyscall.sys.timerfd import TimerfdTask, TimerFileDescriptor
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -68,7 +69,7 @@ from rsyscall.sched import Borrowable
 T = t.TypeVar('T')
 @dataclass(eq=False)
 class FileDescriptor(
-        EventFileDescriptor,
+        EventFileDescriptor, TimerFileDescriptor,
         BaseFileDescriptor,
 ):
     """A file descriptor accessed through some Task, with most FD-based syscalls as methods
@@ -381,7 +382,7 @@ class FileDescriptor(
 # Task
 
 class Task(
-        EventfdTask[FileDescriptor],
+        EventfdTask[FileDescriptor], TimerfdTask[FileDescriptor],
         FileDescriptorTask[FileDescriptor],
         MemoryMappingTask, SignalMaskTask, rsyscall.far.Task,
 ):
