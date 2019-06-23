@@ -121,6 +121,23 @@ class Int32(Struct, int): # type: ignore
     def sizeof(cls) -> int:
         return struct.calcsize('i')
 
+class Int64(Struct, int): # type: ignore
+    "A 64-bit integer, as used by many syscalls"
+    def to_bytes(self) -> bytes: # type: ignore
+        return struct.pack('l', self)
+
+    T = t.TypeVar('T', bound='Int64')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T: # type: ignore
+        if len(data) < cls.sizeof():
+            raise Exception("data too small", data)
+        val, = struct.unpack_from('l', data)
+        return cls(val)
+
+    @classmethod
+    def sizeof(cls) -> int:
+        return struct.calcsize('l')
+
 @dataclass
 class StructList(t.Generic[T_fixed_size], HasSerializer):
     "A list of serializable, fixed-size structures"

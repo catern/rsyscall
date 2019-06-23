@@ -60,12 +60,17 @@ from rsyscall.sys.mount import MS
 from rsyscall.sys.signalfd import SFD
 from rsyscall.sys.uio import RWF, IovecList, split_iovec
 
+from rsyscall.sys.eventfd import EventfdTask, EventFileDescriptor
+
 
 ################################################################################
 # FileDescriptor
 T = t.TypeVar('T')
 @dataclass(eq=False)
-class FileDescriptor(BaseFileDescriptor):
+class FileDescriptor(
+        EventFileDescriptor,
+        BaseFileDescriptor,
+):
     """A file descriptor accessed through some Task, with most FD-based syscalls as methods
 
     A FileDescriptor represents the ability to use some open file through some task.  When
@@ -376,6 +381,7 @@ class FileDescriptor(BaseFileDescriptor):
 # Task
 
 class Task(
+        EventfdTask[FileDescriptor],
         FileDescriptorTask[FileDescriptor],
         MemoryMappingTask, SignalMaskTask, rsyscall.far.Task,
 ):
