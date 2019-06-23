@@ -29,9 +29,7 @@ import os
 import typing as t
 import logging
 import contextlib
-import abc
-from rsyscall.memory.allocation_interface import AllocationInterface
-from rsyscall.memory.transport import MemoryGateway, MemoryTransport
+from rsyscall.handle.fd import FileDescriptorTask, BaseFileDescriptor
 from rsyscall.handle.mmap import MemoryMapping, MemoryMappingTask
 from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.handle.process import Process, ChildProcess, ThreadProcess
@@ -62,13 +60,12 @@ from rsyscall.sys.mount import MS
 from rsyscall.sys.signalfd import SFD
 from rsyscall.sys.uio import RWF, IovecList, split_iovec
 
-T = t.TypeVar('T')
-
 
 ################################################################################
-#### File descriptors ####
+# FileDescriptor
+T = t.TypeVar('T')
 @dataclass(eq=False)
-class FileDescriptor:
+class FileDescriptor(BaseFileDescriptor):
     """A file descriptor accessed through some Task, with most FD-based syscalls as methods
 
     A FileDescriptor represents the ability to use some open file through some task.  When
@@ -122,166 +119,14 @@ class FileDescriptor:
     on-demand when run_fd_table_gc is run.
 
     """
-    task: Task
-    near: rsyscall.near.FileDescriptor
-    valid: bool = True
-
-    def _validate(self) -> None:
-        if not self.valid:
-            raise Exception("handle is no longer valid")
-
-    def _invalidate(self) -> bool:
-        """Invalidate this reference to this file descriptor
-
-        Returns true if we removed the last reference, and are now responsible for closing the FD.
-
-        """
-        if self.valid:
-            self.valid = False
-            handles = self._remove_from_tracking()
-            return len(handles) == 0
-        else:
-            return False
-
-    async def invalidate(self) -> bool:
-        """Invalidate this reference to this file descriptor, closing it if necessary
-
-        Returns true if we removed the last reference, and closed the FD.
-
-        We'll use the task inside the last file descriptor to be invalidated to actually
-        do the close.
-        """
-        if self._invalidate():
-            # we were the last handle for this fd, we should close it
-            logger.debug("invalidating %s, no handles remaining, closing", self)
-            await rsyscall.near.close(self.task.sysif, self.near)
-            return True
-        else:
-            logger.debug("invalidating %s, some handles remaining", self)
-            return False
-
-    async def close(self) -> None:
-        "Close this file descriptor if it's the only handle to it; throwing if there's other handles"
-        if not self.is_only_handle():
-            raise Exception("can't close this fd, there are handles besides this one to it")
-        if not self.valid:
-            raise Exception("can't close an invalid FD handle")
-        closed = await self.invalidate()
-        if not closed:
-            raise Exception("for some reason, the fd wasn't closed; "
-                            "maybe some race condition where there are still handles left around?")
-
-    def for_task(self, task: Task) -> FileDescriptor:
-        "Make another FileDescriptor referencing the same file but using `task` for syscalls"
-        return task.make_fd_handle(self)
-
-    @contextlib.contextmanager
-    def borrow(self, task: Task) -> t.Iterator[rsyscall.near.FileDescriptor]:
-        "Validate that this FD can be accessed from this Task, and yield the near.FD to use for syscalls"
-        # TODO we should be the only means of getting FD.near
-        # TODO we should just set an in_use flag or something
-        # oh argh, what about borrow_with, though?
-        # hmm that's fine I guess... there's references inside...
-        # ok, the thing is, we already can't move fds or pointers around
-        # because we have references in memory
-        # maybe borrowing should be another, more strong reference?
-        # well, the point of this that we won't be freed during a syscall
-        if self.task == task:
-            yield self.near
-        else:
-            # note that we can't immediately change this to not use for_task,
-            # because we need to get an FD which stays in the same fd table as task,
-            # even if the task owning the FD we're borrowing switches fd tables
-            borrowed = self.for_task(task)
-            try:
-                yield borrowed.near
-            finally:
-                # we can't call invalidate since we can't actually close this fd since that would
-                # require more syscalls. we should really make it so that if the user tries to
-                # invalidate the fd they passed into a syscall, they get an exception when they call
-                # invalidate. but in lieu of that, we'll throw here. this will cause us to drop
-                # events from syscalls, which would break a system that wants to handle exceptions
-                # and resume, so we should fix this later. TODO
-                # hmm actually I think it might be fine to borrow an fd and free its original?
-                # that will happen if we borrow an expression... which should be fine...
-                # maybe borrow is a bad design.
-                # maybe borrow should just mean, you can't invalidate this fd right now.
-                # though we do want to also check that it's the right address space...
-                if borrowed.valid:
-                    borrowed.valid = False
-                    if len(borrowed._remove_from_tracking()) == 0:
-                        raise Exception("borrowed fd must have been freed from under us, %s", borrowed)
-
-    def maybe_copy(self, task: Task) -> FileDescriptor:
-        """Copy this file descriptor into this task, if it isn't already in there.
-
-        The immediate use case for this is when we're passed some FD handle and some task to use for
-        some purpose, and we're taking ownership of the task. If the FD handle is already in the
-        task, we don't need to copy it, since we necessarily are taking ownership of it; but if the
-        FD handle is in some other task, then we do need to copy it.
-
-        More concretely, that situation happens if we're passed a FD handle and a thread and we're
-        going to exec in the thread. If we copy the FD handle unnecessarily, disable_cloexec won't
-        work because there will be multiple FD handles.
-
-        """
-        if self.task == task:
-            return self
-        else:
-            return self.for_task(task)
-
-    def move(self, task: Task) -> FileDescriptor:
-        """Return the output of self.for_task(task), and also invalidate `self`.
-
-        This is useful for more precisely expressing intent, if we don't intend to use
-        `self` after getting the new FileDescriptor for the other task.
-
-        This is also somewhat optimized relative to just calling self.for_task then
-        calling self.invalidate; the latter call will have to be async, but this call
-        doesn't have to be async, since we know we won't be invalidating the last handle.
-
-        """
-        new = self.for_task(task)
-        self.valid = False
-        handles = self._remove_from_tracking()
-        if len(handles) == 0:
-            raise Exception("We just made handle B from handle A, "
-                            "so we know there are at least two handles; "
-                            "but after removing handle A, there are no handles left. Huh?")
-        return new
-
-    def _get_global_handles(self) -> t.List[FileDescriptor]:
-        return fd_table_to_near_to_handles[self.task.fd_table][self.near]
-
-    def is_only_handle(self) -> bool:
-        self._validate()
-        return len(self._get_global_handles()) == 1
-
-    def _remove_from_tracking(self) -> t.List[FileDescriptor]:
-        self.task.fd_handles.remove(self)
-        handles = self._get_global_handles()
-        handles.remove(self)
-        return handles
-
-    def __del__(self) -> None:
-        if self.valid:
-            if len(self._remove_from_tracking()) == 0:
-                logger.debug("leaked fd: %s", self)
-
-    def __str__(self) -> str:
-        return f"FD({self.task}, {self.near.number})"
-
-    def __repr__(self) -> str:
-        return f"FD({self.task}, {self.near.number}, valid={self.valid})"
+    def __init__(self, task: Task, near: rsyscall.near.FileDescriptor) -> None:
+        super().__init__(task, near)
+        self.task: Task = task
 
     def as_proc_path(self) -> Path:
         pid = self.task.process.near.id
         num = self.near.number
         return Path(f"/proc/{pid}/fd/{num}")
-
-    def as_proc_self_path(self) -> Path:
-        num = self.near.number
-        return Path(f"/proc/self/fd/{num}")
 
     async def disable_cloexec(self) -> None:
         # TODO this doesn't make any sense. we shouldn't allow cloexec if there are multiple people in our fd table;
@@ -386,30 +231,6 @@ class FileDescriptor:
                                        fd=self.near, offset=offset,
                                        page_size=page_size)
         return MemoryMapping(self.task, ret, file)
-
-    async def dup2(self, newfd: FileDescriptor) -> FileDescriptor:
-        return await self.dup3(newfd, 0)
-
-    # oldfd has to be a valid file descriptor. newfd is not, technically, required to be
-    # open, but that's the best practice for avoiding races, so we require it anyway here.
-    async def dup3(self, newfd: FileDescriptor, flags: int) -> FileDescriptor:
-        self._validate()
-        if not newfd.is_only_handle():
-            raise Exception("can't dup over newfd, there are more handles to it than just ours")
-        with newfd.borrow(self.task):
-            if self.near == newfd.near:
-                # dup3 fails if newfd == oldfd. I guess I'll just work around that.
-                return newfd
-            await rsyscall.near.dup3(self.task.sysif, self.near, newfd.near, flags)
-            # newfd is left as a valid pointer to the new file descriptor
-            return newfd
-
-    async def copy_from(self, source: FileDescriptor, flags=0) -> None:
-        await source.dup3(self, flags)
-
-    async def replace_with(self, source: FileDescriptor, flags=0) -> None:
-        await source.dup3(self, flags)
-        await source.invalidate()
 
     async def fcntl(self, cmd: F, arg: t.Optional[int]=None) -> int:
         self._validate()
@@ -550,53 +371,14 @@ class FileDescriptor:
         self._validate()
         await rsyscall.near.fchmod(self.task.sysif, self.near, mode)
 
-fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[FileDescriptor]]] = {}
-fd_table_to_task: t.Dict[rsyscall.far.FDTable, t.List[Task]] = {}
-
-async def run_fd_table_gc(fd_table: rsyscall.far.FDTable) -> None:
-    if fd_table not in fd_table_to_task:
-        # this is an fd table that has never had active tasks;
-        # probably we called run_fd_table_gc on an exited task
-        return
-    gc.collect()
-    near_to_handles = fd_table_to_near_to_handles[fd_table]
-    fds_to_close = [fd for fd, handles in near_to_handles.items() if not handles]
-    if not fds_to_close:
-        return
-    tasks = fd_table_to_task[fd_table]
-    for task in list(tasks):
-        if task.fd_table is not fd_table:
-            tasks.remove(task)
-        elif task.manipulating_fd_table:
-            # skip tasks currently changing fd table
-            pass
-        else:
-            break
-    else:
-        # uh, there's no valid task available? I guess just do nothing?
-        return
-    async def close_fd(fd: rsyscall.near.FileDescriptor) -> None:
-        del near_to_handles[fd]
-        # TODO I guess we should take a lock on the fd table
-        try:
-            # TODO we should mark this task as dead and fall back to later tasks in the list if
-            # we fail due to a SyscallInterface-level error; that might happen if, say, this is
-            # some decrepit task where we closed the syscallinterface but didn't exit the task.
-            await rsyscall.near.close(task.sysif, fd)
-        except:
-            if fd in fd_table_to_near_to_handles:
-                raise Exception("somehow someone else closed fd", fd, "and then it was reopened???")
-            # put the fd back, I guess.
-            near_to_handles[fd] = []
-    async with trio.open_nursery() as nursery:
-        for fd in fds_to_close:
-            nursery.start_soon(close_fd, fd)
-
 
 ################################################################################
 # Task
 
-class Task(MemoryMappingTask, SignalMaskTask, rsyscall.far.Task):
+class Task(
+        FileDescriptorTask[FileDescriptor],
+        MemoryMappingTask, SignalMaskTask, rsyscall.far.Task,
+):
     # work around breakage in mypy - it doesn't understand dataclass inheritance
     # TODO delete this
     def __init__(self,
@@ -608,21 +390,22 @@ class Task(MemoryMappingTask, SignalMaskTask, rsyscall.far.Task):
     ) -> None:
         self.sysif = sysif
         if isinstance(process, Process):
+            self.near_process = process.near
             self.process = process
             self.parent_task: t.Optional[rsyscall.far.Task] = process.task
         else:
+            self.near_process = process
             self.process = Process(self, process)
             self.parent_task = None
         self.fd_table = fd_table
         self.address_space = address_space
         self.pidns = pidns
-        self.fd_handles: t.List[FileDescriptor] = []
-        self.manipulating_fd_table = False
         self.alive = True
-
-        self._setup_fd_table_handles()
-        self._add_to_active_fd_table_tasks()
         self.__post_init__()
+
+    def _file_descriptor_constructor(self, fd: rsyscall.near.FileDescriptor) -> FileDescriptor:
+        # for extensibility
+        return FileDescriptor(self, fd)
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -633,40 +416,6 @@ class Task(MemoryMappingTask, SignalMaskTask, rsyscall.far.Task):
     def make_path_handle(self, path: Path) -> Path:
         return path
 
-    def _make_fd_handle_from_near(self, fd: rsyscall.near.FileDescriptor) -> FileDescriptor:
-        if self.manipulating_fd_table:
-            raise Exception("can't make a new FD handle while manipulating_fd_table==True")
-        handle = FileDescriptor(self, fd)
-        logger.debug("made handle: %s", self)
-        self.fd_handles.append(handle)
-        fd_table_to_near_to_handles[self.fd_table].setdefault(fd, []).append(handle)
-        return handle
-
-    def make_fd_handle(self, fd: t.Union[rsyscall.near.FileDescriptor,
-                                         FileDescriptor]) -> FileDescriptor:
-        if isinstance(fd, rsyscall.near.FileDescriptor):
-            near = fd
-        elif isinstance(fd, FileDescriptor):
-            if fd.task.fd_table == self.fd_table:
-                near = fd.near
-            else:
-                raise rsyscall.far.FDTableMismatchError(fd.task.fd_table, self.fd_table)
-        else:
-            raise Exception("bad fd type", fd, type(fd))
-        return self._make_fd_handle_from_near(near)
-
-    def _add_to_active_fd_table_tasks(self) -> None:
-        fd_table_to_task.setdefault(self.fd_table, []).append(self)
-
-    def _setup_fd_table_handles(self) -> None:
-        near_to_handles = fd_table_to_near_to_handles.setdefault(self.fd_table, {})
-        for handle in self.fd_handles:
-            near_to_handles.setdefault(handle.near, []).append(handle)
-
-    def _make_fresh_fd_table(self) -> None:
-        self.fd_table = rsyscall.far.FDTable(self.process.near.id)
-        self._setup_fd_table_handles()
-
     def _make_fresh_address_space(self) -> None:
         self.address_space = rsyscall.far.AddressSpace(self.process.near.id)
 
@@ -676,42 +425,6 @@ class Task(MemoryMappingTask, SignalMaskTask, rsyscall.far.Task):
             flags ^= CLONE.FILES
         if flags:
             await rsyscall.near.unshare(self.sysif, flags)
-
-    async def unshare_files(self) -> None:
-        """Unshare this task's file descriptor table.
-
-        When such an unshare is done, the new file descriptor table may contain file
-        descriptors which were copied from the old file descriptor table but are not now
-        referenced by any FileDescriptor. Likewise, the old file descriptor table may
-        contain file descriptors which are no longer referenced by any FileDescriptor,
-        since the FileDescriptors that referenced them were all for the task that unshared
-        its table.  To remove such garbage, run_fd_table_gc is called for both the new and
-        old fd tables after the unshare is complete.
-
-        """
-        if self.manipulating_fd_table:
-            raise Exception("can't unshare_files while manipulating_fd_table==True")
-        # do a GC now to improve efficiency when GCing both tables after the unshare
-        gc.collect()
-        await run_fd_table_gc(self.fd_table)
-        self.manipulating_fd_table = True
-        old_fd_table = self.fd_table
-        self._make_fresh_fd_table()
-        # each fd in the old table is also in the new table, possibly with no handles
-        for fd in fd_table_to_near_to_handles[old_fd_table]:
-            fd_table_to_near_to_handles[self.fd_table].setdefault(fd, [])
-        self._add_to_active_fd_table_tasks()
-        # perform the actual unshare
-        await rsyscall.near.unshare(self.sysif, CLONE.FILES)
-        self.manipulating_fd_table = False
-        # We can only remove our handles from the handle lists after the unshare is done
-        # and the fds are safely copied, because otherwise someone else running GC on the
-        # old fd table would close our fds when they notice there are no more handles.
-        old_near_to_handles = fd_table_to_near_to_handles[old_fd_table]
-        for handle in self.fd_handles:
-            old_near_to_handles[handle.near].remove(handle)
-        await run_fd_table_gc(old_fd_table)
-        await run_fd_table_gc(self.fd_table)
 
     async def setns(self, fd: FileDescriptor, nstype: CLONE) -> None:
         with fd.borrow(self) as fd_n:

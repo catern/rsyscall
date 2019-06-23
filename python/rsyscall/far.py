@@ -138,6 +138,7 @@ class Task:
 
     """
     sysif: rsyscall.near.SyscallInterface
+    near_process: rsyscall.near.Process
     fd_table: FDTable
     address_space: AddressSpace
     pidns: PidNamespace
