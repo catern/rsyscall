@@ -103,6 +103,7 @@ class BaseFileDescriptor:
             # we were the last handle for this fd, we should close it
             logger.debug("invalidating %s, no handles remaining, closing", self)
             await rsyscall.near.close(self.task.sysif, self.near)
+            del fd_table_to_near_to_handles[self.task.fd_table][self.near]
             return True
         else:
             logger.debug("invalidating %s, some handles remaining", self)
