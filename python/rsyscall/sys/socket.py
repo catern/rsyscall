@@ -71,6 +71,7 @@ class SOCK(enum.IntFlag):
     # socket kinds
     DGRAM = lib.SOCK_DGRAM
     STREAM = lib.SOCK_STREAM
+    SEQPACKET = lib.SOCK_SEQPACKET
     RAW = lib.SOCK_RAW
     # flags that can be or'd in
     CLOEXEC = lib.SOCK_CLOEXEC
