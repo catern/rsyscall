@@ -27,7 +27,7 @@ import typing as t
 import logging
 import contextlib
 from rsyscall.handle.fd import FileDescriptorTask, BaseFileDescriptor
-from rsyscall.handle.mmap import MemoryMapping, MemoryMappingTask
+from rsyscall.handle.mmap import MemoryMapping, MappableFileDescriptor, MemoryMappingTask
 from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.handle.process import Process, ChildProcess, ThreadProcess
 logger = logging.getLogger(__name__)
@@ -47,7 +47,6 @@ from rsyscall.linux.dirent import DirentList
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.capability import CapHeader, CapData
 from rsyscall.sys.wait import W
-from rsyscall.sys.mman import MAP, PROT
 from rsyscall.sys.prctl import PR
 from rsyscall.sys.mount import MS
 from rsyscall.sys.uio import RWF, IovecList, split_iovec
@@ -71,6 +70,7 @@ T = t.TypeVar('T')
 class FileDescriptor(
         EventFileDescriptor, TimerFileDescriptor, EpollFileDescriptor,
         InotifyFileDescriptor, SignalFileDescriptor,
+        MappableFileDescriptor,
         BaseFileDescriptor,
 ):
     """A file descriptor accessed through some Task, with most FD-based syscalls as methods
@@ -226,19 +226,6 @@ class FileDescriptor(
         self._validate()
         await rsyscall.near.ftruncate(self.task.sysif, self.near, length)
 
-    async def mmap(self, length: int, prot: PROT, flags: MAP,
-                   offset: int=0,
-                   page_size: int=4096,
-                   file: File=None,
-    ) -> MemoryMapping:
-        self._validate()
-        if file is None:
-            file = File()
-        ret = await rsyscall.near.mmap(self.task.sysif, length, prot, flags,
-                                       fd=self.near, offset=offset,
-                                       page_size=page_size)
-        return MemoryMapping(self.task, ret, file)
-
     async def fcntl(self, cmd: F, arg: t.Optional[int]=None) -> int:
         self._validate()
         return (await rsyscall.near.fcntl(self.task.sysif, self.near, cmd, arg))
@@ -353,8 +340,9 @@ class Task(
         EventfdTask[FileDescriptor], TimerfdTask[FileDescriptor], EpollTask[FileDescriptor],
         InotifyTask[FileDescriptor], SignalfdTask[FileDescriptor],
         MemfdTask[FileDescriptor],
+        MemoryMappingTask,
         FileDescriptorTask[FileDescriptor],
-        MemoryMappingTask, SignalMaskTask, rsyscall.far.Task,
+        SignalMaskTask, rsyscall.far.Task,
 ):
     # work around breakage in mypy - it doesn't understand dataclass inheritance
     # TODO delete this
