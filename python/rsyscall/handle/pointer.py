@@ -8,7 +8,7 @@ import contextlib
 from rsyscall.struct import Serializer
 from rsyscall.memory.allocation_interface import AllocationInterface
 from rsyscall.memory.transport import MemoryGateway
-from rsyscall.handle.mmap import MemoryMapping
+from rsyscall.sys.mman import MemoryMapping
 logger = logging.getLogger(__name__)
 
 

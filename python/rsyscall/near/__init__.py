@@ -204,29 +204,10 @@ async def mkdirat(sysif: SyscallInterface,
         dirfd = AT.FDCWD # type: ignore
     await sysif.syscall(SYS.mkdirat, dirfd, path, mode)
 
-async def mmap(sysif: SyscallInterface, length: int, prot: int, flags: int,
-               addr: t.Optional[Address]=None, 
-               fd: t.Optional[FileDescriptor]=None, offset: int=0,
-               page_size: int=4096) -> MemoryMapping:
-    if addr is None:
-        addr = 0 # type: ignore
-    else:
-        assert (int(addr) % page_size) == 0
-    if fd is None:
-        fd = -1 # type: ignore
-    # TODO we want Linux to enforce this for us, but instead it just rounds,
-    # leaving us unable to later munmap.
-    assert (int(length) % page_size) == 0
-    ret = await sysif.syscall(SYS.mmap, addr, length, prot, flags, fd, offset)
-    return MemoryMapping(address=ret, length=length, page_size=page_size)
-
 async def mount(sysif: SyscallInterface, source: Address, target: Address,
                 filesystemtype: Address, mountflags: int,
                 data: Address) -> None:
     await sysif.syscall(SYS.mount, source, target, filesystemtype, mountflags, data)
-
-async def munmap(sysif: SyscallInterface, mapping: MemoryMapping) -> None:
-    await sysif.syscall(SYS.munmap, mapping.address, mapping.length)
 
 async def openat(sysif: SyscallInterface, dirfd: t.Optional[FileDescriptor],
                  path: Address, flags: int, mode: int) -> FileDescriptor:

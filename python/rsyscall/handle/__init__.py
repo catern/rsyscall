@@ -27,7 +27,6 @@ import typing as t
 import logging
 import contextlib
 from rsyscall.handle.fd import FileDescriptorTask, BaseFileDescriptor
-from rsyscall.handle.mmap import MemoryMapping, MappableFileDescriptor, MemoryMappingTask
 from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.handle.process import Process, ChildProcess, ThreadProcess
 logger = logging.getLogger(__name__)
@@ -57,9 +56,11 @@ from rsyscall.sys.epoll    import EpollTask,    EpollFileDescriptor
 from rsyscall.sys.inotify  import InotifyTask,  InotifyFileDescriptor
 from rsyscall.sys.signalfd import SignalfdTask, SignalFileDescriptor
 from rsyscall.sys.memfd    import MemfdTask
+from rsyscall.sys.mman     import MemoryMappingTask, MappableFileDescriptor
 
 # re-exported
 from rsyscall.sched import Borrowable
+from rsyscall.sys.mman import MemoryMapping
 
 
 
