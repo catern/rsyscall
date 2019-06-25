@@ -43,7 +43,6 @@ from rsyscall.signal import Sigaction, Sigset, SIG, Siginfo, SignalMaskTask
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
 from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
-from rsyscall.sys.epoll import EpollFlag, EPOLL_CTL, EpollEvent, EpollEventList
 from rsyscall.linux.dirent import DirentList
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.capability import CapHeader, CapData
@@ -58,6 +57,7 @@ from rsyscall.sys.uio import RWF, IovecList, split_iovec
 
 from rsyscall.sys.eventfd import EventfdTask, EventFileDescriptor
 from rsyscall.sys.timerfd import TimerfdTask, TimerFileDescriptor
+from rsyscall.sys.epoll   import EpollTask,   EpollFileDescriptor
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -69,7 +69,7 @@ from rsyscall.sched import Borrowable
 T = t.TypeVar('T')
 @dataclass(eq=False)
 class FileDescriptor(
-        EventFileDescriptor, TimerFileDescriptor,
+        EventFileDescriptor, TimerFileDescriptor, EpollFileDescriptor,
         BaseFileDescriptor,
 ):
     """A file descriptor accessed through some Task, with most FD-based syscalls as methods
@@ -247,25 +247,6 @@ class FileDescriptor(
         arg._validate()
         return (await rsyscall.near.ioctl(self.task.sysif, self.near, request, arg.near))
 
-    async def epoll_wait(self, events: Pointer[EpollEventList], timeout: int) -> t.Tuple[Pointer[EpollEventList], Pointer]:
-        self._validate()
-        with events.borrow(self.task) as events_n:
-            num = await rsyscall.near.epoll_wait(
-                self.task.sysif, self.near, events_n, events.size()//EpollEvent.sizeof(), timeout)
-            valid_size = num * EpollEvent.sizeof()
-            return events.split(valid_size)
-
-    async def epoll_ctl(self, op: EPOLL_CTL, fd: FileDescriptor, event: t.Optional[Pointer[EpollEvent]]=None) -> None:
-        self._validate()
-        with fd.borrow(self.task) as fd_n:
-            if event is not None:
-                if event.size() < EpollEvent.sizeof():
-                    raise Exception("pointer is too small", event.size(), "to be an EpollEvent", EpollEvent.sizeof())
-                with event.borrow(self.task) as event_n:
-                    return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd_n, event_n))
-            else:
-                return (await rsyscall.near.epoll_ctl(self.task.sysif, self.near, op, fd_n))
-
     async def inotify_add_watch(self, pathname: WrittenPointer[Path], mask: IN) -> rsyscall.near.WatchDescriptor:
         self._validate()
         with pathname.borrow(self.task) as pathname_n:
@@ -382,7 +363,7 @@ class FileDescriptor(
 # Task
 
 class Task(
-        EventfdTask[FileDescriptor], TimerfdTask[FileDescriptor],
+        EventfdTask[FileDescriptor], TimerfdTask[FileDescriptor], EpollTask[FileDescriptor],
         FileDescriptorTask[FileDescriptor],
         MemoryMappingTask, SignalMaskTask, rsyscall.far.Task,
 ):
@@ -528,10 +509,6 @@ class Task(
         with mask.borrow(self) as mask_n:
             fd = await rsyscall.near.signalfd4(self.sysif, None, mask_n, mask.size(), flags|SFD.CLOEXEC)
             return self.make_fd_handle(fd)
-
-    async def epoll_create(self, flags: EpollFlag=EpollFlag.NONE) -> FileDescriptor:
-        fd = await rsyscall.near.epoll_create(self.sysif, flags|EpollFlag.CLOEXEC)
-        return self.make_fd_handle(fd)
 
     async def inotify_init(self, flags: InotifyFlag=InotifyFlag.NONE) -> FileDescriptor:
         fd = await rsyscall.near.inotify_init(self.sysif, flags|InotifyFlag.CLOEXEC)

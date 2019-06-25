@@ -60,6 +60,56 @@ class EpollEventList(t.List[EpollEvent], Serializable):
             data = data[EpollEvent.sizeof():]
         return cls(entries)
 
+#### Classes ####
+from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
+from rsyscall.handle.pointer import Pointer, WrittenPointer
+
+T_fd = t.TypeVar('T_fd', bound='EpollFileDescriptor')
+class EpollFileDescriptor(BaseFileDescriptor):
+    async def epoll_wait(self, events: Pointer[EpollEventList],
+                         timeout: int) -> t.Tuple[Pointer[EpollEventList], Pointer]:
+        self._validate()
+        with events.borrow(self.task):
+            maxevents = events.size()//EpollEvent.sizeof()
+            num = await _epoll_wait(self.task.sysif, self.near, events.near, maxevents, timeout)
+            valid_size = num * EpollEvent.sizeof()
+            return events.split(valid_size)
+
+    async def epoll_ctl(self, op: EPOLL_CTL, fd: BaseFileDescriptor,
+                        event: t.Optional[WrittenPointer[EpollEvent]]=None) -> None:
+        self._validate()
+        with fd.borrow(self.task):
+            if event is not None:
+                if event.size() < EpollEvent.sizeof():
+                    raise Exception("pointer is too small", event.size(),
+                                    "to be an EpollEvent", EpollEvent.sizeof())
+                with event.borrow(self.task):
+                    return (await _epoll_ctl(self.task.sysif, self.near, op, fd.near, event.near))
+            else:
+                return (await _epoll_ctl(self.task.sysif, self.near, op, fd.near))
+
+class EpollTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+    async def epoll_create(self, flags: EpollFlag=EpollFlag.NONE) -> T_fd:
+        return self.make_fd_handle(await _epoll_create(self.sysif, flags|EpollFlag.CLOEXEC))
+
+#### Raw syscalls ####
+import rsyscall.near.types as near
+from rsyscall.near.sysif import SyscallInterface
+from rsyscall.sys.syscall import SYS
+
+async def _epoll_create(sysif: SyscallInterface, flags: EpollFlag) -> near.FileDescriptor:
+    return near.FileDescriptor(await sysif.syscall(SYS.epoll_create1, flags))
+
+async def _epoll_ctl(sysif: SyscallInterface, epfd: near.FileDescriptor, op: EPOLL_CTL,
+                     fd: near.FileDescriptor, event: t.Optional[near.Address]=None) -> None:
+    if event is None:
+        event = 0 # type: ignore
+    await sysif.syscall(SYS.epoll_ctl, epfd, op, fd, event)
+
+async def _epoll_wait(sysif: SyscallInterface, epfd: near.FileDescriptor,
+                      events: near.Address, maxevents: int, timeout: int) -> int:
+    return (await sysif.syscall(SYS.epoll_wait, epfd, events, maxevents, timeout))
+
 
 #### Tests ####
 from unittest import TestCase

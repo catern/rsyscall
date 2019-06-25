@@ -43,7 +43,6 @@ from rsyscall.sys.syscall import SYS
 
 from rsyscall.fcntl import AT, F
 from rsyscall.sys.wait import IdType
-from rsyscall.sys.epoll import EPOLL_CTL
 from rsyscall.sys.prctl import PR
 from rsyscall.sys.socket import SHUT
 from rsyscall.sys.uio import RWF
@@ -96,18 +95,6 @@ async def connect(sysif: SyscallInterface, sockfd: FileDescriptor, addr: Address
 
 async def dup3(sysif: SyscallInterface, oldfd: FileDescriptor, newfd: FileDescriptor, flags: int) -> None:
     await sysif.syscall(SYS.dup3, oldfd, newfd, flags)
-
-async def epoll_create(sysif: SyscallInterface, flags: int) -> FileDescriptor:
-    return FileDescriptor(await sysif.syscall(SYS.epoll_create1, flags))
-
-async def epoll_ctl(sysif: SyscallInterface, epfd: FileDescriptor, op: EPOLL_CTL,
-                    fd: FileDescriptor, event: t.Optional[Address]=None) -> None:
-    if event is None:
-        event = 0 # type: ignore
-    await sysif.syscall(SYS.epoll_ctl, epfd, op, fd, event)
-
-async def epoll_wait(sysif: SyscallInterface, epfd: FileDescriptor, events: Address, maxevents: int, timeout: int) -> int:
-    return (await sysif.syscall(SYS.epoll_wait, epfd, events, maxevents, timeout))
 
 async def execve(sysif: SyscallInterface,
                  path: Address, argv: Address, envp: Address) -> None:
