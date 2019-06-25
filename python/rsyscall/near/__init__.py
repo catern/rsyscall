@@ -47,7 +47,7 @@ from rsyscall.sys.prctl import PR
 from rsyscall.sys.socket import SHUT
 from rsyscall.sys.uio import RWF
 from rsyscall.sched import CLONE
-from rsyscall.signal import HowSIG, SIG
+from rsyscall.signal import SIG
 
 #### Syscalls (instructions)
 # These are like instructions, run with this segment register override prefix and arguments.
@@ -262,16 +262,6 @@ async def renameat2(sysif: SyscallInterface,
     if newdirfd is None:
         newdirfd = AT.FDCWD # type: ignore
     await sysif.syscall(SYS.renameat2, olddirfd, oldpath, newdirfd, newpath, flags)
-
-async def rt_sigaction(sysif: SyscallInterface, signum: SIG,
-                       act: t.Optional[Address],
-                       oldact: t.Optional[Address],
-                       size: int) -> None:
-    if act is None:
-        act = 0 # type: ignore
-    if oldact is None:
-        oldact = 0 # type: ignore
-    await sysif.syscall(SYS.rt_sigaction, signum, act, oldact, size)
 
 async def sendmsg(sysif: SyscallInterface, fd: FileDescriptor, msg: Address, flags: int) -> int:
     return (await sysif.syscall(SYS.sendmsg, fd, msg, flags))

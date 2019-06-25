@@ -189,7 +189,7 @@ class Sigaction(Struct):
 
 
 
-#### Signal blocking
+#### Classes ####
 from rsyscall.near.sysif import SyscallInterface
 from rsyscall.sys.syscall import SYS
 
@@ -206,14 +206,24 @@ async def _rt_sigprocmask(sysif: SyscallInterface,
         oldset = 0 # type: ignore
     await sysif.syscall(SYS.rt_sigprocmask, how, set, oldset, sigsetsize)
 
-class SignalMaskTask(Task):
-    "The subset of functionality of the Task related to blocking signals"
+class SignalTask(Task):
+    "The subset of functionality of the Task related to blocking and handling signals"
     def __post_init__(self) -> None:
         super().__post_init__()
         self.sigmask = Sigset()
         self.old_sigmask = Sigset()
         self.sigmask_oldset_ptr: t.Optional[Pointer[Sigset]] = None
         self.sigprocmask_running = False
+
+    async def sigaction(self, signum: SIG,
+                        act: t.Optional[Pointer[Sigaction]],
+                        oldact: t.Optional[Pointer[Sigaction]]) -> None:
+        with contextlib.ExitStack() as stack:
+            act_n = self._borrow_optional(stack, act)
+            oldact_n = self._borrow_optional(stack, oldact)
+            # rt_sigaction takes the size of the sigset, not the size of the sigaction;
+            # and sigset is a fixed size.
+            await _rt_sigaction(self.sysif, signum, act_n, oldact_n, Sigset.sizeof())
 
     async def _sigprocmask(self, newset: t.Optional[t.Tuple[HowSIG, WrittenPointer[Sigset]]],
                            oldset: t.Optional[Pointer[Sigset]]=None) -> t.Optional[Pointer[Sigset]]:
@@ -307,7 +317,7 @@ class SignalBlock:
     block them.
 
     """
-    task: SignalMaskTask
+    task: SignalTask
     newset: WrittenPointer[Sigset]
 
     @property
@@ -319,6 +329,18 @@ class SignalBlock:
             await self.task.sigprocmask((HowSIG.UNBLOCK, self.newset), oldset)
         else:
             await self.task.sigprocmask((HowSIG.UNBLOCK, self.newset))
+
+
+#### Raw syscalls ####
+async def _rt_sigaction(sysif: SyscallInterface, signum: SIG,
+                        act: t.Optional[near.Address],
+                        oldact: t.Optional[near.Address],
+                        size: int) -> None:
+    if act is None:
+        act = 0 # type: ignore
+    if oldact is None:
+        oldact = 0 # type: ignore
+    await sysif.syscall(SYS.rt_sigaction, signum, act, oldact, size)
 
 
 #### Tests ####

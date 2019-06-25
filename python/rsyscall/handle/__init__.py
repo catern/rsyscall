@@ -38,7 +38,7 @@ from rsyscall.sys.socket import (
     Socketpair,
 )
 from rsyscall.sched import CLONE, Stack
-from rsyscall.signal import Sigaction, Sigset, SIG, Siginfo, SignalMaskTask
+from rsyscall.signal import Siginfo
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
 from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
@@ -57,6 +57,7 @@ from rsyscall.sys.inotify  import InotifyTask,  InotifyFileDescriptor
 from rsyscall.sys.signalfd import SignalfdTask, SignalFileDescriptor
 from rsyscall.sys.memfd    import MemfdTask
 from rsyscall.sys.mman     import MemoryMappingTask, MappableFileDescriptor
+from rsyscall.signal       import SignalTask
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -343,7 +344,7 @@ class Task(
         MemfdTask[FileDescriptor],
         MemoryMappingTask,
         FileDescriptorTask[FileDescriptor],
-        SignalMaskTask, rsyscall.far.Task,
+        SignalTask, rsyscall.far.Task,
 ):
     # work around breakage in mypy - it doesn't understand dataclass inheritance
     # TODO delete this
@@ -414,16 +415,6 @@ class Task(
         with hdrp.borrow(self):
             with datap.borrow(self):
                 await rsyscall.near.capget(self.sysif, hdrp.near, datap.near)
-
-    async def sigaction(self, signum: SIG,
-                        act: t.Optional[Pointer[Sigaction]],
-                        oldact: t.Optional[Pointer[Sigaction]]) -> None:
-        with contextlib.ExitStack() as stack:
-            act_n = self._borrow_optional(stack, act)
-            oldact_n = self._borrow_optional(stack, oldact)
-            # rt_sigaction takes the size of the sigset, not the size of the sigaction;
-            # and sigset is a fixed size.
-            await rsyscall.near.rt_sigaction(self.sysif, signum, act_n, oldact_n, Sigset.sizeof())
 
     async def open(self, path: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
         with path.borrow(self) as path_n:
