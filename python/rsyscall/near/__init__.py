@@ -198,10 +198,6 @@ async def listen(sysif: SyscallInterface, sockfd: FileDescriptor, backlog: int) 
 async def lseek(sysif: SyscallInterface, fd: FileDescriptor, offset: int, whence: int) -> int:
     return (await sysif.syscall(SYS.lseek, fd, offset, whence))
 
-async def memfd_create(sysif: SyscallInterface, name: Address, flags: int) -> FileDescriptor:
-    ret = await sysif.syscall(SYS.memfd_create, name, flags)
-    return FileDescriptor(ret)
-
 async def mkdirat(sysif: SyscallInterface,
                   dirfd: t.Optional[FileDescriptor], path: Address, mode: int) -> None:
     if dirfd is None:

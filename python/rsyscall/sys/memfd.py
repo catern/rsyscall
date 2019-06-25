@@ -7,3 +7,22 @@ class MFD(enum.IntFlag):
     NONE = 0
     CLOEXEC = lib.MFD_CLOEXEC
     
+#### Classes ####
+from rsyscall.handle.fd import T_fd, FileDescriptorTask
+from rsyscall.handle.pointer import WrittenPointer
+from rsyscall.path import Path
+
+class MemfdTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+    async def memfd_create(self, name: WrittenPointer[Path], flags: MFD=MFD.NONE) -> T_fd:
+        with name.borrow(self) as name_n:
+            fd = await _memfd_create(self.sysif, name_n, flags|MFD.CLOEXEC)
+            return self.make_fd_handle(fd)
+
+#### Raw syscalls ####
+import rsyscall.near.types as near
+from rsyscall.near.sysif import SyscallInterface
+from rsyscall.sys.syscall import SYS
+
+async def _memfd_create(sysif: SyscallInterface,
+                        name: near.Address, flags: MFD) -> near.FileDescriptor:
+    return near.FileDescriptor(await sysif.syscall(SYS.memfd_create, name, flags))

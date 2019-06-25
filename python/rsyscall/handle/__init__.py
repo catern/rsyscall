@@ -46,7 +46,6 @@ from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
 from rsyscall.linux.dirent import DirentList
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.capability import CapHeader, CapData
-from rsyscall.sys.memfd import MFD
 from rsyscall.sys.wait import W
 from rsyscall.sys.mman import MAP, PROT
 from rsyscall.sys.prctl import PR
@@ -58,6 +57,7 @@ from rsyscall.sys.timerfd  import TimerfdTask,  TimerFileDescriptor
 from rsyscall.sys.epoll    import EpollTask,    EpollFileDescriptor
 from rsyscall.sys.inotify  import InotifyTask,  InotifyFileDescriptor
 from rsyscall.sys.signalfd import SignalfdTask, SignalFileDescriptor
+from rsyscall.sys.memfd    import MemfdTask
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -352,6 +352,7 @@ class FileDescriptor(
 class Task(
         EventfdTask[FileDescriptor], TimerfdTask[FileDescriptor], EpollTask[FileDescriptor],
         InotifyTask[FileDescriptor], SignalfdTask[FileDescriptor],
+        MemfdTask[FileDescriptor],
         FileDescriptorTask[FileDescriptor],
         MemoryMappingTask, SignalMaskTask, rsyscall.far.Task,
 ):
@@ -492,11 +493,6 @@ class Task(
             with buf.borrow(self) as buf_n:
                 ret = await rsyscall.near.readlinkat(self.sysif, None, path_n, buf_n, buf.size())
                 return buf.split(ret)
-
-    async def memfd_create(self, name: WrittenPointer[Path], flags: MFD=MFD.NONE) -> FileDescriptor:
-        with name.borrow(self) as name_n:
-            fd = await rsyscall.near.memfd_create(self.sysif, name_n, flags|MFD.CLOEXEC)
-            return self.make_fd_handle(fd)
 
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:
