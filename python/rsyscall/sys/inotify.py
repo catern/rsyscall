@@ -95,3 +95,40 @@ class InotifyEventList(t.List[InotifyEvent], Serializable):
             entries.append(ent)
             data = data[size:]
         return cls(entries)
+
+#### Classes ####
+from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
+from rsyscall.handle.pointer import Pointer, WrittenPointer
+from rsyscall.path import Path
+
+T_fd = t.TypeVar('T_fd', bound='InotifyFileDescriptor')
+class InotifyFileDescriptor(BaseFileDescriptor):
+    async def inotify_add_watch(self,
+                                pathname: WrittenPointer[Path], mask: IN) -> WatchDescriptor:
+        self._validate()
+        with pathname.borrow(self.task):
+            return (await _inotify_add_watch(self.task.sysif, self.near, pathname.near, mask))
+
+    async def inotify_rm_watch(self, wd: WatchDescriptor) -> None:
+        self._validate()
+        await _inotify_rm_watch(self.task.sysif, self.near, wd)
+
+class InotifyTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+    async def inotify_init(self, flags: InotifyFlag=InotifyFlag.NONE) -> T_fd:
+        return self.make_fd_handle(await _inotify_init(self.sysif, flags|InotifyFlag.CLOEXEC))
+
+#### Raw syscalls ####
+import rsyscall.near.types as near
+from rsyscall.near.sysif import SyscallInterface
+from rsyscall.sys.syscall import SYS
+
+async def _inotify_init(sysif: SyscallInterface, flags: InotifyFlag) -> near.FileDescriptor:
+    return near.FileDescriptor(await sysif.syscall(SYS.inotify_init1, flags))
+
+async def _inotify_add_watch(sysif: SyscallInterface, fd: near.FileDescriptor,
+                             pathname: near.Address, mask: IN) -> WatchDescriptor:
+    return WatchDescriptor(await sysif.syscall(SYS.inotify_add_watch, fd, pathname, mask))
+
+async def _inotify_rm_watch(sysif: SyscallInterface, fd: near.FileDescriptor,
+                            wd: WatchDescriptor) -> None:
+    await sysif.syscall(SYS.inotify_rm_watch, fd, wd)

@@ -46,7 +46,6 @@ from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
 from rsyscall.linux.dirent import DirentList
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.capability import CapHeader, CapData
-from rsyscall.sys.inotify import InotifyFlag, IN
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.wait import W
 from rsyscall.sys.mman import MAP, PROT
@@ -58,6 +57,7 @@ from rsyscall.sys.uio import RWF, IovecList, split_iovec
 from rsyscall.sys.eventfd import EventfdTask, EventFileDescriptor
 from rsyscall.sys.timerfd import TimerfdTask, TimerFileDescriptor
 from rsyscall.sys.epoll   import EpollTask,   EpollFileDescriptor
+from rsyscall.sys.inotify import InotifyTask, InotifyFileDescriptor
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -70,6 +70,7 @@ T = t.TypeVar('T')
 @dataclass(eq=False)
 class FileDescriptor(
         EventFileDescriptor, TimerFileDescriptor, EpollFileDescriptor,
+        InotifyFileDescriptor,
         BaseFileDescriptor,
 ):
     """A file descriptor accessed through some Task, with most FD-based syscalls as methods
@@ -247,15 +248,6 @@ class FileDescriptor(
         arg._validate()
         return (await rsyscall.near.ioctl(self.task.sysif, self.near, request, arg.near))
 
-    async def inotify_add_watch(self, pathname: WrittenPointer[Path], mask: IN) -> rsyscall.near.WatchDescriptor:
-        self._validate()
-        with pathname.borrow(self.task) as pathname_n:
-            return (await rsyscall.near.inotify_add_watch(self.task.sysif, self.near, pathname_n, mask))
-
-    async def inotify_rm_watch(self, wd: rsyscall.near.WatchDescriptor) -> None:
-        self._validate()
-        await rsyscall.near.inotify_rm_watch(self.task.sysif, self.near, wd)
-
     async def bind(self, addr: WrittenPointer[Address]) -> None:
         self._validate()
         with addr.borrow(self.task):
@@ -364,6 +356,7 @@ class FileDescriptor(
 
 class Task(
         EventfdTask[FileDescriptor], TimerfdTask[FileDescriptor], EpollTask[FileDescriptor],
+        InotifyTask[FileDescriptor],
         FileDescriptorTask[FileDescriptor],
         MemoryMappingTask, SignalMaskTask, rsyscall.far.Task,
 ):
@@ -509,10 +502,6 @@ class Task(
         with mask.borrow(self) as mask_n:
             fd = await rsyscall.near.signalfd4(self.sysif, None, mask_n, mask.size(), flags|SFD.CLOEXEC)
             return self.make_fd_handle(fd)
-
-    async def inotify_init(self, flags: InotifyFlag=InotifyFlag.NONE) -> FileDescriptor:
-        fd = await rsyscall.near.inotify_init(self.sysif, flags|InotifyFlag.CLOEXEC)
-        return self.make_fd_handle(fd)
 
     async def memfd_create(self, name: WrittenPointer[Path], flags: MFD=MFD.NONE) -> FileDescriptor:
         with name.borrow(self) as name_n:

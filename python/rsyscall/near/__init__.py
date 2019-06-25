@@ -171,15 +171,6 @@ async def getsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int
 async def getuid(sysif: SyscallInterface) -> int:
     return (await sysif.syscall(SYS.getuid))
 
-async def inotify_add_watch(sysif: SyscallInterface, fd: FileDescriptor, pathname: Address, mask: int) -> WatchDescriptor:
-    return WatchDescriptor(await sysif.syscall(SYS.inotify_add_watch, fd, pathname, mask))
-
-async def inotify_init(sysif: SyscallInterface, flags: int) -> FileDescriptor:
-    return FileDescriptor(await sysif.syscall(SYS.inotify_init1, flags))
-
-async def inotify_rm_watch(sysif: SyscallInterface, fd: FileDescriptor, wd: WatchDescriptor) -> None:
-    await sysif.syscall(SYS.inotify_rm_watch, fd, wd)
-
 async def ioctl(sysif: SyscallInterface, fd: FileDescriptor, request: int,
                 arg: t.Optional[t.Union[int, Address]]=None) -> int:
     if arg is None:
