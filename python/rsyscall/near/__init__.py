@@ -325,12 +325,6 @@ async def setsockopt(sysif: SyscallInterface, sockfd: FileDescriptor, level: int
 async def shutdown(sysif: SyscallInterface, sockfd: FileDescriptor, how: SHUT) -> None:
     await sysif.syscall(SYS.shutdown, sockfd, how)
 
-async def signalfd4(sysif: SyscallInterface, fd: t.Optional[FileDescriptor],
-                    mask: Address, sizemask: int, flags: int) -> FileDescriptor:
-    if fd is None:
-        fd = -1 # type: ignore
-    return FileDescriptor(await sysif.syscall(SYS.signalfd4, fd, mask, sizemask, flags))
-
 async def socket(sysif: SyscallInterface, domain: int, type: int, protocol: int) -> FileDescriptor:
     return FileDescriptor(await sysif.syscall(SYS.socket, domain, type, protocol))
 

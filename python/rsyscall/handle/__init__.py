@@ -51,13 +51,13 @@ from rsyscall.sys.wait import W
 from rsyscall.sys.mman import MAP, PROT
 from rsyscall.sys.prctl import PR
 from rsyscall.sys.mount import MS
-from rsyscall.sys.signalfd import SFD
 from rsyscall.sys.uio import RWF, IovecList, split_iovec
 
-from rsyscall.sys.eventfd import EventfdTask, EventFileDescriptor
-from rsyscall.sys.timerfd import TimerfdTask, TimerFileDescriptor
-from rsyscall.sys.epoll   import EpollTask,   EpollFileDescriptor
-from rsyscall.sys.inotify import InotifyTask, InotifyFileDescriptor
+from rsyscall.sys.eventfd  import EventfdTask,  EventFileDescriptor
+from rsyscall.sys.timerfd  import TimerfdTask,  TimerFileDescriptor
+from rsyscall.sys.epoll    import EpollTask,    EpollFileDescriptor
+from rsyscall.sys.inotify  import InotifyTask,  InotifyFileDescriptor
+from rsyscall.sys.signalfd import SignalfdTask, SignalFileDescriptor
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -70,7 +70,7 @@ T = t.TypeVar('T')
 @dataclass(eq=False)
 class FileDescriptor(
         EventFileDescriptor, TimerFileDescriptor, EpollFileDescriptor,
-        InotifyFileDescriptor,
+        InotifyFileDescriptor, SignalFileDescriptor,
         BaseFileDescriptor,
 ):
     """A file descriptor accessed through some Task, with most FD-based syscalls as methods
@@ -335,11 +335,6 @@ class FileDescriptor(
             ret = await rsyscall.near.getdents64(self.task.sysif, self.near, dirp_n, dirp.size())
             return dirp.split(ret)
 
-    async def signalfd(self, mask: Pointer[Sigset], flags: SFD) -> None:
-        self._validate()
-        with mask.borrow(self.task) as mask_n:
-            await rsyscall.near.signalfd4(self.task.sysif, self.near, mask_n, mask.size(), flags)
-
     async def openat(self, path: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
         self._validate()
         with path.borrow(self.task) as path_n:
@@ -356,7 +351,7 @@ class FileDescriptor(
 
 class Task(
         EventfdTask[FileDescriptor], TimerfdTask[FileDescriptor], EpollTask[FileDescriptor],
-        InotifyTask[FileDescriptor],
+        InotifyTask[FileDescriptor], SignalfdTask[FileDescriptor],
         FileDescriptorTask[FileDescriptor],
         MemoryMappingTask, SignalMaskTask, rsyscall.far.Task,
 ):
@@ -497,11 +492,6 @@ class Task(
             with buf.borrow(self) as buf_n:
                 ret = await rsyscall.near.readlinkat(self.sysif, None, path_n, buf_n, buf.size())
                 return buf.split(ret)
-
-    async def signalfd(self, mask: Pointer[Sigset], flags: SFD=SFD.NONE) -> FileDescriptor:
-        with mask.borrow(self) as mask_n:
-            fd = await rsyscall.near.signalfd4(self.sysif, None, mask_n, mask.size(), flags|SFD.CLOEXEC)
-            return self.make_fd_handle(fd)
 
     async def memfd_create(self, name: WrittenPointer[Path], flags: MFD=MFD.NONE) -> FileDescriptor:
         with name.borrow(self) as name_n:

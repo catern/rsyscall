@@ -3,7 +3,7 @@ from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.struct import Struct
 from dataclasses import dataclass
 
-from rsyscall.signal import SIG
+from rsyscall.signal import SIG, Sigset
 import enum
 
 class SFD(enum.IntFlag):
@@ -33,3 +33,31 @@ class SignalfdSiginfo(Struct):
     @classmethod
     def sizeof(cls) -> int:
         return ffi.sizeof('struct signalfd_siginfo')
+
+#### Classes ####
+from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
+from rsyscall.handle.pointer import Pointer
+
+T_fd = t.TypeVar('T_fd', bound='SignalFileDescriptor')
+class SignalFileDescriptor(BaseFileDescriptor):
+    async def signalfd(self, mask: Pointer[Sigset], flags: SFD) -> None:
+        self._validate()
+        with mask.borrow(self.task) as mask_n:
+            await _signalfd(self.task.sysif, self.near, mask_n, mask.size(), flags)
+
+class SignalfdTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+    async def signalfd(self, mask: Pointer[Sigset], flags: SFD=SFD.NONE) -> T_fd:
+        with mask.borrow(self) as mask_n:
+            fd = await _signalfd(self.sysif, None, mask_n, mask.size(), flags|SFD.CLOEXEC)
+            return self.make_fd_handle(fd)
+
+#### Raw syscalls ####
+import rsyscall.near.types as near
+from rsyscall.near.sysif import SyscallInterface
+from rsyscall.sys.syscall import SYS
+
+async def _signalfd(sysif: SyscallInterface, fd: t.Optional[near.FileDescriptor],
+                    mask: near.Address, sizemask: int, flags: SFD) -> near.FileDescriptor:
+    if fd is None:
+        fd = -1 # type: ignore
+    return near.FileDescriptor(await sysif.syscall(SYS.signalfd4, fd, mask, sizemask, flags))
