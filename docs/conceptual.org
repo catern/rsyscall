@@ -77,7 +77,7 @@ like Java.
 
 To learn more about the specifics of the API,
 and see what it looks like in action,
-return to the [[file:~/.local/src/rsyscall/intro.org][introduction]] and read on.
+return to the [[file:../README.org][introduction]] and read on.
 
 * Footnotes
 
