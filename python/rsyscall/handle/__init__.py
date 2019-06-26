@@ -54,6 +54,7 @@ from rsyscall.sys.socket   import SocketTask,   SocketFileDescriptor
 from rsyscall.sys.ioctl    import               IoctlFileDescriptor
 from rsyscall.linux.dirent import               GetdentsFileDescriptor
 from rsyscall.sys.uio      import               UioFileDescriptor
+from rsyscall.unistd       import               IOFileDescriptor
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -69,6 +70,7 @@ class FileDescriptor(
         EventFileDescriptor, TimerFileDescriptor, EpollFileDescriptor,
         InotifyFileDescriptor, SignalFileDescriptor,
         IoctlFileDescriptor, GetdentsFileDescriptor, UioFileDescriptor,
+        IOFileDescriptor,
         SocketFileDescriptor,
         MappableFileDescriptor,
         BaseFileDescriptor,
@@ -146,22 +148,10 @@ class FileDescriptor(
         await self.disable_cloexec()
         return int(self.near)
 
-    async def read(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        self._validate()
-        with buf.borrow(self.task) as buf_n:
-            ret = await rsyscall.near.read(self.task.sysif, self.near, buf_n, buf.size())
-            return buf.split(ret)
-
     async def pread(self, buf: Pointer, offset: int) -> t.Tuple[Pointer, Pointer]:
         self._validate()
         with buf.borrow(self.task):
             ret = await rsyscall.near.pread(self.task.sysif, self.near, buf.near, buf.size(), offset)
-            return buf.split(ret)
-
-    async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        self._validate()
-        with buf.borrow(self.task) as buf_n:
-            ret = await rsyscall.near.write(self.task.sysif, self.near, buf_n, buf.size())
             return buf.split(ret)
 
     async def lseek(self, offset: int, whence: SEEK) -> int:

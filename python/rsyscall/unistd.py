@@ -101,3 +101,34 @@ class PipeSerializer(Serializer[T_pipe]):
         def make(n: int) -> FileDescriptor:
             return self.task.make_fd_handle(near.FileDescriptor(int(n)))
         return self.cls(make(struct.first), make(struct.second))
+
+#### Classes ####
+from rsyscall.handle.fd import BaseFileDescriptor
+from rsyscall.handle.pointer import Pointer
+
+class IOFileDescriptor(BaseFileDescriptor):
+    async def read(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
+        self._validate()
+        with buf.borrow(self.task) as buf_n:
+            ret = await _read(self.task.sysif, self.near, buf_n, buf.size())
+            return buf.split(ret)
+
+    async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
+        self._validate()
+        with buf.borrow(self.task) as buf_n:
+            ret = await _write(self.task.sysif, self.near, buf_n, buf.size())
+            return buf.split(ret)
+
+#### Raw functions ####
+import rsyscall.near.types as near
+from rsyscall.near.sysif import SyscallInterface
+from rsyscall.sys.syscall import SYS
+
+async def _read(sysif: SyscallInterface, fd: near.FileDescriptor,
+                buf: near.Address, count: int) -> int:
+    return (await sysif.syscall(SYS.read, fd, buf, count))
+
+async def _write(sysif: SyscallInterface, fd: near.FileDescriptor,
+                 buf: near.Address, count: int) -> int:
+    return (await sysif.syscall(SYS.write, fd, buf, count))
+

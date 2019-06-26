@@ -194,9 +194,6 @@ async def prctl(sysif: SyscallInterface, option: PR, arg2: int,
 async def pread(sysif: SyscallInterface, fd: FileDescriptor, buf: Address, count: int, offset: int) -> int:
     return (await sysif.syscall(SYS.pread64, fd, buf, count, offset))
 
-async def read(sysif: SyscallInterface, fd: FileDescriptor, buf: Address, count: int) -> int:
-    return (await sysif.syscall(SYS.read, fd, buf, count))
-
 async def readlinkat(sysif: SyscallInterface,
                      dirfd: t.Optional[FileDescriptor], path: Address,
                      buf: Address, bufsiz: int) -> int:
@@ -265,7 +262,4 @@ async def waitid(sysif: SyscallInterface,
     if rusage is None:
         rusage = 0 # type: ignore
     return (await sysif.syscall(SYS.waitid, idtype, id, infop, options, rusage))
-
-async def write(sysif: SyscallInterface, fd: FileDescriptor, buf: Address, count: int) -> int:
-    return (await sysif.syscall(SYS.write, fd, buf, count))
 
