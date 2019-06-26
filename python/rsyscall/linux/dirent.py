@@ -68,6 +68,26 @@ class DirentList(t.List[Dirent], Serializable):
             data = data[record.d_reclen:]
         return cls(entries)
 
+#### Classes ####
+from rsyscall.handle.fd import BaseFileDescriptor
+from rsyscall.handle.pointer import Pointer
+
+class GetdentsFileDescriptor(BaseFileDescriptor):
+    async def getdents(self, dirp: Pointer[DirentList]) -> t.Tuple[Pointer[DirentList], Pointer]:
+        self._validate()
+        with dirp.borrow(self.task) as dirp_n:
+            ret = await _getdents64(self.task.sysif, self.near, dirp_n, dirp.size())
+            return dirp.split(ret)
+
+#### Raw syscalls ####
+import rsyscall.near.types as near
+from rsyscall.near.sysif import SyscallInterface
+from rsyscall.sys.syscall import SYS
+
+async def _getdents64(sysif: SyscallInterface, fd: near.FileDescriptor,
+                      dirp: near.Address, count: int) -> int:
+    return (await sysif.syscall(SYS.getdents64, fd, dirp, count))
+
 
 #### Tests ####
 from unittest import TestCase

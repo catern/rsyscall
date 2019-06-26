@@ -133,9 +133,6 @@ async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: F, arg: t.Opti
 async def ftruncate(sysif: SyscallInterface, fd: FileDescriptor, length: int) -> None:
     await sysif.syscall(SYS.ftruncate, fd, length)
 
-async def getdents64(sysif: SyscallInterface, fd: FileDescriptor, dirp: Address, count: int) -> int:
-    return (await sysif.syscall(SYS.getdents64, fd, dirp, count))
-
 async def getgid(sysif: SyscallInterface) -> int:
     return (await sysif.syscall(SYS.getgid))
 

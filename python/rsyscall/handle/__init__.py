@@ -36,7 +36,6 @@ from rsyscall.signal import Siginfo
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
 from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
-from rsyscall.linux.dirent import DirentList
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.capability import CapHeader, CapData
 from rsyscall.sys.wait import W
@@ -53,7 +52,8 @@ from rsyscall.sys.memfd    import MemfdTask
 from rsyscall.sys.mman     import MemoryMappingTask, MappableFileDescriptor
 from rsyscall.signal       import SignalTask
 from rsyscall.sys.socket   import SocketTask,   SocketFileDescriptor
-from rsyscall.ioctl        import               IoctlFileDescriptor
+from rsyscall.sys.ioctl    import               IoctlFileDescriptor
+from rsyscall.linux.dirent import               GetdentsFileDescriptor
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -68,7 +68,7 @@ T = t.TypeVar('T')
 class FileDescriptor(
         EventFileDescriptor, TimerFileDescriptor, EpollFileDescriptor,
         InotifyFileDescriptor, SignalFileDescriptor,
-        IoctlFileDescriptor,
+        IoctlFileDescriptor, GetdentsFileDescriptor,
         SocketFileDescriptor,
         MappableFileDescriptor,
         BaseFileDescriptor,
@@ -205,12 +205,6 @@ class FileDescriptor(
         self._validate()
         with ptr.borrow(self.task):
             await rsyscall.near.faccessat(self.task.sysif, self.near, ptr.near, mode, flags)
-
-    async def getdents(self, dirp: Pointer[DirentList]) -> t.Tuple[Pointer[DirentList], Pointer]:
-        self._validate()
-        with dirp.borrow(self.task) as dirp_n:
-            ret = await rsyscall.near.getdents64(self.task.sysif, self.near, dirp_n, dirp.size())
-            return dirp.split(ret)
 
     async def openat(self, path: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
         self._validate()
