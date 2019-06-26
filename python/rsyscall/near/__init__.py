@@ -151,9 +151,6 @@ async def mount(sysif: SyscallInterface, source: Address, target: Address,
                 data: Address) -> None:
     await sysif.syscall(SYS.mount, source, target, filesystemtype, mountflags, data)
 
-async def pipe2(sysif: SyscallInterface, pipefd: Address, flags: int) -> None:
-    await sysif.syscall(SYS.pipe2, pipefd, flags)
-
 async def prctl(sysif: SyscallInterface, option: PR, arg2: int,
                 arg3: t.Optional[int], arg4: t.Optional[int], arg5: t.Optional[int]) -> int:
     if arg3 is None:

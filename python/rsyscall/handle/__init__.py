@@ -54,6 +54,7 @@ from rsyscall.sys.ioctl    import               IoctlFileDescriptor
 from rsyscall.linux.dirent import               GetdentsFileDescriptor
 from rsyscall.sys.uio      import               UioFileDescriptor
 from rsyscall.unistd       import FSTask,       FSFileDescriptor
+from rsyscall.unistd.pipe  import PipeTask
 from rsyscall.unistd.io    import IOFileDescriptor, SeekableFileDescriptor
 from rsyscall.sys.capability import CapabilityTask
 
@@ -164,6 +165,7 @@ class Task(
         MemfdTask[FileDescriptor],
         FSTask[FileDescriptor],
         SocketTask[FileDescriptor],
+        PipeTask,
         MemoryMappingTask,
         FileDescriptorTask[FileDescriptor],
         CapabilityTask,
@@ -268,11 +270,6 @@ class Task(
             else:
                 with rusage.borrow(self) as rusage_n:
                     await rsyscall.near.waitid(self.sysif, None, infop_n, options, rusage_n)
-
-    async def pipe(self, buf: Pointer[Pipe], flags: O=O.NONE) -> Pointer[Pipe]:
-        with buf.borrow(self):
-            await rsyscall.near.pipe2(self.sysif, buf.near, flags|O.CLOEXEC)
-            return buf
 
     async def execve(self, filename: WrittenPointer[Path],
                      argv: WrittenPointer[ArgList],

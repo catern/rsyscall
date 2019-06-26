@@ -1,9 +1,8 @@
 "Modeled after unistd.h."
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
-from dataclasses import dataclass
 import enum
-from rsyscall.struct import Serializer, FixedSerializer, Serializable, FixedSize
+from rsyscall.struct import Serializer, FixedSerializer, Serializable
 import struct
 import typing as t
 import rsyscall.near.types as near
@@ -22,6 +21,7 @@ __all__ = [
 
 # re-exported
 from rsyscall.unistd.io import SEEK
+from rsyscall.unistd.pipe import Pipe
 
 class OK(enum.IntFlag):
     "The mode argument to access, faccessat."
@@ -63,39 +63,6 @@ class ArgListSerializer(Serializer[T_arglist]):
 
     def from_bytes(self, data: bytes) -> T_arglist:
         raise Exception("can't get pointer handles from raw bytes")
-
-
-#### pipe stuff
-
-T_pipe = t.TypeVar('T_pipe', bound='Pipe')
-@dataclass
-class Pipe(FixedSize):
-    "A pair of file descriptors, as written by pipe."
-    read: FileDescriptor
-    write: FileDescriptor
-
-    @classmethod
-    def sizeof(cls) -> int:
-        return ffi.sizeof('struct fdpair')
-
-    @classmethod
-    def get_serializer(cls: t.Type[T_pipe], task: Task) -> Serializer[T_pipe]:
-        return PipeSerializer(cls, task)
-
-@dataclass
-class PipeSerializer(Serializer[T_pipe]):
-    cls: t.Type[T_pipe]
-    task: Task
-
-    def to_bytes(self, pair: T_pipe) -> bytes:
-        struct = ffi.new('struct fdpair*', (pair.read, pair.write))
-        return bytes(ffi.buffer(struct))
-
-    def from_bytes(self, data: bytes) -> T_pipe:
-        struct = ffi.cast('struct fdpair const*', ffi.from_buffer(data))
-        def make(n: int) -> FileDescriptor:
-            return self.task.make_fd_handle(near.FileDescriptor(int(n)))
-        return self.cls(make(struct.first), make(struct.second))
 
 #### Classes ####
 from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
