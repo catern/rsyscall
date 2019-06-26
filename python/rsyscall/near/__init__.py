@@ -158,9 +158,6 @@ async def linkat(sysif: SyscallInterface,
         newdirfd = AT.FDCWD # type: ignore
     await sysif.syscall(SYS.linkat, olddirfd, oldpath, newdirfd, newpath, flags)
 
-async def lseek(sysif: SyscallInterface, fd: FileDescriptor, offset: int, whence: int) -> int:
-    return (await sysif.syscall(SYS.lseek, fd, offset, whence))
-
 async def mkdirat(sysif: SyscallInterface,
                   dirfd: t.Optional[FileDescriptor], path: Address, mode: int) -> None:
     if dirfd is None:
@@ -190,9 +187,6 @@ async def prctl(sysif: SyscallInterface, option: PR, arg2: int,
     if arg5 is None:
         arg5 = 0
     return (await sysif.syscall(SYS.prctl, option, arg2, arg3, arg4, arg5))
-
-async def pread(sysif: SyscallInterface, fd: FileDescriptor, buf: Address, count: int, offset: int) -> int:
-    return (await sysif.syscall(SYS.pread64, fd, buf, count, offset))
 
 async def readlinkat(sysif: SyscallInterface,
                      dirfd: t.Optional[FileDescriptor], path: Address,

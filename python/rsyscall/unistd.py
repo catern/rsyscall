@@ -119,6 +119,17 @@ class IOFileDescriptor(BaseFileDescriptor):
             ret = await _write(self.task.sysif, self.near, buf_n, buf.size())
             return buf.split(ret)
 
+class SeekableFileDescriptor(IOFileDescriptor):
+    async def pread(self, buf: Pointer, offset: int) -> t.Tuple[Pointer, Pointer]:
+        self._validate()
+        with buf.borrow(self.task):
+            ret = await _pread(self.task.sysif, self.near, buf.near, buf.size(), offset)
+            return buf.split(ret)
+
+    async def lseek(self, offset: int, whence: SEEK) -> int:
+        self._validate()
+        return (await _lseek(self.task.sysif, self.near, offset, whence))
+
 #### Raw functions ####
 import rsyscall.near.types as near
 from rsyscall.near.sysif import SyscallInterface
@@ -132,3 +143,10 @@ async def _write(sysif: SyscallInterface, fd: near.FileDescriptor,
                  buf: near.Address, count: int) -> int:
     return (await sysif.syscall(SYS.write, fd, buf, count))
 
+async def _pread(sysif: SyscallInterface, fd: near.FileDescriptor,
+                 buf: near.Address, count: int, offset: int) -> int:
+    return (await sysif.syscall(SYS.pread64, fd, buf, count, offset))
+
+async def _lseek(sysif: SyscallInterface, fd: near.FileDescriptor,
+                 offset: int, whence: SEEK) -> int:
+    return (await sysif.syscall(SYS.lseek, fd, offset, whence))
