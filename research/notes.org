@@ -18653,6 +18653,8 @@ i could use a container but i hate those :)
 let's figure out how to override NSS once and for all.
 
 we could even modify NSS and include the patch in nixpkgs
+** TODO split unistd up into a module
+   it's got so many things in it, might as well!
 ** DONE remove syscall eof message
    Hmm, what's the clean way to shut down a thread?
    Exit it?

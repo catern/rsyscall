@@ -185,7 +185,7 @@ class FSTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
                 raise
             return self.make_fd_handle(fd)
 
-#### Raw functions ####
+#### Raw syscalls ####
 import rsyscall.near.types as near
 from rsyscall.near.sysif import SyscallInterface
 from rsyscall.sys.syscall import SYS
