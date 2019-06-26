@@ -114,17 +114,6 @@ async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: F, arg: t.Opti
         arg = 0
     return (await sysif.syscall(SYS.fcntl, fd, cmd, arg))
 
-async def getgid(sysif: SyscallInterface) -> int:
-    return (await sysif.syscall(SYS.getgid))
-
-async def getpgid(sysif: SyscallInterface, pid: t.Optional[Process]) -> ProcessGroup:
-    if pid is None:
-        pid = 0 # type: ignore
-    return ProcessGroup(await sysif.syscall(SYS.getpgid, pid))
-
-async def getuid(sysif: SyscallInterface) -> int:
-    return (await sysif.syscall(SYS.getuid))
-
 async def kill(sysif: SyscallInterface, pid: t.Union[Process, ProcessGroup], sig: SIG) -> None:
     if isinstance(pid, ProcessGroup):
         pid = -int(pid) # type: ignore
@@ -179,16 +168,6 @@ async def set_tid_address(sysif: SyscallInterface, ptr: Address) -> None:
 
 async def setns(sysif: SyscallInterface, fd: FileDescriptor, nstype: int) -> None:
     await sysif.syscall(SYS.setns, fd, nstype)
-
-async def setpgid(sysif: SyscallInterface, pid: t.Optional[Process], pgid: t.Optional[ProcessGroup]) -> None:
-    if pid is None:
-        pid = 0 # type: ignore
-    if pgid is None:
-        pgid = 0 # type: ignore
-    await sysif.syscall(SYS.setpgid, pid, pgid)
-
-async def setsid(sysif: SyscallInterface) -> int:
-    return (await sysif.syscall(SYS.setsid))
 
 async def symlinkat(sysif: SyscallInterface,
                     target: Address, newdirfd: t.Optional[FileDescriptor], linkpath: Address) -> None:

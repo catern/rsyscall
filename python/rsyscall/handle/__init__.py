@@ -55,6 +55,7 @@ from rsyscall.linux.dirent import               GetdentsFileDescriptor
 from rsyscall.sys.uio      import               UioFileDescriptor
 from rsyscall.unistd       import FSTask,       FSFileDescriptor
 from rsyscall.unistd.pipe  import PipeTask
+from rsyscall.unistd.credentials import CredentialsTask
 from rsyscall.unistd.io    import IOFileDescriptor, SeekableFileDescriptor
 from rsyscall.sys.capability import CapabilityTask
 
@@ -169,6 +170,7 @@ class Task(
         MemoryMappingTask,
         FileDescriptorTask[FileDescriptor],
         CapabilityTask,
+        CredentialsTask,
         SignalTask, rsyscall.far.Task,
 ):
     # work around breakage in mypy - it doesn't understand dataclass inheritance
@@ -353,9 +355,6 @@ class Task(
         with head.borrow(self):
             await rsyscall.near.set_robust_list(self.sysif, head.near, head.size())
 
-    async def setsid(self) -> int:
-        return (await rsyscall.near.setsid(self.sysif))
-
     async def prctl(self, option: PR, arg2: int,
                     arg3: int=None, arg4: int=None, arg5: int=None) -> int:
         return (await rsyscall.near.prctl(self.sysif, option, arg2, arg3, arg4, arg5))
@@ -372,25 +371,6 @@ class Task(
                             self.sysif,
                             source.near, target.near, filesystemtype.near,
                             mountflags, data.near))
-
-    async def getuid(self) -> int:
-        return (await rsyscall.near.getuid(self.sysif))
-
-    async def getgid(self) -> int:
-        return (await rsyscall.near.getgid(self.sysif))
-
-    async def getpgid(self) -> rsyscall.near.ProcessGroup:
-        return (await rsyscall.near.getpgid(self.sysif, None))
-
-    async def setpgid(self, pgid: t.Optional[ChildProcess]=None) -> None:
-        if pgid is None:
-            await rsyscall.near.setpgid(self.sysif, None, None)
-        else:
-            if pgid.task.pidns != self.pidns:
-                raise rsyscall.far.NamespaceMismatchError(
-                    "different pid namespaces", pgid.task.pidns, self.pidns)
-            with pgid.borrow():
-                await rsyscall.near.setpgid(self.sysif, None, pgid._as_process_group())
 
     def _make_process(self, pid: int) -> Process:
         return Process(self, rsyscall.near.Process(pid))

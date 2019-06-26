@@ -5,6 +5,7 @@ from rsyscall.linux.futex import FutexNode
 from rsyscall.sched import Stack
 from rsyscall.signal import SIG, Siginfo
 from rsyscall.sys.wait import W, ChildState
+from rsyscall.unistd.credentials import _getpgid, _setpgid
 import contextlib
 import logging
 import rsyscall.far
@@ -39,7 +40,7 @@ class Process:
         await rsyscall.near.kill(self.task.sysif, self._as_process_group(), sig)
 
     async def getpgid(self) -> rsyscall.near.ProcessGroup:
-        return (await rsyscall.near.getpgid(self.task.sysif, self.near))
+        return (await _getpgid(self.task.sysif, self.near))
 
 class ChildProcess(Process):
     """A process that is our child, which we can monitor with waitid and safely signal.
@@ -101,13 +102,13 @@ class ChildProcess(Process):
         # the process group of another child process.
         with self.borrow():
             if pgid is None:
-                await rsyscall.near.setpgid(self.task.sysif, self.near, None)
+                await _setpgid(self.task.sysif, self.near, None)
             else:
                 if pgid.task.pidns != self.task.pidns:
                     raise rsyscall.far.NamespaceMismatchError(
                         "different pid namespaces", pgid.task.pidns, self.task.pidns)
                 with pgid.borrow():
-                    await rsyscall.near.setpgid(self.task.sysif, self.near, self._as_process_group())
+                    await _setpgid(self.task.sysif, self.near, self._as_process_group())
 
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:
