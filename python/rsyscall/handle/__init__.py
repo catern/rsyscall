@@ -54,7 +54,7 @@ from rsyscall.sys.ioctl    import               IoctlFileDescriptor
 from rsyscall.linux.dirent import               GetdentsFileDescriptor
 from rsyscall.sys.uio      import               UioFileDescriptor
 from rsyscall.unistd       import FSTask,       FSFileDescriptor
-from rsyscall.unistd       import IOFileDescriptor, SeekableFileDescriptor
+from rsyscall.unistd.io    import IOFileDescriptor, SeekableFileDescriptor
 from rsyscall.sys.capability import CapabilityTask
 
 # re-exported
