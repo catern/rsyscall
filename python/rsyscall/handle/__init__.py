@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 from rsyscall.sched import CLONE, Stack
 from rsyscall.signal import Siginfo
 from rsyscall.fcntl import AT, F, O
-from rsyscall.path import Path, EmptyPath
+from rsyscall.path import Path
 from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.capability import CapHeader, CapData
@@ -54,6 +54,7 @@ from rsyscall.sys.socket   import SocketTask,   SocketFileDescriptor
 from rsyscall.sys.ioctl    import               IoctlFileDescriptor
 from rsyscall.linux.dirent import               GetdentsFileDescriptor
 from rsyscall.sys.uio      import               UioFileDescriptor
+from rsyscall.unistd       import FSTask,       FSFileDescriptor
 from rsyscall.unistd       import IOFileDescriptor, SeekableFileDescriptor
 
 # re-exported
@@ -71,6 +72,7 @@ class FileDescriptor(
         InotifyFileDescriptor, SignalFileDescriptor,
         IoctlFileDescriptor, GetdentsFileDescriptor, UioFileDescriptor,
         SeekableFileDescriptor, IOFileDescriptor,
+        FSFileDescriptor,
         SocketFileDescriptor,
         MappableFileDescriptor,
         BaseFileDescriptor,
@@ -148,36 +150,9 @@ class FileDescriptor(
         await self.disable_cloexec()
         return int(self.near)
 
-    async def ftruncate(self, length: int) -> None:
-        self._validate()
-        await rsyscall.near.ftruncate(self.task.sysif, self.near, length)
-
     async def fcntl(self, cmd: F, arg: t.Optional[int]=None) -> int:
         self._validate()
         return (await rsyscall.near.fcntl(self.task.sysif, self.near, cmd, arg))
-
-    async def readlinkat(self, path: t.Union[WrittenPointer[Path], WrittenPointer[EmptyPath]],
-                         buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        self._validate()
-        with path.borrow(self.task):
-            with buf.borrow(self.task):
-                ret = await rsyscall.near.readlinkat(self.task.sysif, self.near, path.near, buf.near, buf.size())
-                return buf.split(ret)
-
-    async def faccessat(self, ptr: WrittenPointer[Path], mode: OK, flags: AT=AT.NONE) -> None:
-        self._validate()
-        with ptr.borrow(self.task):
-            await rsyscall.near.faccessat(self.task.sysif, self.near, ptr.near, mode, flags)
-
-    async def openat(self, path: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
-        self._validate()
-        with path.borrow(self.task) as path_n:
-            fd = await rsyscall.near.openat(self.task.sysif, self.near, path_n, flags|O.CLOEXEC, mode)
-            return self.task.make_fd_handle(fd)
-
-    async def fchmod(self, mode: int) -> None:
-        self._validate()
-        await rsyscall.near.fchmod(self.task.sysif, self.near, mode)
 
 
 ################################################################################
@@ -187,6 +162,7 @@ class Task(
         EventfdTask[FileDescriptor], TimerfdTask[FileDescriptor], EpollTask[FileDescriptor],
         InotifyTask[FileDescriptor], SignalfdTask[FileDescriptor],
         MemfdTask[FileDescriptor],
+        FSTask[FileDescriptor],
         SocketTask[FileDescriptor],
         MemoryMappingTask,
         FileDescriptorTask[FileDescriptor],
@@ -258,26 +234,9 @@ class Task(
             with datap.borrow(self):
                 await rsyscall.near.capget(self.sysif, hdrp.near, datap.near)
 
-    async def open(self, path: WrittenPointer[Path], flags: O, mode=0o644) -> FileDescriptor:
-        with path.borrow(self) as path_n:
-            try:
-                fd = await rsyscall.near.openat(self.sysif, None, path_n, flags|O.CLOEXEC, mode)
-            except FileNotFoundError as exn:
-                exn.filename = path.value
-                raise
-            return self.make_fd_handle(fd)
-
     async def mkdir(self, path: WrittenPointer[Path], mode=0o755) -> None:
         with path.borrow(self) as path_n:
             await rsyscall.near.mkdirat(self.sysif, None, path_n, mode)
-
-    async def access(self, path: WrittenPointer[Path], mode: int, flags: int=0) -> None:
-        with path.borrow(self) as path_n:
-            try:
-                await rsyscall.near.faccessat(self.sysif, None, path_n, mode, flags)
-            except FileNotFoundError as exn:
-                exn.filename = path.value
-                raise
 
     async def unlink(self, path: WrittenPointer[Path]) -> None:
         with path.borrow(self) as path_n:
@@ -309,12 +268,6 @@ class Task(
     async def fchdir(self, fd: FileDescriptor) -> None:
         with fd.borrow(self) as fd_n:
             await rsyscall.near.fchdir(self.sysif, fd_n)
-
-    async def readlink(self, path: WrittenPointer[Path], buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        with path.borrow(self) as path_n:
-            with buf.borrow(self) as buf_n:
-                ret = await rsyscall.near.readlinkat(self.sysif, None, path_n, buf_n, buf.size())
-                return buf.split(ret)
 
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:

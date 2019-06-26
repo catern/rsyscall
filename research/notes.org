@@ -18635,6 +18635,12 @@ nativecall?
 
    should we just define the handle.Task version as a method,
    and just have the free function call it?
+** TODO re-export rsyscall.linux.dirent from rsyscall.dirent
+   That's the "header" that readdir is in.
+
+   The manpages don't mention linux/dirent.h
+** TODO rename socket.Address to Sockaddr
+   It's confusing with memory addresses otherwise.
 ** TODO make ssh tests work in Nix store by overriding NSS
    sigh ssh fails with
 

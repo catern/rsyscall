@@ -103,8 +103,9 @@ class PipeSerializer(Serializer[T_pipe]):
         return self.cls(make(struct.first), make(struct.second))
 
 #### Classes ####
-from rsyscall.handle.fd import BaseFileDescriptor
-from rsyscall.handle.pointer import Pointer
+from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
+from rsyscall.handle.pointer import Pointer, WrittenPointer
+from rsyscall.path import Path, EmptyPath
 
 class IOFileDescriptor(BaseFileDescriptor):
     async def read(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
@@ -130,6 +131,60 @@ class SeekableFileDescriptor(IOFileDescriptor):
         self._validate()
         return (await _lseek(self.task.sysif, self.near, offset, whence))
 
+from rsyscall.fcntl import AT, O
+T_fd = t.TypeVar('T_fd', bound='FSFileDescriptor')
+class FSFileDescriptor(BaseFileDescriptor):
+    async def readlinkat(self, path: t.Union[WrittenPointer[Path], WrittenPointer[EmptyPath]],
+                         buf: Pointer) -> t.Tuple[Pointer, Pointer]:
+        self._validate()
+        with path.borrow(self.task):
+            with buf.borrow(self.task):
+                ret = await _readlinkat(self.task.sysif, self.near, path.near, buf.near, buf.size())
+                return buf.split(ret)
+
+    async def faccessat(self, ptr: WrittenPointer[Path], mode: OK, flags: AT=AT.NONE) -> None:
+        self._validate()
+        with ptr.borrow(self.task):
+            await _faccessat(self.task.sysif, self.near, ptr.near, mode, flags)
+
+    async def openat(self: T_fd, path: WrittenPointer[Path], flags: O, mode=0o644) -> T_fd:
+        self._validate()
+        with path.borrow(self.task) as path_n:
+            fd = await _openat(self.task.sysif, self.near, path_n, flags|O.CLOEXEC, mode)
+            return self.task.make_fd_handle(fd)
+
+    async def fchmod(self, mode: int) -> None:
+        self._validate()
+        await _fchmod(self.task.sysif, self.near, mode)
+
+    async def ftruncate(self, length: int) -> None:
+        self._validate()
+        await _ftruncate(self.task.sysif, self.near, length)
+
+class FSTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+    async def readlink(self, path: WrittenPointer[Path], buf: Pointer) -> t.Tuple[Pointer, Pointer]:
+        with path.borrow(self) as path_n:
+            with buf.borrow(self) as buf_n:
+                ret = await _readlinkat(self.sysif, None, path_n, buf_n, buf.size())
+                return buf.split(ret)
+
+    async def access(self, path: WrittenPointer[Path], mode: int, flags: int=0) -> None:
+        with path.borrow(self) as path_n:
+            try:
+                await _faccessat(self.sysif, None, path_n, mode, flags)
+            except FileNotFoundError as exn:
+                exn.filename = path.value
+                raise
+
+    async def open(self, path: WrittenPointer[Path], flags: O, mode=0o644) -> T_fd:
+        with path.borrow(self) as path_n:
+            try:
+                fd = await _openat(self.sysif, None, path_n, flags|O.CLOEXEC, mode)
+            except FileNotFoundError as exn:
+                exn.filename = path.value
+                raise
+            return self.make_fd_handle(fd)
+
 #### Raw functions ####
 import rsyscall.near.types as near
 from rsyscall.near.sysif import SyscallInterface
@@ -150,3 +205,27 @@ async def _pread(sysif: SyscallInterface, fd: near.FileDescriptor,
 async def _lseek(sysif: SyscallInterface, fd: near.FileDescriptor,
                  offset: int, whence: SEEK) -> int:
     return (await sysif.syscall(SYS.lseek, fd, offset, whence))
+
+async def _readlinkat(sysif: SyscallInterface, dirfd: t.Optional[near.FileDescriptor],
+                      path: near.Address, buf: near.Address, bufsiz: int) -> int:
+    if dirfd is None:
+        dirfd = AT.FDCWD # type: ignore
+    return (await sysif.syscall(SYS.readlinkat, dirfd, path, buf, bufsiz))
+
+async def _faccessat(sysif: SyscallInterface, dirfd: t.Optional[near.FileDescriptor],
+                     path: near.Address, flags: int, mode: int) -> None:
+    if dirfd is None:
+        dirfd = AT.FDCWD # type: ignore
+    await sysif.syscall(SYS.faccessat, dirfd, path, flags, mode)
+
+async def _openat(sysif: SyscallInterface, dirfd: t.Optional[near.FileDescriptor],
+                  path: near.Address, flags: int, mode: int) -> near.FileDescriptor:
+    if dirfd is None:
+        dirfd = AT.FDCWD # type: ignore
+    return near.FileDescriptor(await sysif.syscall(SYS.openat, dirfd, path, flags, mode))
+
+async def _fchmod(sysif: SyscallInterface, fd: near.FileDescriptor, mode: int) -> None:
+    await sysif.syscall(SYS.fchmod, fd, mode)
+
+async def _ftruncate(sysif: SyscallInterface, fd: near.FileDescriptor, length: int) -> None:
+    await sysif.syscall(SYS.ftruncate, fd, length)

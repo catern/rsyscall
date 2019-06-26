@@ -112,25 +112,13 @@ async def exit(sysif: SyscallInterface, status: int) -> None:
     with trio.MultiError.catch(handle):
         await sysif.syscall(SYS.exit, status)
 
-async def faccessat(sysif: SyscallInterface,
-                    dirfd: t.Optional[FileDescriptor], path: Address, flags: int, mode: int) -> None:
-    if dirfd is None:
-        dirfd = AT.FDCWD # type: ignore
-    await sysif.syscall(SYS.faccessat, dirfd, path, flags, mode)
-
 async def fchdir(sysif: SyscallInterface, fd: FileDescriptor) -> None:
     await sysif.syscall(SYS.fchdir, fd)
-
-async def fchmod(sysif: SyscallInterface, fd: FileDescriptor, mode: int) -> None:
-    await sysif.syscall(SYS.fchmod, fd, mode)
 
 async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: F, arg: t.Optional[t.Union[int, Address]]=None) -> int:
     if arg is None:
         arg = 0
     return (await sysif.syscall(SYS.fcntl, fd, cmd, arg))
-
-async def ftruncate(sysif: SyscallInterface, fd: FileDescriptor, length: int) -> None:
-    await sysif.syscall(SYS.ftruncate, fd, length)
 
 async def getgid(sysif: SyscallInterface) -> int:
     return (await sysif.syscall(SYS.getgid))
@@ -169,12 +157,6 @@ async def mount(sysif: SyscallInterface, source: Address, target: Address,
                 data: Address) -> None:
     await sysif.syscall(SYS.mount, source, target, filesystemtype, mountflags, data)
 
-async def openat(sysif: SyscallInterface, dirfd: t.Optional[FileDescriptor],
-                 path: Address, flags: int, mode: int) -> FileDescriptor:
-    if dirfd is None:
-        dirfd = AT.FDCWD # type: ignore
-    return FileDescriptor(await sysif.syscall(SYS.openat, dirfd, path, flags, mode))
-
 async def pipe2(sysif: SyscallInterface, pipefd: Address, flags: int) -> None:
     await sysif.syscall(SYS.pipe2, pipefd, flags)
 
@@ -187,13 +169,6 @@ async def prctl(sysif: SyscallInterface, option: PR, arg2: int,
     if arg5 is None:
         arg5 = 0
     return (await sysif.syscall(SYS.prctl, option, arg2, arg3, arg4, arg5))
-
-async def readlinkat(sysif: SyscallInterface,
-                     dirfd: t.Optional[FileDescriptor], path: Address,
-                     buf: Address, bufsiz: int) -> int:
-    if dirfd is None:
-        dirfd = AT.FDCWD # type: ignore
-    return (await sysif.syscall(SYS.readlinkat, dirfd, path, buf, bufsiz))
 
 async def renameat2(sysif: SyscallInterface,
                     olddirfd: t.Optional[FileDescriptor], oldpath: Address,
