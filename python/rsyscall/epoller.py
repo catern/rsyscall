@@ -91,9 +91,8 @@ from dataclasses import dataclass
 from rsyscall.near.sysif import SyscallResponse
 
 from rsyscall.struct import Int32
-from rsyscall.handle import Sockbuf
 from rsyscall.sys.syscall import SYS
-from rsyscall.sys.socket import SOCK, SOL, SO, Address, GenericSockaddr, T_addr
+from rsyscall.sys.socket import SOCK, SOL, SO, Address, GenericSockaddr, T_addr, Sockbuf
 from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EPOLL_CTL, EpollFlag
 from rsyscall.fcntl import O, F
 

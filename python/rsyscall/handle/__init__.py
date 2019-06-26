@@ -31,12 +31,6 @@ from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.handle.process import Process, ChildProcess, ThreadProcess
 logger = logging.getLogger(__name__)
 
-from rsyscall.sys.socket import (
-    AF, SOCK, SOL, SCM, SHUT, Address, Sockbuf, SendmsgFlags, RecvmsgFlags, MsghdrFlags, T_addr,
-    SendMsghdr, RecvMsghdr, RecvMsghdrOut,
-    CmsgList, CmsgSCMRights,
-    Socketpair,
-)
 from rsyscall.sched import CLONE, Stack
 from rsyscall.signal import Siginfo
 from rsyscall.fcntl import AT, F, O
@@ -58,6 +52,7 @@ from rsyscall.sys.signalfd import SignalfdTask, SignalFileDescriptor
 from rsyscall.sys.memfd    import MemfdTask
 from rsyscall.sys.mman     import MemoryMappingTask, MappableFileDescriptor
 from rsyscall.signal       import SignalTask
+from rsyscall.sys.socket   import SocketTask,   SocketFileDescriptor
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -72,6 +67,7 @@ T = t.TypeVar('T')
 class FileDescriptor(
         EventFileDescriptor, TimerFileDescriptor, EpollFileDescriptor,
         InotifyFileDescriptor, SignalFileDescriptor,
+        SocketFileDescriptor,
         MappableFileDescriptor,
         BaseFileDescriptor,
 ):
@@ -183,43 +179,6 @@ class FileDescriptor(
             ret = await rsyscall.near.write(self.task.sysif, self.near, buf_n, buf.size())
             return buf.split(ret)
 
-    async def sendmsg(self, msg: WrittenPointer[SendMsghdr], flags: SendmsgFlags=SendmsgFlags.NONE
-    ) -> t.Tuple[IovecList, IovecList]:
-        with contextlib.ExitStack() as stack:
-            stack.enter_context(msg.borrow(self.task))
-            if msg.value.name:
-                stack.enter_context(msg.value.name.borrow(self.task))
-            if msg.value.control:
-                stack.enter_context(msg.value.control.borrow(self.task))
-                msg.value.control.value.borrow_with(stack, self.task)
-            stack.enter_context(msg.value.iov.borrow(self.task))
-            for iovec_elem in msg.value.iov.value:
-                stack.enter_context(iovec_elem.borrow(self.task))
-            ret = await rsyscall.near.sendmsg(self.task.sysif, self.near, msg.near, flags)
-        return msg.value.iov.value.split(ret)
-
-    async def recvmsg(self, msg: WrittenPointer[RecvMsghdr], flags: RecvmsgFlags=RecvmsgFlags.NONE,
-    ) -> t.Tuple[IovecList, IovecList, Pointer[RecvMsghdrOut]]:
-        flags |= RecvmsgFlags.CMSG_CLOEXEC
-        with contextlib.ExitStack() as stack:
-            stack.enter_context(msg.borrow(self.task))
-            if msg.value.name:
-                stack.enter_context(msg.value.name.borrow(self.task))
-            if msg.value.control:
-                stack.enter_context(msg.value.control.borrow(self.task))
-            stack.enter_context(msg.value.iov.borrow(self.task))
-            for iovec_elem in msg.value.iov.value:
-                stack.enter_context(iovec_elem.borrow(self.task))
-            ret = await rsyscall.near.recvmsg(self.task.sysif, self.near, msg.near, flags)
-        valid, invalid = msg.value.iov.value.split(ret)
-        return valid, invalid, msg.value.to_out(msg)
-
-    async def recv(self, buf: Pointer, flags: int) -> t.Tuple[Pointer, Pointer]:
-        self._validate()
-        with buf.borrow(self.task) as buf_n:
-            ret = await rsyscall.near.recv(self.task.sysif, self.near, buf_n, buf.size(), flags)
-            return buf.split(ret)
-
     async def lseek(self, offset: int, whence: SEEK) -> int:
         self._validate()
         return (await rsyscall.near.lseek(self.task.sysif, self.near, offset, whence))
@@ -236,74 +195,6 @@ class FileDescriptor(
         self._validate()
         arg._validate()
         return (await rsyscall.near.ioctl(self.task.sysif, self.near, request, arg.near))
-
-    async def bind(self, addr: WrittenPointer[Address]) -> None:
-        self._validate()
-        with addr.borrow(self.task):
-            try:
-                await rsyscall.near.bind(self.task.sysif, self.near, addr.near, addr.size())
-            except PermissionError as exn:
-                exn.filename = addr.value
-                raise
-
-    async def connect(self, addr: WrittenPointer[Address]) -> None:
-        self._validate()
-        with addr.borrow(self.task):
-            await rsyscall.near.connect(self.task.sysif, self.near, addr.near, addr.size())
-
-    async def listen(self, backlog: int) -> None:
-        self._validate()
-        await rsyscall.near.listen(self.task.sysif, self.near, backlog)
-
-    async def getsockopt(self, level: int, optname: int, optval: WrittenPointer[Sockbuf[T]]) -> Pointer[Sockbuf[T]]:
-        self._validate()
-        with optval.borrow(self.task):
-            with optval.value.buf.borrow(self.task):
-                await rsyscall.near.getsockopt(self.task.sysif, self.near,
-                                               level, optname, optval.value.buf.near, optval.near)
-        return optval
-
-    async def setsockopt(self, level: int, optname: int, optval: Pointer) -> None:
-        self._validate()
-        with optval.borrow(self.task) as optval_n:
-            await rsyscall.near.setsockopt(self.task.sysif, self.near, level, optname, optval_n, optval.size())
-
-    async def getsockname(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
-        self._validate()
-        with addr.borrow(self.task) as addr_n:
-            with addr.value.buf.borrow(self.task) as addrbuf_n:
-                await rsyscall.near.getsockname(self.task.sysif, self.near, addrbuf_n, addr_n)
-        return addr
-
-    async def getpeername(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
-        self._validate()
-        with addr.borrow(self.task) as addr_n:
-            with addr.value.buf.borrow(self.task) as addrbuf_n:
-                await rsyscall.near.getpeername(self.task.sysif, self.near, addrbuf_n, addr_n)
-        return addr
-
-    @t.overload
-    async def accept(self, flags: SOCK=SOCK.NONE) -> FileDescriptor: ...
-    @t.overload
-    async def accept(self, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
-    ) -> t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]: ...
-
-    async def accept(self, flags: SOCK=SOCK.NONE, addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
-    ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_addr]]]]:
-        self._validate()
-        flags |= SOCK.CLOEXEC
-        if addr is None:
-            fd = await rsyscall.near.accept4(self.task.sysif, self.near, None, None, flags)
-            return self.task.make_fd_handle(fd)
-        else:
-            with addr.borrow(self.task):
-                with addr.value.buf.borrow(self.task):
-                    fd = await rsyscall.near.accept4(self.task.sysif, self.near, addr.value.buf.near, addr.near, flags)
-                    return self.task.make_fd_handle(fd), addr
-
-    async def shutdown(self, how: SHUT) -> None:
-        self._validate()
-        await rsyscall.near.shutdown(self.task.sysif, self.near, how)
 
     async def readlinkat(self, path: t.Union[WrittenPointer[Path], WrittenPointer[EmptyPath]],
                          buf: Pointer) -> t.Tuple[Pointer, Pointer]:
@@ -342,6 +233,7 @@ class Task(
         EventfdTask[FileDescriptor], TimerfdTask[FileDescriptor], EpollTask[FileDescriptor],
         InotifyTask[FileDescriptor], SignalfdTask[FileDescriptor],
         MemfdTask[FileDescriptor],
+        SocketTask[FileDescriptor],
         MemoryMappingTask,
         FileDescriptorTask[FileDescriptor],
         SignalTask, rsyscall.far.Task,
@@ -401,10 +293,6 @@ class Task(
         # can't setns to a user namespace while sharing CLONE_FS
         await self.unshare(CLONE.FS)
         await self.setns(fd, CLONE.NEWUSER)
-
-    async def socket(self, family: AF, type: SOCK, protocol: int=0) -> FileDescriptor:
-        sockfd = await rsyscall.near.socket(self.sysif, family, type|SOCK.CLOEXEC, protocol)
-        return self.make_fd_handle(sockfd)
 
     async def capset(self, hdrp: WrittenPointer[CapHeader], datap: WrittenPointer[CapData]) -> None:
         with hdrp.borrow(self):
@@ -487,11 +375,6 @@ class Task(
         with buf.borrow(self):
             await rsyscall.near.pipe2(self.sysif, buf.near, flags|O.CLOEXEC)
             return buf
-
-    async def socketpair(self, domain: AF, type: SOCK, protocol: int, sv: Pointer[Socketpair]) -> Pointer[Socketpair]:
-        with sv.borrow(self) as sv_n:
-            await rsyscall.near.socketpair(self.sysif, domain, type|SOCK.CLOEXEC, protocol, sv_n)
-            return sv
 
     async def execve(self, filename: WrittenPointer[Path],
                      argv: WrittenPointer[ArgList],

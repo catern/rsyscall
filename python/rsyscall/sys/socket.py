@@ -8,8 +8,9 @@ import contextlib
 import abc
 import struct
 import rsyscall.near.types as near
+from rsyscall.handle.pointer import Pointer, WrittenPointer
 if t.TYPE_CHECKING:
-    from rsyscall.handle import Pointer, WrittenPointer, FileDescriptor, Task
+    from rsyscall.handle import FileDescriptor, Task
 else:
     FileDescriptor = object
 from rsyscall.sys.uio import IovecList
@@ -200,7 +201,7 @@ class Cmsg(FixedSerializer):
     @abc.abstractmethod
     def to_data(self) -> bytes: ...
     @abc.abstractmethod
-    def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None: ...
+    def borrow_with(self, stack: contextlib.ExitStack, task: FileDescriptorTask) -> None: ...
     @classmethod
     @abc.abstractmethod
     def from_data(cls: t.Type[T], task: Task, data: bytes) -> T: ...
@@ -246,7 +247,7 @@ import array
 class CmsgSCMRights(Cmsg, t.List[FileDescriptor]):
     def to_data(self) -> bytes:
         return array.array('i', (int(fd.near) for fd in self)).tobytes()
-    def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
+    def borrow_with(self, stack: contextlib.ExitStack, task: FileDescriptorTask) -> None:
         for fd in self:
             stack.enter_context(fd.borrow(task))
 
@@ -269,7 +270,7 @@ class CmsgList(t.List[Cmsg], FixedSerializer):
     def get_serializer(cls: t.Type[T_cmsglist], task: Task) -> Serializer[T_cmsglist]:
         return CmsgListSerializer(cls, task)
 
-    def borrow_with(self, stack: contextlib.ExitStack, task: Task) -> None:
+    def borrow_with(self, stack: contextlib.ExitStack, task: FileDescriptorTask) -> None:
         for cmsg in self:
             cmsg.borrow_with(stack, task)
 
@@ -380,6 +381,194 @@ class RecvMsghdrOutSerializer(Serializer[RecvMsghdrOut]):
             control, control_rest = self.control.split(struct.msg_controllen)
         flags = MsghdrFlags(struct.msg_flags)
         return RecvMsghdrOut(name, control, flags, name_rest, control_rest)
+
+#### Classes ####
+from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
+
+T_fd = t.TypeVar('T_fd', bound='SocketFileDescriptor')
+class SocketFileDescriptor(BaseFileDescriptor):
+    async def bind(self, addr: WrittenPointer[Address]) -> None:
+        self._validate()
+        with addr.borrow(self.task):
+            try:
+                await _bind(self.task.sysif, self.near, addr.near, addr.size())
+            except PermissionError as exn:
+                exn.filename = addr.value
+                raise
+
+    async def connect(self, addr: WrittenPointer[Address]) -> None:
+        self._validate()
+        with addr.borrow(self.task):
+            await _connect(self.task.sysif, self.near, addr.near, addr.size())
+
+    async def listen(self, backlog: int) -> None:
+        self._validate()
+        await _listen(self.task.sysif, self.near, backlog)
+
+    async def getsockopt(self, level: int, optname: int, optval: WrittenPointer[Sockbuf[T]]) -> Pointer[Sockbuf[T]]:
+        self._validate()
+        with optval.borrow(self.task):
+            with optval.value.buf.borrow(self.task):
+                await _getsockopt(self.task.sysif, self.near,
+                                  level, optname, optval.value.buf.near, optval.near)
+        return optval
+
+    async def setsockopt(self, level: int, optname: int, optval: Pointer) -> None:
+        self._validate()
+        with optval.borrow(self.task) as optval_n:
+            await _setsockopt(self.task.sysif, self.near, level, optname, optval_n, optval.size())
+
+    async def getsockname(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
+        self._validate()
+        with addr.borrow(self.task) as addr_n:
+            with addr.value.buf.borrow(self.task) as addrbuf_n:
+                await _getsockname(self.task.sysif, self.near, addrbuf_n, addr_n)
+        return addr
+
+    async def getpeername(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
+        self._validate()
+        with addr.borrow(self.task) as addr_n:
+            with addr.value.buf.borrow(self.task) as addrbuf_n:
+                await _getpeername(self.task.sysif, self.near, addrbuf_n, addr_n)
+        return addr
+
+    @t.overload
+    async def accept(self: T_fd, flags: SOCK=SOCK.NONE) -> T_fd: ...
+    @t.overload
+    async def accept(self: T_fd, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
+    ) -> t.Tuple[T_fd, WrittenPointer[Sockbuf[T_addr]]]: ...
+
+    async def accept(self: T_fd, flags: SOCK=SOCK.NONE,
+                     addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
+    ) -> t.Union[T_fd, t.Tuple[T_fd, WrittenPointer[Sockbuf[T_addr]]]]:
+        self._validate()
+        flags |= SOCK.CLOEXEC
+        if addr is None:
+            fd = await _accept(self.task.sysif, self.near, None, None, flags)
+            return self._make_fd_handle(fd)
+        else:
+            with addr.borrow(self.task):
+                with addr.value.buf.borrow(self.task):
+                    fd = await _accept(self.task.sysif, self.near,
+                                       addr.value.buf.near, addr.near, flags)
+                    return self._make_fd_handle(fd), addr
+
+    async def shutdown(self, how: SHUT) -> None:
+        self._validate()
+        await _shutdown(self.task.sysif, self.near, how)
+
+    async def sendmsg(self, msg: WrittenPointer[SendMsghdr], flags: SendmsgFlags=SendmsgFlags.NONE
+    ) -> t.Tuple[IovecList, IovecList]:
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(msg.borrow(self.task))
+            if msg.value.name:
+                stack.enter_context(msg.value.name.borrow(self.task))
+            if msg.value.control:
+                stack.enter_context(msg.value.control.borrow(self.task))
+                msg.value.control.value.borrow_with(stack, self.task)
+            stack.enter_context(msg.value.iov.borrow(self.task))
+            for iovec_elem in msg.value.iov.value:
+                stack.enter_context(iovec_elem.borrow(self.task))
+            ret = await _sendmsg(self.task.sysif, self.near, msg.near, flags)
+        return msg.value.iov.value.split(ret)
+
+    async def recvmsg(self, msg: WrittenPointer[RecvMsghdr], flags: RecvmsgFlags=RecvmsgFlags.NONE,
+    ) -> t.Tuple[IovecList, IovecList, Pointer[RecvMsghdrOut]]:
+        flags |= RecvmsgFlags.CMSG_CLOEXEC
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(msg.borrow(self.task))
+            if msg.value.name:
+                stack.enter_context(msg.value.name.borrow(self.task))
+            if msg.value.control:
+                stack.enter_context(msg.value.control.borrow(self.task))
+            stack.enter_context(msg.value.iov.borrow(self.task))
+            for iovec_elem in msg.value.iov.value:
+                stack.enter_context(iovec_elem.borrow(self.task))
+            ret = await _recvmsg(self.task.sysif, self.near, msg.near, flags)
+        valid, invalid = msg.value.iov.value.split(ret)
+        return valid, invalid, msg.value.to_out(msg)
+
+    async def recv(self, buf: Pointer, flags: int) -> t.Tuple[Pointer, Pointer]:
+        self._validate()
+        with buf.borrow(self.task) as buf_n:
+            ret = await _recv(self.task.sysif, self.near, buf_n, buf.size(), flags)
+            return buf.split(ret)
+
+class SocketTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+    async def socket(self, domain: AF, type: SOCK, protocol: int=0) -> T_fd:
+        sockfd = await _socket(self.sysif, domain, type|SOCK.CLOEXEC, protocol)
+        return self.make_fd_handle(sockfd)
+
+    async def socketpair(self, domain: AF, type: SOCK, protocol: int,
+                         sv: Pointer[Socketpair]) -> Pointer[Socketpair]:
+        with sv.borrow(self) as sv_n:
+            await _socketpair(self.sysif, domain, type|SOCK.CLOEXEC, protocol, sv_n)
+            return sv
+
+#### Raw syscalls ####
+from rsyscall.near.sysif import SyscallInterface
+from rsyscall.sys.syscall import SYS
+
+async def _socket(sysif: SyscallInterface,
+                  domain: AF, type: SOCK, protocol: int) -> near.FileDescriptor:
+    return near.FileDescriptor(await sysif.syscall(SYS.socket, domain, type, protocol))
+
+async def _socketpair(sysif: SyscallInterface,
+                      domain: AF, type: SOCK, protocol: int, sv: near.Address) -> None:
+    await sysif.syscall(SYS.socketpair, domain, type, protocol, sv)
+
+async def _bind(sysif: SyscallInterface, sockfd: near.FileDescriptor,
+               addr: near.Address, addrlen: int) -> None:
+    await sysif.syscall(SYS.bind, sockfd, addr, addrlen)
+
+async def _connect(sysif: SyscallInterface, sockfd: near.FileDescriptor,
+                   addr: near.Address, addrlen: int) -> None:
+    await sysif.syscall(SYS.connect, sockfd, addr, addrlen)
+
+async def _listen(sysif: SyscallInterface, sockfd: near.FileDescriptor,
+                  backlog: int) -> None:
+    await sysif.syscall(SYS.listen, sockfd, backlog)
+
+async def _accept(sysif: SyscallInterface, sockfd: near.FileDescriptor,
+                  addr: t.Optional[near.Address], addrlen: t.Optional[near.Address],
+                  flags: SOCK) -> near.FileDescriptor:
+    if addr is None:
+        addr = 0 # type: ignore
+    if addrlen is None:
+        addrlen = 0 # type: ignore
+    return near.FileDescriptor(await sysif.syscall(SYS.accept4, sockfd, addr, addrlen, flags))
+
+async def _shutdown(sysif: SyscallInterface, sockfd: near.FileDescriptor, how: SHUT) -> None:
+    await sysif.syscall(SYS.shutdown, sockfd, how)
+
+async def _getsockname(sysif: SyscallInterface, sockfd: near.FileDescriptor,
+                       addr: near.Address, addrlen: near.Address) -> None:
+    await sysif.syscall(SYS.getsockname, sockfd, addr, addrlen)
+
+async def _getpeername(sysif: SyscallInterface, sockfd: near.FileDescriptor,
+                       addr: near.Address, addrlen: near.Address) -> None:
+    await sysif.syscall(SYS.getpeername, sockfd, addr, addrlen)
+
+async def _getsockopt(sysif: SyscallInterface, sockfd: near.FileDescriptor,
+                      level: int, optname: int, optval: near.Address, optlen: near.Address) -> None:
+    await sysif.syscall(SYS.getsockopt, sockfd, level, optname, optval, optlen)
+
+async def _setsockopt(sysif: SyscallInterface, sockfd: near.FileDescriptor,
+                      level: int, optname: int, optval: near.Address, optlen: int) -> None:
+    await sysif.syscall(SYS.setsockopt, sockfd, level, optname, optval, optlen)
+
+async def _recv(sysif: SyscallInterface, fd: near.FileDescriptor,
+                buf: near.Address, count: int, flags: int) -> int:
+    return (await sysif.syscall(SYS.recvfrom, fd, buf, count, flags))
+
+async def _recvmsg(sysif: SyscallInterface, fd: near.FileDescriptor,
+                   msg: near.Address, flags: int) -> int:
+    return (await sysif.syscall(SYS.recvmsg, fd, msg, flags))
+
+async def _sendmsg(sysif: SyscallInterface, fd: near.FileDescriptor,
+                   msg: near.Address, flags: int) -> int:
+    return (await sysif.syscall(SYS.sendmsg, fd, msg, flags))
+
 
 
 #### Tests ####
