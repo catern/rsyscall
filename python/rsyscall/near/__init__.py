@@ -51,12 +51,6 @@ from rsyscall.signal import SIG
 # These are like instructions, run with this segment register override prefix and arguments.
 import trio
 
-async def capget(sysif: SyscallInterface, hdrp: Address, datap: Address) -> None:
-    await sysif.syscall(SYS.capget, hdrp, datap)
-
-async def capset(sysif: SyscallInterface, hdrp: Address, datap: Address) -> None:
-    await sysif.syscall(SYS.capset, hdrp, datap)
-
 async def chdir(sysif: SyscallInterface, path: Address) -> None:
     await sysif.syscall(SYS.chdir, path)
 

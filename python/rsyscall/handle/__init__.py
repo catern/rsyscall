@@ -37,7 +37,6 @@ from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path
 from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
 from rsyscall.linux.futex import RobustListHead, FutexNode
-from rsyscall.sys.capability import CapHeader, CapData
 from rsyscall.sys.wait import W
 from rsyscall.sys.prctl import PR
 from rsyscall.sys.mount import MS
@@ -56,6 +55,7 @@ from rsyscall.linux.dirent import               GetdentsFileDescriptor
 from rsyscall.sys.uio      import               UioFileDescriptor
 from rsyscall.unistd       import FSTask,       FSFileDescriptor
 from rsyscall.unistd       import IOFileDescriptor, SeekableFileDescriptor
+from rsyscall.sys.capability import CapabilityTask
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -166,6 +166,7 @@ class Task(
         SocketTask[FileDescriptor],
         MemoryMappingTask,
         FileDescriptorTask[FileDescriptor],
+        CapabilityTask,
         SignalTask, rsyscall.far.Task,
 ):
     # work around breakage in mypy - it doesn't understand dataclass inheritance
@@ -223,16 +224,6 @@ class Task(
         # can't setns to a user namespace while sharing CLONE_FS
         await self.unshare(CLONE.FS)
         await self.setns(fd, CLONE.NEWUSER)
-
-    async def capset(self, hdrp: WrittenPointer[CapHeader], datap: WrittenPointer[CapData]) -> None:
-        with hdrp.borrow(self):
-            with datap.borrow(self):
-                await rsyscall.near.capset(self.sysif, hdrp.near, datap.near)
-
-    async def capget(self, hdrp: Pointer[CapHeader], datap: Pointer[CapData]) -> None:
-        with hdrp.borrow(self):
-            with datap.borrow(self):
-                await rsyscall.near.capget(self.sysif, hdrp.near, datap.near)
 
     async def mkdir(self, path: WrittenPointer[Path], mode=0o755) -> None:
         with path.borrow(self) as path_n:
