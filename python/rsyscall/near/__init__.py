@@ -147,12 +147,6 @@ async def getpgid(sysif: SyscallInterface, pid: t.Optional[Process]) -> ProcessG
 async def getuid(sysif: SyscallInterface) -> int:
     return (await sysif.syscall(SYS.getuid))
 
-async def ioctl(sysif: SyscallInterface, fd: FileDescriptor, request: int,
-                arg: t.Optional[t.Union[int, Address]]=None) -> int:
-    if arg is None:
-        arg = 0
-    return (await sysif.syscall(SYS.ioctl, fd, request, arg))
-
 async def kill(sysif: SyscallInterface, pid: t.Union[Process, ProcessGroup], sig: SIG) -> None:
     if isinstance(pid, ProcessGroup):
         pid = -int(pid) # type: ignore

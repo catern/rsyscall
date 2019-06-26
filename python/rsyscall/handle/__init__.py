@@ -53,6 +53,7 @@ from rsyscall.sys.memfd    import MemfdTask
 from rsyscall.sys.mman     import MemoryMappingTask, MappableFileDescriptor
 from rsyscall.signal       import SignalTask
 from rsyscall.sys.socket   import SocketTask,   SocketFileDescriptor
+from rsyscall.ioctl        import               IoctlFileDescriptor
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -67,6 +68,7 @@ T = t.TypeVar('T')
 class FileDescriptor(
         EventFileDescriptor, TimerFileDescriptor, EpollFileDescriptor,
         InotifyFileDescriptor, SignalFileDescriptor,
+        IoctlFileDescriptor,
         SocketFileDescriptor,
         MappableFileDescriptor,
         BaseFileDescriptor,
@@ -190,11 +192,6 @@ class FileDescriptor(
     async def fcntl(self, cmd: F, arg: t.Optional[int]=None) -> int:
         self._validate()
         return (await rsyscall.near.fcntl(self.task.sysif, self.near, cmd, arg))
-
-    async def ioctl(self, request: int, arg: Pointer) -> int:
-        self._validate()
-        arg._validate()
-        return (await rsyscall.near.ioctl(self.task.sysif, self.near, request, arg.near))
 
     async def readlinkat(self, path: t.Union[WrittenPointer[Path], WrittenPointer[EmptyPath]],
                          buf: Pointer) -> t.Tuple[Pointer, Pointer]:
