@@ -44,7 +44,6 @@ from rsyscall.sys.syscall import SYS
 from rsyscall.fcntl import AT, F
 from rsyscall.sys.wait import IdType
 from rsyscall.sys.prctl import PR
-from rsyscall.sys.uio import RWF
 from rsyscall.sched import CLONE
 from rsyscall.signal import SIG
 
@@ -194,12 +193,6 @@ async def prctl(sysif: SyscallInterface, option: PR, arg2: int,
 
 async def pread(sysif: SyscallInterface, fd: FileDescriptor, buf: Address, count: int, offset: int) -> int:
     return (await sysif.syscall(SYS.pread64, fd, buf, count, offset))
-
-async def preadv2(sysif: SyscallInterface, fd: FileDescriptor, iov: Address, iovcnt: int, offset: int, flags: RWF) -> int:
-    return (await sysif.syscall(SYS.preadv2, fd, iov, iovcnt, offset, flags))
-
-async def pwritev2(sysif: SyscallInterface, fd: FileDescriptor, iov: Address, iovcnt: int, offset: int, flags: RWF) -> int:
-    return (await sysif.syscall(SYS.pwritev2, fd, iov, iovcnt, offset, flags))
 
 async def read(sysif: SyscallInterface, fd: FileDescriptor, buf: Address, count: int) -> int:
     return (await sysif.syscall(SYS.read, fd, buf, count))

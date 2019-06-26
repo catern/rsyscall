@@ -40,7 +40,8 @@ import rsyscall.handle as handle
 import typing as t
 import trio
 
-from rsyscall.handle import Pointer, IovecList, FileDescriptor
+from rsyscall.handle import Pointer, FileDescriptor
+from rsyscall.sys.uio import IovecList
 from rsyscall.memory.allocator import AllocatorInterface
 
 __all__ = [

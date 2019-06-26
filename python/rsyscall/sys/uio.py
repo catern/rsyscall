@@ -69,3 +69,38 @@ def split_iovec(iov: WrittenPointer[IovecList], ret: int
     first_ptr, last_ptr = iov.split(first_count * ffi.sizeof('struct iovec'))
     return first_ptr._wrote(first), middle, last_ptr._wrote(last)
 
+#### Classes ####
+from rsyscall.handle.fd import BaseFileDescriptor
+from rsyscall.handle.pointer import Pointer
+import contextlib
+
+class UioFileDescriptor(BaseFileDescriptor):
+    async def readv(self, iov: WrittenPointer[IovecList], flags: RWF=RWF.NONE
+    ) -> t.Tuple[WrittenPointer[IovecList], t.Optional[t.Tuple[Pointer, Pointer]], WrittenPointer[IovecList]]:
+        # TODO should check that the WrittenPointer's value and size correspond...
+        # maybe we should check that at construction time?
+        # otherwise one could make a WrittenPointer that is short, but has a long iovec, and we'd read off the end.
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(iov.borrow(self.task))
+            ret = await _preadv2(self.task.sysif, self.near, iov.near, len(iov.value), -1, flags)
+            return split_iovec(iov, ret)
+
+    async def writev(self, iov: WrittenPointer[IovecList], flags: RWF=RWF.NONE
+    ) -> t.Tuple[WrittenPointer[IovecList], t.Optional[t.Tuple[Pointer, Pointer]], WrittenPointer[IovecList]]:
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(iov.borrow(self.task))
+            ret = await _pwritev2(self.task.sysif, self.near, iov.near, len(iov.value), -1, flags)
+            return split_iovec(iov, ret)
+
+#### Raw syscalls ####
+import rsyscall.near.types as near
+from rsyscall.near.sysif import SyscallInterface
+from rsyscall.sys.syscall import SYS
+
+async def _preadv2(sysif: SyscallInterface, fd: near.FileDescriptor,
+                   iov: near.Address, iovcnt: int, offset: int, flags: RWF) -> int:
+    return (await sysif.syscall(SYS.preadv2, fd, iov, iovcnt, offset, flags))
+
+async def _pwritev2(sysif: SyscallInterface, fd: near.FileDescriptor,
+                    iov: near.Address, iovcnt: int, offset: int, flags: RWF) -> int:
+    return (await sysif.syscall(SYS.pwritev2, fd, iov, iovcnt, offset, flags))

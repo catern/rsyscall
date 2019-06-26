@@ -41,7 +41,6 @@ from rsyscall.sys.capability import CapHeader, CapData
 from rsyscall.sys.wait import W
 from rsyscall.sys.prctl import PR
 from rsyscall.sys.mount import MS
-from rsyscall.sys.uio import RWF, IovecList, split_iovec
 
 from rsyscall.sys.eventfd  import EventfdTask,  EventFileDescriptor
 from rsyscall.sys.timerfd  import TimerfdTask,  TimerFileDescriptor
@@ -54,6 +53,7 @@ from rsyscall.signal       import SignalTask
 from rsyscall.sys.socket   import SocketTask,   SocketFileDescriptor
 from rsyscall.sys.ioctl    import               IoctlFileDescriptor
 from rsyscall.linux.dirent import               GetdentsFileDescriptor
+from rsyscall.sys.uio      import               UioFileDescriptor
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -68,7 +68,7 @@ T = t.TypeVar('T')
 class FileDescriptor(
         EventFileDescriptor, TimerFileDescriptor, EpollFileDescriptor,
         InotifyFileDescriptor, SignalFileDescriptor,
-        IoctlFileDescriptor, GetdentsFileDescriptor,
+        IoctlFileDescriptor, GetdentsFileDescriptor, UioFileDescriptor,
         SocketFileDescriptor,
         MappableFileDescriptor,
         BaseFileDescriptor,
@@ -157,23 +157,6 @@ class FileDescriptor(
         with buf.borrow(self.task):
             ret = await rsyscall.near.pread(self.task.sysif, self.near, buf.near, buf.size(), offset)
             return buf.split(ret)
-
-    async def readv(self, iov: WrittenPointer[IovecList], flags: RWF=RWF.NONE
-    ) -> t.Tuple[WrittenPointer[IovecList], t.Optional[t.Tuple[Pointer, Pointer]], WrittenPointer[IovecList]]:
-        # TODO should check that the WrittenPointer's value and size correspond...
-        # maybe we should check that at construction time?
-        # otherwise one could make a WrittenPointer that is short, but has a long iovec, and we'd read off the end.
-        with contextlib.ExitStack() as stack:
-            stack.enter_context(iov.borrow(self.task))
-            ret = await rsyscall.near.preadv2(self.task.sysif, self.near, iov.near, len(iov.value), -1, flags)
-            return split_iovec(iov, ret)
-
-    async def writev(self, iov: WrittenPointer[IovecList], flags: RWF=RWF.NONE
-    ) -> t.Tuple[WrittenPointer[IovecList], t.Optional[t.Tuple[Pointer, Pointer]], WrittenPointer[IovecList]]:
-        with contextlib.ExitStack() as stack:
-            stack.enter_context(iov.borrow(self.task))
-            ret = await rsyscall.near.pwritev2(self.task.sysif, self.near, iov.near, len(iov.value), -1, flags)
-            return split_iovec(iov, ret)
 
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self._validate()
