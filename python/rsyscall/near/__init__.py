@@ -134,11 +134,6 @@ async def mkdirat(sysif: SyscallInterface,
         dirfd = AT.FDCWD # type: ignore
     await sysif.syscall(SYS.mkdirat, dirfd, path, mode)
 
-async def mount(sysif: SyscallInterface, source: Address, target: Address,
-                filesystemtype: Address, mountflags: int,
-                data: Address) -> None:
-    await sysif.syscall(SYS.mount, source, target, filesystemtype, mountflags, data)
-
 async def renameat2(sysif: SyscallInterface,
                     olddirfd: t.Optional[FileDescriptor], oldpath: Address,
                     newdirfd: t.Optional[FileDescriptor], newpath: Address,

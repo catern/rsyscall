@@ -38,7 +38,6 @@ from rsyscall.path import Path
 from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.wait import W
-from rsyscall.sys.mount import MS
 
 from rsyscall.sys.eventfd  import EventfdTask,  EventFileDescriptor
 from rsyscall.sys.timerfd  import TimerfdTask,  TimerFileDescriptor
@@ -58,6 +57,7 @@ from rsyscall.unistd.credentials import CredentialsTask
 from rsyscall.unistd.io    import IOFileDescriptor, SeekableFileDescriptor
 from rsyscall.sys.capability import CapabilityTask
 from rsyscall.sys.prctl    import PrctlTask
+from rsyscall.sys.mount    import MountTask
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -169,7 +169,7 @@ class Task(
         PipeTask,
         MemoryMappingTask,
         FileDescriptorTask[FileDescriptor],
-        CapabilityTask, PrctlTask,
+        CapabilityTask, PrctlTask, MountTask,
         CredentialsTask,
         SignalTask, rsyscall.far.Task,
 ):
@@ -354,19 +354,6 @@ class Task(
     async def set_robust_list(self, head: WrittenPointer[RobustListHead]) -> None:
         with head.borrow(self):
             await rsyscall.near.set_robust_list(self.sysif, head.near, head.size())
-
-    async def mount(self,
-                    source: WrittenPointer[Arg], target: WrittenPointer[Arg],
-                    filesystemtype: WrittenPointer[Arg], mountflags: MS,
-                    data: WrittenPointer[Arg]) -> None:
-        with source.borrow(self):
-            with target.borrow(self):
-                with filesystemtype.borrow(self):
-                    with data.borrow(self):
-                        return (await rsyscall.near.mount(
-                            self.sysif,
-                            source.near, target.near, filesystemtype.near,
-                            mountflags, data.near))
 
     def _make_process(self, pid: int) -> Process:
         return Process(self, rsyscall.near.Process(pid))
