@@ -38,7 +38,6 @@ from rsyscall.path import Path
 from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.wait import W
-from rsyscall.sys.prctl import PR
 from rsyscall.sys.mount import MS
 
 from rsyscall.sys.eventfd  import EventfdTask,  EventFileDescriptor
@@ -58,6 +57,7 @@ from rsyscall.unistd.pipe  import PipeTask
 from rsyscall.unistd.credentials import CredentialsTask
 from rsyscall.unistd.io    import IOFileDescriptor, SeekableFileDescriptor
 from rsyscall.sys.capability import CapabilityTask
+from rsyscall.sys.prctl    import PrctlTask
 
 # re-exported
 from rsyscall.sched import Borrowable
@@ -169,7 +169,7 @@ class Task(
         PipeTask,
         MemoryMappingTask,
         FileDescriptorTask[FileDescriptor],
-        CapabilityTask,
+        CapabilityTask, PrctlTask,
         CredentialsTask,
         SignalTask, rsyscall.far.Task,
 ):
@@ -354,10 +354,6 @@ class Task(
     async def set_robust_list(self, head: WrittenPointer[RobustListHead]) -> None:
         with head.borrow(self):
             await rsyscall.near.set_robust_list(self.sysif, head.near, head.size())
-
-    async def prctl(self, option: PR, arg2: int,
-                    arg3: int=None, arg4: int=None, arg5: int=None) -> int:
-        return (await rsyscall.near.prctl(self.sysif, option, arg2, arg3, arg4, arg5))
 
     async def mount(self,
                     source: WrittenPointer[Arg], target: WrittenPointer[Arg],
