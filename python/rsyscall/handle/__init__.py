@@ -53,6 +53,7 @@ from rsyscall.linux.dirent import               GetdentsFileDescriptor
 from rsyscall.sys.uio      import               UioFileDescriptor
 from rsyscall.unistd       import FSTask,       FSFileDescriptor
 from rsyscall.unistd.pipe  import PipeTask
+from rsyscall.unistd.cwd   import CWDTask
 from rsyscall.unistd.credentials import CredentialsTask
 from rsyscall.unistd.io    import IOFileDescriptor, SeekableFileDescriptor
 from rsyscall.sys.capability import CapabilityTask
@@ -167,7 +168,7 @@ class Task(
         FSTask[FileDescriptor],
         SocketTask[FileDescriptor],
         PipeTask,
-        MemoryMappingTask,
+        MemoryMappingTask, CWDTask,
         FileDescriptorTask[FileDescriptor],
         CapabilityTask, PrctlTask, MountTask,
         CredentialsTask,
@@ -255,14 +256,6 @@ class Task(
         with target.borrow(self) as target_n:
             with linkpath.borrow(self) as linkpath_n:
                 await rsyscall.near.symlinkat(self.sysif, target_n, None, linkpath_n)
-
-    async def chdir(self, path: WrittenPointer[Path]) -> None:
-        with path.borrow(self) as path_n:
-            await rsyscall.near.chdir(self.sysif, path_n)
-
-    async def fchdir(self, fd: FileDescriptor) -> None:
-        with fd.borrow(self) as fd_n:
-            await rsyscall.near.fchdir(self.sysif, fd_n)
 
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:

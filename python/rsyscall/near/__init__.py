@@ -50,9 +50,6 @@ from rsyscall.signal import SIG
 # These are like instructions, run with this segment register override prefix and arguments.
 import trio
 
-async def chdir(sysif: SyscallInterface, path: Address) -> None:
-    await sysif.syscall(SYS.chdir, path)
-
 async def clone(sysif: SyscallInterface, flags: int, child_stack: Address,
                 ptid: t.Optional[Address], ctid: t.Optional[Address],
                 newtls: t.Optional[Address]) -> Process:
@@ -104,9 +101,6 @@ async def exit(sysif: SyscallInterface, status: int) -> None:
             return exn
     with trio.MultiError.catch(handle):
         await sysif.syscall(SYS.exit, status)
-
-async def fchdir(sysif: SyscallInterface, fd: FileDescriptor) -> None:
-    await sysif.syscall(SYS.fchdir, fd)
 
 async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: F, arg: t.Optional[t.Union[int, Address]]=None) -> int:
     if arg is None:
