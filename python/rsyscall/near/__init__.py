@@ -41,7 +41,7 @@ from rsyscall.near.sysif import SyscallInterface, SyscallResponse, SyscallHangup
 
 from rsyscall.sys.syscall import SYS
 
-from rsyscall.fcntl import AT, F
+from rsyscall.fcntl import F
 from rsyscall.sys.wait import IdType
 from rsyscall.sched import CLONE
 from rsyscall.signal import SIG
@@ -112,32 +112,6 @@ async def kill(sysif: SyscallInterface, pid: t.Union[Process, ProcessGroup], sig
         pid = -int(pid) # type: ignore
     await sysif.syscall(SYS.kill, pid, sig)
 
-async def linkat(sysif: SyscallInterface,
-                 olddirfd: t.Optional[FileDescriptor], oldpath: Address,
-                 newdirfd: t.Optional[FileDescriptor], newpath: Address,
-                 flags: int) -> None:
-    if olddirfd is None:
-        olddirfd = AT.FDCWD # type: ignore
-    if newdirfd is None:
-        newdirfd = AT.FDCWD # type: ignore
-    await sysif.syscall(SYS.linkat, olddirfd, oldpath, newdirfd, newpath, flags)
-
-async def mkdirat(sysif: SyscallInterface,
-                  dirfd: t.Optional[FileDescriptor], path: Address, mode: int) -> None:
-    if dirfd is None:
-        dirfd = AT.FDCWD # type: ignore
-    await sysif.syscall(SYS.mkdirat, dirfd, path, mode)
-
-async def renameat2(sysif: SyscallInterface,
-                    olddirfd: t.Optional[FileDescriptor], oldpath: Address,
-                    newdirfd: t.Optional[FileDescriptor], newpath: Address,
-                    flags: int) -> None:
-    if olddirfd is None:
-        olddirfd = AT.FDCWD # type: ignore
-    if newdirfd is None:
-        newdirfd = AT.FDCWD # type: ignore
-    await sysif.syscall(SYS.renameat2, olddirfd, oldpath, newdirfd, newpath, flags)
-
 async def set_robust_list(sysif: SyscallInterface, head: Address, len: int) -> None:
     await sysif.syscall(SYS.set_robust_list, head, len)
 
@@ -146,18 +120,6 @@ async def set_tid_address(sysif: SyscallInterface, ptr: Address) -> None:
 
 async def setns(sysif: SyscallInterface, fd: FileDescriptor, nstype: int) -> None:
     await sysif.syscall(SYS.setns, fd, nstype)
-
-async def symlinkat(sysif: SyscallInterface,
-                    target: Address, newdirfd: t.Optional[FileDescriptor], linkpath: Address) -> None:
-    if newdirfd is None:
-        newdirfd = AT.FDCWD # type: ignore
-    await sysif.syscall(SYS.symlinkat, target, newdirfd, linkpath)
-
-async def unlinkat(sysif: SyscallInterface,
-                   dirfd: t.Optional[FileDescriptor], path: Address, flags: int) -> None:
-    if dirfd is None:
-        dirfd = AT.FDCWD # type: ignore
-    await sysif.syscall(SYS.unlinkat, dirfd, path, flags)
 
 async def unshare(sysif: SyscallInterface, flags: CLONE) -> None:
     await sysif.syscall(SYS.unshare, flags)

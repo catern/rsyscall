@@ -123,6 +123,33 @@ class FSTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
                 raise
             return self.make_fd_handle(fd)
 
+    async def mkdir(self, path: WrittenPointer[Path], mode=0o755) -> None:
+        with path.borrow(self) as path_n:
+            await _mkdirat(self.sysif, None, path_n, mode)
+
+    async def unlink(self, path: WrittenPointer[Path]) -> None:
+        with path.borrow(self) as path_n:
+            await _unlinkat(self.sysif, None, path_n, 0)
+
+    async def rmdir(self, path: WrittenPointer[Path]) -> None:
+        with path.borrow(self) as path_n:
+            await _unlinkat(self.sysif, None, path_n, AT.REMOVEDIR)
+
+    async def link(self, oldpath: WrittenPointer[Path], newpath: WrittenPointer[Path]) -> None:
+        with oldpath.borrow(self) as oldpath_n:
+            with newpath.borrow(self) as newpath_n:
+                await _linkat(self.sysif, None, oldpath_n, None, newpath_n, 0)
+
+    async def rename(self, oldpath: WrittenPointer[Path], newpath: WrittenPointer[Path]) -> None:
+        with oldpath.borrow(self) as oldpath_n:
+            with newpath.borrow(self) as newpath_n:
+                await _renameat2(self.sysif, None, oldpath_n, None, newpath_n, 0)
+
+    async def symlink(self, target: WrittenPointer, linkpath: WrittenPointer[Path]) -> None:
+        with target.borrow(self) as target_n:
+            with linkpath.borrow(self) as linkpath_n:
+                await _symlinkat(self.sysif, target_n, None, linkpath_n)
+
 #### Raw syscalls ####
 import rsyscall.near.types as near
 from rsyscall.near.sysif import SyscallInterface
@@ -151,3 +178,41 @@ async def _fchmod(sysif: SyscallInterface, fd: near.FileDescriptor, mode: int) -
 
 async def _ftruncate(sysif: SyscallInterface, fd: near.FileDescriptor, length: int) -> None:
     await sysif.syscall(SYS.ftruncate, fd, length)
+
+async def _mkdirat(sysif: SyscallInterface,
+                   dirfd: t.Optional[near.FileDescriptor], path: near.Address, mode: int) -> None:
+    if dirfd is None:
+        dirfd = AT.FDCWD # type: ignore
+    await sysif.syscall(SYS.mkdirat, dirfd, path, mode)
+
+async def _unlinkat(sysif: SyscallInterface,
+                    dirfd: t.Optional[near.FileDescriptor], path: near.Address, flags: int) -> None:
+    if dirfd is None:
+        dirfd = AT.FDCWD # type: ignore
+    await sysif.syscall(SYS.unlinkat, dirfd, path, flags)
+
+async def _linkat(sysif: SyscallInterface,
+                  olddirfd: t.Optional[near.FileDescriptor], oldpath: near.Address,
+                  newdirfd: t.Optional[near.FileDescriptor], newpath: near.Address,
+                  flags: int) -> None:
+    if olddirfd is None:
+        olddirfd = AT.FDCWD # type: ignore
+    if newdirfd is None:
+        newdirfd = AT.FDCWD # type: ignore
+    await sysif.syscall(SYS.linkat, olddirfd, oldpath, newdirfd, newpath, flags)
+
+async def _renameat2(sysif: SyscallInterface,
+                     olddirfd: t.Optional[near.FileDescriptor], oldpath: near.Address,
+                     newdirfd: t.Optional[near.FileDescriptor], newpath: near.Address,
+                     flags: int) -> None:
+    if olddirfd is None:
+        olddirfd = AT.FDCWD # type: ignore
+    if newdirfd is None:
+        newdirfd = AT.FDCWD # type: ignore
+    await sysif.syscall(SYS.renameat2, olddirfd, oldpath, newdirfd, newpath, flags)
+
+async def _symlinkat(sysif: SyscallInterface,
+                     target: near.Address, newdirfd: t.Optional[near.FileDescriptor], linkpath: near.Address) -> None:
+    if newdirfd is None:
+        newdirfd = AT.FDCWD # type: ignore
+    await sysif.syscall(SYS.symlinkat, target, newdirfd, linkpath)

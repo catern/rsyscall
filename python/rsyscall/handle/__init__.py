@@ -230,33 +230,6 @@ class Task(
         await self.unshare(CLONE.FS)
         await self.setns(fd, CLONE.NEWUSER)
 
-    async def mkdir(self, path: WrittenPointer[Path], mode=0o755) -> None:
-        with path.borrow(self) as path_n:
-            await rsyscall.near.mkdirat(self.sysif, None, path_n, mode)
-
-    async def unlink(self, path: WrittenPointer[Path]) -> None:
-        with path.borrow(self) as path_n:
-            await rsyscall.near.unlinkat(self.sysif, None, path_n, 0)
-
-    async def rmdir(self, path: WrittenPointer[Path]) -> None:
-        with path.borrow(self) as path_n:
-            await rsyscall.near.unlinkat(self.sysif, None, path_n, AT.REMOVEDIR)
-
-    async def link(self, oldpath: WrittenPointer[Path], newpath: WrittenPointer[Path]) -> None:
-        with oldpath.borrow(self) as oldpath_n:
-            with newpath.borrow(self) as newpath_n:
-                await rsyscall.near.linkat(self.sysif, None, oldpath_n, None, newpath_n, 0)
-
-    async def rename(self, oldpath: WrittenPointer[Path], newpath: WrittenPointer[Path]) -> None:
-        with oldpath.borrow(self) as oldpath_n:
-            with newpath.borrow(self) as newpath_n:
-                await rsyscall.near.renameat2(self.sysif, None, oldpath_n, None, newpath_n, 0)
-
-    async def symlink(self, target: WrittenPointer, linkpath: WrittenPointer[Path]) -> None:
-        with target.borrow(self) as target_n:
-            with linkpath.borrow(self) as linkpath_n:
-                await rsyscall.near.symlinkat(self.sysif, target_n, None, linkpath_n)
-
     async def waitid(self, options: W, infop: Pointer[Siginfo],
                      *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:
         with infop.borrow(self) as infop_n:
