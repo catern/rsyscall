@@ -230,15 +230,6 @@ class Task(
         await self.unshare(CLONE.FS)
         await self.setns(fd, CLONE.NEWUSER)
 
-    async def waitid(self, options: W, infop: Pointer[Siginfo],
-                     *, rusage: t.Optional[Pointer[Siginfo]]=None) -> None:
-        with infop.borrow(self) as infop_n:
-            if rusage is None:
-                await rsyscall.near.waitid(self.sysif, None, infop_n, options, None)
-            else:
-                with rusage.borrow(self) as rusage_n:
-                    await rsyscall.near.waitid(self.sysif, None, infop_n, options, rusage_n)
-
     async def execve(self, filename: WrittenPointer[Path],
                      argv: WrittenPointer[ArgList],
                      envp: WrittenPointer[ArgList],
