@@ -28,7 +28,7 @@ import logging
 import contextlib
 from rsyscall.handle.fd import FileDescriptorTask, BaseFileDescriptor
 from rsyscall.handle.pointer import Pointer, WrittenPointer
-from rsyscall.handle.process import Process, ChildProcess, ThreadProcess
+from rsyscall.handle.process import Process, ChildProcess, ThreadProcess, ProcessTask
 logger = logging.getLogger(__name__)
 
 from rsyscall.sched import CLONE, Stack
@@ -172,38 +172,12 @@ class Task(
         FileDescriptorTask[FileDescriptor],
         CapabilityTask, PrctlTask, MountTask,
         CredentialsTask,
+        ProcessTask,
         SignalTask, rsyscall.far.Task,
 ):
-    # work around breakage in mypy - it doesn't understand dataclass inheritance
-    # TODO delete this
-    def __init__(self,
-                 sysif: rsyscall.near.SyscallInterface,
-                 process: t.Union[rsyscall.near.Process, Process],
-                 fd_table: rsyscall.far.FDTable,
-                 address_space: rsyscall.far.AddressSpace,
-                 pidns: rsyscall.far.PidNamespace,
-    ) -> None:
-        self.sysif = sysif
-        if isinstance(process, Process):
-            self.near_process = process.near
-            self.process = process
-            self.parent_task: t.Optional[rsyscall.far.Task] = process.task
-        else:
-            self.near_process = process
-            self.process = Process(self, process)
-            self.parent_task = None
-        self.fd_table = fd_table
-        self.address_space = address_space
-        self.pidns = pidns
-        self.alive = True
-        self.__post_init__()
-
     def _file_descriptor_constructor(self, fd: rsyscall.near.FileDescriptor) -> FileDescriptor:
         # for extensibility
         return FileDescriptor(self, fd)
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
 
     def make_path_from_bytes(self, path: t.Union[str, bytes]) -> Path:
         return Path(os.fsdecode(path))
@@ -266,51 +240,8 @@ class Task(
     async def close_task(self):
         # close the syscall interface and kill the process; we don't have to do this since it'll be
         # GC'd, but maybe we want to be tidy in advance.
-        self.alive = False
         await self.sysif.close_interface()
-
-    async def clone(self, flags: CLONE,
-                    # these two pointers must be adjacent; the end of the first is the start of the
-                    # second. the first is the allocation for stack growth, the second is the data
-                    # we've written on the stack that will be popped off for arguments.
-                    child_stack: t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
-                    ptid: t.Optional[Pointer],
-                    ctid: t.Optional[Pointer[FutexNode]],
-                    # this points to anything, it depends on the thread implementation
-                    newtls: t.Optional[Pointer]) -> ThreadProcess:
-        clone_parent = bool(flags & CLONE.PARENT)
-        if clone_parent:
-            if self.parent_task is None:
-                raise Exception("using CLONE.PARENT, but we don't know our parent task")
-            # TODO also check that the parent_task hasn't shut down... not sure how to do that
-            owning_task = self.parent_task
-        else:
-            owning_task = self
-        with contextlib.ExitStack() as stack:
-            stack_alloc, stack_data = child_stack
-            if (int(stack_data.near) % 16) != 0:
-                raise Exception("child stack must have 16-byte alignment, so says Intel")
-            stack_alloc_end = stack_alloc.near + stack_alloc.size()
-            if stack_alloc_end != stack_data.near:
-                raise Exception("the end of the stack allocation pointer", stack_alloc_end,
-                                "and the beginning of the stack data pointer", stack_data.near,
-                                "must be the same")
-            stack.enter_context(stack_alloc.borrow(self))
-            stack.enter_context(stack_data.borrow(self))
-            ptid_n = self._borrow_optional(stack, ptid)
-            ctid_n = self._borrow_optional(stack, ctid)
-            newtls_n = self._borrow_optional(stack, newtls)
-            process = await rsyscall.near.clone(self.sysif, flags, stack_data.near, ptid_n,
-                                                ctid_n + ffi.offsetof('struct futex_node', 'futex') if ctid_n else None,
-                                                newtls_n)
-        # TODO the safety of this depends on no-one borrowing/freeing the stack in borrow __aexit__
-        # should try to do this a bit more robustly...
-        merged_stack = stack_alloc.merge(stack_data)
-        return ThreadProcess(owning_task, process, merged_stack, stack_data.value, ctid, newtls)
 
     async def set_robust_list(self, head: WrittenPointer[RobustListHead]) -> None:
         with head.borrow(self):
             await rsyscall.near.set_robust_list(self.sysif, head.near, head.size())
-
-    def _make_process(self, pid: int) -> Process:
-        return Process(self, rsyscall.near.Process(pid))
