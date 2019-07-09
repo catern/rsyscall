@@ -1,0 +1,43 @@
+This is our stock elevator pitch for rsyscall.
+
+* slogan
+In rsyscall, you explicitly pass the process when making a syscall,
+instead of implicitly operating on the current process.
+
+* fork
+In other operating systems APIs, when you make a syscall,
+you implicitly make that syscall in the context of the current process.
+In rsyscall, you explicitly pass a process to operate on when making a syscall.
+
+This has many benefits; for example, in process creation.
+Unlike posix_spawn,
+which requires explicit support for each attribute of the new process that you want to configure,
+or fork,
+which is inefficient, because you need to copy resources,
+and is complicated, because fork returns twice leading to tricky coordination between the parent and child process,
+including when the child process fails to initialize,
+rsyscall allows a straightforward API for process creation.
+
+Simply create a new process, which starts out inert,
+then explicitly make arbitrary syscalls in the new process to set it up,
+finishing off with an exec or some other function.
+
+rsyscall seeks to provide complete coverage of the Linux API,
+immediately supporting new syscalls as they come out.
+An rsyscall library is currently available for Python;
+as an ancillary benefit, it has excellent support for Python 3 type-checking annotations,
+providing a type-safe API for Linux in Python.
+* language-based system
+Making the process explicit has other benefits as well.
+
+There are cases where we need to access resources from another processes;
+for example, when operating on resources inside a container or on another host.
+
+With rsyscall, instead of writing a separate program to run in a separate process,
+and communicating with it by passing strings on the command line and/or using various limited RPC protocols,
+we can have a single program which operates in many processes,
+and which uses language-level abstractions like function calls or classes or monads to provide modularity.
+
+You can operate on a process on a remote system,
+and use that process as your interface to that system,
+starting and supervising other processes as children of that process.

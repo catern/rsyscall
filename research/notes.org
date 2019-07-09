@@ -18653,7 +18653,125 @@ i could use a container but i hate those :)
 let's figure out how to override NSS once and for all.
 
 we could even modify NSS and include the patch in nixpkgs
-** TODO split unistd up into a module
+** TODO reconsider thread and pointer names?
+   stevenh said they are confusing
+
+   no I like them too much, too bad!
+** TODO make dup2 over an fd with multiple handles, move those other handles away
+   this way we can dup2 without worrying about handle interference.
+
+   it should just throw if those other handles are in use, not a problem
+
+   we have to start tracking usage though,
+   and make sure everything is fine with fds moving.
+
+   which, not everything is.
+
+   ok so we started this.
+
+   OK I think I need some kind of super-handle that I can keep around to pin things.
+
+   and it'll be GC'd I guess?
+
+   but normally we'll try hard to make sure it's freed mechanically?
+
+   having a syscall that has reference to some things, and freeing them automatically...
+   would be nice.
+*** TODO add pinning handle
+    OK so pin will return a PinnedFD.
+
+    It will only be relevant when duping over something.
+
+    hmm, borrow_with
+
+    we need to borrow before serializing, don't we?
+    or, we could just assert that the serialization is correct still I guess
+
+    hmmm.
+    so, what are we really trying to do here?
+
+    when we have an fd serialized to memory,
+    for the pointer to that memory to remain valid and type-safe,
+    we need to pin the fd.
+
+    sooo
+
+    ummmmm
+
+    we could say that a writtenpointer becomes invalid at some point?
+
+    well, no, we don't want to allow invalidating it during a syscall?
+
+    but we know when it's being used because of the pointer pinning.
+
+    sure so we could invalidate the pinned pointer or something, er.
+
+    no wait, to rely on the pointer pinning would require us to scan users of the fd;
+    namely the pointers using it.
+
+    that's too strict.
+
+    ok sooo
+
+    we need to disallow invalidating the fd,
+    as long as there is a pin to that fd.
+
+    how long will there be a pin to the fd?
+    as long as there's a struct containing it,
+    which has been written to memory,
+    as a writtenpointer for it.
+
+    when do we invalidate the writtenpointer?
+
+    well.
+    we want to bound the lifetime of this, don't we?
+
+    hmm.
+
+    maybe we could do the writes lazily?
+
+    in the syscall we'd force the pointer to be written,
+    and then we'd hold a reference to it?
+
+    hm.
+
+    we probably want to go with something where,
+    the pointer can become invalid spontaneously,
+    and we just check validity.
+
+    so, I mean...
+
+    then we'd have a system where we take a pin, but don't activate it;
+    then we borrow from the pin to activate it in a context.
+
+    and that activation can fail.
+
+    hm this doesn't actually require a pinning system if we do this
+
+    just, some kind of system where we record what we actually wrote,
+    then check that it hasn't changed under us.
+
+    this punts responsibility for not invaliditing an fd that is in a pointer that will be used,
+    to the user.
+
+    updating all those pointers, again, the user's responsibility.
+
+    is that really the maximally robust way?
+    well, we already punt some responsibility to the user.
+
+    the question is just, do we fail when we try to invalidate the fd?
+    or fail when we use a pointer that is based on an invalidated fd?
+
+    the latter is acceptable I guess,
+    but what separates that from just breaking the fd altogether?
+
+    i mean, this pointer was written, it should stay valid.
+
+    well. I guess making something invalid under its hood is something we do a lot.
+    pseudo-linearity kind of thing...
+
+    we don't have a type-based guarantee of validity.
+** DONE split unistd up into a module
    it's got so many things in it, might as well!
 ** DONE remove syscall eof message
    Hmm, what's the clean way to shut down a thread?
