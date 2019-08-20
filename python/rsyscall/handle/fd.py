@@ -238,7 +238,7 @@ class BaseFileDescriptor:
     async def dup3(self, newfd: T_fd, flags: int) -> T_fd:
         self._validate()
         if not newfd.is_only_handle():
-            raise Exception("can't dup over newfd, there are more handles to it than just ours")
+            raise Exception("can't dup over newfd", newfd, "there are more handles to it than just ours")
         with newfd.borrow(self.task):
             if self.near == newfd.near:
                 # dup3 fails if newfd == oldfd. I guess I'll just work around that.
@@ -322,6 +322,7 @@ class FileDescriptorTask(t.Generic[T_fd], rsyscall.far.Task):
         if isinstance(fd, rsyscall.near.FileDescriptor):
             near = fd
         elif isinstance(fd, BaseFileDescriptor):
+            fd._validate()
             if fd.task.fd_table == self.fd_table:
                 near = fd.near
             else:
