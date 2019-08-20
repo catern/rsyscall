@@ -218,10 +218,7 @@ class Task(
                     await rsyscall.near.execve(self.sysif, filename.near, argv.near, envp.near)
                 else:
                     await rsyscall.near.execveat(self.sysif, None, filename.near, argv.near, envp.near, flags)
-            except FileNotFoundError as exn:
-                exn.filename = filename.value
-                raise
-            except NotADirectoryError as exn:
+            except OSError as exn:
                 exn.filename = filename.value
                 raise
             self.manipulating_fd_table = False
