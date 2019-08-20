@@ -2,6 +2,7 @@
 import trio
 import unittest
 import functools
+import types
 from trio._core._run import Nursery
 
 class TrioTestCase(unittest.TestCase):
@@ -29,8 +30,8 @@ class TrioTestCase(unittest.TestCase):
                     await self.asyncTearDown()
                 nursery.cancel_scope.cancel()
         @functools.wraps(test_with_setup)
-        def sync_test_with_setup() -> None:
+        def sync_test_with_setup(self) -> None:
             trio.run(test_with_setup)
-        setattr(self, methodName, sync_test_with_setup)
+        setattr(self, methodName, types.MethodType(sync_test_with_setup, self))
         super().__init__(methodName)
 
