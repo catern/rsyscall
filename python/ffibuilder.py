@@ -79,6 +79,10 @@ struct futex_node {
   struct robust_list list;
   uint32_t futex;
 };
+
+// there are some buggy headers on older systems which have a negative value for EPOLLET :(
+#undef EPOLLET
+#define EPOLLET 0x80000000
 """)
 ffibuilder.cdef("""
 typedef union epoll_data {
