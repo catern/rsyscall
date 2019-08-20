@@ -25,7 +25,7 @@ __all__ = [
     "Syscall",
 ]
 
-class ConnectionError(Exception):
+class ConnectionError(SyscallHangup):
     "Something has gone wrong with the rsyscall connection"
     pass
 
