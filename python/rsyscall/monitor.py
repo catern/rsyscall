@@ -136,7 +136,7 @@ class AsyncChildProcess:
 
     async def _waitid_nohang(self) -> t.Optional[ChildState]:
         if self.process.unread_siginfo is None:
-            await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.ALL|W.NOHANG, await self.ram.malloc(Siginfo))
+            await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.NOHANG, await self.ram.malloc(Siginfo))
         return await self.process.read_siginfo()
 
     async def waitpid(self, options: W) -> ChildState:

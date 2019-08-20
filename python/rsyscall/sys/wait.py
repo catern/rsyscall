@@ -27,6 +27,8 @@ class W(enum.IntFlag):
     NOHANG = lib.WNOHANG
     NOWAIT = lib.WNOWAIT
     # wait for different kinds of children
+    # Note, these are only supported in waitid after Linux 4.7;
+    # before that, they were only supported in wait4.
     CLONE = lib._WCLONE
     ALL = lib._WALL
     NOTHREAD = lib._WNOTHREAD
