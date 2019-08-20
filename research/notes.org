@@ -18777,6 +18777,21 @@ we could even modify NSS and include the patch in nixpkgs
    Hmm, what's the clean way to shut down a thread?
    Exit it?
 ** DONE stop using noplt?
+** TODO fix unshare_files_and_replace
+   So we need a good standalone abstraction
+
+   Specifically something which allows us to, um,
+   unshare files in clone and copy some files across.
+
+   Hmm I guess it's not immediately necessary to have that because we can unshare CLONE.FILES in fork,
+   and that's still pretty useful.
+** TODO make it possible to remove CLONE.FILES from fork
+   we can just add a new keyword argument "unshare: CLONE",
+   which are things to mask out of the fork,
+   then we just "fork(unshare=CLONE.FILES)" which looks good
+** TODO include the Command in the ChildProcess
+** TODO make ptr/malloc helpers directly on Thread
+   they are by far the most used methods
 * deployment
   hmm I could include rsyscall.c directly into the python package
 
@@ -19291,6 +19306,29 @@ reducing to a boolean is absurd! boolean blindness..
 what would continuations be in this emacs interactive programming land?
 
 not even sure
+** evaluating
+   it's really cool that the kill ring is a stack, and you can pop from it.
+
+   anyway, I noticed this in a macro I was writing:
+   I wanted to increment a number (or generically, do some math) in a macro.
+
+   well, just kill the number, C-u M-: (+ C-y 1),
+   and we're good!
+** more stuff
+   I used a regular expression to turn some stuff of the form
+   x(b, c, d)
+   y(b)
+   z(b, c)
+
+   into a lisp expression which yielded
+   x_b
+   x_c
+   x_d
+   y_b
+   z_b
+   z_c
+
+   very fancy.
 * fixing mail
   ok so i'll set up mail on earth.
 
@@ -19672,3 +19710,31 @@ that language has pattern matching on effects
    call with a stack and with a function pointer
 
    or just a stack, and ret immediately as the next instruction?
+* pass everything in
+  hmm you could maybe
+
+  use C where there's no globals and have to explicitly call functions to dereference things?
+  then have a "compilation" step where you set up all the variable accesses?
+
+  or, maybe, use monads?
+  stick your variables behind a monadic interface?
+
+  reader allows dynamic variables.
+  maybe you can do the same for all variables
+** hmm
+   theorems
+
+   what if you had a logic where you couldn't abstract?
+
+   you couldn't prove A->B from some other stuff and then not mention that stuff,
+   you would need to pass that stuff in
+* that one post that mentioned using functions for datatypes
+* blocks are compile time functions yielding TFS values?
+
+  hmm
+
+suggestion: maybe blocks are just lambdas but which exist only at compile time? tagless final style? hmm
+
+ok so here's an idea. 
+if "Term x" is a runtime value, and "Term (x -> y)" is a runtime function, maybe "x -> Term y" is a block?
+
