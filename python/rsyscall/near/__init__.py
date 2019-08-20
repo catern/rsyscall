@@ -65,7 +65,11 @@ async def clone(sysif: SyscallInterface, flags: int, child_stack: Address,
     return Process(await sysif.syscall(SYS.clone, flags, child_stack, ptid, ctid, newtls))
 
 async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
-    await sysif.syscall(SYS.close, fd)
+    try:
+        await sysif.syscall(SYS.close, fd)
+    except OSError as e:
+        e.filename = fd
+        raise
 
 async def dup3(sysif: SyscallInterface, oldfd: FileDescriptor, newfd: FileDescriptor, flags: int) -> None:
     await sysif.syscall(SYS.dup3, oldfd, newfd, flags)
