@@ -212,7 +212,7 @@ class PersistentThread(Thread):
         "Make this thread actually persistent"
         # TODO hmm should we switch the transport?
         # i guess we aren't actually doing anything but rearranging the file descriptors
-        await self.task.unshare_files()
+        await self.unshare_files(going_to_exec=False)
         if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
             raise Exception("self.task.sysif of unexpected type", self.task.sysif)
         new_sysif = NonChildSyscallInterface(self.task.sysif.rsyscall_connection, self.task.process.near)
