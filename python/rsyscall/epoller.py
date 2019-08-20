@@ -467,7 +467,12 @@ class AsyncFileDescriptor:
                 retbuf = await self.handle.getsockopt(SOL.SOCKET, SO.ERROR, sockbuf)
                 err = await (await retbuf.read()).buf.read()
                 if err != 0:
-                    raise OSError(err, os.strerror(err))
+                    try:
+                        raise OSError(err, os.strerror(err))
+                    except ConnectionRefusedError as exn:
+                        if hasattr(addr, 'value'):
+                            exn.filename = addr.value
+                        raise
             else:
                 raise
 
