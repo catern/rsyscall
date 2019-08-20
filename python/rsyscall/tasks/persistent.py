@@ -71,7 +71,6 @@ import typing as t
 import rsyscall.near.types as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.handle.fd import run_fd_table_gc
 from rsyscall.thread import Thread
 from rsyscall.path import Path
 from rsyscall.tasks.connection import SyscallConnection
@@ -225,7 +224,7 @@ class PersistentThread(Thread):
         """Using the passed-in thread to establish the connection, reconnect to this PersistentThread
 
         """
-        await run_fd_table_gc(self.task.fd_table)
+        await self.task.run_fd_table_gc(use_self=False)
         if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
             raise Exception("self.task.sysif of unexpected type", self.task.sysif)
         await self.task.sysif.close_interface()
@@ -249,4 +248,4 @@ class PersistentThread(Thread):
         await self.epoller.register(
             infd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP, devnull)
         # close remote fds we don't have handles to; this includes the old interface fds.
-        await run_fd_table_gc(self.task.fd_table)
+        await self.task.run_fd_table_gc()

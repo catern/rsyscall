@@ -36,6 +36,7 @@ import typing as t
 import os
 import rsyscall.near.types as near
 import rsyscall.far as far
+import rsyscall.handle as handle
 from rsyscall.thread import Thread
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
@@ -144,7 +145,7 @@ async def _setup_stub(
     environ = await describe_buf.read_envp(describe_struct.envp_count)
     #### build the new task
     pid = describe_struct.pid
-    fd_table = far.FDTable(pid)
+    fd_table = handle.FDTable(pid)
     address_space = far.AddressSpace(pid)
     # we assume pid namespace is shared
     pidns = thread.task.pidns

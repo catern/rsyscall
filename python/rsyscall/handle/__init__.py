@@ -26,7 +26,7 @@ import os
 import typing as t
 import logging
 import contextlib
-from rsyscall.handle.fd import FileDescriptorTask, BaseFileDescriptor
+from rsyscall.handle.fd import FileDescriptorTask, BaseFileDescriptor, FDTable
 from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.handle.process import Process, ChildProcess, ThreadProcess, ProcessTask
 logger = logging.getLogger(__name__)
@@ -175,6 +175,15 @@ class Task(
         ProcessTask,
         SignalTask, rsyscall.far.Task,
 ):
+    def __init__(self,
+                 sysif: rsyscall.near.SyscallInterface,
+                 process: t.Union[rsyscall.near.Process, Process],
+                 fd_table: FDTable,
+                 address_space: rsyscall.far.AddressSpace,
+                 pidns: rsyscall.far.PidNamespace,
+    ) -> None:
+        super().__init__(sysif, t.cast(rsyscall.near.Process, process), fd_table, address_space, pidns)
+
     def _file_descriptor_constructor(self, fd: rsyscall.near.FileDescriptor) -> FileDescriptor:
         # for extensibility
         return FileDescriptor(self, fd)

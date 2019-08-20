@@ -4,6 +4,7 @@ import abc
 import gc
 import rsyscall.far
 import rsyscall.near
+from rsyscall.near.sysif import SyscallHangup
 import trio
 import typing as t
 import logging
@@ -105,8 +106,9 @@ class BaseFileDescriptor:
         if self._invalidate():
             # we were the last handle for this fd, we should close it
             logger.debug("invalidating %s, no handles remaining, closing", self)
-            await rsyscall.near.close(self.task.sysif, self.near)
-            del fd_table_to_near_to_handles[self.task.fd_table][self.near]
+            fd_table = self.task.fd_table
+            del fd_table.near_to_handles[self.near]
+            await fd_table._close_fd(self.task, self.near)
             return True
         else:
             logger.debug("invalidating %s, some handles remaining", self)
@@ -203,7 +205,7 @@ class BaseFileDescriptor:
         return new
 
     def _get_global_handles(self) -> t.List[BaseFileDescriptor]:
-        return fd_table_to_near_to_handles[self.task.fd_table][self.near]
+        return self.task.fd_table.near_to_handles[self.near]
 
     def is_only_handle(self) -> bool:
         self._validate()
@@ -254,54 +256,73 @@ class BaseFileDescriptor:
         await source.dup3(self, flags)
         await source.invalidate()
 
-fd_table_to_near_to_handles: t.Dict[rsyscall.far.FDTable, t.Dict[rsyscall.near.FileDescriptor, t.List[BaseFileDescriptor]]] = {}
-fd_table_to_task: t.Dict[rsyscall.far.FDTable, t.List[FileDescriptorTask]] = {}
+class FDTable(rsyscall.far.FDTable):
+    def __init__(self, creator_pid: int) -> None:
+        super().__init__(creator_pid)
+        self.near_to_handles: t.Dict[rsyscall.near.FileDescriptor, t.List[BaseFileDescriptor]] = {}
+        self.tasks: t.List[FileDescriptorTask] = []
 
-async def run_fd_table_gc(fd_table: rsyscall.far.FDTable) -> None:
-    if fd_table not in fd_table_to_task:
-        # this is an fd table that has never had active tasks;
-        # probably we called run_fd_table_gc on an exited task
-        return
-    gc.collect()
-    near_to_handles = fd_table_to_near_to_handles[fd_table]
-    fds_to_close = [fd for fd, handles in near_to_handles.items() if not handles]
-    if not fds_to_close:
-        return
-    tasks = fd_table_to_task[fd_table]
-    for task in list(tasks):
-        if task.fd_table is not fd_table:
-            tasks.remove(task)
-        elif task.manipulating_fd_table:
-            # skip tasks currently changing fd table
-            pass
-        else:
-            break
-    else:
-        # uh, there's no valid task available? I guess just do nothing?
-        return
-    async def close_fd(fd: rsyscall.near.FileDescriptor) -> None:
-        del near_to_handles[fd]
-        # TODO I guess we should take a lock on the fd table
+    def _get_task_in_table(self) -> t.Optional[FileDescriptorTask]:
+        for task in self.tasks:
+            if task.fd_table is not self:
+                self.tasks.remove(task)
+            elif task.manipulating_fd_table:
+                # skip tasks currently changing fd table
+                pass
+            else:
+                return task
+        return None
+
+    async def _close_fd(self, task: FileDescriptorTask, fd: rsyscall.near.FileDescriptor) -> None:
         try:
+            # TODO we don't have to block here, we can just send off the close without waiting for it,
+            # because you aren't supposed to retry close on error.
+            # well, except when we actually want to give the user the chance to see the error from close.
+            await rsyscall.near.close(task.sysif, fd)
+        except SyscallHangup:
+            # closing the fd through this task went wrong
             # TODO we should mark this task as dead and fall back to later tasks in the list if
             # we fail due to a SyscallInterface-level error; that might happen if, say, this is
             # some decrepit task where we closed the syscallinterface but didn't exit the task.
-            await rsyscall.near.close(task.sysif, fd)
-        except:
-            if fd in fd_table_to_near_to_handles:
-                raise Exception("somehow someone else closed fd", fd, "and then it was reopened???")
-            # put the fd back, I guess.
-            near_to_handles[fd] = []
-    async with trio.open_nursery() as nursery:
-        for fd in fds_to_close:
-            nursery.start_soon(close_fd, fd)
+            assert fd not in self.near_to_handles, f"fd {fd} was somehow reopened before it was actually closed"
+            # put the fd back, some other task will close it
+            self.near_to_handles[fd] = []
+
+    async def gc_using_task(self, task: FileDescriptorTask) -> None:
+        gc.collect()
+        async with trio.open_nursery() as nursery:
+            # take a snapshot of near_to_handles so we can mutate it while iterating
+            for fd, handles in list(self.near_to_handles.items()):
+                if not handles:
+                    # we immediately take responsibility for closing this fd, so our close
+                    # attempts don't collide with others
+                    del self.near_to_handles[fd]
+                    logger.debug("gc for %s: starting close fd for %s", self, fd)
+                    nursery.start_soon(self._close_fd, task, fd)
+
+    async def run_gc(self) -> None:
+        task = self._get_task_in_table()
+        if task is not None:
+            await self.gc_using_task(task)
 
 class FileDescriptorTask(t.Generic[T_fd], rsyscall.far.Task):
+    def __init__(self,
+                 sysif: rsyscall.near.SyscallInterface,
+                 near_process: rsyscall.near.Process,
+                 fd_table: FDTable,
+                 address_space: rsyscall.far.AddressSpace,
+                 pidns: rsyscall.far.PidNamespace,
+    ) -> None:
+        if not isinstance(fd_table, FDTable):
+            raise Exception("fd_table", fd_table, "needs to be an", FDTable,
+                            "to work with a", FileDescriptorTask)
+        self.fd_table: FDTable
+        super().__init__(sysif, near_process, fd_table, address_space, pidns)
+
     def __post_init__(self) -> None:
         super().__post_init__()
         self.fd_handles: t.List[T_fd] = []
         self.manipulating_fd_table = False
-        self._setup_fd_table_handles()
         self._add_to_active_fd_table_tasks()
 
     # for extensibility
@@ -312,9 +333,9 @@ class FileDescriptorTask(t.Generic[T_fd], rsyscall.far.Task):
         if self.manipulating_fd_table:
             raise Exception("can't make a new FD handle while manipulating_fd_table==True")
         handle = self._file_descriptor_constructor(fd)
-        logger.debug("made handle: %s", self)
+        logger.debug("%s: made handle %s from %s", self, handle, fd)
         self.fd_handles.append(handle)
-        fd_table_to_near_to_handles[self.fd_table].setdefault(fd, []).append(handle)
+        self.fd_table.near_to_handles.setdefault(fd, []).append(handle)
         return handle
 
     def make_fd_handle(self, fd: t.Union[rsyscall.near.FileDescriptor,
@@ -332,16 +353,20 @@ class FileDescriptorTask(t.Generic[T_fd], rsyscall.far.Task):
         return self._make_fd_handle_from_near(near)
 
     def _add_to_active_fd_table_tasks(self) -> None:
-        fd_table_to_task.setdefault(self.fd_table, []).append(self)
+        self.fd_table.tasks.append(self)
 
-    def _setup_fd_table_handles(self) -> None:
-        near_to_handles = fd_table_to_near_to_handles.setdefault(self.fd_table, {})
+    def _make_fresh_fd_table(self) -> FDTable:
+        self.fd_table = FDTable(self.near_process.id)
+        near_to_handles = self.fd_table.near_to_handles
         for handle in self.fd_handles:
             near_to_handles.setdefault(handle.near, []).append(handle)
+        return self.fd_table
 
-    def _make_fresh_fd_table(self) -> None:
-        self.fd_table = rsyscall.far.FDTable(self.near_process.id)
-        self._setup_fd_table_handles()
+    async def run_fd_table_gc(self, use_self: bool=True) -> None:
+        if use_self:
+            await self.fd_table.gc_using_task(self)
+        else:
+            await self.fd_table.run_gc()
 
     async def unshare_files(self) -> None:
         """Unshare this task's file descriptor table.
@@ -359,13 +384,13 @@ class FileDescriptorTask(t.Generic[T_fd], rsyscall.far.Task):
             raise Exception("can't unshare_files while manipulating_fd_table==True")
         # do a GC now to improve efficiency when GCing both tables after the unshare
         gc.collect()
-        await run_fd_table_gc(self.fd_table)
-        self.manipulating_fd_table = True
         old_fd_table = self.fd_table
-        self._make_fresh_fd_table()
         # each fd in the old table is also in the new table, possibly with no handles
         for fd in fd_table_to_near_to_handles[old_fd_table]:
             fd_table_to_near_to_handles[self.fd_table].setdefault(fd, [])
+        await old_fd_table.gc_using_task(self)
+        self.manipulating_fd_table = True
+        new_fd_table = self._make_fresh_fd_table()
         self._add_to_active_fd_table_tasks()
         # perform the actual unshare
         await rsyscall.near.unshare(self.sysif, CLONE.FILES)
@@ -373,8 +398,7 @@ class FileDescriptorTask(t.Generic[T_fd], rsyscall.far.Task):
         # We can only remove our handles from the handle lists after the unshare is done
         # and the fds are safely copied, because otherwise someone else running GC on the
         # old fd table would close our fds when they notice there are no more handles.
-        old_near_to_handles = fd_table_to_near_to_handles[old_fd_table]
         for handle in self.fd_handles:
-            old_near_to_handles[handle.near].remove(handle)
-        await run_fd_table_gc(old_fd_table)
-        await run_fd_table_gc(self.fd_table)
+            old_fd_table.near_to_handles[handle.near].remove(handle)
+        await old_fd_table.run_gc()
+        await new_fd_table.gc_using_task(self)

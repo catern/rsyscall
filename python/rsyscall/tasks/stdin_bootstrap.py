@@ -23,6 +23,7 @@ from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 import logging
 import rsyscall.far as far
+import rsyscall.handle as handle
 import rsyscall.memory.allocator as memory
 import rsyscall.near.types as near
 import rsyscall.nix as nix
@@ -104,7 +105,7 @@ async def stdin_bootstrap(
     environ = await describe_buf.read_envp(describe_struct.envp_count)
     #### build the new task
     pid = describe_struct.pid
-    fd_table = far.FDTable(pid)
+    fd_table = handle.FDTable(pid)
     address_space = far.AddressSpace(pid)
     # we assume pid namespace is shared
     # TODO include namespace inode numbers numbers in describe
