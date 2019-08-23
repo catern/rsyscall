@@ -385,20 +385,34 @@ class FileDescriptorTask(t.Generic[T_fd], rsyscall.far.Task):
         # do a GC now to improve efficiency when GCing both tables after the unshare
         gc.collect()
         old_fd_table = self.fd_table
-        # each fd in the old table is also in the new table, possibly with no handles
-        for fd in fd_table_to_near_to_handles[old_fd_table]:
-            fd_table_to_near_to_handles[self.fd_table].setdefault(fd, [])
         await old_fd_table.gc_using_task(self)
         self.manipulating_fd_table = True
         new_fd_table = self._make_fresh_fd_table()
         self._add_to_active_fd_table_tasks()
         # perform the actual unshare
         await rsyscall.near.unshare(self.sysif, CLONE.FILES)
+        # Each fd in the old table in the old table is also in the new table; this includes unwanted
+        # fds that had handles in the old table and now don't have any handles.  Various race
+        # conditions make garbage collecting those unwanted fds quite difficult, and ultimately
+        # impossible.
+        # The right way to close those unwanted fds is to, after the unshare, temporarily unset
+        # CLOEXEC on the fds that we want to preserve, then close all CLOEXEC fds.  But
+        # unfortunately there's no cheap way to close all CLOEXC fds.
+        # So, instead, we just let the unwanted fds leak into the new table.  Almost all threads that call
+        # unshare_files will call exec soon after, which will handle closing all CLOEXEC fds for us,
+        # and so the leaked unwanted fds will be closed.
+        # Concretely, we'll only create handles in the new table for the fds that this task owns, so
+        # only those fds are involved in garbage collection; that handle-creation happened in
+        # _make_fresh_fd_table.
+        # TODO add a syscall to close all CLOEXEC fds, and call it here with appropriate setup
         self.manipulating_fd_table = False
         # We can only remove our handles from the handle lists after the unshare is done
         # and the fds are safely copied, because otherwise someone else running GC on the
         # old fd table would close our fds when they notice there are no more handles.
         for handle in self.fd_handles:
             old_fd_table.near_to_handles[handle.near].remove(handle)
+        # GC the old fd table to delete any fds that are no longer referenced by our handles.
         await old_fd_table.run_gc()
+        # GC the new table just to make sure that GC works; this should be a no-op, but we might
+        # have messed something up.
         await new_fd_table.gc_using_task(self)
