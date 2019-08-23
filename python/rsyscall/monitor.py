@@ -174,7 +174,11 @@ class AsyncChildProcess:
 
     async def check(self) -> ChildState:
         "Wait for this child to die, and once it does, throw if it didn't exit cleanly"
-        death = await self.waitpid(W.EXITED)
+        try:
+            death = await self.waitpid(W.EXITED)
+        except trio.Cancelled:
+            await self.kill(SIG.TERM)
+            raise
         death.check()
         return death
 
