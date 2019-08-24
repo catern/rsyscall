@@ -20,6 +20,7 @@ from rsyscall.near.sysif import SyscallHangup
 import contextlib
 import logging
 import rsyscall.far as far
+import rsyscall.handle as handle
 import trio
 import typing as t
 
@@ -190,9 +191,14 @@ async def launch_futex_monitor(ram: RAM,
     # TODO uh we need to actually call something to free the stack
     return futex_process
 
+# hmmmmmmmmm so we want to default to have CLONE.FILES;
+# we want the user to have to pass in CLONE.FILES in a list to undo it.
+# so... yeah. just another CLONE argument.
+# one is additive, one is subtractive.
 async def clone_child_task(
         parent: ForkThread,
         flags: CLONE,
+        unshare: CLONE,
         trampoline_func: t.Callable[[FileDescriptor], Trampoline],
 ) -> t.Tuple[AsyncChildProcess, Task]:
     """Clone a new child process and setup the sysif and task to manage it
@@ -207,12 +213,20 @@ async def clone_child_task(
     child process exits or execs, and the futex process will accordingly exit.
 
     """
+    # Default these flags to on...
+    flags |= CLONE.FILES|CLONE.IO|CLONE.SYSVSEM
+    # ...but allow them to be unset with unshare.
+    flags &= ~unshare
+    # This flag is mandatory; if we don't use CLONE_VM then CHILD_CLEARTID doesn't work
+    # properly and we need to do more arcane things; see tasks.exec.
+    if unshare & CLONE.VM:
+        raise Exception("Tried to unshare CLONE.VM with unshare flags", unshare,
+                        "but that's a mandatory flag because CHILD_CLEARTID is buggy without it")
+    flags |= CLONE.VM
     # Open a channel which we'll use for the rsyscall connection
     [(access_sock, remote_sock)] = await parent.connection.open_async_channels(1)
     # Create a trampoline that will start the new process running an rsyscall server
     trampoline = trampoline_func(remote_sock)
-    # Force these flags to be used
-    flags |= CLONE.VM|CLONE.FILES|CLONE.IO|CLONE.SYSVSEM
     # TODO it is unclear why we sometimes need to make a new mapping here, instead of
     # allocating with our normal allocator; all our memory is already MAP.SHARED, I think.
     # We should resolve this so we can use the normal allocator.
@@ -242,11 +256,16 @@ async def clone_child_task(
         pidns = far.PidNamespace(child_process.process.near.id)
     else:
         pidns = parent.task.pidns
+    if flags & CLONE.FILES:
+        fd_table = parent.task.fd_table
+    else:
+        fd_table = handle.FDTable(child_process.process.near.id)
     task = Task(syscall, child_process.process,
-                parent.task.fd_table, parent.task.address_space, pidns)
+                fd_table, parent.task.address_space, pidns)
     task.sigmask = parent.task.sigmask
     # Move ownership of the remote sock into the task and store it so it isn't closed
-    remote_sock_handle = remote_sock.move(task)
+    remote_sock_handle = task.make_fd_handle(remote_sock.near)
+    await remote_sock.invalidate()
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     return child_process, task
 
@@ -270,7 +289,7 @@ class ForkThread(ConnectionThread):
         self.loader = thr.loader
         self.monitor = thr.monitor
 
-    async def _fork_task(self, flags: CLONE) -> t.Tuple[AsyncChildProcess, Task]:
+    async def _fork_task(self, flags: CLONE, unshare: CLONE) -> t.Tuple[AsyncChildProcess, Task]:
         return await clone_child_task(
-            self, flags, lambda sock: Trampoline(self.loader.server_func, [sock, sock]))
+            self, flags, unshare, lambda sock: Trampoline(self.loader.server_func, [sock, sock]))
 

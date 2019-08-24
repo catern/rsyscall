@@ -18789,6 +18789,22 @@ we could even modify NSS and include the patch in nixpkgs
    we can just add a new keyword argument "unshare: CLONE",
    which are things to mask out of the fork,
    then we just "fork(unshare=CLONE.FILES)" which looks good
+
+   haha okay that's nontrivial, we need a way to inherit file descriptors to new tasks.
+
+   we currently call .inherit after making the task,
+   to make new versions of epollers and things for the new task.
+
+   but we want to be able to do that for the task, thing, kinda.
+
+   ok so what if we. uggggggh.
+   what if we took a snapshot of available fds and could inherit into that,
+   (and which we could clear manually later as a GC).
+   but that's so lame...
+
+   well, we should reflect reality! the reality is that that happens!
+
+   making this copy of a table is really bad, having to lock against other users is lame
 ** TODO include the Command in the ChildProcess
 ** TODO make ptr/malloc helpers directly on Thread
    they are by far the most used methods

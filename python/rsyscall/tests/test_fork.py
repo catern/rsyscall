@@ -4,6 +4,7 @@ from rsyscall.tests.utils import do_async_things
 from rsyscall.epoller import Epoller
 from rsyscall.monitor import AsyncSignalfd
 
+from rsyscall.sched import CLONE
 from rsyscall.signal import SIG, Sigset
 from rsyscall.sys.signalfd import SignalfdSiginfo
 
@@ -57,3 +58,17 @@ class TestFork(TrioTestCase):
         buf = await self.thr.ram.malloc(SignalfdSiginfo)
         sigdata, _ = await sigfd.afd.read(buf)
         self.assertEqual((await sigdata.read()).signo, SIG.INT)
+
+class TestForkUnshareFiles(TrioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.local = local.thread
+        self.thr = await self.local.fork(unshare=CLONE.FILES)
+
+    async def asyncTearDown(self) -> None:
+        await self.thr.close()
+
+    async def test_nest_async(self) -> None:
+        thread = await self.thr.fork()
+        async with thread:
+            epoller = await Epoller.make_root(thread.ram, thread.task)
+            await do_async_things(self, epoller, thread)
