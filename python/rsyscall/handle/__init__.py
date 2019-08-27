@@ -26,6 +26,7 @@ import os
 import typing as t
 import logging
 import contextlib
+from rsyscall.command import Command
 from rsyscall.handle.fd import FileDescriptorTask, BaseFileDescriptor, FDTable
 from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.handle.process import Process, ChildProcess, ThreadProcess, ProcessTask
@@ -216,7 +217,9 @@ class Task(
     async def execve(self, filename: WrittenPointer[Path],
                      argv: WrittenPointer[ArgList],
                      envp: WrittenPointer[ArgList],
-                     flags: AT=AT.NONE) -> None:
+                     flags: AT=AT.NONE,
+                     command: Command=None,
+    ) -> None:
         with contextlib.ExitStack() as stack:
             stack.enter_context(filename.borrow(self))
             for arg in [*argv.value, *envp.value]:
@@ -234,7 +237,7 @@ class Task(
             self._make_fresh_fd_table()
             self._make_fresh_address_space()
             if isinstance(self.process, ChildProcess):
-                self.process.did_exec()
+                self.process.did_exec(command)
 
     async def exit(self, status: int) -> None:
         self.manipulating_fd_table = True

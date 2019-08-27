@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 from rsyscall.signal import SignalBlock
 from rsyscall.sys.signalfd import SFD, SignalfdSiginfo
-from rsyscall.sys.wait import CLD, ChildState, W
+from rsyscall.sys.wait import CLD, ChildState, W, UncleanExit
 
 class AsyncSignalfd:
     """A signalfd, registered on epoll, with a SignalBlock for the appropriate signals
@@ -179,7 +179,12 @@ class AsyncChildProcess:
         except trio.Cancelled:
             await self.kill(SIG.TERM)
             raise
-        death.check()
+        if not death.clean():
+            if self.process.command:
+                raise UncleanExit(death, self.process.command)
+            else:
+                raise UncleanExit(death)
+            pass
         return death
 
     async def kill(self, sig: SIG=SIG.KILL) -> None:

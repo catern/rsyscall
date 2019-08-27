@@ -152,10 +152,10 @@ class Thread(UnixThread):
         thread = await self.fork()
         child = await thread.exec(command)
         task_status.started(child)
-        exit_state = await child.waitpid(W.EXITED)
         if check:
-            exit_state.check()
-        return exit_state
+            return await child.check()
+        else:
+            return await child.waitpid(W.EXITED)
 
     async def unshare(self, flags: CLONE) -> None:
         "Call the unshare syscall, appropriately updating values on this class"

@@ -1,6 +1,6 @@
 "Provides the Command class, which is a convenient representation of the arguments to execve."
 import typing as t
-from rsyscall.handle import Path
+from rsyscall.path import Path
 import os
 
 T_command = t.TypeVar('T_command', bound="Command")
@@ -55,3 +55,6 @@ class Command:
             ret += " " + os.fsdecode(arg)
         ret += ")"
         return ret
+
+    def __repr__(self) -> str:
+        return str(self)

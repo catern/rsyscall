@@ -95,7 +95,9 @@ class ChildUnixThread(UnixThread):
         super()._init_from(thr)
         self.process = process
 
-    async def _execve(self, path: Path, argv: t.List[bytes], envp: t.List[bytes]) -> AsyncChildProcess:
+    async def _execve(self, path: Path, argv: t.List[bytes], envp: t.List[bytes],
+                      command: Command=None,
+    ) -> AsyncChildProcess:
         "Call execve, abstracting over memory; self.{exec,execve} are probably preferable"
         async def op(sem: RAM) -> t.Tuple[WrittenPointer[Path],
                                                WrittenPointer[ArgList],
@@ -106,13 +108,14 @@ class ChildUnixThread(UnixThread):
                     await sem.ptr(argv_ptrs),
                     await sem.ptr(envp_ptrs))
         filename, argv_ptr, envp_ptr = await self.ram.perform_batch(op)
-        await self.task.execve(filename, argv_ptr, envp_ptr)
+        await self.task.execve(filename, argv_ptr, envp_ptr, command=command)
         return self.process
 
     async def execve(self, path: Path,
                      argv: t.Sequence[t.Union[str, bytes, os.PathLike]],
                      env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]={},
                      inherited_signal_blocks: t.List[SignalBlock]=[],
+                     command: Command=None,
     ) -> AsyncChildProcess:
         """Replace the running executable in this thread with another.
 
@@ -144,7 +147,7 @@ class ChildUnixThread(UnixThread):
         for key_bytes, value in envp.items():
             raw_envp.append(b''.join([key_bytes, b'=', value]))
         logger.debug("execveat(%s, %s, %s)", path, argv, env_updates)
-        return await self._execve(path, [os.fsencode(arg) for arg in argv], raw_envp)
+        return await self._execve(path, [os.fsencode(arg) for arg in argv], raw_envp, command=command)
 
     async def exec(self, command: Command,
                    inherited_signal_blocks: t.List[SignalBlock]=[],
@@ -155,4 +158,4 @@ class ChildUnixThread(UnixThread):
 
         """
         return (await self.execve(command.executable_path, command.arguments, command.env_updates,
-                                  inherited_signal_blocks=inherited_signal_blocks))
+                                  inherited_signal_blocks=inherited_signal_blocks, command=command))

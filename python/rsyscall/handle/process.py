@@ -1,6 +1,7 @@
 from __future__ import annotations
 from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
+from rsyscall.command import Command
 from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.linux.futex import FutexNode
 from rsyscall.sched import Stack, CLONE
@@ -57,11 +58,16 @@ class ChildProcess(Process):
         self.death_state: t.Optional[ChildState] = None
         self.unread_siginfo: t.Optional[Pointer[Siginfo]] = None
         self.in_use = False
+        # the command this process exec'd; primarily useful for debugging, but we justify
+        # its presence by thinking that the Command might hold references to resources
+        # that the process is now using, like temporary directory paths.
+        self.command: t.Optional[Command] = None
 
     def mark_dead(self, state: ChildState) -> None:
         self.death_state = state
 
-    def did_exec(self) -> ChildProcess:
+    def did_exec(self, command: t.Optional[Command]) -> ChildProcess:
+        self.command = command
         return self
 
     @contextlib.contextmanager
@@ -182,9 +188,9 @@ class ThreadProcess(ChildProcess):
         self.free_everything()
         return super().mark_dead(event)
 
-    def did_exec(self) -> ChildProcess:
+    def did_exec(self, command: t.Optional[Command]) -> ChildProcess:
         self.free_everything()
-        return super().did_exec()
+        return super().did_exec(command)
 
 class ProcessTask(rsyscall.far.Task):
     def __init__(self,
