@@ -469,9 +469,10 @@ class AsyncFileDescriptor:
                 if err != 0:
                     try:
                         raise OSError(err, os.strerror(err))
-                    except ConnectionRefusedError as exn:
+                    except OSError as exn:
+                        exn.filename = self.handle
                         if hasattr(addr, 'value'):
-                            exn.filename = addr.value
+                            exn.filename2 = addr.value
                         raise
             else:
                 raise

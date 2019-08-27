@@ -439,9 +439,10 @@ class SocketFileDescriptor(BaseFileDescriptor):
         with addr.borrow(self.task):
             try:
                 await _connect(self.task.sysif, self.near, addr.near, addr.size())
-            except ConnectionRefusedError as exn:
+            except OSError as exn:
+                exn.filename = self
                 if hasattr(addr, 'value'):
-                    exn.filename = addr.value
+                    exn.filename2 = addr.value
                 raise
 
     async def listen(self, backlog: int) -> None:
