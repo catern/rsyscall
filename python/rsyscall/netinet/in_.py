@@ -42,6 +42,9 @@ class SockaddrIn(Address):
 
     def __str__(self) -> str:
         return f"SockaddrIn({self.addr_as_string()}:{self.port})"
+
+    def __repr__(self) -> str:
+        return str(self)
 _register_sockaddr(SockaddrIn)
 
 
@@ -78,6 +81,9 @@ class SockaddrIn6(Address):
 
     def __str__(self) -> str:
         return f"SockaddrIn6({self.addr}:{self.port})"
+
+    def __repr__(self) -> str:
+        return str(self)
 _register_sockaddr(SockaddrIn6)
 
 
