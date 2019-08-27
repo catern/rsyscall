@@ -45,6 +45,8 @@ async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
 
 async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
+    # it's important to do this so we can't try to inherit the fds that we close here
+    thr.task.fd_table.remove_inherited()
     buf = await thr.ram.malloc(DirentList, 4096)
     dirfd = await thr.task.open(await thr.ram.ptr(Path("/proc/self/fd")), O.DIRECTORY)
     async def maybe_close(fd: near.FileDescriptor) -> None:

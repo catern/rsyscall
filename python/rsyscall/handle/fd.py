@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from weakref import WeakSet
 import abc
 import gc
 import rsyscall.far
@@ -129,6 +130,9 @@ class BaseFileDescriptor:
         "Make another FileDescriptor referencing the same file but using `task` for syscalls"
         return task.make_fd_handle(self)
 
+    def inherit(self, task: FileDescriptorTask[T_fd]) -> T_fd:
+        return task.inherit_fd(self)
+
     @contextlib.contextmanager
     def borrow(self, task: FileDescriptorTask) -> t.Iterator[rsyscall.near.FileDescriptor]:
         "Validate that this FD can be accessed from this Task, and yield the near.FD to use for syscalls"
@@ -257,10 +261,18 @@ class BaseFileDescriptor:
         await source.invalidate()
 
 class FDTable(rsyscall.far.FDTable):
-    def __init__(self, creator_pid: int) -> None:
+    def __init__(self, creator_pid: int, parent: FDTable=None) -> None:
         super().__init__(creator_pid)
         self.near_to_handles: t.Dict[rsyscall.near.FileDescriptor, t.List[BaseFileDescriptor]] = {}
         self.tasks: t.List[FileDescriptorTask] = []
+        self.inherited: WeakSet[BaseFileDescriptor] = WeakSet()
+        if parent:
+            for handles in parent.near_to_handles.values():
+                for handle in handles:
+                    self.inherited.add(handle)
+
+    def remove_inherited(self) -> None:
+        self.inherited = WeakSet()
 
     def _get_task_in_table(self) -> t.Optional[FileDescriptorTask]:
         for task in self.tasks:
@@ -352,10 +364,28 @@ class FileDescriptorTask(t.Generic[T_fd], rsyscall.far.Task):
             raise Exception("bad fd type", fd, type(fd))
         return self._make_fd_handle_from_near(near)
 
+    def inherit_fd(self, fd: BaseFileDescriptor) -> T_fd:
+        fd._validate()
+        if fd.task.fd_table == self.fd_table:
+            # let's allow "inheriting" fds that are already in.. the right fd table?
+            # cuz... that way we can treat the case where we unshare and where we don't, identically
+            # right? yes. it has to be the samed fd table, not the same task,
+            # because the fds we're inheriting aren't in the same task.
+            return self._make_fd_handle_from_near(fd.near)
+        elif fd in self.fd_table.inherited:
+            return self._make_fd_handle_from_near(fd.near)
+        else:
+            raise Exception("tried to inherit non-inherited fd", fd)
+
     def _add_to_active_fd_table_tasks(self) -> None:
         self.fd_table.tasks.append(self)
 
     def _make_fresh_fd_table(self) -> FDTable:
+        """Make a new fd table that is a copy of the old one
+
+        This is called by unshare_files, exec, and exit.
+
+        """
         self.fd_table = FDTable(self.near_process.id)
         near_to_handles = self.fd_table.near_to_handles
         for handle in self.fd_handles:

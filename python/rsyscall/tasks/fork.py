@@ -246,7 +246,8 @@ async def clone_child_task(
                 parent.task.fd_table, parent.task.address_space, pidns)
     task.sigmask = parent.task.sigmask
     # Move ownership of the remote sock into the task and store it so it isn't closed
-    remote_sock_handle = remote_sock.move(task)
+    remote_sock_handle = remote_sock.inherit(task)
+    await remote_sock.invalidate()
     syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
     return child_process, task
 

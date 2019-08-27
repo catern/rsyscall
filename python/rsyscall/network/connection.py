@@ -87,8 +87,8 @@ class Connection:
         pass
 
     @abc.abstractmethod
-    def for_task(self, task: Task, ram: RAM) -> Connection:
-        "Transfer this Connection to a new task; only works if the two tasks have the same fd table"
+    def inherit(self, task: Task, ram: RAM) -> Connection:
+        """Transfer this Connection to a new task by using "inherit" to move the fds"""
         pass
 
 class FDPassConnection(Connection):
@@ -168,8 +168,8 @@ class FDPassConnection(Connection):
             self.access_fd,
             task, ram, fd)
 
-    def for_task(self, task: Task, ram: RAM) -> FDPassConnection:
-        return self.for_task_with_fd(task, ram, self.fd.for_task(task))
+    def inherit(self, task: Task, ram: RAM) -> FDPassConnection:
+        return self.for_task_with_fd(task, ram, self.fd.inherit(task))
 
 class ListeningConnection(Connection):
     """An (address, listening socket) pair with which we can do connect(); accept(); to establish a new channel.
@@ -228,8 +228,8 @@ class ListeningConnection(Connection):
             task, ram, self.listening_fd.with_handle(fd),
         )
 
-    def for_task(self, task: Task, ram: RAM) -> ListeningConnection:
-        return self.for_task_with_fd(task, ram, self.listening_fd.handle.for_task(task))
+    def inherit(self, task: Task, ram: RAM) -> ListeningConnection:
+        return self.for_task_with_fd(task, ram, self.listening_fd.handle.inherit(task))
 
 class ConnectionThread(EpollThread):
     def __init__(self,

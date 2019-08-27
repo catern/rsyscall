@@ -140,7 +140,7 @@ async def fork_persistent(
     child_monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
     return PersistentThread(Thread(
         task, ram,
-        parent.connection.for_task(task, ram),
+        parent.connection.inherit(task, ram),
         parent.loader,
         epoller,
         child_monitor,

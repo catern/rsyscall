@@ -81,13 +81,13 @@ class UnixThread(ForkThread):
             monitor = self.monitor.inherit_to_child(ram, task)
         return ChildUnixThread(UnixThread(
             task, ram,
-            self.connection.for_task(task, ram),
+            self.connection.inherit(task, ram),
             self.loader,
             epoller, monitor,
             self.environ.inherit(task, ram),
-            stdin=self.stdin.for_task(task),
-            stdout=self.stdout.for_task(task),
-            stderr=self.stderr.for_task(task),
+            stdin=self.stdin.inherit(task),
+            stdout=self.stdout.inherit(task),
+            stderr=self.stderr.inherit(task),
         ), process=child_process)
 
 class ChildUnixThread(UnixThread):

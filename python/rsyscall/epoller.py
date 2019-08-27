@@ -239,7 +239,7 @@ class Epoller:
         but we share the class and task which actually calls epoll_wait.
 
         """
-        return Epoller(self.epoll_waiter, ram, ram.task.make_fd_handle(self.epfd))
+        return Epoller(self.epoll_waiter, ram, self.epfd.inherit(ram.task))
 
     async def register(self, fd: FileDescriptor, events: EPOLL,
                        cb: t.Callable[[EPOLL], None]) -> EpolledFileDescriptor:
