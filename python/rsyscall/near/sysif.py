@@ -86,8 +86,11 @@ class SyscallInterface:
         try:
             with trio.CancelScope(shield=True):
                 result = await response.receive()
-        except Exception as exn:
+        except OSError as exn:
             self.logger.debug("%s -> %s", number, exn)
+            raise OSError(exn.errno, exn.strerror) from None
+        except Exception as exn:
+            self.logger.debug("%s -/ %s", number, exn)
             raise
         else:
             self.logger.debug("%s -> %s", number, result)
