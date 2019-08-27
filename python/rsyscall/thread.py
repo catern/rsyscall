@@ -131,9 +131,9 @@ class Thread(UnixThread):
         source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.ram.perform_batch(op)
         await self.task.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
 
-    async def fork(self, flags: CLONE=CLONE.NONE) -> ChildThread:
+    async def fork(self, flags: CLONE=CLONE.NONE, unshare=CLONE.NONE) -> ChildThread:
         "Create a new child thread"
-        thread = await super().fork(flags)
+        thread = await super().fork(flags, unshare)
         if flags & CLONE.NEWUSER:
             # hack, we should really track the [ug]id ahead of this so we don't have to get it
             # we have to get the [ug]id from the parent because it will fail in the child
