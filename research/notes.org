@@ -18789,6 +18789,96 @@ we could even modify NSS and include the patch in nixpkgs
    we can just add a new keyword argument "unshare: CLONE",
    which are things to mask out of the fork,
    then we just "fork(unshare=CLONE.FILES)" which looks good
+
+   haha okay that's nontrivial, we need a way to inherit file descriptors to new tasks.
+
+   we currently call .inherit after making the task,
+   to make new versions of epollers and things for the new task.
+
+   but we want to be able to do that for the task, thing, kinda.
+
+   ok so what if we. uggggggh.
+   what if we took a snapshot of available fds and could inherit into that,
+   (and which we could clear manually later as a GC).
+   but that's so lame...
+
+   well, we should reflect reality! the reality is that that happens!
+
+   making this copy of a table is really bad, having to lock against other users is lame
+*** design
+    okay so it's simple.
+
+    we'll separate "make copy of fd table" (which clone and unshare do)
+    from, "clearing that fd table out with a do_cloexec".
+
+    we'll have the ability to "inherit" handles into that new copy.
+
+    we'll still maintain the auto-updated handles
+
+    the inheritance will always be correct, but sometimes (if an fd was opened simultaneous with the clone/unshare)
+    we won't be able to inherit things since we won't know they're right.
+
+    because we're only synchronizing against closing, so we know all our handles are valid,
+    but we might not know all valid handles.
+    (which is a situation we have to deal with anyway because there might be other libraries in this fd table)
+
+    this allows us to decouple unshare_files_and_replace too.
+
+    could be that we kind of think of the "clearing"" call as,
+    "start_garbage_collection",
+    since it clears out all the garbage, and we can also begin to maintain the fd table with GC.
+
+    but before that we have free inheritance.
+*** implementation
+    ok let's start by separating out the gcfd/farfd from the handle,
+    and gcing based on that;
+
+    then add the inheritance feature,
+    and use it to maintain the handle.
+
+    hmm wait i'm going to have to inherit anyway to maintain the handle. oh well, whatever.
+
+    hmmm having multipl farfds or not?
+*** implementation 2
+    ok splitting out a new farfd is hard,
+    and also tricky because we got rid of farfds for a reason;
+    we need something associated with a task which will stay valid through unshares
+    so that we don't have racy problems with making syscalls on invalid references or farfds from the old fd table.
+
+    so instead we'll have, hmm.
+    a snapshot of all valid handles.
+
+    and support inheritance of them, easy.
+
+    we l llllllllllll
+    yeah ok let's do that. this GC stuff is all so brain-bending!
+    I don't have a way to think about it.
+
+    we'll use a weakrefset
+
+    how do we do it hm.
+
+    ok so I guess when I make a child it.
+    automatically has an fd table that I control,
+    even if it's running some arbitrary function
+
+    maybe? blurgh.
+    i could just do it manually in fork.
+    snapshot the table and boom.
+
+    then we start up gc...
+
+    yeah I mean that seems fine. sure.
+
+    ok this was really easy
+
+    I guess we need to update the names of things for the new inheriting world order, sigh.
+
+    ok i updated some names
+
+    wow this was too easy almost. ugh.
+    i'm sure we'll come back and want to revamp this but, for now,
+    this seems... shippable.
 ** TODO include the Command in the ChildProcess
 ** TODO make ptr/malloc helpers directly on Thread
    they are by far the most used methods
@@ -19737,4 +19827,20 @@ suggestion: maybe blocks are just lambdas but which exist only at compile time? 
 
 ok so here's an idea. 
 if "Term x" is a runtime value, and "Term (x -> y)" is a runtime function, maybe "x -> Term y" is a block?
+* openat
 
+Aleksa Sarai <cyphar@cyphar.com> writes:
+> To this end, we introduce the openat2(2) syscall. It provides all of the
+> features of openat(2) through the @how->flags argument, but also
+> also provides a new @how->resolve argument which exposes RESOLVE_* flags
+> that map to our new LOOKUP_* flags. It also eliminates the long-standing
+> ugliness of variadic-open(2) by embedding it in a struct.
+
+That same ugliness could also be eliminated by making it mandatory to
+pass the mode argument in a register, right?
+
+I don't like this usage of a structure in memory to pass arguments that
+would fit in registers. Besides
+
+I don't lik
+I don't like this usage of a struct 
