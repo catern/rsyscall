@@ -390,7 +390,7 @@ class AsyncFileDescriptor:
                 return (await self.handle.read(ptr))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    self.status.negedge(EPOLL.IN)
+                    self.status.negedge(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
                 else:
                     raise
 
@@ -408,7 +408,7 @@ class AsyncFileDescriptor:
                 return await self.handle.write(buf)
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    self.status.negedge(EPOLL.OUT)
+                    self.status.negedge(EPOLL.OUT|EPOLL.ERR)
                 else:
                     raise
 
@@ -440,7 +440,7 @@ class AsyncFileDescriptor:
                     return (await self.handle.accept(flags, addr))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    self.status.negedge(EPOLL.IN)
+                    self.status.negedge(EPOLL.IN|EPOLL.HUP)
                 else:
                     raise
 
