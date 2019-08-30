@@ -458,11 +458,15 @@ class AsyncFileDescriptor:
     async def connect(self, addr: WrittenPointer[Address]) -> None:
         "Call connect without blocking the thread."
         try:
+            # TODO an unconnected socket, at least with AF.INET SOCK.STREAM,
+            # will have EPOLL.OUT|EPOLL.HUP set when added to epoll, before calling connect.
+            # It seems that this will cause the _wait_for(EPOLL.OUT) call below to spuriously return early,
+            # and cause the getsockopt to spuriously pass.
+            # We should fix this.
             await self.handle.connect(addr)
         except OSError as e:
             if e.errno == errno.EINPROGRESS:
-                while not self.status.mask & EPOLL.OUT:
-                    await self.epolled.do_wait()
+                await self._wait_for(EPOLL.OUT)
                 sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(Int32)))
                 retbuf = await self.handle.getsockopt(SOL.SOCKET, SO.ERROR, sockbuf)
                 err = await (await retbuf.read()).buf.read()
