@@ -41,3 +41,8 @@ class TestSocket(TrioTestCase):
         written, _ = await clientfd.write(in_data)
         valid, _ = await sockfd.read(written)
         self.assertEqual(in_data.value, await valid.read())
+
+    async def test_write_to_unconnected(self) -> None:
+        sockfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
+        with self.assertRaises(BrokenPipeError):
+            await sockfd.write(await self.thr.ram.ptr(b"hello"))
