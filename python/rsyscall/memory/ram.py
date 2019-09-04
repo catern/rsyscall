@@ -49,7 +49,7 @@ class RAM:
     async def malloc(self, cls: t.Type[bytes], size: int) -> Pointer[bytes]: ...
 
     async def malloc(self, cls: t.Union[t.Type[T_fixed_serializer], t.Type[bytes]],
-                     size: int=None,
+                     size: t.Optional[int]=None,
     ) -> t.Union[Pointer[T_fixed_serializer], Pointer[bytes]]:
         "Allocate a typed space in memory, sized according to the size of the type or an explicit size argument"
         if size is None:
@@ -244,3 +244,23 @@ class RAMThread:
     def __init__(self, task: Task, ram: RAM) -> None:
         self.task = task
         self.ram = ram
+
+    @t.overload
+    async def malloc(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]: ...
+    @t.overload
+    async def malloc(self, cls: t.Type[T_fixed_serializer], size: int) -> Pointer[T_fixed_serializer]: ...
+    @t.overload
+    async def malloc(self, cls: t.Type[bytes], size: int) -> Pointer[bytes]: ...
+
+    async def malloc(self, cls: t.Union[t.Type[T_fixed_serializer], t.Type[bytes]],
+                     size: int=None,
+    ) -> t.Union[Pointer[T_fixed_serializer], Pointer[bytes]]:
+        return await self.ram.malloc(cls, size) # type: ignore
+
+    @t.overload
+    async def ptr(self, data: T_has_serializer) -> WrittenPointer[T_has_serializer]: ...
+    @t.overload
+    async def ptr(self, data: t.Union[bytes]) -> WrittenPointer[bytes]: ...
+    async def ptr(self, data: t.Union[T_has_serializer, bytes],
+    ) -> t.Union[WrittenPointer[T_has_serializer], WrittenPointer[bytes]]:
+        return await self.ram.ptr(data)
