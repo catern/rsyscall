@@ -9,7 +9,7 @@ from rsyscall.sched import CLONE
 class TestUser(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
-        self.thr = await self.local.fork()
+        self.thr = await self.local.clone()
         await self.thr.unshare(CLONE.NEWUSER)
 
     async def asyncTearDown(self) -> None:

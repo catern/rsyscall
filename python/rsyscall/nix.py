@@ -75,8 +75,8 @@ async def copy_tree(src: Thread, src_paths: t.List[Path], dest: Thread, dest_pat
     """
     [(local_fd, dest_fd)] = await dest.connection.open_channels(1)
     src_fd = local_fd.move(src.task)
-    await _exec_tar_copy_tree(await src.fork(), src_paths, src_fd,
-                              await dest.fork(), dest_path, dest_fd)
+    await _exec_tar_copy_tree(await src.clone(), src_paths, src_fd,
+                              await dest.clone(), dest_path, dest_fd)
 
 async def exec_nix_store_transfer_db(
         src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor, closure: t.List[Path],
@@ -104,8 +104,8 @@ async def bootstrap_nix_database(
     "Bootstrap the store used by `dest` with the necessary database entries for `closure`, coming from `src`'s store"
     [(local_fd, dest_fd)] = await dest.open_channels(1)
     src_fd = local_fd.move(src.task)
-    await exec_nix_store_transfer_db(await src.fork(), src_nix_store, src_fd, closure,
-                                     await dest.fork(), dest_nix_store, dest_fd)
+    await exec_nix_store_transfer_db(await src.clone(), src_nix_store, src_fd, closure,
+                                     await dest.clone(), dest_nix_store, dest_fd)
 
 async def enter_nix_container(store: Store, dest: Thread, dest_dir: Path) -> Store:
     """Move `dest` into a container in `dest_dir`, deploying Nix inside and returning the Store thus-created
@@ -160,8 +160,8 @@ async def nix_deploy(src: Store, dest: Store, path: StorePath) -> None:
     [(local_fd, dest_fd)] = await dest.thread.open_channels(1)
     src_fd = local_fd.move(src.thread.task)
     await exec_nix_store_import_export(
-        await src.thread.fork(), Command(src.nix.path/'bin/nix-store', ['nix-store'], {}), src_fd, path.closure,
-        await dest.thread.fork(), Command(dest.nix.path/'bin/nix-store', ['nix-store'], {}), dest_fd)
+        await src.thread.clone(), Command(src.nix.path/'bin/nix-store', ['nix-store'], {}), src_fd, path.closure,
+        await dest.thread.clone(), Command(dest.nix.path/'bin/nix-store', ['nix-store'], {}), dest_fd)
 
 async def canonicalize(thr: RAMThread, path: Path) -> Path:
     "Resolve all symlinks in this path, and return the resolved path"

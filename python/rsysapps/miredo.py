@@ -108,7 +108,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) 
     await inet_sock.setsockopt(SOL.IP, IP.MULTICAST_TTL, one)
     # hello fragments my old friend
     await inet_sock.setsockopt(SOL.IP, IP.MTU_DISCOVER, await thread.ram.ptr(Int32(IP.PMTUDISC_DONT)))
-    ns_thread = await thread.fork()
+    ns_thread = await thread.clone()
     await ns_thread.unshare(CLONE.NEWNET|CLONE.NEWUSER)
     # create icmp6 fd so miredo can relay pings
     icmp6_fd = await ns_thread.task.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
@@ -125,7 +125,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) 
     privproc_pair = await (await ns_thread.task.socketpair(
         AF.UNIX, SOCK.STREAM, 0, await ns_thread.ram.malloc(Socketpair))).read()
 
-    privproc_thread = await ns_thread.fork()
+    privproc_thread = await ns_thread.clone()
     await add_to_ambient(privproc_thread, {CAP.NET_ADMIN})
     privproc_child = await exec_miredo_privproc(miredo_exec, privproc_thread, privproc_pair.first, tun_index)
     nursery.start_soon(privproc_child.check)
@@ -135,7 +135,7 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) 
     # iterate through / and umount(MNT_DETACH) everything that isn't /nix
     # ummm and let's use UMOUNT_NOFOLLOW too
     # ummm no let's just only umount directories
-    client_thread = await ns_thread.fork(CLONE.NEWPID)
+    client_thread = await ns_thread.clone(CLONE.NEWPID)
     await client_thread.unshare(CLONE.NEWNET|CLONE.NEWNS)
     await client_thread.unshare_user()
     client_child = await exec_miredo_run_client(
@@ -170,7 +170,7 @@ class TestMiredo(TrioTestCase):
         # TODO lol actually parse this, don't just read and throw it away
         await self.netsock.read(await self.miredo.ns_thread.ram.malloc(bytes, 4096))
         print("b2", time.time())
-        thread = await self.miredo.ns_thread.fork()
+        thread = await self.miredo.ns_thread.clone()
         print("c", time.time())
         # bash = await rsc.which(self.thread, "bash")
         # await (await thread.exec(bash)).check()

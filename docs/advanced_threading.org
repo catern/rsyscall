@@ -1,7 +1,7 @@
 Before reading this, you should read the [[file:multi_threaded.org][multi-threaded tutorial]],
 to get important context on what threads look like in rsyscall.
 
-The "fork" thread described in the multi-threaded tutorial is only one kind of thread:
+The threads created by calling `clone` in the multi-threaded tutorial, are only one kind of thread:
 A process, started as our direct child, sharing our address space, on the same host as us, and which dies when we do.
 
 But other kinds of threads are also supported by rsyscall.

@@ -35,7 +35,7 @@ __all__ = [
     'ChildSyscallInterface',
     'launch_futex_monitor',
     'clone_child_task',
-    'ForkThread',
+    'CloneThread',
 ]
 
 class ChildExit(SyscallHangup):
@@ -192,7 +192,7 @@ async def launch_futex_monitor(ram: RAM,
     return futex_process
 
 async def clone_child_task(
-        parent: ForkThread,
+        parent: CloneThread,
         flags: CLONE,
         unshare: CLONE,
         trampoline_func: t.Callable[[FileDescriptor], Trampoline],
@@ -267,7 +267,7 @@ async def clone_child_task(
 
 from rsyscall.epoller import Epoller
 from rsyscall.network.connection import Connection, ConnectionThread
-class ForkThread(ConnectionThread):
+class CloneThread(ConnectionThread):
     def __init__(self,
                  task: Task,
                  ram: RAM,
@@ -280,12 +280,12 @@ class ForkThread(ConnectionThread):
         self.loader = loader
         self.monitor = monitor
 
-    def _init_from(self, thr: ForkThread) -> None: # type: ignore
+    def _init_from(self, thr: CloneThread) -> None: # type: ignore
         super()._init_from(thr)
         self.loader = thr.loader
         self.monitor = thr.monitor
 
-    async def _fork_task(self, flags: CLONE, unshare: CLONE) -> t.Tuple[AsyncChildProcess, Task]:
+    async def _clone_task(self, flags: CLONE, unshare: CLONE) -> t.Tuple[AsyncChildProcess, Task]:
         return await clone_child_task(
             self, flags, unshare, lambda sock: Trampoline(self.loader.server_func, [sock, sock]))
 

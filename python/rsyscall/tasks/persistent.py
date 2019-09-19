@@ -75,7 +75,7 @@ from rsyscall.thread import Thread
 from rsyscall.path import Path
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
-from rsyscall.tasks.fork import ChildSyscallInterface, clone_child_task
+from rsyscall.tasks.clone import ChildSyscallInterface, clone_child_task
 from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.sched import Stack
 from rsyscall.handle import WrittenPointer, ThreadProcess, Pointer, Task, FileDescriptor
@@ -102,12 +102,12 @@ from rsyscall.signal import SIG, Sigset, SignalBlock
 from rsyscall.sys.prctl import PR
 
 __all__ = [
-    "fork_persistent",
+    "clone_persistent",
     "PersistentThread",
 ]
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
-async def fork_persistent(
+async def clone_persistent(
         parent: Thread, path: Path,
 ) -> PersistentThread:
     """Create a new not-yet-persistent thread and return the thread and its tracking object

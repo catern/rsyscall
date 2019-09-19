@@ -10,7 +10,7 @@ class TestCat(TrioTestCase):
         self.cat = await self.thr.environ.which("cat")
         self.pipe_in = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()
         self.pipe_out = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()
-        thread = await self.thr.fork()
+        thread = await self.thr.clone()
         await thread.unshare_files_and_replace({
             thread.stdin: self.pipe_in.read,
             thread.stdout: self.pipe_out.write,

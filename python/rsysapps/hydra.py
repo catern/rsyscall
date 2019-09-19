@@ -268,7 +268,7 @@ async def start_fresh_nginx(
         nursery, parent: Thread, path: Path, proxy_addr: SockaddrUn
 ) -> t.Tuple[SockaddrIn, NginxChild]:
     nginx = await parent.environ.which("nginx")
-    thread = await parent.fork(CLONE.NEWUSER|CLONE.NEWPID)
+    thread = await parent.clone(CLONE.NEWUSER|CLONE.NEWPID)
     sock = await thread.task.socket(AF.INET, SOCK.STREAM)
     zero_addr = await thread.ram.ptr(SockaddrIn(0, 0x7F_00_00_01))
     await sock.bind(zero_addr)
@@ -300,7 +300,7 @@ http {
 
 async def start_simple_nginx(nursery, parent: Thread, path: Path, sockpath: Path) -> NginxChild:
     nginx = await parent.environ.which("nginx")
-    thread = await parent.fork(CLONE.NEWUSER|CLONE.NEWPID)
+    thread = await parent.clone(CLONE.NEWUSER|CLONE.NEWPID)
     config = b"""
 error_log stderr error;
 daemon off;
@@ -416,7 +416,7 @@ async def start_hydra(nursery, thread: Thread, path: Path, dbi: str, store: Loca
         'NIX_STATE_DIR': store.state_dir(),
     }
     # start server
-    server_thread = await thread.fork()
+    server_thread = await thread.clone()
     await server_thread.unshare_files()
     sock = await server_thread.task.socket(AF.UNIX, SOCK.STREAM)
     addr = await server_thread.ram.ptr(
@@ -511,7 +511,7 @@ class TestHydra(TrioTestCase):
         self.thread.environ['PATH'] = os.fsdecode(stubbin) + ':' + self.thread.environ['PATH']
         # start server
         # TODO I suppose this pidns thread is just going to be GC'd away... gotta make sure that works fine.
-        pidns_thread = await self.thread.fork(CLONE.NEWUSER|CLONE.NEWPID)
+        pidns_thread = await self.thread.clone(CLONE.NEWUSER|CLONE.NEWPID)
         self.hydra = await start_hydra(
             self.nursery, pidns_thread, await self.thread.mkdir(self.path/"hydra"),
             "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;",

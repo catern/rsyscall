@@ -13,8 +13,8 @@ class TestExec(TrioTestCase):
         self.local = local.thread
         self.store = local_store
         self.executables = await RsyscallServerExecutable.from_store(self.store)
-        thread = await self.local.fork()
-        await rsyscall_exec(self.local, await self.local.fork(), self.executables)
+        thread = await self.local.clone()
+        await rsyscall_exec(self.local, await self.local.clone(), self.executables)
         self.child = thread
 
     async def asyncTearDown(self) -> None:
@@ -27,7 +27,7 @@ class TestExec(TrioTestCase):
         await assert_thread_works(self, self.child)
 
     async def test_nest(self) -> None:
-        thread = await self.child.fork()
+        thread = await self.child.clone()
         async with thread:
             await rsyscall_exec(self.child, thread, self.executables)
             await assert_thread_works(self, thread)

@@ -187,12 +187,12 @@ class ConsoleGenie(WishGranter):
             async_from_term = await self.thread.make_afd(from_term_pipe.read)
             async_to_term = await self.thread.make_afd(to_term_pipe.write)
             try:
-                cat_stdin_thread = await self.thread.fork()
+                cat_stdin_thread = await self.thread.clone()
                 await cat_stdin_thread.unshare_files_and_replace({
                     cat_stdin_thread.stdin: to_term_pipe.read,
                 })
                 async with await cat_stdin_thread.exec(self.cat):
-                    cat_stdout_thread = await self.thread.fork()
+                    cat_stdout_thread = await self.thread.clone()
                     await cat_stdout_thread.unshare_files_and_replace({
                         cat_stdout_thread.stdout: from_term_pipe.write,
                     })
@@ -257,7 +257,7 @@ class ConsoleServerGenie(WishGranter):
             @nursery.start_soon
             async def do_socat():
                 while True:
-                    thread = await self.thread.fork()
+                    thread = await self.thread.clone()
                     try:
                         child = await thread.exec(cmd)
                     except:

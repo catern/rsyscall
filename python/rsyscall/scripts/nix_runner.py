@@ -23,7 +23,7 @@ async def deploy_nix_daemon(remote_thread: rsc.Thread,
 
 async def make_container(root: Path, thread: Thread) -> Thread:
     # TODO do we need to keep track of this thread?
-    thread = await thread.fork()
+    thread = await thread.clone()
     container_thread = thread
     await container_thread.unshare(CLONE.NEWUSER|CLONE.NEWNS|CLONE.FS)
     await container_thread.task.chdir(root)
@@ -65,7 +65,7 @@ async def run_nix_daemon(remote_thread: rsc.Thread, container_thread: rsc.Thread
             if failures > 3:
                 raise Exception("nix-daemon keeps failing for some reason")
             else:
-                thread = await container_thread.fork()
+                thread = await container_thread.clone()
                 child = await nix_daemon.exec(thread)
         except:
             # TODO hmm, while working on this you might want to do a child.wait_for_exit,

@@ -46,7 +46,7 @@ class TemporaryDirectory:
 
         """
         # TODO would be nice if not sharing the fs information gave us a cap to chdir
-        cleanup = await self.thr.fork()
+        cleanup = await self.thr.clone()
         await cleanup.task.chdir(await cleanup.ram.ptr(self.parent))
         child = await cleanup.exec(self.thr.environ.sh.args(
             '-c', f"chmod -R +w -- {self.name} && rm -rf -- {self.name}"))

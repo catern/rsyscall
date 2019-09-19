@@ -1,4 +1,4 @@
-"""The core thread class required to fork a new child thread and call exec on it
+"""The core thread class required to clone a new child thread and call exec on it
 
 We keep this separate so that helpers can be defined in terms of this
 interface, and then attached to an omnibus Thread class.  For example,
@@ -14,7 +14,7 @@ from rsyscall.loader import NativeLoader
 from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.network.connection import Connection
-from rsyscall.tasks.fork import ForkThread
+from rsyscall.tasks.clone import CloneThread
 import logging
 import typing as t
 import os
@@ -27,7 +27,7 @@ from rsyscall.unistd import Arg, ArgList
 
 logger = logging.getLogger(__name__)
 
-class UnixThread(ForkThread):
+class UnixThread(CloneThread):
     def __init__(self,
                  task: Task,
                  ram: RAM,
@@ -53,9 +53,9 @@ class UnixThread(ForkThread):
         self.stdout = thr.stdout
         self.stderr = thr.stderr
 
-    async def fork(self, flags: CLONE=CLONE.SIGHAND, unshare: CLONE=CLONE.NONE) -> ChildUnixThread:
+    async def clone(self, flags: CLONE=CLONE.SIGHAND, unshare: CLONE=CLONE.NONE) -> ChildUnixThread:
         "Create a new child thread"
-        child_process, task = await self._fork_task(flags, unshare)
+        child_process, task = await self._clone_task(flags, unshare)
         ram = RAM(task,
                   # We don't inherit the transport because it leads to a deadlock:
                   # If when a child task calls transport.read, it performs a syscall in the child task,

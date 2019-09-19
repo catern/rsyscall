@@ -21,7 +21,7 @@ from rsyscall.sys.wait import W, CLD
 
 # GNU hello is a program which prints "Hello, world!"
 async def example1(thr: Thread, hello_path: Path) -> None:
-    child = await thr.fork()
+    child = await thr.clone()
     child_process = await child.execve(hello_path, ['hello'])
     event = await child_process.waitpid(W.EXITED)
     if not (event.code == CLD.EXITED and event.exit_status == 0):
@@ -47,20 +47,20 @@ We receive a Path as an argument as well;
 we'll assume this is the path to the "hello" binary from the GNU hello package.
 
 #+BEGIN_SRC python
-    child = await thr.fork()
+    child = await thr.clone()
 #+END_SRC
 
-We create a new `Thread` using `thr.fork()`.
+We create a new `Thread` using `thr.clone()`.
 What we get back is in fact a `ChildThread`;
 a `ChildThread` is a `Thread` with the additional knowledge that it's the child of one of our other threads.
 Knowing that, we can call `exec` on the `ChildThread` and monitor the resulting child process.
 A bare `Thread` does not have the ability to (safely) call `execve`,
 because there's no other `Thread` that is its parent and is able to monitor it.
 
-`fork` here is not using any special control flow;
+`clone` here is not using any special control flow;
 this is a normal Python function, which returns exactly once.
 Remember that Python code does not execute in rsyscall threads;
-when we call `fork`, we get back a new context to execute syscalls in.
+when we call `clone`, we get back a new context to execute syscalls in.
 
 #+BEGIN_SRC python
     child_process = await child.execve(hello_path, ['hello'])
@@ -101,17 +101,19 @@ Typically, a program will be written taking a `Thread` as a function argument,
 and only in the main function will the local thread be imported and passed as an argument.
 This allows for programs to operate on any thread,
 which allows for substantial flexibility.
-* `fork`
-The `fork` method is the normal way to create new threads.
-It is the only high-level way to create a child thread,
-which is a thread that is the child of one of our other existing threads,
-and can therefore be monitored even if we call exec on the child thread.
+* `clone`
+The `clone` syscall is the only way to create a new thread.
+Because this is a common operation, `Thread` has a high-level `Thread.clone` method,
+which abstracts over some of the details, such as memory allocation,
+which are required to use the underlying `clone` syscall.
 
-A thread created with `fork` starts out sharing all namespaces with its parent thread.
+Threads created with the `clone` method are child threads.
+When `exec` is called on a child thread,
+we can still monitor the resulting child process until it eventually exits.
+
+A thread created with `clone` starts out sharing all namespaces with its parent thread.
 This includes the file descriptor table and the address space.
 Changes in the parent thread affect the child thread, and vice versa.
-(This is not the behavior of the POSIX `fork` function,
-but we reused the name because it's nice to see the fork/exec pattern.)
 
 Since the file descriptor table is shared,
 we can open files in the parent and use them in the child,
@@ -121,6 +123,9 @@ This is especially useful when the child does not share other namespaces;
 for example, the child and its parent might be in different network namespaces,
 but the child can receive sockets from the parent's network namespace
 since they share the file descriptor table.
+
+The `execve` syscall will automatically unshare most of these namespaces,
+including the file descriptor table and address space.
 * Unshare
 Since a child shares file descriptor tables with its parent,
 and possibly many other threads,
@@ -157,7 +162,7 @@ from rsyscall.sched import CLONE
 
 async def example2(thr: Thread, cat_path: Path, pair: Socketpair) -> None:
     ## launch a child thread
-    child = await thr.fork()
+    child = await thr.clone()
     ## replace the child's stdin and stdout with pair.first
     # move ownership of pair.first to the child task
     stdinout = pair.first.move(child.task)
@@ -193,11 +198,11 @@ from rsyscall.sched import CLONE
 
 async def example2(thr: Thread, cat_path: Path, pair: Socketpair) -> None:
     ## launch a child thread
-    child = await thr.fork()
+    child = await thr.clone()
 #+END_SRC
 
 As in our original example, we receive a thread and path as arguments,
-and immediately fork off a child.
+and immediately clone to create a child thread.
 
 We also receive a Socketpair, produced elsewhere by a call to the socketpair() system call.
 The Socketpair class contains the two file descriptor ends of the socketpair in the "first" and "second" fields.
@@ -280,9 +285,9 @@ from rsyscall.sys.wait import W, CLD
 
 async def example3(thr: Thread, sh_path: Path, pipe: Pipe) -> None:
     # create new pid namespace, with init as one of our threads
-    init = await thr.fork(CLONE.NEWUSER|CLONE.NEWPID)
+    init = await thr.clone(CLONE.NEWUSER|CLONE.NEWPID)
     # create a new child inside the pid namespace
-    child = await init.fork()
+    child = await init.clone()
     # pass down the write-end of the pipe to the child;
     # the write-end of the pipe will only be open inside the child.
     child_fd = pipe.write.move(child.task)
@@ -317,19 +322,19 @@ from rsyscall.sys.wait import W, CLD
 
 async def example3(thr: Thread, sh_path: Path, pipe: Pipe) -> None:
     # create new pid namespace, with init as one of our threads
-    init = await thr.fork(CLONE.NEWUSER|CLONE.NEWPID)
+    init = await thr.clone(CLONE.NEWUSER|CLONE.NEWPID)
 #+END_SRC
-We first spawn a new pid namespace by passing CLONE.NEWPID to fork;
+We first spawn a new pid namespace by passing CLONE.NEWPID to clone;
 we need to also pass CLONE.NEWUSER to create a user namespace to gain the privileges required to create a pid namespace.
 See [[http://man7.org/linux/man-pages/man7/namespaces.7.html][man 7 namespaces]] for more in-depth documentation about namespaces.
-The thread returned by fork is the init process in the pid namespace.
+The thread returned by clone is the init process in the pid namespace.
 
 #+BEGIN_SRC python
     # create a new child inside the pid namespace
-    child = await init.fork()
+    child = await init.clone()
 #+END_SRC
 
-We fork again from init to create a useful child in the namespace.
+We clone again from init to create a useful child in the namespace.
 
 #+BEGIN_SRC python
     # pass down the write-end of the pipe to the child;
@@ -420,7 +425,7 @@ await child.exec(await child.environ.which('hello'))
 await (await child.exec(await child.environ.which('hello'))).check()
 #+END_SRC
 * More thread types
-  The kind of thread created by "fork" is only one kind of thread available in rsyscall.
+  The kind of thread created by the high-level "Thread.clone" method is only one kind of thread available in rsyscall.
   Once you have read this tutorial and understand the approach of rsyscall to threading,
   you can read the [[file:advanced_threading.org][advanced threading tutorial]] for more information on the other kinds of threads available.
   Don't try to skip ahead, though.

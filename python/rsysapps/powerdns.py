@@ -32,7 +32,7 @@ async def start_powerdns(nursery, parent: Thread, path: Path, zone: dns.zone.Zon
 ) -> Powerdns:
     pdns_server = Command(Path("/home/sbaugh/.local/src/pdns/pdns/pdns_server"), ['pdns_server'], {})
     # pdns_server = await parent.environ.which("pdns_server")
-    thread = await parent.fork()
+    thread = await parent.clone()
 
     # we pretend to pass addresses like 0.0.0.1 etc
     # we add one so we don't pass 0.0.0.0 and make powerdns think it's bound to everything
@@ -74,7 +74,7 @@ async def start_recursor(nursery, parent: Thread, path: Path,
                                   ipv6_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
                                   root_hints: dns.zone.Zone=None) -> Powerdns:
     pdns_recursor = Command(Path("/home/sbaugh/.local/src/pdns/pdns/recursordist/pdns_recursor"), ['pdns_recursor'], {})
-    thread = await parent.fork()
+    thread = await parent.clone()
 
     ipv4s = {str(i+1): (udp.move(thread.task), tcp.move(thread.task))
              for i, (udp, tcp) in enumerate(ipv4_sockets)}
@@ -120,7 +120,7 @@ def make_zone(origin: t.Union[str, dns.name.Name],
 import rsyscall.tasks.local as local
 class TestPowerdns(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thread = await local.thread.fork()
+        self.thread = await local.thread.clone()
         await self.thread.unshare_user(0, 0)
         await self.thread.unshare(CLONE.NEWNET)
         # set loopback up

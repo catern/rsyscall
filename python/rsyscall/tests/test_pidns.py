@@ -13,7 +13,7 @@ class TestPidns(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
         self.store = local_store
-        self.init = await self.local.fork(CLONE.NEWUSER|CLONE.NEWPID)
+        self.init = await self.local.clone(CLONE.NEWUSER|CLONE.NEWPID)
 
     async def asyncTearDown(self) -> None:
         await self.init.close()
@@ -28,7 +28,7 @@ class TestPidns(TrioTestCase):
         cat = await self.local.environ.which('cat')
         pair = await (await self.local.task.socketpair(
             AF.UNIX, SOCK.STREAM, 0, await self.local.ram.malloc(Socketpair))).read()
-        child = await self.init.fork()
+        child = await self.init.clone()
         await child.unshare_files_and_replace({
             child.stdin: pair.first,
             child.stdout: pair.first,
@@ -42,7 +42,7 @@ class TestPidns(TrioTestCase):
 
     async def test_sleep(self) -> None:
         pipe = await (await self.local.task.pipe(await self.local.ram.malloc(Pipe))).read()
-        child = await self.init.fork()
+        child = await self.init.clone()
         child_fd = pipe.write.move(child.task)
         await child.unshare_files()
         await child_fd.disable_cloexec()

@@ -62,13 +62,13 @@ async def stdin_bootstrap(
     bootstrap_command can be any arbitrary command, but it must eventually exec
     rsyscall-stdin-bootstrap, and pass down stdin when it does.
 
-    We'll fork and exec bootstrap_command, passing down a socketpair for stdin, and try to
+    We'll clone and exec bootstrap_command, passing down a socketpair for stdin, and try to
     bootstrap over the other end of the socketpair. Once rsyscall-stdin-bootstrap starts,
     it will respond to our bootstrap and we'll create a new thread.
 
     """
-    #### fork and exec into the bootstrap command
-    child = await parent.fork()
+    #### clone and exec into the bootstrap command
+    child = await parent.clone()
     # create the socketpair that will be used as stdin
     stdin_pair = await (await parent.task.socketpair(
         AF.UNIX, SOCK.STREAM, 0, await parent.ram.malloc(Socketpair))).read()

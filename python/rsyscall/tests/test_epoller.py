@@ -20,7 +20,7 @@ class TestEpoller(TrioTestCase):
                 nursery.start_soon(do_async_things, self, self.thr.epoller, self.thr)
 
     async def test_thread_two(self) -> None:
-        thread = await self.thr.fork()
+        thread = await self.thr.clone()
         epoller = await Epoller.make_root(thread.ram, thread.task)
         async with trio.open_nursery() as nursery:
             nursery.start_soon(do_async_things, self, epoller, thread)

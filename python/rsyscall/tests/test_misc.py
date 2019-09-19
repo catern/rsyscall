@@ -18,7 +18,7 @@ class TestMisc(TrioTestCase):
         self.local = local.thread
         self.store = local_store
         self.executables = await RsyscallServerExecutable.from_store(self.store)
-        self.thr = await self.local.fork()
+        self.thr = await self.local.clone()
 
     async def asyncTearDown(self) -> None:
         await self.thr.close()

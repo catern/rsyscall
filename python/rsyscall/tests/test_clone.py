@@ -8,10 +8,10 @@ from rsyscall.sched import CLONE
 from rsyscall.signal import SIG, Sigset
 from rsyscall.sys.signalfd import SignalfdSiginfo
 
-class TestFork(TrioTestCase):
+class TestClone(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
-        self.thr = await self.local.fork()
+        self.thr = await self.local.clone()
 
     async def asyncTearDown(self) -> None:
         await self.thr.close()
@@ -20,7 +20,7 @@ class TestFork(TrioTestCase):
         await self.thr.exit(0)
 
     async def test_nest_exit(self) -> None:
-        thread = await self.thr.fork()
+        thread = await self.thr.clone()
         async with thread:
             await thread.exit(0)
 
@@ -29,14 +29,14 @@ class TestFork(TrioTestCase):
         await do_async_things(self, epoller, self.thr)
 
     async def test_nest_async(self) -> None:
-        thread = await self.thr.fork()
+        thread = await self.thr.clone()
         async with thread:
             epoller = await Epoller.make_root(thread.ram, thread.task)
             await do_async_things(self, epoller, thread)
 
     async def test_unshare_async(self) -> None:
         await self.thr.unshare_files()
-        thread = await self.thr.fork()
+        thread = await self.thr.clone()
         async with thread:
             epoller = await Epoller.make_root(thread.ram, thread.task)
             await thread.unshare_files()
@@ -59,16 +59,16 @@ class TestFork(TrioTestCase):
         sigdata, _ = await sigfd.afd.read(buf)
         self.assertEqual((await sigdata.read()).signo, SIG.INT)
 
-class TestForkUnshareFiles(TrioTestCase):
+class TestCloneUnshareFiles(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
-        self.thr = await self.local.fork(unshare=CLONE.FILES)
+        self.thr = await self.local.clone(unshare=CLONE.FILES)
 
     async def asyncTearDown(self) -> None:
         await self.thr.close()
 
     async def test_nest_async(self) -> None:
-        thread = await self.thr.fork()
+        thread = await self.thr.clone()
         async with thread:
             epoller = await Epoller.make_root(thread.ram, thread.task)
             await do_async_things(self, epoller, thread)

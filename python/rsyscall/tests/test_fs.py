@@ -29,7 +29,7 @@ class TestFS(TrioTestCase):
         await source_file.lseek(0, SEEK.SET)
         dest_file = await self.thr.task.open(await self.thr.ram.ptr(self.path/"dest"), O.RDWR|O.CREAT)
 
-        thread = await self.thr.fork()
+        thread = await self.thr.clone()
         cat = await self.thr.environ.which("cat")
         await thread.unshare_files_and_replace({
             thread.stdin: source_file,

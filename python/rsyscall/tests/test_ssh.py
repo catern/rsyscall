@@ -22,7 +22,7 @@ from rsyscall.monitor import AsyncChildProcess
 
 async def start_cat(thread: Thread, cat: Command,
                     stdin: FileDescriptor, stdout: FileDescriptor) -> AsyncChildProcess:
-    thread = await thread.fork()
+    thread = await thread.clone()
     await thread.unshare_files_and_replace({
         thread.stdin: stdin,
         thread.stdout: stdout,
@@ -55,7 +55,7 @@ class TestSSH(TrioTestCase):
     async def test_exec_pipe(self) -> None:
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)
         cat = await self.store.bin(coreutils_nixdep, "cat")
-        thread = await self.remote.fork()
+        thread = await self.remote.clone()
         await thread.unshare_files_and_replace({
             thread.stdin: remote_sock,
             thread.stdout: remote_sock,
@@ -67,10 +67,10 @@ class TestSSH(TrioTestCase):
         valid, _ = await local_sock.read(written)
         self.assertEqual(in_data.value, await valid.read())
 
-    async def test_fork(self) -> None:
-        thread1 = await self.remote.fork()
+    async def test_clone(self) -> None:
+        thread1 = await self.remote.clone()
         async with thread1:
-            thread2 = await thread1.fork()
+            thread2 = await thread1.clone()
             await thread2.close()
 
     async def test_nest(self) -> None:
@@ -103,7 +103,7 @@ class TestSSH(TrioTestCase):
         self.assertEqual(await read.read(), data)
 
     async def test_sigmask_bug(self) -> None:
-        thread = await self.remote.fork()
+        thread = await self.remote.clone()
         await thread.unshare_files(going_to_exec=True)
         await rsyscall.thread.do_cloexec_except(
             thread, set([fd.near for fd in thread.task.fd_handles]))

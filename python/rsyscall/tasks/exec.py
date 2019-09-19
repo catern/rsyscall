@@ -16,7 +16,7 @@ from rsyscall.thread import ChildThread, Thread
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.monitor import AsyncChildProcess
-from rsyscall.tasks.fork import launch_futex_monitor, ChildSyscallInterface
+from rsyscall.tasks.clone import launch_futex_monitor, ChildSyscallInterface
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.memory.ram import RAM
 import rsyscall.far as far
@@ -182,8 +182,8 @@ async def rsyscall_exec(
     child.task._add_to_active_fd_table_tasks()
 
 async def spawn_exec(thread: Thread, store: nix.Store) -> ChildThread:
-    "Fork off a new ChildThread and immediately call rsyscall_exec in it."
+    "Clone off a new ChildThread and immediately call rsyscall_exec in it."
     executable = await RsyscallServerExecutable.from_store(store)
-    child = await thread.fork()
+    child = await thread.clone()
     await rsyscall_exec(thread, child, executable)
     return child

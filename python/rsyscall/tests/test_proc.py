@@ -18,7 +18,7 @@ class TestProc(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
         self.store = local_store
-        self.init = await self.local.fork(CLONE.NEWUSER|CLONE.NEWPID)
+        self.init = await self.local.clone(CLONE.NEWUSER|CLONE.NEWPID)
         # set up proc
 
     async def test_pgid(self) -> None:
@@ -27,9 +27,9 @@ class TestProc(TrioTestCase):
         except FileNotFoundError:
             raise unittest.SkipTest("Requires /proc/sys/kernel/ns_last_pid, which requires CONFIG_CHECKPOINT_RESTORE")
 
-        pgldr = await self.init.fork()
+        pgldr = await self.init.clone()
         await pgldr.task.setpgid()
-        pgflr = await self.init.fork()
+        pgflr = await self.init.clone()
         await pgflr.task.setpgid(pgldr.process.process)
         self.assertEqual(int(await pgflr.task.getpgid()), 2)
         await pgldr.exit(0)
@@ -44,7 +44,7 @@ class TestProc(TrioTestCase):
 
         with self.assertRaises(ProcessLookupError):
             await self.init.task._make_process(2).kill(SIG.NONE)
-        pg_two = await self.init.fork()
+        pg_two = await self.init.clone()
         with self.assertRaises(ProcessLookupError):
             await self.init.task._make_process(2).kill(SIG.NONE)
         # Linux skips right over process 2, even though it's dead, because it's still used by the process group

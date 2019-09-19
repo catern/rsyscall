@@ -18785,7 +18785,7 @@ we could even modify NSS and include the patch in nixpkgs
 
    Hmm I guess it's not immediately necessary to have that because we can unshare CLONE.FILES in fork,
    and that's still pretty useful.
-** TODO make it possible to remove CLONE.FILES from fork
+** DONE make it possible to remove CLONE.FILES from fork
    we can just add a new keyword argument "unshare: CLONE",
    which are things to mask out of the fork,
    then we just "fork(unshare=CLONE.FILES)" which looks good
@@ -18879,9 +18879,11 @@ we could even modify NSS and include the patch in nixpkgs
     wow this was too easy almost. ugh.
     i'm sure we'll come back and want to revamp this but, for now,
     this seems... shippable.
-** TODO include the Command in the ChildProcess
+** DONE include the Command in the ChildProcess
 ** TODO make ptr/malloc helpers directly on Thread
    they are by far the most used methods
+** DONE rename fork to clone
+   I think this is wise anyway, fork is too confusing a name.
 * deployment
   hmm I could include rsyscall.c directly into the python package
 

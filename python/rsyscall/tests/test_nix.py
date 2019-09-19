@@ -7,7 +7,7 @@ from rsyscall.misc import hello_nixdep
 class TestNix(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.tmpdir = await local.thread.mkdtemp()
-        self.thr = await local.thread.fork()
+        self.thr = await local.thread.clone()
         self.store = await enter_nix_container(local_store, self.thr, self.tmpdir.path)
 
     async def asyncTearDown(self) -> None:
@@ -19,7 +19,7 @@ class TestNix(TrioTestCase):
 
     async def test_with_daemon(self) -> None:
         nix_daemon = await self.store.bin(nix, "nix-daemon")
-        nd_child = await (await self.thr.fork()).exec(nix_daemon)
+        nd_child = await (await self.thr.clone()).exec(nix_daemon)
         self.thr.environ['NIX_REMOTE'] = 'daemon'
         hello = await self.store.bin(hello_nixdep, "hello")
         await self.thr.run(hello)
