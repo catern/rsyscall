@@ -48,8 +48,6 @@ __all__ = [
 ssh_bootstrap_script_contents = importlib.resources.read_text('rsyscall.tasks', 'ssh_bootstrap.sh')
 logger = logging.getLogger(__name__)
 
-openssh = nix.import_nix_dep("openssh")
-
 T_ssh_command = t.TypeVar('T_ssh_command', bound="SSHCommand")
 class SSHCommand(Command):
     "The 'ssh' executable provided by OpenSSH, plus some arguments and special methods"
@@ -96,8 +94,8 @@ class SSHExecutables:
 
     @classmethod
     async def from_store(cls, store: nix.Store) -> SSHExecutables:
-        ssh_path = await store.realise(openssh)
-        rsyscall_path = await store.realise(nix.rsyscall)
+        ssh_path = await store.realise(nix.import_nix_dep("openssh"))
+        rsyscall_path = await store.realise(nix.import_nix_dep("rsyscall"))
         base_ssh = SSHCommand.make(ssh_path/"bin"/"ssh")
         bootstrap_path = rsyscall_path/"libexec"/"rsyscall"/"rsyscall-bootstrap"
         return SSHExecutables(base_ssh, bootstrap_path)
@@ -321,7 +319,7 @@ class SSHDExecutables:
 
     @classmethod
     async def from_store(cls, store: nix.Store) -> SSHDExecutables:
-        ssh_path = await store.realise(openssh)
+        ssh_path = await store.realise(nix.import_nix_dep("openssh"))
         ssh_keygen = Command(ssh_path/"bin"/"ssh-keygen", ["ssh-keygen"], {})
         sshd = SSHDCommand.make(ssh_path/"bin"/"sshd")
         return SSHDExecutables(ssh_keygen, sshd)
@@ -377,5 +375,4 @@ async def make_local_ssh(thread: Thread, store: nix.Store) -> SSHHost:
     ssh = await SSHExecutables.from_store(store)
     sshd = await SSHDExecutables.from_store(store)
     return (await make_local_ssh_from_executables(thread, ssh, sshd))
-
 

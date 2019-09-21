@@ -102,7 +102,7 @@ class RsyscallServerExecutable:
 
     @classmethod
     async def from_store(cls, store: nix.Store) -> RsyscallServerExecutable:
-        rsyscall_path = await store.realise(nix.rsyscall)
+        rsyscall_path = await store.realise(nix.import_nix_dep("rsyscall"))
         server = Command(rsyscall_path/"libexec"/"rsyscall"/"rsyscall-server", ['rsyscall-server'], {})
         return cls(server)
 

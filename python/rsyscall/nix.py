@@ -252,5 +252,3 @@ def import_nix_dep(name: str) -> StorePath:
     local_store._add_root(store_path, store_path.path)
     _imported_store_paths[name] = store_path
     return store_path
-
-rsyscall = import_nix_dep("rsyscall")

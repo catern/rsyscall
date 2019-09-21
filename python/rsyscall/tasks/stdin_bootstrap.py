@@ -50,7 +50,7 @@ async def stdin_bootstrap_path_from_store(store: nix.Store) -> Path:
     command, such as sudo.
 
     """
-    rsyscall_path = await store.realise(nix.rsyscall)
+    rsyscall_path = await store.realise(nix.import_nix_dep("rsyscall"))
     return rsyscall_path/"libexec"/"rsyscall"/"rsyscall-stdin-bootstrap"
 
 async def stdin_bootstrap(
