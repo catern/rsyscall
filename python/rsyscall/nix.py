@@ -238,10 +238,29 @@ class Store:
         path = await self.realise(store_path)
         return Command(path/"bin"/name, [name], {})
 
-nix = StorePath._load_without_registering("nix")
-local_store = Store(local.thread, nix)
+local_store: Store
+nix: StorePath
+_imported_store_paths: t.Dict[str, StorePath] = {}
+# This is some hackery to make it possible to import rsyscall.nix without being
+# built with Nix, as long as you don't use import_nix_dep, nix, or local_store.
+def _get_nix() -> StorePath:
+    global nix
+    if "nix" in globals():
+        return nix
+    else:
+        nix = StorePath._load_without_registering("nix")
+        _imported_store_paths['nix'] = nix
+        return nix
 
-_imported_store_paths: t.Dict[str, StorePath] = {"nix": nix}
+def __getattr__(name: str) -> t.Any:
+    if name == "nix":
+        return _get_nix()
+    elif name == "local_store":
+        global local_store
+        local_store = Store(local.thread, _get_nix())
+        return local_store
+    raise AttributeError(f"module {__name__} has no attribute {name}")
+
 def import_nix_dep(name: str) -> StorePath:
     "Import the Nixdep with this name, returning it as a StorePath"
     if name in _imported_store_paths:
