@@ -18880,6 +18880,14 @@ we could even modify NSS and include the patch in nixpkgs
     i'm sure we'll come back and want to revamp this but, for now,
     this seems... shippable.
 ** DONE include the Command in the ChildProcess
+** TODO make an inherit methd on task
+   so we'll take a snapshot of our parent's fd handles,
+   and we can activate those in ours be calling inherit.
+
+   and if/when we do a cloexec to clear the fds,
+   we clear the snapshot so we can no longer inherit.
+
+   ok yeah i think it neatly fits in.
 ** TODO make ptr/malloc helpers directly on Thread
    they are by far the most used methods
 ** DONE rename fork to clone
@@ -19802,6 +19810,61 @@ that language has pattern matching on effects
    call with a stack and with a function pointer
 
    or just a stack, and ret immediately as the next instruction?
+
+* function-encode everything
+hmm
+what is the type-theoretic underpinnings of, defining a new datatype?
+like, when I define, say, the type of lists.
+
+or the type of naturals
+
+the type of naturals can also be, um.
+
+Nat = (Nat -> A) -> (() -> A) -> A
+
+And... some obvious constructors.
+
+which can be defined as just,
+
+(Succ n) a b = a n
+
+Zero a b = b ()
+
+
+and that neatly defines both how pattern matching works,
+and the type of the function.
+
+yeaah
+
+a language without datatypes, a language with just functions.
+
+where that is expressive enough to work.
+
+y'know! functions should be implementable efficiently with data.
+
+also they are still serializable
+
+thanks to good ole tagless final style.
+
+the tricky question is just, what's this implementation hiding thing?
+
+yeah also and it's kind of that,
+whenever we see this type,
+we'll know it has so-and-so representation
+
+i.e. the natural number recursive function type is represented with bits.L
+
+
+hmm, also functions  an be non-terminating,
+if they recurse to themselves.
+
+because they can reference themselvs.
+they use a fix point.
+data doesn't (ususally?) have the ability to reference itself, i.e. take succ of itself
+
+the nat function type is actually totally abstract,
+which is why it can still be easily serialized and all that,
+using type-directed partial evaluation.
 * pass everything in
   hmm you could maybe
 
