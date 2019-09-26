@@ -16,6 +16,7 @@ setup(name='rsyscall',
       cffi_modules=["ffibuilder.py:ffibuilder"],
       packages=find_packages(),
       nix_deps={'rsyscall._nixdeps': ['miredo', 'nix', 'rsyscall', 'openssh', 'bash', 'coreutils', 'hello']},
+      include_package_data=True,
       entry_points={
           'distutils.setup_keywords': [
               "nix_deps = nixdeps.setuptools:nix_deps",
