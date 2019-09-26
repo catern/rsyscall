@@ -32,7 +32,7 @@ from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.handle.process import Process, ChildProcess, ThreadProcess, ProcessTask
 logger = logging.getLogger(__name__)
 
-from rsyscall.sched import CLONE, Stack
+from rsyscall.sched import CLONE, Stack, _unshare
 from rsyscall.signal import Siginfo
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path
@@ -203,7 +203,7 @@ class Task(
             await self.unshare_files()
             flags ^= CLONE.FILES
         if flags:
-            await rsyscall.near.unshare(self.sysif, flags)
+            await _unshare(self.sysif, flags)
 
     async def setns(self, fd: FileDescriptor, nstype: CLONE) -> None:
         with fd.borrow(self) as fd_n:

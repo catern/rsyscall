@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from rsyscall.command import Command
 from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.linux.futex import FutexNode
-from rsyscall.sched import Stack, CLONE
+from rsyscall.sched import Stack, CLONE, _clone, _unshare
 from rsyscall.signal import SIG, Siginfo
 from rsyscall.sys.wait import W, ChildState
 from rsyscall.unistd.credentials import _getpgid, _setpgid
@@ -241,7 +241,7 @@ class ProcessTask(rsyscall.far.Task):
             ptid_n = self._borrow_optional(stack, ptid)
             ctid_n = self._borrow_optional(stack, ctid)
             newtls_n = self._borrow_optional(stack, newtls)
-            process = await rsyscall.near.clone(self.sysif, flags, stack_data.near, ptid_n,
+            process = await _clone(self.sysif, flags, stack_data.near, ptid_n,
                                                 ctid_n + ffi.offsetof('struct futex_node', 'futex') if ctid_n else None,
                                                 newtls_n)
         # TODO the safety of this depends on no-one borrowing/freeing the stack in borrow __aexit__

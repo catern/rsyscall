@@ -43,26 +43,11 @@ from rsyscall.sys.syscall import SYS
 
 from rsyscall.fcntl import F
 from rsyscall.sys.wait import IdType
-from rsyscall.sched import CLONE
 from rsyscall.signal import SIG
 
 #### Syscalls (instructions)
 # These are like instructions, run with this segment register override prefix and arguments.
 import trio
-
-async def clone(sysif: SyscallInterface, flags: int, child_stack: Address,
-                ptid: t.Optional[Address], ctid: t.Optional[Address],
-                newtls: t.Optional[Address]) -> Process:
-    # I don't use CLONE_THREAD, so I can say without confusion, that clone returns a Process.
-    if child_stack is None:
-        child_stack = 0 # type: ignore
-    if ptid is None:
-        ptid = 0 # type: ignore
-    if ctid is None:
-        ctid = 0 # type: ignore
-    if newtls is None:
-        newtls = 0 # type: ignore
-    return Process(await sysif.syscall(SYS.clone, flags, child_stack, ptid, ctid, newtls))
 
 async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
     try:
@@ -124,9 +109,6 @@ async def set_tid_address(sysif: SyscallInterface, ptr: Address) -> None:
 
 async def setns(sysif: SyscallInterface, fd: FileDescriptor, nstype: int) -> None:
     await sysif.syscall(SYS.setns, fd, nstype)
-
-async def unshare(sysif: SyscallInterface, flags: CLONE) -> None:
-    await sysif.syscall(SYS.unshare, flags)
 
 async def waitid(sysif: SyscallInterface,
                  id: t.Union[Process, ProcessGroup, None], infop: t.Optional[Address], options: int,

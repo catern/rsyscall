@@ -13,7 +13,7 @@ import contextlib
 logger = logging.getLogger(__name__)
 
 from rsyscall.fcntl import F
-from rsyscall.sched import CLONE
+from rsyscall.sched import CLONE, _unshare
 from rsyscall.path import Path
 
 T_fd = t.TypeVar('T_fd', bound='BaseFileDescriptor')
@@ -420,7 +420,7 @@ class FileDescriptorTask(t.Generic[T_fd], rsyscall.far.Task):
         new_fd_table = self._make_fresh_fd_table()
         self._add_to_active_fd_table_tasks()
         # perform the actual unshare
-        await rsyscall.near.unshare(self.sysif, CLONE.FILES)
+        await _unshare(self.sysif, CLONE.FILES)
         # Each fd in the old table in the old table is also in the new table; this includes unwanted
         # fds that had handles in the old table and now don't have any handles.  Various race
         # conditions make garbage collecting those unwanted fds quite difficult, and ultimately
