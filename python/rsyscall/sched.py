@@ -1,15 +1,19 @@
 "#include <sched.h>"
 from __future__ import annotations
-from rsyscall._raw import lib # type: ignore
-from rsyscall.struct import Serializable, Serializer
+from rsyscall._raw import lib, ffi # type: ignore
+from rsyscall.struct import Serializable, Serializer, Struct, bits
 from dataclasses import dataclass
 import enum
 import typing as t
 import struct
 import contextlib
 if t.TYPE_CHECKING:
-    from rsyscall.handle import Task, Pointer
+    from rsyscall.handle import Task, Pointer, WrittenPointer
     from rsyscall.loader import NativeFunction
+
+__all__ = [
+    'CpuSet',
+]
 
 class CLONE(enum.IntFlag):
     "The flag argument to clone, unshare, and setns"
@@ -79,6 +83,47 @@ class Stack(Serializable, t.Generic[T_borrowable]):
     def from_bytes(cls: t.Type[T_stack], data: bytes) -> T_stack:
         raise Exception("nay")
 
+class CpuSet(Struct, t.Set[int]):
+    """cpu_set_t, as used in sched_setaffinity and sched_getaffinity
+
+    Currently we fix the size of the cpuset at 1024 bits, just like glibc. To
+    support systems with more CPUs, we should loosen this fixed-size-ness.
+
+    """
+    def to_bytes(self) -> bytes:
+        output = [0]*16
+        for val in self:
+            idx = val // 64
+            bit = val % 64
+            output[idx] |= 1 << bit
+        return bytes(ffi.buffer(ffi.new('cpu_set_t const*', (output,))))
+
+    T = t.TypeVar('T', bound='CpuSet')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        struct = ffi.cast('cpu_set_t*', ffi.from_buffer(data))
+        ret: t.List[int] = []
+        for i, val in enumerate(getattr(struct, '__bits')):
+            inc = (64*i)
+            for bit in bits(val, one_indexed=False):
+                ret.append(bit)
+        return cls(ret)
+
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('cpu_set_t')
+
+import rsyscall.far
+class SchedTask(rsyscall.far.Task):
+    async def sched_setaffinity(self, mask: WrittenPointer[CpuSet]) -> None:
+        with mask.borrow(self) as mask_n:
+            await _sched_setaffinity(self.sysif, 0, mask.size(), mask_n)
+
+    async def sched_getaffinity(self, mask: Pointer[CpuSet]) -> Pointer[CpuSet]:
+        with mask.borrow(self) as mask_n:
+            await _sched_getaffinity(self.sysif, 0, mask.size(), mask_n)
+        return mask
+
 #### Raw syscalls ####
 from rsyscall.near.sysif import SyscallInterface
 from rsyscall.sys.syscall import SYS
@@ -101,3 +146,17 @@ async def _clone(sysif: SyscallInterface, flags: int, child_stack: near.Address,
 async def _unshare(sysif: SyscallInterface, flags: CLONE) -> None:
     await sysif.syscall(SYS.unshare, flags)
 
+async def _sched_setaffinity(sysif: SyscallInterface, pid: int, cpusetsize: int, mask: near.Address) -> None:
+    await sysif.syscall(SYS.sched_setaffinity, pid, cpusetsize, mask)
+
+async def _sched_getaffinity(sysif: SyscallInterface, pid: int, cpusetsize: int, mask: near.Address) -> None:
+    await sysif.syscall(SYS.sched_getaffinity, pid, cpusetsize, mask)
+
+
+#### Tests ####
+from unittest import TestCase
+class TestEpoll(TestCase):
+    def test_cpu_set(self) -> None:
+        initial = CpuSet([42])
+        output = CpuSet.from_bytes(initial.to_bytes())
+        self.assertEqual(initial, output)

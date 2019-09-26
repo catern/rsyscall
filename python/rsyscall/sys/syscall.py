@@ -63,6 +63,8 @@ class SYS(enum.IntEnum):
     renameat2 = lib.SYS_renameat2
     rt_sigaction = lib.SYS_rt_sigaction
     rt_sigprocmask = lib.SYS_rt_sigprocmask
+    sched_setaffinity = lib.SYS_sched_setaffinity
+    sched_getaffinity = lib.SYS_sched_getaffinity
     sendmsg = lib.SYS_sendmsg
     set_robust_list = lib.SYS_set_robust_list
     set_tid_address = lib.SYS_set_tid_address
