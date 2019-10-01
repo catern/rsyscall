@@ -28,7 +28,9 @@ from rsyscall.sys.mman import PROT, MAP
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+# We set eq=False because two distinct zero-length allocations can be identical in all
+# their fields, yet they should not be treated as equal, such as in calls to .index()
+@dataclass(eq=False)
 class Allocation(AllocationInterface):
     """An allocation from some Arena.
 
@@ -85,7 +87,8 @@ class Allocation(AllocationInterface):
         a_idx = arena.allocations.index(self)
         b_idx = arena.allocations.index(other)
         if a_idx + 1 != b_idx:
-            raise Exception("allocations are unexpectedly at non-adjacent indices", a_idx, b_idx)
+            raise Exception("allocations are unexpectedly at non-adjacent indices",
+                            a_idx, self, id(self), b_idx, other, id(other))
         new = Allocation(self.arena, self.start, other.end, valid=False)
         self.free()
         other.free()
