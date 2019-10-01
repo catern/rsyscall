@@ -19,11 +19,11 @@ from rsyscall.unistd import Pipe
 
 async def f(thr: Thread, pipe: Pipe) -> None:
     # write some data to memory
-    in_data_ptr = await thr.ram.ptr(b"hello world")
+    in_data_ptr = await thr.ptr(b"hello world")
     # write that data to the write-end of the pipe
     written_ptr, remaining_ptr = await pipe.write.write(in_data_ptr)
     # read that data from the read-end of the pipe
-    read_ptr, unused_ptr = await pipe.read.read(written)
+    read_ptr, unused_ptr = await pipe.read.read(written_ptr)
     if read_ptr.bytesize() != in_data_ptr.bytesize():
         raise Exception("unexpected partial write or read happened")
     # read the data from memory into a Python bytes object
@@ -49,7 +49,7 @@ The Pipe class contains the two file descriptor ends of the pipe in the "read" a
 
 #+BEGIN_SRC python
     # write some data to memory
-    in_data_ptr = await thr.ram.ptr(b"hello world")
+    in_data_ptr = await thr.ptr(b"hello world")
 #+END_SRC
 
 In rsyscall, syscalls that operate on memory take a Pointer argument.
@@ -82,13 +82,13 @@ since it has been split into the two Pointers returned back out.
 
 #+BEGIN_SRC python
     # read that data from the read-end of the pipe
-    read_ptr, unused_ptr = await pipe.read.read(written)
+    read_ptr, unused_ptr = await pipe.read.read(written_ptr)
 #+END_SRC
 
 We then call the `read` syscall on the read-end of the pipe.
-We reuse the `written` pointer as a buffer to read into,
+We reuse the `written_ptr` pointer as a buffer to read into,
 so we don't have to allocate more memory.
-We know that the `written` pointer is exactly the right size for reading out the data that is currently in the pipe,
+We know that the `written_ptr` pointer is exactly the right size for reading out the data that is currently in the pipe,
 since it in fact points to the original copy of the data that is currently in the pipe.
 This is true even if there was a partial write, or if no data was written at all.
 This is only marginally useful for this function,
@@ -103,7 +103,7 @@ If we tried to use the original pointer,
 we'd get a Python-level exception about an invalid pointer before any syscall is made.
 
 #+BEGIN_SRC python
-    if read_ptr.bytesize() != in_data_ptr.bytesize():
+    if read_ptr.size() != in_data_ptr.size():
         raise Exception("unexpected partial write or read happened")
 #+END_SRC
 
@@ -157,10 +157,11 @@ After a split,
 the pointers may be merged back together so that the whole buffer may be reused.
 For example:
 #+BEGIN_SRC python
-read, rest = await fd.read(await ram.malloc(bytes, 4096))
-while read.size() > 0:
-  print(await read.read())
-  read, rest = await fd.read(read.merge(rest))
+read_buf, rest = await fd.read(await thr.malloc(bytes, 4096))
+# TODO change from read/write pointer to load/store?
+while read_buf.size() > 0:
+  print(await read_buf.read())
+  read_buf, rest = await fd.read(read_buf.merge(rest))
 #+END_SRC
 
 In general, any two pointers that are adjacent in memory may be merged into a single allocation.
@@ -178,14 +179,14 @@ Consult the documentation for more details about specific syscalls.
 
   For example:
 #+BEGIN_SRC python
-async def f(thr: Thread) -> Pipe:
-    buf = await thr.ram.malloc(Pipe)
+async def make_pipe(thr: Thread) -> Pipe:
+    buf = await thr.malloc(Pipe)
     written_buf = await thr.task.pipe(buf)
     return await written_buf.read()
 
 # or, more concisely:
-async def f(thr: Thread) -> Pipe:
-    return await (await thr.task.pipe(await thr.ram.malloc(Pipe))).read()
+async def make_pipe(thr: Thread) -> Pipe:
+    return await (await thr.task.pipe(await thr.malloc(Pipe))).read()
 #+END_SRC
 
 `malloc` takes as its first argument a type to allocate a buffer for.
@@ -204,7 +205,7 @@ For example:
 from rsyscall import Path
 from rsyscall.fcntl import O
 
-fd = await thr.task.open(await thr.ram.ptr(Path("/dev/null")), O.RDONLY)
+fd = await thr.task.open(await thr.ptr(Path("/dev/null")), O.RDONLY)
 #+END_SRC
 
 We get a pointer to the path "/dev/null" in memory,
@@ -237,7 +238,7 @@ then call the "open" syscall on that path to get a file descriptor.
   #+BEGIN_SRC python
   from rsyscall.netinet.in_ import SockaddrIn
 
-  await sock.bind(await thr.ram.ptr(SockaddrIn(53, "127.0.0.1")))
+  await sock.bind(await thr.ptr(SockaddrIn(53, "127.0.0.1")))
   #+END_SRC
 
   Some headers or constants (such as "netinet/in.h") collide with Python keywords ("in");
@@ -267,9 +268,9 @@ then call the "open" syscall on that path to get a file descriptor.
   if you want it to be deterministically closed.
 
   Syscalls which don't fit into another category are methods on the task object.
-  This notably includes all syscalls operating on paths;
-  we don't yet represent paths as a concrete object,
-  primarily because the ownership model of a path is not clear.
+  This notably includes all syscalls operating on paths.
+  We don't represent paths as an owned, garbage-collected object,
+  primarily because the ownership and cleanup model of a path is not clear.
 
   Some syscalls can operate in multiple modes;
   for example, `kill` can operate on a process, but it can also operate on process groups.
@@ -287,9 +288,11 @@ then call the "open" syscall on that path to get a file descriptor.
    The Task is the low-level representation of a thread.
    All syscalls are either methods on the Task,
    or methods on objects returned by the Task.
-** ram: RAM
+** malloc/ptr and ram: RAM
    The RAM abstracts over memory and allows us to create pointers which can be passed to syscalls.
-** epoller: Epoller
+
+   It's what provides the malloc/ptr helpers that are directly accessible on a Thread.
+** make_afd and epoller: Epoller
    The Epoller is an interface to epoll.
    In general, it won't be used directly;
    instead, you use it by passing a file descriptor to `thread.make_afd`,

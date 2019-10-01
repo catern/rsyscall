@@ -25,7 +25,7 @@ async def example1(thr: Thread, hello_path: Path) -> None:
     child_process = await child.execve(hello_path, ['hello'])
     event = await child_process.waitpid(W.EXITED)
     if not (event.code == CLD.EXITED and event.exit_status == 0):
-        raise Exception("GNU hello exited uncleanly :(")
+        raise Exception("hello exited uncleanly :(")
 #+END_SRC
 
 This function creates a child process running GNU hello,
@@ -80,7 +80,7 @@ even if we can no longer control it.
 #+BEGIN_SRC python
     event = await child_process.waitpid(W.EXITED)
     if not (event.code == CLD.EXITED and event.exit_status == 0):
-        raise Exception("GNU hello exited uncleanly :(")
+        raise Exception("hello exited uncleanly :(")
 #+END_SRC
 
 We call `waitpid(W.EXITED)` on the child process,
@@ -174,7 +174,7 @@ async def example2(thr: Thread, cat_path: Path, pair: Socketpair) -> None:
     ## exec cat on the child thread
     child_process = await child.execve(cat_path, ['cat'])
     ## write and read some data sent through cat
-    written, _ = await pair.second.write(await thr.ram.ptr(b"hello world"))
+    written, _ = await pair.second.write(await thr.ptr(b"hello world"))
     read, _ = await pair.second.read(written)
     print(await read.read())
     ## wait for cat to exit
@@ -242,7 +242,7 @@ We perform the exec, getting back a child process we can monitor.
 
 #+BEGIN_SRC python
     ## write and read some data sent through cat
-    written, _ = await pair.second.write(await thr.ram.ptr(b"hello world"))
+    written, _ = await pair.second.write(await thr.ptr(b"hello world"))
     read, _ = await pair.second.read(written)
     print(await read.read())
 #+END_SRC
@@ -304,7 +304,7 @@ async def example3(thr: Thread, sh_path: Path, pipe: Pipe) -> None:
     # exit the init process to shut down the pid namespace 
     await init.exit(0)
     # we read the pipe and get an EOF, since the write-end has been closed.
-    read, _ = await pipe.read.read(await thr.ram.malloc(bytes, 1))
+    read, _ = await pipe.read.read(await thr.malloc(bytes, 1))
     if read.size() != 0:
         raise Exception("unexpectedly actually read something?!??")
 #+END_SRC
@@ -373,7 +373,7 @@ This kills the "sleep inf" process inside the pid namespace.
 
 #+BEGIN_SRC python
     # we read the pipe and get an EOF, since the write-end has been closed.
-    read, _ = await pipe.read.read(await thr.ram.malloc(bytes, 1))
+    read, _ = await pipe.read.read(await thr.malloc(bytes, 1))
     if read.size() != 0:
         raise Exception("unexpectedly actually read something?!??")
 #+END_SRC
