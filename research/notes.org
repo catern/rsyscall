@@ -18785,6 +18785,9 @@ we could even modify NSS and include the patch in nixpkgs
 
    Hmm I guess it's not immediately necessary to have that because we can unshare CLONE.FILES in fork,
    and that's still pretty useful.
+
+   ok we made a direct inherit method which doesn't require you to have an fd in advance.
+   very cool!
 ** DONE make it possible to remove CLONE.FILES from fork
    we can just add a new keyword argument "unshare: CLONE",
    which are things to mask out of the fork,
@@ -18888,7 +18891,7 @@ we could even modify NSS and include the patch in nixpkgs
    we clear the snapshot so we can no longer inherit.
 
    ok yeah i think it neatly fits in.
-** TODO make ptr/malloc helpers directly on Thread
+** DONE make ptr/malloc helpers directly on Thread
    they are by far the most used methods
 ** DONE rename fork to clone
    I think this is wise anyway, fork is too confusing a name.
