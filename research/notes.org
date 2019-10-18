@@ -18895,6 +18895,48 @@ we could even modify NSS and include the patch in nixpkgs
    they are by far the most used methods
 ** DONE rename fork to clone
    I think this is wise anyway, fork is too confusing a name.
+** DONE consider making ssh bootstrap not require an executable tmpdir
+   hey #osdev, where could I ask for help with something that sounds like a super-sketchy exploitation technique?
+   (but which is actually part of my OS) I feel like security people could help since it sounds like shellcode or something
+
+   ok I'll try asking here but first, I swear I'm not trying to actually do anything evil,
+   this is just trying to support a niche way to bootstrap distributed operation for my OS. that being said...
+
+   I have a POSIX shell on x86_64 Linux to which I can send arbitrary,
+   and I have a pipe of arbitrary data on stdin; and I want to get to a state where I can execute arbitrary instructions,
+   or at least execute arbitrary syscalls, and I want to do this robustly without relying on the configuration of the target.
+   My first attempt was writing over an executable in /tmp, but some machines have noexec set on /tmp, so now I'm trying to think of something more reliable, if I can
+*** user namespaces plus mount a new tmpfs!
+    perfect! that's how I make an executable binary!
+
+    I can do that from the shell
+
+    dear diary today I hacked myself
+*** excellent resource
+    excellent survey:
+    https://blog.rapid7.com/2019/01/03/santas-elfs-running-linux-executables-without-execve/
+
+    got that from asking in smash the stack irc
+
+    use ctypes.sh? or bash builtins generally?
+    https://unix.stackexchange.com/questions/402834/execute-system-calls-directly
+    probably doesn't work, because of noexec.
+*** DONE hmmm, give up?
+    so it's pretty hard to do this robustly
+
+    we should support a mode where we already know the location of the bootstrap executable on the remote system
+
+    and also, like, if the whole system is noexec,
+    we can't deploy anything there anyway!
+    so. y'know.
+
+    that's not a scenario we need to deal with.
+    if the whole system is noexec,
+    then we should control it from the start.
+
+    hmm so also we should maybe test noexec?
+    or. allow overriding the bootstrap script?
+    yeah something like that sure, but for now we'll give up
 * deployment
   hmm I could include rsyscall.c directly into the python package
 
