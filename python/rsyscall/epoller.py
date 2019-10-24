@@ -451,9 +451,9 @@ class AsyncFileDescriptor:
         addr = (await (await sockbuf.read()).buf.read()).parse()
         return fd, addr
 
-    async def bind(self, addr: T_addr) -> None:
+    async def bind(self, addr: WrittenPointer[Address]) -> None:
         "Call bind; bind already doesn't block the thread."
-        await self.handle.bind(await self.ram.ptr(addr))
+        await self.handle.bind(addr)
 
     async def connect(self, addr: WrittenPointer[Address]) -> None:
         "Call connect without blocking the thread."
