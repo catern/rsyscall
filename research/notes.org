@@ -18937,6 +18937,29 @@ we could even modify NSS and include the patch in nixpkgs
     hmm so also we should maybe test noexec?
     or. allow overriding the bootstrap script?
     yeah something like that sure, but for now we'll give up
+** DONE weird ssh failure
+   ok it seems that we aren't issuing the waitids to see that the exec on the bootstrap thread completed?
+
+   huh?
+
+   oh i just messed up and cleared the signal mask is all, lol oops
+** TODO fix -static breaking nix build
+   ok so it seems that /build/ is in the rpath
+
+   but only when built by nix, when I build it myself it doesn't seem to be there
+
+   let's try using the nix build commands?
+
+   wow even more annoying,
+   I actually build a completely static executable with this stuff ummmm
+
+   ARGH ok, progress
+
+   (makeStaticBinaries stdenv) gives me static binaries, which is good
+
+   it makes my lib static too which is bad, lol, but we can do this I'm sure.
+** DONE add pwrite
+   needed to add fstat to test it
 * deployment
   hmm I could include rsyscall.c directly into the python package
 
