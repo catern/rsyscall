@@ -101,6 +101,13 @@ struct fdpair {
     int second;
 };
 
+typedef signed... time_t;
+
+struct timespec {
+    time_t tv_sec;                /* Seconds */
+    long   tv_nsec;               /* Nanoseconds */
+};
+
 int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
 int epoll_create1(int flags);
 int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
@@ -248,6 +255,7 @@ struct signalfd_siginfo {
 #define SYS_read ...
 #define SYS_write ...
 #define SYS_pread64 ...
+#define SYS_pwrite64 ...
 #define SYS_recvfrom ...
 #define SYS_close ...
 #define SYS_dup3 ...
@@ -303,6 +311,29 @@ struct signalfd_siginfo {
 #define W_OK ...
 #define X_OK ...
 #define F_OK ...
+
+// stat
+#define SYS_fstat ...
+
+struct stat {
+	unsigned long	st_dev;
+	unsigned long	st_ino;
+	unsigned long	st_nlink;
+
+	unsigned int		st_mode;
+	unsigned int		st_uid;
+	unsigned int		st_gid;
+	unsigned int		__pad0;
+	unsigned long	st_rdev;
+	long		st_size;
+	long		st_blksize;
+	long		st_blocks;	/* Number 512-byte blocks allocated. */
+
+	struct timespec	st_atim;
+	struct timespec	st_mtim;
+	struct timespec	st_ctim;
+	...;
+};
 
 // prctl
 #define SYS_prctl ...
@@ -423,13 +454,6 @@ struct pollfd {
 
 #define TFD_TIMER_ABSTIME ...
 #define TFD_TIMER_CANCEL_ON_SET ...
-
-typedef signed... time_t;
-
-struct timespec {
-    time_t tv_sec;                /* Seconds */
-    long   tv_nsec;               /* Nanoseconds */
-};
 
 struct itimerspec {
     struct timespec it_interval;  /* Interval for periodic timer */

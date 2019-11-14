@@ -29,6 +29,7 @@ class SYS(enum.IntEnum):
     fchdir = lib.SYS_fchdir
     fchmod = lib.SYS_fchmod
     fcntl = lib.SYS_fcntl
+    fstat = lib.SYS_fstat
     ftruncate = lib.SYS_ftruncate
     getdents64 = lib.SYS_getdents64
     getgid = lib.SYS_getgid
@@ -55,6 +56,7 @@ class SYS(enum.IntEnum):
     prctl = lib.SYS_prctl
     pread64 = lib.SYS_pread64
     preadv2 = lib.SYS_preadv2
+    pwrite64 = lib.SYS_pwrite64
     pwritev2 = lib.SYS_pwritev2
     read = lib.SYS_read
     readlinkat = lib.SYS_readlinkat

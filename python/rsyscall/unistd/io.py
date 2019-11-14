@@ -43,6 +43,12 @@ class SeekableFileDescriptor(IOFileDescriptor):
             ret = await _pread(self.task.sysif, self.near, buf.near, buf.size(), offset)
             return buf.split(ret)
 
+    async def pwrite(self, buf: Pointer, offset: int) -> t.Tuple[Pointer, Pointer]:
+        self._validate()
+        with buf.borrow(self.task):
+            ret = await _pwrite(self.task.sysif, self.near, buf.near, buf.size(), offset)
+            return buf.split(ret)
+
     async def lseek(self, offset: int, whence: SEEK) -> int:
         self._validate()
         return (await _lseek(self.task.sysif, self.near, offset, whence))
@@ -63,6 +69,10 @@ async def _write(sysif: SyscallInterface, fd: near.FileDescriptor,
 async def _pread(sysif: SyscallInterface, fd: near.FileDescriptor,
                  buf: near.Address, count: int, offset: int) -> int:
     return (await sysif.syscall(SYS.pread64, fd, buf, count, offset))
+
+async def _pwrite(sysif: SyscallInterface, fd: near.FileDescriptor,
+                  buf: near.Address, count: int, offset: int) -> int:
+    return (await sysif.syscall(SYS.pwrite64, fd, buf, count, offset))
 
 async def _lseek(sysif: SyscallInterface, fd: near.FileDescriptor,
                  offset: int, whence: SEEK) -> int:

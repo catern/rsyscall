@@ -47,6 +47,7 @@ from rsyscall.sys.inotify  import InotifyTask,  InotifyFileDescriptor
 from rsyscall.sys.signalfd import SignalfdTask, SignalFileDescriptor
 from rsyscall.sys.memfd    import MemfdTask
 from rsyscall.sys.mman     import MemoryMappingTask, MappableFileDescriptor
+from rsyscall.sys.stat     import               StatFileDescriptor
 from rsyscall.signal       import SignalTask
 from rsyscall.sys.socket   import SocketTask,   SocketFileDescriptor
 from rsyscall.sys.ioctl    import               IoctlFileDescriptor
@@ -80,6 +81,7 @@ class FileDescriptor(
         FSFileDescriptor,
         SocketFileDescriptor,
         MappableFileDescriptor,
+        StatFileDescriptor,
         BaseFileDescriptor,
 ):
     """A file descriptor accessed through some Task, with most FD-based syscalls as methods
