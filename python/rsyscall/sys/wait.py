@@ -3,6 +3,7 @@ import typing as t
 from dataclasses import dataclass
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.signal import Siginfo, SIG
+from rsyscall.command import Command
 import enum
 
 class IdType(enum.IntEnum):
@@ -34,7 +35,12 @@ class W(enum.IntFlag):
     NOTHREAD = lib._WNOTHREAD
 
 class UncleanExit(Exception):
-    pass
+    def __init__(self, state: ChildState, command: Command=None) -> None:
+        super().__init__(state, command)
+        self.state = state
+        # this is optionally attached to UncleanExit as a useful additional bit
+        # of information for debugging.
+        self.command = command
 
 @dataclass
 class ChildState:
