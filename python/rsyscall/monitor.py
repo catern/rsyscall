@@ -172,6 +172,9 @@ class AsyncChildProcess:
                 # we received a SIGCHLD while calling waitid.
                 self.next_sigchld = saved_sigchld
 
+    async def wait(self, options: W=W.EXITED|W.STOPPED|W.CONTINUED) -> ChildState:
+        return await self.waitpid(options)
+
     async def check(self) -> ChildState:
         "Wait for this child to die, and once it does, throw if it didn't exit cleanly"
         try:
