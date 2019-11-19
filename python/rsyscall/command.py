@@ -39,7 +39,7 @@ class Command:
         "Render this Command as a string which could be passed to a shell."
         ret = ""
         for key, value in self.env_updates.items():
-            ret += os.fsdecode(key) + "=" + os.fsdecode(value)
+            ret += os.fsdecode(key) + "=" + os.fsdecode(value) + " "
         ret += os.fsdecode(self.executable_path)
         # skip first argument
         for arg in self.arguments[1:]:
