@@ -11,13 +11,24 @@ __all__ = [
     'SockaddrIn6',
 ]
 
+@dataclass(frozen=True)
 class SockaddrIn(Address):
-    "Representation of struct sockaddr_in"
+    """Representation of struct sockaddr_in
+
+    The port is in totally-normal host byte order, even though with the real
+    struct sockaddr_in, the port (and address) would be in network byte
+    order. That's just an encoding quirk of C, not something we want to copy.
+
+    """
+    port: int
+    _addr: t.Union[str, int, ipaddress.IPv4Address]
     family = AF.INET
-    def __init__(self, port: int, addr: t.Union[str, int, ipaddress.IPv4Address]) -> None:
-        # these are in host byte order, of course
-        self.port = port
-        self.addr = ipaddress.IPv4Address(addr)
+    def __post_init__(self) -> None:
+        # the dataclass is frozen so we have to do this; we want to support
+        # str/int arguments when constructing a SockaddrIn, but always have them
+        # be IPv4Address when read back out.
+        object.__setattr__(self, 'addr', ipaddress.IPv4Address(self._addr))
+        self.addr: ipaddress.IPv4Address
 
     def to_bytes(self) -> bytes:
         addr = ffi.new('struct sockaddr_in*', (AF.INET, socket.htons(self.port), (socket.htonl(int(self.addr)),)))
