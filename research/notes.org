@@ -18960,6 +18960,17 @@ we could even modify NSS and include the patch in nixpkgs
    it makes my lib static too which is bad, lol, but we can do this I'm sure.
 ** DONE add pwrite
    needed to add fstat to test it
+** TODO stop leaking ssh forwarding process
+   This is actually bad because if we do a loop of sshing, we will just accumulate zombies for that process,
+   because we'll never wait on it.
+** TODO make asyncchildprocess more consistent
+returning death state is bad because it makes it seem as if you can be multi-threaded
+
+but you can't actually
+
+we should properly support multi-threaded waiting for the next child state - or something.
+
+waiting for death, at least.
 * deployment
   hmm I could include rsyscall.c directly into the python package
 
