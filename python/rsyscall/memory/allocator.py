@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from rsyscall.sys.mman import PROT, MAP
 logger = logging.getLogger(__name__)
 
+class UseAfterFreeError(Exception):
+    pass
 
 # We set eq=False because two distinct zero-length allocations can be identical in all
 # their fields, yet they should not be treated as equal, such as in calls to .index()
@@ -47,7 +49,13 @@ class Allocation(AllocationInterface):
 
     def offset(self) -> int:
         if not self.valid:
-            raise Exception("can't get offset for freed allocation")
+            raise UseAfterFreeError(
+                "This allocation has already been freed; refusing to return its offset for use in pointers",
+                "start", self.start,
+                "end", self.end,
+                "idx", self.arena.allocations.index(self),
+                "self.arena.allocations", self.arena.allocations,
+            )
         return self.start
 
     def free(self) -> None:
