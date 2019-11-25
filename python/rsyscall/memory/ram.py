@@ -227,9 +227,9 @@ async def perform_batch(
 
     We had a more explicit style before, where you explicitly listed
     the sizes of the allocations you wanted, but it was far less
-    ergonomic and less robust. This style is nominally less efficient,
-    but it improves robustness by making it not possible to mess up in
-    calculating the size you want to allocate.
+    ergonomic and less robust. This style is nominally less efficient
+    in CPU time, but it improves robustness by making it not possible
+    to mess up in calculating the size you want to allocate.
 
     """
     later_allocator = LaterAllocator()
