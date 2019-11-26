@@ -49,11 +49,14 @@ class Allocation(AllocationInterface):
 
     def offset(self) -> int:
         if not self.valid:
+            try:
+                idx = self.arena.allocations.index(self)
+            except ValueError:
+                idx = -1
             raise UseAfterFreeError(
                 "This allocation has already been freed; refusing to return its offset for use in pointers",
-                "start", self.start,
-                "end", self.end,
-                "idx", self.arena.allocations.index(self),
+                self,
+                "idx", idx,
                 "self.arena.allocations", self.arena.allocations,
             )
         return self.start
