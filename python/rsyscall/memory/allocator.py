@@ -15,7 +15,7 @@ from rsyscall.far import AddressSpace
 from rsyscall.near.sysif import SyscallInterface
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.memory.allocation_interface import AllocationInterface
+from rsyscall.memory.allocation_interface import AllocationInterface, UseAfterFreeError
 from rsyscall.handle import MemoryMapping, Task
 import trio
 import abc
@@ -26,9 +26,6 @@ import logging
 from dataclasses import dataclass
 from rsyscall.sys.mman import PROT, MAP
 logger = logging.getLogger(__name__)
-
-class UseAfterFreeError(Exception):
-    pass
 
 # We set eq=False because two distinct zero-length allocations can be identical in all
 # their fields, yet they should not be treated as equal, such as in calls to .index()

@@ -3,6 +3,9 @@ from __future__ import annotations
 import abc
 import typing as t
 
+class UseAfterFreeError(Exception):
+    pass
+
 class AllocationInterface:
     """Represents an allocation of a range of bytes in some file
 

@@ -6,7 +6,7 @@ import typing as t
 import logging
 import contextlib
 from rsyscall.struct import Serializer
-from rsyscall.memory.allocation_interface import AllocationInterface
+from rsyscall.memory.allocation_interface import AllocationInterface, UseAfterFreeError
 from rsyscall.memory.transport import MemoryGateway
 from rsyscall.sys.mman import MemoryMapping
 logger = logging.getLogger(__name__)
@@ -146,7 +146,13 @@ class Pointer(t.Generic[T]):
         """
         # TODO hmm should maybe validate that this fits in the bounds of the mapping I guess
         self._validate()
-        return self._get_raw_near()
+        try:
+            return self.mapping.near.as_address() + self.allocation.offset()
+        except UseAfterFreeError as e:
+            raise UseAfterFreeError(
+                "Allocation inside this Pointer", self,
+                "is freed, but the pointer is still valid; someone violated some invariants",
+            ) from e
 
     @contextlib.contextmanager
     def borrow(self, task: rsyscall.far.Task) -> t.Iterator[rsyscall.near.Address]:
@@ -171,7 +177,7 @@ class Pointer(t.Generic[T]):
 
     def _validate(self) -> None:
         if not self.valid:
-            raise Exception("handle is no longer valid")
+            raise UseAfterFreeError("handle is no longer valid")
 
     def free(self) -> None:
         """Free this pointer, invalidating it and releasing the underlying allocation.
@@ -216,15 +222,11 @@ class Pointer(t.Generic[T]):
         written = await write_buf.write(value)
         return rest, written
 
-    def _get_raw_near(self) -> rsyscall.near.Address:
-        # only for printing purposes
-        return self.mapping.near.as_address() + self.allocation.offset()
-
     def __repr__(self) -> str:
-        if self.valid:
+        try:
             return f"Pointer({self.near}, {self.serializer})"
-        else:
-            return f"Pointer(invalid, {self._get_raw_near()}, {self.serializer})"
+        except UseAfterFreeError:
+            return f"Pointer(valid={self.valid}, {self.mapping}, {self.allocation}, {self.serializer})"
 
     #### Various ways to create new Pointers by changing one thing about the old pointer. 
     def _with_mapping(self: T_pointer, mapping: MemoryMapping) -> T_pointer:
@@ -294,7 +296,10 @@ class WrittenPointer(Pointer[T_co]):
         self.value = value
 
     def __repr__(self) -> str:
-        return f"WrittenPointer({self.near}, {self.value})"
+        if self.valid:
+            return f"WrittenPointer({self.near}, {self.value})"
+        else:
+            return f"WrittenPointer(invalid, {self.mapping}, {self.allocation}, {self.value})"
 
     def _with_mapping(self, mapping: MemoryMapping) -> WrittenPointer:
         if type(self) is not WrittenPointer:
