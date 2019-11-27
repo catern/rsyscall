@@ -296,10 +296,10 @@ class WrittenPointer(Pointer[T_co]):
         self.value = value
 
     def __repr__(self) -> str:
-        if self.valid:
+        try:
             return f"WrittenPointer({self.near}, {self.value})"
-        else:
-            return f"WrittenPointer(invalid, {self.mapping}, {self.allocation}, {self.value})"
+        except UseAfterFreeError:
+            return f"WrittenPointer(valid={self.valid}, {self.mapping}, {self.allocation}, {self.value})"
 
     def _with_mapping(self, mapping: MemoryMapping) -> WrittenPointer:
         if type(self) is not WrittenPointer:

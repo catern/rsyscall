@@ -11,9 +11,15 @@ class TestSocket(TrioTestCase):
         buf.free()
         with self.assertRaises(UseAfterFreeError):
             buf.near
+        str(buf)
 
     async def test_use_after_free_allocation(self) -> None:
         buf = await self.thr.malloc(bytes, 16)
         buf.allocation.free()
         with self.assertRaises(UseAfterFreeError):
             buf.near
+        buf = await self.thr.ptr(b'foo')
+        buf.allocation.free()
+        with self.assertRaises(UseAfterFreeError):
+            buf.near
+        str(buf)
