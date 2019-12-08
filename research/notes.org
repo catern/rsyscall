@@ -19988,3 +19988,119 @@ would fit in registers. Besides
 
 I don't lik
 I don't like this usage of a struct 
+* static typing against executables
+  ok ok ok
+
+  so we want to do this static typing against executables thing
+
+  where we call functions in the executable directly
+
+  and we get static typing against it
+
+  which is better than with argv because that's just totally untyped.
+
+  so one way of doing this is, I guess, if we have some executable and we,
+  I guess, just load it up and call binaries in it.
+  hm.
+  how do we do more static typing here?
+
+  we could dynamically load libraries that have static interfaces I suppose.
+  but that doesn't support statically linked binaries which I guess would be nice to support.
+  and also is a bit weird and unnecessary.
+
+  well ok so the most naive way is just,
+  there's some annotation on the library,
+  which says what it links against,
+  and.
+
+  well really we need to be part of the build, if we're going to link against it.
+
+  i mean, the headers are available, sure,
+  but we don't konw, after the build, what libraies we can use from it.
+
+  we need headers for binaries, basically.
+  typed binaries.
+
+  i mean, that's the most naive way anyway,
+  to generate...
+  I guess maybe generate a list of headers or something?
+  well how do we check that the linking is right?
+  well we could basically say,
+  include these headers,
+  and check that those symbols are in the binary at build type
+  (which is what linking does)
+  and that's what we do.
+
+  basically like C!
+
+  kinda neat actually.
+  I mean, assuming the symbols are in there...
+  I guess we need an un-stripped binary or something? not sure how it works...
+  static libraries work fine, but do they get stripped or something...
+  no I think the symbols are still there...
+  main is anyway...
+
+  ok so regardless.
+  that's a pretty cool way to do it.
+
+  we can say it's: "linking against an executable".
+  or "linking against a C binary" or "a C executable" or something.
+  or "linking over RPC" or something.
+
+  anyway, anyway, so that's what we can do if we're using a C interface.
+  the more tricky thing is if we are calling with RPC.
+
+  although why would we call with RPC if we can use the C interface?
+  seems like a waste!
+
+  if we know the types, and the C executable is going to start the server when it launches,
+  we can just use normal C.
+
+  that seems really pretty straightforward.
+
+  I don't think we need any fancy PYthon things.
+
+  ok but let's consider RPC as well.
+  so if we have an RPC interface,
+  which we could generate from the headers.
+  then how could we check that?
+
+  well, there's no obvious way
+
+  urgh and symbols are stripped also from C executables, with gcc -s/the strip command.
+
+  ok ok ok.
+
+  so in either case we have to tell the user to compile things a little differently,
+  either to not strip symbols,
+  or to include some more RPC typing information with the binary.
+
+  now if we had typing attached, we could work for any binary
+  but still, the fact that we have to generate a separate interface is a hassle
+
+  oh! argh! yeah and I totally forgot that we'll be throwing away most of the RPC stuff.
+  we won't serialize data or any of that stuff.
+
+  it's all going to happen in-process. which makes things tricky, hm.
+  cuz we just want to deal with pointers.
+
+  ok also we need to pass large values by pointer,
+  which we can do.
+
+  oh we can have basically three arguments:
+  syscall, data, cfunc.
+
+  um wait no.
+
+  something like that anyway.
+
+  and we deal with functions directly,
+  and translate large types into pointers.
+  
+  ok so yeah we need to learn what the C ABI is.
+
+  to learn what a large type is
+  
+  and we can translate headers into different types,
+  depending on what size values we want to treat as values and stream across,
+  and what size we want to have to access through pointers.
