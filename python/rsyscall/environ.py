@@ -43,7 +43,7 @@ class ExecutablePathCache:
         self.ram = ram
         self.paths = [Path(path) for path in paths]
         self.fds: t.Dict[Path, t.Optional[FileDescriptor]] = {}
-        self.name_to_path: t.Dict[str, Path] = {}
+        self.path_cache: t.Dict[str, Path] = {}
 
     async def _get_fd_for_path(self, path: Path) -> t.Optional[FileDescriptor]:
         "Return a cached file descriptor for this path."
@@ -74,7 +74,7 @@ class ExecutablePathCache:
     async def which(self, name: str) -> Command:
         "Locate an executable with this name on PATH; throw ExecutableNotFound on failure"
         try:
-            path = self.name_to_path[name]
+            path = self.path_cache[name]
         except KeyError:
             nameptr = await self.ram.ptr(Path(name))
             # do the lookup for 64 paths at a time, that seems like a good batching number
@@ -90,7 +90,7 @@ class ExecutablePathCache:
                     break
             else:
                 raise ExecutableNotFound(name)
-            self.name_to_path[name] = path
+            self.path_cache[name] = path
         return Command(path/name, [name], {})
 
 class Environment:
