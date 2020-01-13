@@ -1,14 +1,14 @@
 from rsyscall.trio_test_case import TrioTestCase
 import trio
 
-class TestException(Exception):
+class MyException(Exception):
     pass
 
 async def sleep_and_throw() -> None:
     async with trio.open_nursery() as nursery:
         async def thing1() -> None:
             await trio.sleep(0)
-            raise TestException("ha ha")
+            raise MyException("ha ha")
         async def thing2() -> None:
             await trio.sleep(1000)
         nursery.start_soon(thing1)
@@ -22,7 +22,7 @@ class TestConcurrency(TrioTestCase):
             async def a2() -> None:
                 try:
                     await sleep_and_throw()
-                except TestException:
+                except MyException:
                     pass
                 finally:
                     nursery.cancel_scope.cancel()
