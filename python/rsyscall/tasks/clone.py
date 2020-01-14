@@ -232,7 +232,7 @@ async def clone_child_task(
         stack_value = parent.loader.make_trampoline_stack(trampoline)
         stack_buf = await sem.malloc(Stack, 4096)
         stack = await stack_buf.write_to_end(stack_value, alignment=16)
-        futex_pointer = await sem.ptr(FutexNode(None, Int32(0)))
+        futex_pointer = await sem.ptr(FutexNode(None, Int32(1)))
         return stack, futex_pointer
     # Create the stack we'll need, and the zero-initialized futex
     stack, futex_pointer = await parent.ram.perform_batch(op, arena)
