@@ -433,6 +433,9 @@ class SocketFileDescriptor(BaseFileDescriptor):
             except PermissionError as exn:
                 exn.filename = addr.value
                 raise
+            except FileNotFoundError as exn:
+                exn.filename = addr.value
+                raise
 
     async def connect(self, addr: WrittenPointer[Address]) -> None:
         self._validate()
