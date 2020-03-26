@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from rsyscall._raw import ffi # type: ignore
+from rsyscall._raw import lib, ffi # type: ignore
 from rsyscall.handle.fd import BaseFileDescriptor
 from rsyscall.handle.pointer import Pointer
 from rsyscall.near.sysif import SyscallInterface
@@ -11,10 +11,43 @@ import enum
 import rsyscall.near.types as near
 import typing as t
 
+class S_IF(enum.IntEnum):
+    SOCK = lib.S_IFSOCK
+    LNK = lib.S_IFLNK
+    REG = lib.S_IFREG
+    BLK = lib.S_IFBLK
+    DIR = lib.S_IFDIR
+    CHR = lib.S_IFCHR
+    IFO = lib.S_IFIFO
+    # mask with all set
+    MT = lib.S_IFMT
+
+class Mode(int):
+    def __repr__(self) -> str:
+        return oct(self)
+
+    def __str__(self) -> str:
+        return repr(self)
+
+@dataclass
+class TypeMode:
+    # should change this to DT I guess?
+    # maybe have an as_dt?
+    type: S_IF
+    mode: Mode
+
+    @staticmethod
+    def from_int(val: int) -> TypeMode:
+        type_bits = val & S_IF.MT
+        return TypeMode(S_IF(type_bits), Mode(val ^ type_bits))
+
+    def __int__(self) -> int:
+        return self.type | self.mode
+
 @dataclass
 class Stat(Struct):
     dev: int
-    mode: int
+    mode: TypeMode
     nlink: int
     uid: int
     gid: int
@@ -94,7 +127,7 @@ class TestStat(TestCase):
     def test_stat(self) -> None:
         initial = Stat(
             dev=0,
-            mode=0,
+            mode=TypeMode(S_IF.REG, Mode(0o777)),
             nlink=0,
             uid=0,
             gid=0,
