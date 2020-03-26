@@ -1,11 +1,12 @@
 let
   pkgs = import ../pinned.nix;
-  nix = pkgs.nixUnstable.overrideAttrs (_: { src = pkgs.fetchFromGitHub {
-      owner = "catern";
-      repo = "nix";
-      rev = "b287df11b5f0dd41821349def360139b79f3bc65";
-      sha256 = "0q8bnvz80dbg83z1m0mmg9rp3rv8y873vh4q1l04wkyqmzzimnnf";
-  };});
+  # nix = pkgs.nixUnstable.overrideAttrs (_: { src = pkgs.fetchFromGitHub {
+  #     owner = "catern";
+  #     repo = "nix";
+  #     rev = "b287df11b5f0dd41821349def360139b79f3bc65";
+  #     sha256 = "0q8bnvz80dbg83z1m0mmg9rp3rv8y873vh4q1l04wkyqmzzimnnf";
+  # };});
+  nix = pkgs.nix;
   hydra = pkgs.hydra;
   # hydra = (pkgs.hydra.override { nix = nix; }).overrideAttrs (_: { src = /home/sbaugh/.local/src/hydra; });
   # hydra = pkgs.hydra.overrideAttrs (_: { src = pkgs.fetchFromGitHub {
@@ -32,7 +33,8 @@ buildPythonPackage {
   src = ./.;
   checkInputs = [
   pydocstyle
-  (mypy.overrideAttrs (_: { src = /home/sbaugh/.local/src/mypy; }))
+  mypy
+  # (mypy.overrideAttrs (_: { src = /home/sbaugh/.local/src/mypy; }))
   typing-extensions
 pytest ];
   # ssh tests don't work because the build user's login shell is /noshell :(
@@ -51,10 +53,10 @@ pytest ];
   strictDeps = false;
   nativePropagatedBuildInputs = [
       pkgs.s6
-      miredo
+      # miredo
       pkgs.postgresql_11
       pkgs.iproute
-      opensmtpd
+      # opensmtpd
       pkgs.dovecot
       hydra
       pkgs.powerdns
@@ -70,7 +72,7 @@ pytest ];
       dnspython
       pyroute2
   ];
-  miredo = miredo;
+  miredo = pkgs.miredo;
   nix = nix;
   rsyscall = rsyscall;
   openssh = pkgs.openssh;

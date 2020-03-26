@@ -25,7 +25,6 @@ rsyscall_server_LDADD = librsyscall.la
 
 rsyscall_bootstrap_SOURCES = src/rsyscall_bootstrap.c
 rsyscall_bootstrap_LDADD = librsyscall.la
-rsyscall_bootstrap_LDFLAGS = -static
 
 rsyscall_unix_stub_SOURCES = src/rsyscall_unix_stub.c
 rsyscall_unix_stub_LDADD = librsyscall.la
