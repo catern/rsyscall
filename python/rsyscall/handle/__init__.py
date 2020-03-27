@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 from rsyscall.sched import CLONE, Stack, _unshare
 from rsyscall.signal import Siginfo
 from rsyscall.fcntl import AT, F, O
-from rsyscall.path import Path
+from rsyscall.path import Path, EmptyPath
 from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.wait import W
@@ -224,10 +224,37 @@ class Task(
         await self.unshare(CLONE.FS)
         await self.setns(fd, CLONE.NEWUSER)
 
+    async def execveat(self, fd: t.Optional[FileDescriptor],
+                       pathname: t.Union[WrittenPointer[Path], WrittenPointer[EmptyPath]],
+                       argv: WrittenPointer[ArgList],
+                       envp: WrittenPointer[ArgList],
+                       flags: AT=AT.NONE,
+                       command: Command=None,
+    ) -> None:
+        with contextlib.ExitStack() as stack:
+            if fd:
+                fd_n: t.Optional[rsyscall.near.FileDescriptor] = stack.enter_context(fd.borrow(self))
+            else:
+                fd_n = None
+            stack.enter_context(pathname.borrow(self))
+            for arg in [*argv.value, *envp.value]:
+                stack.enter_context(arg.borrow(self))
+            self.manipulating_fd_table = True
+            try:
+                await rsyscall.near.execveat(self.sysif, fd_n, pathname.near, argv.near, envp.near, flags)
+            except OSError as exn:
+                exn.filename = (fd, pathname.value)
+                raise
+            finally:
+                self.manipulating_fd_table = False
+            self._make_fresh_fd_table()
+            self._make_fresh_address_space()
+            if isinstance(self.process, ChildProcess):
+                self.process.did_exec(command)
+
     async def execve(self, filename: WrittenPointer[Path],
                      argv: WrittenPointer[ArgList],
                      envp: WrittenPointer[ArgList],
-                     flags: AT=AT.NONE,
                      command: Command=None,
     ) -> None:
         with contextlib.ExitStack() as stack:
@@ -236,10 +263,7 @@ class Task(
                 stack.enter_context(arg.borrow(self))
             self.manipulating_fd_table = True
             try:
-                if flags == AT.NONE:
-                    await rsyscall.near.execve(self.sysif, filename.near, argv.near, envp.near)
-                else:
-                    await rsyscall.near.execveat(self.sysif, None, filename.near, argv.near, envp.near, flags)
+                await rsyscall.near.execve(self.sysif, filename.near, argv.near, envp.near)
             except OSError as exn:
                 exn.filename = filename.value
                 raise
