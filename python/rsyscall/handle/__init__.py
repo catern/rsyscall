@@ -161,6 +161,12 @@ class FileDescriptor(
         self._validate()
         return (await rsyscall.near.fcntl(self.task.sysif, self.near, cmd, arg))
 
+    async def __aenter__(self) -> FileDescriptor:
+        return self
+
+    async def __aexit__(self, *args, **kwargs) -> None:
+        await self.close()
+
 
 ################################################################################
 # Task
