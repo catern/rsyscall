@@ -47,6 +47,7 @@ class TypeMode:
 @dataclass
 class Stat(Struct):
     dev: int
+    ino: int
     mode: TypeMode
     nlink: int
     uid: int
@@ -62,8 +63,9 @@ class Stat(Struct):
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct stat const*', {
             "st_dev": self.dev,
-            "st_mode": self.mode,
+            "st_ino": self.ino,
             "st_nlink": self.nlink,
+            "st_mode": self.mode,
             "st_uid": self.uid,
             "st_gid": self.gid,
             "st_rdev": self.rdev,
@@ -93,6 +95,7 @@ class Stat(Struct):
         struct = ffi.cast('struct stat*', ffi.from_buffer(data))
         return cls(
             dev=struct.st_dev,
+            ino=struct.st_ino,
             mode=struct.st_mode,
             nlink=struct.st_nlink,
             uid=struct.st_uid,
@@ -127,6 +130,7 @@ class TestStat(TestCase):
     def test_stat(self) -> None:
         initial = Stat(
             dev=0,
+            ino=0,
             mode=TypeMode(S_IF.REG, Mode(0o777)),
             nlink=0,
             uid=0,
