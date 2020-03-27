@@ -272,6 +272,9 @@ class EpolledFileDescriptor:
         self.number = number
         self.in_epollfd = True
 
+    def __str__(self) -> str:
+        return f"EpolledFileDescriptor({self.fd.near}, {self.number})"
+
     async def do_wait(self) -> None:
         "Perform one epoll_wait, which may call some callbacks."
         await self.epoller.epoll_waiter.do_wait()
@@ -367,6 +370,9 @@ class AsyncFileDescriptor:
         self.handle = handle
         self.status = status
         self.epolled = epolled
+
+    def __str__(self) -> str:
+        return f"AsyncFileDescriptor({self.epolled}, {self.status})"
 
     @property
     def thr(self) -> EpollThread:
