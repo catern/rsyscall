@@ -46,7 +46,6 @@ class Timespec:
             "tv_sec": self.sec,
             "tv_nsec": self.nsec,
         }
-        return 
 
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct timespec const*', self._to_cffi_dict())))
