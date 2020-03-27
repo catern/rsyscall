@@ -59,6 +59,8 @@ class DirentList(t.List[Dirent], Serializable):
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         entries = []
         while len(data) > 0:
+            # We do the work of from_bytes in this class instead of in Dirent because we need the
+            # raw length field from the struct; merely doing len(name) will exclude padding.
             record = ffi.cast('struct linux_dirent64*', ffi.from_buffer(data))
             name_len = record.d_reclen - _d_name_offset
             # the name is padded with null bytes to make the dirent aligned,
