@@ -3,9 +3,24 @@ import typing as t
 import enum
 
 class MS(enum.IntFlag):
+    NONE = 0
     BIND = lib.MS_BIND
+    DIRSYNC = lib.MS_DIRSYNC
+    LAZYTIME = lib.MS_LAZYTIME
+    MANDLOCK = lib.MS_MANDLOCK
+    MOVE = lib.MS_MOVE
+    NODEV = lib.MS_NODEV
+    NOEXEC = lib.MS_NOEXEC
+    NOSUID = lib.MS_NOSUID
     RDONLY = lib.MS_RDONLY
+    REC = lib.MS_REC
+    RELATIME = lib.MS_RELATIME
     REMOUNT = lib.MS_REMOUNT
+    SILENT = lib.MS_SILENT
+    SLAVE = lib.MS_SLAVE
+    STRICTATIME = lib.MS_STRICTATIME
+    SYNCHRONOUS = lib.MS_SYNCHRONOUS
+    UNBINDABLE = lib.MS_UNBINDABLE
 
 #### Classes ####
 import rsyscall.far
