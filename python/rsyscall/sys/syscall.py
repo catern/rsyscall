@@ -82,6 +82,7 @@ class SYS(enum.IntEnum):
     timerfd_create = lib.SYS_timerfd_create
     timerfd_gettime = lib.SYS_timerfd_gettime
     timerfd_settime = lib.SYS_timerfd_settime
+    umount2 = lib.SYS_umount2
     unlinkat = lib.SYS_unlinkat
     unshare = lib.SYS_unshare
     waitid = lib.SYS_waitid
