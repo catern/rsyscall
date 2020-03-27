@@ -18971,6 +18971,109 @@ but you can't actually
 we should properly support multi-threaded waiting for the next child state - or something.
 
 waiting for death, at least.
+** TODO fexecve/execveat support
+   So one issue is that scripts need to read their exec'd file after startup,
+   and when fexec'd, the fd needs to be passed down to them.
+
+   Which is kind of tricky!
+   But I think we could punt that to the user at least for now.
+
+   so I guess, what can we do, hm.
+
+   well we don't need to support it in Command as of yet,
+   we just need the low-level support and we can call it directly,
+   that's fine.
+
+   so what's that look like?
+
+   I suppose we create another syscall, execveat.
+   and just expose the fd argument directly?
+   the low-level style kinda thing....
+
+   oh hmm right the other ones, we put it on the fd.
+   hm.
+
+   exec REALLY doesn't seem like an fd method, lol.
+
+   ok so I guess I do these as fd methods and you can pass in an empty path if you want AT_EMPTY_PATH.
+
+   hm. it would be fairly crazy to do the same thing with exec.
+   but, I mean, all of these things do block the thread, they consume it until they return.
+
+   it's kind of the same!
+
+   and it would be a cool uniformity...
+
+   on the other hand, exec is a complicated method, so maybe I should keep them in the same place.
+
+   also, I don't have, e.g., setns, as an fd method.
+
+   cuz it would be wacky indeed.
+
+   yeah I don't think people would expect setns or exec to be fd methods,
+   even despite the uniformity.
+* fuse stuff
+  ok so one thing we noticed in fuse is,
+  if we don't close the devfuse, then other threads making syscalls will get stuck in D-wait,
+  and then we'll hang forever in the nursery waiting for them to be done.
+
+  i don't think making syscalls cancellable is the right idea - the threads should be interrupted by signals,
+  or at least, killed.
+  except they are in D-wait so they can't be killed,
+  so really what we need to do is kill off the filesystem,
+  which we can do easily by closing devfuse
+
+  and we're doing that now with a contextmanager
+
+  (we want it to be closed even if we throw an exception)
+
+  hmm would be nice to strip off some of thes
+** hanging
+   ok so i'm trying to use it through epoll now.
+
+   and i'm getting some weird behavior, it's hanging.
+
+   i guess it's waiting for the EPOLLIN, but why? how?
+
+   could it be because of the partial read?
+
+   well no that doesn't make any sense...
+** nonblock fuse
+   ok this is confusing, this email says "FUSE itself needs sync read/writes to /dev/fuse"
+
+   but it also says you can epoll on it to see?
+
+   ok there are definitely suggestions that it works.
+
+   what's this fuse_chan_fd thing? hm.
+   it was renamed to fuse_session_fd
+
+   ugfghghgghhghg why is this blocking
+
+   why am I not getting the EPOLLIN I expect?!??!?!
+
+   it really seems like that should work blah.
+
+   but also, I don't even need async since i'm not doing it on the main thread. so what's going on!!
+
+   ok so the fuse source definitely have O_NONBLOCK supported.
+
+   and there's a poll here...
+
+   which sets pollin when the request is pending, hmm.... how does epoll work?
+
+   i mean, maybe i shouldn't be negedging here!
+
+   although i have no idea what the heck else i could do...
+
+   i can't just read again...
+
+   and it does do an epoll wait, right?
+
+   uh why don't do I do an epoll_wait
+
+   should I do it eagerly instead of going into wait_readable??
+   maybe yeah....
 * deployment
   hmm I could include rsyscall.c directly into the python package
 
@@ -19988,6 +20091,46 @@ would fit in registers. Besides
 
 I don't lik
 I don't like this usage of a struct 
+* cloud provisioning
+startup idea!
+
+that's what we would do
+
+scripting and monitoring and all that stuff is hard to share between companies.
+
+we would fill that missing gap!
+
+as demanded by SSPL!
+* post about my goal
+my goal: destroy all bad languages!
+
+such as bash and configuration and JSON and stuff
+
+no writing any of that, write Python instead! blargh!
+
+don't configure things with those stupid things!
+
+use high level languages! serialization to whatever, who cares!!!
+
+
+i wanna get rid of this low level stuff
+
+because, it stinks, and is unmaintainable and unabstractable and unimprovable.
+
+
+title: "destroy all weaker langauges" ? no, but something like that
+
+practical example: python toplevel calling C function
+
+python toplevel execing C program
+
+configure something by writing a Python program to call its C (or whatever language) main.
+
+that's the first step and obvious.
+
+then step from that to writing a Python program which execs the native program;
+that's just another calling convention- kind of...
+6
 * static typing against executables
   ok ok ok
 
@@ -20104,3 +20247,366 @@ I don't like this usage of a struct
   and we can translate headers into different types,
   depending on what size values we want to treat as values and stream across,
   and what size we want to have to access through pointers.
+
+  hmm there's a lot of minutiae with C
+
+  including optimizations that make the calling conventions of functions fairly wacky,
+  with LTO
+
+  wow oh my god parsing C header is going to be a nightmare.
+  because there's all these attributes and stuff. HM.
+
+  maybe we should do the rpc after all hmmmmmmmm
+
+  or something better
+** hmm
+   so the whole reason we need to do this is because we have a large collection of legacy code,
+   which just runs syscalls and accesses memory on the current thread,
+   and which can't be translated to run across the network
+   (since memory access will be really inefficient to intercept)
+
+   so we need to run executables, and C functions, and things.
+   (and really it's not even that legacy because running local computation on the remote side is useful)
+
+   what if we just didn't care about the executables
+   and just had our server running native C functions
+
+   well ok so we'd compile against a library,
+   and then dynload it in remotely
+
+   nix would give us the guarantee we need that it's statically typed right
+
+   ya I guess we don't really need a super huge amount of certainty
+   that we are getting the right implementation for the interface;
+   i.e. we can have dynlinking for these things, it's fine I guess.
+
+   we do need to be able to type-check against an interface though.
+** CALL FAR 
+   call gates!!
+
+   oh wow that stuff is so cool!!!
+
+   memory segmentation is Good
+
+   i should read about it.
+
+   call gates are faster than interrupts?
+   why?
+   changing address space stuff whatever...
+   what about locality umm..
+** implicit scope in objects
+   uhh so I was thinking about how,
+   you have an object kind of implicitly scoped in C++ etc where you don't have to name it to call methods
+
+   I was thinking about that in relation to multimethds, etc, cluld you use that to do full explicit scope
+
+   one issue is that a class of methods allows implicit scope,
+   but not *open* implicit scope - you can't add a new method from the outside,
+   which you then call from the inside,
+   which gets to use the object.
+
+   and then I was finally thinking, well, maybe this relates to open recursion,
+   and passing around a record full of functions,
+   and getting fix-pointed into recursion.
+** double hmm
+   okay so I could do some code gen,
+   build a top level that calls these functions,
+   and which dumps the functions it can call to stdout when invoked in a certain mode,
+
+   and then I guess I can just link against that from Python.
+
+   hmm if I do that I could use cffi to understand the types I suppose.
+
+   or I could make my own custom thing
+* calling native functions on another stack
+  is what I want to do, and it's pretty tricky
+
+  is it stack though?
+
+we just want to send raw instructions
+
+it's useful for (at least) two things:
+
+- dispatching on the results of earlier operations;
+  i.e. we could have a batch semantics where you can if-case on the result of a syscall,
+  and it gets wrapped up into a bunch of instructions.
+  we can embed data into the instruction stream too
+  basically we're talking about writing assembly where syscalls are high level;
+  we should also have high level functions too.
+  it's all typesafe of course.
+- calling actual native functions.
+  munging all the wacky argument stuff that we need to do,
+  and executing a "call" instruction
+
+like, obviously I want to use raw instructions rather than a VM to do the mobile code thing.
+(because that's less abstracted,
+and I don't think the abstraction of a VM is necessary since I don't care about portability)
+so raw instructions are obviously necessary.
+and if I have them I can call native functions too.
+
+on the other hand, what if I compile anything mobile ahead of time?
+basically I lift my definitions up to top level... is what occurs to me - lambda lifting.
+compile ahead of time.
+how does that correspond?
+
+well i'm kind of building functions from combinators anyway aren't I?
+in TFS.
+
+well that's something I'm avoiding anyway, because,
+if I really wanted to hoist things up,
+I could write custom remote servers for all this instead of centrally doing it!
+of course that's a major hassle.
+
+so.
+unless the hoisting is automatic, it's not viable.
+
+right I mean...
+a snippet of dispatching code might be hoisted up and compiled AOT,
+but, having to do that manually is a hassle.
+plus it's incompatible with a REPL
+
+anyway for now, while I mull that over,
+I'll do more just rsyscall stuff
+* shell decompilation paper
+** snippets
+   much legacy code is shell scripts
+   or much shell scripts is legacy code?
+
+   unfortuantely, once a shell script has gone through the compilation process,
+   it becomes unreadable
+
+   show comparison between original source code for shell script and the compiled version (they are identical)
+
+   we define "fully polymorphic shell scripts" as shell scripts which do not contain any absolute paths.
+   (hmm we could make relative executables work actually! neat.)
+   (wait a second we could also make absolute paths work)
+   so maybe we'll call "fully polymorphic shell scripts" as ones which don't use builtins and stuff
+
+   we could title it
+   "Decompiling fully polymorphic shell scripts"
+** abstract
+   [something about legacy code].
+   We demonstrate decompilation of any "fully polymorphic" shell script without source code.
+** how to decompile ifs
+   hmm we could do something with aliases to override the ifs!
+
+   could we do the same thing for functions?
+
+   hmm very interesting
+
+   ok so i can override if/then/else/fi to be executables, sure.
+
+   what about while and case?
+** can also function as compiler from C to shell script
+   make a C program which starts some processes and pipes them, and show that it's compiled to shell
+** make sure to make it clear that we aren't tampering with the process
+   no ld_preload or anything.
+
+   and no strace.
+** we can do interactive things
+   I guess that would be cool?
+** references
+   ok the link from oleg is
+
+   "Typed Tagless Final Interpreters" (exact title)
+
+   And footnote 9 links to some Danvy lecture notes which are offline...
+   cited filename is "tdpe-ln.pdf"
+
+   aha but I think it's this page.
+   which has a 1998 filename but I think that's wrong...
+** title
+   type directed decompilation of shell scripts
+** abstract
+** introduction
+
+** background
+Shell is a language closely tied to Unix, which has a unique feature:
+The language automatically compiles itself as it is written.
+Immediately after a shell script is typed into a computer and saved into a file,
+it is transformed into a compiled form which is unreadable by humans.
+Such a script can be immediately used for all your most important financial data, medical procedures, etc.,
+while you are safe in the knowledge that no-one can read your important proprietary shell scripts.
+
+Unfortunately, sometimes such scripts might exhibit minor bugs.
+Since these executable files that are leftover from the process of shell scripting are unreadable garbage,
+maintenance programmers are often forced to rewrite from scratch.
+Sometimes, very brave programmers will try open one of these old, buggy "shell script files",
+but generally they are instantly turned to stone upon seeing the inscrutable contents.
+And since shell is so convenient, typically the original programmer is long gone - probably retired early.
+# TODO cite baugh 2018
+
+Our contribution in this paper is a decompiler for these files,
+which is able to recover the original source code.
+This source code can then be viewed by the maintenance programmer,
+to help them reimplement the script in their non-shell language of choice.
+** background 2: electric boogaloo
+As described in Oleg 20XX, as citing Danvy 1998, as blowing the minds of undergrads everywhere,
+sufficiently general partial evaluation techniques
+can be applied to "reify" a compiled program and recover the program source code,
+under the constraints that the program 1. has a type and 2. terminates.[fn:real]
+Pretty easy constraints, I think we can make that happen for bash!
+
+As a more approachable introduction (note that "more approachable" doesn't mean "approachable"),
+these techniques can be compared to tagless-final-style techniques.
+Decompilation of a typed, compiled program is essentially identical to pretty-printing of a tagless-final-style term.
+The magic is that any typed, closed program can be treated as a TFS term.
+Neat!
+** typed
+What is the type of a shell script?
+Well, a shell script takes the PATH environment variable,
+and runs commands (identified by strings) out of PATH,
+each of which has some side effects.
+A shell script doesn't return anything, it just has side effects,
+so let's say that its output type is unit.
+
+So that means a shell script has type `path -> unit`,
+where `path` is `(str, [str]) -> unit`.
+
+Then in total, a shell script has type `((str, [str]) -> unit) -> unit`.
+
+We can confirm this is correct by applying double negation elimination[fn:permitted],
+which shows us that shell scripts have type `(str, [str])`.
+This is correct because a shell script is indeed a bunch of strings.
+
+Let's be a little more specific with our type, though, and model each executable as a function.
+So then the type of PATH is $(str -> ([str] -> unit))$,
+and the type of a shell script is then $(str -> ([str] -> unit)) -> unit$
+
+For now, just think of a shell script as taking PATH and running commands out of it.
+** termination
+Termination, on the other hand, is a much harder problem than assigning a strict static type to shell scripts.
+This is because of the presence of the dreaded D-wait in Unix.
+A process can get into an uninterruptible state when making a filesystem request,
+and just hang forever, ignoring all signals, including SIGKILL.
+This is really annoying for people developing filesystems, which we had to do for this paper,
+so we want to complain about it here.
+
+Nevertheless, if the program hangs, this issue can be solved by simply mashing Ctrl-C.
+Even D-wait can be solved by throwing the computer out the window
+(assuming a sufficiently portable computer, and great enough height for it to be destroyed on impact if it has a battery).
+
+So termination is ultimately not a problem either.
+** theory
+In brief, the principle of the technique we will be applying is this:
+A closed, abstract function,
+which takes in other functions and combines them through application in some way to eventually return a result,
+can be passed functions which, instead of performing actual operations and returning real results,
+take ASTs and return ASTs.
+
+For example, a function with type (a, a) -> a,
+which might normally be addition of two integers or something,
+can instead have type (ast, ast) -> ast,
+and be implemented as $\lambda x. \lambda y. Plus (x, y)$
+where $Plus$ is some data-type constructor.
+
+A shell script's single argument (in our model) is the PATH environment variable.
+We will pass in a PATH which, when an executable name is looked up in it,
+returns the executables (functions) of our choice.
+These executables will in turn, when executed,
+construct an AST instead of actually doing anything.
+** example
+Let's demonstrate our tool before getting to the actually interesting part.
+
+[insert trace here]
+
+As you can see, our decompiler even pretty-prints the shell script.
+You could go ahead and standardize it for the language to enforce a single formatting style,
+but that would rob people of their ability to choose their own formatting,
+and they might come after you with a pike.
+
+It also works on C programs:
+
+[insert here]
+
+** implementation
+OK, now for the actually interesting part instead of a bunch of lame jokes!
+
+We have implemented a filesystem (using FUSE),
+which pretends to have any possible executable you want.
+We point the shell script at this filesystem using PATH,
+and each time the shell script goes to run a command,
+it instead runs a stub under our control.
+Using some real technology we developed earlier and just thought it would be funny to use for this,
+this stub connects back to the filesystem server,
+where our decompiler is able to query its argv, stat its stdin/out/err, and tell it to exit with a specific exit code.
+
+To mount the filesystem without requiring privileges or setuid executables,
+we use a user namespace and mount namespace, and run the script inside those namespaces.
+
+After the shell script finishes execution,
+we reconstruct its source code from the trace of executed commands
+using a highly advanced for loop.
+
+Note that this doesn't use LD_PRELOAD or strace,
+so it can even be used on statically linked, setuid shell scripts.
+There are lots of those!
+
+The code is on github at https://github.com/catern/rsyscall/tree/master/research/sigbovik2020.
+
+** conclusion
+
+** misc
+ files must be opened again maintenance programmers
+
+Maintenance programmers often find themselves faced with shell scripts which they describe as "unreadable".
+
+
+Indeed, all programs seem to be unavoidably compiled as time passes,
+becoming less and less readable and more and more like inscrutable magic.
+
+Shell is no different;
+after a few years or days or seconds,
+a shell script that was so clear as it was typed by the fingers of genius programmers such as the authors,
+will be inevitably compiled by the process of time into something which sadly can't be read.
+
+The achievement of this paper is to take such unreadable shell scripts and recover the source code
+to recover regular
+
+after the shell script has compressed
+It is unfortunate that only the unreadable, compile
+
+* Footnotes
+
+[fn:more]
+"more approachable" doesn't mean "approachable"
+[fn:permitted]
+Permitted because this result is unintuitive and not constructive.
+
+[fn:real]
+Seriously! It's pretty cool. It blows my mind.
+
+* hmm games
+combinators
+games
+
+use combinators instead of builtins to build programs and you will be free
+
+hmmm
+
+games
+
+UIs
+
+a game that is just a nice UI over Linux
+
+playing is literally programming
+
+good UIs
+
+making a new game is making a new programming language
+
+programming language problems are user interface problems - an oft mentioned refrain
+
+user interfaces are programming languages - not mentioned as much?
+
+or rather...
+
+programming language people look at games and UIs and stuff for inspiration, why not other way around?
+
+games all have god-awful UIs
+
+I want to do things inside emacs
+
+I guess if I make a game eventually or something,
+I *will* be making my own programming language!
