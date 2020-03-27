@@ -34,6 +34,9 @@ class O(enum.IntFlag):
     SYNC = lib.O_SYNC
     PATH = lib.O_PATH
     TMPFILE = lib.O_TMPFILE
+    # internal kernel flags, visible through FUSE and possibly other places
+    FMODE_EXEC = 0x20
+    FMODE_NONOTIFY = 0x4000000
 
 class F(enum.IntEnum):
     "The cmd argument to fcntl; specifies what fcntl operation we want to do."
