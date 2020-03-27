@@ -58,6 +58,10 @@ struct linux_dirent64 {
 #define _WALL __WALL
 #define _ss_padding __ss_padding
 
+// glibc hides the real O_LARGEFILE from us - it lies to us! evil!
+#undef O_LARGEFILE
+#define O_LARGEFILE 0100000
+
 #define SA_RESTORER 0x04000000
 typedef void (*sighandler_t)(int);
 typedef void (*sigrestore_t)(void);
