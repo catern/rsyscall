@@ -501,6 +501,12 @@ class AsyncFileDescriptor:
         await self.epolled.delete()
         await self.handle.invalidate()
 
+    async def __aenter__(self) -> None:
+        pass
+
+    async def __aexit__(self, *args, **kwargs) -> None:
+        await self.close()
+
 
 ################################################################################
 # Miscellaneous helpers
