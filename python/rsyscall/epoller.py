@@ -578,7 +578,7 @@ class AsyncReadBuffer:
             ret.append(await self.read_length_prefixed_string())
         return ret
 
-    async def read_envp(self, length: int) -> t.Dict[bytes, bytes]:
+    async def read_envp(self, length: int) -> t.Dict[str, str]:
         """Read a size-prefixed array of size-prefixed bytestrings, with each bytestring containing '=', into a dict.
 
         This is the format we expect for envp, which is written to us on startup by
@@ -590,10 +590,10 @@ class AsyncReadBuffer:
 
         """
         raw = await self.read_length_prefixed_array(length)
-        environ: t.Dict[bytes, bytes] = {}
+        environ: t.Dict[str, str] = {}
         for elem in raw:
             key, val = elem.split(b"=", 1)
-            environ[key] = val
+            environ[os.fsdecode(key)] = os.fsdecode(val)
         return environ
 
     async def read_until_delimiter(self, delim: bytes) -> t.Optional[bytes]:

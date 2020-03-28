@@ -144,8 +144,8 @@ async def rsyscall_exec(
     # unset cloexec on all the fds we want to copy to the new space
     for fd in child.task.fd_handles:
         await fd.fcntl(F.SETFD, 0)
-    def encode(fd: FileDescriptor) -> bytes:
-        return str(int(fd.near)).encode()
+    def encode(fd: FileDescriptor) -> str:
+        return str(int(fd.near))
     #### call exec and set up the new task
     await child.exec(executable.command.args(
         encode(passed_data_sock), encode(syscall.infd), encode(syscall.outfd),

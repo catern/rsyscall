@@ -65,7 +65,7 @@ class SSHCommand(Command):
 
     @classmethod
     def make(cls: t.Type[T_ssh_command], executable_path: Path) -> T_ssh_command:
-        return cls(executable_path, [b"ssh"], {})
+        return cls(executable_path, ["ssh"], {})
 
 class SSHDCommand(Command):
     "The 'sshd' executable provided by OpenSSH, plus some arguments and special methods"
@@ -77,7 +77,7 @@ class SSHDCommand(Command):
 
     @classmethod
     def make(cls, executable_path: Path) -> SSHDCommand:
-        return cls(executable_path, [b"sshd"], {})
+        return cls(executable_path, ["sshd"], {})
 
 @dataclass
 class SSHExecutables:

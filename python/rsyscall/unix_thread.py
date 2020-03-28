@@ -95,7 +95,7 @@ class ChildUnixThread(UnixThread):
         super()._init_from(thr)
         self.process = process
 
-    async def _execve(self, path: Path, argv: t.List[bytes], envp: t.List[bytes],
+    async def _execve(self, path: Path, argv: t.List[str], envp: t.List[str],
                       command: Command=None,
     ) -> AsyncChildProcess:
         "Call execve, abstracting over memory; self.{exec,execve} are probably preferable"
@@ -112,8 +112,8 @@ class ChildUnixThread(UnixThread):
         return self.process
 
     async def execve(self, path: Path,
-                     argv: t.Sequence[t.Union[str, bytes, os.PathLike]],
-                     env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]={},
+                     argv: t.Sequence[t.Union[str, os.PathLike]],
+                     env_updates: t.Mapping[str, t.Union[str, os.PathLike]]={},
                      inherited_signal_blocks: t.List[SignalBlock]=[],
                      command: Command=None,
     ) -> AsyncChildProcess:
@@ -140,14 +140,12 @@ class ChildUnixThread(UnixThread):
         for block in inherited_signal_blocks:
             sigmask = sigmask.union(block.mask)
         await self.task.sigprocmask((HowSIG.SETMASK, await self.ram.ptr(Sigset(sigmask))))
-        envp: t.Dict[bytes, bytes] = {**self.environ.data}
-        for key in env_updates:
-            envp[os.fsencode(key)] = os.fsencode(env_updates[key])
-        raw_envp: t.List[bytes] = []
-        for key_bytes, value in envp.items():
-            raw_envp.append(b''.join([key_bytes, b'=', value]))
+        envp: t.Dict[str, str] = {**self.environ.data}
+        for key, value in env_updates.items():
+            envp[key] = os.fsdecode(value)
+        raw_envp: t.List[str] = ['='.join([key, value]) for key, value in envp.items()]
         logger.debug("execveat(%s, %s, %s)", path, argv, env_updates)
-        return await self._execve(path, [os.fsencode(arg) for arg in argv], raw_envp, command=command)
+        return await self._execve(path, [os.fsdecode(arg) for arg in argv], raw_envp, command=command)
 
     async def exec(self, command: Command,
                    inherited_signal_blocks: t.List[SignalBlock]=[],

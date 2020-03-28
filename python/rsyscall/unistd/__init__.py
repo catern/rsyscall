@@ -6,6 +6,7 @@ from rsyscall.struct import Serializer, FixedSerializer, Serializable
 import struct
 import typing as t
 import rsyscall.near.types as near
+import os
 if t.TYPE_CHECKING:
     from rsyscall.handle import Pointer, Task, FileDescriptor
 else:
@@ -30,10 +31,10 @@ class OK(enum.IntFlag):
     X = lib.X_OK
     F = lib.F_OK
 
-class Arg(bytes, Serializable):
+class Arg(str, Serializable):
     "A null-terminated string, as passed to execve."
     def to_bytes(self) -> bytes:
-        return self + b'\0'
+        return os.fsencode(self) + b'\0'
 
     T = t.TypeVar('T', bound='Arg')
     @classmethod
@@ -41,9 +42,9 @@ class Arg(bytes, Serializable):
         try:
             nullidx = data.index(b'\0')
         except ValueError:
-            return cls(data)
+            return cls(os.fsdecode(data))
         else:
-            return cls(data[0:nullidx])
+            return cls(os.fsdecode(data[0:nullidx]))
 
 T_arglist = t.TypeVar('T_arglist', bound='ArgList')
 class ArgList(t.List[Pointer[Arg]], FixedSerializer):

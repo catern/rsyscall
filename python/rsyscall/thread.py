@@ -116,9 +116,9 @@ class Thread(UnixThread):
             # TODO this would be more efficient if we batched our memory-reads at the end
             data += await read.read()
 
-    async def mount(self, source: bytes, target: bytes,
-                    filesystemtype: bytes, mountflags: MS,
-                    data: bytes) -> None:
+    async def mount(self, source: t.Union[Path, str], target: t.Union[Path, str],
+                    filesystemtype: str, mountflags: MS,
+                    data: str) -> None:
         "Call mount with these args"
         async def op(sem: RAM) -> t.Tuple[
                 WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg]]:

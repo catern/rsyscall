@@ -95,34 +95,34 @@ class ExecutablePathCache:
 
 class Environment:
     "A representation of Unix environment variables."
-    def __init__(self, task: Task, ram: RAM, environment: t.Dict[bytes, bytes]) -> None:
+    def __init__(self, task: Task, ram: RAM, environment: t.Dict[str, str]) -> None:
         self.data = environment
         self.sh = Command(Path("/bin/sh"), ['sh'], {})
         self.tmpdir = Path(self.get("TMPDIR", "/tmp"))
         self.path = ExecutablePathCache(task, ram, self.get("PATH", "").split(":"))
 
-    def __getitem__(self, key: t.Union[str, bytes]) -> str:
-        return os.fsdecode(self.data[os.fsencode(key)])
+    def __getitem__(self, key: str) -> str:
+        return self.data[key]
 
-    def __contains__(self, key: t.Union[str, bytes]) -> bool:
-        return os.fsencode(key) in self.data
+    def __contains__(self, key: str) -> bool:
+        return key in self.data
 
     def __len__(self) -> int:
         return len(self.data)
 
-    def __delitem__(self, key: t.Union[str, bytes]) -> None:
-        del self.data[os.fsencode(key)]
+    def __delitem__(self, key: str) -> None:
+        del self.data[key]
 
-    def __setitem__(self, key: t.Union[str, bytes], val: t.Union[str, bytes]) -> None:
-        self.data[os.fsencode(key)] = os.fsencode(val)
+    def __setitem__(self, key: str, val: str) -> None:
+        self.data[key] = val
 
-    def get(self, key: t.Union[str, bytes], default: str) -> str:
+    def get(self, key: str, default: str) -> str:
         "Like dict.get; get an environment variable, with a default."
-        result = self.data.get(os.fsencode(key))
+        result = self.data.get(key)
         if result is None:
             return default
         else:
-            return os.fsdecode(result)
+            return result
 
     async def which(self, name: str) -> Command:
         "Locate an executable with this name on PATH; throw ExecutableNotFound on failure."

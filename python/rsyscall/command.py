@@ -8,20 +8,20 @@ class Command:
     "A convenient builder-pattern representation of the arguments to execve."
     def __init__(self,
                  executable_path: Path,
-                 arguments: t.List[t.Union[str, bytes, os.PathLike]],
-                 env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]) -> None:
+                 arguments: t.List[t.Union[str, os.PathLike]],
+                 env_updates: t.Mapping[str, t.Union[str, os.PathLike]]) -> None:
         self.executable_path = executable_path
         self.arguments = arguments
         self.env_updates = env_updates
 
-    def args(self: T_command, *args: t.Union[str, bytes, os.PathLike]) -> T_command:
+    def args(self: T_command, *args: t.Union[str, os.PathLike]) -> T_command:
         "Add more arguments to this Command."
         return type(self)(self.executable_path,
                           [*self.arguments, *args],
                           self.env_updates)
 
-    def env(self: T_command, env_updates: t.Mapping[str, t.Union[str, bytes, os.PathLike]]={},
-            **updates: t.Union[str, bytes, os.PathLike]) -> T_command:
+    def env(self: T_command, env_updates: t.Mapping[str, t.Union[str, os.PathLike]]={},
+            **updates: t.Union[str, os.PathLike]) -> T_command:
         """Add more environment variable updates to this Command.
 
         There are two ways to pass arguments to this method (which can be used simultaneously):

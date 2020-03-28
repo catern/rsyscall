@@ -121,7 +121,7 @@ async def enter_nix_container(store: Store, dest: Thread, dest_dir: Path) -> Sto
     await copy_tree(store.thread, store.nix.closure, dest, dest_dir)
     # enter the container
     await dest.unshare(CLONE.NEWNS|CLONE.NEWUSER)
-    await dest.mount(os.fsencode(dest_dir/"nix"), b"/nix", b"none", MS.BIND, b"")
+    await dest.mount(dest_dir/"nix", "/nix", "none", MS.BIND, "")
     # init the database
     nix_store = Command(store.nix.path/'bin/nix-store', ['nix-store'], {})
     await bootstrap_nix_database(store.thread, nix_store, store.nix.closure, dest, nix_store)
