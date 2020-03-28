@@ -32,3 +32,9 @@ __pycache__
 /python/.pytest_cache/
 /python/rsyscall/_nixdeps
 /python/TAGS
+/research/sigbovik2020/paper.aux
+/research/sigbovik2020/paper.bbl
+/research/sigbovik2020/paper.blg
+/research/sigbovik2020/paper.log
+/research/sigbovik2020/paper.out
+/python/strace/

@@ -1,0 +1,30 @@
+This directory contains information
+related to the "Type-directed decompilation of shell scripts" paper in SIGBOVIK 2020.
+A copy of the paper is in [[file:paper.pdf][paper.pdf]].
+
+The tool described in that paper is called "symsh",
+so named because, in some sense,
+it's providing the ability to pass-in an arbitrary "*symantics*" (to use Oleg's TFS terminology)
+for Unix *shell* scripts.
+
+Really it works for arbitrary Unix executables, and the symantics match the Unix interface,
+so symunix might be a better name,
+but that doesn't roll off the tongue quite as well.
+
+Note that the rest of this repo is essentially unrelated to symsh,
+except that it's some pre-existing research which we used to implement symsh.
+(It would be uncouth to shill for one's real research in a SIGBOVIK paper, but...
+rsyscall sure made it a lot easier to implement this!)
+
+The implementation is entirely contained in
+[[file:~/.local/src/rsyscall/python/rsyscall/scripts/symsh.py][symsh.py]].
+
+A simple example can be run with
+=python -m rsyscall.scripts.symsh example=.
+
+You can use symsh on your own executables with
+=python -m rsyscall.scripts.symsh exec [path_to_some_executable]=;
+for example, =example.sh= in this directory.
+
+Of course, as the paper describes, it can be used for more than just shell scripts.
+Try compiling =prog.c= in this directory and running symsh on it.
