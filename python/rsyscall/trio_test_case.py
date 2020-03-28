@@ -26,7 +26,16 @@ class TrioTestCase(unittest.TestCase):
                 await self.asyncSetUp()
                 try:
                     await test(self)
-                finally:
+                except BaseException as exn:
+                    try:
+                        await self.asyncTearDown()
+                    except BaseException as teardown_exn:
+                        # have to merge the exceptions if they both throw;
+                        # might as well do this with trio.MultiError since we have it
+                        raise trio.MultiError([exn, teardown_exn])
+                    else:
+                        raise
+                else:
                     await self.asyncTearDown()
                 nursery.cancel_scope.cancel()
         @functools.wraps(test_with_setup)
