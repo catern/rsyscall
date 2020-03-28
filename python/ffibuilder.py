@@ -13,6 +13,7 @@ ffibuilder.set_source_pkgconfig(
 #include <linux/if_tun.h>
 #include <linux/netlink.h>
 #include <linux/futex.h>
+#include <linux/fuse.h>
 #include <net/if.h>
 #include <netinet/ip.h>
 #include <netinet/ip.h>
@@ -602,6 +603,239 @@ typedef struct {
 #define MNT_DETACH ...
 #define MNT_EXPIRE ...
 #define UMOUNT_NOFOLLOW ...
+
+//// FUSE stuff
+// INIT flags
+#define FUSE_ASYNC_READ		...
+#define FUSE_POSIX_LOCKS	...
+#define FUSE_FILE_OPS		...
+#define FUSE_ATOMIC_O_TRUNC	...
+#define FUSE_EXPORT_SUPPORT	...
+#define FUSE_BIG_WRITES		...
+#define FUSE_DONT_MASK		...
+#define FUSE_SPLICE_WRITE	...
+#define FUSE_SPLICE_MOVE	...
+#define FUSE_SPLICE_READ	...
+#define FUSE_FLOCK_LOCKS	...
+#define FUSE_HAS_IOCTL_DIR	...
+#define FUSE_AUTO_INVAL_DATA	...
+#define FUSE_DO_READDIRPLUS	...
+#define FUSE_READDIRPLUS_AUTO	...
+#define FUSE_ASYNC_DIO		...
+#define FUSE_WRITEBACK_CACHE	...
+#define FUSE_NO_OPEN_SUPPORT	...
+#define FUSE_PARALLEL_DIROPS    ...
+#define FUSE_HANDLE_KILLPRIV	...
+#define FUSE_POSIX_ACL		...
+#define FUSE_ABORT_ERROR	...
+
+// WRITE flags
+#define FUSE_WRITE_CACHE	...
+#define FUSE_WRITE_LOCKOWNER	...
+
+// RELEASE flags
+#define FUSE_RELEASE_FLUSH	...
+#define FUSE_RELEASE_FLOCK_UNLOCK	...
+
+
+enum fuse_opcode {
+	FUSE_LOOKUP	   = ...,
+	FUSE_FORGET	   = ..., /* no reply */
+	FUSE_GETATTR	   = ...,
+	FUSE_SETATTR	   = ...,
+	FUSE_READLINK	   = ...,
+	FUSE_SYMLINK	   = ...,
+	FUSE_MKNOD	   = ...,
+	FUSE_MKDIR	   = ...,
+	FUSE_UNLINK	   = ...,
+	FUSE_RMDIR	   = ...,
+	FUSE_RENAME	   = ...,
+	FUSE_LINK	   = ...,
+	FUSE_OPEN	   = ...,
+	FUSE_READ	   = ...,
+	FUSE_WRITE	   = ...,
+	FUSE_STATFS	   = ...,
+	FUSE_RELEASE       = ...,
+	FUSE_FSYNC         = ...,
+	FUSE_SETXATTR      = ...,
+	FUSE_GETXATTR      = ...,
+	FUSE_LISTXATTR     = ...,
+	FUSE_REMOVEXATTR   = ...,
+	FUSE_FLUSH         = ...,
+	FUSE_INIT          = ...,
+	FUSE_OPENDIR       = ...,
+	FUSE_READDIR       = ...,
+	FUSE_RELEASEDIR    = ...,
+	FUSE_FSYNCDIR      = ...,
+	FUSE_GETLK         = ...,
+	FUSE_SETLK         = ...,
+	FUSE_SETLKW        = ...,
+	FUSE_ACCESS        = ...,
+	FUSE_CREATE        = ...,
+	FUSE_INTERRUPT     = ...,
+	FUSE_BMAP          = ...,
+	FUSE_DESTROY       = ...,
+	FUSE_IOCTL         = ...,
+	FUSE_POLL          = ...,
+	FUSE_NOTIFY_REPLY  = ...,
+	FUSE_BATCH_FORGET  = ...,
+	FUSE_FALLOCATE     = ...,
+	FUSE_READDIRPLUS   = ...,
+	FUSE_RENAME2       = ...,
+	FUSE_LSEEK         = ...,
+
+	/* CUSE specific operations */
+	CUSE_INIT          = 4096,
+};
+
+struct fuse_attr {
+	uint64_t	ino;
+	uint64_t	size;
+	uint64_t	blocks;
+	uint64_t	atime;
+	uint64_t	mtime;
+	uint64_t	ctime;
+	uint32_t	atimensec;
+	uint32_t	mtimensec;
+	uint32_t	ctimensec;
+	uint32_t	mode;
+	uint32_t	nlink;
+	uint32_t	uid;
+	uint32_t	gid;
+	uint32_t	rdev;
+	uint32_t	blksize;
+	uint32_t	padding;
+};
+
+struct fuse_in_header {
+    uint32_t len;       /* Total length of the data,
+                           including this header */
+    uint32_t opcode;    /* The kind of operation (see below) */
+    uint64_t unique;    /* A unique identifier for this request */
+    uint64_t nodeid;    /* ID of the filesystem object
+                           being operated on */
+    uint32_t uid;       /* UID of the requesting process */
+    uint32_t gid;       /* GID of the requesting process */
+    uint32_t pid;       /* PID of the requesting process */
+    uint32_t padding;
+};
+
+struct fuse_out_header {
+    uint32_t len;       /* Total length of data written to
+                           the file descriptor */
+    int32_t  error;     /* Any error that occurred (0 if none) */
+    uint64_t unique;    /* The value from the
+                           corresponding request */
+};
+
+struct fuse_init_in {
+	uint32_t	major;
+	uint32_t	minor;
+	uint32_t	max_readahead;
+	uint32_t	flags;
+};
+
+struct fuse_init_out {
+	uint32_t	major;
+	uint32_t	minor;
+	uint32_t	max_readahead;
+	uint32_t	flags;
+	uint16_t	max_background;
+	uint16_t	congestion_threshold;
+	uint32_t	max_write;
+	uint32_t	time_gran;
+	uint32_t	unused[9];
+};
+
+struct fuse_open_in {
+	uint32_t	flags;
+	uint32_t	unused;
+};
+
+#define FOPEN_DIRECT_IO   ...
+#define FOPEN_KEEP_CACHE  ...
+#define FOPEN_NONSEEKABLE ...
+
+struct fuse_open_out {
+	uint64_t	fh;
+	uint32_t	open_flags;
+	uint32_t	padding;
+};
+
+struct fuse_entry_out {
+	uint64_t	nodeid;		/* Inode ID */
+	uint64_t	generation;	/* Inode generation: nodeid:gen must
+					   be unique for the fs's lifetime */
+	uint64_t	entry_valid;	/* Cache timeout for the name */
+	uint64_t	attr_valid;	/* Cache timeout for the attributes */
+	uint32_t	entry_valid_nsec;
+	uint32_t	attr_valid_nsec;
+	struct fuse_attr attr;
+};
+
+#define FUSE_READ_LOCKOWNER ...
+
+struct fuse_read_in {
+	uint64_t	fh;
+	uint64_t	offset;
+	uint32_t	size;
+	uint32_t	read_flags;
+	uint64_t	lock_owner;
+	uint32_t	flags;
+	uint32_t	padding;
+};
+
+#define FUSE_GETATTR_FH ...
+
+struct fuse_getattr_in {
+	uint32_t	getattr_flags;
+	uint32_t	dummy;
+	uint64_t	fh;
+};
+
+struct fuse_attr_out {
+	uint64_t	attr_valid;	/* Cache timeout for the attributes */
+	uint32_t	attr_valid_nsec;
+	uint32_t	dummy;
+	struct fuse_attr attr;
+};
+
+struct fuse_dirent {
+	uint64_t	ino;
+	uint64_t	off;
+	uint32_t	namelen;
+	uint32_t	type;
+	char name[];
+};
+
+struct fuse_direntplus {
+	struct fuse_entry_out entry_out;
+	struct fuse_dirent dirent;
+};
+
+struct fuse_flush_in {
+	uint64_t	fh;
+	uint32_t	unused;
+	uint32_t	padding;
+	uint64_t	lock_owner;
+};
+
+struct fuse_release_in {
+	uint64_t	fh;
+	uint32_t	flags;
+	uint32_t	release_flags;
+	uint64_t	lock_owner;
+};
+
+struct fuse_getxattr_in {
+	uint32_t	size;
+	uint32_t	padding;
+};
+
+struct fuse_getxattr_out {
+	uint32_t	size;
+	uint32_t	padding;
+};
 
 // socket stuff
 #define SYS_socket ...
