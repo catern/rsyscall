@@ -90,6 +90,7 @@ to make the collection of processes appear more like a single process.
 Even before CLONE_THREAD was added, glibc's pthreads implementation was LinuxThreads,
 which implements each thread with a separate process, without using CLONE_THREAD.
 
-rsyscall's threads do not use CLONE_THREAD, so it's more like LinuxThreads;
+rsyscall's threads are likewise separate processes,
+but they do not use CLONE_THREAD, so it's more like LinuxThreads;
 although unlike LinuxThreads, we are not constrained by compatibility with the pthreads API;
 for example, we don't need to hide the fact that each of our threads has a different pid.

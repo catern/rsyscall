@@ -16,9 +16,12 @@ you can implement a new kind of thread which does.
 For more information on any of these thread types,
 see the documentation for that thread type.
 * stdin bootstrap
-  A thread which uses a socketpair passed as stdin to bootstrap its connection back to the main thread.
+  Like a stub thread,
+  but instead using one end of a socketpair passed as stdin to bootstrap its connection back to the main thread.
   This can be used, for example, with sudo or other programs which start a child in an altered state,
   so that we can run syscalls in that altered state.
+  We would pass the socketpair endpoint to sudo, which would launch the bootstrap program,
+  which will then use the socketpair endpoint to connect back to the main thread and begin serving as a thread.
 * stub
   A stub executable that, when run, connects back to us;
   we can accept the connection to get a thread which controls the stub executable.

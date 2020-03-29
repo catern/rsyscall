@@ -14,7 +14,7 @@ read the [[file:multi_threaded.org][multi-threaded tutorial]] for more on creati
 * Initial example
 An example rsyscall program is the following:
 #+BEGIN_SRC python
-from rsyscall.thread import Thread
+from rsyscall import Thread
 from rsyscall.unistd import Pipe
 
 async def f(thr: Thread, pipe: Pipe) -> None:
@@ -35,7 +35,7 @@ reads that same data back out from the pipe,
 and prints that data.
 
 #+BEGIN_SRC python
-from rsyscall.thread import Thread
+from rsyscall import Thread
 from rsyscall.unistd import Pipe
 
 async def f(thr: Thread, pipe: Pipe) -> None:
@@ -158,7 +158,6 @@ the pointers may be merged back together so that the whole buffer may be reused.
 For example:
 #+BEGIN_SRC python
 read_buf, rest = await fd.read(await thr.malloc(bytes, 4096))
-# TODO change from read/write pointer to load/store?
 while read_buf.size() > 0:
   print(await read_buf.read())
   read_buf, rest = await fd.read(read_buf.merge(rest))
@@ -251,10 +250,14 @@ then call the "open" syscall on that path to get a file descriptor.
   Therefore, it is represented with three classes, all in `rsyscall.sys.socket`,
   `SendMsghdr`, `RecvMsghdr`, and `RecvMsghdrOut`.
 
-  Consule the rsyscall documentation for specific headers for more details about how to use those headers.
+  Consult the rsyscall documentation for specific headers for more details about how to use those headers.
+
+  Types which are unique to rsyscall, such as `Thread` or `Path`,
+  are in general imported directly from `rsyscall`;
+  that is, with `from rsyscall import Thread`.
 * Organization of syscalls
   In general, if a syscall takes some thing as its first argument in the POSIX interface to Linux,
-  then in rsyscall it is a method on an object representing and owning that thing.
+  then in the rsyscall Python API it is a method on an object representing and owning that thing.
 
   - syscalls which operate on file descriptors are methods on file descriptor objects
   - syscalls which operate on existing memory mappings are methods on memory mapping objects
@@ -272,9 +275,10 @@ then call the "open" syscall on that path to get a file descriptor.
   We don't represent paths as an owned, garbage-collected object,
   primarily because the ownership and cleanup model of a path is not clear.
 
-  Some syscalls can operate in multiple modes;
+  Some syscalls can operate on multiple kinds of objects;
   for example, `kill` can operate on a process, but it can also operate on process groups.
-  In this case, the syscall will be split across multiple objects.
+  In such cases, all the objects which are valid targets for the syscall will have a method for the syscall;
+  for example, there's a "kill" method on both Process and ProcessGroup[
 
   Consult the documentation for more detail on individual syscalls.
 * Objects and helpers on Thread
