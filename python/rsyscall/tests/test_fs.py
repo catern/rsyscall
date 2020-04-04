@@ -2,11 +2,10 @@ from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.nix import local_store
 import rsyscall.tasks.local as local
 
-from rsyscall.handle import Pointer
+from rsyscall import Pointer, EmptyPath, Path
 from rsyscall.tests.utils import do_async_things
 from rsyscall.fcntl import O
 from rsyscall.unistd import SEEK
-from rsyscall.path import EmptyPath, Path
 from rsyscall.linux.dirent import *
 from rsyscall.environ import ExecutablePathCache, ExecutableNotFound
 
