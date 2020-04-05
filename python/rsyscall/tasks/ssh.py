@@ -13,6 +13,7 @@ from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.network.connection import ListeningConnection
 from rsyscall.path import Path
+from rsyscall.sched import CLONE
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 import abc
@@ -177,12 +178,10 @@ async def make_bootstrap_dir(
     stdout_pipe = await (await parent.task.pipe(
         await parent.ram.malloc(Pipe))).read()
     async_stdout = await parent.make_afd(stdout_pipe.read)
-    child = await parent.clone()
+    child = await parent.clone(unshare=CLONE.FILES)
     async with child:
-        await child.unshare_files_and_replace({
-            child.stdout: stdout_pipe.write,
-            child.stdin: bootstrap_executable,
-        })
+        await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
+        await child.task.inherit_fd(bootstrap_executable).dup2(child.stdin)
         child_process = await child.exec(ssh_command.args(ssh_bootstrap_script_contents))
         await stdout_pipe.write.close()
         # from... local?

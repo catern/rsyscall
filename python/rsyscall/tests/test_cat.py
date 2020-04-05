@@ -3,6 +3,7 @@ import rsyscall.tasks.local as local
 
 from rsyscall.unistd import Pipe
 from rsyscall.fcntl import O
+from rsyscall.sched import CLONE
 
 class TestCat(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -10,11 +11,9 @@ class TestCat(TrioTestCase):
         self.cat = await self.thr.environ.which("cat")
         self.pipe_in = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()
         self.pipe_out = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()
-        thread = await self.thr.clone()
-        await thread.unshare_files_and_replace({
-            thread.stdin: self.pipe_in.read,
-            thread.stdout: self.pipe_out.write,
-        })
+        thread = await self.thr.clone(unshare=CLONE.FILES)
+        await thread.task.inherit_fd(self.pipe_in.read).dup2(thread.stdin)
+        await thread.task.inherit_fd(self.pipe_out.write).dup2(thread.stdout)
         self.child = await thread.exec(self.cat)
 
     async def test_cat_pipe(self) -> None:

@@ -10,6 +10,7 @@ import rsyscall.tasks.local as local
 from rsyscall.unistd import SEEK
 from rsyscall.signal import Sigset, HowSIG
 from rsyscall.sys.memfd import MFD
+from rsyscall.sched import CLONE
 
 from rsyscall.handle import FileDescriptor
 from rsyscall.path import Path
@@ -22,11 +23,9 @@ from rsyscall.monitor import AsyncChildProcess
 
 async def start_cat(thread: Thread, cat: Command,
                     stdin: FileDescriptor, stdout: FileDescriptor) -> AsyncChildProcess:
-    thread = await thread.clone()
-    await thread.unshare_files_and_replace({
-        thread.stdin: stdin,
-        thread.stdout: stdout,
-    })
+    thread = await thread.clone(unshare=CLONE.FILES)
+    await thread.task.inherit_fd(stdin).dup2(thread.stdin)
+    await thread.task.inherit_fd(stdout).dup2(thread.stdout)
     child = await thread.exec(cat)
     return child
 
@@ -55,11 +54,11 @@ class TestSSH(TrioTestCase):
     async def test_exec_pipe(self) -> None:
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)
         cat = await self.store.bin(coreutils_nixdep, "cat")
-        thread = await self.remote.clone()
-        await thread.unshare_files_and_replace({
-            thread.stdin: remote_sock,
-            thread.stdout: remote_sock,
-        })
+        thread = await self.remote.clone(unshare=CLONE.FILES)
+        cat_side = thread.task.inherit_fd(remote_sock)
+        await remote_sock.close()
+        await cat_side.dup2(thread.stdin)
+        await cat_side.dup2(thread.stdout)
         child_process = await thread.exec(cat)
 
         in_data = await self.local.ram.ptr(b"hello")

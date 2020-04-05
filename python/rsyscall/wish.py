@@ -64,6 +64,7 @@ import trio
 import types
 import typing as t
 
+from rsyscall.sched import CLONE
 from rsyscall.sys.socket import SOCK, AF
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.wait import W
@@ -187,15 +188,11 @@ class ConsoleGenie(WishGranter):
             async_from_term = await self.thread.make_afd(from_term_pipe.read)
             async_to_term = await self.thread.make_afd(to_term_pipe.write)
             try:
-                cat_stdin_thread = await self.thread.clone()
-                await cat_stdin_thread.unshare_files_and_replace({
-                    cat_stdin_thread.stdin: to_term_pipe.read,
-                })
+                cat_stdin_thread = await self.thread.clone(unshare=CLONE.FILES)
+                await cat_stdin_thread.task.inherit_fd(to_term_pipe.read).dup2(cat_stdin_thread.stdin)
                 async with await cat_stdin_thread.exec(self.cat):
-                    cat_stdout_thread = await self.thread.clone()
-                    await cat_stdout_thread.unshare_files_and_replace({
-                        cat_stdout_thread.stdout: from_term_pipe.write,
-                    })
+                    cat_stdout_thread = await self.thread.clone(unshare=CLONE.FILES)
+                    await cat_stdout_thread.task.inherit_fd(from_term_pipe.write).dup2(cat_stdout_thread.stdout)
                     async with await cat_stdout_thread.exec(self.cat):
                         ret = await run_repl(async_from_term, async_to_term, {
                             **wisher_frame.f_locals,

@@ -47,17 +47,12 @@ async def _exec_tar_copy_tree(src: ChildThread, src_paths: t.List[Path], src_fd:
     dest_tar = await dest.environ.which("tar")
     src_tar = await dest.environ.which("tar")
 
-    await dest.task.unshare(CLONE.FS)
     await dest.task.chdir(await dest.ram.ptr(dest_path))
-    await dest.unshare_files_and_replace({
-        dest.stdin: dest_fd,
-    })
+    await dest.task.inherit_fd(dest_fd).dup2(dest.stdin)
     await dest_fd.close()
     dest_child = await dest.exec(dest_tar.args("--extract"))
 
-    await src.unshare_files_and_replace({
-        src.stdout: src_fd,
-    })
+    await src.task.inherit_fd(src_fd).dup2(src.stdout)
     await src_fd.close()
     src_child = await src.exec(src_tar.args(
         "--create", "--to-stdout", "--hard-dereference",
@@ -75,23 +70,19 @@ async def copy_tree(src: Thread, src_paths: t.List[Path], dest: Thread, dest_pat
     """
     [(local_fd, dest_fd)] = await dest.connection.open_channels(1)
     src_fd = local_fd.move(src.task)
-    await _exec_tar_copy_tree(await src.clone(), src_paths, src_fd,
-                              await dest.clone(), dest_path, dest_fd)
+    await _exec_tar_copy_tree(await src.clone(unshare=CLONE.FILES), src_paths, src_fd,
+                              await dest.clone(unshare=CLONE.FILES|CLONE.FS), dest_path, dest_fd)
 
-async def exec_nix_store_transfer_db(
+async def _exec_nix_store_transfer_db(
         src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor, closure: t.List[Path],
         dest: ChildThread, dest_nix_store: Command, dest_fd: FileDescriptor,
 ) -> None:
     "Exec nix-store to copy the Nix database for a closure between two stores"
-    await dest.unshare_files_and_replace({
-        dest.stdin: dest_fd,
-    })
+    await dest.task.inherit_fd(dest_fd).dup2(dest.stdin)
     await dest_fd.close()
     dest_child = await dest.exec(dest_nix_store.args("--load-db").env({'NIX_REMOTE': ''}))
 
-    await src.unshare_files_and_replace({
-        src.stdout: src_fd,
-    })
+    await src.task.inherit_fd(src_fd).dup2(src.stdout)
     await src_fd.close()
     src_child = await src.exec(src_nix_store.args("--dump-db", *closure))
     await src_child.check()
@@ -104,8 +95,8 @@ async def bootstrap_nix_database(
     "Bootstrap the store used by `dest` with the necessary database entries for `closure`, coming from `src`'s store"
     [(local_fd, dest_fd)] = await dest.open_channels(1)
     src_fd = local_fd.move(src.task)
-    await exec_nix_store_transfer_db(await src.clone(), src_nix_store, src_fd, closure,
-                                     await dest.clone(), dest_nix_store, dest_fd)
+    await _exec_nix_store_transfer_db(await src.clone(unshare=CLONE.FILES), src_nix_store, src_fd, closure,
+                                      await dest.clone(unshare=CLONE.FILES), dest_nix_store, dest_fd)
 
 async def enter_nix_container(store: Store, dest: Thread, dest_dir: Path) -> Store:
     """Move `dest` into a container in `dest_dir`, deploying Nix inside and returning the Store thus-created
@@ -136,20 +127,16 @@ async def deploy_nix_bin(store: Store, dest: Thread) -> Store:
     await bootstrap_nix_database(store.thread, nix_store, store.nix.closure, dest, nix_store)
     return Store(dest, store.nix)
 
-async def exec_nix_store_import_export(
+async def _exec_nix_store_import_export(
         src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor, closure: t.List[Path],
         dest: ChildThread, dest_nix_store: Command, dest_fd: FileDescriptor,
 ) -> None:
     "Exec nix-store to copy a closure of paths between two stores"
-    await dest.unshare_files_and_replace({
-        dest.stdin: dest_fd,
-    })
+    await dest.task.inherit_fd(dest_fd).dup2(dest.stdin)
     await dest_fd.close()
     dest_child = await dest.exec(dest_nix_store.args("--import").env({'NIX_REMOTE': ''}))
 
-    await src.unshare_files_and_replace({
-        src.stdout: src_fd,
-    })
+    await src.task.inherit_fd(src_fd).dup2(src.stdout)
     await src_fd.close()
     src_child = await src.exec(src_nix_store.args("--export", *closure))
     await src_child.check()
@@ -159,9 +146,11 @@ async def nix_deploy(src: Store, dest: Store, path: StorePath) -> None:
     "Deploy a StorePath from the src Store to the dest Store"
     [(local_fd, dest_fd)] = await dest.thread.open_channels(1)
     src_fd = local_fd.move(src.thread.task)
-    await exec_nix_store_import_export(
-        await src.thread.clone(), Command(src.nix.path/'bin/nix-store', ['nix-store'], {}), src_fd, path.closure,
-        await dest.thread.clone(), Command(dest.nix.path/'bin/nix-store', ['nix-store'], {}), dest_fd)
+    await _exec_nix_store_import_export(
+        await src.thread.clone(unshare=CLONE.FILES),
+        Command(src.nix.path/'bin/nix-store', ['nix-store'], {}), src_fd, path.closure,
+        await dest.thread.clone(unshare=CLONE.FILES),
+        Command(dest.nix.path/'bin/nix-store', ['nix-store'], {}), dest_fd)
 
 async def canonicalize(thr: RAMThread, path: Path) -> Path:
     "Resolve all symlinks in this path, and return the resolved path"

@@ -6,6 +6,7 @@ from rsyscall import Pointer, EmptyPath, Path
 from rsyscall.tests.utils import do_async_things
 from rsyscall.fcntl import O
 from rsyscall.unistd import SEEK
+from rsyscall.sched import CLONE
 from rsyscall.linux.dirent import *
 from rsyscall.environ import ExecutablePathCache, ExecutableNotFound
 
@@ -28,12 +29,10 @@ class TestFS(TrioTestCase):
         await source_file.lseek(0, SEEK.SET)
         dest_file = await self.thr.task.open(await self.thr.ram.ptr(self.path/"dest"), O.RDWR|O.CREAT)
 
-        thread = await self.thr.clone()
+        thread = await self.thr.clone(unshare=CLONE.FILES)
         cat = await self.thr.environ.which("cat")
-        await thread.unshare_files_and_replace({
-            thread.stdin: source_file,
-            thread.stdout: dest_file,
-        })
+        await thread.task.inherit_fd(source_file).dup2(thread.stdin)
+        await thread.task.inherit_fd(dest_file).dup2(thread.stdout)
         child_process = await thread.exec(cat)
         await child_process.check()
 

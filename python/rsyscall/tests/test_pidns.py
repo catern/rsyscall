@@ -28,12 +28,12 @@ class TestPidns(TrioTestCase):
         cat = await self.local.environ.which('cat')
         pair = await (await self.local.task.socketpair(
             AF.UNIX, SOCK.STREAM, 0, await self.local.ram.malloc(Socketpair))).read()
-        child = await self.init.clone()
-        await child.unshare_files_and_replace({
-            child.stdin: pair.first,
-            child.stdout: pair.first,
-        })
+        child = await self.init.clone(unshare=CLONE.FILES)
+        child_side = child.task.inherit_fd(pair.first)
+        # close in parent so we'll get EOF on other side when cat dies
         await pair.first.close()
+        await child_side.dup2(child.stdin)
+        await child_side.dup2(child.stdout)
         child_process = await child.exec(cat)
         await self.init.close()
         # cat dies, get EOF on socket

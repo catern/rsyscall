@@ -191,32 +191,6 @@ class Thread(UnixThread):
         if not going_to_exec:
             await do_cloexec_except(self, set([fd.near for fd in self.task.fd_handles]))
 
-    async def unshare_files_and_replace(self, mapping: t.Dict[FileDescriptor, FileDescriptor],
-                                        disable_cloexec: t.List[FileDescriptor]=[]) -> None:
-        """Unshare the file descriptor table, replacing some file descriptors according to the arguments
-
-        This is a useful helper method. `mapping` is a map from the fd to replace, to the fd to
-        replace it with.  disable_cloexec is just a list of fds to disable cloexec on, so that they
-        will be inherited without changing fd number.
-
-        """
-        mapping = {
-            # we maybe_copy the key because we need to have the only handle to it in the task,
-            # which we'll then consume through dup3.
-            key.maybe_copy(self.task):
-            # we for_task the value so that we get a copy of it, which we then explicitly invalidate;
-            # this means if we had the only reference to the fd passed into us as an expression,
-            # we will close that fd - nice.
-            val.for_task(self.task)
-            for key, val in mapping.items()}
-        disable_cloexec = [fd.maybe_copy(self.task) for fd in disable_cloexec]
-        await self.unshare_files()
-        for dest, source in mapping.items():
-            await source.dup3(dest, 0)
-            await source.invalidate()
-        for fd in disable_cloexec:
-            await fd.disable_cloexec()
-
     async def unshare_user(self,
                            in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
         """Unshare the user namespace.
