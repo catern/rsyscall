@@ -7,7 +7,6 @@ let
   #     sha256 = "0q8bnvz80dbg83z1m0mmg9rp3rv8y873vh4q1l04wkyqmzzimnnf";
   # };});
   nix = pkgs.nix;
-  hydra = pkgs.hydra;
   # hydra = (pkgs.hydra.override { nix = nix; }).overrideAttrs (_: { src = /home/sbaugh/.local/src/hydra; });
   # hydra = pkgs.hydra.overrideAttrs (_: { src = pkgs.fetchFromGitHub {
   #     owner = "catern";
@@ -58,7 +57,7 @@ pytest ];
       pkgs.iproute
       # opensmtpd
       pkgs.dovecot
-      hydra
+      # hydra
       pkgs.powerdns
       pkgs.bubblewrap
       pkgs.nginx

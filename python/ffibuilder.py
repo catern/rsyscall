@@ -744,7 +744,7 @@ struct fuse_init_out {
 	uint16_t	congestion_threshold;
 	uint32_t	max_write;
 	uint32_t	time_gran;
-	uint32_t	unused[9];
+        ...;
 };
 
 struct fuse_open_in {
