@@ -24276,6 +24276,53 @@ I want to do things inside emacs
 I guess if I make a game eventually or something,
 I *will* be making my own programming language!
 
+plus I think "The Linux Game" would be good advertisement too
+
+all these people making these "theorem prover games"
+where you just assemble something - v. interesting...
+
+I guess we can't copy bytes around directly ourselves,
+but we can invoke programs to do it for us.
+
+hm, spells...
+
+related to considering how we do combinator programming/conditionals with syscalls
+I think we don't? we just spawn other programs to do things? hm. or something anyway.
+* hmm namespaces
+linking
+
+plan9 has a namespace in the filesystem
+which it uses for things that some other people use syscalls for
+
+but this isn't inherently better, they're just two namespaces with different invocation strategies
+
+doing a "write" on a "filesystem path" isn't inherently better than doing a "call" on a "function"
+
+though of course, of course, filesystems are way more flexible
+
+but really we could do this all as part of the programming languages namespace
+
+and do a bunch of stuff at "link time"
+(which might be at runtime or at build time, doesn't matter)
+
+like, mm, yeah. put the filesystem in the programming language namespace.
+
+i mean the real reason I'm saying this is, well,
+
+one reason calls on functions are better than writes on fs paths is,
+the typechecking happens at build time.
+
+we want to move checks as early as possible.
+
+tbh it's pathetic that C doesn't have nested namespaces,
+yet C was invented for Unix, known for its powerful filesystem
+
+i guess C does have namespaces: structs. hm.
+
+lol so what if I #included the filesystem,
+and made it visible as a set of nested structures?
+
+and then the dynamic linker would handle opening the file or whatever?
 * paper response
 My main concern is that the paper seems to mix the syscall interface
 and the application programming interface (API). It's defensible to
