@@ -65,6 +65,13 @@ can show a chart even, two lines, speed with and without, nice
 - it's efficient
 - it has a coherent theory behind it and is relatively easy to use
 ** Direct-style process creation on Linux
+*** why do I feel uncertain about this
+it's because i'm not certain about this,
+unlike say the config paper,
+where I was very sure.
+
+actually I think I'm always uncertain at first about my posts
+then I write them and get confident
 * outline
 ** abstract
 Traditional process creation interfaces are complex to use, limited in power, and difficult to abstract over.
@@ -152,9 +159,106 @@ And we need to demonstrate that our style actually makes things easier. hm.
 well, it's definitely different, and I contend easier...
 we need to clean it up a little.
 
-yeah let's get rid of unshare_files_and_replace where we can, too abstracted
+ok so we have a nice and pure inherit-based thing, that's nice.
+wow it's almost as good as what you can do naively in C! great.
 
-we can use inherit instead
+ok so what's better hmm
+
+ok one thing is that we can create a process then pass it to something else to exec it, sure.
+that's more generally useful for other things, for example putting it in namespaces first, hmmm.
+
+maybe some of the things I've done with rsyscall?
+
+also passing a process to something else isn't necessarily an application of the process abstraction, hm.
+
+okay, again, my belief is that the process abstraction can be used for many things,
+but that isn't done because it's too annoying to create them.
+
+maybe let's read the fork paper in more detail? high time to do that.
+
+right right okay so, we can be used safely in multithreading,
+we don't have any of the disadvantages of fork,
+which means we can be used in a lot more places,
+and likewise don't have the disadvantages of spawn,
+which means we have much more power
+
+fork can't be used in:
+- large memory programs
+- multithreaded programs
+- programs using unusual fork-unaware libraries such as CUDA or kernel networking bypass
+
+ok so the gist is then,
+
+here are some things we can do with processes,
+here is why we can't do those with fork/spawn,
+here is how we can now do those with direct-style.
+
+maybe focus on features that are directly prevented by fork/spawn.
+
+so let's see... forking after startup...
+complex applications cannot practically use fork.
+what would a complex application like to use fork for?
+running helpers... dispatching stuff...
+let's focus on more concrete ones I guess...
+
+well yeah, spinning up new long-running jobs or stuff like that.
+using it as a security boundary, say.
+
+running different processes for each user...
+
+what are things people have done with processes that I like?
+capsicum, ucspi, sandstorm, mmm, what else.
+systemd, job scheduling programs, hmm
+
+processes are better than servers in that they provide fate-sharing;
+where's somewhere that fate-sharing would be helpful?
+or rather, what are some servers we could replace with processes?
+i'm not super in to setuid, but it's true that we could maaaybe theoretically setuid things...
+or, maybe some advanced UI, hmm...
+like maybe you get a process with the environment already set up, and then you can run inside it?
+sure, yeah, like stub stuff with rsyscall.
+but that's nigh-impossible with fork;
+how can we state it cleanly with direct-style?
+
+right, processes give us an environment where we can sandbox users code... umm...
+well this is more of a benefit of remote process access actually,
+that's not something to do with process creation.
+
+ok sure. hm.
+
+ok let's not shy away from the notion of flexible namespacing stuff.
+
+so we can customize the namespace environment
+
+we can abstract resources
+
+we can do sandboxing
+
+we can do complex parallel processing
+
+that's four features, taht's probably enough!
+
+oh let's list also, um, establishing networks of processes with same config or something,
+since starting up distributed systems is important to me as a practical use case.
+
+oh we should actually do the things we talk about in the intro,
+in the main part of the paper.
+that will be cool yeah.
+
+right so we should list things that we actually want to do,
+and then do them, using our techniques
+
+right so maybe we should focus on the demos first?
+definitely
+*** introduction real
+Processes, and the process interface for running programs, has a wide variety of uses.
+They can be used to abstract resources[fn:ucspi],
+provide capability-based security[fn:capsicum],
+etc. etc.
+
+Unfortunately,
+processes are rarely used to their full power.
+It is hard to use processes for these uses chiefly because it is hard to create complex processes.
 *** introduction gist
 - Processes are capable of providing many features
   - Abstracting from what kind of resource you're using (ucspi)
@@ -194,7 +298,428 @@ we can use inherit instead
 ** overview/example
    The primary entry point
    We provide direct-style process creation for Linux.
+** demos
+ok so what demos will I give?
+
+setting up a pid namespace very easily is a good one.
+
+I guess a basic "spawning a process with some file descriptors" would be good.
+
+"setting up a pipeline" would be good. we need to be competitive with bash.
+
+no we can skip a pipeline because that requires manipulating hardcoded fd numbers,
+which is annoying to do.
+
+we can do some more "pass down configs/args with fd numbers embedded in them",
+that's something you couldn't much do before.
+that covers abstracting resources/sandboxing and also parallel processing to an extent maybe.
+
+so let's see:
+namespaces,
+passing down configs with fd numbers,
+what else? we certainly need a third.
+
+well I can consider what I've been doing,
+but right now let's think about it from first principles
+
+ok some things
+
+namespaces are great examples I guess
+
+the fuse mount in namespace process setup thing was actually a great example
+
+miredo might be a good example too, that was some complex setup
+
+hmm, not sure how to show these.
+
+oh, plan9-style namespace setup, that's another thing we should mention in the introduction duh
+
+plan9 is all fork based I guess? for sure.
+
+man plan9 invented clone, it's lame that fork paper didn't even cite it - or keykos for that matter
+the fork paper was a little myopic but right in its conclusions anyway, oh well
+
+yeah okay so let's talk thoroughly about namespaces,
+with a thought for plan 9,
+including mount namespaces (mounting FUSE) and network namespaces (miredo?),
+and also talk about passing down configs with fd numbers.
+
+maybe a little more non-namespace stuff, but we can think about that later;
+it would be nice to have a concrete non-namespace example;
+maybe fleshing out the fd numbers stuff into a full process network.
 ** detailed design and implementation
+how do we do this? we just write about what we did
+
+ok so we just talked about a bunch of examples
+
+now we talk about actual implementation details
+*** text
+Our primary need for implementing direct-style process creation
+was a robust system for cross-process operations.
+We implemented this in the rsyscall project.
+rsyscall is a design and toolkit for cross-process operations on Linux,
+with several language-specific library implementations.
+More detailed papers demonstrating implementation details of rsyscall and more applciations,
+but we can examine the relevant parts here.
+
+rsyscall's basic primitive is a syscall function
+which explictly specifies the process in which to perform the syscall.
+On Linux x86_64, calling a syscall is completely specified by the syscall number plus six register-sized arguments;
+a syscall returns exactly one register-sized value.
+rsyscall's most deployable form implements these explicit-process syscalls by sending these seven integers over a pipe
+to a stub process running a stub function which reads syscall requests off the pipe,
+performs them,
+and writes the return value back over a return pipe.
+This allows us to calls syscalls in other processes under our control,
+in a way that is easily deployable on stock Linux kernels.
+
+Many syscalls either take or return pointers to memory,
+and require the caller to read or write that memory to provide arguments or receive results.
+Hence, rsyscall needs a means of memory access for the target process.
+We implement this through another set of pipes,
+and by explicitly copying memory into and out of those pipes using the =read= and =write= system calls.
+When we wish to read =N= bytes of memory at address =A= in the target process,
+we =write(memory_pipe, A, N)= and then read the memory off the other end of the pipe in the parent process.
+To write some data to memory, we instead first write that data to the pipe,
+then =read(memory_pipe, A, N)= to copy that data from the pipe into memory.
+
+ptrace provides an alternative means to perform arbitrary actions on other processes.
+However, among other issues, it has the unavoidable substantial disadvantage of not permitting multiple ptracers.
+A ptrace-based implementation would prevent using strace or gdb on rsyscall-controlled processes,
+which is an unacceptable limitation for a general-purpose utility.
+
+The =process_vm_readv= and =process_vm_writev= system calls
+allow the caller to read and write memory from the virtual address space of other processes.
+However, they require that the caller have specific credentials relative to the process being accessed,
+which may not always be the case.
+Additionally, these system calls are disabled if ptrace is disabled system-wide,
+which is a niche but possible system configuration.
+To ensure that rsyscall can be used for arbitrary purposes and on arbitrary systems, we avoided these calls.
+
+rsyscall provides a suite of useful functionality,
+including garbage collected file descriptors,
+which make it straightforward to write programs which perform arbitrary cross-process syscalls.
+# TODO make some more notes here? about features in rsyscall that we assume down below
+# I'll explain them in another paper
+*** clone
+Now that we've established the basic operations which rsyscall provides,
+let's consider the specific issues related to process creation and initialization.
+
+There are three Linux system calls which create processes:
+=fork=, =vfork= and =clone=.
+
+=vfork= has some intriguing features,
+and we performed some early investigation into process-creation primitives based on it[fn:vfork],
+but ultimately discarded it in favor of our rsyscall-based approach.
+With an rsyscall-based approach, =vfork= is not suitable,
+because when a child process is created with =vfork=,
+the parent process is suspended until the child process either calls =exec= or =exit=;
+since the parent process is where our actual program is running, this is unsuitable.
+
+=fork= is the typical approach,
+but we can emulate it by essentially calling =clone= with =CLONE_VM= unset,
+so that the new process has a copy of the parent process's address space;
+hence we'll move on directly to consider the details of =clone=.
+
+=clone= (along with =fork=) creates a new process
+which starts executing at the next instruction after the syscall instruction,
+with its registers in generally the same state as the parent process.[fn:glibc]
+In the style of Plan 9's =fork= syscall, which inspired =clone=,
+=clone= takes a mask of flags which determines whether several attributes of the new process
+are either shared with, or copied from, the parent process.
+
+While this is the traditional design,
+it's not suitable for us:
+We want, at a minimum, to be able to set arbitrary registers for the new process,
+so that we can control where it begins executing and the stack it executes on.
+
+Fortunately, =clone= lets us set the stack register to an arbitrary pointer,
+and this is sufficient.
+To avoid special-casing =clone=,
+we ensure that the next instruction executed after any syscall
+is (in x86 terms) a =RET=.
+Since we control the stack,
+this allows us to cause the new process to jump to an arbitrary address;
+then, we can provide additional arguments and data from this code under our control
+by putting them on the stack.
+
+As a useful general-purpose utility,
+we provide a trampoline which sets all registers to values found on the stack.
+We take a moment here to note that this is, admittedly,
+also a generally useful utility for hackers performing return-oriented-programming attacks,
+but we console ourselves with the knowledge that similar functionality exists in any standards-compliant C library.
+With this trampoline code linked into the target process,
+we can provide a helper Python function that,
+when given a function pointer following C calling conventions, and some arguments,
+will prepare a stack for a call to clone such that the new process will call that function with those arguments.
+
+With our new ability to call arbitrary functions,
+we can now call =clone= so that it launches a process running our stub syscall function,
+described in the previous section,
+which will use two pipes passed as arguments to receive syscall requests and respond with syscall results.
+
+The addresses of these functions and trampolines are discovered through a linking procedure.
+When the process being created is in the same address space as the main process which is running user code,
+the location of the rsyscall library and the code within it is known through normal language linking mechanisms,
+and no special effort needs to be taken.
+However, when a process is created with a different address space,
+such as when we establish a connection to another process after it's been started,
+we need to perform linking to learn the addresses of functions.
+This linking procedure is performed while bootstrapping the connection,
+and generally involves the target process sending a table of important addresses to the parent process.
+
+After creating a new process with clone,
+most system calls can be called as normal.
+The new process can be modified freely through unshare, dup2, and other system calls.
+*** exec
+Eventually, most processes will want to call =exec=.
+=exec= is unusual and requires careful design,
+because it does not return if successful.
+Therefore we need a way to determine if =exec= is successful;
+merely waiting for a response to the syscall will leave us waiting forever.
+
+One traditional means is to create a pipe before forking,
+ensure both ends are marked =O_CLOEXEC=,
+perform the fork and exec,
+close the write end of the pipe,
+and wait for EOF on the read end.
+If the child process has neither called exec nor exited,
+then the write end of the pipe will still be open in the child process's fd table.
+But once the child process calls exec,
+=O_CLOEXEC= will cause the write end of the pipe to be closed after the exec.
+
+This is a somewhat indirect way of achieving the goal, but works acceptably with fork.
+Unfortunately, many of our child processes will share their fd table with the parent at the time they call exec,
+so if the write end of the pipe is closed in the parent, then it will be closed in the child as well.
+
+Fortunately, there is an alternative.
+The =ctid= argument to =clone= specifies a memory address which,
+when the =CLONE_CHILD_CLEARTID= flag is set,
+the kernel sets to zero when the child exits or execs,
+and then performs a futex wakeup on.
+More specifically,
+the kernel clears and does a wakeup on =ctid= when the child process leaves its current address space;
+this precisely coincides with exiting or execing,
+since those are the only way to change address space in current Linux.
+
+Unfortunately, futexes in current Linux integrate poorly:
+There is no way for to block on more than one futex at a time,
+and no way to integrate a futex into a file-descriptor based event loop.
+The best we can do is create a dedicated process for each futex we want to wait on.
+We have this process exit zero when the futex wakes up;
+we can integrate waiting for the process exit into our event loop through normal means.
+
+Nevertheless, this provides a solution.
+We provide an argument for =ctid= whenever we call =clone=,
+and set up a process to wait on that futex so that when we call =exec=,
+we wait for either the =exec= to return or the futex process to exit,
+whichever comes first.
+If the futex process exits,
+we close the write end of the pipe and wait for EOF on the read end;
+if we don't read a response for the exec,
+we know that the child has successfully called exec.
+
+This works well;
+however, it would be nicer if Linux natively provided functionality to wait for a child's exec.
+Several systems with kqueue, including FreeBSD,
+allowing waiting for exec events of arbitrary processes through kqueue's =EVFILT_PROC=.
+One approach for Linux would be to add a new =clone= flag to opt-in to receiving =WEXECED= events through =waitid=;
+note that a =waitid= flag alone is not sufficient,
+since it's necessary to receive =SIGCHLD= signals for the =WEXECED= event if waiting for it from an event loop.
+Alternatively, some form of the now long-removed =FUTEX_FD= functionality could be re-added to Linux
+so that waiting for the =ctid= futex could be integrated into an event loop.
+*** unshare
+#+BEGIN_QUOTE
+int unshare(int flags);
+
+unshare()  allows  a process (or thread) to disassociate parts of its execution context
+that are currently being shared  with  other  processes  (or  threads).
+Part of the execution context, such as the mount namespace,
+is shared implicitly when a new process is created  using  fork(2) or vfork(2),
+while other parts, such as virtual memory, 
+may be shared by explicit request when creating a process or thread using clone(2).
+
+The flags argument is a bit mask that specifies which parts of the execution context should be unshared.
+#+END_QUOTE
+
+We'll say "attributes" instead of "parts of its execution context" for short.
+Specifically, when the flags to unshare specify some attribute,
+and that attribute is currently shared,
+a copy of that attribute is made and the process switches to the copy.
+    
+Calling =unshare=, on its own, poses no complexity, even when done cross-process;
+the new attribute is a copy of the old attribute, so we can, naively, just continue on as before.
+The complexity is in ensuring the safety of operations after =unshare=,
+and in general for this model of selective copying versus sharing of process attributes.
+
+Most languages and libraries have similar issues,
+but these are typically neglected and left to user code to handle properly.
+As a very general example,
+a memory-safe system will not permit access to freed memory through a stale reference;
+however, such systems will often allow a call to =close= or =dup2= to invalidate a file descriptor,
+and then allow system calls on stale references to that file descriptor,
+which now may point to a completely unrelated internal file.
+These issues are aggravated further by the presence of =fork= or =unshare=.
+
+In rsyscall, we attempt to provide a safer API to such functionality;
+we'll focus here on =unshare(CLONE_FILES)=, which unshares the file descriptor table,
+for which our safe APIs are most developed.
+
+We'll note first that file descriptors in rsyscall are garbage collected,
+which solves the above-mentioned issue of creating stale file descriptor through =close=/=dup2=
+and then unwittingly accessing them;
+such accesses to stale references are checked and prevented.
+
+For example, if the file descriptor table is shared with another process,
+then when we open files other processes with the same fd table can use those file descriptors,
+and we can use the file descriptors opened by other processes.
+If we call =unshare(CLONE_FILES)=,
+then after the call 
+we'll have a file descriptor table which is a copy of the old table,
+meaning it contains all the file descriptors that were open in our old table at the time of our call to =unshare=.
+The new table is no longer shared,
+meaning other processes can't use the file descriptors we open in it,
+nor can we use file descriptors opened by other processes.
+    
+    Calling =unshare=, on its own, poses no complexity, even when done cross-process;
+    the new attribute is a copy of the old attribute, so we can, naively, just continue on as before.
+    The complexity is in ensuring the safety of operations after =unshare=,
+    and in general for this model of selective copying versus sharing of process attributes.
+
+    Everything =unshare= can operate on, can also be copied by =clone= and =fork=.
+    Nevertheless, most languages and libraries leave proper handling of these attributes entirely up to user code.
+    For example, after a =fork= (or an =unshare(CLONE_FILES)=),
+    two processes will have file descriptor tables;
+    one process can close a file descriptor without affecting the other.
+    File descriptor numbers stored by libraries, then,
+    might no longer be valid 
+    one process can change its CWD without affecting the other process.
+    Relative paths in one process might no longer be valid paths for the other process;
+    or worse, they might still point to files, but the wrong files.
+
+    Memory-safe languages and libraries deal with these issues when 
+
+    Similar issues happen with all attributes which can be unshared by =unshare=, =clone= and =fork=;
+    all these attributes provide namespaces for the resolution of references,
+    and those references can become invalid.
+
+    These issues are, indeed, difficult to handle robustly.
+
+    So far, we have only found a satisfactory user API for =unshare(CLONE_FILES)=;
+    like other systems, we leave it up to the user to correctly handle other attributes.
+    This is essentially equivalent to memory-unsafe languages which can generate invalid pointers.
+
+    # hmm what am I trying to say here?
+    # I'm just trying to get to the point of talking about the fd API
+    # let's just do that then
+
+    When calling =unshare(CLONE_FILES)=, or =clone(CLONE_FILES)=, or =fork=,
+    a new file descriptor table is created
+    with a copy of all file descriptors existing at the time of the system call.
+    This is called "file descriptor inheritance".
+
+    The new file descriptor table will contain 
+    private file descriptors from libraries and other processes sharing the same file descriptor table.
+    Leaving these file descriptors open in the new table is a form of resource leakage,
+    but it also will cause erroneous behavior.
+    For example, it's a common practice to close the write end of a pipe
+    and expect an EOF on the read end;
+    if the write end is copied into the new file descriptor table before being closed,
+    and the write end is never closed in the new table,
+    the read end will never get an EOF.
+
+    The traditional way to deal with this is the =CLOEXEC= file descriptor flag.
+    This flag can be set on a file descriptor and affects what happens when the process calls =execve=.
+    Typically, the effect is described as "the file descriptor is closed when the process calls =execve=".
+    Since we are discussing processes which share a file descriptor table,
+    it's useful to clarify that =execve= first creates a new file descriptor table
+    and copies all file descriptors existing at the time of the system call,
+    before performing the =CLOEXEC= behavior;
+    thus, if a process calls =execve= while sharing its file descriptor table,
+    that won't resulting in =CLOEXEC= fds being closed in that file descriptor table for other processes sharing the table;
+    rather, the observed effect is instead that
+    the =CLOEXEC= fd is not copied into the new file descriptor table that the process uses after the =execve= completes.
+
+    In a correct conventional program or library, =CLOEXEC= is set on all file descriptors at creation time,
+    to avoid unexpected file descriptor inheritance;
+    and it is only unset after creation for file descriptors for which inheritance is explicitly desired.
+    We follow the same discipline.
+
+    However, just setting =CLOEXEC= is not sufficient for us,
+    because we can inherit file descriptors through =unshare(CLONE_FILES)=
+    into processes that may never call =execve= at all,
+    and thus never clean up the file descriptor table through =CLOEXEC=.
+
+    We can solve this by explicitly closing all =CLOEXEC= file descriptors,
+    achieving the same behavior as =execve= and cleaning up the file descriptor table.
+    However, this would require us to unset =CLOEXEC= on any file descriptor we want to preserve into the new table.
+    As an optimization, since file descriptors in rsyscall are garbage collected,
+    we enumerate all live file descriptor references in the process and except those from being closed,
+    even if they have =CLOEXEC= set.
+
+    This issue and solution have a surface similarity to the =closefrom= function provided on some Unix systems;
+    =closefrom= allows closing all file descriptors with an numeric value greater than a specified integer.
+    Unlike =closefrom=, explicitly closing only =CLOEXEC= file descriptors
+    preserves the ability to opt-in to inheritance when desired.
+    =closefrom= lets the program special-case stdin/stdout/stderr as inherited,
+    while not permitting anything else, such as higher fds, to be inherited.
+    This is not recommended for a program that is part of a general-purpose system;
+    inheritance of useful fds to unaware programs is a useful, if niche, feature,
+    which can be used for many of the same purposes as inheritance of environment variables.
+    Thus, we close fds based on whether they have =CLOEXEC= set,
+    not based on their numeric value.
+
+    During the time between calling =unshare(CLONE_FILES)= and closing all =CLOEXEC= file descriptors,
+    all the file descriptors that were in the original fd table at the time of calling =unshare=
+    are in the new file descriptor table.
+    Rather than ignore this as an implementation detail,
+    we explicitly expose this to the user;
+    after an =unshare(CLONE_FILES)=,
+    the user can call an =inherit= method on a file descriptor
+    to get a new live reference to the file descriptor 
+    so that it is preserved by the garbage collector across the closing of =CLOEXEC= file descriptors.
+    If =inherit= is called on a file descriptor that wasn't copied into the new file descriptor table
+    (for example, a file descriptor that was opened in the parent after the =unshare(CLONE_FILES)= call),
+    or is called after the file descriptor table has been cleaned by closing all =CLOEXEC= file descriptors,
+    then an error is returned to the user.
+**** outline
+     we'll cover inheritance through a clone_files making a new fd table,
+     then doing a do_cloexec or exec to clear it out.
+
+     and maybe details of unshare?
+
+     yeah, we'll focus on unshare.
+     basically just talk about unshare.
+**** text
+*** others
+hmmm ok
+**** namespace talk stuff?
+     no this is mostly related to the remote aspects
+**** inheritance
+     this is kind of related to the implementation detail of using clone
+     but...
+**** CLOEXEC
+ok ok ok yes cloexec
+
+and something with CLOUNSHARE or something
+
+right okay so we need to talk about these issues
+
+of, wanting to... clear the fd table of stray references when copying it
+
+**** explicit list of fds for exec to be passed even if cloexec
+     so that execveat on scripts works
+**** prctl to set cloexec for everything
+     sure would be nice
 ** evaluation (or, measurement)
 something?
 ** conclusion
+* what to do after writing
+1. send to labs team at TS for review
+2. send to fork paper guy for review
+3. send to professors as booper says and ask about research opportunities
+* Footnotes
+
+[fn:glibc]
+Note that =glibc= defines a wrapper for the raw kernel syscall;
+we are here talking about the kernel syscall.
