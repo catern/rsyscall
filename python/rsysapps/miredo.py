@@ -63,10 +63,10 @@ async def exec_miredo_privproc(
         miredo_exec: MiredoExecutables,
         thread: ChildThread,
         privproc_side: FileDescriptor, tun_index: int) -> AsyncChildProcess:
-    privproc_side = privproc_side.move(thread.task)
-    await thread.unshare_files(going_to_exec=True)
-    await thread.stdin.copy_from(privproc_side)
-    await thread.stdout.replace_with(privproc_side)
+    await thread.unshare(CLONE.FILES)
+    privproc_side = thread.task.inherit_fd(privproc_side)
+    await privproc_side.dup2(thread.stdin)
+    await privproc_side.dup2(thread.stdout)
     child = await thread.exec(miredo_exec.privproc.args(str(tun_index)))
     return child
 
@@ -79,11 +79,10 @@ async def exec_miredo_run_client(
         icmp6_fd: FileDescriptor,
         client_side: FileDescriptor,
         server_name: str) -> AsyncChildProcess:
-    fd_args = [fd.move(thread.task)
-               for fd in [inet_sock, tun_fd, reqsock, icmp6_fd, client_side]]
-    await thread.unshare_files()
+    await thread.unshare(CLONE.FILES)
     child = await thread.exec(miredo_exec.run_client.args(
-        *[str(await fd.as_argument()) for fd in fd_args],
+        *[str(await fd.inherit(thread.task).as_argument())
+          for fd in [inet_sock, tun_fd, reqsock, icmp6_fd, client_side]],
         server_name, server_name))
     return child
 
@@ -95,6 +94,16 @@ async def add_to_ambient(thr: RAMThread, capset: t.Set[CAP]) -> None:
     data.inheritable.update(capset)
     data_ptr = await data_ptr.write(data)
     await thr.task.capset(hdr_ptr, data_ptr)
+    for cap in capset:
+        await thr.task.prctl(PR.CAP_AMBIENT, PR_CAP_AMBIENT.RAISE, cap)
+
+async def add_to_ambient_caps(thr: RAMThread, capset: t.Set[CAP]) -> None:
+    hdr = await thr.ptr(CapHeader())
+    data_ptr = await thr.ram.malloc(CapData)
+    data = thr.task.capget(hdr, data_ptr).read()
+    data.inheritable.update(capset)
+    data_ptr = await data_ptr.write(data)
+    await thr.task.capset(hdr, data_ptr)
     for cap in capset:
         await thr.task.prctl(PR.CAP_AMBIENT, PR_CAP_AMBIENT.RAISE, cap)
 
@@ -144,6 +153,53 @@ async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) 
 
     # we keep the ns thread around so we don't have to mess with setns
     return Miredo(ns_thread)
+
+async def start_miredo_simple(nursery, miredo_exec: MiredoExecutables, thread: Thread) -> Miredo:
+    ### create socket Miredo will use for internet access
+    inet_sock = await thread.task.socket(AF.INET, SOCK.DGRAM)
+    await inet_sock.bind(await thread.ram.ptr(SockaddrIn(0, 0)))
+    # set_miredo_sockopts extracted to a helper function to preserve clarity
+    await set_miredo_sockopts(inet_sock)
+    ns_thread = await thread.clone()
+    ### create main network namespace thread
+    await ns_thread.unshare(CLONE.NEWNET|CLONE.NEWUSER)
+    ### create in-namespace raw INET6 socket which Miredo will use to relay pings
+    icmp6_fd = await ns_thread.task.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
+    ### create and set up the TUN interface
+    # open /dev/net/tun
+    tun_fd = await ns_thread.task.open(await ns_thread.ptr(Path("/dev/net/tun")), O.RDWR)
+    # create tun interface for this fd
+    ifreq = await thread.ptr(Ifreq('teredo', flags=IFF_TUN))
+    await tun_fd.ioctl(TUNSETIFF, ifreq)
+    ### create socket which Miredo will use for Ifreq operations in this network namespace
+    reqsock = await ns_thread.task.socket(AF.INET, SOCK.STREAM)
+    # use reqsock to look up the interface index of the TUN interface by name (reusing the previous Ifreq)
+    await reqsock.ioctl(SIOCGIFINDEX, ifreq)
+    tun_index = (await ifreq.read()).ifindex
+    # create socketpair which Miredo will use to communicate between privileged process and Teredo client
+    privproc_pair = await (await ns_thread.task.socketpair(
+        AF.UNIX, SOCK.STREAM, 0, await ns_thread.ram.malloc(Socketpair))).read()
+    ### start up privileged process
+    privproc_thread = await ns_thread.clone(unshare=CLONE.FILES)
+    # preserve NET_ADMIN capability over exec so that privproc can manipulate the TUN interface
+    # add_to_ambient_caps extracted to a helper function to preserve clarity
+    await add_to_ambient_caps(privproc_thread, {CAP.NET_ADMIN})
+    privproc_side = thread.task.inherit_fd(privproc_pair.first)
+    await privproc_side.dup2(privproc_thread.stdin)
+    await privproc_side.dup2(privproc_thread.stdout)
+    privproc_child = await thread.exec(miredo_exec.privproc.args(str(tun_index)))
+    ### start up Teredo client
+    # we pass CLONE.NEWPID since miredo starts subprocesses and this will ensure they're killed on exit
+    client_thread = await ns_thread.clone(flags=CLONE.NEWNET|CLONE.NEWNS|CLONE.NEWPID, unshare=CLONE.FILES)
+    # a helper method
+    async def pass_fd(fd: FileDescriptor) -> str:
+        await fd.inherit(ns_thread.task).disable_cloexec()
+        return str(int(fd.near))
+    client_child = await thread.exec(miredo_exec.run_client.args(
+        await pass_fd(inet_sock), await pass_fd(tun_fd), await pass_fd(reqsock),
+        await pass_fd(icmp6_fd), await pass_fd(privproc_pair.second),
+        "teredo.remlab.net", "teredo.remlab.net")
+    return Miredo(ns_thread, client_child, privproc_child)
 
 class TestMiredo(TrioTestCase):
     async def asyncSetUp(self) -> None:

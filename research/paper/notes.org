@@ -267,6 +267,7 @@ It is hard to use processes for these uses chiefly because it is hard to create 
   - Containers and stuff? Namespaces?
   - Failure monitoring? Concurrency control? Concurrency in general? Service-oriented distributed systems?
     Shared-nothing message-passing concurrency? (aka "distributed systems")
+  - plan 9!!
 - It is hard to use processes for these features because it is hard to create complex processes
   - Initializing a process with specific resources is painful
     - TODO Why? need to establish this more
@@ -347,20 +348,112 @@ and also talk about passing down configs with fd numbers.
 maybe a little more non-namespace stuff, but we can think about that later;
 it would be nice to have a concrete non-namespace example;
 maybe fleshing out the fd numbers stuff into a full process network.
-** detailed design and implementation
-how do we do this? we just write about what we did
+*** basic example
+Simply creating a new process and immediately execing a binary:
 
-ok so we just talked about a bunch of examples
+#+BEGIN_SRC python
+child = thr.clone()
+child_process = child.execve(hello_path, [hello_path])
+event = child_process.waitpid(W.EXITED)
+if not (event.code == CLD.EXITED and event.exit_status == 0):
+    raise Exception("hello exited uncleanly :(")
+#+END_SRC
+*** passing down fds
+We can open file descriptors, including sockets, in the child, and pass them down straightforwardly:
 
-now we talk about actual implementation details
-*** text
+#+BEGIN_SRC python
+child = thr.clone(unshare=CLONE.FILES)
+sock = child.task.socket(AF.INET, SOCK.DGRAM)
+sock.bind(child.ptr(SockaddrIn(0, 0)))
+sock.listen(10)
+sock.disable_cloexec()
+child_process = child.execve(executable_path, [executable_path, "--listening-socket", str(int(sock))])
+#+END_SRC
+
+File descriptors, here, are object oriented and have relevant syscalls as methods.
+They make syscalls in the process they are created in by default;
+we can create more objects referring to the same file descriptor from different processes
+if we want to make the syscalls from another process.
+**** introducing
+disable_cloexec
+socket creation
+
+not using:
+.args
+as_argument
+*** piping
+**** text
+**** thoughts
+We want to be competitive-ish with bash
+
+Let's just do two processes?
+**** introduce
+dup2
+pipe
+*** pid namespace
+*** mount namespace
+Making a new mount namespace and rearranging the filesystem tree for the child process:
+# hmm ok let's try maybe.. chroot?
+# yeah that's an easy one, and common one.
+# no fuse, just chroot, with some bind mounts
+# TODO
+
+#+BEGIN_SRC python
+devfuse = await main.task.open(await thread.ptr(Path("/dev/fuse")), O.RDWR)
+child = thread.clone(flags=CLONE.NEWUSER|CLONE.NEWNS)
+child.mount("", path, "fuse", MS.NONE,
+            f"fd={int(devfuse)},rootmode=40777,user_id={self.uid},group_id={self.gid}")
+child_process = child.exec(cat)
+process.waitpid(W.EXITED)
+child.unshare(CLONE.FILES)
+devfuse.close
+thr.
+#+END_SRC
+*** things to introduce
+need to introduce .args for Command
+
+need to introduce disable_cloexec
+
+introduce dup2
+
+Maybe have a .args and dup2 and disable cloexec all in one, hmm.
+
+no that would be painful, hm
+
+although we did want to explicitly pass down fd numbers in config! yeah we can do that.
+
+we'll do the dup2 after as a separate example?
+
+pid namespaces
+
+socket creation
+*** network namespace
+Here we demonstrate launching a non-trivial application and namespace;
+the Miredo IPv6 tunneling software.
+Miredo is separated into two components, a privileged process which sets up network interfaces,
+and an unprivileged process which talks to the network.
+With minimal modifications,
+we launch Miredo entirely unprivileged inside a user namespace and network namespace.
+
+Complex coordination and setup of multiple processes would previously require hundreds of lines of concurrent code;
+we reduce it to a few dozen lines of sequential code, with no loss in power.
+#+BEGIN_SRC python
+
+#+END_SRC
+*** pid namespace
+*** failure condition
+    Show catching an exception in setup of the child process and falling back to something else?
+** implementation
+*** basics about rsyscall
 Our primary need for implementing direct-style process creation
 was a robust system for cross-process operations.
 We implemented this in the rsyscall project.
-rsyscall is a design and toolkit for cross-process operations on Linux,
+rsyscall is a toolkit for cross-process operations on Linux,
 with several language-specific library implementations.
-More detailed papers demonstrating implementation details of rsyscall and more applciations,
-but we can examine the relevant parts here.
+
+In this paper, we'll give a brief overview of rsyscall,
+and focus on implementation issues specific to process creation.
+# no need to mention more detailed papers here
 
 rsyscall's basic primitive is a syscall function
 which explictly specifies the process in which to perform the syscall.
@@ -476,7 +569,7 @@ Eventually, most processes will want to call =exec=.
 =exec= is unusual and requires careful design,
 because it does not return if successful.
 Therefore we need a way to determine if =exec= is successful;
-merely waiting for a response to the syscall will leave us waiting forever.
+naively waiting for a response to the syscall will leave us waiting forever.
 
 One traditional means is to create a pipe before forking,
 ensure both ends are marked =O_CLOEXEC=,
@@ -542,146 +635,90 @@ may be shared by explicit request when creating a process or thread using clone(
 The flags argument is a bit mask that specifies which parts of the execution context should be unshared.
 #+END_QUOTE
 
-We'll say "attributes" instead of "parts of its execution context" for short.
-Specifically, when the flags to unshare specify some attribute,
-and that attribute is currently shared,
-a copy of that attribute is made and the process switches to the copy.
-    
-Calling =unshare=, on its own, poses no complexity, even when done cross-process;
-the new attribute is a copy of the old attribute, so we can, naively, just continue on as before.
-The complexity is in ensuring the safety of operations after =unshare=,
-and in general for this model of selective copying versus sharing of process attributes.
+More concretely, when some part of the execution context is currently shared,
+and it's specified by the flags to =unshare=,
+=unshare= will make a copy of that part of the execution context and switch the process to that copy.
 
-Most languages and libraries have similar issues,
-but these are typically neglected and left to user code to handle properly.
-As a very general example,
-a memory-safe system will not permit access to freed memory through a stale reference;
-however, such systems will often allow a call to =close= or =dup2= to invalidate a file descriptor,
-and then allow system calls on stale references to that file descriptor,
-which now may point to a completely unrelated internal file.
-These issues are aggravated further by the presence of =fork= or =unshare=.
+For most =unshare= flags, the complexities of usage are minor and well-known,
+and are also encountered with =fork=;
+for example, =unshare(CLONE_FS)= and =fork= unshare the current working directory,
+so that one process might change its current working directory without affecting the other process.
+In this case, user code must be careful to not use a relative path from one process
+in a process that has a different current working directory.
 
-In rsyscall, we attempt to provide a safer API to such functionality;
-we'll focus here on =unshare(CLONE_FILES)=, which unshares the file descriptor table,
-for which our safe APIs are most developed.
+The most important issues lie with =unshare(CLONE_FILES)=.
+When calling =unshare(CLONE_FILES)=, or =clone(CLONE_FILES)=, or =fork=,
+a new file descriptor table is created
+with a copy of all file descriptors existing at the time of the system call.
+This is known as "file descriptor inheritance".
 
-We'll note first that file descriptors in rsyscall are garbage collected,
-which solves the above-mentioned issue of creating stale file descriptor through =close=/=dup2=
-and then unwittingly accessing them;
-such accesses to stale references are checked and prevented.
+The new file descriptor table will contain 
+private file descriptors from libraries and other processes sharing the same file descriptor table.
+Leaving these file descriptors open in the new table is a form of resource leakage,
+but it also will cause erroneous behavior.
+For example, it's a common practice to close the write end of a pipe
+and expect an EOF on the read end;
+if the write end is copied into the new file descriptor table before being closed,
+and the write end is never closed in the new table,
+the read end will never get an EOF.
 
-For example, if the file descriptor table is shared with another process,
-then when we open files other processes with the same fd table can use those file descriptors,
-and we can use the file descriptors opened by other processes.
-If we call =unshare(CLONE_FILES)=,
-then after the call 
-we'll have a file descriptor table which is a copy of the old table,
-meaning it contains all the file descriptors that were open in our old table at the time of our call to =unshare=.
-The new table is no longer shared,
-meaning other processes can't use the file descriptors we open in it,
-nor can we use file descriptors opened by other processes.
-    
-    Calling =unshare=, on its own, poses no complexity, even when done cross-process;
-    the new attribute is a copy of the old attribute, so we can, naively, just continue on as before.
-    The complexity is in ensuring the safety of operations after =unshare=,
-    and in general for this model of selective copying versus sharing of process attributes.
+The traditional way to deal with this is the =CLOEXEC= file descriptor flag.
+This flag can be set on a file descriptor and affects what happens when the process calls =execve=.
+Typically, the effect is described as "the file descriptor is closed when the process calls =execve=".
+Since we are discussing processes which share a file descriptor table,
+it's useful to clarify that =execve= first creates a new file descriptor table
+and copies all file descriptors existing at the time of the system call,
+before performing the =CLOEXEC= behavior;
+thus, if a process calls =execve= while sharing its file descriptor table,
+that won't resulting in =CLOEXEC= fds being closed in that file descriptor table for other processes sharing the table;
+rather, the observed effect is instead that
+the =CLOEXEC= fd is not copied into the new file descriptor table that the process uses after the =execve= completes.
 
-    Everything =unshare= can operate on, can also be copied by =clone= and =fork=.
-    Nevertheless, most languages and libraries leave proper handling of these attributes entirely up to user code.
-    For example, after a =fork= (or an =unshare(CLONE_FILES)=),
-    two processes will have file descriptor tables;
-    one process can close a file descriptor without affecting the other.
-    File descriptor numbers stored by libraries, then,
-    might no longer be valid 
-    one process can change its CWD without affecting the other process.
-    Relative paths in one process might no longer be valid paths for the other process;
-    or worse, they might still point to files, but the wrong files.
+In a correct conventional program or library, =CLOEXEC= is set on all file descriptors at creation time,
+to avoid unexpected file descriptor inheritance;
+and it is only unset after creation for file descriptors for which inheritance is explicitly desired.
+We follow the same discipline.
 
-    Memory-safe languages and libraries deal with these issues when 
+However, just setting =CLOEXEC= is not sufficient for us,
+because we can inherit file descriptors through =unshare(CLONE_FILES)=
+into processes that may never call =execve= at all,
+and thus never clean up the file descriptor table through =CLOEXEC=.
 
-    Similar issues happen with all attributes which can be unshared by =unshare=, =clone= and =fork=;
-    all these attributes provide namespaces for the resolution of references,
-    and those references can become invalid.
+We can solve this by explicitly closing all =CLOEXEC= file descriptors,
+achieving the same behavior as =execve= and cleaning up the file descriptor table.
+However, this would require us to unset =CLOEXEC= on any file descriptor we want to preserve into the new table.
+As an optimization, since file descriptors in rsyscall are garbage collected,
+we enumerate all live file descriptor references in the process and except those from being closed,
+even if they have =CLOEXEC= set.
 
-    These issues are, indeed, difficult to handle robustly.
+This issue and solution have a surface similarity to the =closefrom= function provided on some Unix systems;
+=closefrom= allows closing all file descriptors with an numeric value greater than a specified integer.
+Unlike =closefrom=, explicitly closing only =CLOEXEC= file descriptors
+preserves the ability to opt-in to inheritance when desired.
+=closefrom= lets the program special-case stdin/stdout/stderr as inherited,
+while not permitting anything else, such as higher fds, to be inherited.
+This is not recommended for a program that is part of a general-purpose system;
+inheritance of useful fds to unaware programs is a useful, if niche, feature,
+which can be used for many of the same purposes as inheritance of environment variables.
+Thus, we close fds based on whether they have =CLOEXEC= set,
+not based on their numeric value.
 
-    So far, we have only found a satisfactory user API for =unshare(CLONE_FILES)=;
-    like other systems, we leave it up to the user to correctly handle other attributes.
-    This is essentially equivalent to memory-unsafe languages which can generate invalid pointers.
+During the time between calling =unshare(CLONE_FILES)= and closing all =CLOEXEC= file descriptors,
+all the file descriptors that were in the original fd table at the time of calling =unshare=
+are in the new file descriptor table.
+Rather than ignore this as an implementation detail,
+we explicitly expose this to the user;
+after an =unshare(CLONE_FILES)=,
+the user can call an =inherit= method on a file descriptor
+to get a new live reference to the file descriptor 
+so that it is preserved by the garbage collector across the closing of =CLOEXEC= file descriptors.
+If =inherit= is called on a file descriptor that wasn't copied into the new file descriptor table
+(for example, a file descriptor that was opened in the parent after the =unshare(CLONE_FILES)= call),
+or is called after the file descriptor table has been cleaned by closing all =CLOEXEC= file descriptors,
+then an error is returned to the user.
 
-    # hmm what am I trying to say here?
-    # I'm just trying to get to the point of talking about the fd API
-    # let's just do that then
-
-    When calling =unshare(CLONE_FILES)=, or =clone(CLONE_FILES)=, or =fork=,
-    a new file descriptor table is created
-    with a copy of all file descriptors existing at the time of the system call.
-    This is called "file descriptor inheritance".
-
-    The new file descriptor table will contain 
-    private file descriptors from libraries and other processes sharing the same file descriptor table.
-    Leaving these file descriptors open in the new table is a form of resource leakage,
-    but it also will cause erroneous behavior.
-    For example, it's a common practice to close the write end of a pipe
-    and expect an EOF on the read end;
-    if the write end is copied into the new file descriptor table before being closed,
-    and the write end is never closed in the new table,
-    the read end will never get an EOF.
-
-    The traditional way to deal with this is the =CLOEXEC= file descriptor flag.
-    This flag can be set on a file descriptor and affects what happens when the process calls =execve=.
-    Typically, the effect is described as "the file descriptor is closed when the process calls =execve=".
-    Since we are discussing processes which share a file descriptor table,
-    it's useful to clarify that =execve= first creates a new file descriptor table
-    and copies all file descriptors existing at the time of the system call,
-    before performing the =CLOEXEC= behavior;
-    thus, if a process calls =execve= while sharing its file descriptor table,
-    that won't resulting in =CLOEXEC= fds being closed in that file descriptor table for other processes sharing the table;
-    rather, the observed effect is instead that
-    the =CLOEXEC= fd is not copied into the new file descriptor table that the process uses after the =execve= completes.
-
-    In a correct conventional program or library, =CLOEXEC= is set on all file descriptors at creation time,
-    to avoid unexpected file descriptor inheritance;
-    and it is only unset after creation for file descriptors for which inheritance is explicitly desired.
-    We follow the same discipline.
-
-    However, just setting =CLOEXEC= is not sufficient for us,
-    because we can inherit file descriptors through =unshare(CLONE_FILES)=
-    into processes that may never call =execve= at all,
-    and thus never clean up the file descriptor table through =CLOEXEC=.
-
-    We can solve this by explicitly closing all =CLOEXEC= file descriptors,
-    achieving the same behavior as =execve= and cleaning up the file descriptor table.
-    However, this would require us to unset =CLOEXEC= on any file descriptor we want to preserve into the new table.
-    As an optimization, since file descriptors in rsyscall are garbage collected,
-    we enumerate all live file descriptor references in the process and except those from being closed,
-    even if they have =CLOEXEC= set.
-
-    This issue and solution have a surface similarity to the =closefrom= function provided on some Unix systems;
-    =closefrom= allows closing all file descriptors with an numeric value greater than a specified integer.
-    Unlike =closefrom=, explicitly closing only =CLOEXEC= file descriptors
-    preserves the ability to opt-in to inheritance when desired.
-    =closefrom= lets the program special-case stdin/stdout/stderr as inherited,
-    while not permitting anything else, such as higher fds, to be inherited.
-    This is not recommended for a program that is part of a general-purpose system;
-    inheritance of useful fds to unaware programs is a useful, if niche, feature,
-    which can be used for many of the same purposes as inheritance of environment variables.
-    Thus, we close fds based on whether they have =CLOEXEC= set,
-    not based on their numeric value.
-
-    During the time between calling =unshare(CLONE_FILES)= and closing all =CLOEXEC= file descriptors,
-    all the file descriptors that were in the original fd table at the time of calling =unshare=
-    are in the new file descriptor table.
-    Rather than ignore this as an implementation detail,
-    we explicitly expose this to the user;
-    after an =unshare(CLONE_FILES)=,
-    the user can call an =inherit= method on a file descriptor
-    to get a new live reference to the file descriptor 
-    so that it is preserved by the garbage collector across the closing of =CLOEXEC= file descriptors.
-    If =inherit= is called on a file descriptor that wasn't copied into the new file descriptor table
-    (for example, a file descriptor that was opened in the parent after the =unshare(CLONE_FILES)= call),
-    or is called after the file descriptor table has been cleaned by closing all =CLOEXEC= file descriptors,
-    then an error is returned to the user.
+# TODO note that exec should also have this exception stuff,
+# that way we could have scripts use fexecve
 **** outline
      we'll cover inheritance through a clone_files making a new fd table,
      then doing a do_cloexec or exec to clear it out.
@@ -691,26 +728,6 @@ nor can we use file descriptors opened by other processes.
      yeah, we'll focus on unshare.
      basically just talk about unshare.
 **** text
-*** others
-hmmm ok
-**** namespace talk stuff?
-     no this is mostly related to the remote aspects
-**** inheritance
-     this is kind of related to the implementation detail of using clone
-     but...
-**** CLOEXEC
-ok ok ok yes cloexec
-
-and something with CLOUNSHARE or something
-
-right okay so we need to talk about these issues
-
-of, wanting to... clear the fd table of stray references when copying it
-
-**** explicit list of fds for exec to be passed even if cloexec
-     so that execveat on scripts works
-**** prctl to set cloexec for everything
-     sure would be nice
 ** evaluation (or, measurement)
 something?
 ** conclusion
