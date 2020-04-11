@@ -23,7 +23,7 @@ from rsyscall.monitor import AsyncChildProcess
 
 async def start_cat(thread: Thread, cat: Command,
                     stdin: FileDescriptor, stdout: FileDescriptor) -> AsyncChildProcess:
-    thread = await thread.clone(unshare=CLONE.FILES)
+    thread = await thread.clone()
     await thread.task.inherit_fd(stdin).dup2(thread.stdin)
     await thread.task.inherit_fd(stdout).dup2(thread.stdout)
     child = await thread.exec(cat)
@@ -54,7 +54,7 @@ class TestSSH(TrioTestCase):
     async def test_exec_pipe(self) -> None:
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)
         cat = await self.store.bin(coreutils_nixdep, "cat")
-        thread = await self.remote.clone(unshare=CLONE.FILES)
+        thread = await self.remote.clone()
         cat_side = thread.task.inherit_fd(remote_sock)
         await remote_sock.close()
         await cat_side.dup2(thread.stdin)
@@ -103,7 +103,6 @@ class TestSSH(TrioTestCase):
 
     async def test_sigmask_bug(self) -> None:
         thread = await self.remote.clone()
-        await thread.unshare_files(going_to_exec=True)
         await rsyscall.thread.do_cloexec_except(
             thread, set([fd.near for fd in thread.task.fd_handles]))
         await self.remote.task.sigprocmask((HowSIG.SETMASK,

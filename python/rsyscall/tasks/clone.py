@@ -194,7 +194,6 @@ async def launch_futex_monitor(ram: RAM,
 async def clone_child_task(
         parent: CloneThread,
         flags: CLONE,
-        unshare: CLONE,
         trampoline_func: t.Callable[[FileDescriptor], Trampoline],
 ) -> t.Tuple[AsyncChildProcess, Task]:
     """Clone a new child process and setup the sysif and task to manage it
@@ -209,15 +208,8 @@ async def clone_child_task(
     child process exits or execs, and the futex process will accordingly exit.
 
     """
-    # Default these flags to on...
-    flags |= CLONE.FILES|CLONE.IO|CLONE.SYSVSEM
-    # ...but allow them to be unset with unshare.
-    flags &= ~unshare
     # This flag is mandatory; if we don't use CLONE_VM then CHILD_CLEARTID doesn't work
     # properly and we need to do more arcane things; see tasks.exec.
-    if unshare & CLONE.VM:
-        raise Exception("Tried to unshare CLONE.VM with unshare flags", unshare,
-                        "but that's a mandatory flag because CHILD_CLEARTID is buggy without it")
     flags |= CLONE.VM
     # Open a channel which we'll use for the rsyscall connection
     [(access_sock, remote_sock)] = await parent.connection.open_async_channels(1)
@@ -285,7 +277,7 @@ class CloneThread(ConnectionThread):
         self.loader = thr.loader
         self.monitor = thr.monitor
 
-    async def _clone_task(self, flags: CLONE, unshare: CLONE) -> t.Tuple[AsyncChildProcess, Task]:
+    async def _clone_task(self, flags: CLONE) -> t.Tuple[AsyncChildProcess, Task]:
         return await clone_child_task(
-            self, flags, unshare, lambda sock: Trampoline(self.loader.server_func, [sock, sock]))
+            self, flags, lambda sock: Trampoline(self.loader.server_func, [sock, sock]))
 

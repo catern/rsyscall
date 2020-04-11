@@ -13,7 +13,7 @@ class TestPidns(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
         self.store = local_store
-        self.init = await self.local.clone(CLONE.NEWUSER|CLONE.NEWPID)
+        self.init = await self.local.clone(CLONE.NEWUSER|CLONE.NEWPID|CLONE.FILES)
 
     async def asyncTearDown(self) -> None:
         await self.init.close()
@@ -28,7 +28,7 @@ class TestPidns(TrioTestCase):
         cat = await self.local.environ.which('cat')
         pair = await (await self.local.task.socketpair(
             AF.UNIX, SOCK.STREAM, 0, await self.local.ram.malloc(Socketpair))).read()
-        child = await self.init.clone(unshare=CLONE.FILES)
+        child = await self.init.clone()
         child_side = child.task.inherit_fd(pair.first)
         # close in parent so we'll get EOF on other side when cat dies
         await pair.first.close()
@@ -43,8 +43,8 @@ class TestPidns(TrioTestCase):
     async def test_sleep(self) -> None:
         pipe = await (await self.local.task.pipe(await self.local.ram.malloc(Pipe))).read()
         child = await self.init.clone()
-        child_fd = pipe.write.move(child.task)
-        await child.unshare_files()
+        child_fd = child.task.inherit_fd(pipe.write)
+        await pipe.write.close()
         await child_fd.disable_cloexec()
         child_process = await child.exec(child.environ.sh.args('-c', '{ sleep inf & } &'))
         await child_process.check()

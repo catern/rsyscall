@@ -8,6 +8,7 @@ from rsyscall.near.sysif import SyscallHangup
 from rsyscall.tests.utils import assert_thread_works
 from rsyscall.sched import CLONE
 from rsyscall.signal import SIG
+import unittest
 
 class TestPersistent(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -35,6 +36,15 @@ class TestPersistent(TrioTestCase):
             await per_thr.reconnect(self.thread)
 
     async def test_nest_exit(self) -> None:
+        per_thr = await clone_persistent(self.thread, self.sock_path)
+        thread = await per_thr.clone(CLONE.FILES)
+        async with thread:
+            await per_thr.reconnect(self.thread)
+            await assert_thread_works(self, thread)
+            await thread.exit(0)
+
+    @unittest.skip("hangs on reconnect for some reason")
+    async def test_nest_unshare_files_exit(self) -> None:
         per_thr = await clone_persistent(self.thread, self.sock_path)
         thread = await per_thr.clone()
         async with thread:

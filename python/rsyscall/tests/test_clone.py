@@ -10,8 +10,7 @@ from rsyscall.sys.signalfd import SignalfdSiginfo
 
 class TestClone(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local.thread
-        self.thr = await self.local.clone()
+        self.thr = await local.thread.clone(CLONE.FILES)
 
     async def asyncTearDown(self) -> None:
         await self.thr.close()
@@ -20,7 +19,7 @@ class TestClone(TrioTestCase):
         await self.thr.exit(0)
 
     async def test_nest_exit(self) -> None:
-        thread = await self.thr.clone()
+        thread = await self.thr.clone(CLONE.FILES)
         async with thread:
             await thread.exit(0)
 
@@ -29,17 +28,17 @@ class TestClone(TrioTestCase):
         await do_async_things(self, epoller, self.thr)
 
     async def test_nest_async(self) -> None:
-        thread = await self.thr.clone()
+        thread = await self.thr.clone(CLONE.FILES)
         async with thread:
             epoller = await Epoller.make_root(thread.ram, thread.task)
             await do_async_things(self, epoller, thread)
 
     async def test_unshare_async(self) -> None:
-        await self.thr.unshare_files()
-        thread = await self.thr.clone()
+        await self.thr.unshare(CLONE.FILES)
+        thread = await self.thr.clone(CLONE.FILES)
         async with thread:
             epoller = await Epoller.make_root(thread.ram, thread.task)
-            await thread.unshare_files()
+            await thread.unshare(CLONE.FILES)
             await do_async_things(self, epoller, thread)
 
     async def test_exec(self) -> None:
@@ -62,7 +61,7 @@ class TestClone(TrioTestCase):
 class TestCloneUnshareFiles(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
-        self.thr = await self.local.clone(unshare=CLONE.FILES)
+        self.thr = await self.local.clone()
 
     async def asyncTearDown(self) -> None:
         await self.thr.close()

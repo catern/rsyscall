@@ -53,9 +53,9 @@ class UnixThread(CloneThread):
         self.stdout = thr.stdout
         self.stderr = thr.stderr
 
-    async def clone(self, flags: CLONE=CLONE.SIGHAND, unshare: CLONE=CLONE.NONE) -> ChildUnixThread:
+    async def clone(self, flags: CLONE=CLONE.NONE) -> ChildUnixThread:
         "Create a new child thread"
-        child_process, task = await self._clone_task(flags, unshare)
+        child_process, task = await self._clone_task(flags=flags)
         ram = RAM(task,
                   # We don't inherit the transport because it leads to a deadlock:
                   # If when a child task calls transport.read, it performs a syscall in the child task,

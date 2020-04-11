@@ -178,7 +178,7 @@ async def make_bootstrap_dir(
     stdout_pipe = await (await parent.task.pipe(
         await parent.ram.malloc(Pipe))).read()
     async_stdout = await parent.make_afd(stdout_pipe.read)
-    child = await parent.clone(unshare=CLONE.FILES)
+    child = await parent.clone()
     async with child:
         await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
         await child.task.inherit_fd(bootstrap_executable).dup2(child.stdin)
@@ -211,9 +211,7 @@ async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
         await thread.ram.malloc(Pipe))).read()
     async_stdout = await thread.make_afd(stdout_pipe.read)
     child = await thread.clone()
-    stdout = stdout_pipe.write.move(child.task)
-    await child.unshare_files()
-    await child.stdout.replace_with(stdout)
+    await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
     await child.task.chdir(await thread.ptr(local_path.parent))
     child_process = await child.exec(ssh_command.local_forward(
         "./" + local_path.name, remote_path,

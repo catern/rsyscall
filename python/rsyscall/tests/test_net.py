@@ -11,16 +11,14 @@ from rsyscall.sched import CLONE
 
 class TestNet(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local.thread
-        self.thr = await self.local.clone()
-        await self.thr.unshare(CLONE.NEWUSER|CLONE.NEWNET)
+        self.thr = await local.thread.clone(CLONE.NEWUSER|CLONE.NEWNET)
 
     async def asyncTearDown(self) -> None:
         await self.thr.close()
 
     async def test_setns_ownership(self) -> None:
         netnsfd = await self.thr.task.open(await self.thr.ram.ptr(Path("/proc/self/ns/net")), O.RDONLY)
-        thread = await self.thr.clone()
+        thread = await self.thr.clone(CLONE.FILES)
         await thread.unshare_user()
         with self.assertRaises(PermissionError):
             # we can't setns to a namespace that we don't own, which is fairly lame

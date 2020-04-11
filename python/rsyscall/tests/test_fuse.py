@@ -34,7 +34,7 @@ from dataclasses import dataclass
 class TestFUSE(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.tmpdir = await local.thread.mkdtemp()
-        self.thr = await local.thread.clone(flags=CLONE.NEWUSER|CLONE.NEWNS)
+        self.thr = await local.thread.clone(CLONE.NEWUSER|CLONE.NEWNS)
         self.child = await self.thr.clone()
         self.path = self.tmpdir.path/"path"
         await self.thr.mkdir(self.path)

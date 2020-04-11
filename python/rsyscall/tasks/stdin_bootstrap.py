@@ -68,15 +68,14 @@ async def stdin_bootstrap(
 
     """
     #### clone and exec into the bootstrap command
-    child = await parent.clone()
     # create the socketpair that will be used as stdin
     stdin_pair = await (await parent.task.socketpair(
         AF.UNIX, SOCK.STREAM, 0, await parent.ram.malloc(Socketpair))).read()
     parent_sock = stdin_pair.first
-    child_sock = stdin_pair.second.move(child.task)
+    child = await parent.clone()
     # set up stdin with socketpair
-    await child.unshare_files(going_to_exec=True)
-    await child.stdin.replace_with(child_sock)
+    await child.task.inherit_fd(stdin_pair.second).dup2(child.stdin)
+    await stdin_pair.second.close()
     # exec
     child_process = await child.exec(bootstrap_command)
     #### set up all the fds we'll want to pass over

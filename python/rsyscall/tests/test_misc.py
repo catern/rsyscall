@@ -12,13 +12,14 @@ from rsyscall.thread import do_cloexec_except
 from rsyscall.tests.utils import do_async_things
 from rsyscall.fcntl import O
 from rsyscall.unistd import Pipe
+from rsyscall.sched import CLONE
 
 class TestMisc(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
         self.store = local_store
         self.executables = await RsyscallServerExecutable.from_store(self.store)
-        self.thr = await self.local.clone()
+        self.thr = await self.local.clone(CLONE.FILES)
 
     async def asyncTearDown(self) -> None:
         await self.thr.close()

@@ -3,6 +3,7 @@ import rsyscall.tasks.local as local
 
 from rsyscall.nix import *
 from rsyscall.misc import hello_nixdep
+from rsyscall.sched import CLONE
 
 class TestNix(TrioTestCase):
     async def asyncSetUp(self) -> None:

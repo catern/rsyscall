@@ -30,6 +30,7 @@ from rsyscall.struct import Int32
 from rsyscall.linux.futex import FutexNode, RobustListHead, FUTEX_WAITERS, FUTEX_TID_MASK
 from rsyscall.sys.mman import PROT, MAP
 from rsyscall.sys.memfd import MFD
+from rsyscall.sched import CLONE
 from rsyscall.path import Path
 
 __all__ = [
@@ -184,6 +185,6 @@ async def rsyscall_exec(
 async def spawn_exec(thread: Thread, store: nix.Store) -> ChildThread:
     "Clone off a new ChildThread and immediately call rsyscall_exec in it."
     executable = await RsyscallServerExecutable.from_store(store)
-    child = await thread.clone()
+    child = await thread.clone(CLONE.FILES)
     await rsyscall_exec(thread, child, executable)
     return child

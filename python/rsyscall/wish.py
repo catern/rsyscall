@@ -188,10 +188,10 @@ class ConsoleGenie(WishGranter):
             async_from_term = await self.thread.make_afd(from_term_pipe.read)
             async_to_term = await self.thread.make_afd(to_term_pipe.write)
             try:
-                cat_stdin_thread = await self.thread.clone(unshare=CLONE.FILES)
+                cat_stdin_thread = await self.thread.clone()
                 await cat_stdin_thread.task.inherit_fd(to_term_pipe.read).dup2(cat_stdin_thread.stdin)
                 async with await cat_stdin_thread.exec(self.cat):
-                    cat_stdout_thread = await self.thread.clone(unshare=CLONE.FILES)
+                    cat_stdout_thread = await self.thread.clone()
                     await cat_stdout_thread.task.inherit_fd(from_term_pipe.write).dup2(cat_stdout_thread.stdout)
                     async with await cat_stdout_thread.exec(self.cat):
                         ret = await run_repl(async_from_term, async_to_term, {

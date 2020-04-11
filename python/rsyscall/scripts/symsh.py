@@ -88,8 +88,7 @@ class FuseFS:
         # other threads accessing the filesystem don't deadlock when we abort the FUSE server loop -
         # instead their syscalls will be aborted with ENOTCONN.
         self.thr = await thread.clone()
-        self.devfuse = devfuse.for_task(self.thr.task)
-        await self.thr.unshare(CLONE.FILES)
+        self.devfuse = self.thr.task.inherit_fd(devfuse)
         await devfuse.close()
         # Respond to FUSE init message to sanity-check things are set up right.
         self.buf = await self.thr.malloc(FuseInList, 4096)
