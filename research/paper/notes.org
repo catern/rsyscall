@@ -352,22 +352,50 @@ maybe fleshing out the fd numbers stuff into a full process network.
 Simply creating a new process and immediately execing a binary:
 
 #+BEGIN_SRC python
-child = thr.clone()
-child_process = child.execve(hello_path, [hello_path])
-event = child_process.waitpid(W.EXITED)
+# Use the clone syscall in the local thread to create a new thread;
+# we use a wrapper that supplies defaults for all arguments.
+child = local.thread.clone()
+# Call execve to run a different executable in the child thread;
+# We pass the executable path as the first argument in the argument list, as is traditional.
+# We use a wrapper that defaults envp to an unchanged environment, so we don't pass envp.
+child.execve(hello_path, [hello_path])
+# Wait on the child process to exit.
+event = child.process.waitpid(W.EXITED)
 if not (event.code == CLD.EXITED and event.exit_status == 0):
     raise Exception("hello exited uncleanly :(")
 #+END_SRC
+
+We use the word "thread" to refer to a process we control,
+along with some associated resources for that process.
+
+As exceptions are used for error-handling in the Python API,
+there is no need for error-checking code here.
+**** introducing
+thr
+
+we refer to processes as threads.
+
+hmm maybe we shouldn't
+no it's fine
+
+
+clone
+
+not using:
+execve returining the child process
+
 *** passing down fds
 We can open file descriptors, including sockets, in the child, and pass them down straightforwardly:
 
 #+BEGIN_SRC python
-child = thr.clone(unshare=CLONE.FILES)
-sock = child.task.socket(AF.INET, SOCK.DGRAM)
+child = local.thread.clone()
+sock = child.socket(AF.INET, SOCK.DGRAM)
+# bind the socket to a sockaddr_in;
+# the sockaddr is allocated in memory with child.ptr and is garbage collected
 sock.bind(child.ptr(SockaddrIn(0, 0)))
 sock.listen(10)
 sock.disable_cloexec()
-child_process = child.execve(executable_path, [executable_path, "--listening-socket", str(int(sock))])
+child.execve(executable_path, [executable_path, "--listening-socket", str(int(sock))])
 #+END_SRC
 
 File descriptors, here, are object oriented and have relevant syscalls as methods.
@@ -377,58 +405,61 @@ if we want to make the syscalls from another process.
 **** introducing
 disable_cloexec
 socket creation
+using int on sock
+.ptr
 
 not using:
 .args
 as_argument
 *** piping
-**** text
-**** thoughts
-We want to be competitive-ish with bash
+We can connect two children with a pipe,
+similar to the shell pipeline "yes | head -n 15":
 
-Let's just do two processes?
+#+BEGIN_SRC python
+# create the pipe
+pipe = local.thread.pipe()
+child1 = local.thread.clone()
+# inherit the write-end of the pipe to child1, and replace child1.stdout with it
+child1.inherit_fd(pipe.write).dup2(child1.stdout)
+child1_proc = child1.execve(yes_path, [yes_path])
+child2 = local.thread.clone()
+# inherit the read-end of the pipe to child2, and replace child2.stdin with it
+child2.inherit_fd(pipe.read).dup2(child2.stdin)
+child2_proc = child2.execve(head_path, [head_path, "-n", "15"])
+#+END_SRC
+
+After a process is created with clone,
+it maybe have inherited file descriptors.
+We make this inheritance explicit with =inherit_fd=,
+which returns a new handle to the file descriptor.
+Then we simply =dup2= as normal to replace child1's stdout with the write end of the pipe.
+We do the same operation with child2.
 **** introduce
 dup2
 pipe
-*** pid namespace
+
+not using:
+syscalls returning the buffer passed into them
+malloc
 *** mount namespace
-Making a new mount namespace and rearranging the filesystem tree for the child process:
-# hmm ok let's try maybe.. chroot?
-# yeah that's an easy one, and common one.
-# no fuse, just chroot, with some bind mounts
-# TODO
+We can make a new mount namespace and rearranging the filesystem tree for the child process.
+We bind-mount /proc at /proc inside the chroot directory,
+chroot into the directory,
+and exec an executable which will run inside the chroot.
 
 #+BEGIN_SRC python
-devfuse = await main.task.open(await thread.ptr(Path("/dev/fuse")), O.RDWR)
-child = thread.clone(flags=CLONE.NEWUSER|CLONE.NEWNS)
-child.mount("", path, "fuse", MS.NONE,
-            f"fd={int(devfuse)},rootmode=40777,user_id={self.uid},group_id={self.gid}")
-child_process = child.exec(cat)
-process.waitpid(W.EXITED)
-child.unshare(CLONE.FILES)
-devfuse.close
-thr.
+child = thread.clone(CLONE.NEWUSER|CLONE.NEWNS)
+child.mkdir(rootdir/"proc")
+child.mount(Path("/proc"), rootdir/"proc", "", MS.BIND, "")
+child.chroot(rootdir)
+child.execve(executable_path, [executable_path])
 #+END_SRC
-*** things to introduce
-need to introduce .args for Command
+**** introduce
+namespaces
 
-need to introduce disable_cloexec
-
-introduce dup2
-
-Maybe have a .args and dup2 and disable cloexec all in one, hmm.
-
-no that would be painful, hm
-
-although we did want to explicitly pass down fd numbers in config! yeah we can do that.
-
-we'll do the dup2 after as a separate example?
-
-pid namespaces
-
-socket creation
+slashes in paths
 *** network namespace
-Here we demonstrate launching a non-trivial application and namespace;
+Here we show real code for launching a non-trivial application and namespace:
 the Miredo IPv6 tunneling software.
 Miredo is separated into two components, a privileged process which sets up network interfaces,
 and an unprivileged process which talks to the network.
@@ -437,12 +468,61 @@ we launch Miredo entirely unprivileged inside a user namespace and network names
 
 Complex coordination and setup of multiple processes would previously require hundreds of lines of concurrent code;
 we reduce it to a few dozen lines of sequential code, with no loss in power.
+We use a few helper functions to keep the attention focused on the interesting parts.
 #+BEGIN_SRC python
-
+### create socket outside network namespace that Miredo will use for internet access
+inet_sock = local.thread.socket(AF.INET, SOCK.DGRAM)
+inet_sock.bind(local.thread.ptr(SockaddrIn(0, 0)))
+# set some miscellaneous additional sockopts that Miredo wants
+set_miredo_sockopts(local.thread, inet_sock)
+### create main network namespace thread
+ns_thread = local.thread.clone(CLONE.NEWNET|CLONE.NEWUSER)
+### create in-network-namespace raw INET6 socket which Miredo will use to relay pings
+icmp6_fd = ns_thread.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
+### create in-network-namespace socket which Miredo will use for unassociated Ifreq ioctls
+reqsock = ns_thread.socket(AF.INET, SOCK.STREAM)
+### create and set up the TUN interface
+tun_fd, tun_index = make_tun(ns_thread, "miredo", reqsock)
+### create socketpair which Miredo will use to communicate between privileged process and Teredo client
+privproc_pair = ns_thread.socketpair(AF.UNIX, SOCK.STREAM)
+### start up privileged process which manipulates the network setup in the namespace
+# privproc_thread is cloned from ns_thread, which was also created through clone; this nesting is fully supported
+privproc_thread = ns_thread.clone()
+# preserve NET_ADMIN capability over exec so that privproc can manipulate the TUN interface
+# helper function used because manipulating Linux ambient capabilities is fairly verbose
+add_to_ambient_caps(privproc_thread, {CAP.NET_ADMIN})
+# privproc expects to communicate with the main client over stdin and stdout
+privproc_side = privproc_thread.inherit_fd(privproc_pair.first)
+privproc_side.dup2(privproc_thread.stdin)
+privproc_side.dup2(privproc_thread.stdout)
+privproc_child = privproc_thread.execve(miredo_privproc_executable_path, [
+    miredo_privproc_executable_path, str(tun_index)
+])
+### start up Miredo client process which communicates over the internet to implement the tunnel
+# the client process doesn't need to be in the same network namespace, since it is passed all
+# the resources it needs as fds at startup.
+client_thread = ns_thread.clone(CLONE.NEWUSER|CLONE.NEWNET|CLONE.NEWNS|CLONE.NEWPID)
+# lightly sandbox by unmounting everything except for the executable and its deps (known via package manager)
+unmount_everything_except(client_thread, miredo_exec.run_client.executable_path)
+# a helper function for preparing the fds that are passed as command line arguments
+async def pass_fd(fd: FileDescriptor) -> str:
+    client_thread.inherit_fd(fd).disable_cloexec()
+    return str(int(fd))
+client_child = client_thread.execve(miredo_client_executable_path, [
+    miredo_client_executable_path,
+    pass_fd(inet_sock), pass_fd(tun_fd), pass_fd(reqsock),
+    pass_fd(icmp6_fd), pass_fd(privproc_pair.second),
+    "teredo.remlab.net", "teredo.remlab.net"
+])
 #+END_SRC
-*** pid namespace
-*** failure condition
-    Show catching an exception in setup of the child process and falling back to something else?
+
+Note that, as mentioned in a comment, we call =clone= on a thread we previously created with =clone= on =local.thread=.
+Such nested cloning is fully supported and allows us to set up complex graphs of processes and namespaces.
+**** introduces
+nested clone
+socketpair
+several helper functions
+
 ** implementation
 *** basics about rsyscall
 Our primary need for implementing direct-style process creation

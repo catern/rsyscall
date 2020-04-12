@@ -53,7 +53,7 @@ pytest ];
   strictDeps = false;
   nativePropagatedBuildInputs = [
       pkgs.s6
-      # miredo
+      miredo
       pkgs.postgresql_11
       pkgs.iproute
       # opensmtpd
@@ -73,7 +73,7 @@ pytest ];
       pyroute2
       outcome
   ];
-  miredo = pkgs.miredo;
+  miredo = miredo;
   nix = nix;
   rsyscall = rsyscall;
   openssh = pkgs.openssh;
@@ -81,7 +81,7 @@ pytest ];
   coreutils = pkgs.coreutils;
   hello = pkgs.hello;
   exportReferencesGraph = [
-    "miredo" pkgs.miredo
+    "miredo" miredo
     "nix" pkgs.nix
     "rsyscall" rsyscall
     "openssh" pkgs.openssh
