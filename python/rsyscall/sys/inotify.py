@@ -53,7 +53,7 @@ class InotifyEvent:
 
     def to_bytes(self) -> bytes:
         if self.name is not None:
-            name = name.encode()
+            name = self.name.encode()
             name_len = len(name)
         else:
             name = b""
