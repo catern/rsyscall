@@ -14,6 +14,7 @@ class SYS(enum.IntEnum):
     capget = lib.SYS_capget
     capset = lib.SYS_capset
     chdir = lib.SYS_chdir
+    chroot = lib.SYS_chroot
     clone = lib.SYS_clone
     close = lib.SYS_close
     connect = lib.SYS_connect

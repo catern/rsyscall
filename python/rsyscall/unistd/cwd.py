@@ -12,6 +12,10 @@ class CWDTask(FileDescriptorTask):
         with fd.borrow(self) as fd_n:
             await _fchdir(self.sysif, fd_n)
 
+    async def chroot(self, path: WrittenPointer[Path]) -> None:
+        with path.borrow(self) as path_n:
+            await _chroot(self.sysif, path_n)
+
 #### Raw syscalls ####
 import rsyscall.near.types as near
 from rsyscall.near.sysif import SyscallInterface
@@ -22,3 +26,6 @@ async def _chdir(sysif: SyscallInterface, path: near.Address) -> None:
 
 async def _fchdir(sysif: SyscallInterface, fd: near.FileDescriptor) -> None:
     await sysif.syscall(SYS.fchdir, fd)
+
+async def _chroot(sysif: SyscallInterface, path: near.Address) -> None:
+    await sysif.syscall(SYS.chroot, path)
