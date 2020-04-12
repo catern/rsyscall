@@ -226,6 +226,9 @@ class BaseFileDescriptor:
             if len(self._remove_from_tracking()) == 0:
                 logger.debug("leaked fd: %s", self)
 
+    def __int__(self) -> int:
+        return self.near.number
+
     def __str__(self) -> str:
         return f"FD({self.task}, {self.near.number})"
 

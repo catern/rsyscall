@@ -61,7 +61,7 @@ class TrampolineSerializer(Serializer[Trampoline]):
         args: t.List[int] = []
         for arg in val.args:
             if isinstance(arg, FileDescriptor):
-                args.append(int(arg.near))
+                args.append(int(arg))
             elif isinstance(arg, Pointer):
                 args.append(int(arg.near))
             else:

@@ -284,7 +284,7 @@ class CmsgSerializer(Serializer[T_cmsg]):
 import array
 class CmsgSCMRights(Cmsg, t.List[FileDescriptor]):
     def to_data(self) -> bytes:
-        return array.array('i', (int(fd.near) for fd in self)).tobytes()
+        return array.array('i', (int(fd) for fd in self)).tobytes()
     def borrow_with(self, stack: contextlib.ExitStack, task: FileDescriptorTask) -> None:
         for fd in self:
             stack.enter_context(fd.borrow(task))

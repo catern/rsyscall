@@ -155,7 +155,7 @@ class FileDescriptor(
 
     async def as_argument(self) -> int:
         await self.disable_cloexec()
-        return int(self.near)
+        return int(self)
 
     async def fcntl(self, cmd: F, arg: t.Optional[int]=None) -> int:
         self._validate()

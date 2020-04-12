@@ -79,7 +79,7 @@ _register_sockaddr(SockaddrUn)
 
 class SockaddrUnProcFd(SockaddrUn):
     def __init__(self, fd: FileDescriptor, name: str) -> None:
-        super().__init__(os.fsencode(f"/proc/self/fd/{int(fd.near)}/{name}"))
+        super().__init__(os.fsencode(f"/proc/self/fd/{int(fd)}/{name}"))
         self.fd = fd
         self.name = name
 
