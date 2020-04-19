@@ -374,32 +374,31 @@ a spawn-style API does not allow for conditional logic during the setup,
 where later syscalls depend on the results of earlier syscalls.
 
 Most applications would benefit from all the features of processes we listed above.
-But as expected,
-as the current process creation interfaces are poor,
-most applications don't use any of those features.
-We don't claim that this is the sole reason,
+But most applications don't use any of those features.
+We don't claim it is the sole reason,
 but the poor quality of the process creation interface
-is one thing blocking more advanced usage of processes.
+is one thing preventing more advanced usage of processes.
 
-We have adapted a common pattern which we see in other operating systems
-to Unix.
-In systems such as seL4 and KeyKOS,
-a process is created by its parent in an inert state,
+In some systems, such as KeyKOS, seL4 and other capability-based operating systems,
+there is another style of process creation.
+In this style, a process is created by its parent in an inert state,
 and then supplied with various resources,
-and then started running.
-The same mechanism that mutates a process while it is running,
-is used to initialize the process while it is in an inert state.
-In Unix, this corresponds to the parent operating on (calling the?) syscalls
-We've termed this "direct-style process creation".
-*** 
-these features of processes are all used at process creation and initialization time.
+and then started once it is fully set up.
+The same mechanisms that can mutate a process while it is running,
+are used to mutate the process while it is in an inert state;
+in such systems, these mechanisms can be used on the process from *outside* the context of the process,
+just as easily as they can be used from inside the process.
+We refer to this as "direct-style" process creation,
+because the parent creating the process operates on it directly and imperatively
+rather than dispatching a distinct unit of code to perform setup from inside the context of the new process,
+as in fork-style,
+or building up a declarative specification of what the new process should look like,
+as in spawn-style.
 
-hence it is important to have a good process creation and initialization interface.
-
-our current such interfaces suck,
-and as expected,
-most systems would benefit from all these features.
-yet most systems do not use any of them.
+Direct-style process creation lacks many of the disadvantages of fork-style or spawn-style process creation.
+We have adapted direct-style process creation for Linux.
+In the rest of the paper, we will examine the design and implementation of this style of process creation on Linux,
+and demonstrate its usage.
 *** server paragraph
 # hmm this is weak.
 # I don't think most processes actually need servers.
