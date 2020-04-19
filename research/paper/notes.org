@@ -85,7 +85,7 @@ This method of process creation results in more comprehensible programs,
 has better error handling,
 is more efficient,
 and is more amenable to abstraction.
-Our implementation is immediately deployable without kernel modifications on non-ancient Linux kernel versions.
+Our implementation is immediately deployable without kernel modifications on any recent Linux kernel versions.
 ** introduction
 
 Processes have significant power for abstraction.
@@ -250,8 +250,10 @@ and then do them, using our techniques
 
 right so maybe we should focus on the demos first?
 definitely
+
+demos, focused, and written!
 *** introduction real
-Processes, and the process interface for running programs, has a wide variety of uses.
+Processes, and the process interface for running programs, can be used for many purposes.
 They can be used to abstract resources[fn:ucspi],
 provide capability-based security[fn:capsicum],
 etc. etc.
@@ -259,6 +261,170 @@ etc. etc.
 Unfortunately,
 processes are rarely used to their full power.
 It is hard to use processes for these uses chiefly because it is hard to create complex processes.
+*** introduction attempt 2
+Processes are a powerful and widespread abstraction.
+Most operating systems provide processes,
+and most applications are distributed as executables which run in isolated processes.
+
+Beyond the basic usage of a processes to implement an application,
+the proces interface has many further uses.
+
+In Unix, the mechanism of file descriptor inheritance
+allows a process to be provided a resource by its creator,
+while abstracting over the precise nature of that resource.
+For example, a process can be provided a file descriptor which it is expected to read and write,
+which can be a file in a filesystem, a pipe, a network connection, or some other resource,
+without the process being aware of the type of resource it has been passed.
+As another example,
+a process can be provided a socket file descriptor from which it is expected to accept connections,
+without being aware of whether those connections come from the internet or from a local Unix socket.
+This mechanism is the basic principle of pipelines and redirection the Unix shell,
+but it is rarely used outside of the shell.
+
+In many systems,
+it's possible to modify a process's view of nominally "global" resources.
+In Unix-derived systems, this ability is most influentially provided in Plan 9,
+which allows each process to customize its view of the filesystem with private mounts and union directories.
+In Linux, these concepts were inherited as per-process namespaces.
+In its most basic application,
+this allows customizing the environment of a process without having to write explicit support code for customization.
+For example, Plan 9, unlike most other Unix-derived systems,
+did not have a =PATH= environment variable which was searched by code in the process to find executables;
+instead, each process was executed with a =/bin= directory at the root of the filesystem,
+which was a union of many other directories,
+and simply executed =/bin/foo= to run the program named =foo=.
+In this way a process could get a customized set of executables,
+without needing code to parse and handle =PATH=.
+
+# attempt
+The basic isolation powers of processes are used to simplify application development:
+it is beneficial to have a private virtual memory space when developing a stand-alone program.
+But most systems have additional mechanisms of isolation between processes,
+such as different privilege levels and access to global resources,
+which can be used to provide a form of sandboxing.
+For example, components which may exposed to hostile network requests
+can be run in a separate process, at a lower privilege level than the main program;
+in this way, even if an attacker gains control over that component,
+the attacker will only have access to the lower level of privileges of that component,
+rather than the full privileges of the main program.
+
+# we separate "regular" sandboxing and capability-based security
+# because lots people won't understand they're the same thing
+As a further, more robust development of process-based sandboxing,
+the privileges of a process can be explicitly enumerated
+in a capability-based security model.
+By using previously-mentioned resource passing mechanisms,
+such as file descriptor inheritance or namespace manipulation,
+and by disabling the process's access to global resources such as the shared filesystem,
+we can enforce that all resources used by the process are passed at creation time.
+
+# TODO not sure about this one
+Processes run concurrently,
+which allows exploiting parallelism in the hardware.
+Since processes don't share memory,
+they can provide a less complex parallel programming environment
+than shared-memory thread-based approaches.
+The most popular parallel programming environment in existence today is the Unix shell,
+which obtains its parallelism by running multiple processes connected via pipes.
+The Unix shell has a relatively constrained form of parallel processing,
+but it's also possible to create more complex webs of parallel processes,
+where, for example, one process might take multiple inputs over multiple pipes,
+or produce multiple outputs.
+*** continuation
+These features of processes are all used at process creation and initialization time;
+hence, it is important to have a good process creation interface,
+so that these features can be used.
+*** TODO fork and spawn are bad
+Currently available process creation interfaces
+on Unix-like systems such as Linux
+are not generally considered high quality.
+
+The two interfaces currently available can be divided into "fork-style" and "spawn-style".
+
+Fork-style interfaces are those that follow the model of fork.
+A process calls fork, and a copy of that process is made,
+with the return value of fork being the only differentiation between the process and its copy.
+The same program continues executing in both processes.
+Typically, the program will case on the return value to determine if it's running in the parent or the child,
+and run process setup and initialization code if the program is running in the child,
+calling various syscalls to set up the state of the child.
+
+Fork has a number of flaws,
+and much ink has been spilled detailing them.
+We'll cover the most prominent briefly here,
+but see Baumann 2019 for more detail.
+
+Fork has an unusual execution model that makes it fundamentally difficult to integrate into normal programs.
+
+- it's weird to return twice
+- errors and fallbacks can't be communicated across fork
+- it's fundamentally slow
+- it's weird and sucks
+
+Spawn-style interfaces are those that follow the model of =posix_spawn=.
+All the details about the new process are provided up-front.
+
+This does not extend to all the possible attributes that might want to set for a new process.
+Most systems have a large number of syscalls which can mutate the state of a process during its lifetime;
+for a spawn-style interface to work in all scenarios,
+all those possible mutations must be reproduced in the interface.
+This is difficult;
+furthermore, even if that can be achieved,
+a spawn-style API does not allow for conditional logic during the setup,
+where later syscalls depend on the results of earlier syscalls.
+
+Most applications would benefit from all the features of processes we listed above.
+But as expected,
+as the current process creation interfaces are poor,
+most applications don't use any of those features.
+We don't claim that this is the sole reason,
+but the poor quality of the process creation interface
+is one thing blocking more advanced usage of processes.
+
+We have adapted a common pattern which we see in other operating systems
+to Unix.
+In systems such as seL4 and KeyKOS,
+a process is created by its parent in an inert state,
+and then supplied with various resources,
+and then started running.
+The same mechanism that mutates a process while it is running,
+is used to initialize the process while it is in an inert state.
+In Unix, this corresponds to the parent operating on (calling the?) syscalls
+We've termed this "direct-style process creation".
+*** 
+these features of processes are all used at process creation and initialization time.
+
+hence it is important to have a good process creation and initialization interface.
+
+our current such interfaces suck,
+and as expected,
+most systems would benefit from all these features.
+yet most systems do not use any of them.
+*** server paragraph
+# hmm this is weak.
+# I don't think most processes actually need servers.
+# what am I really trying to go for here?
+# I want each of my examples to be actually useful for every application.
+# what is the server thing?
+# it's maybe objects? it's maybe parallelism? 
+# I mean, it is indeed parallelism and resources
+# but it's also objects, a server is an object that hides its implementation
+# aha! yes, implementation hiding, that's...
+# that's something we've done before, drat!
+# ok so, maybe we can do that hmm.
+# well it's just the whole service-based thing.
+# right, so maybe I should talk about some of the reasoning for services?
+# like... modularity.
+# i mean the abstraction thing is good.
+# maybe we should go into more depth about abstraction?
+# just have another section about it?
+# actually, we should cut it short, we don't want too much verbosity.
+# yeah let's cut it
+Since processes run concurrently and can have different privilege levels and resources,
+we can also create server processes which receive requests for operations on some resource
+from less-privileged client processes.
+
+This allows a less-privileged process to access constrained um.
 *** introduction gist
 - Processes are capable of providing many features
   - Abstracting from what kind of resource you're using (ucspi)
@@ -267,7 +433,7 @@ It is hard to use processes for these uses chiefly because it is hard to create 
   - Containers and stuff? Namespaces?
   - Failure monitoring? Concurrency control? Concurrency in general? Service-oriented distributed systems?
     Shared-nothing message-passing concurrency? (aka "distributed systems")
-  - plan 9!!
+  - Talk about plan 9!!
 - It is hard to use processes for these features because it is hard to create complex processes
   - Initializing a process with specific resources is painful
     - TODO Why? need to establish this more
@@ -277,6 +443,20 @@ It is hard to use processes for these uses chiefly because it is hard to create 
 - If we make it simpler to create processes, we can increase our usage of these features, including in combination
   - This will also make it possible to replace separate programs running as system servers, with libraries
 - TODO look at my SOSP rant thought process thing
+*** outline 2
+- features of processes, things they can do
+- therefore it is important to have a good process creation interface
+- currently widely available process creation interfaces suck for these reasons
+- we have created a process creation interface that does not have these flaws
+
+yes this is good.
+
+then we go into describing the interface,
+and then we give the examples
+
+we don't have a separate background section.
+
+I guess we can do all of this in the introduction?
 ** background
 *** fork weaknesses
     fork in the road paper
@@ -297,42 +477,34 @@ It is hard to use processes for these uses chiefly because it is hard to create 
     https://docs.sel4.systems/Tutorials/threads.html
 
 ** overview/example
-   The primary entry point
-   We provide direct-style process creation for Linux.
+   In a direct-style program,
+   we cause things to happen by directly invoking commands which have effects.
+   In an object-oriented language,
+   this most naturally takes the form of calling methods on objects.
+
+   With process creation,
+   we want to setup a process in a specific state.
+   We can make syscalls to change the state of a process.
+   In an object-oriented language,
+   direct-style process creation
+   then takes the form of calling syscalls in a process,
+   by calling methods *on* an object.
+
+   The change from needing to be *in* the process,
+   to being able to operate *on* the process is the primary source of improvement.
+
+   We call a syscall to create a new process;
+   instead of the syscall forking off the new process,
+   it returns an object;
+   then our program can act both on the original process and the new process.
+
+   We can call syscalls in the new process to change how it is set up,
+   and, typically, ultimately call =execve= to exec a new program in the process.
+
+   Then we can monitor the child process,
+   no longer under our control,
+   using normal Unix child monitoring techniques.
 ** demos
-ok so what demos will I give?
-
-setting up a pid namespace very easily is a good one.
-
-I guess a basic "spawning a process with some file descriptors" would be good.
-
-"setting up a pipeline" would be good. we need to be competitive with bash.
-
-no we can skip a pipeline because that requires manipulating hardcoded fd numbers,
-which is annoying to do.
-
-we can do some more "pass down configs/args with fd numbers embedded in them",
-that's something you couldn't much do before.
-that covers abstracting resources/sandboxing and also parallel processing to an extent maybe.
-
-so let's see:
-namespaces,
-passing down configs with fd numbers,
-what else? we certainly need a third.
-
-well I can consider what I've been doing,
-but right now let's think about it from first principles
-
-ok some things
-
-namespaces are great examples I guess
-
-the fuse mount in namespace process setup thing was actually a great example
-
-miredo might be a good example too, that was some complex setup
-
-hmm, not sure how to show these.
-
 oh, plan9-style namespace setup, that's another thing we should mention in the introduction duh
 
 plan9 is all fork based I guess? for sure.
@@ -518,11 +690,15 @@ client_child = client_thread.execve(miredo_client_executable_path, [
 
 Note that, as mentioned in a comment, we call =clone= on a thread we previously created with =clone= on =local.thread=.
 Such nested cloning is fully supported and allows us to set up complex graphs of processes and namespaces.
+
 **** introduces
 nested clone
 socketpair
 several helper functions
-
+**** paring down
+ok so maybe I should remove some of the unnecessary networking stuff?
+actually we can come back to this later
+# TODO maybe I should remove some more of the networking stuff into helper functions or something
 ** implementation
 *** basics about rsyscall
 Our primary need for implementing direct-style process creation
@@ -820,3 +996,7 @@ something?
 [fn:glibc]
 Note that =glibc= defines a wrapper for the raw kernel syscall;
 we are here talking about the kernel syscall.
+* other papers
+  cross-host operation with rsyscall
+
+  asynchronous IO with rsyscall thread pool (flexsc style)
