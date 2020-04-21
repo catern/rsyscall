@@ -556,36 +556,52 @@ i could intro some other namespace; newnet or newpid maybe
 Nested clone example: client and server inside net namespace using fixed localhost port
 ** implementation
 *** basics about rsyscall
-Our primary need for implementing direct-style process creation
-was a robust system for cross-process operations.
-We implemented this in the rsyscall project.
-rsyscall is a toolkit for cross-process operations on Linux,
+Our main need for implementing direct-style process creation
+is a robust system for cross-process syscalls.
+We provided this in the rsyscall project.
+rsyscall is a toolkit for cross-process syscalls on Linux,
 with several language-specific library implementations.
 
-In this paper, we'll give a brief overview of rsyscall,
+In this section, we'll give a brief overview of rsyscall,
 and focus on implementation issues specific to process creation.
 # no need to mention more detailed papers here
 
-rsyscall's basic primitive is a syscall function
-which explictly specifies the process in which to perform the syscall.
-On Linux x86_64, calling a syscall is completely specified by the syscall number plus six register-sized arguments;
-a syscall returns exactly one register-sized value.
-rsyscall's most deployable form implements these explicit-process syscalls by sending these seven integers over a pipe
-to a stub process running a stub function which reads syscall requests off the pipe,
-performs them,
-and writes the return value back over a return pipe.
-This allows us to calls syscalls in other processes under our control,
-in a way that is easily deployable on stock Linux kernels.
+rsyscall can be conceptually divided in two parts:
+the basic cross-process syscall primitive,
+and a language-specific library built on top
+to handle the complexities of manipulating resources across multiple processes.
+The Python language-specific library has already been demonstrated above.
+Such libraries only need to be able to call syscalls and explicitly specify a process in some way;
+they are, for the most part, agnostic to how the cross-process syscall is implemented.
+
+Using the Python library as an example,
+it provides Python wrappers for Linux system calls and structs
+which are type-safe using Python 3 type annotations and runtime checks
+while still providing low-abstraction access to a large subset of native Linux functionality.
+It also provides garbage collection for remote file descriptors, memory and other resources.
+Such features are independent of the precise implementation of the cross-process syscall primitive.
+
+On Linux x86_64, a syscall is specified by a syscall number plus six register-sized arguments;
+a syscall returns one register-sized value.
+rsyscall's default implementation of cross-process syscalls sends those seven integers over a pipe,
+and waits for a response on another pipe.
+Processes are created running a stub function which, in an infinite loop,
+reads a syscall request off the pipe,
+performs that syscall,
+and writes the return value back over the return pipe.
+In this way, a cross-process syscall works much like a very primitive remote procedure call.
 
 Many syscalls either take or return pointers to memory,
 and require the caller to read or write that memory to provide arguments or receive results.
-Hence, rsyscall needs a means of memory access for the target process.
+Therefore, an rsyscall library needs a way to access memory in the target process.
 We implement this through another set of pipes,
-and by explicitly copying memory into and out of those pipes using the =read= and =write= system calls.
+by explicitly copying memory into and out of those pipes using the =read= and =write= system calls.
 When we wish to read =N= bytes of memory at address =A= in the target process,
-we =write(memory_pipe, A, N)= and then read the memory off the other end of the pipe in the parent process.
-To write some data to memory, we instead first write that data to the pipe,
-then =read(memory_pipe, A, N)= to copy that data from the pipe into memory.
+we first perform a =write(memory_pipe, A, N)= in the target process,
+and then read that data off the other end of the pipe in the parent process.
+When we wish to write =N= bytes of data at address =A= in the target process,
+we first write that data to the pipe in the parent process,
+then perform a =read(memory_pipe, A, N)= in the target process to copy that data from the pipe into memory.
 
 ptrace provides an alternative means to perform arbitrary actions on other processes.
 However, among other issues, it has the unavoidable substantial disadvantage of not permitting multiple ptracers.
@@ -599,12 +615,13 @@ which may not always be the case.
 Additionally, these system calls are disabled if ptrace is disabled system-wide,
 which is a niche but possible system configuration.
 To ensure that rsyscall can be used for arbitrary purposes and on arbitrary systems, we avoided these calls.
+**** notes
+     maybe it would be beneficial to separate
+     "rsyscall the basic cross-process syscall primitive"
+     from
+     "rsyscall the python library".
 
-rsyscall provides a suite of useful functionality,
-including garbage collected file descriptors,
-which make it straightforward to write programs which perform arbitrary cross-process syscalls.
-# TODO make some more notes here? about features in rsyscall that we assume down below
-# I'll explain them in another paper
+     
 *** clone
 Now that we've established the basic operations which rsyscall provides,
 let's consider the specific issues related to process creation and initialization.
