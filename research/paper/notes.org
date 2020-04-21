@@ -39,7 +39,7 @@ On most systems today,
 the interfaces for process creation
 can be divided into "fork-style" and "spawn-style".
 A few systems use a third style, which we'll refer to as "direct-style".
-*** TODO fork-style
+*** fork-style
 Fork-style interfaces are those that follow the model of fork.
 A process calls fork, and a copy of that process is made,
 with the return value of fork being the only differentiation between the process and its copy.
@@ -51,9 +51,31 @@ calling various syscalls to set up the state of the child.
 Fork has a number of flaws,
 and much ink has been spilled detailing them.
 We'll cover the most prominent briefly here,
-but see Baumann 2019 for more detail.
+but see Baumann 2019 for a more detailed summary.
 
-Fork has an unusual execution model that makes it fundamentally difficult to integrate into normal programs.
+Fork returns twice, creating two different processes which execute concurrently.
+This immediately makes fork difficult to integrate;
+for example, errors can't be easily communicated between the two processes.
+If there is an error in the initialization of the child process,
+the part of the program running in the child process
+needs to use some form of inter-process communication (IPC) to communicate it back to the parent process.
+The child process can run arbitrary code to make decisions about its initialization,
+but that code needs to use IPC if it wishes to communicate with the rest of the program,
+which is still in the parent process.
+
+The most common complaint about fork is its poor performance.
+It copies many attributes about the parent process when creating the child process,
+including setting up copy-on-write memory-mappings in the child process.
+This becomes slower as the parent process has more memory-mappings,
+eventually taking a significant amount of time.
+
+Multi-threaded programs generally cannot use fork safely.
+Typical Unix fork implementations do not duplicate all threads in the parent process to the child process,
+so, for example, an important lock might be locked at the time of the fork and then never be unlocked,
+causing a deadlock.
+In combination with fork's poor performance in large-memory programs,
+a user of fork must think carefully
+about the characteristics of the process from which fork is being called.
 **** notes
 expand this
 - it's weird to return twice
@@ -64,24 +86,40 @@ expand this
     - large memory programs
     - multithreaded programs
     - programs using unusual fork-unaware libraries such as CUDA or kernel networking bypass
-*** TODO spawn-style
-Spawn-style interfaces are those that follow the model of =posix_spawn=.
-All the details about the new process are provided up-front.
 
-This does not extend to all the possible attributes that might want to set for a new process.
+What does spawn solve? performance I guess
+we should make sure to clarify. hm. or something.
+*** spawn-style
+Spawn-style interfaces are those that follow the model of =posix_spawn= or Windows' =CreateProcess=.
+All the details about the new process are provided up-front as arguments to a syscall,
+which creates the new process from a clean slate, initialized with the provided details.
+
+Since spawn-style interfaces don't copy details from the parent process,
+they don't have the performance problems of fork.
+However, they have significant flaws of their own.
+
+The arguments that can be provided to a spawn-style process creation syscall
+do not cover all the possible attributes that one might want to set for the new process.
 Most systems have a large number of syscalls which can mutate the state of a process during its lifetime;
 for a spawn-style interface to work in all scenarios,
 all those possible mutations must be reproduced in the interface.
-This is difficult;
-furthermore, even if that can be achieved,
-a spawn-style API does not allow for conditional logic during the setup,
-where later syscalls depend on the results of earlier syscalls.
+
+Spawn-style process creation also does not allow for conditional logic during the setup;
+if the setup of the new process encounters an error at some point,
+the only option is to return from the entire spawn call with an error.
+Such errors returned from spawn-style calls
+are typically much less informative
+than the errors returned by the syscalls which directly mutate the process attributes.
+In general, a spawn-style interface does not allow for conditional logic during the process setup;
+a modification to the process cannot depend on the result of some other modification.
 **** notes
 need to list more flaws I guess
 - limited number of modifiable things
 - limited expressiveness (conditionals?)
 - error handling (haven't included this one yet!)
-*** TODO direct-style
+
+seems like in multics, process creation was a privileged operation
+*** direct-style
 A few systems, such as KeyKOS, seL4 and other capability-based operating systems,
 use another style of process creation.
 In this style, a process is created by its parent in an inert state,
@@ -91,6 +129,7 @@ The same mechanisms that can mutate a process while it is running,
 are used to mutate the process while it is in an inert state;
 in such systems, these mechanisms can be used on the process from *outside* the context of the process,
 just as easily as they can be used from inside the process.
+
 We refer to this as "direct-style" process creation,
 because the parent creating the process operates on it directly and imperatively
 rather than dispatching a distinct unit of code to perform setup from inside the context of the new process,
@@ -98,10 +137,23 @@ as in fork-style,
 or building up a declarative specification of what the new process should look like,
 as in spawn-style.
 
-Direct-style process creation lacks many of the disadvantages of fork-style or spawn-style process creation.
-**** notes
-     need to say more about how it lacks the disadvantages
+Direct-style process creation has significant advantages over fork-style and spawn-style process creation.
 
+Unlike fork-style, the new process can be created in a clean, empty state,
+which removes the performance issues of copying the parent.
+The new process does not actually run any user code,
+so multi-threaded programs can safely create new processes without fear of deadlocks.
+
+Unlike spawn-style,
+the new process can be manipulated with all the normal mechanisms for process manipulation,
+so there is no need to create a duplicate spawn interface that allows specifying every possible attribute of a process.
+
+Unlike both fork-style and spawn-style,
+direct-style process creation operates on the process from the context of the main program,
+using individual syscalls.
+Thus, an error in some step of the initialization is reported to the main program like an error in any other syscall,
+and coordination between a component creating a process and the rest of the program requires no IPC.
+**** notes
      SEL4 has this style.
      https://docs.sel4.systems/Tutorials/threads.html
 *** TODO we've made a new process creation interface that doesn't suck
@@ -110,6 +162,7 @@ We have adapted direct-style process creation for Linux.
 In the rest of the paper,
 we will examine the design and implementation of this style of process creation on Linux,
 and demonstrate its usage.
+# TODO need to clean up this, should make a nice outline here
 ** background on the use of processes
 Why is it important to have a high-quality interface for creating processes?
 Processes are already widely used;
@@ -149,8 +202,7 @@ which was a union of many other directories,
 and simply executed =/bin/foo= to run the program named =foo=.
 In this way a process could get a customized set of executables,
 without needing code to parse and handle =PATH=.
-*** privilege separation allows sandboxing
-# attempt
+*** TODO privilege separation allows sandboxing
 The basic isolation powers of processes are used to simplify application development:
 it is beneficial to have a private virtual memory space when developing a stand-alone program.
 But most systems have additional mechanisms of isolation between processes,
@@ -162,8 +214,6 @@ in this way, even if an attacker gains control over that component,
 the attacker will only have access to the lower level of privileges of that component,
 rather than the full privileges of the main program.
 *** robust privilege separation and resource privion allows capability-based-security
-# we separate "regular" sandboxing and capability-based security
-# because lots people won't understand they're the same thing
 As a further, more robust development of process-based sandboxing,
 the privileges of a process can be explicitly enumerated
 in a capability-based security model.
@@ -172,6 +222,9 @@ such as file descriptor inheritance or namespace manipulation,
 and by disabling the process's access to global resources such as the shared filesystem,
 we can enforce that all resources used by the process are passed at creation time.
 **** notes
+     we separate "regular" sandboxing and capability-based security
+     because lots people won't understand they're the same thing
+
      mention capsicum
 *** non-shared-memory concurrency allows exploiting parallelism in a simple way
 # TODO not sure about this one
@@ -186,16 +239,37 @@ The Unix shell has a relatively constrained form of parallel processing,
 but it's also possible to create more complex webs of parallel processes,
 where, for example, one process might take multiple inputs over multiple pipes,
 or produce multiple outputs.
+**** notes
+     really, non-shared-memory concurrency is a better fit with reality
+
+     processors don't share memory! they should explicitly copy, that's reality
+
+     where's that dang datastructure server paper
 *** services?
+    don't think i really want this section
+
  - Failure monitoring? Concurrency control? Concurrency in general? Service-oriented distributed systems?
    Shared-nothing message-passing concurrency? (aka "distributed systems")
-*** TODO these features aren't used because of the bad process creation interfaces
-Most software would benefit from all the features of processes we listed above.
-But most software doesn't use any of those features.
-We don't claim it is the sole reason,
-but the poor quality of the process creation interface
-is one thing preventing more advanced usage of processes.
 
+*** conclusion
+These techniques, and more, are available through the process interface.
+Most software would benefit from abstraction over resources, sandboxing, and parallelism.
+Yet these features of processes are used only rarely.
+There are multiple reasons for this,
+but one of the primary reasons is the complexity of current process creation interfaces.
+
+Many of these techniques are used today by specialized software and services.
+Often, such software only allows use of one of these techniques;
+for example, the Unix shell allows piping together process, but not namespacing them;
+container systems allow sandboxing processes, but not piping them together.
+By delegating these features to specific separate services,
+we lose the ability to use them in combination.
+
+By improving the process creation interface,
+we can make it possible both for programs to directly manipulate processes to use these techniques,
+and to use and share composable libraries which use these techniques.
+We believe this potential justifies the investment of substantial effort
+into improving the process creation interface.
 **** notes
 should establish more that applications don't use these features
 
@@ -231,11 +305,11 @@ should establish more that applications don't use these features
    creating processes in direct-style
    is then a normal imperative program creating and mutating objects.
 
-   We've implemented these APIs in their most robust form for Python,
-   so we will give all our examples of direct-style process creation in pseudo-Python;
-   some Python-specific syntax has been removed for clarity.
+   We'll give all our examples of direct-style process creation in object-oriented Python;
+   some Python-specific syntax has been removed for clarity,
+   but the examples are otherwise real working code.
 *** Terminology: A thread is a process controlled by a single program
-    From the perspective of user code,
+    From the perspective of our programs,
     there are multiple processes which are under its control.
     "A process which is under my control" is a mouthful;
     we use the term "thread" to refer to all such controlled processes,
@@ -249,7 +323,10 @@ should establish more that applications don't use these features
     and so the terminology provides useful intuition.
     We will therefore use the term "thread" to refer to these controlled processes throughout the rest of the paper.
 *** basic example
-Simply creating a new process and immediately execing a binary:
+In \listing{basic}, we simply create a new process under our control (a thread)
+and immediately exec a binary with it.
+As exceptions are used for error-handling in the Python API,
+there is no need for error-checking code.
 
 #+BEGIN_SRC python
 # Use the clone syscall in the local thread to create a new thread;
@@ -259,17 +336,7 @@ child = local.thread.clone()
 # We pass the executable path as the first argument in the argument list, as is traditional.
 # We use a wrapper that defaults envp to an unchanged environment, so we don't pass envp.
 child.execve(hello_path, [hello_path])
-# Wait on the child process to exit.
-event = child.process.waitpid(W.EXITED)
-if not (event.code == CLD.EXITED and event.exit_status == 0):
-    raise Exception("hello exited uncleanly :(")
 #+END_SRC
-
-We use the word "thread" to refer to a process we control,
-along with some associated resources for that process.
-
-As exceptions are used for error-handling in the Python API,
-there is no need for error-checking code here.
 **** introducing
 thr
 
@@ -284,8 +351,17 @@ clone
 not using:
 execve returining the child process
 
+not actually waiting on the child.
 *** passing down fds
-We can open file descriptors, including sockets, in the child, and pass them down straightforwardly:
+In \listing{fds}, we create a new thread,
+then create a listening socket bound to a random port in that thread,
+then call exec, 
+passing down the socket by disabling cloexec and passing its file descriptor number as an argument to the new program.
+
+File descriptors, here, are object oriented and have relevant syscalls as methods.
+They make syscalls in the process they are created in by default;
+we can create more objects referring to the same file descriptor from different processes
+if we want to make the syscalls from another process.
 
 #+BEGIN_SRC python
 child = local.thread.clone()
@@ -297,11 +373,6 @@ sock.listen(10)
 sock.disable_cloexec()
 child.execve(executable_path, [executable_path, "--listening-socket", str(int(sock))])
 #+END_SRC
-
-File descriptors, here, are object oriented and have relevant syscalls as methods.
-They make syscalls in the process they are created in by default;
-we can create more objects referring to the same file descriptor from different processes
-if we want to make the syscalls from another process.
 **** introducing
 disable_cloexec
 socket creation
@@ -312,8 +383,24 @@ not using:
 .args
 as_argument
 *** piping
-We can connect two children with a pipe,
-similar to the shell pipeline "yes | head -n 15":
+In \listing{pipe},
+we do the same as the Unix shell pipeline "yes | head -n 15".
+We create a pipe,
+then create two threads,
+connect them with a pipe,
+and exec a different program in each thread.
+
+After a process is created with clone,
+it may have inherited file descriptors;
+here we inherit the pipe.
+We make this inheritance explicit with =inherit_fd=,
+a helper method on our thread object,
+which takes a file descriptor from a different thread
+and performs a runtime check that the file descriptor actually was inherited.
+If so, it returns a new handle to the file descriptor which performs syscalls from the new thread.
+
+Then we simply =dup2= as normal to replace child1's stdout with the write end of the pipe;
+=dup2= disables CLOEXEC by default on the target.
 
 #+BEGIN_SRC python
 # create the pipe
@@ -327,13 +414,6 @@ child2 = local.thread.clone()
 child2.inherit_fd(pipe.read).dup2(child2.stdin)
 child2_proc = child2.execve(head_path, [head_path, "-n", "15"])
 #+END_SRC
-
-After a process is created with clone,
-it maybe have inherited file descriptors.
-We make this inheritance explicit with =inherit_fd=,
-which returns a new handle to the file descriptor.
-Then we simply =dup2= as normal to replace child1's stdout with the write end of the pipe.
-We do the same operation with child2.
 **** introduce
 dup2
 pipe
@@ -342,7 +422,8 @@ not using:
 syscalls returning the buffer passed into them
 malloc
 *** mount namespace
-We can make a new mount namespace and rearranging the filesystem tree for the child process.
+In \listing{mount},
+we make a new mount namespace and rearrange the filesystem tree for the child process.
 We bind-mount /proc at /proc inside the chroot directory,
 chroot into the directory,
 and exec an executable which will run inside the chroot.
@@ -358,17 +439,52 @@ child.execve(executable_path, [executable_path])
 namespaces
 
 slashes in paths
-*** network namespace
-Here we show real code for launching a non-trivial application and namespace:
+
+do we really need this? yeah it's nice, shrug
+*** nested clone and network namespace
+In \listing{nested},
+we make a process (=ns_thread=) in a new network namespace.
+Then, we create two more child processes of =ns_thread=,
+which are also in the new network namespace.
+This nested creation of child processes is fully supported,
+like all other syscalls,
+and allows us to set up complex graphs of processes and namespaces.
+
+We bind to a privileged port on localhost inside the namespace,
+and create one child to listen on that socket,
+and another child to connect to it.
+
+#+BEGIN_SRC python
+ns_thread = local.thread.clone(CLONE.NEWNET|CLONE.NEWUSER)
+
+listening_child = ns_thread.clone()
+sock = listening_child.socket(AF.INET, SOCK.DGRAM)
+sockaddr = SockaddrIn(22, "127.0.0.1")
+sock.bind(listening_child.ptr(sockaddr))
+sock.listen(10)
+sock.disable_cloexec()
+child.execve(server_path, [server_path, "--listening-socket", str(int(sock))])
+
+connecting_child = ns_thread.clone()
+child.execve(client_path, [client_path, "--connect-address", str(sockaddr.address) + ":" + str(sockaddr.port)])
+#+END_SRC
+**** introduce
+network namespace
+nested clone
+
+Nested clone example: client and server inside net namespace using fixed localhost port
+*** TODO miredo
+In \listing{miredo},
+we show non-trivial code for launching a real application:
 the Miredo IPv6 tunneling software.
+We use a few helper functions in this listing to keep the attention focused on the interesting parts.
+
 Miredo is separated into two components, a privileged process which sets up network interfaces,
 and an unprivileged process which talks to the network.
-With minimal modifications,
-we launch Miredo entirely unprivileged inside a user namespace and network namespace.
+With minimal modifications to Miredo,
+we launch Miredo entirely unprivileged inside a user namespace and network namespace,
+with all resources created outside and explicitly passed in.
 
-Complex coordination and setup of multiple processes would previously require hundreds of lines of concurrent code;
-we reduce it to a few dozen lines of sequential code, with no loss in power.
-We use a few helper functions to keep the attention focused on the interesting parts.
 #+BEGIN_SRC python
 ### create socket outside network namespace that Miredo will use for internet access
 inet_sock = local.thread.socket(AF.INET, SOCK.DGRAM)
@@ -386,7 +502,6 @@ tun_fd, tun_index = make_tun(ns_thread, "miredo", reqsock)
 ### create socketpair which Miredo will use to communicate between privileged process and Teredo client
 privproc_pair = ns_thread.socketpair(AF.UNIX, SOCK.STREAM)
 ### start up privileged process which manipulates the network setup in the namespace
-# privproc_thread is cloned from ns_thread, which was also created through clone; this nesting is fully supported
 privproc_thread = ns_thread.clone()
 # preserve NET_ADMIN capability over exec so that privproc can manipulate the TUN interface
 # helper function used because manipulating Linux ambient capabilities is fairly verbose
@@ -416,17 +531,29 @@ client_child = client_thread.execve(miredo_client_executable_path, [
 ])
 #+END_SRC
 
-Note that, as mentioned in a comment, we call =clone= on a thread we previously created with =clone= on =local.thread=.
-Such nested cloning is fully supported and allows us to set up complex graphs of processes and namespaces.
-
 **** introduces
-nested clone
 socketpair
 several helper functions
-**** paring down
+**** notes
 ok so maybe I should remove some of the unnecessary networking stuff?
 actually we can come back to this later
-# TODO maybe I should remove some more of the networking stuff into helper functions or something
+
+ok I feel like we need more detailed description or something.
+
+actually it would be strongly beneficial to show what the corresponding fork-based code looks like.
+ah maybe I shouldn't actually do the gloating "wow we're so simple"
+
+maybe I should do a nested clone before this? yeah for sure actually.
+
+OK so that's a big, clear todo:
+do a nested clone before here.
+what's the use of nested clones? well, namespaces are one.
+
+guess I could do that in the mount namespace?
+I could do a pipe in the mount namespace.
+i could intro some other namespace; newnet or newpid maybe
+
+Nested clone example: client and server inside net namespace using fixed localhost port
 ** implementation
 *** basics about rsyscall
 Our primary need for implementing direct-style process creation
@@ -718,11 +845,18 @@ something?
 can mmap a bunch of stuff and show that without having to copy page tables, it's faster
 
 can show a chart even, two lines, speed with and without, nice
+
+We are more interested in complexity.
+We have not optimized our implementation for performance.
+
+nevertheless, [chart]
 ** future work
 *** rsyscall other uses
 rsyscall has many uses unrelated to process creation;
 we are actively exploring such directions.
 *** non-OO APIs for other languages
+*** portability?
+we don't think portability concerns should prevent moving unix-like systems forward.
 ** conclusion
 * Footnotes
 
