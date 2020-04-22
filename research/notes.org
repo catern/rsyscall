@@ -22671,6 +22671,17 @@ Either way, thanks for working on Project Loom!
     We don't want to require building with Nix. Hm. Hm hm hm.
 ** DONE stop using python O flags and EPOLL flags
    They are buggy/wrong?
+** TODO carefully consider exec-detection bug
+ok right, if a process is killed before the exec,
+vs being killed after the exec:
+they're indistinguishable with this approach since neither will upt something on the pipe
+and both will cause both waitids to return (the futex and the child process).
+
+so it's inextricably buggy!
+
+(there are other bugs in it which could be solved by closing the pipe,
+but while there's one bug, there's no point in resolving other bugs - a twisted philosophy but it's true! we want perfection)
+
 * PR
 ** website?
 ** mailing list
