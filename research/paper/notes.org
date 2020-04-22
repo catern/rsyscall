@@ -585,7 +585,7 @@ On Linux x86_64, a syscall is specified by a syscall number plus six register-si
 a syscall returns one register-sized value.
 rsyscall's default implementation of cross-process syscalls sends those seven integers over a pipe,
 and waits for a response on another pipe.
-Processes are created running a stub function which, in an infinite loop,
+Processes are created running an infinite loop which, at each iteration,
 reads a syscall request off the pipe,
 performs that syscall,
 and writes the return value back over the return pipe.
@@ -628,128 +628,139 @@ let's consider the specific issues related to process creation and initializatio
 
 There are three Linux system calls which create processes:
 =fork=, =vfork= and =clone=.
-
-=vfork= has some intriguing features,
-and we performed some early investigation into process-creation primitives based on it[fn:vfork],
-but ultimately discarded it in favor of our rsyscall-based approach.
-With an rsyscall-based approach, =vfork= is not suitable,
-because when a child process is created with =vfork=,
-the parent process is suspended until the child process either calls =exec= or =exit=;
-since the parent process is where our actual program is running, this is unsuitable.
-
-=fork= is the typical approach,
-but we can emulate it by essentially calling =clone= with =CLONE_VM= unset,
-so that the new process has a copy of the parent process's address space;
-hence we'll move on directly to consider the details of =clone=.
+=clone= provides a superset of the functionality of the other two,
+so we focused our attention on =clone=.
 
 =clone= (along with =fork=) creates a new process
-which starts executing at the next instruction after the syscall instruction,
+which immediately starts executing at the next instruction after the syscall instruction,
+in parallel with the parent process,
 with its registers in generally the same state as the parent process.[fn:glibc]
 In the style of Plan 9's =fork= syscall, which inspired =clone=,
 =clone= takes a mask of flags which determines whether several attributes of the new process
 are either shared with, or copied from, the parent process.
 
-While this is the traditional design,
-it's not suitable for us:
-We want, at a minimum, to be able to set arbitrary registers for the new process,
+=clone= only lets us change the stack register for the new process.
+We would like to be able to set arbitrary registers for the new process,
 so that we can control where it begins executing and the stack it executes on.
+Fortunately, changing the stack is sufficient.
 
-Fortunately, =clone= lets us set the stack register to an arbitrary pointer,
-and this is sufficient.
-To avoid special-casing =clone=,
-we ensure that the next instruction executed after any syscall
-is (in x86 terms) a =RET=.
-Since we control the stack,
-this allows us to cause the new process to jump to an arbitrary address;
-then, we can provide additional arguments and data from this code under our control
+We ensure that the next instruction executed after any syscall
+is (in x86 terms) a =RET=;
+this is always the case, so we have no need to special case the execution of =clone=.
+Since we control the stack of the new process,
+the =RET= will jump to a code address that we control.
+We can then supply additional arguments to this code
 by putting them on the stack.
 
-As a useful general-purpose utility,
-we provide a trampoline which sets all registers to values found on the stack.
-We take a moment here to note that this is, admittedly,
-also a generally useful utility for hackers performing return-oriented-programming attacks,
-but we console ourselves with the knowledge that similar functionality exists in any standards-compliant C library.
-With this trampoline code linked into the target process,
+We typically cause the new process to jump to a trampoline provided by the rsyscall library
+which sets all registers to values found on the stack
+and then jumps to another address.[fn:rop]
+With this trampoline,
 we can provide a helper Python function that,
 when given a function pointer following C calling conventions, and some arguments,
 will prepare a stack for a call to clone such that the new process will call that function with those arguments.
 
-With our new ability to call arbitrary functions,
-we can now call =clone= so that it launches a process running our stub syscall function,
-described in the previous section,
-which will use two pipes passed as arguments to receive syscall requests and respond with syscall results.
+With our new ability to call arbitrary C-compatible functions,
+we can now call =clone= so that it launches a process running our infinite syscall loop,
+which is implented in C and, as described in the previous section,
+uses two pipes passed as arguments to receive syscall requests and respond with syscall results.
 
+# TODO is this section necessary?
 The addresses of these functions and trampolines are discovered through a linking procedure.
 When the process being created is in the same address space as the main process which is running user code,
-the location of the rsyscall library and the code within it is known through normal language linking mechanisms,
-and no special effort needs to be taken.
+the location of the rsyscall library in memory, and the addresses of code within it,
+are known through normal language-specific linking mechanisms.
 However, when a process is created with a different address space,
-such as when we establish a connection to another process after it's been started,
+such as when we establish a connection to a process after it's been started,
 we need to perform linking to learn the addresses of functions.
 This linking procedure is performed while bootstrapping the connection,
-and generally involves the target process sending a table of important addresses to the parent process.
+and involves the target process sending a table of important addresses to the connecting process.
 
-After creating a new process with clone,
+After using =clone= to create a new process running our syscall loop,
 most system calls can be called as normal.
-The new process can be modified freely through unshare, dup2, and other system calls.
-*** exec
-Eventually, most processes will want to call =exec=.
-=exec= is unusual and requires careful design,
-because it does not return if successful.
-Therefore we need a way to determine if =exec= is successful;
-naively waiting for a response to the syscall will leave us waiting forever.
+The new process can be modified freely through chdir, dup2, and other system calls.
+Out of system calls related to process creation,
+only =execve= and =unshare= need substantial further attention.
+*** execve
+Eventually, most programs will want to call =execve= in the processes they create.
+=execve= is unusual and requires careful design,
+because when it is successful, it does not return.
+Therefore we need a way to determine if =execve= is successful;
+naively waiting for a response to the syscall request will leave us waiting forever.
 
-One traditional means is to create a pipe before forking,
+One traditional means to detect a successful =execve= is to create a pipe before forking,
 ensure both ends are marked =O_CLOEXEC=,
-perform the fork and exec,
+perform the fork,
+call =execve= in the child,
 close the write end of the pipe,
 and wait for EOF on the read end.
-If the child process has neither called exec nor exited,
-then the write end of the pipe will still be open in the child process's fd table.
-But once the child process calls exec,
-=O_CLOEXEC= will cause the write end of the pipe to be closed after the exec.
+If the child process has neither successfully called =execve=, nor exited for some other reason,
+then the write end of the pipe will still be open in the child process's fd table,
+and the read end of the pipe will not return EOF.
+But once the child process calls =execve= successfully,
+=O_CLOEXEC= will cause the write end of the pipe to be closed,
+and the read end of the pipe will return EOF.
 
-This is a somewhat indirect way of achieving the goal, but works acceptably with fork.
-Unfortunately, many of our child processes will share their fd table with the parent at the time they call exec,
-so if the write end of the pipe is closed in the parent, then it will be closed in the child as well.
+This trick works well with =fork=;
+but it's not general enough to work with =clone=.
+Child processes can be created with the =CLONE_FILES= flag passed to =clone=,
+which causes the parent process and child process to share a single fd table.
+This means that when the parent process closes the write end of the pipe,
+it will also be closed in the child process,
+and the read end of the pipe will immediately return EOF,
+regardless of whether the child has called =execve= or exited.
 
-Fortunately, there is an alternative.
+Fortunately, there is an alternative solution, which does work with =CLONE_FILES=.
 The =ctid= argument to =clone= specifies a memory address which,
 when the =CLONE_CHILD_CLEARTID= flag is set,
 the kernel sets to zero when the child exits or execs,
-and then performs a futex wakeup on.
+and then, crucially, performs a futex wakeup on.
 More specifically,
-the kernel clears and does a wakeup on =ctid= when the child process leaves its current address space;
+the kernel clears and does a futex wakeup on =ctid= when the child process leaves its current address space;
 this precisely coincides with exiting or execing,
-since those are the only way to change address space in current Linux.
+since those are the only way to change address space in Linux as of this writing.
+
+A futex is a Linux-specific feature,
+which is generally used for the implementation of userspace shared-memory synchronization constructs,
+such as mutexes and condition variables.
+The relevant detail for us here is that we can wait on an address
+until a futex wakeup is performed on that address;
+that means we can wait on =ctid= until the futex wakeup is performed,
+and in this way get notified of the child process calling =execve=.
 
 Unfortunately, futexes in current Linux integrate poorly:
-There is no way for to block on more than one futex at a time,
-and no way to integrate a futex into a file-descriptor based event loop.
-The best we can do is create a dedicated process for each futex we want to wait on.
-We have this process exit zero when the futex wakes up;
-we can integrate waiting for the process exit into our event loop through normal means.
+There is no way for a single process to wait for more than one futex at a time,
+and no way to monitor a futex with file-descriptor-monitoring syscalls such as =poll=.
+The best we can do is create a dedicated child process for each futex we want to wait on,
+and have this child process exit when the futex has a wakeup.
+Monitoring child processes can be straightforwardly integrated into an event loop.
 
-Nevertheless, this provides a solution.
-We provide an argument for =ctid= whenever we call =clone=,
-and set up a process to wait on that futex so that when we call =exec=,
-we wait for either the =exec= to return or the futex process to exit,
+While slightly complex to implement, this solution works well.
+We provide =ctid= whenever we call =clone=,
+and set up a process to wait on that futex.
+Then, when we call =execve=,
+we wait for either the =execve= to return an error or the futex process to exit,
 whichever comes first.
 If the futex process exits,
-we close the write end of the pipe and wait for EOF on the read end;
-if we don't read a response for the exec,
-we know that the child has successfully called exec.
+and the child process doesn't itself exit,
+we know that the child has successfully called =execve=.
 
-This works well;
-however, it would be nicer if Linux natively provided functionality to wait for a child's exec.
-Several systems with kqueue, including FreeBSD,
-allowing waiting for exec events of arbitrary processes through kqueue's =EVFILT_PROC=.
+If the futex process and child process both exit,
+it's ambiguous whether the child process successfully called =execve=;
+this ambiguity is unfortunate, but it is also present in the pipe-based approach.
+This is, we believe, the best solution currently available.
+
+We would prefer for Linux to natively provide functionality to wait for a child's =execve=.
+Some other Unix-like systems provide this;
+kqueue, on FreeBSD, allows waiting for exec in arbitrary processes through kqueue's =EVFILT_PROC=.
 One approach for Linux would be to add a new =clone= flag to opt-in to receiving =WEXECED= events through =waitid=;
 note that a =waitid= flag alone is not sufficient,
 since it's necessary to receive =SIGCHLD= signals for the =WEXECED= event if waiting for it from an event loop.
-Alternatively, some form of the now long-removed =FUTEX_FD= functionality could be re-added to Linux
-so that waiting for the =ctid= futex could be integrated into an event loop.
-*** unshare
+Alternatively, some way to wait for futex wakeups through a file descriptor could be added,
+so we can use file-descriptor-monitoring syscalls to wait for the =ctid= futex;
+such a feature used to exist in the form of =FUTEX_FD=,
+but was removed from Linux long ago due to race conditions in its design.
+*** TODO unshare
 #+BEGIN_QUOTE
 int unshare(int flags);
 
@@ -858,6 +869,14 @@ then an error is returned to the user.
 **** text
 ** evaluation (or, measurement)
 something?
+
+what if i just skip this section lol
+
+let's do that.
+skipping this!
+
+ugh we'll have to do it eventually though,
+but not now, I don't want to.
 *** performance I guess?
 can mmap a bunch of stuff and show that without having to copy page tables, it's faster
 
@@ -867,15 +886,64 @@ We are more interested in complexity.
 We have not optimized our implementation for performance.
 
 nevertheless, [chart]
+*** rewrite something?
+    maybe I should try implementing Python's popen/subprocess with rsyscall?
+    But that's not fair, theirs is portable.
+
+    lol I can't do it anyway, unless I want to wrap rsyscall fds with Python fds
+    i guess I could do that hmmmt
 ** future work
 *** rsyscall other uses
-rsyscall has many uses unrelated to process creation;
-we are actively exploring such directions.
+Most avenues of future work focus on rsyscall.
+rsyscall was not developed solely for the purpose of this paper,
+and it has many uses unrelated to direct-style process creation,
+such as asynchronous system calls, exceptionless system calls[fn:flexsc], cross-host operations, among others.
+We are actively exploring such directions.
 *** non-OO APIs for other languages
-*** portability?
-we don't think portability concerns should prevent moving unix-like systems forward.
+[do I really need this section?]
+*** portability? other Unix systems
+We believe similar techniques as outlined in this paper
+could be applied to other systems to provide direct-style process creation for them.
+We are not actively exploring this,
+as our focus is on Linux,
+but others may wish to explore porting this strategy to other operating systems.
+*** direct kernel support
+rsyscall's cross-process syscalls can be performed entirely in userspace,
+which has substantial benefits for deployability.
+Nevertheless, direct kernel support for creating a stub process and performing syscalls in the context of that process
+may provide efficiency benefits, as well as reducing userspace-visible complexity.
+*** TODO kernel support
+    # let's concretely say again the features we want;
+    # it's just the exec-detecing and do_cloexec_except stuff
+Some aspects of direct-style process creation are difficult to achieve on Linux;
+see the implementation section for more.
+We would benefit from some kernel features;
+exploring how to implement these features in a generally useful and upstreamable way
+is an important direction for future work.
+*** large scale open source usage
+We have made substantial use of the techniques described in this paper
+in proprietary software at Two Sigma.
+While this gives us personally greater confidence in these techniques,
+it would be better to use them in a publicly available, open source system.
+Either porting an existing system to use these techniques,
+or using these techniques to create a substantial new system from scratch,
+would aid adoption of these techniques.
 ** conclusion
+Direct-style process creation is much less known and much less used than fork-style and spawn-style.
+We have implemented direct-style process creation for Linux.
+Our implementation is immediately deployable on today's Linux systems.
+We have discussed various applications of processes,
+and demonstrated the use of Linux direct-style process creation
+to implement them.
+We hope that this work will help encourage more use of the process abstraction,
+which, though widespread,
+is still not used to its full potential.
 * Footnotes
+
+[fn:rop]
+This is also a generally useful utility for hackers performing return-oriented-programming attacks;
+but similar functionality exists in any standards-compliant C library,
+so there is no increase in attack surface.
 
 [fn:glibc]
 Note that =glibc= defines a wrapper for the raw kernel syscall;
