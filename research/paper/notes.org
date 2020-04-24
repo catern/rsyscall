@@ -760,118 +760,116 @@ Alternatively, some way to wait for futex wakeups through a file descriptor coul
 so we can use file-descriptor-monitoring syscalls to wait for the =ctid= futex;
 such a feature used to exist in the form of =FUTEX_FD=,
 but was removed from Linux long ago due to race conditions in its design.
-*** TODO unshared file descriptor tables
+*** TODO managing file descriptor tables
 As mentioned in the previous section,
 the =CLONE_FILES= flag can be passed to =clone=.
 When this flag is passed,
 the file descriptor table is shared between the parent process and child process.
+The same file descriptors are open in both processes at the same numbers,
+and if new file descriptors are opened in either process,
+they are also visible in the other process.
 This is simple to model,
 and convenient for many purposes;
 for example, the child process might be in a different network namespace from the parent,
 and the shared file descriptor table would allow the child to bind a socket
 and the parent to use it.
 
-The real difficulty is when =CLONE_FILES= is not passed to =clone=.
-Then, we get the same behavior as =fork=:
+If =CLONE_FILES= is not passed to =clone=,
+then =clone= has the same behavior as =fork=:
 The new process has a new file descriptor table,
 containing copies of all the file descriptors existing in the parent at the time of the system call.
 This same behavior can also be triggered after process creation by calling =unshare(CLONE_FILES)= or =execve=;
-if =unshare(CLONE_FILES)= or =execve=
+if =unshare(CLONE_FILES)= or =execve= (ignoring =CLOEXEC=, which we'll discuss later),
 are called in a process currently sharing its file descriptor table with another process,
 then after the call that process will have a new, private file descriptor table,
 again with a copy of all the file descriptors existing at the time of the system call.
 
-The new file descriptor table containing a copy of all the file descriptors in the old table
-is known as "file descriptor inheritance".
-The new table will contain private file descriptors from libraries running in the old table.
-Leaving these file descriptors open in the new table is a form of resource leakage,
-but it also will cause erroneous behavior.
+After all the file descriptors have been copied from the old table into the new table,
+we need to decide which ones we want to keep open in the new table,
+and which ones should be closed.
+Keeping some file descriptors from the old table in the new table
+is referred to as "file descriptor inheritance".
+**** inheriting file descriptors
+The rule about which file descriptors stay open is simple:
+We want to keep a file descriptor open in the new table
+if there is a process using that file descriptor.
+Note, if the process is using a file descriptor in the new table,
+this necessarily means that the process's file descriptor table is the new table.
+We track which processes are using which file descriptors as part of our file descriptor garbage collection system.
+File descriptors are used through garbage-collected handles,
+each of which is associated with a process.
+If there is an existing handle for a (process, file descriptor number) combination,
+this means that that process is using the file descriptor with that number in its file descriptor table.
+
+This means that for any file descriptors which is regarded as in-use before an =unshare(CLONE_FILES)=,
+the copy of that file descriptor in the new file descriptor table will also be regarded as in-use,
+since the (process, file descriptor number) will still exist and now refer to the file descriptor in the new table.
+So, such file descriptors will automatically be kept open;
+that is, they will be automatically inherited into the new table.
+This same mechanism can work across =execve=,
+if a connection to the process is re-established after the =execve=,
+although this is of relatively little use.
+
+When a process is created with =clone= with a new file descriptor table,
+no file descriptor handles yet exist for that process.
+Once a handle is created with that process and some file descriptor,
+that file descriptor will be inherited into (that is, kept open in) the new table.
+These handles can be created through the =inherit_fd= function.
+
+At the time of creating a new file descriptor table,
+we perform some bookkeeping:
+We make a list of all the file descriptors that existed in the old table
+at the time of the creation of the new table.
+These file descriptors are the ones which were copied into the new table.
+
+The =inherit_fd= method uses this list.
+It takes a process and a file descriptor handle from another process,
+and checks (with the list) that that file descriptor was copied into the process's file descriptor table
+and hasn't since been closed.
+If so, it creates a new handle for that (process, file descriptor number) combination.
+This will allow the file descriptor to stay open and be used in the new process.
+**** closing file descriptors after inheritance
+After file descriptor inheritance is complete,
+we must promptly close other file descriptors we don't want to inherit.
+Leaving these file descriptors open in the new table is a form of resource leakage.
+It can also cause erroneous behavior.
 For example, it's a common practice to close the write end of a pipe
 and expect an EOF on the read end;
 if the write end is copied into the new file descriptor table before being closed,
 and the write end is never closed in the new table,
 the read end will never get an EOF.
 
-This issue is well-known,
-and the traditional fix is the =CLOEXEC= file descriptor flag.
-If this flag is set on a file descriptor,
-it will not be copied into the new file descriptor table when one is created;
-file descriptor inheritance will not happen for this file descriptor.
-This flag can be set on all private file descriptors,
-so that they will not be inherited.
+However, we can't simply close all other file descriptors.
+The possibility of implicit inheritance of file descriptors is a traditional Unix feature,
+which is useful in a wide variety of situations,
+in much the same way as implicit inheritance of environment variables;
+it can allow a resource to be passed down a process hierarchy without intervening programs being aware.
 
-If a program does want a file descriptor to be inherited,
-it can unset =CLOEXEC= on that file descriptor,
-create the new file descriptor table,
-and then set =CLOEXEC= again.
-It's important that this only be done on file descriptors in processes
-that don't have a shared file descriptor table;
-otherwise, other processes sharing that file descriptor might call =execve= while =CLOEXEC= is unset,
-and unexpectedly inherit the file descriptor.
+Here is where =CLOEXEC= becomes relevant:
+=CLOEXEC=, in practice,
+is a tag, set by userspace, for file descriptors which should not be implicitly inherited.
+If =CLOEXEC= is set on a file descriptor,
+we should close it if we don't explicitly want it;
+if =CLOEXEC= is not set, we should not close it, but instead should allow it to be implicitly inherited.
 
-Unfortunately, =CLOEXEC= only works when a new file descriptor table is created by an =execve=;
-hence the typical explanation of its functionality as
-"closing CLOEXEC-marked file descriptors when exec is called".
-As we noted earlier, file descriptor tables can also be created by =unshare(CLONE_FILES)= or by =clone=.
-In many cases, processes that call =unshare(CLONE_FILES)= or =clone= may be short-lived,
-or may call =execve= soon thereafter, removing the problem.
-But if they are long-lived and don't call =execve=,
-the file descriptors inherited into those file descriptor tables
-will cause the same resource leakage and incorrect behavior
-as file descriptors inherited across =execve=.
+This usage of =CLOEXEC= is a consequence of =CLOEXEC='s primary purpose:
+Managing inheritance of file descriptors over =execve=,
+in programs where the caller of =execve= doesn't know all the file descriptors
+that may have been opened by the rest of the program,
+which is in practice all programs.
+When =CLOEXEC= is set on a file descriptor,
+it will not be copied into the new file descriptor table created after =execve=.
+Thus =CLOEXEC= is a way of saying, before an =execve=,
+that this file descriptor will not be used by the new program after an =execve=.
+Since, in a general purpose program, =execve= may be called at any time,
+libraries must have =CLOEXEC= set correctly at all times.
+So we can check =CLOEXEC= to see whether a file descriptor should be inherited or not,
+even if the file descriptor is used by a library unrelated to rsyscall.
 
-The solution is straightforward.
-After a call to =unshare(CLONE_FILES)= or =clone=,
-we can simply explicitly close all =CLOEXEC= file descriptors.
-There is no system call to do this,
-but there are multiple mechanism we can use to loop over =CLOEXEC= file descriptors and call =close= on them.
-Like with =execve=,
-we can inherit a file descriptor into a new file descriptor table by unsetting =CLOEXEC= before creating the new table.
-
-This works well,
-but there's one more relevant aspect.
-As we mentioned,
-it's important that =CLOEXEC= only be unset on file descriptors in processes
-that don't have a shared file descriptor table.
-Following this rule strictly doesn't allow a process which already shares a file descriptor table
-to create a new file descriptor table and selectively inheriting file descriptors into that table.
-The imperative process of unsetting =CLOEXEC= and then setting it again
-is unsuitable for shared file descriptor tables.
-
-We would prefer to be able to explicitly list =CLOEXEC= fds
-which should be inherited into the new file descriptor table
-rather than closed.
-Fortunately, since we are manually closing the =CLOEXEC= fds in the first place,
-we can implement this ourselves:
-We simply pass a list of fds as an argument to the userspace function
-which closes =CLOEXEC= fds,
-and change the function to ignore those fds when closing.
-If this functionality was implemented with a system call,
-it would be likewise essential that it take a list of fds to exclude from closing.
-
-Note that this is not the same as explicitly listing all fds which should be copied into the new file descriptor table.
-Non-=CLOEXEC= fds should still be implicitly inherited;
-this is a traditional Unix feature which is useful in a wide variety of situations,
-much the same as implicit inheritance of environment variables.
-
-This explicit list of =CLOEXEC= fds which should be inherited is built up by calls to =inherit_fd=;
-the programs in the examples section demonstrate its use.
-The actual closing of =CLOEXEC= fds doesn't happen, in the Python library,
-until the user explicitly triggers it or a file descriptor garbage collection happens.
-This is how the feature of inheritance is explicitly exposed to the user.
-
-# TODO um we earlier just said it was really important to close these things
-# maybe we should focus on the perspective which emphasizes inherit_fd?
-# and emphasizes explicitly cleaning up the fd space
-# focus on inheritance
-# one thing I do like about this version is that we're very clear about creating new file descriptor tables.
-# OK!
-# so there are three issues:
-# inherit_fd, do_cloexec, and do_cloexec_except
-# let's focus on inherit_fd.
-# the notion is, we have all fds.
-# so we can inherit.
-# but, we do need to clean up the fd table afterwards.
+The implementation of closing non-inherited file descriptors is then simple:
+We close all file descriptors which have =CLOEXEC= set
+and which aren't referenced by an rsyscall file descriptor handle.
+We do this in userspace; a syscall to support this would be a useful addition to Linux.
 **** outline
      we'll cover inheritance through a clone_files making a new fd table,
      then doing a do_cloexec or exec to clear it out.
@@ -971,6 +969,20 @@ it would be better to use them in a publicly available, open source system.
 Either porting an existing system to use these techniques,
 or using these techniques to create a substantial new system from scratch,
 would aid adoption of these techniques.
+*** file descriptor lifetime management
+Keeping file descriptors open if and only if there is a specific process using that file descriptor
+is not the only possibility.
+Keep in mind that "a process using the file descriptor" is a slight abuse of terminology;
+processes don't use file descriptors, programs do, and in our system there is only one program.
+To reflect this, we could instead more directly use file descriptors in a process-agnostic way;
+this would support the creation of objects
+which work transparently across multiple processes which share a file descriptor table.
+Such objects would automatically use the relevant process to perform the syscalls for any specific operation.
+A process-centric view of file descriptors instead forces each object to be associated with one process.
+Nevertheless, we found that the process-centric perspective better matches the existing intuitions of users,
+especially those with prior experience in programming with processes.
+We hope that future systems for multi-process programming
+might explore an object-centric approach for managing resources.
 ** conclusion
 Direct-style process creation is much less known and much less used than fork-style and spawn-style.
 We have implemented direct-style process creation for Linux.
@@ -982,6 +994,16 @@ We hope that this work will help encourage more use of the process abstraction,
 which, though widespread,
 is still not used to its full potential.
 * Footnotes
+
+[fn:fdnumber]
+In this paper, we are somewhat loose about using the term "file descriptor"
+when we really mean "file descriptor number".
+A file descriptor exists in a specific file descriptor table;
+when a process switches tables,
+it can use the same file descriptor number to refer to the same "open file description",
+but the file descriptor establishing the link between the two is different.
+File descriptors have only one bit of state which is independent from the "open file description":
+The CLOEXEC flag.
 
 [fn:rop]
 This is also a generally useful utility for hackers performing return-oriented-programming attacks;
