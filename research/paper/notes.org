@@ -578,7 +578,6 @@ with several language-specific library implementations.
 
 In this section, we'll give a brief overview of rsyscall,
 and focus on implementation issues specific to process creation.
-# no need to mention more detailed papers here
 
 rsyscall can be conceptually divided in two parts:
 the basic cross-process syscall primitive,
@@ -904,33 +903,18 @@ while the file descriptor table is shared;
 unsetting =CLOEXEC= while the file descriptor table is shared will cause race conditions,
 because the other processes sharing the file descriptor table might call =execve= at any time,
 and so the file descriptor table must first be unshared before unsetting =CLOEXEC= and calling =execve=.
-** TODO evaluation (or, measurement)
-something?
+** TODO evaluation
+*** performance ideas
+Can mmap a bunch of stuff in a process and then create some children,
+and show that without having to copy page tables (due to CLONE_VM), it's faster.
+Can make the classic chart of fork vs glibc's posix_spawn vs direct-style.
+*** abstraction ideas
+    implementing Python's popen/subprocess with rsyscall?
+    But that's not fair, theirs is portable, we'll be way simpler for free.
 
-what if i just skip this section lol
-
-let's do that.
-skipping this!
-
-ugh we'll have to do it eventually though,
-but not now, I don't want to.
-*** performance I guess?
-can mmap a bunch of stuff and show that without having to copy page tables, it's faster
-
-can show a chart even, two lines, speed with and without, nice
-
-We are more interested in complexity.
-We have not optimized our implementation for performance.
-
-nevertheless, [chart]
-*** rewrite something?
-    maybe I should try implementing Python's popen/subprocess with rsyscall?
-    But that's not fair, theirs is portable.
-
-    lol I can't do it anyway, unless I want to wrap rsyscall fds with Python fds
-    i guess I could do that hmmmt
+    Rewrite some existing system with rsyscall?
+    Write a shell?
 ** Future work
-   # these headings won't actually exist in the paper, it will be just one section
 *** rsyscall other uses
 Most avenues of future work focus on rsyscall.
 rsyscall was not developed solely for the purpose of this paper,
@@ -967,6 +951,7 @@ Either porting an existing system to use these techniques,
 or using these techniques to create a substantial new system from scratch,
 would provide a meaningful demonstration of the viability of these techniques.
 *** file descriptor lifetime management                            :noexport:
+    # TODO this is hard to explain, probably best to drop this
 Keeping file descriptors open if and only if there is a specific process using that file descriptor
 is not the only possibility.
 Keep in mind that "a process using the file descriptor" is a slight abuse of terminology;
@@ -990,9 +975,6 @@ to implement them.
 We hope that this work will help encourage more use of the process abstraction,
 which, though widespread,
 is still not used to its full potential.
-* more references
-porting unix to windows NT, mentions implementing fork on top of CreateProcess
-https://www.usenix.org/legacy/publications/library/proceedings/nt-sysadmin97/full_papers/korn/korn.pdf
 
 * Footnotes
 
@@ -1062,3 +1044,9 @@ so there is no increase in attack surface.
 [fn:glibc]
 Note that =glibc= defines a wrapper for the raw kernel syscall;
 we are here talking about the kernel syscall.
+* misc other references
+porting unix to windows NT, mentions implementing fork on top of CreateProcess
+https://www.usenix.org/legacy/publications/library/proceedings/nt-sysadmin97/full_papers/korn/korn.pdf
+
+* other ideas
+can do stuff to prepare the process up-front and replicate it to make many
