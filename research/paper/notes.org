@@ -40,7 +40,7 @@ the interfaces for process creation
 can be divided into "fork-style" and "spawn-style".
 A few systems use a third style, which we'll refer to as "direct-style".
 *** fork-style
-Fork-style interfaces are those that follow the model of fork.
+Fork-style interfaces are those that follow the model used by Unix's fork[fn:fork].
 A process calls fork, and a copy of that process is made,
 with the return value of fork being the only differentiation between the process and its copy.
 The same program continues executing in both processes.
@@ -51,7 +51,7 @@ calling various syscalls to set up the state of the child.
 Fork has a number of flaws,
 and much ink has been spilled detailing them.
 We'll cover the most prominent briefly here,
-but see Baumann 2019 for a more detailed summary.
+but see Baumann 2019[fn:forkroad] for a more detailed evaluation.
 
 Fork returns twice, creating two different processes which execute concurrently.
 This immediately makes fork difficult to integrate;
@@ -63,7 +63,7 @@ The child process can run arbitrary code to make decisions about its initializat
 but that code needs to use IPC if it wishes to communicate with the rest of the program,
 which is still in the parent process.
 
-The most common complaint about fork is its poor performance.
+The most common complaint about fork is its poor performance[fn:forkroad].
 It copies many attributes about the parent process when creating the child process,
 including setting up copy-on-write memory-mappings in the child process.
 This becomes slower as the parent process has more memory-mappings,
@@ -90,7 +90,8 @@ expand this
 What does spawn solve? performance I guess
 we should make sure to clarify. hm. or something.
 *** spawn-style
-Spawn-style interfaces are those that follow the model of =posix_spawn= or Windows' =CreateProcess=.
+Spawn-style interfaces are those that follow the model used by =posix_spawn=[fn:posix_spawn]
+and Windows' =CreateProcess=[fn:create_process].
 All the details about the new process are provided up-front as arguments to a syscall,
 which creates the new process from a clean slate, initialized with the provided details.
 
@@ -120,7 +121,8 @@ need to list more flaws I guess
 
 seems like in multics, process creation was a privileged operation
 *** direct-style
-A few systems, such as KeyKOS, seL4 and other capability-based operating systems,
+A few systems, such as KeyKOS[fn:keykos], seL4[fn:sel4]
+and some other operating systems[fn:exokernel] [fn:fuschia] [fn:singularity],
 use another style of process creation.
 In this style, a process is created by its parent in an inert state,
 and then supplied with various resources,
@@ -134,7 +136,7 @@ We refer to this as "direct-style" process creation,
 because the parent creating the process operates on it directly and imperatively
 rather than dispatching a distinct unit of code to perform setup from inside the context of the new process,
 as in fork-style,
-or building up a declarative specification of what the new process should look like,
+or building up a declarative specification of what the new process should look like ahead of time,
 as in spawn-style.
 
 Direct-style process creation has significant advantages over fork-style and spawn-style process creation.
@@ -174,34 +176,42 @@ which benefit from a better process creation interface.
 *** file descriptor inheritance allows abstracting over resources
 In Unix, the mechanism of file descriptor inheritance
 allows a process to be provided a resource by its creator,
-while abstracting over the precise nature of that resource.
-For example, a process can be provided a file descriptor which it is expected to read and write,
-which can be a file in a filesystem, a pipe, a network connection, or some other resource,
-without the process being aware of the type of resource it has been passed.
+while abstracting over the precise identity of that resource.[fn:ucspi]
+For example, a process can be provided a file descriptor,
+which can correspond to any file in a filesystem,
+without the process being aware of what specific file it is accessing.
+This is further enhanced by Unix's "everything is a file" design;
+the passed file descriptor could also be a pipe, a network connection, or some other resource,
+without the process knowing.
 As another example,
-a process can be provided a socket file descriptor from which it is expected to accept connections,
-without being aware of whether those connections come from the internet or from a local Unix socket.
-This mechanism is the basic principle of pipelines and redirection the Unix shell,
+a process can be provided a socket file descriptor on which it can call =accept= to receive connections,
+without being aware of whether those connections come from the internet or from a local Unix socket.[fn:ucspi]
+This abstraction mechanism is the basic principle of pipelines and redirection in the Unix shell,
 but it is rarely used outside of the shell.
 **** notes
      mention ucspi
 
      and inetd
+
+     hmm should I talk about socket activation? lazily starting processes?
+
+     TODO need more cites for this, it's a common concept.
 *** namespace modification allows customization without explicit support
 In many systems,
 it's possible to modify a process's view of nominally "global" resources.
-In Unix-derived systems, this ability is most influentially provided in Plan 9,
-which allows each process to customize its view of the filesystem with private mounts and union directories.
-In Linux, these concepts were implemented as per-process namespaces.
-In its most basic application,
-this allows customizing the environment of a process without having to write explicit support code for customization.
+In Unix-derived systems, this ability is most influentially provided in Plan 9[fn:plan9],
+which allows each process to customize its view of the filesystem with private mounts and union directories[fn:plan9ns].
+In Linux, these concepts were implemented as per-process namespaces[fn:linuxns].
+Fundamentally,
+this allows customizing a process's environment and therefore a program's behavior,
+without having to write explicit support code for customization.
 For example, Plan 9, unlike most other Unix-derived systems,
 did not have a =PATH= environment variable which was searched by code in the process to find executables;
 instead, each process was executed with a =/bin= directory at the root of the filesystem,
 which was a union of many other directories,
 and simply executed =/bin/foo= to run the program named =foo=.
-In this way a process could get a customized set of executables,
-without needing code to parse and handle =PATH=.
+In this way the set of executables provided to a process could be customized,
+without any code to parse and handle =PATH= or any other executable-lookup-specific customization code.
 *** TODO privilege separation allows sandboxing
 The basic isolation powers of processes are used to simplify application development:
 it is beneficial to have a private virtual memory space when developing a stand-alone program.
@@ -213,10 +223,12 @@ can be run in a separate process, at a lower privilege level than the main progr
 in this way, even if an attacker gains control over that component,
 the attacker will only have access to the lower level of privileges of that component,
 rather than the full privileges of the main program.
+**** notes
+     hmm guess I can just find some paper about privile separation in Unix?
 *** robust privilege separation and resource privion allows capability-based-security
 As a further, more robust development of process-based sandboxing,
 the privileges of a process can be explicitly enumerated
-in a capability-based security model.
+in a capability-based security model.[fn:capsicum]
 By using previously-mentioned resource passing mechanisms,
 such as file descriptor inheritance or namespace manipulation,
 and by disabling the process's access to global resources such as the shared filesystem,
@@ -245,6 +257,8 @@ or produce multiple outputs.
      processors don't share memory! they should explicitly copy, that's reality
 
      where's that dang datastructure server paper
+
+     I should be able to find plenty of cites suggesting that process-based concurrency is superior
 *** services?
     don't think i really want this section
 
@@ -635,7 +649,7 @@ so we focused our attention on =clone=.
 which immediately starts executing at the next instruction after the syscall instruction,
 in parallel with the parent process,
 with its registers in generally the same state as the parent process.[fn:glibc]
-In the style of Plan 9's =fork= syscall, which inspired =clone=,
+In the style of Plan 9's =fork= syscall[fn:rfork], which inspired =clone=,
 =clone= takes a mask of flags which determines whether several attributes of the new process
 are either shared with, or copied from, the parent process.
 
@@ -915,44 +929,44 @@ nevertheless, [chart]
 
     lol I can't do it anyway, unless I want to wrap rsyscall fds with Python fds
     i guess I could do that hmmmt
-** TODO future work
-   # we need to organize this
+** Future work
+   # these headings won't actually exist in the paper, it will be just one section
 *** rsyscall other uses
 Most avenues of future work focus on rsyscall.
 rsyscall was not developed solely for the purpose of this paper,
 and it has many uses unrelated to direct-style process creation,
 such as asynchronous system calls, exceptionless system calls[fn:flexsc], cross-host operations, among others.
-We are actively exploring such directions.
-*** TODO non-OO APIs for other languages
-[do I really need this section?]
-*** portability? other Unix systems
-We believe similar techniques as outlined in this paper
-could be applied to other systems to provide direct-style process creation for them.
-We are not actively exploring this,
-as our focus is on Linux,
-but others may wish to explore porting this strategy to other operating systems.
+We are actively exploring such applications,
+as well as broadening rsyscall's language support.
 *** direct kernel support
 rsyscall's cross-process syscalls can be performed entirely in userspace,
 which has substantial benefits for deployability.
 Nevertheless, direct kernel support for creating a stub process and performing syscalls in the context of that process
 may provide efficiency benefits, as well as reducing userspace-visible complexity.
 *** kernel support
-Several aspects of our implementation would be improved by kernel support.
-Detecting the =execve= of a child process,
-closing =CLOEXEC= file descriptors,
-and inheriting =CLOEXEC= file descriptors explicitly specified as an =execve= argument
-would all be helpful.
-Implementing these kernel features in a generally useful way, and upstreaming them,
-is an important direction for future work.
+Several other aspects of our implementation would be improved by kernel support.
+We discussed these in the implementation section;
+in brief, we would most benefit from kernel support for
+detecting when a child process finishes =execve=,
+closing all =CLOEXEC= file descriptors except for an explicitly specified list,
+and explicitly specifying a list of =CLOEXEC= file descriptors to inherit over =excve=.
+Implementing these features in the kernel in a generally useful way, and upstreaming them,
+is an important direction for our future work.
+*** portability? other Unix systems
+Other non-Linux systems
+could adopt the techniques of this paper
+to provide direct-style process creation.
+Currently, our focus is on Linux,
+but others may wish to explore porting these techniques to other operating systems.
 *** large scale open source usage
-We have made substantial use of the techniques described in this paper
+We have made use of the techniques described in this paper
 in proprietary software at Two Sigma.
 While this gives us personally greater confidence in these techniques,
 it would be better to use them in a publicly available, open source system.
 Either porting an existing system to use these techniques,
 or using these techniques to create a substantial new system from scratch,
-would aid adoption of these techniques.
-*** file descriptor lifetime management
+would provide a meaningful demonstration of the viability of these techniques.
+*** file descriptor lifetime management                            :noexport:
 Keeping file descriptors open if and only if there is a specific process using that file descriptor
 is not the only possibility.
 Keep in mind that "a process using the file descriptor" is a slight abuse of terminology;
@@ -976,7 +990,59 @@ to implement them.
 We hope that this work will help encourage more use of the process abstraction,
 which, though widespread,
 is still not used to its full potential.
+* more references
+porting unix to windows NT, mentions implementing fork on top of CreateProcess
+https://www.usenix.org/legacy/publications/library/proceedings/nt-sysadmin97/full_papers/korn/korn.pdf
+
 * Footnotes
+
+[fn:linuxns]
+TODO something about namespaces?
+maybe cite namespaces(7)?
+
+[fn:plan9ns]
+http://doc.cat-v.org/plan_9/4th_edition/papers/names
+
+[fn:rfork]
+http://man.cat-v.org/plan_9/2/fork
+
+[fn:ucspi]
+https://cr.yp.to/proto/ucspi.txt
+
+[fn:fork]
+https://pdfs.semanticscholar.org/ee8b/ece5d6d3270df9a22211aeaa84919a9251b3.pdf
+
+[fn:create_process]
+https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa
+
+[fn:posix_spawn]
+https://pubs.opengroup.org/onlinepubs/9699919799/functions/posix_spawn.html
+
+[fn:singularity]
+https://www.microsoft.com/en-us/research/publication/deconstructing-process-isolation/
+
+[fn:exokernel]
+https://www.semanticscholar.org/paper/The-exokernel-operating-system-architecture-Engler/071b014e255ed65b6e933db22882e0532e4cff1c
+
+[fn:fuschia]
+https://fuchsia.dev/fuchsia-src/reference/syscalls/process_create
+
+[fn:plan9]
+https://www.semanticscholar.org/paper/Plan-9-from-Bell-Labs-Pike-Presotto/d84747ac8b31be455670c20fe975a2f4dcaf7f7e
+paper pdf is wrong, real pdf is
+https://www.usenix.org/legacy/publications/compsystems/1995/sum_pike.pdf
+
+[fn:sel4]
+https://dl.acm.org/doi/10.1145/2893177
+
+[fn:keykos]
+https://www.researchgate.net/publication/221397234_The_KeyKOS_nanokernel_architecture
+
+[fn:forkroad]
+https://www.microsoft.com/en-us/research/publication/a-fork-in-the-road/
+
+[fn:flexsc]
+https://www.semanticscholar.org/paper/FlexSC%3A-Flexible-System-Call-Scheduling-with-System-Soares-Stumm/7bdd86e6b294870bd1e1349b3b4bed80f655044e
 
 [fn:fdnumber]
 In this paper, we are somewhat loose about using the term "file descriptor"
