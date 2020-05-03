@@ -1,0 +1,112 @@
+@ARTICLE{forkhist,  author={L. {Nyman} and M. {Laakso}},  journal={IEEE Annals of the History of Computing},  title={Notes on the History of Fork and Join},   year={2016},  volume={38},  number={3},  pages={84-87},}
+
+@InProceedings{forkroad,
+author = {Baumann, Andrew and Appavoo, Jonathan and Krieger, Orran and Roscoe, Timothy},
+title = {A fork() in the road},
+booktitle = {17th Workshop on Hot Topics in Operating Systems},
+year = {2019},
+month = {May},
+abstract = {The received wisdom suggests that Unix's unusual combination of fork() and exec() for process creation was an inspired design. In this paper, we argue that fork was a clever hack for machines and programs of the 1970s that has long outlived its usefulness and is now a liability. We catalog the ways in which fork is a terrible abstraction for the modern programmer to use, describe how it compromises OS implementations, and propose alternatives.
+
+As the designers and implementers of operating systems, we should acknowledge that fork's continued existence as a first-class OS primitive holds back systems research, and deprecate it. As educators, we should teach fork as a historical artifact, and not the first process creation mechanism students encounter.},
+publisher = {ACM},
+url = {https://www.microsoft.com/en-us/research/publication/a-fork-in-the-road/},
+}
+
+@MISC{posix_spawn,
+     AUTHOR = "Placeholder",
+     TITLE = "\url{https://pubs.opengroup.org/onlinepubs/9699919799/functions/posix_spawn.html}",
+     YEAR = "xxxx",
+}
+
+@MISC{create_process,
+     AUTHOR = "Placeholder",
+     TITLE = "\url{https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa}",
+     YEAR = "xxxx",
+}
+
+@inproceedings{keykos,
+author = {Bomberger, Allen and Frantz, William and Hardy, Ann and Hardy, Norman and Landau, Charles and Shapiro, Jonathan},
+year = {1992},
+month = {01},
+pages = {95-112},
+title = {The KeyKOS nanokernel architecture}
+}
+
+@article{sel4,
+author = {Heiser, Gernot and Elphinstone, Kevin},
+title = {L4 Microkernels: The Lessons from 20 Years of Research and Deployment},
+year = {2016},
+issue_date = {April 2016},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+volume = {34},
+number = {1},
+issn = {0734-2071},
+url = {https://doi.org/10.1145/2893177},
+doi = {10.1145/2893177},
+journal = {ACM Trans. Comput. Syst.},
+month = apr,
+articleno = {Article 1},
+numpages = {29},
+keywords = {minimality, seL4, IPC, formal verification, L4, virtualization, performance, message passing, worst-case execution time, real time, Microkernels}
+}
+  
+@inproceedings{exokernel,
+  title={The exokernel operating system architecture},
+  author={Dawson R. Engler},
+  year={1998}
+}
+
+@MISC{fuschia,
+     AUTHOR = "Placeholder",
+     TITLE = "\url{https://fuchsia.dev/fuchsia-src/reference/syscalls/process_create}",
+     YEAR = "xxxx",
+}
+
+@InProceedings{singularity,
+author = {Aiken, Mark and Fahndrich, Manuel and Hawblitzel, Chris and Hunt, Galen and Larus, Jim},
+title = {Deconstructing Process Isolation},
+booktitle = {ACM SIGPLAN Workshop on Memory Systems Performance and Correctness},
+year = {2006},
+month = {October},
+abstract = {Most operating systems enforce process isolation through hardware protection mechanisms such as memory segmentation, page mapping, and differentiated user and kernel instructions. Singularity is a new operating system that uses software mechanisms to enforce process isolation. A software isolated process (SIP) is a process whose boundaries are established by language safety rules and enforced by static type checking. SIPs provide a low cost isolation mechanism that provides failure isolation and fast inter-process communication.To compare the performance of Singularity's SIPs against traditional isolation techniques, we implemented an optional hardware isolation mechanism. Protection domains are hardware-enforced address spaces, which can contain one or more SIPs. Domains can either run at the kernel's privilege level or be fully isolated from the kernel and run at the normal application privilege level. With protection domains, we can construct Singularity configurations that are similar to micro-kernel and monolithic kernel systems. We found that hardware-based isolation incurs non-trivial performance costs (up to 25–33%) and complicates system implementation. Software isolation has less than 5% overhead on these benchmarks.The lower run-time cost of SIPs makes their use feasible at a finer granularity than conventional processes. However, hardware isolation remains valuable as a defense-in-depth against potential failures in software isolation mechanisms. Singularity's ability to employ hardware isolation selectively enables careful balancing of the costs and benefits of each isolation technique.},
+publisher = {ACM},
+url = {https://www.microsoft.com/en-us/research/publication/deconstructing-process-isolation/},
+pages = {1-10},
+edition = {ACM SIGPLAN Workshop on Memory Systems Performance and Correctness},
+}
+
+@MISC{ucspi,
+     AUTHOR = "Placeholder",
+     TITLE = "\url{https://cr.yp.to/proto/ucspi.txt}",
+     YEAR = "xxxx",
+}
+
+@article{plan9,
+  title={Plan 9 from Bell Labs},
+  author={Rob Pike and David L. Presotto and Sean Dorward and Bob Flandrena and Ken Thompson and Howard Trickey and Phil Winterbottom},
+  journal={Computing Systems},
+  year={1995},
+  volume={8},
+  pages={221-254}
+}
+
+@MISC{plan9ns,
+     AUTHOR = "Placeholder",
+     TITLE = "\url{http://doc.cat-v.org/plan_9/4th_edition/papers/names}",
+     YEAR = "xxxx",
+}
+
+@MISC{rfork,
+     AUTHOR = "Placeholder",
+     TITLE = "\url{http://man.cat-v.org/plan_9/2/fork}",
+     YEAR = "xxxx",
+}
+
+@inproceedings{flexsc,
+  title={FlexSC: Flexible System Call Scheduling with Exception-Less System Calls},
+  author={Livio Baldini Soares and Michael Stumm},
+  booktitle={OSDI},
+  year={2010}
+}

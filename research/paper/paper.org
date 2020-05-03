@@ -329,11 +329,62 @@ into improving the process creation interface.
     Should make sure that the examples cover most of the process-features in this section;
     maybe explicitly?
 ** Overview and examples
+In most operating system APIs, including the ones available on Linux,
+when a program makes a syscall, it implicitly operates on the current process.
+We need an API where we instead explicitly specify in which process we want to make a syscall,
+so that we can initialize a child process from a program running in the parent process.
+
+\texttt{rsyscall} provides this cross-process API.
+rsyscall is a 
+
+In this section, we show several example of direct-style process creation using the rsyscall API.
+
+This API is naturally language-specific.
+In C, the process would be an additional argument to existing functions.
+In object oriented languages, the process is naturally an object,
+on which syscalls are methods.
+
+
+To perform direct-style process creation on Linux,
+we need to be able to write a program which calls system calls in another process,
+interleaved with system calls in its own process.
+The standard C library API for system calls on Linux is not expressive enough for this;
+system calls implicitly operate on the current process.
+We need a new programming interface,
+giving us access to the same system calls,
+but allowing us to specify which process we are operating on.
+
+To 
+
+A program that wants to use direct-style process creation
+needs to be able to express
+calling a system call on another process.
+The standard C library API for system calls on Linux is not expressive enough for this;
+they implicitly operate on the current process.
+A new API must be created 
+
+The natural API for an imperative language using direct-style process creation is
+The API we've chosen for typical imperative languages is an object-oriented interface.
+
+A more natural interface 
+
+The classic interface for system calls treats them as global functions which can be called from any context,
+and which always 
+
+The classic interface for system calls treats them as global
+
+
+A program using direct-style process creation on Linux
+creates a child process using the existing Linux =clone= syscall,
+then calls various system calls on this child process to mutate it.
+This usage of systemm 
+
+
 To implement direct-style process creation on Linux,
 we need to be able to call syscalls which operate on a child process,
 from a program which does not run in the child process.
 Given a system for such cross-process syscalls,
-we can create a child process in a sufficiently inert state using existing Linux functionality,
+we can create a child process using the existing Linux =clone= syscall.
 and then mutate it through various syscalls,
 until it reaches the desired state,
 at which point we can call =execve= on the child process to start it running.
@@ -970,9 +1021,6 @@ is still not used to its full potential.
 
 [fn:fork]
 https://pdfs.semanticscholar.org/ee8b/ece5d6d3270df9a22211aeaa84919a9251b3.pdf
-
-[fn:genie]
-Genie was the first OS with fork
 
 [fn:forkroad]
 https://www.microsoft.com/en-us/research/publication/a-fork-in-the-road/
