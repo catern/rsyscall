@@ -19038,6 +19038,128 @@ although this doesn't work if the maybe_copy actually copied
 anyway this all stinks and is precisely what I wanted to prevent needing
 
 aha ok I like this inherit_fd thing, this is good and nice.
+** TODO make fork example
+   We can call clone directly, instead of wrapping fork.
+
+   ok so we need an example where we really do need the ipc. let's see;
+   multiple children coordinating? no that's less interesting.
+
+   just the exec failure at all?
+   sure that might be good.
+
+   yeah, this example seems great!
+
+   what about some conditionality?
+   well, we can do that in fork. what would we need coordination for?
+   I guess this is fine.
+** TODO benchmark
+   ok, so I guess I need to do some benchmarks, fine fine.
+   but that means I need to optimize?
+
+   well, I can do something in C?
+
+   or preallocate the exec stuff, maybe.
+   well, let's just benchmark it and see.
+
+   ok so. how do we benchmark this async code?
+
+   i guess what we'll do is a bunch of fork/exits,
+   and a bunch of clones.
+   In the context of varying processes.
+   Ones with large memory or not, I guess.
+
+   OK so...
+
+   Let's just do the benchmarking manually?
+
+   ok so we don't necessarily want to exit, any syscalls are painful for us I guess.
+   since we're doing them cross-process.
+
+   well, an exec could be good.
+   yeah let's do a fork and exec.
+
+   ok basic loop now.
+   Oh I guess we should also wait on the children.
+
+   hmm we don't want Python/rsyscall to slow us down there though.
+
+   well let's just do it and see!
+
+   ok so exec is slowing us down a lot.
+   I guess because we're copying the environment every time, which is very slow.
+   if we exit instead I think we'll be fine.
+
+   lol okay well bare fork is then even faster.
+
+   we should do this with clone maybe???
+
+   well, let's try the waitpid maybe?
+
+   oh also we can just time the fork I guess...
+   that's one way to help. though only helps a little.
+
+   OH!!!!
+
+   let's benchmark the direct comparsion of features? sure! that makes sense.
+
+   and also the bare fork too..
+   we have to include sans-IPC, otherwise people will raise questions.
+
+   ok we can't really reasonably compare just clone to fork I guess.
+
+   well, wait! actually, that would be a good easy benchmark!
+   compare fork to CLONE_VM etc.
+
+   and... and we can compare .run to subprocess.run.
+
+   that's our two bencmarks: fork vs clone in C,
+   and subprocess.run vs thread.run in Python.
+
+   seems sensible!
+
+   ok so we do need to cache the memory writes of the exec command
+   or at least that's my though
+
+   ok so with some profiling,
+   yeah most of the time is spent in the batch in _execve.
+
+   Now, I expect most of that in turn is writing out the environment.
+   Can we reuse the environment? hm.
+** optimizing environment
+   so there are two options;
+
+   either specifically optimize environment (precreate the arglist),
+   or optimize ptr for everything.
+
+   ok, let's just precreate the environment arglist, actually.
+   that will be better anyway - even faster than looking up constants in a cache.
+
+   but on the other hand, hashconsing is *so* general...
+
+   on the other other hand,
+   .ptr assumes mutability.
+
+   we really want, maybe, a read-only pointer... or something.
+
+   most pointers are read only actually so maybe we want a mutable pointer.
+
+   it can just be an argument to pointer.
+
+   ok so to_bytes also is pretty expensive
+
+   yeah we just want to optimize all dis stuff.
+   I think just caching envp would be easy, if hacky.
+   alternatively,
+   we could make the transparent cache...
+
+   oh, right, to_bytes is expensive,
+   which is why I was concerned about the transparent cache.
+
+   ok let's do it with envp.
+   yeah just cache the whole envp and use it if there's no updates
+
+   should we automatically cache it? hm.
+
 ** DONE AFD lets you write on fds which will never be writable, and blocks forever
    maybe we *should* optimistically try to write?
 

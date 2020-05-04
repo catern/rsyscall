@@ -357,10 +357,9 @@ but the examples are otherwise real working code.
 # Use the clone syscall in the local thread to create a new thread;
 # we use a wrapper that supplies defaults for all arguments.
 child = local.thread.clone()
-# Call execve to run a different executable in the child thread;
+# Call execv to run a different executable in the child thread;
 # We pass the executable path as the first argument in the argument list, as is traditional.
-# We use a wrapper that defaults envp to an unchanged environment, so we don't pass envp.
-child.execve(hello_path, [hello_path])
+child.execv(hello_path, [hello_path])
 \end{lstlisting}
 In Listing \ref{basic}, we simply create a new process under our control (a thread)
 and immediately exec a binary with it.
@@ -379,7 +378,7 @@ sock = child.socket(AF.INET, SOCK.DGRAM)
 sock.bind(child.ptr(SockaddrIn(0, 0)))
 sock.listen(10)
 sock.disable_cloexec()
-child.execve(executable_path, [executable_path, "--listening-socket", str(int(sock))])
+child.execv(executable_path, [executable_path, "--listening-socket", str(int(sock))])
 \end{lstlisting}
 In Listing \ref{fds}, we create a new thread,
 then create a listening socket bound to a random port in that thread,
@@ -402,11 +401,11 @@ pipe = local.thread.pipe()
 child1 = local.thread.clone()
 # inherit the write-end of the pipe to child1, and replace child1.stdout with it
 child1.inherit_fd(pipe.write).dup2(child1.stdout)
-child1_proc = child1.execve(yes_path, [yes_path])
+child1_proc = child1.execv(yes_path, [yes_path])
 child2 = local.thread.clone()
 # inherit the read-end of the pipe to child2, and replace child2.stdin with it
 child2.inherit_fd(pipe.read).dup2(child2.stdin)
-child2_proc = child2.execve(head_path, [head_path, "-n", "15"])
+child2_proc = child2.execv(head_path, [head_path, "-n", "15"])
 \end{lstlisting}
 In Listing \ref{pipe},
 we do the same as the Unix shell pipeline "yes | head -n 15".
@@ -435,7 +434,7 @@ child = local.thread.clone(CLONE.NEWUSER|CLONE.NEWNS)
 child.mkdir(rootdir/"proc")
 child.mount(Path("/proc"), rootdir/"proc", "", MS.BIND, "")
 child.chroot(rootdir)
-child.execve(executable_path, [executable_path])
+child.execv(executable_path, [executable_path])
 \end{lstlisting}
 In Listing \ref{mount},
 we make a new mount namespace and rearrange the filesystem tree for the child process.
@@ -455,10 +454,10 @@ sockaddr = SockaddrIn(22, "127.0.0.1")
 sock.bind(listening_child.ptr(sockaddr))
 sock.listen(10)
 sock.disable_cloexec()
-child.execve(server_path, [server_path, "--listening-socket", str(int(sock))])
+child.execv(server_path, [server_path, "--listening-socket", str(int(sock))])
 
 connecting_child = ns_thread.clone()
-child.execve(client_path, [
+child.execv(client_path, [
   client_path, "--connect-address", str(sockaddr.address) + ":" + str(sockaddr.port)])
 \end{lstlisting}
 In Listing \ref{nested},
@@ -504,7 +503,7 @@ and another child to connect to it.
 % privproc_side = privproc_thread.inherit_fd(privproc_pair.first)
 % privproc_side.dup2(privproc_thread.stdin)
 % privproc_side.dup2(privproc_thread.stdout)
-% privproc_child = privproc_thread.execve(miredo_privproc_executable_path, [
+% privproc_child = privproc_thread.execv(miredo_privproc_executable_path, [
 %     miredo_privproc_executable_path, str(tun_index)
 % ])
 % ### start up Miredo client process which communicates
@@ -519,7 +518,7 @@ and another child to connect to it.
 % async def pass_fd(fd: FileDescriptor) -> str:
 %     client_thread.inherit_fd(fd).disable_cloexec()
 %     return str(int(fd))
-% client_child = client_thread.execve(miredo_client_executable_path, [
+% client_child = client_thread.execv(miredo_client_executable_path, [
 %     miredo_client_executable_path,
 %     pass_fd(inet_sock), pass_fd(tun_fd), pass_fd(reqsock),
 %     pass_fd(icmp6_fd), pass_fd(privproc_pair.second),
@@ -890,6 +889,15 @@ But that's not fair, theirs is portable, we'll be way simpler for free.
 
 Rewrite some existing system with rsyscall?
 Write a shell?
+
+Right okay so we can do some fork-style code, sure.
+Show the IPC, not too complex, but show it.
+
+We can do it in Python with rsyscall - have a hidden experimental secret fork thing.
+Using write_all_bytes will be annoying but fine.
+Ugh, but we'll have to decode it too.
+Eh, no, we can wrap that.
+Yeah then it's fine.
 \section{Future work}\label{future_work}
 \subsection{Other applications of rsyscall}
 Most avenues of future work focus on rsyscall.
