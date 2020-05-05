@@ -53,6 +53,8 @@ class Borrowable:
 
 T_borrowable = t.TypeVar('T_borrowable', bound=Borrowable)
 
+_address = struct.Struct("Q")
+
 @dataclass
 class Stack(Serializable, t.Generic[T_borrowable]):
     """The stack argument to clone
@@ -76,7 +78,7 @@ class Stack(Serializable, t.Generic[T_borrowable]):
         self.data.borrow_with(stack, task)
 
     def to_bytes(self) -> bytes:
-        return struct.Struct("Q").pack(int(self.function.near)) + self.serializer.to_bytes(self.data)
+        return _address.pack(int(self.function.near)) + self.serializer.to_bytes(self.data)
 
     T_stack = t.TypeVar('T_stack', bound='Stack')
     @classmethod
