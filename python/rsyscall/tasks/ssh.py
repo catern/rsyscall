@@ -298,7 +298,7 @@ async def ssh_bootstrap(
         loader=NativeLoader.make_from_symbols(new_base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,
-        environ=Environment(new_base_task, new_ram, environ),
+        environ=Environment.make_from_environ(new_base_task, new_ram, environ),
         stdin=new_base_task.make_fd_handle(near.FileDescriptor(0)),
         stdout=new_base_task.make_fd_handle(near.FileDescriptor(1)),
         stderr=new_base_task.make_fd_handle(near.FileDescriptor(2)),

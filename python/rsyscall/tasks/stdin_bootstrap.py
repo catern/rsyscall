@@ -138,7 +138,7 @@ async def stdin_bootstrap(
         loader=NativeLoader.make_from_symbols(base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,
-        environ=Environment(base_task, ram, environ),
+        environ=Environment.make_from_environ(base_task, ram, environ),
         stdin=base_task.make_fd_handle(near.FileDescriptor(0)),
         stdout=base_task.make_fd_handle(near.FileDescriptor(1)),
         stderr=base_task.make_fd_handle(near.FileDescriptor(2)),

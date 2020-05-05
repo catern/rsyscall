@@ -96,13 +96,17 @@ class ExecutablePathCache:
 
 class Environment:
     "A representation of Unix environment variables."
-    def __init__(self, task: Task, ram: RAM, environment: t.Dict[str, str],
-                 arglist_ptr: WrittenPointer[ArgList]=None,
+    @staticmethod
+    def make_from_environ(task: Task, ram: RAM, environment: t.Dict[str, str]) -> Environment:
+        return Environment(environment, ExecutablePathCache(task, ram, environment.get("PATH", "").split(":")))
+
+    def __init__(self, environment: t.Dict[str, str], path: ExecutablePathCache,
+                 arglist_ptr: t.Optional[WrittenPointer[ArgList]]=None,
     ) -> None:
         self.data = environment
         self.sh = Command(Path("/bin/sh"), ['sh'], {})
         self.tmpdir = Path(self.get("TMPDIR", "/tmp"))
-        self.path = ExecutablePathCache(task, ram, self.get("PATH", "").split(":"))
+        self.path = path
         self.arglist_ptr = arglist_ptr
 
     def __getitem__(self, key: str) -> str:
@@ -139,9 +143,7 @@ class Environment:
         they're shared between all threads.
 
         """
-        env = Environment(task, ram, dict(self.data), self.arglist_ptr)
-        env.path = self.path
-        return env
+        return Environment(dict(self.data), self.path, self.arglist_ptr)
 
     async def as_arglist(self, ram: RAM) -> WrittenPointer[ArgList]:
         if self.arglist_ptr is None:

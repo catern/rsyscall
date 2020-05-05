@@ -149,7 +149,7 @@ async def _make_local_thread() -> Thread:
         NativeLoader.make_from_symbols(task, lib),
         epoller,
         await ChildProcessMonitor.make(ram, task, epoller),
-        Environment(task, ram, {**os.environ}),
+        Environment.make_from_environ(task, ram, {**os.environ}),
         stdin=task.make_fd_handle(near.FileDescriptor(0)),
         stdout=task.make_fd_handle(near.FileDescriptor(1)),
         stderr=task.make_fd_handle(near.FileDescriptor(2)),
