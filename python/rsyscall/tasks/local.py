@@ -61,6 +61,24 @@ class LocalSyscall(SyscallInterface):
     async def close_interface(self) -> None:
         pass
 
+    async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        """Send a syscall and wait for it to complete, throwing on error results.
+
+        See SyscallInterface.syscall.
+
+        SyscallInterface provides a default implementation for this method, but we override it for performance reasons;
+        since we immediately get the result, we don't need to create a trio.CancelScope as SyscallInterface.syscall
+        does, which is sadly quite expensive.
+
+        """
+        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+        result = await _direct_syscall(
+            number,
+            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
+            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
+        raise_if_error(result)
+        return result
+
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> LocalSyscallResponse:
         """Make a syscall in the local thread; return SyscallResponse already containing the result.
 
