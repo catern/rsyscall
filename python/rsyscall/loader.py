@@ -58,23 +58,23 @@ class Trampoline(Borrowable):
 
 class TrampolineSerializer(Serializer[Trampoline]):
     def to_bytes(self, val: Trampoline) -> bytes:
-        args: t.List[int] = []
-        for arg in val.args:
+        # at most six arguments
+        args: t.List[int] = [0]*6
+        for i, arg in enumerate(val.args):
             if isinstance(arg, FileDescriptor):
-                args.append(int(arg))
+                args[i] = int(arg)
             elif isinstance(arg, Pointer):
-                args.append(int(arg.near))
+                args[i] = int(arg.near)
             else:
-                args.append(int(arg))
-        arg1, arg2, arg3, arg4, arg5, arg6 = args + [0]*(6 - len(args))
+                args[i] = int(arg)
         struct = ffi.new('struct rsyscall_trampoline_stack*', {
             'function': ffi.cast('void*', int(val.function.near)),
-            'rdi': int(arg1),
-            'rsi': int(arg2),
-            'rdx': int(arg3),
-            'rcx': int(arg4),
-            'r8':  int(arg5),
-            'r9':  int(arg6),
+            'rdi': args[0],
+            'rsi': args[1],
+            'rdx': args[2],
+            'rcx': args[3],
+            'r8':  args[4],
+            'r9':  args[5],
         })
         return bytes(ffi.buffer(struct))
 
