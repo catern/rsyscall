@@ -18971,6 +18971,57 @@ but you can't actually
 we should properly support multi-threaded waiting for the next child state - or something.
 
 waiting for death, at least.
+
+okaaay.
+so...
+
+if I have multiple people calling waitpid right now...
+
+well if they were calling the syscall only one would ge tthe event.
+
+and, actually, the same here.
+*** waitid_nohang buffer optimization
+ok so this seems plausibly simple.
+without major changes.
+
+we go into waitid_nohang,
+we check if there's something already read.
+
+well.
+ok.
+
+we check if there's a buffer,
+we check if that buffer has data in it,
+we read that siginfo.
+
+but isn't this racy?
+
+i mean what behavior do we even want to support.
+
+the child events are a stream.
+
+I *suppose* we could have a wait_exited
+
+which can be called by multiple coroutines.
+
+but there's no obvious implementation of waitpid called by multiple coroutines;
+the ordering is pretty important,
+and they drop events relative to each other.
+
+it's like multiple reads on an fd.
+
+anyway, it works right now.
+
+so let's see...
+we have this unread_siginfo thing.
+
+we can steal the buffer, it seems fine.
+
+right so we get the buffer when we call read_siginfo, sure.
+
+and then waitid can't be cancelled
+
+so the process steals the buffer back from us
 ** DONE fexecve/execveat support
    So one issue is that scripts need to read their exec'd file after startup,
    and when fexec'd, the fd needs to be passed down to them.
@@ -19160,6 +19211,117 @@ aha ok I like this inherit_fd thing, this is good and nice.
 
    should we automatically cache it? hm.
 
+   yeah doing envp is fine
+** TODO optimizing borrowing
+   what if I do it recursively?
+   basically... disallow a free unless you free the thing with a reference first?
+
+   actually, that makes a ton of sense. although.
+
+   in some sense aren't i already doing that by recursive validation?
+
+   eh, no...
+
+   ok so how do I allow freeing only top-level objects?
+
+   what if I just don't allow freeing?
+   ok that seems like an extremely plausible thing to do actually.
+
+   ok, so what about writes?
+   how do we disallow writes?
+
+   we could couple that with the const system.
+   it's const while in this.
+
+   wait lol we aren't even actually pinning addresses right now lol
+
+   so it's completely useless overhead lol
+
+   ok anyway.
+
+   how do we disallow writes?
+   well... is that really something we want to put much effort into?
+   we aren't actually doing it right now!
+
+   moving memory allocations isn't somethign we' do right now, hmmmmmm3
+
+   yeah so, remove free and move,
+   and just don't care about writes.
+
+   for now we'll just forget about borrowing
+** DONE optimize syscall
+   so like .1 second is spent in this wrapper thing,
+   let's get rid of it.
+
+   nice!
+** TODO more optimizations
+   ok so the allocation could do with some optimization, for sure.
+   it's very naive right now, so.
+
+   waitid_nohang is wasting like 20 millis on mallocing siginfos each time, hm.
+   gotta think about that.
+
+   ok we just need to speed up allocation, simple as that.
+
+   ok, so, I mostly don't care about excessive memory usage.
+   what if we just started allocating all in new memory?
+
+   hmmmmmmmmMMmmm.
+
+   i mean, bulk malloc currently does little to improve things.
+
+   maybe I should... keep track of how much free space I have,
+   and resort immediately to making a new arena?
+
+   mmap is fast-ish...
+
+   well, one issue is reuse.
+   I mean, how much am I call mmap?
+   500, hm.
+   that's actually pretty good.
+
+   wait a second, what's this?
+   i only allocate one thing in each arena? that's not good...
+   i should have... a nested loop or something...
+
+   or just manually jump forward, bah.
+   oh, right, nest a while true loop,
+   and break out of it when we run out of space.
+
+   lol ok that made things slower, probably because small allocations got slower.
+
+   so right now I have a bunch of lists,
+   in various blocks,
+   and i allocate from in them.
+
+   let's suppose i have one block.
+
+   there's a sorted list in order of allocation.
+
+   but i don't care about where it is in memory,
+   i care about the free space in between.
+
+   hmmmmmmmmmmmm m m m.
+** TODO optimize memory allocator
+   ok let's make a free list
+
+   ok so we really are freeing things in this intense case! nice.
+
+   that's pretty cool
+
+   so allocations are pretty concise, so we could probably afford to keep iterating over all arenas
+
+   maybe iterate in a random order each time? that would be cool for balancing I guess
+
+   ok ok fine.
+
+   merging! that's tricky.
+
+   so splitting,
+   that's relatively easy.
+   merging too actually.
+
+   neither of them should affect the free list actually.
 ** DONE AFD lets you write on fds which will never be writable, and blocks forever
    maybe we *should* optimistically try to write?
 
