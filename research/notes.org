@@ -19322,6 +19322,16 @@ aha ok I like this inherit_fd thing, this is good and nice.
    merging too actually.
 
    neither of them should affect the free list actually.
+
+   lol I made it slower
+
+   ok so I need to just do something that is super cheap and wastes lots of memory.
+
+   and I'll defer maintaining the free list to later;
+   i'll do maintenance of it when some function for cleanup is called
+
+   also let's check the state of the free list over time.
+   welp it seems like it's short. what's going on with this?
 ** DONE AFD lets you write on fds which will never be writable, and blocks forever
    maybe we *should* optimistically try to write?
 
