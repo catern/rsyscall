@@ -176,7 +176,7 @@ class TestMiredo(TrioTestCase):
         print("c", time.time())
         # bash = await rsc.which(self.thread, "bash")
         # await (await thread.exec(bash)).check()
-        await add_to_ambient(thread, {CAP.NET_RAW})
+        await add_to_ambient_caps(thread, {CAP.NET_RAW})
         await (await thread.exec(ping6.args('-c', '1', 'google.com'))).check()
         print("d", time.time())
 
