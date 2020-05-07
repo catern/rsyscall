@@ -103,26 +103,34 @@ Correct and performant usage of fork-style places significant constraints on the
 Spawn-style lifts many of these constraints,
 but is fundamentally limited in the kinds of processes it can create.
 With both fork-style and spawn-style,
-it is difficult to express
-branching behavior based on results or errors encountered while initializing the new process;
+it is difficult to
+branch based on results or errors encountered while initializing the new process;
 fork-style requires IPC if it wishes to communicate errors back to the rest of the program,
 while robust indication of errors in spawn-style requires substantial growth in the spawn interface.
+Additionally, modern operating systems such as Linux have features
+which are difficult or impossible to fully exploit through fork-style or spawn-style.
 
 Direct-style is rare in general, but relatively common on academic operating systems.
 Direct-style involves creating a new child process in a non-running state,
 and then calling individual syscalls from the parent to initialize the child.
 Direct-style does not constrain the calling process,
-can create any kind of process supported by the underlying system,
-and easily expresses errors in any individual step of the initialization.
+easily branches at any step of the initialization,
+and can create any kind of process supported by the underlying system.
 
-Our contribution is an implementation of direct-style process creation for Linux.
-Our implementation has all the advantages of direct-style
-over Linux's fork-style \texttt{fork} syscall and spawn-style \texttt{posix\_spawn} libc function.
+Our contribution is an implementation of direct-style process creation for Linux,
+making use of our work on the rsyscall project.
+The rsyscall project develops language-specific ``process-independent'' syscall libraries,
+replacing libc for interaction with Linux,
+allowing a program to perform cross-process syscalls.
+rsyscall currently has best support for Python,
+but can be ported to other languages;
+the examples we show in this paper will be in Python,
+but generalize easily to other languages.
 
 In our implementation, a parent process calls the \texttt{clone} syscall
 to create a child process which shares memory and other resources with the parent,
 and which runs no user code.
-The parent then uses \texttt{rsyscall}, a cross-process syscall library,
+The parent then uses \texttt{rsyscall}
 to call arbitrary syscalls in the child process to initialize it;
 for example, the parent might call \texttt{chdir} to change the child's current working directory.
 After the process is fully initialized,
@@ -130,17 +138,27 @@ the parent can call \texttt{execve} in the child,
 causing the process to start running an arbitrary executable
 and detaching the child from the control of \texttt{rsyscall}.
 
+A direct-style \texttt{clone} has all the advantages of direct-style process creation
+over Linux's fork-style \texttt{fork} syscall and spawn-style \texttt{posix\_spawn} libc function.
+Direct-style \texttt{clone} can be used correctly and performantly from any process.
+Cross-process syscalls made with rsyscall individually report errors, as normal, and can be easily branched on.
+Arbitrary processes involving complex namespaces and initialization can be created
+using techniques that are impossible with \texttt{fork}.
+
 We have used direct-style process creation on Linux to do TODO and TODO,
 and we've benchmarked our implementation as TODO.
+Direct-style \texttt{clone} has minimal performance cost in normal situations,
+and can outperform \texttt{fork} in some cases.
+We have deployed direct-style process creation in production internally at Two Sigma.
 
-Our implementation is immediately deployable on recent Linux kernels,
-and is distributed as a feature of the open source \texttt{rsyscall} library,
-available from \url{https://github.com/catern/rsyscall}.
+Our implementation is distributed as a feature of \texttt{rsyscall},
+and is immediately deployable on recent Linux kernels.
+rsyscall is open source and available from \url{https://github.com/catern/rsyscall}.
 
 This paper is organized in several sections.
 In section \ref{background}, we provide background on fork-style, spawn-style, and direct-style process creation,
 and consider their advantages and disadvantages in more depth.
-In section \ref{examples} we show examples of usage of direct-style process creation on Linux,
+In section \ref{examples} we show examples of usage of direct-style process creation in Python on Linux,
 including use of process features which are difficult to use on Linux with \texttt{fork} or \texttt{posix\_spawn},
 and briefly examine the user API.
 In section \ref{implementation}, we explore our implementation in depth,
@@ -304,6 +322,95 @@ would implicitly copy some attributes to the new process,
 rather than being capability-oriented and requiring all attributes to be specified explicitly.
 This is the kind of direct-style interface that we contribute in this paper.
 
+\section{Background on the use of processes}
+Why is it important to have a high-quality interface for creating processes?
+Processes are already widely used;
+most software is distributed as an executable which runs in a dedicated process.
+This basic usage of processes can be performed with even a complex and inefficient process creation interface.
+But processes have many uses beyond this simple and widespread one;
+here we examine some more sophisticated applications of processes,
+which benefit from a better process creation interface.
+\subsection{Abstraction over resources}
+In Unix, the mechanism of file descriptor inheritance
+allows a process to be provided a resource by its creator,
+while abstracting over the precise identity of that resource.[fn:ucspi]
+For example, a process can be provided a file descriptor,
+which can correspond to any file in a filesystem,
+without the process being aware of what specific file it is accessing.
+This is further enhanced by Unix's "everything is a file" design;
+the passed file descriptor could also be a pipe, a network connection, or some other resource,
+without the process knowing.
+As another example,
+a process can be provided a socket file descriptor on which it can call \texttt{accept} to receive connections,
+without being aware of whether those connections come from the internet or from a local Unix socket.[fn:ucspi]
+This abstraction mechanism is the basic principle of pipelines and redirection in the Unix shell,
+but it is rarely used outside of the shell.
+\subsection{Customization without explicit support}
+In many systems,
+it's possible to modify a process's view of nominally "global" resources.
+In Unix-derived systems, this ability is most influentially provided in Plan 9[fn:plan9],
+which allows each process to customize its view of the filesystem with private mounts and union directories[fn:plan9ns].
+In Linux, these concepts were implemented as per-process namespaces[fn:linuxns].
+Fundamentally,
+this allows customizing a process's environment and therefore a program's behavior,
+without having to write explicit support code for customization.
+For example, Plan 9, unlike most other Unix-derived systems,
+did not have a \texttt{PATH} environment variable which was searched by code in the process to find executables;
+instead, each process was executed with a \texttt{/bin} directory at the root of the filesystem,
+which was a union of many other directories,
+and simply executed \texttt{/bin/foo} to run the program named \texttt{foo}.
+In this way the set of executables provided to a process could be customized,
+without any code to parse and handle \texttt{PATH} or any other executable-lookup-specific customization code.
+\subsection{Sandboxing}
+The basic isolation powers of processes are used to simplify application development:
+it is beneficial to have a private virtual memory space when developing a stand-alone program.
+But most systems have additional mechanisms of isolation between processes,
+such as different privilege levels and access to global resources,
+which can be used to provide a form of sandboxing.
+For example, components which may exposed to hostile network requests
+can be run in a separate process, at a lower privilege level than the main program;
+in this way, even if an attacker gains control over that component,
+the attacker will only have access to the lower level of privileges of that component,
+rather than the full privileges of the main program.
+\subsection{Capability-based security}
+As a further development of process-based sandboxing,
+the privileges of a process can be explicitly enumerated
+in a capability-based security model.[fn:capsicum]
+By using previously-mentioned resource passing mechanisms,
+such as file descriptor inheritance or namespace manipulation,
+and by disabling the process's access to global resources such as the shared filesystem,
+we can enforce that all resources used by the process are passed at creation time.
+\subsection{Non-shared-memory concurrency}
+Processes run concurrently,
+which allows exploiting parallelism in the hardware.
+Since processes don't share memory,
+they can provide a less complex parallel programming environment
+than shared-memory thread-based approaches.
+The most popular parallel programming environment in existence today is the Unix shell,
+which obtains its parallelism by running multiple processes connected via pipes.
+The Unix shell has a relatively constrained form of parallel processing,
+but it's also possible to create more complex webs of parallel processes,
+where, for example, one process might take multiple inputs over multiple pipes,
+or produce multiple outputs.
+\subsection{Conclusion}
+These techniques, and more, are available through the process interface.
+Most software would benefit from abstraction over resources, sandboxing, and parallelism.
+Yet these features of processes are used only rarely.
+There are multiple reasons for this,
+but one of the primary reasons is the complexity of current process creation interfaces.
+
+Many of these techniques are used today by specialized software and services.
+Often, such software only allows use of one of these techniques;
+for example, the Unix shell allows piping together process, but not namespacing them;
+container systems allow sandboxing processes, but not piping them together.
+By delegating these features to specific separate services,
+we lose the ability to use them in combination.
+
+By improving the process creation interface,
+we can make it possible both for programs to directly manipulate processes to use these techniques,
+and to use and share composable libraries which use these techniques.
+We believe this potential justifies the investment of substantial effort
+into improving the process creation interface.
 \section{Overview and examples}\label{examples}
 In most operating system APIs, including the ones available on Linux,
 when a program makes a syscall, it implicitly operates on the current process.
@@ -374,7 +481,7 @@ there is no need for error-checking code.
 child = local.thread.clone()
 sock = child.socket(AF.INET, SOCK.DGRAM)
 # Bind the socket to a sockaddr_in;
-# the sockaddr is allocated in memory with child.ptr and is garbage collected.
+# the sockaddr is written to memory accessible by the child with child.ptr
 sock.bind(child.ptr(SockaddrIn(0, 0)))
 sock.listen(10)
 sock.disable_cloexec()
@@ -400,11 +507,13 @@ if we want to make the syscalls from another process.
 pipe = local.thread.pipe()
 child1 = local.thread.clone()
 # inherit the write-end of the pipe to child1, and replace child1.stdout with it
-child1.inherit_fd(pipe.write).dup2(child1.stdout)
+child1_pipe_write = child1.inherit_fd(pipe.write)
+child1_pipe_write.dup2(child1.stdout)
 child1_proc = child1.execv(yes_path, [yes_path])
 child2 = local.thread.clone()
 # inherit the read-end of the pipe to child2, and replace child2.stdin with it
-child2.inherit_fd(pipe.read).dup2(child2.stdin)
+child2_pipe_read = child2.inherit_fd(pipe.read)
+child2_pipe_read.dup2(child2.stdin)
 child2_proc = child2.execv(head_path, [head_path, "-n", "15"])
 \end{lstlisting}
 In Listing \ref{pipe},
@@ -471,79 +580,68 @@ and allows us to set up complex graphs of processes and namespaces.
 We bind to a privileged port on localhost inside the namespace,
 and create one child to listen on that socket,
 and another child to connect to it.
-%% **** note to self: concepts introduced in this example
-%% network namespace
-%% nested clone
-% \subsection{Example: Starting a complex system}
-% \begin{lstlisting}[float,language=Python,label={miredo},caption={Starting a complex system}]
-% ### create socket outside network namespace that Miredo will use for internet access
-% inet_sock = local.thread.socket(AF.INET, SOCK.DGRAM)
-% inet_sock.bind(local.thread.ptr(SockaddrIn(0, 0)))
-% # set some miscellaneous additional sockopts that Miredo wants
-% set_miredo_sockopts(local.thread, inet_sock)
-% ### create main network namespace thread
-% ns_thread = local.thread.clone(CLONE.NEWNET|CLONE.NEWUSER)
-% ### create in-network-namespace raw INET6 socket which Miredo will use to relay pings
-% icmp6_fd = ns_thread.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
-% ### create in-network-namespace socket,
-% ### which Miredo will use for unassociated Ifreq ioctls
-% reqsock = ns_thread.socket(AF.INET, SOCK.STREAM)
-% ### create and set up the TUN interface
-% tun_fd, tun_index = make_tun(ns_thread, "miredo", reqsock)
-% ### create socketpair which Miredo will use to communicate
-% ### between privileged process and Teredo client
-% privproc_pair = ns_thread.socketpair(AF.UNIX, SOCK.STREAM)
-% ### start up privileged process which manipulates the network setup in the namespace
-% privproc_thread = ns_thread.clone()
-% # We preserve NET_ADMIN capability over exec so that privproc can
-% # manipulate the TUN interface. add_to_ambient_caps is a helper function
-% # used because manipulating Linux ambient capabilities is fairly verbose
-% add_to_ambient_caps(privproc_thread, {CAP.NET_ADMIN})
-% # privproc expects to communicate with the main client over stdin and stdout
-% privproc_side = privproc_thread.inherit_fd(privproc_pair.first)
-% privproc_side.dup2(privproc_thread.stdin)
-% privproc_side.dup2(privproc_thread.stdout)
-% privproc_child = privproc_thread.execv(miredo_privproc_executable_path, [
-%     miredo_privproc_executable_path, str(tun_index)
-% ])
-% ### start up Miredo client process which communicates
-% ### over the internet to implement the tunnel
-% # the client process doesn't need to be in the same network namespace,
-% # since it is passed all the resources it needs as fds at startup.
-% client_thread = ns_thread.clone(CLONE.NEWUSER|CLONE.NEWNET|CLONE.NEWNS|CLONE.NEWPID)
-% # lightly sandbox by unmounting everything except for the executable
-% # and its deps (known via package manager)
-% unmount_everything_except(client_thread, miredo_exec.run_client.executable_path)
-% # a helper function for preparing the fds that are passed as command line arguments
-% async def pass_fd(fd: FileDescriptor) -> str:
-%     client_thread.inherit_fd(fd).disable_cloexec()
-%     return str(int(fd))
-% client_child = client_thread.execv(miredo_client_executable_path, [
-%     miredo_client_executable_path,
-%     pass_fd(inet_sock), pass_fd(tun_fd), pass_fd(reqsock),
-%     pass_fd(icmp6_fd), pass_fd(privproc_pair.second),
-%     "teredo.remlab.net", "teredo.remlab.net"
-% ])
-% \end{lstlisting}
+\subsection{Example: Starting a complex system}
+\begin{lstlisting}[float,language=Python,label={miredo},caption={Starting a complex system}]
+### create socket outside network namespace that Miredo will use for internet access
+inet_sock = local.thread.socket(AF.INET, SOCK.DGRAM)
+inet_sock.bind(local.thread.ptr(SockaddrIn(0, 0)))
+# set some miscellaneous additional sockopts that Miredo wants
+set_miredo_sockopts(local.thread, inet_sock)
+### create main network namespace thread
+ns_thread = local.thread.clone(CLONE.NEWNET|CLONE.NEWUSER)
+### create in-network-namespace raw INET6 socket which Miredo will use to relay pings
+icmp6_fd = ns_thread.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
+### create in-network-namespace socket,
+### which Miredo will use for unassociated Ifreq ioctls
+reqsock = ns_thread.socket(AF.INET, SOCK.STREAM)
+### create and set up the TUN interface
+tun_fd, tun_index = make_tun(ns_thread, "miredo", reqsock)
+### create socketpair which Miredo will use to communicate
+### between privileged process and Teredo client
+privproc_pair = ns_thread.socketpair(AF.UNIX, SOCK.STREAM)
+### start up privileged process which manipulates the network setup in the namespace
+privproc_thread = ns_thread.clone()
+# We preserve NET_ADMIN capability over exec so that privproc can
+# manipulate the TUN interface. add_to_ambient_caps is a helper function
+# used because manipulating Linux ambient capabilities is fairly verbose
+add_to_ambient_caps(privproc_thread, {CAP.NET_ADMIN})
+# privproc expects to communicate with the main client over stdin and stdout
+privproc_side = privproc_thread.inherit_fd(privproc_pair.first)
+privproc_side.dup2(privproc_thread.stdin)
+privproc_side.dup2(privproc_thread.stdout)
+privproc_child = privproc_thread.execv(miredo_privproc_executable_path, [
+    miredo_privproc_executable_path, str(tun_index)
+])
+### start up Miredo client process which communicates
+### over the internet to implement the tunnel
+# the client process doesn't need to be in the same network namespace,
+# since it is passed all the resources it needs as fds at startup.
+client_thread = ns_thread.clone(CLONE.NEWUSER|CLONE.NEWNET|CLONE.NEWNS|CLONE.NEWPID)
+# lightly sandbox by unmounting everything except for the executable
+# and its deps (known via package manager)
+unmount_everything_except(client_thread, miredo_exec.run_client.executable_path)
+# a helper function for preparing the fds that are passed as command line arguments
+async def pass_fd(fd: FileDescriptor) -> str:
+    client_thread.inherit_fd(fd).disable_cloexec()
+    return str(int(fd))
+client_child = client_thread.execv(miredo_client_executable_path, [
+    miredo_client_executable_path,
+    pass_fd(inet_sock), pass_fd(tun_fd), pass_fd(reqsock),
+    pass_fd(icmp6_fd), pass_fd(privproc_pair.second),
+    "teredo.remlab.net", "teredo.remlab.net"
+])
+\end{lstlisting}
 
-% In Listing \ref{miredo},
-% we show non-trivial code for launching a real application:
-% the Miredo IPv6 tunneling software.
-% We use a few helper functions in this listing to keep the attention focused on the interesting parts.
+In Listing \ref{miredo},
+we show non-trivial code for launching a real application:
+the Miredo IPv6 tunneling software.
+We use a few helper functions in this listing to keep the attention focused on the interesting parts.
 
-% Miredo is separated into two components, a privileged process which sets up network interfaces,
-% and an unprivileged process which talks to the network.
-% With minimal modifications to Miredo,
-% we launch Miredo entirely unprivileged inside a user namespace and network namespace,
-% with all resources created outside and explicitly passed in.
-
-%% **** note to self: concepts introduced in this example
-%% socketpair
-%% several helper functions
-%% **** note to self
-%% maybe I should remove some of the unnecessary networking stuff?
-%% maybe show the corresponding fork-based code?
-%% except doing something with fork with the same error handling requires a bunch of crazy IPC
+Miredo is separated into two components, a privileged process which sets up network interfaces,
+and an unprivileged process which talks to the network.
+With minimal modifications to Miredo,
+we launch Miredo entirely unprivileged inside a user namespace and network namespace,
+with all resources created outside and explicitly passed in.
 \section{Implementation}\label{implementation}
 \subsection{Basics about rsyscall}
 Our main need for implementing direct-style process creation
@@ -889,15 +987,6 @@ But that's not fair, theirs is portable, we'll be way simpler for free.
 
 Rewrite some existing system with rsyscall?
 Write a shell?
-
-Right okay so we can do some fork-style code, sure.
-Show the IPC, not too complex, but show it.
-
-We can do it in Python with rsyscall - have a hidden experimental secret fork thing.
-Using write_all_bytes will be annoying but fine.
-Ugh, but we'll have to decode it too.
-Eh, no, we can wrap that.
-Yeah then it's fine.
 \section{Future work}\label{future_work}
 \subsection{Other applications of rsyscall}
 Most avenues of future work focus on rsyscall.
