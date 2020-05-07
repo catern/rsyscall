@@ -19332,6 +19332,33 @@ aha ok I like this inherit_fd thing, this is good and nice.
 
    also let's check the state of the free list over time.
    welp it seems like it's short. what's going on with this?
+
+   lol ok and it's buggy too. SIGH.
+
+   ok so let's thoroughly optimize for allocation and freeing,
+   and freely fragment and waste memory;
+   require an explicit call to clean up.
+
+   ok so i can allocate from a pointer and, still put things on a linked list,
+   and remove them from the linked list for cheap.
+
+   that will leave fragmentation, but, sigh, that's fine.
+
+   sure wish I could move pointers, that would be good...
+   but that's the whole issue, sigh, being able to move pointers
+   means locking them at use,
+   which is slow. sigh! sigh!
+
+   ok so we'll have a free list,
+   but only update it with the big chunk I guess?
+
+   UGGHGHH okay i've failed to optimize any further.
+
+   very frustrating.
+
+   let's try pypy, I guess.
+
+   i pray that it helps
 ** DONE AFD lets you write on fds which will never be writable, and blocks forever
    maybe we *should* optimistically try to write?
 

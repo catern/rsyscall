@@ -12,3 +12,386 @@ https://www.usenix.org/legacy/publications/library/proceedings/nt-sysadmin97/ful
 
 * other ideas
 can do stuff to prepare the process up-front and replicate it to make many
+
+* comments
+>1. We need a name for your technique. Let's call it direct_spawn()
+
+Sure, but the name I use in the paper is "direct-style". There's no
+real individual function that would be called "direct_spawn". The
+closest possible is the syscall to clone to create a new process, but
+that has the same interface as clone and is ultimately a small wrapper
+around clone. Does "direct-style" have some problem? Maybe
+"direct-style clone"?
+
+>2. For OSDI, you need an evaluation section of 3/4 pages. I think we
+>   can take a bunch of open-source apps and show that direct_spawn()
+>   is better than the alternatives on all sorts of dimensions (errors
+>   handling, performance, LoC). IIRC, the JVM forks early to provide a
+>   parent that can do low-cost children spawning. Can you modify the
+>   JVM to use direct_spawn() and simplify their code?
+
+Yes, it's something that I've considered, but that would require
+porting the API to Java, which would take at least a year of work.
+
+Right now my plan is to do three comparisons:
+
+- Show that some code with equivalent behavior in both direct-style
+  and fork is much longer in fork-style
+- Benchmark fork against clone in large address spaces
+- Benchmark Python's subprocess library against Python rsyscall
+
+Do those sound plausible? Should I add some more?
+
+>3. As direct_spawn() is user-space only, Maybe port it to BSD, and
+>   show that it also make things better there?
+
+A good suggestion, but it's "user-space only" in a similary way that
+CRIU is "user-space only" :) There is a great deal of Linux-specific
+functionality being used. Porting is non-trivial. rsyscall is
+essentially a libc, which is not something that's easily portable.
+
+>4. You are competing against fork() and posix_spawn() for creating a
+>   new process. These are C APIs. So I think you should show your API
+>   with C, not Python. Further, in the design section, Python is a
+>   distraction. It makes the API unclear and more complex than it
+>   needs to be (e.g., child.ptr() is very odd in Python, or
+>   inherid_fd() is chainable is strange. It's hard to imagine the C
+>   API from that).
+
+I understand, and I wish I could, but it's not possible. The C API
+is far more primitive than the the Python API. The usable
+implementation is mostly in Python. (bizarrely low-level Python,
+but Python nonetheless.) I wish I could have written primarily in
+C, but there are numerous disadvantages to writing in C. Good
+alternatives would have been Go or Rust, but I chose Python due to
+its wide adoption.
+
+I'll avoid using the chaining of inherit_fd, since it might be
+confusing. The use of .ptr is hard to avoid without significantly
+reworking the API. Other thoughts on the use of Python?
+
+>5. You say that main complaint of fork() is that it's
+>   slow. direct_spawn() should absolutely be faster than fork then.
+
+Will discuss in the evaluation
+
+>6. The fork() memory copy-on-write in multi-threaded environment also
+>   have the terrible downside that the application memory usage could
+>   double while the child has not yet execve(). This can send an
+>   application in OOM land, which is terrible.
+
+This doesn't happen if the application doesn't touch its memory,
+right?
+
+>7. When you argue that you use a pipe for communicating between the
+>   parent and the child of direct_spawn(), it seems that you don't
+>   explain why it's better than using shared memory (e.g.,
+>   mmap(MAP_SHARED), and communicate there). Also, memory structures
+>   that need to be sent around (here, via write(memory_pipe) )could
+>   just sit on this piece of shared memory and you have a zero-copy
+>   solution. You should describe all the possible ways to do IPC, and
+>   argue why the one you picked is better than all the others.
+
+Good point, I'll discuss that as well. (The reason is that that
+wouldn't work across different kernels, which is the primary case
+for the processes being in separate address spaces)
+
+>8. I don't understand in the design of direct_spawn(), why the child
+>   is in a different memory space than the parent. Skip
+>   mmap(MAP_SHARED) all together, and just use clone(...,
+>   CLONE_VM). Performance will be much better in multi-threaded
+>   programs.
+
+Good point, I'll discuss that. (I forgot to note that usually they
+are in the same address space; the memory stuff I discussed is to
+support when they can't be, such as remote hosts.)
+
+>9. Nit picking regarding CLONE_CHILD_CLEARTID: more precisely, the
+>   ctid address is cleared when the child releases its memory space
+>   (which is the case when the child exits, or execve, but also when
+>   it unshare(CLONE_VM)).
+
+AFAIK, unshare(CLONE_VM) either returns an error or has no
+effect. I thought it was better to not go into depth on the
+mechanism of CLEARTID; do you disagree?
+
+>10. You argue that you want to support cases of CLONE_FILES, and so
+>    it's hard to use pipes. I don't think you need to support
+>    CLONE_FILES for process creation. Why would anyone spawn a new
+>    process with CLONE_FILES? I think it's fine to not offer such
+>    feature. You are competing against fork+execve, and posix_spawn,
+>    not clone.
+
+I did briefly explain one application: "for example, the child
+process might be in a different network namespace from the parent,
+and the shared file descriptor table would allow the child to bind
+a socket and the parent to use it." Should I go into more depth?
+Maybe it's not clear that execve unshare the file descriptor table,
+so you can use this as part of a clone+execve?
+
+CLONE_FILES is something I actually use in an example that I
+commented out. (You can still see it in the .tex, it's under
+Miredo) I commented it out because it was too long and complex.
+(The example doesn't actually explicitly pass CLONE_FILES to calls to clone(),
+but that's just an oversight,  - CLONE_FILES was previously the default and 
+I didn't update the example since commenting it out)
+
+And, of course, CLONE_FILES is mandatory for creating, for
+example, worker pools for asynchronous execution of system calls,
+or things like that.  Maybe I should mention that as well?
+
+>11. I think the paper should be about rsyscall (which is what you seem
+>    to do), and direct_spawn() should be one of its application. It
+>    should also have other compelling applications (at least 3 in the
+>    paper), which you seem to have. I'm not sure there's enough
+>    content for direct_spawn() alone for OSDI. Maybe for another
+>    conference though.
+
+Hmm. I did cut a fair bit of content on Larry's suggestion;
+namely, a section that explained the implications of a good
+process creation interface, as a justification for extensive
+investment into it.
+
+I attached that section to this email. It was between the current
+"Background" and "Overview and Examples" sections. Do you think it
+makes sense to include?
+
+Is the implementation section too long/uninteresting?
+
+I'm fairly sure that I won't be able to write a paper focusing on all
+the applications of rsyscall before the OSDI deadline, so let's just
+take that off the table. I understand the appeal though; I considered
+it, but rejected it early on because the different applications are
+just too distinct, and the resulting paper would be fairly chaotic.
+
+* arguments
+  right now people are forced to write C to access this functionality
+  I enable it to be used from Python.
+
+
+  rsyscall is a reimplementation of libc.
+  It's inherently not portable.
+
+** ok ok ok
+let's think about this calmly and rationally.
+
+i made the decision to not use C over a long time.
+
+right, we were talking about,
+how do we multiplex over multiple processes instead of blocking?
+
+and also how do i monitor readiness in a remote process?
+epoll_wait, of course.
+
+but presumably while doing that I also want to be able to service local requests.
+
+so I inherently need this async interface at least for blocking syscalls.
+
+and so I might as well have it for everything.
+
+so the interface either becomes,
+I take over your event loop and give you callbacks (which is unacceptable for integration into arbitrary applications),
+or each system call is split into "call" and "response" parts.
+
+at that point it's too complex to work with.
+
+I could have a blocking interface which is only suitable for setting up child processes, sure.
+
+so some kind of direct_spawn which creates the process,
+then some more blocking calls for them.
+
+but that would be too abstracted and too much work.
+well, okay right.
+
+so if I did that, which was my original consideration,
+then I would need to define a custom protocol for serializing all system calls.
+
+right now, instead, my protocol is simple,
+and doesn't serialize system calls.
+
+which means it's very easy to add new system calls - just define the interface for it,
+and we're good; no need to add it to a protocol or anything.
+
+
+so, let's say we avoid that,
+by using my current technique,
+being explicit about transferring memory and resources,
+and using "near" and "far" pointers.
+
+ok, so if we do that then...
+
+a blocking interface could work maybe? let's see....
+
+ok so sure, maybe we could do that.
+
+but it wouldn't be a generically useful interface! i mean, i guess it would be fine, but...
+
+i mean, you might as well use sfork then. if you were going to do that.
+
+yeah, I would just do it with sfork instead.
+
+so the ultimate conclusion of this constrained interface, just for process creation, is sfork.
+
+but sfork is very limited.
+but, sigh, I guess it can work.
+
+so the entire point of this paper, then,
+is that we can do direct-style process creation from a generic interface for cross-process operation.
+if we only wanted to do direct-style process creation (for one process at a time, in a fairly constrained way),
+then, we could use sfork.
+
+well, sfork isn't quite perfect;
+it doesn't let you do operations in the parent process.
+it's kind of just an incremental improvement over fork/vfork.
+
+and, like, doing operations in the parent process might mean doing async operations!
+well, but they wouldn't be async in the child.
+well, they might be!
+
+** portability
+   Yeah I guess a simple port to BSD could be viable. I mean...
+   It's pretty dang hard to do all this.
+
+   ok, so they have an rfork.
+   and... we could wrap some basic syscalls and make a protocol for them...
+
+
+** cleaned up
+   So the basic operation we want to do is remote syscalls;
+   naively, this just takes the form of transforming
+   =int read(int fd, void \*buf, size_t count)= to
+   =int read(process\* proc, int fd, void *buf, size_t count)=.
+
+   The immediate issue with this is that it's a blocking interface.
+   I can't service local requests while making one of these calls;
+   these calls roundtrip to another process which might not respond promptly for any number of reasons,
+   so calling this naively may block for a long time, which isn't acceptable for a complex application.
+   We need an interface that we can integrate into an event loop.
+
+   There are two options:
+   We can transform every syscall into a callback,
+   for example,
+   =int read(process* proc, int fd, void *buf, size_t count, func_type callback)=,
+   or we can split syscalls into "call" and "response" parts,
+   for example, maybe,
+   =void read_call(process* proc, int fd, void \*buf, size_t count)= and
+   =int read_response(process* proc)=,
+   or we can do something else; in any of these cases, it's no longer easy to use.
+
+   Making things asynchronous in this way is necessary even in a toy example
+   if we want to set up multiple processes at once,
+   or if we want to perform an operation in the parent and child at the same time
+   (such as connecting from the child to a listening socket in the parent).
+   Those are capabilities that fork has, that we won't have.
+
+   This is fine for C, and it can be integrated nicely into C daemons,
+   but it's not easy to use.
+   I could make asynchronous stuff easy to use by adopting, say, a coroutine system for C,
+   and then forcing the user to use it,
+   but then it's not a library, it's a framework that takes over your whole program.
+   I could loosen the requirement that the calls not be blocking,
+   but then it's not useful in a complex application.
+
+   The problem is with C.
+   Luckily, 1. people don't really like C these days,
+   and 2. it's not actually useful to do this in C.
+   No-one is writing their container orchestration system in C,
+   or any other kind of application that would want to do complex process manipulation.
+   Those have no need for C - except inasmuch as they're forced to use C today.
+   There's precedent for interacting with Linux in a C-free, language-specific way (Go),
+   so that's what I did.
+
+   BTW, if we did loosen the requirement that calls not be blocking,
+   then you might as well use my sfork library,
+   which is yet another semantics for process creation,
+   one which AFAIK no system has ever done before.
+   https://github.com/catern/sfork
+   But it's something I've considered and rejected,
+   because it won't work for real systems,
+   which are concurrent.
+
+   Second off, supposing we're fine with a blocking interface,
+   the naive interface still has the problem of serialization.
+   To call, say, =int write(process\* proc, int fd, void *buf, size_t count)=,
+   either buf is a local pointer and we have complete shared memory between us and the remote process,
+   or buf is a local pointer and internally that call serializes the memory and copies it over,
+   or we don't pass a local pointer.
+   Among other reasons,
+   sharing memory with a process at a different privilege level is insecure,
+   so we can't assume that we'll always have shared memory.
+   So we need to define the aforementioned serialization.
+   This makes it difficult to 
+
+   We can have a wrapper which serializes the memory, sure.
+   It's not performant, but it's fine.
+
+   What about the internal thing, then?
+   Well.
+   So say we have
+   =int write(process\* proc, int fd, void *buf, size_t count)=
+   where the buf is a remote one.
+   How do we implement that?
+
+   ok it's fine but,
+   what about say, dup2?
+   we can use high fds like we said we would originally
+
+   yeah, no non-trivial application could work like this
+
+** hmm
+*** expressiveness
+   ok so we need to be more explicit about...
+   the purpose is,
+   the more expressive technique.
+
+   we
+   I think this line about features that are difficult to exploit is good.
+
+   and we should dig into that in the fork-style and spawn-style sections I guess?
+
+   spawn-style, only a short section,
+   since it's just straight up impossible.
+
+   fork-style, we can talk about at more length.
+
+   so we should actually talk about features that are hard to work with.
+
+   yeah, obviously. naturally.
+
+   let's discuss fork.
+**** TODO come up with things which are difficult with fork!
+     ok ok ok.
+
+     let's do this.
+
+     and theoretically we can do this in the evaluation?
+     or the examples?
+     or the background?
+***** netns
+     making a network namespace,
+     creating a socket,
+     then using it in the parent.
+***** others
+      nested network namespaces
+
+      pid namespaces need to be nested inherently
+      (because you can't unshare them)
+
+      so yeah nesting is a good one
+      although you *can* do it with fork.
+*** python
+   we should also maybe say that it's a consequence of the rsyscall libc for Python.
+
+   like.
+
+   We are able to express direct-style process creation by using the rsyscall library,
+   which allows Python programs to perform cross-process system calls.
+   Our implementation strategy can be employed for any language by porting the rsyscall library.
+
+   if we lean into the Python-ness, we don't have to make excuses for it.
+
+
+   Our contribution is an implementation of direct-style process creation for Linux,
+   making use of our work on the rsyscall project.
+   rsyscall is a cross-process Linux syscall library, replacing libc.
+   rsyscall is currently best supported on Python.
