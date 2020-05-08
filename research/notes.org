@@ -19359,6 +19359,7 @@ aha ok I like this inherit_fd thing, this is good and nice.
    let's try pypy, I guess.
 
    i pray that it helps
+   ok we're blocked on pypy so let's go back on working on the paper
 ** DONE AFD lets you write on fds which will never be writable, and blocks forever
    maybe we *should* optimistically try to write?
 
