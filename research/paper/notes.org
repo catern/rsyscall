@@ -395,3 +395,266 @@ well, they might be!
    making use of our work on the rsyscall project.
    rsyscall is a cross-process Linux syscall library, replacing libc.
    rsyscall is currently best supported on Python.
+*** related work?
+    need a related work section I guess.
+
+    it's just mandatory, even if it's not closely related.
+
+    we can talk about cross-process syscall techniques,
+    and about direct-style process creation.
+
+    criu
+
+    that other rsyscall paper about forwarding syscalls
+
+    transparent migration of linux machines for SSI,
+    such as popcorn linux,
+    typically forward syscall back
+
+    that google sandboxing thing
+
+    io_uring
+
+    this thing http://madchat.fr/coding/c/c.seku/SyscallProxying.pdf
+
+    "condor's remote system calls"
+** takeaways
+   talk about novel applications in the intro
+   
+   be clear on the requirements of the mechanism
+
+   (I think it's clear enough right now...)
+
+   ok so the main thing right now is that we need to revamp this "Overview and examples" section.
+
+   and possibly merge in the process background to the examples?
+
+   we need to genuinely evaluate fork vs rsyscall.
+   and show things that we can and can't do with fork.
+
+   ok so we have these examples...
+
+   maybe we can just bulk them up yeah.
+
+   current organization:
+
+   introduction,
+   background,
+   overview on rsyscall,
+   examples.
+
+   what we want to insert is:
+   1. genuine evaluation of fork vs rsyscall
+   2. novel techniques you can do with rsyscall
+   3. things one might want to do with processes which are difficult otherwise
+
+   I guess this is all done in one way:
+   go through each process-use-case,
+   and do it with both fork and rsyscall,
+   and show the example.
+
+   SIGH.
+
+   ok fine let's do it.
+   let's brew up the examples/sections,
+   based on the process-applications.
+
+   i obviously need this section, it's obvious;
+   it will provide a reference for others,
+   and make my paper eternal.
+*** DONE abstracting over resources
+    Passing down a file descriptor
+
+    can open a file and pass it down.
+*** DONE concurrency
+    a pipeline!
+
+    pipelines are good.
+*** DONE customization without support
+    Using some kind of user namespace + mount namespace thing?
+
+    some other customization thing?
+
+    TODO this one is a bit tricky
+
+    nested clone? network namespaces? pid namespaces?
+
+    we should show something using nested clone;
+
+    and we should show something using shared fd tables.
+
+    binding a random port in the child is good but you can achieve that by fd passing.
+    but not if you're in a network namespace! that's good then.
+
+    that's a useful thing, sure.
+
+    and, another one is, say...
+    running a client outside the thing?
+
+    oh we could do this with the sandboxing thing.
+
+    ugh the miredo thing inherits fds though, sigh.
+
+    ok so that's not helpful.
+
+    customization: use a mount namespace, for sure.
+    and override  .. ..... something.
+    doesn't really need to be real I guess.
+    /etc/foo or whatever.
+
+    oh, and we can do it as a function.
+    that would be a nice demonstration of abstraction.
+
+    this is fine.
+*** DONE sandboxing
+    Lower privilege level thing, easy.
+
+    hmmmmmm I think I should just combine sandboxing and capsec.
+
+    or, maybe not!
+
+    or maybe yes.
+
+    it's really just a combination of abstracting over resources,
+    and sandboxing.
+    yeah I should skip it.
+
+    ok so what kind of sandboxing can we do?
+    let's be capsecish, and pass explicit resources.
+    and... otherwise just lock it down completely?
+    unmount all?
+
+    and we can say, caveat, this isn't a full sandbox, but concise for the sake of space.
+    yeah and this can be a static binary
+
+    ok so we can fexec a static binary,
+    along with one explicitly passed file,
+    and unmount everything,
+    and boom, we're good.
+*** DONE fuse and shared fd table
+    make ns thread from root thread,
+    open dev fuse,
+    make server thread from root thread,
+    pass down dev fuse,
+    mount dev fuse,
+    open file,
+    use in root thread.
+*** misc
+    need to find a space for these:
+**** shared fd tables
+    we can create sockets after process creation and then share them;
+    like we talked about earlier,
+    we can do:
+    create process
+    create socket
+    use socket.
+
+    we can also use the socket in the parent I guess?
+
+    oh we can pass it down to another process in another namespace, nice, perfect
+
+    oh yeah, actually, for that matter can we create the netns thread,
+    then the client thread.
+
+    that would be cool
+
+    yeah that saves a thread.
+
+    and we'll split it between the two
+
+    perfect, and CLONE.FILES does work with newuser.
+
+    so let's rework this
+
+    that's complex though
+
+    let's consider just NEWNET and NEWNS.
+
+    so we can use the fd in the parent
+
+    which is ifne...
+
+    there's a complex use case, which is,
+    open the file in one task in a new namespace,
+    and then pass it down to another task not in that namespace.
+
+    let's see. hm.
+    this isn't necessarily something that fits into our existing use cases.
+
+    maybe I can just skip it?
+
+    let's just skip it for now, I'm avoiding the issue
+
+    nope! got it!
+
+    just mount a fuse filesystem inside,
+    and use the mounted file from the outside.
+    boom!
+**** TODO nested clone
+     This is handy, mmm.
+
+     can we think of a way to handle this that doesn't require a bind?
+
+     yeah, let's figure out how to get rid of the .ptr.
+
+     we can't viably use network stuff if we do that. but I guess it's fine.
+*** thoughts
+    maybe we don't need to include each comparison in the paper?
+
+    maybe we don't need to put the comparisons right next to these examples?
+    we can do that later, in evaluation?
+    although it would be helpful; we'll include one.
+
+    ok, that seems good, seems good.
+
+    um, except,
+    the entire point of having the comparisons right adjacent,
+    is so we can show off advanced techniques.
+    
+    OH OH OH FUSE MOUNTS YES OK
+
+    perfect!
+
+    ok so that's how I can use the shared fd tables!
+    just mount a fuse filesystem inside,
+    and use the mounted file from the outside.
+
+    oh and we need nested clone to do that, too.
+    well, to do it sanely.
+
+    oh, hey, we can use it multiple times, actually.
+    we can make the ns,
+    then clone the server off the root thread,
+    using the shared fuse fd.
+
+    ok so that's a good example.
+*** design
+    ok so I guess we'll stay with this overview and examples design?
+    let's look at other papers.
+
+    oh i should have my end be called "conclusions"
+
+    ok I guess I could have "overview",
+    then "Applications".
+
+    Overview can have this one create and exec example.
+
+    Yeah, that makes sense.
+*** related work
+    I guess I need such a section.
+
+    process capabilities, is something we're saying a lot
+    guess I should distinguish myself from pidfd.
+*** evaluation
+    We quantitatively answer the following questions:
+
+    - Does direct-style process creation on Linux allow for simpler programs than the alternatives?
+      We implement and compare similar functionality using both direct-style and fork-style.
+
+    - Does a clone-based implementation avoid the well-known performance overheads of fork?
+      We evaluate clone against fork on several microbenchmarks.
+
+    - Does a high-level Python direct-style process creation interface
+      have acceptable performance relative to the Python standard library's spawn-style interface?
+      We benchmark direct-style process creation against spawn-style.
+

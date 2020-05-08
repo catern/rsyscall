@@ -104,13 +104,14 @@ Spawn-style lifts many of these constraints,
 but is fundamentally limited in the kinds of processes it can create.
 With both fork-style and spawn-style,
 it is difficult to
-branch based on results or errors encountered while initializing the new process;
+branch based on results or errors encountered while initializing the new process:
 fork-style requires IPC if it wishes to communicate errors back to the rest of the program,
-while robust indication of errors in spawn-style requires substantial growth in the spawn interface.
+and robust indication of errors in spawn-style requires substantial growth in the spawn interface.
 Additionally, modern operating systems such as Linux have features
 which are difficult or impossible to fully exploit through fork-style or spawn-style.
 
 Direct-style is rare in general, but relatively common on academic operating systems.
+% insert citations to direct-style papers here
 Direct-style involves creating a new child process in a non-running state,
 and then calling individual syscalls from the parent to initialize the child.
 Direct-style does not constrain the calling process,
@@ -119,9 +120,8 @@ and can create any kind of process supported by the underlying system.
 
 Our contribution is an implementation of direct-style process creation for Linux,
 making use of our work on the rsyscall project.
-The rsyscall project develops language-specific ``process-independent'' syscall libraries,
-replacing libc for interaction with Linux,
-allowing a program to perform cross-process syscalls.
+The rsyscall project develops language-specific ``process-independent'' syscall libraries for Linux,
+which replace libc syscall wrappers and allow a program to perform cross-process syscalls.
 rsyscall currently has best support for Python,
 but can be ported to other languages;
 the examples we show in this paper will be in Python,
@@ -143,7 +143,8 @@ over Linux's fork-style \texttt{fork} syscall and spawn-style \texttt{posix\_spa
 Direct-style \texttt{clone} can be used correctly and performantly from any process.
 Cross-process syscalls made with rsyscall individually report errors, as normal, and can be easily branched on.
 Arbitrary processes involving complex namespaces and initialization can be created
-using techniques that are impossible with \texttt{fork}.
+using techniques that are impractical with \texttt{fork}.
+The performance cost from high-level code varies, but the underlying primitives are substantially faster.
 
 We have used direct-style process creation on Linux to do TODO and TODO,
 and we've benchmarked our implementation as TODO.
@@ -166,7 +167,7 @@ and discuss several difficult process-creation related details of \texttt{rsysca
 In section \ref{evaluation}, we evaluate, somehow (TODO).
 In section \ref{future_work},
 we list several directions for future work related to direct-style process creation and to \texttt{rsyscall}.
-In section \ref{conclusion}, we briefly and optimistically conclude.
+In section \ref{conclusions}, we briefly and optimistically conclude.
 
 \section{Background}\label{background}
 Processes are a widespread feature of operating systems,
@@ -411,32 +412,48 @@ we can make it possible both for programs to directly manipulate processes to us
 and to use and share composable libraries which use these techniques.
 We believe this potential justifies the investment of substantial effort
 into improving the process creation interface.
-\section{Overview and examples}\label{examples}
+\section{Overview}\label{examples}
 In most operating system APIs, including the ones available on Linux,
 when a program makes a syscall, it implicitly operates on the current process.
 To perform direct-style process creation on Linux,
 we need a Linux API where we instead explicitly specify in which process we want to make a syscall.
 
-\texttt{rsyscall} provides this cross-process API for Linux.
-\texttt{rsyscall} is a library which allows us to create processes in which we can call arbitrary syscalls.
-These processes run no other code; they do nothing except for execute syscalls at our request.
-We will discuss the implementation of rsyscall in greater detail in section \ref{implementation}.
+\texttt{rsyscall} provides this API for Linux.
+
+The \texttt{rsyscall} project develops
+language-specific, object-capability-model, low-abstraction libraries for the Linux syscall interface,
+bypassing libc.
+Unlike POSIX C libraries such as glibc or musl,
+an rsyscall library is organized based on the object-capability model.
+The capabilities to make syscalls in any given process are reified as language objects.
+If the capability to make syscalls in a specific process is not passed (in some way) to a function,
+then that function cannot make syscalls in that process.
+
+Due to this design, an \texttt{rsyscall} program can make use of multiple processes at once,
+by manipulating capabilities for multiple processes.
+The relevant two capabilities for this paper are the initial capability to the ``local'' process,
+and capabilities to child processes.
+The ``local'' process is the one which hosts the runtime for the running program,
+and in which a legacy libc would implicitly make syscalls;
+every rsyscall program starts with the ``local'' process
+and uses it to bootstrap the initial capabilities for other processes.
 
 From the perspective of an program using rsyscall,
-there are multiple processes which are under its control.
+there are multiple processes which are under its control,
+through multiple capabilities.
 We use the term ``thread'' to refer to all such controlled processes,
 including the main "thread" on which the program is running.
 On Linux, the shared-memory "threads" provided by libraries such as \texttt{pthreads}
 are implemented as processes,
 and their lifetime and execution is completely controlled by a single program.
-The same is true of the controlled-process "threads" provided by rsyscall.
+The same is mostly true of the controlled-process "threads" provided by rsyscall.
 The most significant difference is that rsyscall "threads"
 do not run their own code concurrently with the main program;
 nevertheless rsyscall "threads" do provide the opportunity for parallel execution of system calls,
 and so the terminology provides useful intuition.
 
 To perform direct-style process creation,
-we use \texttt{rsyscall} to call \texttt{clone} on our main thread to create a new child thread.
+we use \texttt{rsyscall} to call \texttt{clone} on the ``local'' thread to create a new child thread.
 We call various syscalls in the child thread to mutate it until it reaches the desired state,
 at which point we can call \texttt{execve} in the child thread to start it running on its own.
 After that, the process is no longer under our control, and it functions like any other child process.
@@ -445,37 +462,46 @@ The child process can be monitored using normal Linux child monitoring syscalls 
 such as \texttt{waitid},
 which we can also do with \texttt{rsyscall}.
 
-Resource management across multiple processes can be complex,
-as we'll see in section \ref{implementation}.
-To ease the complexity for user code,
-rsyscall provides substantial language-specific libraries,
-which allow for resource management in a language-idiomatic fashion.
-
-To reduce distracting non-essential complexity,
-we will show all our examples with the Python rsyscall library.
-We will not use any substantial abstractions;
-besides process creation, which has complexities we'll discuss in section \ref{clone},
-each function call corresponds to exactly one syscall.
-Python-specific asynchronous execution syntax (\texttt{await}) has been removed for clarity,
-but the examples are otherwise real working code.
-
-\subsection{Example: Create and exec}
-\begin{lstlisting}[float,language=Python,label={basic},caption={Creating a new process and immediately execing}]
-# Use the clone syscall in the local thread to create a new thread;
-# we use a wrapper that supplies defaults for all arguments.
-child = local.thread.clone()
-# Call execv to run a different executable in the child thread;
-# We pass the executable path as the first argument in the argument list, as is traditional.
-child.execv(hello_path, [hello_path])
+\begin{lstlisting}[float,language=Python,label={basic},caption={Creating a new process, changing CWD, and execing}]
+child = local_thread.clone()
+child.chdir("/etc")
+child.execve(ls_path, [ls_path], local_thread.environ)
 \end{lstlisting}
-In Listing \ref{basic}, we simply create a new process under our control (a thread)
-and immediately exec a binary with it.
-As exceptions are used for error-handling in the Python API,
-there is no need for error-checking code.
-%% **** note to self: concepts introduced in this example
-%% local.thread
-%% clone
-%% execve
+
+Listing \ref{basic} shows this in action in Python.
+We create a new child thread using \texttt{clone} on \texttt{local_thread},
+and receive back a capability to control it.
+We pass no flags to use \texttt{clone}'s defaults
+(which essentially match \texttt{fork}) to create the process.
+We call \texttt{chdir} in the thread to change its working directory to \texttt{/etc}.
+Then we call \texttt{execve},
+passing the path of the \texttt{ls} executable,
+the arguments to the new executable,
+and the unchanged set of environment variables.
+The path of the executable is passed as the first argument,
+as is traditional in Unix.
+Calling \texttt{execve} consumes the capability,
+and later use of this child thread capability will fail with an exception.
+
+The API for direct-style process creation on Linux is not new;
+it is the same Linux system call API that systems programmers are already familiar with.
+The novelty is constrained to the newly explicit process capabilities;
+once that is understood, the rest of the API is mundane,
+and the representation of these programs is obvious in any language.
+
+The familiar and mundane nature of the API is important not just for the learning curve,
+but also for expressivity.
+Since the API is simply normal Linux system calls,
+anything that could be expressed with fork and syscalls
+can also be expressed with direct-style clone.
+\section{Applications}
+In this section,
+we'll discuss several more advanced uses of processes,
+using more sophisticated Linux features,
+and accompany them with Python examples using direct-style process creation.
+As always, since these examples are using the Linux system call API directly,
+they can be translated straightforwardly into any language with an \texttt{rsyscall} API.
+
 \subsection{Example: Passing down FDs}
 \begin{lstlisting}[float,language=Python,label={fds},caption={Passing down FDs}]
 child = local.thread.clone()
@@ -646,8 +672,24 @@ with all resources created outside and explicitly passed in.
 \subsection{Basics about rsyscall}
 Our main need for implementing direct-style process creation
 is a robust system for cross-process syscalls.
-We provided this in the rsyscall project.
-rsyscall is a toolkit for cross-process syscalls on Linux,
+The rsyscall project provides this.
+
+The rsyscall project develops language-specific libraries
+for the Linux syscall interface, with minimal abstraction.
+The rsyscall project develops a collection of language-specific libraries tightly coupled to Linux,
+which provide access to Linux syscalls with minimal abstraction,
+bypassing libc.
+
+Unlike POSIX C libraries, an rsyscall library is organized in a capability-oriented style;
+the capability to make syscalls in a process is explicicitly passed around as a language object.
+This organization allows an rsyscall program to be process-independent,
+and straightforwardly make system calls in any of the processes under its control,
+so-called ``cross-process'' system calls.
+
+for 
+These 
+for the is an alternative, low-abstraction to the Linux
+The rsyscall project is a toolkit for cross-process syscalls on Linux,
 with several language-specific library implementations.
 
 In this section, we'll give a brief overview of rsyscall,
@@ -857,7 +899,8 @@ This is simple to model,
 and convenient for many purposes;
 for example, the child process might be in a different network namespace from the parent,
 and the shared file descriptor table would allow the child to bind a socket
-and the parent to use it.
+and the parent to use it;
+the file descriptor table is unshared once the child calls \texttt{execve}.
 
 If \verb|CLONE_FILES| is not passed to \texttt{clone},
 then \texttt{clone} has the same behavior as \texttt{fork}:
@@ -1038,7 +1081,7 @@ would provide a meaningful demonstration of the viability of these techniques.
 % especially those with prior experience in programming with processes.
 % We hope that future systems for multi-process programming
 % might explore an object-centric approach for managing resources.
-\section{Conclusion}\label{conclusion}
+\section{Conclusions}\label{conclusions}
 Direct-style process creation is much less known and much less used than fork-style and spawn-style.
 We have implemented direct-style process creation for Linux.
 Our implementation is immediately deployable on today's Linux systems.
