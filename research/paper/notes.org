@@ -463,13 +463,140 @@ well, they might be!
    it will provide a reference for others,
    and make my paper eternal.
 *** DONE abstracting over resources
+
+\begin{lstlisting}[float,language=Python,label={fds},caption={Passing down FDs}]
+child = local.thread.clone()
+sock = child.socket(AF.INET, SOCK.DGRAM)
+# Bind the socket to a sockaddr_in;
+# the sockaddr is written to memory accessible by the child with child.ptr
+sock.bind(child.ptr(SockaddrIn(0, 0)))
+sock.listen(10)
+sock.disable_cloexec()
+child.execv(executable_path, [executable_path, "--listening-socket", str(int(sock))])
+\end{lstlisting}
+    
+    
+
+    This is further generalized by Linux's generic tr
+    
+    a child process can inherit file des
+    Most fundamentally,
+    
+
     Passing down a file descriptor
 
     can open a file and pass it down.
-*** DONE concurrency
+
+In Unix, the mechanism of file descriptor inheritance
+allows a process to be provided a resource by its creator,
+while abstracting over the precise identity of that resource.[fn:ucspi]
+For example, a process can be provided a file descriptor,
+which can correspond to any file in a filesystem,
+without the process being aware of what specific file it is accessing.
+This is further enhanced by Unix's "everything is a file" design;
+the passed file descriptor could also be a pipe, a network connection, or some other resource,
+without the process knowing.
+As another example,
+a process can be provided a socket file descriptor on which it can call \texttt{accept} to receive connections,
+without being aware of whether those connections come from the internet or from a local Unix socket.[fn:ucspi]
+This abstraction mechanism is the basic principle of pipelines and redirection in the Unix shell,
+but it is rarely used outside of the shell.
+*** DONE also, pull anything else out of the "background on processes" section
+    ok extracted - i just wanted the bit about these techniques not being usable in combination with existing services.
+*** TODO concurrency
     a pipeline!
 
     pipelines are good.
+
+Processes run concurrently,
+which allows exploiting the parallelism of the underlying hardware.
+Since processes don't share memory,
+they can provide a less complex parallel programming environment
+than shared-memory thread-based approaches.
+
+A popular parallel programming environment is the Unix shell,
+which obtains its parallelism by running multiple processes connected via pipes.
+The Unix shell has a relatively constrained form of parallel processing,
+but it's also possible to create more complex webs of parallel processes,
+where, for example, one process might take multiple inputs over multiple pipes,
+or produce multiple outputs,
+or the processes might be arranged in a loop.
+
+# hmm what is a good example????
+
+# encryption/decryption maybe? some kind of ssl terminator?
+# ucspi requires 6/7, so maybe... that's a good idea?
+# yeah I could do some kind of SSL terminator thing?
+# and then pass the socketpair to... something else..
+
+    In listing \ref{pipe},
+    we create a bidirectional connection between two processes.
+    hwere the one 
+    between their stdout and stderr;
+    something which is not possible in a POSIX shell.
+
+    blah blah blah.
+
+    This is, of course, substantially more complex than the Unix shell,
+    but it's also substantially more capable;
+    we can pass multiple channels of communication or other resources,
+    and we can freely combine these webs of processes with other features that we'll discuss below,
+    including Linux namespaces.
+
+    # two additions to the spawn-style background:
+    # shell and chainloading are spawn-style, 
+    # and spawn-style requires a DSL
+
+    but it allows composition of these techniques with other
+
+    The most basic usage of this is in the widespread distribution of software
+    as executables which run in dedicated processes.
+**** what example?
+     let's just do some made up programs again
+
+     try to be evocative with naming;
+     two streams between two processes, for example.
+
+     hmmmmmm.
+
+     is made up a good idea?
+     yes.
+
+     two streams of data, maybe going different places.
+
+     ummmm
+
+     maybe uhhh
+
+     ok
+
+     maybe we can think of some way in which direct style is actually helpful..?
+
+#+BEGIN_SRC python
+def as_argument(child, fd):
+  child_fd = child.inherit_fd(fd)
+  child_fd.fcntl(F.SETFD, 0)
+  return str(int(child_fd))
+
+audio_pipe = local_thread.pipe()
+video_pipe = local_thread.pipe()
+source = local.thread.clone()
+source.execve('/bin/source', ['source',
+  '--audio-output', as_argument(source, audio_pipe.write),
+  '--video-output', as_argument(source, video_pipe.write)])
+video_sink = local.thread.clone()
+video_sink.execve('/bin/video_sink', ['video_sink',
+  '--video-input', as_argument(video_sink, video_pipe.read)])
+audio_sink = local.thread.clone()
+audio_sink.execve('/bin/audio_sink', ['audio_sink',
+  '--audio-input', as_argument(audio_sink, audio_pipe.read)])
+#+END_SRC
+
+In listing \ref{pipe},
+we execute a few programs in parallel,
+connected by pipes.
+We first create two pipes,
+then inherit them down to several processes using a helper function, \texttt{as_argument}.
 *** DONE customization without support
     Using some kind of user namespace + mount namespace thing?
 
@@ -506,7 +633,49 @@ well, they might be!
     that would be a nice demonstration of abstraction.
 
     this is fine.
+
+In many systems,
+it's possible to modify a process's view of nominally "global" resources.
+In Unix-derived systems, this ability is most influentially provided in Plan 9[fn:plan9],
+which allows each process to customize its view of the filesystem with private mounts and union directories[fn:plan9ns].
+In Linux, these concepts were implemented as per-process namespaces[fn:linuxns].
+Fundamentally,
+this allows customizing a process's environment and therefore a program's behavior,
+without having to write explicit support code for customization.
+For example, Plan 9, unlike most other Unix-derived systems,
+did not have a \texttt{PATH} environment variable which was searched by code in the process to find executables;
+instead, each process was executed with a \texttt{/bin} directory at the root of the filesystem,
+which was a union of many other directories,
+and simply executed \texttt{/bin/foo} to run the program named \texttt{foo}.
+In this way the set of executables provided to a process could be customized,
+without any code to parse and handle \texttt{PATH} or any other executable-lookup-specific customization code.
+
+
+
+
+
+
+
+We'll bind mount a single file, sure.
+
+ok one awkwardness is finding a filename.
+
+should i do uts namespaces???
+that seems plausible
+
+yeah. that's good.
+or no, it's boring.
+
+let's use mkdtemp to make a tempdir?
+yeah yeah ok.
+
+no let's hardcode a path
+perfect
 *** DONE sandboxing
+
+Capability-secure sandboxing.
+
+
     Lower privilege level thing, easy.
 
     hmmmmmm I think I should just combine sandboxing and capsec.
@@ -531,6 +700,153 @@ well, they might be!
     along with one explicitly passed file,
     and unmount everything,
     and boom, we're good.
+**** old
+The basic isolation powers of processes are used to simplify application development:
+it is beneficial to have a private virtual memory space when developing a stand-alone program.
+But most systems have additional mechanisms of isolation between processes,
+such as different privilege levels and access to global resources,
+which can be used to provide a form of sandboxing.
+For example, components which may exposed to hostile network requests
+can be run in a separate process, at a lower privilege level than the main program;
+in this way, even if an attacker gains control over that component,
+the attacker will only have access to the lower level of privileges of that component,
+rather than the full privileges of the main program.
+
+As a further development of process-based sandboxing,
+the privileges of a process can be explicitly enumerated
+in a capability-based security model.[fn:capsicum]
+By using previously-mentioned resource passing mechanisms,
+such as file descriptor inheritance or namespace manipulation,
+and by disabling the process's access to global resources such as the shared filesystem,
+we can enforce that all resources used by the process are passed at creation time.
+**** writing
+At process creation time,
+we can not only pass resources and customize the process's environment,
+we can also deny the process access to resources that it otherwise gets by default.
+This is a key part of creating a secure sandbox for potentially malicious code.
+
+Historically, system calls such as \texttt{chroot} were the main mechanism for doing this;
+today, Linux's namespaces system is the most important component.
+
+\begin{lstlisting}[float,language=Python,label={unmount},caption={Unmount all and run executable via fexec}]
+thread = local_thread.clone(CLONE.NEWNS)
+executable_fd = child.open("/bin/static_executable", O.RDONLY)
+db_fd = child.open("/var/db/database.db", O.RDWR)
+child.umount("/", MNT.DETACH)
+db_fd.fcntl(F.SETFD, 0)
+child.fexec(executable_fd, ["static_executable", "--database-fd", str(int(db_fd))])
+\end{lstlisting}
+
+In listing \ref{unmount}
+we create a new child thread,
+again in a new mount namespace using \texttt{CLONE_NEWNS}.
+We open the executable that we'll later exec in this child thread,
+as well as another file as in listing \ref{fds},
+since we won't be able to do exec or open files normally after the next step.
+Then we use \texttt{umount},
+passing \texttt{MNT_DETACH} to perform a recursive unmount of the entire filesystem tree,
+removing it all from the view of this process.
+As in listing \ref{fds}, we unset the \texttt{CLOEXEC} flag from the database file descriptor,
+so that it can be inherited across \texttt{exec};
+we don't need to call \texttt{inherit_fd} since, in this case, the database fd was opened directly from the child.
+We then exec the file we opened earlier, using \texttt{fexec},
+which allows execing a file descriptor,
+and also pass the database file descriptor as an argument,
+as in listing \ref{fds}.
+(The underlying system call for \texttt{fexec} is \texttt{execveat};
+this \texttt{fexec} is a helper function.)
+Note that this executable must be statically linked,
+or it wouldn't work in an empty filesystem namespace,
+with no libraries to dynamically link against.
+
+By removing the filesystem tree from the view of this process,
+we can run this executable with greater confidence
+that it won't be able to tamper with the rest of the system.
+A sandbox which is truly robust against malicious or compromised programs requires some additional steps,
+but this is a substantial start.
+Such a technique can also be used when a full sandbox is not relevant,
+to ease reasoning about the behavior of the program being run,
+and protect against bugs.
+
+Even if the process needs additional resources,
+those can be explicitly passed down through file descriptor passing,
+as we do here with the database file descriptor.
+This is the essence of capability-based security,
+which Linux can increasingly closely approximate.
+*** DONE killing child processes?
+    can demonstrate using a pid namespace for that?
+
+    yeah that's good.
+
+    although there's the signal restriction;
+    does that matter?
+
+    no not really.
+    just use sigkill if you want to kill it.
+
+    well, it is annoying that there isns't an interface...
+    actually, you've always needed to fall back to sigkill ater sigterm.
+    not doing that is a joke.
+
+    zombies, also, are kept around?
+    shrug, I'm mostsly fine with that.
+
+    ok maybe this isn't a super good idea.
+
+    our other wacky example can be one depending on a clone.
+
+    aha yes this is good,
+    because we can demo nested clone.
+
+    things we're doing here:
+
+    nesting 
+
+    using a pid namespace to clean up resources
+
+
+    Namespaces can also be used to.
+**** writing
+    Process-local resource can also be used to control the lifetime of resources used by that process.
+    Many Linux resources are not automatically cleaned up on process exit;
+    a poorly coded program may allocate global resources
+    and not ensure that they are cleaned up,
+    leaving behind unuseds litter on the system.
+
+    One resource which is not automatically cleaned up is processes themselves;
+    if we run a program which itself spawns subprocesses,
+    those subprocesses may unintentionally leak,
+    and be left running on the system even after the program itself has stopped.
+
+    We can use a pid namespace, in conjunction with nested cloning, to solve this issue.
+    The lifetime of all processes in a pid namespace is tied to the first process created in it,
+    the init process.
+    When the init process dies,
+    all other processes in the pid namespace are destroyed.
+
+#+BEGIN_SRC python
+init = local_thread.clone(CLONE.NEWPID)
+grandchild = init.clone()
+grandchild.execv(foo_path, [foo_path])
+#+END_SRC    
+
+    In listing \ref{pidns},
+    we create a child process which we call \texttt{init},
+    passing \verb|CLONE_NEWPID| to create it in a new pid namespace.
+    To create another process in the pid namespace,
+    we clone again, this time from \texttt{init};
+    note that this is the first time we've cloned from one of our child processes.
+    We exec in the grandchild,
+    and we can monitor the grandchild process from \texttt{init},
+    just as we would monitor \texttt{init} from its parent process.
+
+    \texttt{init} in a pid namespace has some special powers and responsibilities.
+    We can handle these responsibilities ourselves, directly from this program,
+    or we can continue on by execing an init daemon in \texttt{init} to handle it for us.
+
+    In either case, when \texttt{init} dies,
+    the pid namespace will be destroyed,
+    and \texttt{grandchild} will be cleaned up.
 *** DONE fuse and shared fd table
     make ns thread from root thread,
     open dev fuse,
@@ -539,6 +855,52 @@ well, they might be!
     mount dev fuse,
     open file,
     use in root thread.
+
+    okaaaay.
+
+    this should be good.
+
+    I guess I can say, uh.
+
+    well one attribute is Linux's ability to make usersspace filesystems
+    and otherwise mock file descriptors.
+
+    another is running a subprocess to run a service.
+
+    yet another is sharing the file descriptor table.
+    # !!! TODO !!!
+    # we could just hardcode the paths of everything instead of assuming they're in scope;
+    # that's probably better.
+
+    ok so this is using a subprocess to perform a task, that's the key thing.
+
+    fo rhtat, sharing the fd table is useful.
+
+    (incidentally, a usersspace filesystem is useful, but not super useful)
+
+    A library can create a child process to perform a useful service.
+    This can sometimes be done more easily when the child process shares file descriptors with the parent.
+
+#+BEGIN_SRC python
+ns_child = local_thread.clone(CLONE.FILES|CLONE.NEWNS)
+server_child = ns_child.clone()
+await server_child.execve(fuseserver_path, [fuseserver_path, "/foo"])
+fd = ns_child.open("/foo/bar", O.RDONLY)
+parent_fd = local_thread.use_fd(fd)
+#+END_SRC
+
+    In listing \ref{fuse},
+    we first create a child process, \texttt{ns_child}, in a new mount namespace with \texttt{CLONE_NEWNS},
+    and for the first time, also pass \texttt{CLONE_FILES},
+    which causes the file descriptor table to be shared between the parent process and the child process.
+    We create a grandchild off of \texttt{ns_child},
+    and use it to exec a FUSE filesystem,
+    which will appear only in the mount namespace of \texttt{ns_child} and its descendents.
+    Then we can open FUSE files in \texttt{ns_child}
+    and use those files in the parent process,
+    through the shared file descriptor table.
+
+    # TODO hmm technically we could open devfuse from local_thread, that would work too.
 *** misc
     need to find a space for these:
 **** shared fd tables
@@ -598,6 +960,17 @@ well, they might be!
      yeah, let's figure out how to get rid of the .ptr.
 
      we can't viably use network stuff if we do that. but I guess it's fine.
+
+     ok so we probably should do nested clone before the clone_files thing.
+
+     need to think of a good nested clone.
+     a pid namespace, maybe?
+
+     oh, yeah, let's do a pid namespace.
+     and have our process as pid 1 in the namespace.
+     that works!
+
+     and that can be about, resource cleanup, I guess?
 *** thoughts
     maybe we don't need to include each comparison in the paper?
 
