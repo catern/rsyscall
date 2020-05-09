@@ -179,8 +179,9 @@ the interfaces for process creation
 can be divided into "fork-style" and "spawn-style".
 A few systems use a third style, which we refer to as "direct-style".
 \subsection{Fork-style}
-Fork-style interfaces are those that follow the model used by Unix's fork \cite{forkhist}.
-A process calls fork, and a copy of that process is made,
+By far the most well-known fork-style interface is Unix's fork.\cite{forkhist}
+With a fork-style interface,
+a process calls \texttt{fork}, and a copy of that process is made,
 with the return value of fork being the only differentiation between the process and its copy.
 The same program continues executing in both processes.
 Typically, the program will case on the return value to determine if it's running in the parent or the child,
@@ -224,15 +225,18 @@ In combination with fork's poor performance in large-memory programs,
 a user of fork must think carefully
 about the characteristics of the process from which fork is being called.
 \subsection{Spawn-style}
-Spawn-style interfaces are those that follow the model used by \texttt{posix\_spawn} \cite{posix_spawn}
-and Windows' \texttt{CreateProcess} \cite{create_process}.
-All the details about the new process are provided up-front as arguments to a syscall,
+In a spawn-style interface,
+all the details about the new process are provided up-front as arguments to some function,
 which creates the new process from a mostly-clean slate, initialized with the provided details.
+The most well known spawn-style interfaces are Unix's \texttt{posix\_spawn} \cite{posix_spawn}
+and Windows \texttt{CreateProcess} \cite{create_process};
+the Unix shell also serves as a spawn-style process creation interface,
+especially when used with chain-loading techniques.[fn:chainloading]
 
 Spawn-style interfaces typically still transparently copy some details from the parent process;
 for example, various security contexts,
 and any other process attribute which is not explicitly specified in the arguments to the spawn interface.
-The key difference between fork-style and spawn-style is not how much they copy;
+The key difference between fork-style and spawn-style is not how much they copy,
 it is how the attributes which are not copied are specified:
 by mutation from code running in the new process in the case of fork-style,
 or by explicit argument passing in the case of spawn-style.
@@ -250,6 +254,14 @@ for a spawn-style interface to work in all scenarios,
 all those possible mutations must be reproduced in the interface.
 For example, the \texttt{posix\_spawn} function provided by glibc does not support creating processes in new namespaces,
 as is required for container functionality on Linux.
+
+Furthermore, spawn-style process creation
+creates a new domain-specific language for specifying the attributes of the process.
+Fork-style allows existing system calls,
+with which programmers are already familiar,
+to be used to set up the new process.
+Spawn-style requires some form of declarative description of the new process,
+which must be learned in additional to the normal system call interface.
 
 Spawn-style process creation also does not allow for conditional logic during the setup;
 if the setup of the new process encounters an error at some point,
@@ -323,95 +335,6 @@ would implicitly copy some attributes to the new process,
 rather than being capability-oriented and requiring all attributes to be specified explicitly.
 This is the kind of direct-style interface that we contribute in this paper.
 
-\section{Background on the use of processes}
-Why is it important to have a high-quality interface for creating processes?
-Processes are already widely used;
-most software is distributed as an executable which runs in a dedicated process.
-This basic usage of processes can be performed with even a complex and inefficient process creation interface.
-But processes have many uses beyond this simple and widespread one;
-here we examine some more sophisticated applications of processes,
-which benefit from a better process creation interface.
-\subsection{Abstraction over resources}
-In Unix, the mechanism of file descriptor inheritance
-allows a process to be provided a resource by its creator,
-while abstracting over the precise identity of that resource.[fn:ucspi]
-For example, a process can be provided a file descriptor,
-which can correspond to any file in a filesystem,
-without the process being aware of what specific file it is accessing.
-This is further enhanced by Unix's "everything is a file" design;
-the passed file descriptor could also be a pipe, a network connection, or some other resource,
-without the process knowing.
-As another example,
-a process can be provided a socket file descriptor on which it can call \texttt{accept} to receive connections,
-without being aware of whether those connections come from the internet or from a local Unix socket.[fn:ucspi]
-This abstraction mechanism is the basic principle of pipelines and redirection in the Unix shell,
-but it is rarely used outside of the shell.
-\subsection{Customization without explicit support}
-In many systems,
-it's possible to modify a process's view of nominally "global" resources.
-In Unix-derived systems, this ability is most influentially provided in Plan 9[fn:plan9],
-which allows each process to customize its view of the filesystem with private mounts and union directories[fn:plan9ns].
-In Linux, these concepts were implemented as per-process namespaces[fn:linuxns].
-Fundamentally,
-this allows customizing a process's environment and therefore a program's behavior,
-without having to write explicit support code for customization.
-For example, Plan 9, unlike most other Unix-derived systems,
-did not have a \texttt{PATH} environment variable which was searched by code in the process to find executables;
-instead, each process was executed with a \texttt{/bin} directory at the root of the filesystem,
-which was a union of many other directories,
-and simply executed \texttt{/bin/foo} to run the program named \texttt{foo}.
-In this way the set of executables provided to a process could be customized,
-without any code to parse and handle \texttt{PATH} or any other executable-lookup-specific customization code.
-\subsection{Sandboxing}
-The basic isolation powers of processes are used to simplify application development:
-it is beneficial to have a private virtual memory space when developing a stand-alone program.
-But most systems have additional mechanisms of isolation between processes,
-such as different privilege levels and access to global resources,
-which can be used to provide a form of sandboxing.
-For example, components which may exposed to hostile network requests
-can be run in a separate process, at a lower privilege level than the main program;
-in this way, even if an attacker gains control over that component,
-the attacker will only have access to the lower level of privileges of that component,
-rather than the full privileges of the main program.
-\subsection{Capability-based security}
-As a further development of process-based sandboxing,
-the privileges of a process can be explicitly enumerated
-in a capability-based security model.[fn:capsicum]
-By using previously-mentioned resource passing mechanisms,
-such as file descriptor inheritance or namespace manipulation,
-and by disabling the process's access to global resources such as the shared filesystem,
-we can enforce that all resources used by the process are passed at creation time.
-\subsection{Non-shared-memory concurrency}
-Processes run concurrently,
-which allows exploiting parallelism in the hardware.
-Since processes don't share memory,
-they can provide a less complex parallel programming environment
-than shared-memory thread-based approaches.
-The most popular parallel programming environment in existence today is the Unix shell,
-which obtains its parallelism by running multiple processes connected via pipes.
-The Unix shell has a relatively constrained form of parallel processing,
-but it's also possible to create more complex webs of parallel processes,
-where, for example, one process might take multiple inputs over multiple pipes,
-or produce multiple outputs.
-\subsection{Conclusion}
-These techniques, and more, are available through the process interface.
-Most software would benefit from abstraction over resources, sandboxing, and parallelism.
-Yet these features of processes are used only rarely.
-There are multiple reasons for this,
-but one of the primary reasons is the complexity of current process creation interfaces.
-
-Many of these techniques are used today by specialized software and services.
-Often, such software only allows use of one of these techniques;
-for example, the Unix shell allows piping together process, but not namespacing them;
-container systems allow sandboxing processes, but not piping them together.
-By delegating these features to specific separate services,
-we lose the ability to use them in combination.
-
-By improving the process creation interface,
-we can make it possible both for programs to directly manipulate processes to use these techniques,
-and to use and share composable libraries which use these techniques.
-We believe this potential justifies the investment of substantial effort
-into improving the process creation interface.
 \section{Overview}\label{examples}
 In most operating system APIs, including the ones available on Linux,
 when a program makes a syscall, it implicitly operates on the current process.
@@ -419,7 +342,6 @@ To perform direct-style process creation on Linux,
 we need a Linux API where we instead explicitly specify in which process we want to make a syscall.
 
 \texttt{rsyscall} provides this API for Linux.
-
 The \texttt{rsyscall} project develops
 language-specific, object-capability-model, low-abstraction libraries for the Linux syscall interface,
 bypassing libc.
@@ -456,30 +378,30 @@ To perform direct-style process creation,
 we use \texttt{rsyscall} to call \texttt{clone} on the ``local'' thread to create a new child thread.
 We call various syscalls in the child thread to mutate it until it reaches the desired state,
 at which point we can call \texttt{execve} in the child thread to start it running on its own.
-After that, the process is no longer under our control, and it functions like any other child process.
-(Hence we call it ``process'' rather than ``thread'')
+After that, the process is no longer under our control, and it functions like any other child process
+(hence we say ``process'' rather than ``thread'').
 The child process can be monitored using normal Linux child monitoring syscalls from our main thread,
 such as \texttt{waitid},
 which we can also do with \texttt{rsyscall}.
 
 \begin{lstlisting}[float,language=Python,label={basic},caption={Creating a new process, changing CWD, and execing}]
 child = local_thread.clone()
-child.chdir("/etc")
-child.execve(ls_path, [ls_path], local_thread.environ)
+child.chdir("/dev")
+child.execve("/bin/cat",
+  ["cat", "./null"], local_thread.environ)
 \end{lstlisting}
-
 Listing \ref{basic} shows this in action in Python.
-We create a new child thread using \texttt{clone} on \texttt{local_thread},
+We create a new child thread using \texttt{clone} on \verb|local_thread|,
 and receive back a capability to control it.
 We pass no flags to use \texttt{clone}'s defaults
 (which essentially match \texttt{fork}) to create the process.
-We call \texttt{chdir} in the thread to change its working directory to \texttt{/etc}.
+We call \texttt{chdir} in the thread to change its working directory to \texttt{/dev}.
 Then we call \texttt{execve},
-passing the path of the \texttt{ls} executable,
+passing the path of the \texttt{cat} executable,
 the arguments to the new executable,
 and the unchanged set of environment variables.
-The path of the executable is passed as the first argument,
-as is traditional in Unix.
+The name of the executable is passed as the first argument,
+as is typical in Unix.
 Calling \texttt{execve} consumes the capability,
 and later use of this child thread capability will fail with an exception.
 
@@ -499,175 +421,269 @@ In this section,
 we'll discuss several more advanced uses of processes,
 using more sophisticated Linux features,
 and accompany them with Python examples using direct-style process creation.
-As always, since these examples are using the Linux system call API directly,
-they can be translated straightforwardly into any language with an \texttt{rsyscall} API.
 
-\subsection{Example: Passing down FDs}
+% TODO this intro is all a bit muddled, and also not true.
+These examples are all conventional applications of Linux features;
+they are all possible using Linux's existing \texttt{fork} system call,
+and in some cases, \verb|posix_spawn|,
+with varying degrees of difficulty and workarounds.
+But direct-style makes these easier to write;
+we'll compare our implementations in this section to fork-style implementations in section \ref{evaluation}.
+Furthermore, since the examples are using the Linux system call API directly,
+they can be translated straightforwardly into any language with an \texttt{rsyscall} API;
+Python is chosen simply for convenience.
+
+Some of these examples showcase functionality that can be done today by specialized software and services.
+Such software often allows use of one or two of these techniques, but prevents the use of others.
+
+By improving the process creation interface,
+all these techniques can be used together, flexibly,
+to more closely meet the specific needs of individual real-world applications.
+
+\subsection{Abstraction through file descriptor passing}\label{fd_abstraction}
+In Linux (and Unix in general),
+a program can use file descriptor inheritance
+to provide file descriptors created by the parent process to child processes.
+Put simply,
+a new Linux child process receives copies of all file descriptors in the parent process.
+When calling \texttt{execve}, these file descriptors are normally closed automatically,
+but selected file descriptors can be preserved over \texttt{execve}
+by disabling the \texttt{CLOEXEC} flag on individual file descriptors.
+We will discuss file descriptor inheritance in more detail in section \label{fdtables},
+as part of our discussion of resource management in the implementation of \texttt{rsyscall}.
+
+Most resources in Linux are managed through file descriptors,
+so this allows the parent process to pass a wide variety of resources to the child process.
+An executable program can be provided a file descriptor,
+which can correspond to any file in any filesystem,
+or to a network connection\cite{ucspi},
+or a pipe connected to another process,
+without the process being aware of what specific resource it is accessing.
+In this way, we immediately know "for free"\cite{theoremsforfree}
+that the behavior of the program does not depend on the name of the file,
+or the hostname to it which the socket is connected,
+or the executable running in the process on the other end of the pipe.
 \begin{lstlisting}[float,language=Python,label={fds},caption={Passing down FDs}]
-child = local.thread.clone()
-sock = child.socket(AF.INET, SOCK.DGRAM)
-# Bind the socket to a sockaddr_in;
-# the sockaddr is written to memory accessible by the child with child.ptr
-sock.bind(child.ptr(SockaddrIn(0, 0)))
-sock.listen(10)
-sock.disable_cloexec()
-child.execv(executable_path, [executable_path, "--listening-socket", str(int(sock))])
+db_fd = local_thread.open("/var/db/database.db", O.RDWR)
+child = local_thread.clone()
+child_fd = child.inherit_fd(db_fd)
+child_fd.fcntl(F.SETFD, 0)
+child.execv("/bin/fooserver",
+  ["fooserver", "--database-fd", str(int(child_fd))])
 \end{lstlisting}
-In Listing \ref{fds}, we create a new thread,
-then create a listening socket bound to a random port in that thread,
-then call exec, 
-passing down the socket by disabling cloexec and passing its file descriptor number as an argument to the new program.
+In Listing \ref{fds},
+we first open a file with read-write permission.
+Then we create a child thread,
+which inherits all file descriptors from its parent.
+We indicate that we want to operate on the child's copy of the file descriptor with \verb|child.inherit_fd|.
+\verb|inherit_fd| only updates resource-tracking bookkeeping in our program;
+it makes no system calls.
+Then we disable \texttt{CLOEXEC} on the child's file descriptor,
+which on Linux we can do by clearing the FD flags with \verb|fcntl(fd, F_SETFD, 0)|.
+Finally, we execute some executable,
+passing the file descriptor number as an argument;
+when the executable starts up, that file descriptor number will already be pointing to this file descriptor.
+We call the \texttt{execv} wrapper rather than \texttt{execve} as in listing \ref{basic}
+so that we don't need to pass the (unmodified) environment to every exec call in these examples.
+\subsection{Non-shared-memory concurrency}
+Processes run concurrently,
+which allows exploiting the parallelism of the underlying hardware.
+Since processes don't share memory,
+they can provide a less complex parallel programming environment
+than shared-memory thread-based approaches.
 
-File descriptors, here, are object oriented and have relevant syscalls as methods.
-They make syscalls in the process they are created in by default;
-we can create more objects referring to the same file descriptor from different processes
-if we want to make the syscalls from another process.
-%% **** note to self: concepts introduced in this example
-%% disable_cloexec
-%% socket creation
-%% using int on sock
-%% .ptr
-\subsection{Example: Pipeline}
-\begin{lstlisting}[float,language=Python,label={pipe},caption={Creating a pipeline}]
-# create the pipe
-pipe = local.thread.pipe()
-child1 = local.thread.clone()
-# inherit the write-end of the pipe to child1, and replace child1.stdout with it
-child1_pipe_write = child1.inherit_fd(pipe.write)
-child1_pipe_write.dup2(child1.stdout)
-child1_proc = child1.execv(yes_path, [yes_path])
-child2 = local.thread.clone()
-# inherit the read-end of the pipe to child2, and replace child2.stdin with it
-child2_pipe_read = child2.inherit_fd(pipe.read)
-child2_pipe_read.dup2(child2.stdin)
-child2_proc = child2.execv(head_path, [head_path, "-n", "15"])
+A popular parallel programming environment is the Unix shell,
+which obtains its parallelism by running multiple processes connected via pipes.
+The Unix shell has a relatively constrained form of parallel processing,
+but it's also possible to create more complex webs of parallel processes,
+where, for example, one process might take multiple inputs over multiple pipes,
+or produce multiple outputs.
+\begin{lstlisting}[float,language=Python,label={pipe},caption={Creating a parallel processing pipeline}]
+def as_argument(child, fd):
+  child_fd = child.inherit_fd(fd)
+  child_fd.fcntl(F.SETFD, 0) # unset CLOEXEC
+  return str(int(child_fd)) # turn fd number to string
+
+audio_pipe = local_thread.pipe()
+video_pipe = local_thread.pipe()
+source = local.thread.clone()
+source.execve('/bin/source', ['source',
+  '--audio-output', as_argument(source, audio_pipe.write),
+  '--video-output', as_argument(source, video_pipe.write)])
+video_sink = local.thread.clone()
+video_sink.execve('/bin/video_sink', ['video_sink',
+  '--video-input', as_argument(video_sink, video_pipe.read)])
+audio_sink = local.thread.clone()
+audio_sink.execve('/bin/audio_sink', ['audio_sink',
+  '--audio-input', as_argument(audio_sink, audio_pipe.read)])
 \end{lstlisting}
-In Listing \ref{pipe},
-we do the same as the Unix shell pipeline "yes | head -n 15".
-We create a pipe,
-then create two threads,
-connect them with a pipe,
-and exec a different program in each thread.
+In listing \ref{pipe},
+we execute a few programs in parallel,
+connected by pipes.
+We first create two pipes,
+then inherit them down to several processes using a helper function, \texttt{as_argument},
+which uses \verb|inherit_fd| and \texttt{fcntl} as described in section \ref{fd_abstraction}.
+We exec each program passing some file descriptors as arguments.
+The whole system then runs in parallel,
+as normal child processes.
+\subsection{Customization without explicit support}
+While, ideally, all resources would be passed by file descriptor,[fn:capsicum]
+Unix has a number of resources that are global,
+such as the pid space or the mount table,
+and which cannot be changed on a per-process basis.
 
-After a process is created with clone,
-it may have inherited file descriptors;
-here we inherit the pipe.
-We make this inheritance explicit with \texttt{inherit\_fd},
-a helper method on our thread object,
-which takes a file descriptor from a different thread
-and performs a runtime check that the file descriptor actually was inherited.
-If so, it returns a new handle to the file descriptor which performs syscalls from the new thread.
+In Linux, most global resources have been made process-local
+through the namespaces system.
+Like other process-local resources such as the current working directory,
+namespaces are typically set up at process creation time.
 
-Then we simply =dup2= as normal to replace child1's stdout with the write end of the pipe;
-=dup2= disables CLOEXEC by default on the target.
-%% **** note to self: concepts introduced in this example
-%% dup2
-%% pipe
-\subsection{Example: Mount namespace}
-\begin{lstlisting}[float,language=Python,label={mount},caption={Mount namespace}]
-child = local.thread.clone(CLONE.NEWUSER|CLONE.NEWNS)
-child.mkdir(rootdir/"proc")
-child.mount(Path("/proc"), rootdir/"proc", "", MS.BIND, "")
-child.chroot(rootdir)
-child.execv(executable_path, [executable_path])
-\end{lstlisting}
-In Listing \ref{mount},
-we make a new mount namespace and rearrange the filesystem tree for the child process.
-We bind-mount /proc at /proc inside the chroot directory,
-chroot into the directory,
-and exec an executable which will run inside the chroot.
-%% **** note to self: concepts introduced in this example
-%% namespaces
-%% path slash syntax sugar
-\subsection{Example: Nested clone and network namespace}
-\begin{lstlisting}[float,language=Python,label={nested},caption={Nested clone and network namespace}]
-ns_thread = local.thread.clone(CLONE.NEWNET|CLONE.NEWUSER)
+The most popular usage of namespaces is for large-scale container systems such as Docker;
+however, this is far from the only use.
+With an adaquate process creation primitive,
+namespaces can be used easily on a much smaller scale.
 
-listening_child = ns_thread.clone()
-sock = listening_child.socket(AF.INET, SOCK.DGRAM)
-sockaddr = SockaddrIn(22, "127.0.0.1")
-sock.bind(listening_child.ptr(sockaddr))
-sock.listen(10)
-sock.disable_cloexec()
-child.execv(server_path, [server_path, "--listening-socket", str(int(sock))])
+Namespaces, like all process-local resources,
+can be used to customize a program's behavior
+in ways that were not anticipated by the author
+by customizing the environment the process runs in.
 
-connecting_child = ns_thread.clone()
-child.execv(client_path, [
-  client_path, "--connect-address", str(sockaddr.address) + ":" + str(sockaddr.port)])
-\end{lstlisting}
-In Listing \ref{nested},
-we make a process (\texttt{ns\_thread}) in a new network namespace.
-Then, we create two more child processes of \texttt{ns\_thread},
-which are also in the new network namespace.
-This nested creation of child processes is fully supported,
-like all other syscalls,
-and allows us to set up complex graphs of processes and namespaces.
-
-We bind to a privileged port on localhost inside the namespace,
-and create one child to listen on that socket,
-and another child to connect to it.
-\subsection{Example: Starting a complex system}
-\begin{lstlisting}[float,language=Python,label={miredo},caption={Starting a complex system}]
-### create socket outside network namespace that Miredo will use for internet access
-inet_sock = local.thread.socket(AF.INET, SOCK.DGRAM)
-inet_sock.bind(local.thread.ptr(SockaddrIn(0, 0)))
-# set some miscellaneous additional sockopts that Miredo wants
-set_miredo_sockopts(local.thread, inet_sock)
-### create main network namespace thread
-ns_thread = local.thread.clone(CLONE.NEWNET|CLONE.NEWUSER)
-### create in-network-namespace raw INET6 socket which Miredo will use to relay pings
-icmp6_fd = ns_thread.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
-### create in-network-namespace socket,
-### which Miredo will use for unassociated Ifreq ioctls
-reqsock = ns_thread.socket(AF.INET, SOCK.STREAM)
-### create and set up the TUN interface
-tun_fd, tun_index = make_tun(ns_thread, "miredo", reqsock)
-### create socketpair which Miredo will use to communicate
-### between privileged process and Teredo client
-privproc_pair = ns_thread.socketpair(AF.UNIX, SOCK.STREAM)
-### start up privileged process which manipulates the network setup in the namespace
-privproc_thread = ns_thread.clone()
-# We preserve NET_ADMIN capability over exec so that privproc can
-# manipulate the TUN interface. add_to_ambient_caps is a helper function
-# used because manipulating Linux ambient capabilities is fairly verbose
-add_to_ambient_caps(privproc_thread, {CAP.NET_ADMIN})
-# privproc expects to communicate with the main client over stdin and stdout
-privproc_side = privproc_thread.inherit_fd(privproc_pair.first)
-privproc_side.dup2(privproc_thread.stdin)
-privproc_side.dup2(privproc_thread.stdout)
-privproc_child = privproc_thread.execv(miredo_privproc_executable_path, [
-    miredo_privproc_executable_path, str(tun_index)
-])
-### start up Miredo client process which communicates
-### over the internet to implement the tunnel
-# the client process doesn't need to be in the same network namespace,
-# since it is passed all the resources it needs as fds at startup.
-client_thread = ns_thread.clone(CLONE.NEWUSER|CLONE.NEWNET|CLONE.NEWNS|CLONE.NEWPID)
-# lightly sandbox by unmounting everything except for the executable
-# and its deps (known via package manager)
-unmount_everything_except(client_thread, miredo_exec.run_client.executable_path)
-# a helper function for preparing the fds that are passed as command line arguments
-async def pass_fd(fd: FileDescriptor) -> str:
-    client_thread.inherit_fd(fd).disable_cloexec()
-    return str(int(fd))
-client_child = client_thread.execv(miredo_client_executable_path, [
-    miredo_client_executable_path,
-    pass_fd(inet_sock), pass_fd(tun_fd), pass_fd(reqsock),
-    pass_fd(icmp6_fd), pass_fd(privproc_pair.second),
-    "teredo.remlab.net", "teredo.remlab.net"
-])
+\begin{lstlisting}[float,language=Python,label={mount},caption={Overriding absolute path using a mount namespace}]
+child = local.thread.clone(CLONE.NEWNS)
+child.mount("/home/foo/custom_foo.conf", "/etc/foo.conf", "", MS.BIND, "")
+child.execv('/bin/fooserver', ['fooserver'])
 \end{lstlisting}
 
-In Listing \ref{miredo},
-we show non-trivial code for launching a real application:
-the Miredo IPv6 tunneling software.
-We use a few helper functions in this listing to keep the attention focused on the interesting parts.
+One classic form of customization enabled by namespaces
+is overriding files at paths that were hardcoded into the program.
+In listing \ref{mount},
+we create a new child thread as normal,
+but for the first time,
+pass an argument to \texttt{clone}.
+\verb|CLONE_NEWNS| causes clone to create the process in a new mount namespace,
+which allows us to use the \texttt{mount} system call
+to manipulate the filesystem tree in a way that only this process will see.
+We call mount, passing \texttt{MS.BIND}, to make the file \verb|/home/foo/custom_foo.conf|
+appear at the path \verb|/etc/foo.conf|;
+this is known as a bind mount.
+Then we execute some executable,
+which will see the \verb|/etc/foo.conf| as we specified.
+\subsection{Sandboxing}
+At process creation time,
+we can not only pass resources and customize the process's environment,
+we can also deny the process access to resources that it otherwise gets by default.
+This is a key part of creating a secure sandbox for potentially malicious code.
 
-Miredo is separated into two components, a privileged process which sets up network interfaces,
-and an unprivileged process which talks to the network.
-With minimal modifications to Miredo,
-we launch Miredo entirely unprivileged inside a user namespace and network namespace,
-with all resources created outside and explicitly passed in.
+Historically, system calls such as \texttt{chroot} were the main mechanism for doing this;
+today, Linux's namespaces system is the most important component.
+
+\begin{lstlisting}[float,language=Python,label={unmount},caption={Unmount all and run executable via fexec}]
+thread = local_thread.clone(CLONE.NEWNS)
+executable_fd = child.open("/bin/static_executable", O.RDONLY)
+db_fd = child.open("/var/db/database.db", O.RDWR)
+child.umount("/", MNT.DETACH)
+db_fd.fcntl(F.SETFD, 0)
+child.fexec(executable_fd, ["static_executable", "--database-fd", str(int(db_fd))])
+\end{lstlisting}
+
+In listing \ref{unmount}
+we create a new child thread,
+again in a new mount namespace using \texttt{CLONE.NEWNS}.
+We open the executable that we'll later exec in this child thread,
+as well as another file as in listing \ref{fds},
+since we won't be able to do exec or open files normally after the next step.
+Then we use \texttt{umount},
+passing \texttt{MNT>DETACH} to perform a recursive unmount of the entire filesystem tree,
+removing it all from the view of this process.
+As in listing \ref{fds}, we unset the \texttt{CLOEXEC} flag from the database file descriptor,
+so that it can be inherited across \texttt{exec};
+we don't need to call \verb|inherit_fd| since, in this case, the database fd was opened directly from the child.
+We then exec the file we opened earlier, using \texttt{fexec},
+which allows execing a file descriptor,
+and also pass the database file descriptor as an argument,
+as in listing \ref{fds}.
+(The underlying system call for \texttt{fexec} is \texttt{execveat};
+this \texttt{fexec} is a helper function.)
+Note that this executable must be statically linked,
+or it wouldn't work in an empty filesystem namespace,
+with no libraries to dynamically link against.
+
+By removing the filesystem tree from the view of this process,
+we can run this executable with greater confidence
+that it won't be able to tamper with the rest of the system.
+A sandbox which is truly robust against malicious or compromised programs requires some additional steps,
+but this is a substantial start.
+Such a technique can also be used when a full sandbox is not relevant,
+to ease reasoning about the behavior of the program being run,
+and protect against bugs.
+
+Even if the process needs additional resources,
+those can be explicitly passed down through file descriptor passing,
+as we do here with the database file descriptor.
+This is the essence of capability-based security,
+which Linux can increasingly closely approximate.
+
+\subsection{Nested clone and pid namespaces}
+Process-local resource can also be used to control the lifetime of resources used by that process.
+Many Linux resources are not automatically cleaned up on process exit;
+a poorly coded program may allocate global resources
+and not ensure that they are cleaned up,
+leaving behind unuseds litter on the system.
+
+One resource which is not automatically cleaned up is processes themselves;
+if we run a program which itself spawns subprocesses,
+those subprocesses may unintentionally leak,
+and be left running on the system even after the program itself has stopped.
+
+We can use a pid namespace, in conjunction with nested cloning, to solve this issue.
+The lifetime of all processes in a pid namespace is tied to the first process created in it,
+the init process.
+When the init process dies,
+all other processes in the pid namespace are destroyed.
+
+\begin{lstlisting}[float,language=Python,label={pidns},caption={Nested clone and pid namespace}]
+init = local_thread.clone(CLONE.NEWPID)
+grandchild = init.clone()
+grandchild.execv('/bin/fooserver', ['fooserver'])
+\end{lstlisting}
+
+In listing \ref{pidns},
+we create a child process which we call \texttt{init},
+passing \verb|CLONE_NEWPID| to create it in a new pid namespace.
+To create another process in the pid namespace,
+we clone again, this time from \texttt{init};
+note that this is the first time we've cloned from one of our child processes.
+We exec in the grandchild,
+and we can monitor the grandchild process from \texttt{init},
+just as we would monitor \texttt{init} from its parent process.
+
+\texttt{init} in a pid namespace has some special powers and responsibilities.
+We can handle these responsibilities ourselves, directly from this program,
+or we can continue on by execing an init daemon in \texttt{init} to handle it for us.
+
+In either case, when \texttt{init} dies,
+the pid namespace will be destroyed,
+and \texttt{grandchild} will be cleaned up.
+
+\subsection{Shared file descriptor tables}
+A library can create a child process to perform a useful service.
+This can sometimes be done more easily when the child process shares file descriptors with the parent.
+\begin{lstlisting}[float,language=Python,label={fuse},caption={Shared file descriptor tables}]
+ns_child = local_thread.clone(CLONE.FILES|CLONE.NEWNS)
+server_child = ns_child.clone()
+await server_child.execve('/bin/foofs', ['foofs', "--mount-at", "/"])
+fd = ns_child.open("/foo/bar", O.RDONLY)
+parent_fd = local_thread.use_fd(fd)
+\end{lstlisting}
+In listing \ref{fuse},
+we first create a child process, \verb|ns_child|, in a new mount namespace with \verb|CLONE_NEWNS|,
+and for the first time, also pass \verb|CLONE_FILES|,
+which causes the file descriptor table to be shared between the parent process and the child process.
+We create a grandchild off of \verb|ns_child|,
+and use it to exec a FUSE filesystem,
+which will appear only in the mount namespace of \verb|ns_child| and its descendents.
+Then we can open FUSE files in \verb|ns_child|
+and use those files in the parent process,
+through the shared file descriptor table.
 \section{Implementation}\label{implementation}
 \subsection{Basics about rsyscall}
 Our main need for implementing direct-style process creation
