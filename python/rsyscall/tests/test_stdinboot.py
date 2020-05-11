@@ -29,4 +29,10 @@ class TestStdinboot(TrioTestCase):
         child, new_thread = await stdin_bootstrap(self.remote, self.command)
         async with child:
             await do_async_things(self, new_thread.epoller, new_thread)
+
+    async def test_nest_multiple(self) -> None:
+        for i in range(5):
+            child = await self.remote.clone()
+            async with child:
+                await do_async_things(self, child.epoller, child)
     
