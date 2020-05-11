@@ -104,6 +104,34 @@ class ChildState:
         return self.sig
 
 
+#### Raw syscalls ####
+from rsyscall.near.sysif import SyscallInterface
+from rsyscall.sys.syscall import SYS
+from rsyscall.near.types import (
+    Address,
+    Process,
+    ProcessGroup,
+)
+
+async def _waitid(sysif: SyscallInterface,
+                  id: t.Union[Process, ProcessGroup, None], infop: t.Optional[Address], options: int,
+                  rusage: t.Optional[Address]) -> int:
+    if isinstance(id, Process):
+        idtype = IdType.PID
+    elif isinstance(id, ProcessGroup):
+        idtype = IdType.PGID
+    elif id is None:
+        idtype = IdType.ALL
+        id = 0 # type: ignore
+    else:
+        raise ValueError("unknown id type", id)
+    if infop is None:
+        infop = 0 # type: ignore
+    if rusage is None:
+        rusage = 0 # type: ignore
+    return (await sysif.syscall(SYS.waitid, idtype, id, infop, options, rusage))
+
+
 #### Tests ####
 from unittest import TestCase
 

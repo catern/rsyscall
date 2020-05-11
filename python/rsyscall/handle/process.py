@@ -6,7 +6,7 @@ from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.linux.futex import FutexNode
 from rsyscall.sched import Stack, CLONE, _clone, _unshare
 from rsyscall.signal import SIG, Siginfo
-from rsyscall.sys.wait import W, ChildState
+from rsyscall.sys.wait import W, ChildState, _waitid
 from rsyscall.unistd.credentials import _getpgid, _setpgid
 import contextlib
 import logging
@@ -125,8 +125,8 @@ class ChildProcess(Process):
             if rusage is not None:
                 stack.enter_context(rusage.borrow(self.task))
             try:
-                await rsyscall.near.waitid(self.task.sysif, self.near, infop.near, options,
-                                           rusage.near if rusage else None)
+                await _waitid(self.task.sysif, self.near, infop.near, options,
+                              rusage.near if rusage else None)
             except ChildProcessError as exn:
                 exn.filename = self.near
                 raise

@@ -42,7 +42,6 @@ from rsyscall.near.sysif import SyscallInterface, SyscallResponse, SyscallHangup
 from rsyscall.sys.syscall import SYS
 
 from rsyscall.fcntl import F
-from rsyscall.sys.wait import IdType
 from rsyscall.signal import SIG
 
 #### Syscalls (instructions)
@@ -109,22 +108,4 @@ async def set_tid_address(sysif: SyscallInterface, ptr: Address) -> None:
 
 async def setns(sysif: SyscallInterface, fd: FileDescriptor, nstype: int) -> None:
     await sysif.syscall(SYS.setns, fd, nstype)
-
-async def waitid(sysif: SyscallInterface,
-                 id: t.Union[Process, ProcessGroup, None], infop: t.Optional[Address], options: int,
-                 rusage: t.Optional[Address]) -> int:
-    if isinstance(id, Process):
-        idtype = IdType.PID
-    elif isinstance(id, ProcessGroup):
-        idtype = IdType.PGID
-    elif id is None:
-        idtype = IdType.ALL
-        id = 0 # type: ignore
-    else:
-        raise ValueError("unknown id type", id)
-    if infop is None:
-        infop = 0 # type: ignore
-    if rusage is None:
-        rusage = 0 # type: ignore
-    return (await sysif.syscall(SYS.waitid, idtype, id, infop, options, rusage))
 
