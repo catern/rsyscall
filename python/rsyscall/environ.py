@@ -66,7 +66,7 @@ class ExecutablePathCache:
             try:
                 # TODO hmm this returns fine for directories tho. hm. hm.
                 # oh well we'll just fail at exec time, that was always possible
-                await fd.faccessat(name, OK.R|OK.X)
+                await fd.faccessat(name, OK.X)
             except OSError:
                 return False
             else:
