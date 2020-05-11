@@ -80,13 +80,8 @@ class EpollFileDescriptor(BaseFileDescriptor):
         self._validate()
         with fd.borrow(self.task):
             if event is not None:
-                if event.size() < EpollEvent.sizeof():
-                    raise Exception("pointer is too small", event.size(),
-                                    "to be an EpollEvent", EpollEvent.sizeof())
-                with event.borrow(self.task):
-                    return (await _epoll_ctl(self.task.sysif, self.near, op, fd.near, event.near))
-            else:
-                return (await _epoll_ctl(self.task.sysif, self.near, op, fd.near))
+                event.check_address_space(self.task)
+            return (await _epoll_ctl(self.task.sysif, self.near, op, fd.near, event.near if event else None))
 
 class EpollTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
     async def epoll_create(self, flags: EpollFlag=EpollFlag.NONE) -> T_fd:

@@ -167,6 +167,10 @@ class Pointer(t.Generic[T]):
                 "is freed, but the pointer is still valid; someone violated some invariants",
             ) from e
 
+    def check_address_space(self, task: rsyscall.far.Task) -> None:
+        if task.address_space != self.mapping.task.address_space:
+            raise rsyscall.far.AddressSpaceMismatchError(task.address_space, self.mapping.task.address_space)
+
     @contextlib.contextmanager
     def borrow(self, task: rsyscall.far.Task) -> t.Iterator[rsyscall.near.Address]:
         """Pin the address of this pointer, and yield the pointer's raw memory address
@@ -184,8 +188,7 @@ class Pointer(t.Generic[T]):
         # TODO rename this to pinned
         # TODO make this the only way to get .near
         self._validate()
-        if task.address_space != self.mapping.task.address_space:
-            raise rsyscall.far.AddressSpaceMismatchError(task.address_space, self.mapping.task.address_space)
+        self.check_address_space(task)
         yield self.near
 
     def _validate(self) -> None:

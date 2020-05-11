@@ -26,15 +26,15 @@ from rsyscall.path import Path, EmptyPath
 class IOFileDescriptor(BaseFileDescriptor):
     async def read(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self._validate()
-        with buf.borrow(self.task) as buf_n:
-            ret = await _read(self.task.sysif, self.near, buf_n, buf.size())
-            return buf.split(ret)
+        buf.check_address_space(self.task)
+        ret = await _read(self.task.sysif, self.near, buf.near, buf.size())
+        return buf.split(ret)
 
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self._validate()
-        with buf.borrow(self.task) as buf_n:
-            ret = await _write(self.task.sysif, self.near, buf_n, buf.size())
-            return buf.split(ret)
+        buf.check_address_space(self.task)
+        ret = await _write(self.task.sysif, self.near, buf.near, buf.size())
+        return buf.split(ret)
 
 class SeekableFileDescriptor(IOFileDescriptor):
     async def pread(self, buf: Pointer, offset: int) -> t.Tuple[Pointer, Pointer]:

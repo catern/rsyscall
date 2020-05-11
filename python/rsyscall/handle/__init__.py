@@ -258,21 +258,20 @@ class Task(
                      envp: WrittenPointer[ArgList],
                      command: Command=None,
     ) -> None:
-        with contextlib.ExitStack() as stack:
-            stack.enter_context(filename.borrow(self))
-            for arg in [*argv.value, *envp.value]:
-                stack.enter_context(arg.borrow(self))
-            self.manipulating_fd_table = True
-            try:
-                await rsyscall.near.execve(self.sysif, filename.near, argv.near, envp.near)
-            except OSError as exn:
-                exn.filename = filename.value
-                raise
-            self.manipulating_fd_table = False
-            self._make_fresh_fd_table()
-            self._make_fresh_address_space()
-            if isinstance(self.process, ChildProcess):
-                self.process.did_exec(command)
+        filename.check_address_space(self)
+        for arg in [*argv.value, *envp.value]:
+            arg.check_address_space(self)
+        self.manipulating_fd_table = True
+        try:
+            await rsyscall.near.execve(self.sysif, filename.near, argv.near, envp.near)
+        except OSError as exn:
+            exn.filename = filename.value
+            raise
+        self.manipulating_fd_table = False
+        self._make_fresh_fd_table()
+        self._make_fresh_address_space()
+        if isinstance(self.process, ChildProcess):
+            self.process.did_exec(command)
 
     async def exit(self, status: int) -> None:
         self.manipulating_fd_table = True
