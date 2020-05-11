@@ -152,6 +152,7 @@ class FDPassConnection(Connection):
         chans = await self.open_channels(count)
         access_socks, local_socks = zip(*chans)
         async def make_afd(sock: FileDescriptor) -> AsyncFileDescriptor:
+            # have to set NONBLOCK after creation because we want the other end to be blocking
             await sock.fcntl(F.SETFL, O.NONBLOCK)
             return await AsyncFileDescriptor.make(self.access_epoller, self.access_ram, sock)
         async_access_socks = [await make_afd(sock) for sock in access_socks]
