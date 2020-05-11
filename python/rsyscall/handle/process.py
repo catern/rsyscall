@@ -5,7 +5,7 @@ from rsyscall.command import Command
 from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.linux.futex import FutexNode
 from rsyscall.sched import Stack, CLONE, _clone, _unshare
-from rsyscall.signal import SIG, Siginfo
+from rsyscall.signal import SIG, Siginfo, _kill
 from rsyscall.sys.wait import W, ChildState, _waitid
 from rsyscall.unistd.credentials import _getpgid, _setpgid
 import contextlib
@@ -33,13 +33,13 @@ class Process:
     near: rsyscall.near.Process
 
     async def kill(self, sig: SIG) -> None:
-        await rsyscall.near.kill(self.task.sysif, self.near, sig)
+        await _kill(self.task.sysif, self.near, sig)
 
     def _as_process_group(self) -> rsyscall.near.ProcessGroup:
         return rsyscall.near.ProcessGroup(self.near.id)
 
     async def killpg(self, sig: SIG) -> None:
-        await rsyscall.near.kill(self.task.sysif, self._as_process_group(), sig)
+        await _kill(self.task.sysif, self._as_process_group(), sig)
 
     async def getpgid(self) -> rsyscall.near.ProcessGroup:
         return (await _getpgid(self.task.sysif, self.near))

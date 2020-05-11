@@ -42,7 +42,6 @@ from rsyscall.near.sysif import SyscallInterface, SyscallResponse, SyscallHangup
 from rsyscall.sys.syscall import SYS
 
 from rsyscall.fcntl import F
-from rsyscall.signal import SIG
 
 #### Syscalls (instructions)
 # These are like instructions, run with this segment register override prefix and arguments.
@@ -94,11 +93,6 @@ async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: F, arg: t.Opti
     if arg is None:
         arg = 0
     return (await sysif.syscall(SYS.fcntl, fd, cmd, arg))
-
-async def kill(sysif: SyscallInterface, pid: t.Union[Process, ProcessGroup], sig: SIG) -> None:
-    if isinstance(pid, ProcessGroup):
-        pid = -int(pid) # type: ignore
-    await sysif.syscall(SYS.kill, pid, sig)
 
 async def set_robust_list(sysif: SyscallInterface, head: Address, len: int) -> None:
     await sysif.syscall(SYS.set_robust_list, head, len)
