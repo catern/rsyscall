@@ -26,7 +26,7 @@ class TestNet(TrioTestCase):
 
     async def test_make_tun(self) -> None:
         tun_fd = await self.thr.task.open(await self.thr.ram.ptr(Path("/dev/net/tun")), O.RDWR)
-        ptr = await self.thr.ram.ptr(Ifreq(b'tun0', flags=IFF_TUN))
+        ptr = await self.thr.ram.ptr(Ifreq('tun0', flags=IFF_TUN))
         await tun_fd.ioctl(TUNSETIFF, ptr)
         sock = await self.thr.task.socket(AF.INET, SOCK.STREAM)
         await sock.ioctl(SIOCGIFINDEX, ptr)
@@ -38,7 +38,7 @@ class TestNet(TrioTestCase):
         await netsock.bind(await self.thr.ram.ptr(SockaddrNl(0, RTMGRP.LINK)))
 
         tun_fd = await self.thr.task.open(await self.thr.ram.ptr(Path("/dev/net/tun")), O.RDWR)
-        ptr = await self.thr.ram.ptr(Ifreq(b'tun0', flags=IFF_TUN))
+        ptr = await self.thr.ram.ptr(Ifreq('tun0', flags=IFF_TUN))
         await tun_fd.ioctl(TUNSETIFF, ptr)
         sock = await self.thr.task.socket(AF.INET, SOCK.STREAM)
         await sock.ioctl(SIOCGIFINDEX, ptr)

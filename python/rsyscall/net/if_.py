@@ -20,15 +20,20 @@ IFF_TUN: int = lib.IFF_TUN
 TUNSETIFF: int = lib.TUNSETIFF
 SIOCGIFINDEX: int = lib.SIOCGIFINDEX
 
-class BytesField:
+class CStringField:
     def __init__(self, name: str) -> None:
         self.name = name
 
-    def __get__(self, instance, owner) -> bytes:
-        return bytes(ffi.buffer(getattr(instance.cffi, self.name)))
+    def __get__(self, instance, owner) -> str:
+        data = bytes(ffi.buffer(getattr(instance.cffi, self.name)))
+        try:
+            valid_data = data[:data.index(b'\0')]
+        except ValueError:
+            valid_data = data
+        return valid_data.decode()
 
-    def __set__(self, instance, value: bytes) -> None:
-        setattr(instance.cffi, self.name, value)
+    def __set__(self, instance, value: str) -> None:
+        setattr(instance.cffi, self.name, value.encode() + b"\0")
 
 class IntField:
     def __init__(self, name: str) -> None:
@@ -63,12 +68,12 @@ class Ifreq(Struct):
     extract some specific field from the union, stored as a cffi type.
 
     """
-    name = BytesField("ifr_name")
+    name = CStringField("ifr_name")
     addr = AddressField("ifr_addr")
     ifindex = IntField("ifr_ifindex")
     flags = IntField("ifr_flags")
     
-    def __init__(self, name: bytes=None, *, flags: int=None, cffi=None) -> None:
+    def __init__(self, name: str=None, *, flags: int=None, cffi=None) -> None:
         if cffi is None:
             cffi = ffi.new('struct ifreq*')
         self.cffi = cffi
@@ -95,13 +100,10 @@ class Ifreq(Struct):
         return ffi.sizeof('struct ifreq')
 
     def __str__(self) -> str:
-        try:
-            strname = self.name[:self.name.index(b'\0')].decode()
-        except ValueError:
-            strname = self.name.decode()
-        if strname:
-            return f"Ifreq({strname}, ...)"
+        if self.name:
+            return f"Ifreq({self.name}, ...)"
         else:
+            # if it's an empty string, indicate that there's no name
             return "Ifreq(<no interface name>, ...)"
 
 
@@ -110,7 +112,7 @@ from unittest import TestCase
 class TestIf(TestCase):
     def test_ifreq(self) -> None:
         initial = Ifreq()
-        initial.name = b"hello"
+        initial.name = "hello"
         initial.addr = SockaddrIn(42, "127.0.0.1")
         output = Ifreq.from_bytes(initial.to_bytes())
         self.assertEqual(initial.name, output.name)
