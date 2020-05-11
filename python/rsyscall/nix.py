@@ -257,6 +257,6 @@ def import_nix_dep(name: str) -> StorePath:
     store_path = StorePath._load_without_registering(name)
     # the local store has a root for every StorePath; that's where the
     # paths actually originally are.
-    local_store._add_root(store_path, store_path.path)
+    __getattr__("local_store")._add_root(store_path, store_path.path)
     _imported_store_paths[name] = store_path
     return store_path
