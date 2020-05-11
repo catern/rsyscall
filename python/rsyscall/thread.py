@@ -17,7 +17,8 @@ from rsyscall.linux.dirent import DirentList
 from rsyscall.sched import CLONE
 from rsyscall.sys.mount import MS
 from rsyscall.sys.wait import ChildState, W
-from rsyscall.unistd import Arg
+from rsyscall.sys.socket import Socketpair, AF, SOCK
+from rsyscall.unistd import Arg, Pipe
 
 async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
                               in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
@@ -130,6 +131,21 @@ class Thread(UnixThread):
             )
         source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.ram.perform_batch(op)
         await self.task.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
+
+    async def socket(self, domain: AF, type: SOCK, protocol: int=0) -> FileDescriptor:
+        return await self.task.socket(domain, type, protocol)
+
+    async def pipe(self) -> Pipe:
+        return await (await self.task.pipe(await self.malloc(Pipe))).read()
+
+    async def socketpair(self, domain: AF, type: SOCK, protocol: int=0) -> Socketpair:
+        return await (await self.task.socketpair(domain, type, protocol, await self.malloc(Socketpair))).read()
+
+    async def chroot(self, path: Path) -> None:
+        await self.task.chroot(await self.ptr(path))
+
+    def inherit_fd(self, fd: FileDescriptor) -> FileDescriptor:
+        return self.task.inherit_fd(fd)
 
     async def clone(self, flags: CLONE=CLONE.NONE) -> ChildThread:
         "Create a new child thread"
