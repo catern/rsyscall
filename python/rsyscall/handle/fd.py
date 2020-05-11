@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from weakref import WeakSet
+import itertools
 import abc
 import gc
 import rsyscall.far
@@ -268,13 +269,13 @@ class FDTable(rsyscall.far.FDTable):
         super().__init__(creator_pid)
         self.near_to_handles: t.Dict[rsyscall.near.FileDescriptor, t.List[BaseFileDescriptor]] = {}
         self.tasks: t.List[FileDescriptorTask] = []
-        self.inherited: WeakSet[BaseFileDescriptor] = WeakSet()
         if parent:
-            for handles in parent.near_to_handles.values():
-                for handle in handles:
-                    self.inherited.add(handle)
-            for handle in parent.inherited:
-                self.inherited.add(handle)
+            self.inherited: WeakSet[BaseFileDescriptor] = WeakSet(
+                itertools.chain(itertools.chain.from_iterable(parent.near_to_handles.values()),
+                                parent.inherited)
+            )
+        else:
+            self.inherited = WeakSet()
 
     def remove_inherited(self) -> None:
         self.inherited = WeakSet()
