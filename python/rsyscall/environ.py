@@ -13,6 +13,7 @@ from rsyscall.command import Command
 from rsyscall.concurrency import run_all
 from rsyscall.handle import Path, Task, FileDescriptor, WrittenPointer
 from rsyscall.memory.ram import RAM
+from rsyscall.unistd import Arg, ArgList
 import os
 import typing as t
 import functools
@@ -95,11 +96,14 @@ class ExecutablePathCache:
 
 class Environment:
     "A representation of Unix environment variables."
-    def __init__(self, task: Task, ram: RAM, environment: t.Dict[str, str]) -> None:
+    def __init__(self, task: Task, ram: RAM, environment: t.Dict[str, str],
+                 arglist_ptr: WrittenPointer[ArgList]=None,
+    ) -> None:
         self.data = environment
         self.sh = Command(Path("/bin/sh"), ['sh'], {})
         self.tmpdir = Path(self.get("TMPDIR", "/tmp"))
         self.path = ExecutablePathCache(task, ram, self.get("PATH", "").split(":"))
+        self.arglist_ptr = arglist_ptr
 
     def __getitem__(self, key: str) -> str:
         return self.data[key]
@@ -135,6 +139,16 @@ class Environment:
         they're shared between all threads.
 
         """
-        env = Environment(task, ram, dict(self.data))
+        env = Environment(task, ram, dict(self.data), self.arglist_ptr)
         env.path = self.path
         return env
+
+    async def as_arglist(self, ram: RAM) -> WrittenPointer[ArgList]:
+        if self.arglist_ptr is None:
+            envp = [Arg('='.join([key, value])) for key, value in self.data.items()]
+            async def op(sem: RAM) -> WrittenPointer[ArgList]:
+                envp_ptrs = ArgList([await sem.ptr(arg) for arg in envp])
+                return await sem.ptr(envp_ptrs)
+            ptr: WrittenPointer[ArgList] = await ram.perform_batch(op)
+            self.arglist_ptr = ptr
+        return self.arglist_ptr

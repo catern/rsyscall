@@ -111,6 +111,20 @@ class ChildUnixThread(UnixThread):
         await self.task.execve(filename, argv_ptr, envp_ptr, command=command)
         return self.process
 
+    async def execv(self, path: Path,
+                    argv: t.Sequence[t.Union[str, os.PathLike]],
+                    command: Command=None,
+    ) -> AsyncChildProcess:
+        """Replace the running executable in this thread with another; see execve.
+        """
+        async def op(sem: RAM) -> t.Tuple[WrittenPointer[Path], WrittenPointer[ArgList]]:
+            argv_ptrs = ArgList([await sem.ptr(Arg(arg)) for arg in argv])
+            return (await sem.ptr(path), await sem.ptr(argv_ptrs))
+        filename_ptr, argv_ptr = await self.ram.perform_batch(op)
+        envp_ptr = await self.environ.as_arglist(self.ram)
+        await self.task.execve(filename_ptr, argv_ptr, envp_ptr, command=command)
+        return self.process
+
     async def execve(self, path: Path,
                      argv: t.Sequence[t.Union[str, os.PathLike]],
                      env_updates: t.Mapping[str, t.Union[str, os.PathLike]]={},
@@ -140,6 +154,9 @@ class ChildUnixThread(UnixThread):
         for block in inherited_signal_blocks:
             sigmask = sigmask.union(block.mask)
         await self.task.sigprocmask((HowSIG.SETMASK, await self.ram.ptr(Sigset(sigmask))))
+        if not env_updates:
+            # use execv if we aren't updating the env, as an optimization.
+            return await self.execv(path, argv, command=command)
         envp: t.Dict[str, str] = {**self.environ.data}
         for key, value in env_updates.items():
             envp[key] = os.fsdecode(value)
