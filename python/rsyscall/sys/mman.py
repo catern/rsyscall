@@ -34,6 +34,9 @@ class MemoryMapping:
             raise rsyscall.far.AddressSpaceMismatchError()
         return MemoryMapping(task, self.near, self.file)
 
+    def __str__(self) -> str:
+        return f"MemoryMapping({str(self.task)}, {str(self.near)})"
+
 from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
 
 class MemoryMappingTask(FileDescriptorTask):

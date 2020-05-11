@@ -151,5 +151,8 @@ class Task:
             stack.enter_context(ptr.borrow(self))
             return ptr.near
 
+    def __str__(self) -> str:
+        return f"Task({self.near_process.id})"
+
     def __post_init__(self) -> None:
         pass
