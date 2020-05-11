@@ -72,25 +72,23 @@ async def prep() -> None:
     return (await local.thread.environ.which("echo")).args("hello world")
 cmd = trio.run(prep)
 echo_path = cmd.executable_path
-async def rsys_run() -> None:
-    count = 500
+async def rsys_run(count: int) -> None:
     for _ in range(count):
         thread = await local.thread.clone()
         child = await thread.execv(cmd.executable_path, [cmd.executable_path, "-n", "hello"])
         await child.waitpid(W.EXITED)
         await thread.close()
-        # print("free list length", len(local.thread.ram.allocator.shared_allocator.arenas[0].free_list))
 import pstats
-def main():
+async def main():
     pr = cProfile.Profile()
-    pr.enable()    
-    trio.run(rsys_run)
+    await rsys_run(100)
+    pr.enable()
+    await rsys_run(500)
     pr.disable()
     pr.print_stats(sort='cumtime')
     # ps = pstats.Stats(pr).strip_dirs().sort_stats('cumulative')
     # ps.print_callees()
-    print("arenas count", len(local.thread.ram.allocator.shared_allocator.arenas))
     return pr
 
 if __name__ == "__main__":
-    pr = main()
+    pr = trio.run(main)

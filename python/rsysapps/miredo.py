@@ -100,6 +100,70 @@ async def start_miredo_internal(thread: Thread, miredo_exec: MiredoExecutables) 
     await inet_sock.bind(await thread.ptr(SockaddrIn(0, 0)))
     # set some miscellaneous additional sockopts that Miredo wants
     await set_miredo_sockopts(thread, inet_sock)
+    ### create dummy thread just for cloning off
+    outer_ns_thread = await thread.clone(CLONE.NEWNET|CLONE.NEWUSER|CLONE.FILES)
+    ### create a thread in a new network namespace
+    netns_thread = await outer_ns_thread.clone(CLONE.FILES) # lol skipping it for now
+    ### create in-network-namespace raw INET6 socket which Miredo will use to relay pings
+    icmp6_fd = await netns_thread.socket(AF.INET6, SOCK.RAW, IPPROTO.ICMPV6)
+    ### create in-network-namespace socket which Miredo will use for unassociated Ifreq ioctls
+    reqsock = await netns_thread.socket(AF.INET, SOCK.STREAM)
+    ### create and set up the TUN interface
+    tun_fd, tun_index = await make_tun(netns_thread, "miredo", reqsock)
+    ### create socketpair which Miredo will use to communicate between privileged process and Teredo client
+    privproc_pair = await netns_thread.socketpair(AF.UNIX, SOCK.STREAM)
+    ### create thread for miredo client
+    # the client process doesn't need to be in the same network namespace, since it is passed all
+    # the resources it needs as fds at startup.
+    client_thread = await thread.clone(CLONE.NEWUSER|CLONE.NEWNET|CLONE.NEWNS|CLONE.NEWPID)
+    # lightly sandbox by unmounting everything except for the executable and its deps (known via package manager)
+    await unmount_everything_except(client_thread, miredo_exec.run_client.executable_path)
+    # a helper function
+    async def pass_fd(fd: FileDescriptor) -> str:
+        await client_thread.inherit_fd(fd).disable_cloexec()
+        return str(int(fd))
+    client_child = await client_thread.execve(miredo_exec.run_client.executable_path, [
+        miredo_exec.run_client.executable_path,
+        await pass_fd(inet_sock), await pass_fd(tun_fd), await pass_fd(reqsock),
+        await pass_fd(icmp6_fd), await pass_fd(privproc_pair.second),
+        "teredo.remlab.net", "teredo.remlab.net"
+    ])
+    ### prepare to exec miredo's privileged helper in the network namespace thread
+    # preserve NET_ADMIN capability over exec so that privproc can manipulate the TUN interface
+    # helper function used because manipulating Linux ambient capabilities is fairly verbose
+    await add_to_ambient_caps(privproc_thread, {CAP.NET_ADMIN})
+    # privproc expects to communicate with the main client over stdin and stdout
+    privproc_side = privproc_thread.inherit_fd(privproc_pair.first)
+    privproc_pair 
+    await privproc_side.dup2(privproc_thread.stdin)
+    await privproc_side.dup2(privproc_thread.stdout)
+    privproc_child = await privproc_thread.execve(miredo_exec.privproc.executable_path, [
+        miredo_exec.privproc.executable_path, str(tun_index)
+    ])
+    ### start up Miredo client process which communicates over the internet to implement the tunnel
+    # the client process doesn't need to be in the same network namespace, since it is passed all
+    # the resources it needs as fds at startup.
+    client_thread = await ns_thread.clone(CLONE.NEWUSER|CLONE.NEWNET|CLONE.NEWNS|CLONE.NEWPID)
+    # lightly sandbox by unmounting everything except for the executable and its deps (known via package manager)
+    await unmount_everything_except(client_thread, miredo_exec.run_client.executable_path)
+    # a helper function
+    async def pass_fd(fd: FileDescriptor) -> str:
+        await client_thread.inherit_fd(fd).disable_cloexec()
+        return str(int(fd))
+    client_child = await client_thread.execve(miredo_exec.run_client.executable_path, [
+        miredo_exec.run_client.executable_path,
+        await pass_fd(inet_sock), await pass_fd(tun_fd), await pass_fd(reqsock),
+        await pass_fd(icmp6_fd), await pass_fd(privproc_pair.second),
+        "teredo.remlab.net", "teredo.remlab.net"
+    ])
+    return Miredo(ns_thread, client_child, privproc_child)
+
+async def start_miredo_internal(thread: Thread, miredo_exec: MiredoExecutables) -> Miredo:
+    ### create socket outside network namespace that Miredo will use for internet access
+    inet_sock = await thread.socket(AF.INET, SOCK.DGRAM)
+    await inet_sock.bind(await thread.ptr(SockaddrIn(0, 0)))
+    # set some miscellaneous additional sockopts that Miredo wants
+    await set_miredo_sockopts(thread, inet_sock)
     ### create main network namespace thread
     ns_thread = await thread.clone(CLONE.NEWNET|CLONE.NEWUSER)
     ### create in-network-namespace raw INET6 socket which Miredo will use to relay pings
