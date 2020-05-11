@@ -275,6 +275,8 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
         return PrimitiveSocketMemoryTransport(self.local, task.make_fd_handle(self.remote))
 
     async def write(self, dest: Pointer, data: bytes) -> None:
+        if dest.size() != len(data):
+            raise Exception("mismatched pointer size", dest.size(), "and data size", len(data))
         dest = to_span(dest)
         src = await self.local.ram.ptr(data)
         async def write() -> None:
@@ -381,6 +383,8 @@ class SocketMemoryTransport(MemoryTransport):
                             _, split_rest = await self.remote.read(split_rest)
 
     def _start_single_write(self, dest: Pointer, data: bytes) -> WriteOp:
+        if dest.size() != len(data):
+            raise Exception("mismatched pointer size", dest.size(), "and data size", len(data))
         write = WriteOp(dest, data)
         self.pending_writes.append(write)
         return write
