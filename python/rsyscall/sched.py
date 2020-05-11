@@ -131,7 +131,7 @@ from rsyscall.near.sysif import SyscallInterface
 from rsyscall.sys.syscall import SYS
 import rsyscall.near as near
 
-async def _clone(sysif: SyscallInterface, flags: int, child_stack: near.Address,
+async def _clone(sysif: SyscallInterface, flags: int, child_stack: t.Optional[near.Address],
                 ptid: t.Optional[near.Address], ctid: t.Optional[near.Address],
                 newtls: t.Optional[near.Address]) -> near.Process:
     # We don't use CLONE_THREAD, so we can say without confusion, that clone returns a Process.
