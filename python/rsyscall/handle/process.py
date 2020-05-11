@@ -141,6 +141,7 @@ class ChildProcess(Process):
 
     def parse_waitid_siginfo(self, siginfo: Siginfo) -> t.Optional[ChildState]:
         self.unread_siginfo = None
+        # this is to catch the case where we did waitid(W.NOHANG) and there was no event
         if siginfo.pid == 0:
             return None
         else:
