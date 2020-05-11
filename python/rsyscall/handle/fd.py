@@ -273,6 +273,8 @@ class FDTable(rsyscall.far.FDTable):
             for handles in parent.near_to_handles.values():
                 for handle in handles:
                     self.inherited.add(handle)
+            for handle in parent.inherited:
+                self.inherited.add(handle)
 
     def remove_inherited(self) -> None:
         self.inherited = WeakSet()
