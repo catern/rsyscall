@@ -18,7 +18,7 @@ class PurePosixPath(pathlib.PurePosixPath):
     class insulates us from that stuff, so it can be inherited from naively.
 
     """
-    def __new__(cls, *args, **kwargs) -> None:
+    def __new__(cls, *args, **kwargs) -> PurePosixPath:
         """Override pathlib.PurePath.__new__ to restore default behavior
 
         pathlib.PurePath inherits from object, so we just use object's __new__.
