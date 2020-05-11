@@ -73,9 +73,18 @@ class BaseFileDescriptor:
     on-demand when run_fd_table_gc is run.
 
     """
+    __slots__ = ('task', 'near', 'valid')
     task: FileDescriptorTask
     near: rsyscall.near.FileDescriptor
-    valid: bool = True
+    valid: bool
+
+    def __init__(self,
+                 task: FileDescriptorTask,
+                 near: rsyscall.near.FileDescriptor,
+    ) -> None:
+        self.task = task
+        self.near = near
+        self.valid = True
 
     def _make_fd_handle(self: T_fd, near: rsyscall.near.FileDescriptor) -> T_fd:
         return self.task.make_fd_handle(near)

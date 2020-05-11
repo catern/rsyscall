@@ -26,6 +26,7 @@ class FileDescriptor:
     object know what file descriptor table that is.
 
     """
+    __slots__ = ('number')
     number: int
 
     def __str__(self) -> str:
@@ -64,6 +65,7 @@ class Address:
     what address space that is.
 
     """
+    __slots__ = ('address')
     address: int
 
     def __add__(self, other: int) -> 'Address':
@@ -117,6 +119,7 @@ class MemoryMapping:
     unexpected page sizes.
 
     """
+    __slots__ = ('address', 'length', 'page_size')
     address: int
     length: int
     page_size: int

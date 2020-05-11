@@ -51,11 +51,24 @@ class Pointer(t.Generic[T]):
     See also the inheriting class WrittenPointer
 
     """
+    __slots__ = ('mapping', 'transport', 'serializer', 'allocation', 'valid')
     mapping: MemoryMapping
     transport: MemoryGateway
     serializer: Serializer[T]
     allocation: AllocationInterface
-    valid: bool = True
+    valid: bool
+
+    def __init__(self,
+                 mapping: MemoryMapping,
+                 transport: MemoryGateway,
+                 serializer: Serializer[T],
+                 allocation: AllocationInterface,
+    ) -> None:
+        self.mapping = mapping
+        self.transport = transport
+        self.serializer = serializer
+        self.allocation = allocation
+        self.valid = True
 
     async def write(self, value: T) -> WrittenPointer[T]:
         "Write this value to this pointer, consuming it and returning a new WrittenPointer"
@@ -285,6 +298,7 @@ class WrittenPointer(Pointer[T_co]):
     the WrittenPointer. That's mostly syscalls using Sockbufs...
 
     """
+    __slots__ = ('value')
     def __init__(self,
                  mapping: MemoryMapping,
                  transport: MemoryGateway,

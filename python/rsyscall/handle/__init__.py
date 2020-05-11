@@ -137,6 +137,7 @@ class FileDescriptor(
     on-demand when run_fd_table_gc is run.
 
     """
+    __slots__ = ()
     def __init__(self, task: Task, near: rsyscall.near.FileDescriptor) -> None:
         super().__init__(task, near)
         self.task: Task = task
