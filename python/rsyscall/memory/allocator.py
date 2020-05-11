@@ -104,6 +104,12 @@ class Allocation(AllocationInterface):
         new.valid = True
         return new
 
+    def __str__(self) -> str:
+        if self.valid:
+            return f"Alloc({str(self.arena)}, {self.start}, {self.end})"
+        else:
+            return f"Alloc(FREED, {str(self.arena)}, {self.start}, {self.end})"
+
     def __del__(self) -> None:
         # TODO this is actually not going to work, because the Arena stores references to the allocation
         self.free()
@@ -124,8 +130,12 @@ class AllocatorInterface:
     def inherit(self, task: Task) -> AllocatorInterface:
         raise Exception("can't be inherited:", self)
 
+@dataclass(eq=False)
 class Arena(AllocatorInterface):
     "A single memory mapping and allocations within it."
+    mapping: MemoryMapping
+    allocations: t.List[Allocation]
+
     def __init__(self, mapping: MemoryMapping) -> None:
         self.mapping = mapping
         self.allocations: t.List[Allocation] = []
@@ -151,6 +161,10 @@ class Arena(AllocatorInterface):
         if self.allocations:
             raise Exception
         await self.mapping.munmap()
+
+    def __str__(self) -> str:
+        allocations = "[" + ",".join(f"({alloc.start}, {alloc.end})" for alloc in self.allocations) + "]"
+        return f"Arena({str(self.mapping)}, allocations={allocations})"
 
 def align(num: int, alignment: int) -> int:
     """Return the lowest value greater than `num` that is cleanly divisible by `alignment`.
