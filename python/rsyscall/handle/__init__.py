@@ -61,6 +61,7 @@ from rsyscall.unistd.io    import IOFileDescriptor, SeekableFileDescriptor
 from rsyscall.sys.capability import CapabilityTask
 from rsyscall.sys.prctl    import PrctlTask
 from rsyscall.sys.mount    import MountTask
+from rsyscall.sys.resource import ResourceTask
 from rsyscall.sched        import SchedTask
 
 # re-exported
@@ -185,6 +186,7 @@ class Task(
         CredentialsTask,
         ProcessTask,
         SchedTask,
+        ResourceTask,
         SignalTask, rsyscall.far.Task,
 ):
     def __init__(self,

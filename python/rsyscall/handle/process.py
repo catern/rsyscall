@@ -6,6 +6,7 @@ from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.linux.futex import FutexNode
 from rsyscall.sched import Stack, CLONE, _clone, _unshare
 from rsyscall.signal import SIG, Siginfo, _kill
+from rsyscall.sys.resource import PRIO, _setpriority, _getpriority
 from rsyscall.sys.wait import W, ChildState, _waitid
 from rsyscall.unistd.credentials import _getpgid, _setpgid
 import contextlib
@@ -43,6 +44,12 @@ class Process:
 
     async def getpgid(self) -> rsyscall.near.ProcessGroup:
         return (await _getpgid(self.task.sysif, self.near))
+
+    async def setpriority(self, prio: int) -> None:
+        return (await _setpriority(self.task.sysif, PRIO.PROCESS, self.near.id, prio))
+
+    async def getpriority(self) -> int:
+        return (await _getpriority(self.task.sysif, PRIO.PROCESS, self.near.id))
 
 class ChildProcess(Process):
     """A process that is our child, which we can monitor with waitid and safely signal.

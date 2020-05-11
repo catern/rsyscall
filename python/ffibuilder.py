@@ -31,6 +31,7 @@ ffibuilder.set_source_pkgconfig(
 #include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/ptrace.h>
+#include <sys/resource.h>
 #include <sys/signal.h>
 #include <sys/signalfd.h>
 #include <sys/socket.h>
@@ -578,6 +579,15 @@ struct inotify_event {
 typedef struct {
   unsigned long __bits[...];
 } cpu_set_t;
+
+// getpriority/setpriority
+
+#define PRIO_PROCESS ...
+#define PRIO_PGRP ...
+#define PRIO_USER ...
+
+#define SYS_getpriority ...
+#define SYS_setpriority ...
 
 // mount stuff
 #define SYS_mount ...

@@ -36,6 +36,7 @@ class SYS(enum.IntEnum):
     getgid = lib.SYS_getgid
     getpeername = lib.SYS_getpeername
     getpgid = lib.SYS_getpgid
+    getpriority = lib.SYS_getpriority
     getsockname = lib.SYS_getsockname
     getsockopt = lib.SYS_getsockopt
     getuid = lib.SYS_getuid
@@ -73,6 +74,7 @@ class SYS(enum.IntEnum):
     set_tid_address = lib.SYS_set_tid_address
     setns = lib.SYS_setns
     setpgid = lib.SYS_setpgid
+    setpriority = lib.SYS_setpriority
     setsid = lib.SYS_setsid
     setsockopt = lib.SYS_setsockopt
     shutdown = lib.SYS_shutdown
