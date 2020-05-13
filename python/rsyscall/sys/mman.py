@@ -12,6 +12,7 @@ class MAP(enum.IntFlag):
     PRIVATE = lib.MAP_PRIVATE
     SHARED = lib.MAP_SHARED
     ANONYMOUS = lib.MAP_ANONYMOUS
+    POPULATE = lib.MAP_POPULATE
 
 #### Classes ####
 from dataclasses import dataclass
