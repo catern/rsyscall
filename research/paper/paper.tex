@@ -167,9 +167,9 @@ rsyscall is open source and available from \url{https://github.com/catern/rsysca
 This paper is organized in several sections.
 In section \ref{background}, we provide background on fork-style, spawn-style, and direct-style process creation,
 and consider their advantages and disadvantages in more depth.
-In section \ref{overview} we discuss the design of the API,
+In section \ref{overview}, we discuss the design of the API,
 including our usage of \texttt{rsyscall}.
-In section \ref{applications} we show examples of usage of direct-style process creation in Python on Linux,
+In section \ref{applications}, we show examples of usage of direct-style process creation in Python on Linux,
 including use of process features which are difficult to use on Linux with \texttt{fork} or \texttt{posix\_spawn}.
 In section \ref{implementation}, we explore our implementation in depth,
 and discuss several difficult process-creation related details of \texttt{rsyscall}'s implementation.
@@ -601,7 +601,7 @@ that it won't be able to tamper with the rest of the system.
 A sandbox which is truly robust against malicious or compromised programs requires some additional steps,
 but this is a substantial start.
 Such a technique can also be used when a full sandbox is not relevant,
-to ease reasoning about the behavior of the program being run,
+to ease reasoning about the behavior of the program being run
 and protect against bugs.
 
 Even if the process needs additional resources,
@@ -643,7 +643,7 @@ and we can monitor the grandchild process from \texttt{init},
 just as we would monitor \texttt{init} from its parent process.
 
 \texttt{init} in a pid namespace has some special powers and responsibilities.
-We can handle these responsibilities ourselves, directly from this program,
+We can handle these responsibilities ourselves directly from our program,
 or we can continue on by execing an init daemon in \texttt{init} to handle it for us.
 
 In either case, when \texttt{init} dies,
