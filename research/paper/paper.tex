@@ -192,12 +192,15 @@ A few systems use a third style, which we refer to as "direct-style".
 \subsection{Fork-style}
 By far the most well-known fork-style interface is Unix's fork.\cite{forkhist}
 With a fork-style interface,
-a process calls \texttt{fork}, and a copy of that process is made,
-with the return value of fork being the only differentiation between the process and its copy.
-The same program continues executing in both processes.
-Typically, the program will case on the return value to determine if it's running in the parent or the child,
-and run process setup and initialization code if the program is running in the child,
-calling various syscalls to set up the state of the child.
+a process, called the parent process, calls \texttt{fork},
+and a copy of that process is made,
+called the child process,
+differing only in a few attributes such as process id.
+The same program continues executing in both processes,
+with a different return value from fork to allow it to distinguish whether it is running in the parent or the child.
+Typically, the program will case on the return value
+and, if running in the child,
+call various system calls to modify the state of the new process.
 
 Fork has a number of flaws,
 and much ink has been spilled detailing them.
@@ -289,11 +292,11 @@ and some others \cite{exokernel} \cite{fuschia} \cite{singularity},
 use another style of process creation, which we refer to as "direct-style".
 
 In direct-style, a process is created by its parent in a non-running state,
-and then supplied with various resources,
+then supplied with various resources,
 and then started running once it is fully set up.
 In operating systems with true direct-style process creation,
 the syscalls that can mutate a process
-take explicit arguments to indicate which process they should operate on.
+take explicit arguments to indicate the process on which they should operate.
 In this way, the same syscalls that can mutate a process while it is running,
 are called by the parent process to mutate the process while it is being set up.
 
