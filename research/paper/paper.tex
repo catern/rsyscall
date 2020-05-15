@@ -145,11 +145,17 @@ Our direct-style process creation implementation uses \texttt{clone} to create a
 which can then be manipulated from user code using syscalls with \texttt{rsyscall}.
 A direct-style \texttt{clone} has all the advantages of direct-style process creation
 over Linux's fork-style \texttt{fork} syscall and spawn-style \texttt{posix\_spawn} libc function.
+\begin{itemize}
+\item
 Direct-style \texttt{clone} can be used correctly and performantly from any process.
+\item
 Cross-process syscalls made with rsyscall individually report errors, as normal, and can be easily branched on.
+\item
 Arbitrary processes involving complex namespaces and initialization can be created
 using techniques that are impractical with \texttt{fork}.
+\item
 The performance cost from high-level code varies, but the underlying primitives are substantially faster.
+\end{itemize}
 
 We've implemented a variety of useful applications using direct-style process creation on Linux,
 which can be expressed more concisely and more clearly than with fork-style,
@@ -178,13 +184,10 @@ In section \ref{related_work},
 we examine other work which also touches on the topics covered by this paper.
 In section \ref{future_work},
 we list several directions for future work related to direct-style process creation and to \texttt{rsyscall}.
+% TODO
 In section \ref{conclusions}, we briefly and optimistically conclude.
 
 \section{Background}\label{background}
-Processes are a widespread feature of operating systems,
-with substantial variation in characteristics between systems.
-One of the areas of variation is in process creation mechanisms.
-
 On most systems today,
 the interfaces for process creation
 can be divided into "fork-style" and "spawn-style".
@@ -297,7 +300,7 @@ and then started running once it is fully set up.
 In operating systems with true direct-style process creation,
 the syscalls that can mutate a process
 take explicit arguments to indicate the process on which they should operate.
-In this way, the same syscalls that can mutate a process while it is running,
+In this way, the same syscalls that can mutate a process while it is running
 are called by the parent process to mutate the process while it is being set up.
 
 We refer to this as "direct-style" process creation,
@@ -430,7 +433,7 @@ and, in fact, as we'll see in section \ref{applications},
 is significantly more expressive.
 \section{Applications}\label{applications}
 In this section,
-we'll discuss several more advanced uses of processes,
+we'll discuss several more advanced uses of processes
 using more sophisticated Linux features,
 and accompany them with Python examples using direct-style process creation.
 
@@ -656,10 +659,10 @@ This can sometimes be done more easily when the child process shares file descri
 \lstinputlisting[float=*,language=Python,label={fuse},caption={Shared file descriptor tables}]
 {examples/fuse/direct.py}
 In listing \ref{fuse},
-we first create a child process, \verb|ns_child|, in a new mount namespace with \verb|CLONE_NEWNS|,
-and for the first time, also pass \verb|CLONE_FILES|,
+we first create a child process \verb|ns_child| in a new mount namespace with \verb|CLONE_NEWNS|,
+and, for the first time, also pass \verb|CLONE_FILES|,
 which causes the file descriptor table to be shared between the parent process and the child process.
-We create a grandchild off of \verb|ns_child|,
+We create a grandchild off of \verb|ns_child|
 and use it to exec a FUSE filesystem,
 which will appear only in the mount namespace of \verb|ns_child| and its descendents.
 Then we can open FUSE files in \verb|ns_child|
@@ -876,7 +879,7 @@ causing the file descriptor table to be shared between the parent process and ch
 The same file descriptors are open in both processes at the same numbers,
 and if new file descriptors are opened in either process,
 they are also visible in the other process.
-This is simple to model, and convenient for many purposes.
+This is simple to model and convenient for many purposes.
 The file descriptor table is unshared once the child calls \texttt{execve}.
 
 If \verb|CLONE_FILES| is not passed to \texttt{clone},
