@@ -114,7 +114,7 @@ async def main() -> None:
             times.append(time)
         return(mean(times))
     async def get_data(mode: str) -> t.List[t.Tuple[int, int]]:
-        return [(i, await run_many(mode, 10**i)) for i in range(5)]
+        return [(i, await run_many(mode, 10**i)) for i in range(7)]
     subprocess = [(0, 1482.3333333333333), (1, 1530.3333333333333), (2, 1504.6666666666667), (3, 1665.3333333333333), (4, 1873.3333333333333)]
     rsyscall = [(0, 2249.3333333333335), (1, 2234.3333333333335), (2, 2261.6666666666665), (3, 2241.3333333333335), (4, 2321.3333333333335)]
     subprocess = await get_data("subprocess")
