@@ -14,3 +14,6 @@ clone_benchmark.csv: clone_with_mmap
 
 clone_benchmark.txt: analyze_clone_with_mmap.py clone_benchmark.csv
 	python $< >$@ <$(word 2,$^)
+
+ease.tex: ease.py
+	python $< >$@
