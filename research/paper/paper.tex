@@ -389,58 +389,48 @@ The behavior of system calls made on a remote process through \texttt{rsyscall}
 is identical to the behavior of system calls made implicitly on the current process through libc.
 This is an API that systems programmers are already familiar with,
 and which is already thoroughly documented through Linux system call manpages.
-The novelty is constrained to the newly explicit process capabilities;
-once that is understood, the rest of the API is mundane,
-and the representation of these programs is obvious in any language.
+The novelty is constrained to the newly explicit process capabilities.
 
-The familiar and mundane nature of the API is important not just for the learning curve,
-but also for expressivity.
-Since the API is simply normal Linux system calls,
-direct-style clone is at least as expressive as fork and syscalls;
-and, in fact, as we'll see in section \ref{applications},
-is significantly more expressive.
+The lack of novelty in the API is important not only for the learning curve,
+but also for power.
+Since we are using conventional Linux system calls,
+just in a cross-process way,
+direct-style \texttt{clone} will always be at least as powerful as \texttt{fork}.
 \section{Applications}\label{applications}
 In this section,
 we'll discuss several more advanced uses of processes
 using more sophisticated Linux features,
 and accompany them with Python examples using direct-style process creation.
+All of these examples use only conventional Linux system calls,
+and can therefore translated straightforwardly into any language with an \texttt{rsyscall} API.
+For concision, we assume that we are running with sufficient permissions in these examples,
+but these examples can all be run without privileges with appropriate use of \texttt{CLONE.NEWUSER}.
 
-All of these examples use only existing Linux system calls and features.
-Most are possible, though difficult to implement,
-with Linux's existing \texttt{fork} system call,
-and in some cases, \verb|posix_spawn|.
+Implementing these examples with \texttt{fork} or \verb|posix_spawn| requires substantially more boilerplate,
+or even a complete change in implementation approach,
+such as in section \ref{shared_fd_table}.
+We'll compare our direct-style implementations in this section
+to fork-style implementations
+in section \ref{evaluation}.
 
-Direct-style makes these examples substantially easier to write;
-we'll compare our implementations in this section to fork-style implementations in section \ref{evaluation}.
-Furthermore, since the examples are using the Linux system call API directly,
-they can be translated straightforwardly into any language with an \texttt{rsyscall} API;
-Python is chosen simply for convenience.
-
-Some of these examples showcase functionality that can be done today by specialized software and services.
+Several of these examples demonstrate functionality that can be done today by specialized software and services.
 Such software often allows use of one or two of these techniques, but prevents the use of others.
 For example, a shell allows the creation of pipelines and container systems like Docker allow sandboxing,
 but the two are difficult to combine.
 
-By improving the process creation interface,
-all these techniques can be used together, flexibly,
-to more closely meet the specific needs of individual real-world applications.
-
-For concision, we assume that we are running with sufficient permissions in these examples,
-but these examples can all be run without privileges with appropriate use of \texttt{CLONE.NEWUSER}.
+One of the key advantages of direct-style process creation is that the techniques we demonstrate here
+can be easily used in combination,
+to meet the specific needs of individual real-world applications.
 \subsection{Abstraction through file descriptor passing}\label{fd_abstraction}
 In Linux (and Unix in general),
-a program can use file descriptor inheritance
-to provide file descriptors created by the parent process to child processes.
-Put simply,
-a new Linux child process receives copies of all file descriptors in the parent process.
-When calling \texttt{execve}, these file descriptors are normally closed automatically,
-but selected file descriptors can be preserved over \texttt{execve}
-by disabling the \texttt{CLOEXEC} flag on individual file descriptors.
-We will discuss file descriptor inheritance in more detail in section \label{fdtables},
-as part of our discussion of resource management in the implementation of \texttt{rsyscall}.
+a program can pass file descriptors from the parent process to a child process
+by using file descriptor inheritance.
+All open file descriptors are copied at process creation time from the parent process to the child process;
+the child process can then make independent use of the file descriptors.
+We'll discuss this important feature further in section \ref{fdtables}.
 
 Most resources in Linux are managed through file descriptors,
-so this allows the parent process to pass a wide variety of resources to the child process.
+so this feature allows the parent process to pass a wide variety of resources to the child process.
 An executable program can be provided a file descriptor,
 which can correspond to any file in any filesystem,
 or to a network connection\cite{ucspi},
@@ -459,17 +449,15 @@ In Listing \ref{fds},
 we first open a file with read-write permission.
 Then we create a child process,
 which inherits all file descriptors from its parent.
-We indicate that we want to operate on the child's copy of the file descriptor with \verb|child.inherit_fd|.
-\verb|inherit_fd| only updates resource-tracking bookkeeping in our program,
-it makes no system calls;
-the file descriptor was already copied at process creation time.
+We indicate that we want to operate on the child's inherited copy of the file descriptor with \verb|child.inherit_fd|.
 Then we disable \texttt{CLOEXEC} on the child's file descriptor,
 which on Linux we can do by clearing the FD flags with \verb|fcntl(fd, F_SETFD, 0)|.
 Finally, we execute some executable,
 passing the file descriptor number as an argument;
-when the executable starts up, that file descriptor number will already be pointing to this file descriptor.
-We call the \texttt{execv} wrapper rather than \texttt{execve} as in listing \ref{basic}
-so that we don't need to pass the (unmodified) environment to every exec call in these examples.
+since we disabled \texttt{CLOEXEC} on the file descriptor,
+the executable will be able to use that file descriptor through that file descriptor number.
+Unlike in listing \ref{basic}, we call the \texttt{execv} wrapper rather than \texttt{execve},
+so that we don't need to pass the (unmodified) environment to every \texttt{exec} call in these examples.
 \subsection{Non-shared-memory concurrency}
 Processes run concurrently,
 which allows exploiting the parallelism of the underlying hardware.
@@ -496,7 +484,7 @@ We exec each program passing some file descriptors as arguments.
 The whole system then runs in parallel,
 as normal child processes.
 \subsection{Customization without explicit support}
-While, ideally, all resources would be passed by file descriptor,\cite{capsicum}
+While, ideally, all resources would be passed by file descriptor\cite{capsicum},
 Unix has a number of resources that are global,
 such as the pid space or the mount table,
 and which cannot be changed on a per-process basis.
@@ -538,7 +526,7 @@ which, when it opens \verb|/etc/foo.conf|, will see the contents of our \verb|cu
 \subsection{Sandboxing}
 At process creation time,
 we can not only pass resources and customize the process's environment,
-we can also deny the process access to resources that it otherwise gets by default.
+we can also deny the process access to resources that it otherwise receives by default.
 This is a key part of creating a secure sandbox for potentially malicious code.
 
 \lstinputlisting[float=*,language=Python,label={unmount},caption={Unmount all and run executable via fexec}]
@@ -578,8 +566,7 @@ and protect against bugs.
 Even if the process needs additional resources,
 those can be explicitly passed down through file descriptor passing,
 as we do here with the database file descriptor.
-This is the essence of capability-based security,
-which Linux can increasingly closely approximate.
+This allows us to approximate capability-based security\cite{capsicum}.
 \subsection{Nested clone and pid namespaces}
 Process-local resources can also be used to control the lifetime of resources used by that process.
 Many Linux resources are not automatically cleaned up on process exit;
@@ -642,7 +629,7 @@ can allow similar behavior without sharing the file descriptor table,
 but is substantially more complex for the user.
 Nevertheless, for fork-style and spawn-style process creation,
 file descriptor passing over a Unix domain socket
-is the only option to do something like this.
+is our only option to do something like this.
 \section{Implementation}\label{implementation}
 \subsection{Basics about \texttt{rsyscall}}
 In this section, we'll give a brief overview of the implementation of \texttt{rsyscall},
@@ -659,7 +646,7 @@ On Linux \verb|x86_64|, a syscall is specified by a syscall number plus six regi
 a syscall returns one register-sized value.
 \texttt{rsyscall}'s default implementation of cross-process syscalls sends those seven integers over a pipe,
 and waits for a response on another pipe.
-Processes are created running an infinite loop which, at each iteration,
+Processes are created running a loop which, at each iteration,
 reads a syscall request off the pipe,
 performs that syscall,
 and writes the return value back over the return pipe.
@@ -670,8 +657,8 @@ to support straightforward integration with event loops.
 
 ptrace provides an alternative means to perform arbitrary actions on other processes,
 including system calls.
-However, among other issues, it has the unavoidable substantial disadvantage of not permitting multiple ptracers.
-A ptrace-based implementation would prevent using strace or gdb on \texttt{rsyscall}-controlled processes,
+However, among other issues, it has the substantial disadvantage of not permitting multiple ptracers.
+A ptrace-based implementation would prevent using \texttt{strace} or \texttt{gdb} on \texttt{rsyscall}-controlled processes,
 which is an unacceptable limitation for a general-purpose utility.
 
 Many syscalls either take or return pointers to memory,
@@ -686,13 +673,9 @@ it must be in a different address space,
 as sharing an address space with a process at a different privilege level is unsafe.
 
 We implement access to the memory of processes in different address spaces through another set of pipes,
-by explicitly copying memory into and out of those pipes using the \texttt{read} and \texttt{write} system calls.
-When we wish to read \texttt{N} bytes of memory at address \texttt{A} in the target process,
-we first perform a \verb|write(memory_pipe, A, N)| in the target process,
-and then read that data off the other end of the pipe in the parent process.
-When we wish to write \texttt{N} bytes of data at address \texttt{A} in the target process,
-we first write that data to the pipe in the parent process,
-then perform a \verb|read(memory_pipe, A, N)| in the target process to copy that data from the pipe into memory.
+by copying memory into and out of those pipes using \texttt{read} and \texttt{write} system calls in the target process.
+A \texttt{read} syscall corresponds to a write to memory,
+and a \texttt{write} syscall corresponds to a read from memory.
 
 The \verb|process_vm_readv| and \verb|process_vm_writev| system calls
 allow the caller to read and write memory from the virtual address space of other processes.
@@ -713,45 +696,24 @@ which is immediately unsuitable for direct-style process creation.
 \texttt{clone} provides a superset of the functionality of \texttt{fork},
 so we focused our attention on \texttt{clone}.
 
-\texttt{clone} (along with \texttt{fork}) creates a new process
+\texttt{clone}
+(along with \texttt{fork}) creates a new process
 which immediately starts executing at the next instruction after the syscall instruction,
 in parallel with the parent process,
 with its registers in generally the same state as the parent process.
-\footnote{Note that glibc defines a wrapper for the clone syscall;
-we are talking about the raw kernel syscall.}
-In the style of Plan 9's \texttt{fork} syscall\cite{rfork}, which inspired \texttt{clone},
-\texttt{clone} takes a mask of flags which determines whether several attributes of the new process
-are either shared with, or copied from, the parent process.
 
-\texttt{clone} only lets us change the stack for the new process;
-the new process begins executing, after \texttt{clone}, at the same instruction as the parent process.
-We would like to be able to set arbitrary registers for the new process,
-so that we can control where it begins executing and the stack it executes on.
+Common Linux libcs provide a wrapper for \texttt{clone}
+which allow executing an arbitrary function with an arbitrary argument,
+but since we want to support remote execution,
+we can't use the libc wrapper.
 
-Fortunately, changing the stack is sufficient.
-We ensure that the next instruction executed after any syscall is a \texttt{RET}.
-Since we control the state of the stack in the new process after a \texttt{clone} syscall,
-the \texttt{RET} will jump to a code address that we control.
-We can then supply additional arguments to this code
-by putting them on the stack.
+Instead, since \texttt{clone} lets us change the stack for the new process,
+we use this to return, after the system call to an arbitrary function address stored on the stack.
+Further arguments can also be passed on the stack,
+with the aid of a trampoline to match C calling conventions if necessary.
 
-We typically cause the new process to jump to a trampoline provided by the \texttt{rsyscall} library
-which sets all registers to values found on the stack
-and then jumps to another address.
-\footnote{This is also a generally useful utility for hackers performing return-oriented-programming attacks;
-but similar functionality exists in any standards-compliant C library,
-so there is no increase in attack surface.}
-With this trampoline,
-we can provide a helper Python function that,
-when given a function pointer following C calling conventions, and some arguments,
-will prepare a stack for a call to clone such that the new process will call that function with those arguments.
-
-With our new ability to call arbitrary C-compatible functions,
-we can now call \texttt{clone} so that it launches a process running our infinite syscall loop,
-which is implented in freestanding C and, as described in the previous section,
-uses two pipes passed as arguments to receive syscall requests and respond with syscall results.
-
-After using \texttt{clone} to create a new process running our syscall loop,
+We use this to create processes running the syscall request-response loop described in the previous section.
+After this,
 most system calls can be called as normal.
 The new process can be modified freely through \texttt{chdir}, \texttt{dup2}, and other system calls.
 Out of system calls related to process creation,
@@ -791,18 +753,12 @@ The \texttt{ctid} argument to \texttt{clone} specifies a memory address which,
 when the \verb|CLONE_CHILD_CLEARTID| flag is set,
 the kernel sets to zero when the child exits or execs,
 and then, crucially, performs a futex wakeup on.
-More specifically,
-the kernel clears and does a futex wakeup on \texttt{ctid} when the child process leaves its current address space;
-this precisely coincides with exiting or execing,
-since those are the only way to change address space in Linux as of this writing.
 
-A futex is a Linux-specific feature,
-which is generally used for the implementation of userspace shared-memory synchronization constructs,
-such as mutexes and condition variables.
-The relevant detail for us here is that we can wait on an address
-until a futex wakeup is performed on that address;
-that means we can wait on \texttt{ctid} until the futex wakeup is performed,
-and in this way get notified of the child process calling \texttt{execve}.
+Futexes are usually used for the implementation of userspace shared-memory synchronization constructs,
+but the relevant detail for us here is that we can wait on an address
+until a futex wakeup is performed on that address.
+This means we can wait on \texttt{ctid} until the futex wakeup is performed,
+and in this way get notified of the child process calling \texttt{execve} or exiting.
 
 Unfortunately, futexes in current Linux integrate poorly:
 There is no way for a single process to wait for more than one futex at a time,
@@ -832,14 +788,11 @@ Some other Unix-like systems provide this;
 kqueue, on FreeBSD, allows waiting for exec in arbitrary processes through kqueue's \verb|EVFILT_PROC|.
 
 One approach for Linux would be to add a new \texttt{clone} flag to
-opt-in to receiving \texttt{WEXECED} events through \texttt{waitid};
-note that a \texttt{waitid} flag alone is not sufficient,
-since it's necessary to receive \texttt{SIGCHLD} signals for the \texttt{WEXECED} event if waiting for it from an event loop.
-
-Alternatively, some way to wait for futex wakeups through a file descriptor could be added,
-so we can use file-descriptor-monitoring syscalls to wait for the \texttt{ctid} futex;
-such a feature used to exist in the form of \verb|FUTEX_FD|,
-but was removed from Linux long ago due to race conditions in its design.
+opt-in to receiving \texttt{WEXECED} events through \texttt{waitid}.
+A new \texttt{waitid} flag alone is not sufficient,
+since, to integrate this feature into an event loop,
+it's necessary to receive \texttt{SIGCHLD} signals or readability notifications on a pidfd
+when the \texttt{WEXECED} event happens.
 \subsection{Managing file descriptor tables}\label{fdtables}
 As demonstrated in section \ref{shared_fd_table},
 the \verb|CLONE_FILES| flag can be passed to \texttt{clone},
@@ -847,8 +800,8 @@ causing the file descriptor table to be shared between the parent process and ch
 The same file descriptors are open in both processes at the same numbers,
 and if new file descriptors are opened in either process,
 they are also visible in the other process.
-This is simple to model and convenient for many purposes.
 The file descriptor table is unshared once the child calls \texttt{execve}.
+This is simple to model and convenient for many purposes.
 
 If \verb|CLONE_FILES| is not passed to \texttt{clone},
 then \texttt{clone} has the same behavior as \texttt{fork}:
@@ -866,8 +819,7 @@ If \texttt{execve} is called,
 the treatment of the file descriptor table is the same as \verb|unshare(CLONE_FILES)|,
 except that file descriptors with the \texttt{CLOEXEC} flag set on them
 are not copied into the newly created file descriptor table.
-In standard Unix practice, \texttt{CLOEXEC} is set habitually by users on all file descriptors;
-we'll discuss the semantics of \texttt{CLOEXEC} more in section \ref{cloexec}.
+We'll discuss the semantics of \texttt{CLOEXEC} more in section \ref{cloexec}.
 \subsubsection{Tracking file descriptors through handles}
 After a system call has copied all the file descriptors in the old table into the new table,
 we need to decide which file descriptors we want to keep open in the new table,
@@ -881,8 +833,8 @@ and the responsibilities of the \texttt{rsyscall} library would end there.
 Manual resource management in C has led to many bugs,
 many of which with significant security implications.
 
-Python, however, is a garbage collected language,
-and therefore we determine which file descriptors should stay open through garbage collection:
+Python, instead, has automatic resource management,
+and therefore we determine which file descriptors should stay open automatically:
 if a certain file descriptor is in use by the program,
 through a certain process,
 that file descriptor should stay open in that process's file descriptor table.
@@ -893,7 +845,7 @@ For a handle to remain valid,
 that file descriptor number must continue to refer to an open file descriptor in that process.
 We determine which handles are live (in use by the program)
 by recourse to the native Python garbage collection system.
-We keep open exactly what file descriptors are necessary to keep the live handles valid.
+The file descriptors we keep open are then those which are necessary to keep the live handles valid.
 
 When a process changes file descriptor table through \verb|unshare(CLONE_FILES)|,
 we need to make sure all the live file descriptor handles associated with that process continue to be valid.
@@ -907,7 +859,7 @@ we make sure to keep all the file descriptors with live handles open.
 This requires careful management of \texttt{CLOEXEC}.
 
 When a process is newly created,
-no file descriptor handles yet exist;
+no file descriptor handles yet exist.
 New handles can be created by opening files in the process,
 or by using the \verb|inherit_fd| function to create handles for inherited file descriptors.
 \verb|inherit_fd| takes a file descriptor handle associated with the parent process,
@@ -920,17 +872,17 @@ Once the inherited file descriptors are closed as described in section \ref{cloe
 After creating a new file descriptor table,
 and establishing which file descriptors should be kept open,
 we must promptly close other file descriptors.
-Leaving unwanted file descriptors open in the new table is a form of resource leakage.
-It can also cause erroneous behavior.
-For example, it's a common practice to close the write end of a pipe
+Leaving unwanted file descriptors open in the new table wastes resources,
+and can also cause bugs.
+For example, it's common practice to close the write end of a pipe
 and expect an EOF on the read end;
-if the write end is copied into the new file descriptor table before being closed,
+if the write end is copied into a new file descriptor table between creating and closing,
 and the write end is never closed in the new table,
 the read end will never get an EOF.
 
 However, we can't simply close all other file descriptors,
 because we must preserve the semantics of implicit file descriptor inheritance.
-The possibility of implicit inheritance of file descriptors is a traditional Unix feature,
+The possibility of implicit inheritance of file descriptors is an old Unix feature,
 which is useful in a wide variety of situations,
 in much the same way as environment variables, which are also implicitly inherited.
 As with environment variables,
@@ -954,20 +906,20 @@ and which are not referenced by a live file descriptor handle;
 we refer to this operation as \verb|close_cloexec|.
 
 For \verb|unshare(CLONE_FILES)|, we perform \verb|close_cloexec| automatically in userspace.
-For \texttt{clone}, we perform \verb|close_cloexec| closing operation only on user request,
+For \texttt{clone}, we perform \verb|close_cloexec| only on user request,
 so that the user can control when \verb|inherit_fd| stops working.
 Even if the user never requests that unused file descriptors be closed,
 as long as they call \texttt{execve}, the table will be cleaned at that point.
 In both of these cases,
-it would be beneficial for efficiency to delegate \verb|close_cloexec|
-to a new system call which takes a list of file descriptors
-and closes all \texttt{CLOEXEC} file descriptors except for those on the list.
+we would benefit from a new system call which takes a list of file descriptors
+and closes all \texttt{CLOEXEC} file descriptors except for those on the list;
+this would replace our userspace implementation of \verb|close_cloexec|.
 
-For \texttt{execve}, this oepration is, in some sense, done automatically for us by the kernel;
+For \texttt{execve}, \verb|close_cloexec| is, in some sense, done automatically for us by the kernel;
 except we don't get the chance to preserve live file descriptors handles,
 without first unsetting \texttt{CLOEXEC} on them.
 Again an extension to the kernel would be useful:
-A new argument to \texttt{execve} which allows specifying a list of file descriptor numbers to inherit
+A new argument to \texttt{execve} which allows specifying a list of file descriptors to inherit
 despite the \texttt{CLOEXEC} flag.
 This would allow programs to avoid the pattern
 of unsetting \texttt{CLOEXEC}, calling \texttt{execve}, and then immediately re-setting \texttt{CLOEXEC},
