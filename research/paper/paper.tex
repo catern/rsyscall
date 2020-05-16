@@ -362,35 +362,20 @@ and in which a legacy libc would implicitly make syscalls.
 Every \texttt{rsyscall} program starts with the ``local'' process
 and uses it to bootstrap the initial capabilities for other processes.
 
-We use the term ``thread'' to refer to the processes under the control of \texttt{rsyscall},
-including the ``local'' process.
-On Linux, the shared-memory ``threads'' provided by libraries such as \texttt{pthreads}
-are implemented as processes,
-and their lifetime and execution is completely controlled by a single program.
-The same is mostly true of the controlled-process ``threads'' provided by \texttt{rsyscall}.
-The most significant difference is that \texttt{rsyscall} ``threads''
-do not run user code concurrently with the main program;
-nevertheless \texttt{rsyscall} ``threads'' do provide the opportunity for concurrent execution of system calls,
-and so the terminology provides useful intuition.
-
 To perform direct-style process creation,
-we use \texttt{rsyscall} to call \texttt{clone} on the ``local'' thread to create a new child thread.
-We call various syscalls in the child thread to mutate it until it reaches the desired state,
-at which point we can call \texttt{execve} in the child thread to start it running on its own.
-After that, the process is no longer under our control, and it functions like any other child process
-(hence we say ``process'' rather than ``thread'').
-The child process can be monitored using normal Linux child monitoring syscalls from our main thread,
-such as \texttt{waitid},
-which we can also do with \texttt{rsyscall}.
+we use \texttt{rsyscall} to call \texttt{clone} on the ``local'' process to create a new child process.
+We call various syscalls in the child process to mutate it until it reaches the desired state,
+at which point we can call \texttt{execve} in the child process to start it running on its own.
+After that, the process is no longer under our control, and it functions like any other child process.
+The child process can be monitored using normal Linux child monitoring syscalls,
+such as \texttt{waitid}.
 
 \lstinputlisting[float=*,language=Python,label={basic},caption={Creating a new process, changing CWD, and execing}]
 {examples/basic/direct.py}
 Listing \ref{basic} shows this in action in Python.
-We create a new child thread using \texttt{clone} on \verb|local_thread|,
+We create a new child process using \texttt{clone} on the local process \verb|local|,
 and receive back a capability to control it.
-We pass no flags to use \texttt{clone}'s defaults
-(which essentially match \texttt{fork}) to create the process.
-We call \texttt{chdir} in the thread to change its working directory to \texttt{/dev}.
+We call \texttt{chdir} in the child process to change its working directory to \texttt{/dev}.
 Then we call \texttt{execve},
 passing the path of the \texttt{cat} executable,
 the arguments to the new executable,
@@ -398,7 +383,7 @@ and the unchanged set of environment variables.
 The name of the executable is passed as the first argument,
 as is typical in Unix.
 Calling \texttt{execve} consumes the capability,
-and later use of this child thread capability will fail with an exception.
+and later use of this child process capability will fail with an exception.
 
 The behavior of system calls made on a remote process through \texttt{rsyscall}
 is identical to the behavior of system calls made implicitly on the current process through libc.
@@ -472,7 +457,7 @@ or other abstracted-away details.
 {examples/fds/direct.py}
 In Listing \ref{fds},
 we first open a file with read-write permission.
-Then we create a child thread,
+Then we create a child process,
 which inherits all file descriptors from its parent.
 We indicate that we want to operate on the child's copy of the file descriptor with \verb|child.inherit_fd|.
 \verb|inherit_fd| only updates resource-tracking bookkeeping in our program,
@@ -538,7 +523,7 @@ One classic form of customization enabled by namespaces
 is overriding files at paths that were hardcoded into a program we can't change,
 without changing those files for the rest of the system.
 In listing \ref{mount},
-we create a new child thread as normal,
+we create a new child process as normal,
 but for the first time,
 pass an argument to \texttt{clone}.
 
@@ -559,9 +544,9 @@ This is a key part of creating a secure sandbox for potentially malicious code.
 \lstinputlisting[float=*,language=Python,label={unmount},caption={Unmount all and run executable via fexec}]
 {examples/unmount/direct.py}
 In listing \ref{unmount}
-we create a new child thread,
+we create a new child process,
 again in a new mount namespace using \texttt{CLONE.NEWNS}.
-We open the executable that we'll later exec in this child thread,
+We open the executable that we'll later exec in this child process,
 as well as another file as in listing \ref{fds},
 since we won't be able to do exec or open files normally after the next step.
 Then we use \texttt{umount},
@@ -621,9 +606,9 @@ passing \verb|CLONE_NEWPID| to create it in a new pid namespace.
 
 To create another process in the pid namespace,
 we clone again, this time from \texttt{init}.
-This is the first example in which we've cloned from one of our child threads;
-as normal, this produces a new process, a grandchild,
-which can be used exactly like a direct child thread.
+This is the first example in which we've cloned from one of our child processes;
+as normal, this gives us a capability for a new process, a grandchild,
+which can be used exactly like a direct child process.
 We exec in the grandchild,
 and we can monitor the grandchild process from \texttt{init},
 just as we would monitor \texttt{init} from its parent process.
@@ -693,8 +678,8 @@ Many syscalls either take or return pointers to memory,
 and require the caller to read or write that memory to provide arguments or receive results.
 Therefore, an \texttt{rsyscall} library needs a way to access memory in the target process.
 
-The most simple way to access memory is for the main thread to be in the same address space as the target process.
-This is the case most of the time; we pass \texttt{CLONE.VM} by default in the Python wrapper.
+The most simple way to access memory is for the local process to be in the same address space as the target process.
+This is the case most of the time; we pass \texttt{CLONE.VM} to \texttt{clone} by default in the Python wrapper.
 However, the target process may be in another address.
 For example, if the target process is at a different privilege level,
 it must be in a different address space,
