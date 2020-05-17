@@ -913,6 +913,16 @@ we assume a great deal of infrastructure is available to make fork-style simpler
 We assume the existence of a robust IPC system,
 with an already-defined protocol which can cover all errors from all system calls.
 Despite this, fork-style implementations are still significantly more verbose than direct-style.
+
+We ensure that errors are reported back to the main program,
+even without handling them;
+this is a significant source of boilerplate in fork,
+because reporting an error back to the main program requires IPC.
+Even if there's no desire to handle errors,
+proper error reporting is necessary for debugging.
+And for serious users, proper error reporting and handling
+is essential for a robust application.
+% TODO hmm talk about... some stuff.
 \subsection{Clone versus fork}\label{microbench}
 \begin{figure}[h!]
 \centering
@@ -925,7 +935,14 @@ We run a benchmark which times how long process creation takes
 with \texttt{fork}, \texttt{clone}, and \verb|clone(CLONE_VM)|
 with varying amounts of anonymous memory mapped in the parent process
 before running the benchmark.
-\texttt{clone} without \verb|CLONE_VM| functions identically to fork.
+Note that \texttt{clone} without \verb|CLONE_VM| is expected to function identically to fork.
+
+All benchmarks are run pinned to an isolated core,
+running on an Intel i9-9900K CPU with hyperthreading enabled.
+Our benchmarks are intended to give a sense of relative, not absolute, performance,
+and we have no reason to believe a more controlled benchmarking setup
+would have differential effects on the performance of \texttt{fork} and \texttt{clone}.
+
 The results are in figure \ref{fig:microbench}.
 Without \verb|CLONE_VM|,
 process creation time is linear in the amount of memory mapped in the parent process.
@@ -937,7 +954,6 @@ This is because \texttt{fork}, and \texttt{clone} without \verb|CLONE_VM|,
 must set up memory mappings in the child process for all the memory mapped in the parent process.
 \verb|clone(CLONE_VM)| does not have to do this bookkeeping,
 so its process creation time is constant in the amount of memory used in the parent process.
-
 \subsection{High-level direct-style versus spawn-style}\label{subprocess_bench}
 \begin{figure}[h!]
 \centering
@@ -946,12 +962,37 @@ so its process creation time is constant in the amount of memory used in the par
  \label{fig:subprocess_bench}
 \end{figure}
 
-We benchmark Python's \texttt{subprocess.run} against direct-style \texttt{clone} with \texttt{rsyscall}
-with varying memory usage, as in section \ref{microbench}.
+We create a child process running \texttt{true} and wait for it to exit
+using both the Python standard library's \texttt{subprocess.run},
+and direct-style \texttt{clone} with \texttt{rsyscall}.
+We benchmark the time each implementation takes
+with varying amounts of mapped memory, as in section \ref{microbench}.
+Both are running under CPython 3.7.7,
+again pinned to an isolated core as with section \ref{microbench}.
 The results are in Figure \ref{fig:subprocess_bench}.
-TODO generate again to get the higher end where it crosses over.
+
+The direct-style \texttt{clone} implementation stays around 2.2 milliseconds regardless of memory usage.
+\texttt{subprocess.run}, which uses \texttt{fork},
+starts at 1.4 milliseconds,
+and then scales linearly with the amount of memory mapped, as expected.
+Direct-style \texttt{clone} starts being faster than \texttt{subprocess.run}
+at about 40 megabytes of memory mapped.
+
+These results are acceptable.
+Process creation in Python is already slow, taking milliseconds of time,
+so it is not expected to be on the fast path.
+In that context, \texttt{rsyscall} has a reasonable cost compared to \texttt{subprocess.run},
+and avoids the bad scaling of \texttt{fork} which might be unexpected by the naive programmer.
+
+Furthermore,
+our implementation of \texttt{rsyscall} is barely-optimized pure-Python,
+all the way down the syscall primitive,
+whereas \texttt{subprocess.run} is entirely in C.
+If we need to speed up our implementation,
+we can perform some targeted optimizations,
+reimplement some parts of the Python \texttt{rsyscall} library in native code,
+or run our code using a faster Python interpreter such as PyPy.
 \section{Related work}\label{related_work}
-% TODO all this is just slapped onto the page without much thought, needs revising
 \subsection{Direct-style process creation}
 As we discuss in section \ref{background},
 many academic operating systems have direct-style process creation.
