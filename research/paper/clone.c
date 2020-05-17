@@ -8,6 +8,7 @@
 #include <sys/syscall.h>
 #include <sched.h>
 #include <string.h>
+#include <signal.h>
 #include <err.h>
 #include <sched.h>
 
@@ -44,7 +45,7 @@ static int do_fork(struct log *log) {
 
 static int do_clone_fork(struct log *log) {
         int rc;
-        rc = syscall(SYS_clone, 0, NULL, NULL, NULL, NULL);
+        rc = syscall(SYS_clone, SIGCHLD, NULL, NULL, NULL, NULL);
         if (rc == 0) {
                 gettimeofday(&log->in_child, NULL);
                 exit(0);
