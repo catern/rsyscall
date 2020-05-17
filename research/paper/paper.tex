@@ -109,7 +109,7 @@ including our usage of \texttt{rsyscall}.
 including use of process features which are difficult to use on Linux with \texttt{fork} or \texttt{posix\_spawn}.
 \item In section \ref{implementation}, we explore our implementation in depth,
 and discuss several difficult process-creation related details of \texttt{rsyscall}'s implementation.
-\item In section \ref{evaluation}, we evaluate, somehow (TODO).
+\item In section \ref{evaluation}, we evaluate using both quantitative and qualitative approaches.
 \item In section \ref{related_work},
 we examine other work which also touches on the topics covered by this paper.
 \item In section \ref{future_work},
@@ -876,9 +876,8 @@ but unsetting \texttt{CLOEXEC} before \texttt{execve} is not possible
 when the process calling \texttt{execve} has a shared file descriptor table,
 because some other process might call \texttt{execve} as well,
 and erroneously inherit the file descriptor.
-\section{Evaluation \textbf{TODO}}\label{evaluation}
-
-We quantitatively answer the following questions:
+\section{Evaluation}\label{evaluation}
+We answer the following questions:
 \begin{compactitem}
 \item
   Does direct-style process creation on Linux allow for simpler programs than the alternatives?
@@ -890,8 +889,9 @@ We quantitatively answer the following questions:
   Does a high-level Python direct-style process creation interface
   have acceptable performance relative to the Python standard library's spawn-style interface?
   We benchmark direct-style process creation against spawn-style in \ref{subprocess_bench}.
-% TODO have an item about use at TS? hm.
-% could be qualitative
+\item
+  Does direct-style process creation work in the ``real world''?
+  We discuss our experience with using direct-style process creation at \twosigma in \ref{realworld}.
 \end{compactitem}
 \subsection{Ease of programming with direct-style}\label{ease}
 \begin{table}
@@ -922,7 +922,6 @@ Even if there's no desire to handle errors,
 proper error reporting is necessary for debugging.
 And for serious users, proper error reporting and handling
 is essential for a robust application.
-% TODO hmm talk about... some stuff.
 \subsection{Clone versus fork}\label{microbench}
 \begin{figure}[h!]
 \centering
@@ -992,6 +991,33 @@ If we need to speed up our implementation,
 we can perform some targeted optimizations,
 reimplement some parts of the Python \texttt{rsyscall} library in native code,
 or run our code using a faster Python interpreter such as PyPy.
+\subsection{Usage in the real world}\label{realworld}
+At \twosigma we have used \texttt{rsyscall} and direct-style process creation
+as a component of a distributed system deployment library.
+This library is in use in production,
+and is extensively used as part of testing and development.
+
+With direct-style process creation,
+we can robustly and easily write custom code to start up each program,
+passing down file descriptors and initializing process attributes according to each program's needs,
+all of which can be done directly from a single parent process.
+This has allowed us to make more use of file descriptor abstraction;
+for example, connections over our shared memory transport are bootstrapped over passed-down file descriptors,
+and our management interfaces listen on passed-in sockets,
+allowing them to be easily swapped between network-accessible TCP sockets and host-local Unix domain sockets.
+We can also flexibly use namespaces where appropriate;
+for example, for legacy applications which directly start subprocesses,
+we prevent process leaking with pid namespaces.
+
+All this has allowed us to run our systems in a much more dynamic way than before;
+we can freely start up arbitrary subsets of our systems on-demand,
+spread across one or more hosts,
+for development, testing, or production,
+regardless of the configuration of that host,
+without worrying about interference between instances,
+and without a dependency on any external privileged services,
+such as container runtimes.
+This has become a key part of our new development workflow.
 \section{Related work}\label{related_work}
 \subsection{Direct-style process creation}
 As we discuss in section \ref{background},
@@ -1083,14 +1109,10 @@ to provide direct-style process creation.
 Currently, our focus is on Linux,
 but others may wish to explore porting these techniques to other operating systems.
 \subsection{Large scale open source usage}
-We have made use of the techniques described in this paper
-in proprietary software at \twosigma.
-While this gives us personally greater confidence in these techniques,
-it would be beneficial to use them in a publicly available, open source system.
-Likely the best 
-Either porting an existing system to use these techniques,
-or using these techniques to create a substantial new system from scratch,
-would provide a substantial demonstration of the viability of these techniques.
+We would like to open source libraries built on top of direct-style process creation.
+From our experience using such libraries at \twosigma,
+we believe this would greatly ease the development of complex systems involving processes,
+and would provide a substantial demonstration of the power of direct-style process creation.
 \section{Conclusions}\label{conclusions}
 Direct-style process creation is much less known and much less used than fork-style and spawn-style.
 We have implemented direct-style process creation for Linux.
@@ -1104,9 +1126,9 @@ including on Linux.
 Our technique is immediately deployable and can be used for a wide variety of complex applications.
 
 We hope that a better process creation mechanism
-will help encourage more use of the process abstraction,
+will help encourage more creative use of processes,
 which, though widespread,
-is still not used to its full potential.
+are still not used to their full potential.
 
 \bibliographystyle{plain}
 \bibliography{bibliography}
