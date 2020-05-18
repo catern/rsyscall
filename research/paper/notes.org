@@ -1122,3 +1122,14 @@ parent_fd = local_thread.use_fd(fd)
   ok, let's strip out the "thread" term.
   it's too confusing,
   and I don't want to unify.
+* huh
+  I rememberd why I named it direct-style
+
+  it's because fork is (deeply) a continuation primitive - it's, uh, some representation of LEM.
+  usually continuation primitives are DNE, but fork is LEM instead, how wacky. well. maybe.
+  I mean, in some really super pointlessly deep sense, anyway!
+
+  anyway, that's why I called it direct-style
+
+  well, no, it's just that I wanted something nicer than "imperative",
+  and the alternatives are clearly "declarative" or involve advanced control flow.
