@@ -1133,3 +1133,86 @@ parent_fd = local_thread.use_fd(fd)
 
   well, no, it's just that I wanted something nicer than "imperative",
   and the alternatives are clearly "declarative" or involve advanced control flow.
+* comment notes
+  page 5 seems to have the comments on the wrong page?
+  same with page 29?
+
+  same with page 31?
+
+  a few of the comments seem to be truncated - such as on page 28?
+** thoughts
+   ok so he says again, put the trick into the introduction.
+
+   but I fear that if I do that, people will immediately dismiss the work.
+
+   I feel like I have to make a kernel extension purely to show that I can,
+   even if I don't use it.
+
+   but, that would be a good way, for sure.
+
+   oh, ugh, but file descriptors are how I do the interrupt thing...
+
+   yeah a naive blocking syscall isn't suitable, I need something async;
+   it would have to still be async,
+   and really, have an identical interface - on both sides!
+
+   but, yes, we should mention it's entirely in userspace in the intro.
+** notes about changes
+*** baumann
+    he's on the PC!
+    we need to really mention him then - especially in related work.
+*** userspace
+    let's say it's userspace
+
+    and let's justify it!
+    we chose not to implement it in kernel-space because we don't think it would be beneficial!
+    the naive syscall is hard,
+    it would need to be async,
+    and so it's kind of pointless!
+
+    what might be ideal is a BPF program associated with a process context;
+    that would work nicely to lower the overhead.
+*** builder pattern
+    should we mention that?
+    eh no. eh. maybe.
+*** applications intro
+    he says it's not clear what's novel,
+    and what exactly these are;
+    applications is also a bad word.
+    examples does seem better.
+*** use a table in the background section?
+    This would be handy, yeah.
+
+|                       | fork                         | spawn                  | direct                          |
+|-----------------------+------------------------------+------------------------+---------------------------------|
+| Allows any caller     | No, no threads, small memory | Yes                    | Yes                             |
+| Programming model     | Complex (returns twice)      | Simple (one and done)  | Simple (imperative)             |
+| Maximally powerful    | Yes, can call any syscall    | No, limited interface  | Yes, can call any syscall       |
+| Error handling        | Poor, requires IPC           | Poor, not fine-grained | Good, reports individual errors |
+| Non-copied attributes | Mutated by code in child     | Set by arguments       | Mutated by code in parent       |
+
+*** add references
+**** 
+    need a reference for a large spawn interface
+    maybe a glibc bug for adding some feature?
+
+    oh we specifically need to cite that indicating errors well requires a big interface back up to the user.
+    again, posix_spawn bug maybe?
+**** ryscall project
+     need to cite it I guess he says
+
+     I guess just the github url
+*** we is ambiguous
+    I see, this is unclear,
+    because we don't know if "we" is calling in the parent process or the child process.
+
+    Yeah that's a good point.
+*** clone newns stuff
+    they seem to think it's a wrapper over clone. hm.
+    I should get rid of the periods, I guess.
+*** name the syscall response loop
+well what do I call it?
+
+the rsyscall server I guess?
+
+the syscall server.

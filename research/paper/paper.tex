@@ -3,6 +3,12 @@
 
 \usepackage{tikz}
 \usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{pifont}
+\usepackage{comment}
+
+\newcommand{\cmark}{\ding{51}}
+\newcommand{\xmark}{\ding{55}}
 
 \usepackage{graphicx}
 \usepackage{hyperref}
@@ -54,9 +60,9 @@ With both fork-style and spawn-style,
 it is difficult to
 branch based on results or errors encountered while initializing the new process:
 fork-style requires IPC if it wishes to communicate errors back to the rest of the program,
-and robust indication of errors in spawn-style requires substantial growth in the spawn interface.
+and robust indication of errors in spawn-style requires substantial expansion of the spawn interface.
 
-Direct-style is more rarely seen, but has a number of advantages.
+Direct-style is more rarely seen, but gives a number of advantages.
 Direct-style involves creating a new child process in a non-running state,
 and then calling individual system calls from the parent to initialize the child.
 Direct-style does not constrain the calling process,
@@ -67,13 +73,15 @@ Our contribution is an implementation of direct-style process creation for Linux
 making use of our work on the \texttt{rsyscall} project.
 The \texttt{rsyscall} project develops language-specific ``process-independent'' system call libraries for Linux,
 which replace libc system call wrappers, and allow a program to perform cross-process system calls.
-rsyscall currently has best support for Python,
+\texttt{rsyscall} can work entirely in userspace,
+and can be deployed on existing Linux systems without kernel modifications.
+\texttt{rsyscall} is currently focused on supporting, and is implemented in, Python,
 but can be ported to other languages;
 the examples we show in this paper will be in Python,
 but generalize easily to other languages.
 
 Our direct-style process creation implementation uses \texttt{clone} to create a child process in an embryonic state
-which can then be manipulated from user code using syscalls with \texttt{rsyscall}.
+which can then be manipulated from user code in the parent process using syscalls with \texttt{rsyscall}.
 A direct-style \texttt{clone} has all the advantages of direct-style process creation
 over Linux's fork-style \texttt{fork} and spawn-style \texttt{posix\_spawn}:
 \begin{compactitem}
@@ -83,8 +91,8 @@ over Linux's fork-style \texttt{fork} and spawn-style \texttt{posix\_spawn}:
 \item
   Processes can be created with the full set of Linux features.
 \item
-  Syscall results are reported individually to the parent process,
-  rather than batched together as with spawn-style or manually reported via IPC as with fork-style.
+  Syscall results are reported individually to the parent process.
+  % rather than batched together as with spawn-style or manually reported via IPC as with fork-style.
 \end{compactitem}
 
 We've implemented a variety of useful applications using direct-style process creation on Linux,
@@ -94,34 +102,66 @@ and can outperform \texttt{fork} in some cases.
 We have deployed direct-style process creation in production internally at \twosigma.
 
 Our implementation is distributed as a feature of \texttt{rsyscall},
-and is immediately deployable on recent Linux kernels.
+and is immediately deployable, entirely in userspace, on recent Linux kernels.
 \texttt{rsyscall} is open source and available from
 [Github url].
 % \url{https://github.com/catern/rsyscall}.
 
 This paper is organized in several sections.
 \begin{compactitem}
-\item In section \ref{background}, we provide background on fork-style, spawn-style, and direct-style process creation,
-and consider their advantages and disadvantages in more depth.
-\item In section \ref{overview}, we discuss the design of the API,
+\item Section \ref{background} provides background on fork-style, spawn-style, and direct-style process creation,
+and considers their advantages and disadvantages in more depth.
+\item Section \ref{overview} discusses the design of the API,
 including our usage of \texttt{rsyscall}.
-\item In section \ref{applications}, we show examples of usage of direct-style process creation in Python on Linux,
+\item Section \ref{examples} shows examples of direct-style process creation in Python on Linux,
 including use of process features which are difficult to use on Linux with \texttt{fork} or \texttt{posix\_spawn}.
-\item In section \ref{implementation}, we explore our implementation in depth,
-and discuss several difficult process-creation related details of \texttt{rsyscall}'s implementation.
-\item In section \ref{evaluation}, we evaluate using both quantitative and qualitative approaches.
-\item In section \ref{related_work},
-we examine other work which also touches on the topics covered by this paper.
-\item In section \ref{future_work},
-we list several directions for future work related to direct-style process creation and to \texttt{rsyscall}.
-\item In section \ref{conclusions}, we briefly outline our conclusions about direct-style and the future of process creation.
+\item Section \ref{implementation} explores our implementation in depth,
+and discusses several difficult process-creation related details of \texttt{rsyscall}.'s implementation.
+\item Section \ref{evaluation} evaluates our results using both quantitative and qualitative approaches.
+\item Section \ref{related_work} examines other work which also touches on the topics covered by this paper.
+\item Section \ref{future_work} lists several directions for future work
+related to direct-style process creation and to \texttt{rsyscall}.
+\item Section \ref{conclusions} briefly outlines our conclusions about direct-style and the future of process creation.
 \end{compactitem}
-\section{Background}\label{background}
+\section{Background on process-creation}\label{background}
 As mentioned in the introduction,
 on most operating systems today,
 the available interfaces for process creation
 are either "fork-style" or "spawn-style".
 A few operating systems have a third style, which we refer to as "direct-style".
+
+% Ugh, these aren't the same size right now.
+\newcommand{\tbad}{\xmark:}
+\newcommand{\tgood}{\cmark:}
+% \newcommand{\tbad}{\text{\sffamily X} :}
+% \newcommand{\tgood}{\checkmark:}
+
+\begin{table*}
+\begin{tabular}{l|l|l|l}
+% BEGIN RECEIVE ORGTBL compare
+ & fork-style & spawn-style & direct-style\\
+\hline
+Works with any caller & \tbad No threads or large memory & \tgood Yes & \tgood Yes\\
+Programming model & \tbad Complex (returns twice) & \tgood Simple (single call) & \tgood Simple (imperative)\\
+Maximally powerful & \tgood Yes, can call any syscall & \tbad No, limited interface & \tgood Can call any syscall\\
+Error handling & \tbad Poor, requires IPC & \tbad Poor, not fine-grained & \tgood Reports individual errors\\
+Non-copied attributes & Mutated by code in child & Set by arguments & Mutated by code in parent\\
+% END RECEIVE ORGTBL compare
+\end{tabular}
+\caption{Features of fork-style vs spawn-style vs direct-style}
+\label{tab:ease}
+\end{table*}
+\begin{comment}
+#+ORGTBL: SEND compare orgtbl-to-latex :splice t
+|                       | fork-style                       | spawn-style                  | direct-style                     |
+|-----------------------+----------------------------------+------------------------------+----------------------------------|
+| Works with any caller | \tbad No threads or large memory | \tgood Yes                   | \tgood Yes                       |
+| Programming model     | \tbad Complex (returns twice)    | \tgood Simple (single call)  | \tgood Simple (imperative)       |
+| Maximally powerful    | \tgood Yes, can call any syscall | \tbad No, limited interface  | \tgood Can call any syscall      |
+| Error handling        | \tbad Poor, requires IPC         | \tbad Poor, not fine-grained | \tgood Reports individual errors |
+| Non-copied attributes | Mutated by code in child         | Set by arguments             | Mutated by code in parent        |
+% $
+\end{comment}
 \subsection{Fork-style}
 By far the most well-known fork-style interface is Unix's fork.\cite{forkhist}
 With a fork-style interface,
@@ -131,13 +171,13 @@ called the child process,
 differing only in a few attributes such as process id.
 The same program continues executing in both processes,
 with a different return value from fork to allow it to distinguish whether it is running in the parent or the child.
-Typically, the program will case on the return value
+Typically, the program will branch based on the return value
 and, if running in the child,
 call various system calls to modify the state of the new process.
 
 Fork has a number of flaws,
 and much ink has been spilled detailing them.
-We'll cover the most prominent briefly here,
+We'll cover the most egregious briefly here,
 but see Baumann 2019 \cite{forkroad} for a more detailed evaluation.
 
 Fork, when called successfully, returns twice,
@@ -196,7 +236,7 @@ Likewise, there are no inherent issues when a spawn-style interface is used from
 though operating systems, such as Linux,
 which implement spawn-style interfaces on top of \texttt{fork} can still have threading bugs.
 
-However, the arguments that can be provided to a spawn-style process creation syscall
+The arguments that can be provided to a spawn-style process creation syscall
 do not cover all the possible attributes that one might want to set for the new process.
 Most systems have a large number of syscalls which can mutate the state of a process during its lifetime;
 for a spawn-style interface to work in all scenarios,
@@ -210,7 +250,7 @@ Fork-style allows existing system calls,
 with which programmers are already familiar,
 to be used to set up the new process.
 Spawn-style requires some form of declarative description of the new process,
-which must be learned in additional to the normal system call interface.
+which must be learned in addition to the normal system call interface.
 
 Spawn-style process creation also does not allow for conditional logic during the setup.
 If the setup of the new process encounters an error at some point,
@@ -223,7 +263,9 @@ one modification to the process cannot depend on the result of some other modifi
 \subsection{Direct-style}
 A few academic operating systems, such as KeyKOS \cite{keykos}, seL4 \cite{sel4}
 and some others \cite{exokernel} \cite{fuschia} \cite{singularity},
-use another style of process creation, which we refer to as "direct-style".
+use another style of process creation.
+We use the new term "direct-style" to refer to this,
+since we know of no pre-existing concise and generic term for this style of process creation.
 
 In direct-style, a process is created by its parent in a non-running state,
 then supplied with various resources,
@@ -283,7 +325,7 @@ Such an interface, like fork-style and spawn-style,
 would implicitly copy some attributes to the new process,
 rather than being capability-oriented and requiring all attributes to be specified explicitly.
 This is the kind of direct-style interface that we contribute in this paper.
-\section{Overview}\label{overview}
+\section{Overview of API}\label{overview}
 In most operating system APIs, including the ones available on Linux,
 when a program makes a syscall, it implicitly operates on the current process.
 To perform direct-style process creation on Linux,
@@ -343,29 +385,28 @@ but also for power.
 Since we are using conventional Linux system calls,
 just in a cross-process way,
 direct-style \texttt{clone} will always be at least as powerful as \texttt{fork}.
-\section{Applications}\label{applications}
+\section{Examples}\label{examples}
 In this section,
-we'll discuss several more advanced uses of processes
-using more sophisticated Linux features,
-and accompany them with Python examples using direct-style process creation.
-All of these examples use only conventional Linux system calls,
-and can therefore translated straightforwardly into any language with an \texttt{rsyscall} API.
-For concision, we assume that we are running with sufficient permissions in these examples,
+we'll demonstrate direct-style process creation
+by demonstrating several advanced uses of processes
+using more sophisticated Linux features.
+For concision, we assume in these examples that we are running with sufficient permissions in these examples,
 but these examples can all be run without privileges with appropriate use of \texttt{CLONE.NEWUSER}.
 
-Implementing these examples with \texttt{fork} or \verb|posix_spawn| requires substantially more boilerplate,
+These examples are not novel, as such, as they use only conventional Linux system calls;
+but implementing them with \texttt{fork} or \verb|posix_spawn| requires substantially more code,
 or even a complete change in implementation approach,
-such as in section \ref{shared_fd_table}.
+as described in section \ref{shared_fd_table}.
 We'll compare our direct-style implementations in this section
 to fork-style implementations
 in section \ref{evaluation}.
 
-Several of these examples demonstrate functionality that can be done today by specialized software and services.
-Such software often allows use of one or two of these techniques, but prevents the use of others.
+Several of these examples provide functionality that can be done today by specialized software and services.
+Such software often enables one or two of these uses of processes, but prevents others.
 For example, a shell allows the creation of pipelines and container systems like Docker allow sandboxing,
-but the two are difficult to combine.
+but the two are difficult to combine.\cite{docker_pipe}
 
-One of the key advantages of direct-style process creation is that the techniques we demonstrate here
+One of the key advantages of direct-style process creation is that the features we demonstrate here
 can be easily used in combination,
 to meet the specific needs of individual real-world applications.
 \subsection{Abstraction through file descriptor passing}\label{fd_abstraction}
@@ -376,19 +417,17 @@ All open file descriptors are copied at process creation time from the parent pr
 the child process can then make independent use of the file descriptors.
 We'll discuss this important feature further in section \ref{fdtables}.
 
+% TODO need to clarify this more, this is v2, Larry didn't like v1 beyond first sentence
 Most resources in Linux are managed through file descriptors,
-so this feature allows the parent process to pass a wide variety of resources to the child process.
-An executable program can be provided a file descriptor,
-which can correspond to any file in any filesystem,
-or to a network connection\cite{ucspi},
-or a pipe connected to another process,
-or a variety of other resources,
-without the process being aware of what specific resource it is accessing.
-In this way, we immediately know "for free"\cite{theoremsforfree}
-that the behavior of the program does not depend on the name of the file,
-or the hostname to it which the socket is connected,
-or the executable running in the process on the other end of the pipe,
-or other abstracted-away details.
+so this feature allows the parent process to pass a variety of resources to the child process,
+such as files, network connections, pipes, or other resources.\cite{ucspi}
+Since the resource is created outside the child process and passed down as an opqaue file descriptor,
+the precise details and type of the resource are not available to the child.
+Thus, this is a form of abstraction,
+and we can know ``for free''\cite{theoremsforfree}
+that the program running in the child process
+will not rely on the details of how the file descriptor was created,
+such as the filename.
 
 \lstinputlisting[float=*ht,language=Python,label={fds},caption={Passing down FDs}]
 {examples/fds/direct.py}
@@ -448,7 +487,7 @@ namespaces can be used easily on a much smaller scale.
 
 Namespaces, like all process-local resources,
 can be used to customize a program's behavior
-in ways that were not anticipated by the author
+in ways that were not anticipated at development time
 by customizing the environment the process runs in.
 Other system calls such as \texttt{chroot} can also be used for this.
 
@@ -578,33 +617,31 @@ Nevertheless, for fork-style and spawn-style process creation,
 file descriptor passing over a Unix domain socket
 is our only option to do something like this.
 \section{Implementation}\label{implementation}
-\subsection{Basics about \texttt{rsyscall}}
 In this section, we'll give a brief overview of the implementation of \texttt{rsyscall},
 and then focus on implementation issues specific to process creation.
-
+\subsection{Cross-process syscalls}
 \texttt{rsyscall} can be conceptually divided in two parts:
 the basic cross-process syscall primitive,
 and a language-specific library built on top.
 The Python language-specific library has already been demonstrated above.
 Such libraries only need to be able to call syscalls and explicitly specify a process in some way;
 they are, for the most part, agnostic to how the cross-process syscall is implemented.
+The cross-process syscall primitive takes a syscall number, and some number of register-sized integer arguments,
+and arranges to call that syscall in the target process,
+returning the response as a single register-sized integer.
 
-On Linux \verb|x86_64|, a syscall is specified by a syscall number plus six register-sized arguments;
-a syscall returns one register-sized value.
-\texttt{rsyscall}'s default implementation of cross-process syscalls sends those seven integers over a pipe,
-and waits for a response on another pipe.
-Processes are created running a loop which, at each iteration,
-reads a syscall request off the pipe,
-performs that syscall,
-and writes the return value back over the return pipe.
-In this way, a cross-process syscall works much like a very primitive remote procedure call.
-
-We use pipes (or other file descriptors) for transport of data rather than a shared memory segment
+\texttt{rsyscall}'s default userspace cross-process syscall primitive sends the syscall request
+to a userspace ``syscall server'' running in the target process,
+which performs the syscall and sends the response back.
+Communication to the syscall server happens over file descriptors,
+typically a pair of pipes.
+We use file descriptors for transport of data rather than shared memory
 to support straightforward integration with event loops.
 
-ptrace provides an alternative means to perform arbitrary actions on other processes,
-including system calls.
-However, among other issues, it has the substantial disadvantage of not permitting multiple ptracers.
+ptrace provides a way to perform arbitrary actions on other processes,
+including system calls,
+but is not suitable for us.
+Among other issues, it has the substantial disadvantage of not permitting multiple ptracers.
 A ptrace-based implementation would prevent using \texttt{strace} or \texttt{gdb} on \texttt{rsyscall}-controlled processes,
 which is an unacceptable limitation for a general-purpose utility.
 
@@ -614,78 +651,65 @@ Therefore, an \texttt{rsyscall} library needs a way to access memory in the targ
 
 The most simple way to access memory is for the local process to be in the same address space as the target process.
 This is the case most of the time; we pass \texttt{CLONE.VM} to \texttt{clone} by default in the Python wrapper.
-However, the target process may be in another address.
-For example, if the target process is at a different privilege level,
-it must be in a different address space,
-as sharing an address space with a process at a different privilege level is unsafe.
 
-We implement access to the memory of processes in different address spaces through another set of pipes,
-by copying memory into and out of those pipes using \texttt{read} and \texttt{write} system calls in the target process.
-A \texttt{read} syscall corresponds to a write to memory,
-and a \texttt{write} syscall corresponds to a read from memory.
-
-The \verb|process_vm_readv| and \verb|process_vm_writev| system calls
-allow the caller to read and write memory from the virtual address space of other processes.
-However, they require that the caller have specific credentials relative to the process being accessed,
-which may not always be the case.
-Additionally, these system calls are disabled if ptrace is disabled system-wide,
-which is a niche but possible system configuration.
-To ensure that \texttt{rsyscall} can be used for arbitrary purposes and on arbitrary systems, we avoided these calls.
+Sometimes, the target process may be in another address space;
+for example, if the target process is at a different privilege level,
+it must be in a different address space.
+There are a number of available techniques in that scenario;
+we choose to copy memory over a pair of pipes,
+again using file descriptors for the sake of easy event-loop integration.
 \subsection{\texttt{clone}}\label{clone}
 Now that we've established the basic implementation details of \texttt{rsyscall},
 we'll consider specific issues related to process creation and initialization.
 
-There are three Linux system calls which create processes:
-\texttt{fork}, \texttt{vfork} and \texttt{clone}.
+Besides \texttt{clone}, \texttt{vfork} and \texttt{fork} also create processes,
+but they are not suitable for flexible direct-style process creation.
 \texttt{vfork} suspends execution of the parent process
 while waiting for the child process to exit or call \texttt{execve},
-which is immediately unsuitable for direct-style process creation.
-\texttt{clone} provides a superset of the functionality of \texttt{fork},
-so we focused our attention on \texttt{clone}.
+which is immediately unsuitable.
+\texttt{fork} lacks many features which are restricted to \texttt{clone}.
+For example, with \texttt{fork},
+we could not create child processes which share the parent's address space,
+which would complicate memory access.
 
-\texttt{clone}
-(along with \texttt{fork}) creates a new process
+\texttt{clone} creates a new process
 which immediately starts executing at the next instruction after the syscall instruction,
 in parallel with the parent process,
 with its registers in generally the same state as the parent process.
 
-Common Linux libcs provide a wrapper for \texttt{clone}
-which allow executing an arbitrary function with an arbitrary argument,
-but since we want to support remote execution,
-we can't use the libc wrapper.
-
-Instead, since \texttt{clone} lets us change the stack for the new process,
-we use this to return, after the system call to an arbitrary function address stored on the stack.
+\texttt{clone} lets us change the stack for the new process;
+we use this to call an arbitrary function address stored on the stack.
 Further arguments can also be passed on the stack,
 with the aid of a trampoline to match C calling conventions if necessary.
 
-We use this to create processes running the syscall request-response loop described in the previous section.
+We use this to create processes running the syscall server.
 After this,
-most system calls can be called as normal.
-The new process can be modified freely through \texttt{chdir}, \texttt{dup2}, and other system calls.
-Out of system calls related to process creation,
+the parent process can be begin to call system calls in the child process.
+Most system calls work as normal;
+the new process can be modified freely through \texttt{chdir}, \texttt{dup2}, and other system calls.
+From the system calls related to process creation,
 only \texttt{execve} and \texttt{unshare} need substantial further attention.
 \subsection{\texttt{exec}}\label{execve}
 \texttt{execve} is unusual and requires careful design,
 because when it is successful, it does not return.
-Therefore we need a way to determine if \texttt{execve} is successful;
+We need a way to determine if \texttt{execve} is successful;
 naively waiting for a response to the syscall request will leave us waiting forever.
 
-There is a traditional technique to detect a successful \texttt{execve} using a pipe.
-We create a pipe before forking,
-ensure both ends are marked \verb|O_CLOEXEC|,
-perform the fork,
-call \texttt{execve} in the child,
-close the write end of the pipe,
-and wait for EOF on the read end.
-If the child process has neither successfully called \texttt{execve}, nor exited for some other reason,
-then the write end of the pipe will still be open in the child process's fd table,
-and the read end of the pipe will not return EOF.
-But once the child process calls \texttt{execve} successfully,
-\verb|O_CLOEXEC| will cause the write end of the pipe to be closed,
-and the read end of the pipe will return EOF.
+There is a traditional technique used with \texttt{fork}
+to detect a successful \texttt{execve} using a pipe,
+which unfortunately won't work for us.
+In this technique, the parent process creates a pipe before forking,
+ensures both ends are marked \verb|O_CLOEXEC|,
+performs the fork,
+closes the write end of the pipe,
+and \texttt{read}s the read end of the pipe.
+The child process either successfully calls \texttt{execve} or exits;
+either way, the last copy of the write end of the pipe will be closed,
+which causes the \texttt{read} in the parent process to return EOF.
+The parent can then check that the child process hasn't exited;
+if the child hasn't exited, then it must have successfully called exec.
 
-This trick works well with \texttt{fork};
+This trick works with \texttt{fork},
 but it's not general enough to work with \texttt{clone}.
 Child processes can be created with the \verb|CLONE_FILES| flag passed to \texttt{clone},
 which causes the parent process and child process to share a single fd table;
@@ -693,13 +717,14 @@ we showed an example of this in section \ref{shared_fd_table}.
 This means that when the parent process closes the write end of the pipe,
 it will also be closed in the child process,
 and the read end of the pipe will immediately return EOF,
-regardless of whether the child has called \texttt{execve} or exited.
+before the child has called \texttt{execve} or exited.
 
 Fortunately, there is an alternative solution, which does work with \verb|CLONE_FILES|.
-The \texttt{ctid} argument to \texttt{clone} specifies a memory address which,
-when the \verb|CLONE_CHILD_CLEARTID| flag is set,
-the kernel sets to zero when the child exits or execs,
-and then, crucially, performs a futex wakeup on.
+\texttt{clone} has an argument, \texttt{ctid}, which specifies a memory address.
+If the \verb|CLONE_CHILD_CLEARTID| \texttt{clone} flag is set,
+then when the child exits or execs,
+the kernel will set \texttt{ctid} to zero and then,
+crucially, perform a futex wakeup on it.
 
 Futexes are usually used for the implementation of userspace shared-memory synchronization constructs,
 but the relevant detail for us here is that we can wait on an address
@@ -707,15 +732,13 @@ until a futex wakeup is performed on that address.
 This means we can wait on \texttt{ctid} until the futex wakeup is performed,
 and in this way get notified of the child process calling \texttt{execve} or exiting.
 
-Unfortunately, futexes in current Linux integrate poorly:
-There is no way for a single process to wait for more than one futex at a time,
-and no way to monitor a futex with file-descriptor-monitoring syscalls such as \texttt{poll}.
-The best we can do is create a dedicated child process for each futex we want to wait on,
+A process can only wait on one futex at a time;
+to monitor multiple futexes from a single event loop,
+we need to create a dedicated child process for each futex we want to wait on,
 and have this child process exit when the futex has a wakeup.
-Monitoring child processes can be straightforwardly integrated into an event loop.
+We can then monitor these child processes from an event loop using standard techniques.\cite{signalfd}\cite{pidfd}
 
-While slightly complex to implement, this solution works well.
-We provide \texttt{ctid} whenever we call \texttt{clone},
+So, we pass \texttt{ctid} whenever we call \texttt{clone},
 and set up a process to wait on that futex.
 Then, when we call any syscall,
 we wait for either the syscall to return an error or the futex process to exit,
@@ -728,71 +751,52 @@ then we can catch that in \texttt{execve} and know that the child has successful
 If the futex process and child process both exit,
 it's ambiguous whether the child process successfully called \texttt{execve};
 this ambiguity is unfortunate, but it is also present in the pipe-based approach.
-This is, we believe, the best solution currently available.
 
-We would prefer for Linux to natively provide functionality to wait for a child's \texttt{execve}.
-Some other Unix-like systems provide this;
-kqueue, on FreeBSD, allows waiting for exec in arbitrary processes through kqueue's \verb|EVFILT_PROC|.
-
-One approach for Linux would be to add a new \texttt{clone} flag to
+Some other Unix-like systems natively provide the ability to wait for a child's \texttt{execve};
+our implementation would be simplified, and the ambiguity eliminated,
+if we had this ability on Linux.\cite{freebsd_kqueue}
+One approach would be to add a new \texttt{clone} flag to
 opt-in to receiving \texttt{WEXECED} events through \texttt{waitid}.
 A new \texttt{waitid} flag alone is not sufficient,
 since, to integrate this feature into an event loop,
 it's necessary to receive \texttt{SIGCHLD} signals or readability notifications on a pidfd
 when the \texttt{WEXECED} event happens.
 \subsection{Managing file descriptor tables}\label{fdtables}
-As demonstrated in section \ref{shared_fd_table},
-the \verb|CLONE_FILES| flag can be passed to \texttt{clone},
-causing the file descriptor table to be shared between the parent process and child process.
-The same file descriptors are open in both processes at the same numbers,
-and if new file descriptors are opened in either process,
-they are also visible in the other process.
-The file descriptor table is unshared once the child calls \texttt{execve}.
-This is simple to model and convenient for many purposes.
-
-If \verb|CLONE_FILES| is not passed to \texttt{clone},
-then \texttt{clone} has the same behavior as \texttt{fork}:
-The new process has a new file descriptor table,
+\texttt{clone} (without \verb|CLONE_FILES|) and \texttt{fork}
+deal with file descriptor tables in the same way:
+The new child process has a new file descriptor table,
 containing copies of all the file descriptors existing in the parent at the time of the system call.
 This is known as file descriptor inheritance.
 
-This same behavior can also be triggered after process creation by calling \verb|unshare(CLONE_FILES)| or \texttt{execve}.
-If \verb|unshare(CLONE_FILES)|
-is called in a process currently sharing its file descriptor table with another process,
-then after the call that process will have a new, private file descriptor table,
-again with a copy of all the file descriptors existing at the time of the system call.
+As demonstrated in section \ref{shared_fd_table},
+when the \verb|CLONE_FILES| flag is passed to \texttt{clone},
+the parent process and the child process will share a single file descriptor table,
+so changes to the file descriptor table made in one process will affect the other.
 
-If \texttt{execve} is called,
-the treatment of the file descriptor table is the same as \verb|unshare(CLONE_FILES)|,
-except that file descriptors with the \texttt{CLOEXEC} flag set on them
-are not copied into the newly created file descriptor table.
-We'll discuss the semantics of \texttt{CLOEXEC} more in section \ref{cloexec}.
+The file descriptor table can be unshared by calling \verb|unshare(CLONE_FILES)| or \texttt{execve}.
+After either system call, the process will have a new file descriptor table
+which is no longer shared with any other process.
+All the file descriptors existing in the old table at the time of the system call
+will be copied into the new file descriptor table,
+except for, in the case of \texttt{execve}, file descriptors with the \texttt{CLOEXEC} flag set.
 \subsubsection{Tracking file descriptors through handles}
-After a system call has copied all the file descriptors in the old table into the new table,
+After \texttt{clone}, \verb|unshare(CLONE_FILES)|, or \texttt{execve}
+has copied all the file descriptors from some old table into a new table,
 we need to decide which file descriptors we want to keep open in the new table,
 and which file descriptors should be closed.
 
-This is a question of resource management.
-In a language with manual resource management,
-such as C,
-this would be delegated to the user,
-and the responsibilities of the \texttt{rsyscall} library would end there.
-Manual resource management in C has led to many bugs,
-many of which with significant security implications.
-
-Python, instead, has automatic resource management,
-and therefore we determine which file descriptors should stay open automatically:
-if a certain file descriptor is in use by the program,
+In general, if a certain file descriptor is in use by the program,
 through a certain process,
 that file descriptor should stay open in that process's file descriptor table.
 
 To achieve this, file descriptors are used through garbage-collected handles;
 each handle is associated with a process and contains a specific file descriptor number.
-For a handle to remain valid,
-that file descriptor number must continue to refer to an open file descriptor in that process.
-We determine which handles are live (in use by the program)
-by recourse to the native Python garbage collection system.
-The file descriptors we keep open are then those which are necessary to keep the live handles valid.
+A handle is ``valid''
+when that file descriptor number refers to an open file descriptor in that process.
+A handle is ``live''
+when the handle is in use by the program, which we can determine
+from Python's garbage collection system.
+We then keep open exactly those file descriptors which are necessary to keep all live handles, valid.
 
 When a process changes file descriptor table through \verb|unshare(CLONE_FILES)|,
 we need to make sure all the live file descriptor handles associated with that process continue to be valid.
@@ -805,19 +809,18 @@ in a way that allows the program to keep control of the process,
 we make sure to keep all the file descriptors with live handles open.
 This requires careful management of \texttt{CLOEXEC}.
 
-When a process is newly created,
-no file descriptor handles yet exist.
-New handles can be created by opening files in the process,
-or by using the \verb|inherit_fd| function to create handles for inherited file descriptors.
+When a child process is created,
+there are no file descriptor handles associated with it.
+We can use the \verb|inherit_fd| function to create handles for inherited file descriptors.
 \verb|inherit_fd| takes a file descriptor handle associated with the parent process,
 and, if that file descriptor was open at the time the child process was created,
 creates a new handle associated with the child process
 for the child process's copy of that file descriptor.
 Once the inherited file descriptors are closed as described in section \ref{cloexec},
-\verb|inherit_fd| can't be used again until the process next changes file descriptor table.
+\verb|inherit_fd| can no longer be used.
 \subsubsection{Closing file descriptors after inheritance}\label{cloexec}
 After creating a new file descriptor table,
-and establishing which file descriptors should be kept open,
+and determining which file descriptors should be kept open,
 we must promptly close other file descriptors.
 Leaving unwanted file descriptors open in the new table wastes resources,
 and can also cause bugs.
@@ -914,14 +917,9 @@ We assume the existence of a robust IPC system,
 with an already-defined protocol which can cover all errors from all system calls.
 Despite this, fork-style implementations are still significantly more verbose than direct-style.
 
-We ensure that errors are reported back to the main program,
-even without handling them;
+We ensure that errors are reported back to the main program;
 this is a significant source of boilerplate in fork,
 because reporting an error back to the main program requires IPC.
-Even if there's no desire to handle errors,
-proper error reporting is necessary for debugging.
-And for serious users, proper error reporting and handling
-is essential for a robust application.
 \subsection{Clone versus fork}\label{microbench}
 \begin{figure}[h!]
 \centering
@@ -948,6 +946,7 @@ process creation time is linear in the amount of memory mapped in the parent pro
 At the upper end of our benchmark, with 4 GB of memory mapped ($10^6$ pages),
 \texttt{fork} takes an average of 42.6 milliseconds to create a process,
 while \verb|clone(CLONE_VM)| stays flat at 21.1 microseconds.
+\texttt{clone} without \verb|CLONE_VM| is comparable to fork.
 
 This is because \texttt{fork}, and \texttt{clone} without \verb|CLONE_VM|,
 must set up memory mappings in the child process for all the memory mapped in the parent process.
@@ -957,24 +956,24 @@ so its process creation time is constant in the amount of memory used in the par
 \begin{figure}[h!]
 \centering
  \includegraphics[width=0.5\textwidth]{subprocess_bench}
- \caption{Python subprocess and direct-style clone performance under varying memory usage}
+ \caption{Python spawn-style vs direct-style performance under varying memory usage}
  \label{fig:subprocess_bench}
 \end{figure}
 
-We create a child process running \texttt{true} and wait for it to exit
+We create a child process, exec the \texttt{true} binary, and wait for it to exit
 using both the Python standard library's \texttt{subprocess.run},
-and direct-style \texttt{clone} with \texttt{rsyscall}.
+and direct-style with \texttt{rsyscall}.
 We benchmark the time each implementation takes
 with varying amounts of mapped memory, as in section \ref{microbench}.
 Both are running under CPython 3.7.7,
 again pinned to an isolated core as with section \ref{microbench}.
 The results are in Figure \ref{fig:subprocess_bench}.
 
-The direct-style \texttt{clone} implementation stays around 2.2 milliseconds regardless of memory usage.
+The direct-style implementation stays around 2.2 milliseconds regardless of memory usage.
 \texttt{subprocess.run}, which uses \texttt{fork},
 starts at 1.4 milliseconds,
 and then scales linearly with the amount of memory mapped, as expected.
-Direct-style \texttt{clone} starts being faster than \texttt{subprocess.run}
+Direct-style starts being faster than \texttt{subprocess.run}
 at about 40 megabytes of memory mapped.
 
 These results are acceptable.
@@ -1020,6 +1019,11 @@ such as container runtimes.
 This has become a key part of our new development workflow.
 \section{Related work}\label{related_work}
 \subsection{Direct-style process creation}
+Baumann 2019\cite{forkroad} briefly suggests cross-process operations as a possible replacement for fork on Unix,
+positing many of the same advantages we find in practice.
+This work, though developed independently and largely completed before that paper,
+is in many ways an elaboration on and implementation of that idea.
+
 As we discuss in section \ref{background},
 many academic operating systems have direct-style process creation.
 We are not aware of any previous instances of direct-style process creation in a Unix-like environment.
@@ -1031,7 +1035,6 @@ Such compatibility environments could theoretically be bypassed to perform direc
 using the underlying primitives,
 but regular Unix system calls could not be used to create new Unix processes in a direct-style way
 in such an environment.
-% Oh, maybe we should mention that Baumann suggests cross-process operations as a way forward?
 \subsection{Remote system calls}
 There are many Unix-based systems which do something called "remote system calls".
 Most such systems do not allow a single program to manipulate multiple processes.
@@ -1109,6 +1112,7 @@ could adopt the techniques of this paper
 to provide direct-style process creation.
 Currently, our focus is on Linux,
 but others may wish to explore porting these techniques to other operating systems.
+% TODO maybe we could get rid of this paragraph?
 \subsection{Large scale open source usage}
 We would like to open source libraries built on top of direct-style process creation.
 From our experience using such libraries at \twosigma,
