@@ -72,8 +72,9 @@ and can create any kind of process supported by the underlying system.
 Our contribution is an implementation of direct-style process creation for Linux,
 making use of our work on the \texttt{rsyscall} project.
 The \texttt{rsyscall} project develops language-specific ``process-independent'' system call libraries for Linux,
-which replace libc system call wrappers, and allow a program to perform cross-process system calls.
-\texttt{rsyscall} can work entirely in userspace,
+which replace libc system call wrappers,
+and allow a program to perform cross-process system calls.
+\texttt{rsyscall} works entirely in userspace
 and can be deployed on existing Linux systems without kernel modifications.
 \texttt{rsyscall} is currently focused on supporting, and is implemented in, Python,
 but can be ported to other languages;
@@ -359,13 +360,13 @@ After that, the process is no longer under our control, and it functions like an
 The child process can be monitored using normal Linux child monitoring syscalls,
 such as \texttt{waitid}.
 
-\lstinputlisting[float=*ht,language=Python,label={basic},caption={Creating a new process, changing CWD, and execing}]
+\lstinputlisting[float=ht,language=Python,label={basic},caption={Creating a new process, changing CWD, and execing}]
 {examples/basic/direct.py}
 Listing \ref{basic} shows this in action in Python.
 We create a new child process using \texttt{clone} on the local process \verb|local|,
 and receive back a capability to control it.
 We call \texttt{chdir} in the child process to change its working directory to \texttt{/dev}.
-Then we call \texttt{execve},
+Then we call \texttt{execve} in the child,
 passing the path of the \texttt{cat} executable,
 the arguments to the new executable,
 and the unchanged set of environment variables.
@@ -391,7 +392,7 @@ we'll demonstrate direct-style process creation
 by demonstrating several advanced uses of processes
 using more sophisticated Linux features.
 For concision, we assume in these examples that we are running with sufficient permissions in these examples,
-but these examples can all be run without privileges with appropriate use of \texttt{CLONE.NEWUSER}.
+but these examples can all be run without privileges with appropriate use of \verb|CLONE_NEWUSER|.
 
 These examples are not novel, as such, as they use only conventional Linux system calls;
 but implementing them with \texttt{fork} or \verb|posix_spawn| requires substantially more code,
@@ -423,22 +424,22 @@ so this feature allows the parent process to pass a variety of resources to the 
 such as files, network connections, pipes, or other resources.\cite{ucspi}
 Since the resource is created outside the child process and passed down as an opqaue file descriptor,
 the precise details and type of the resource are not available to the child.
-Thus, this is a form of abstraction,
+This is a form of abstraction,
 and we can know ``for free''\cite{theoremsforfree}
 that the program running in the child process
 will not rely on the details of how the file descriptor was created,
-such as the filename.
+such as the filename that was opened or the hostname that was connected to.
 
 \lstinputlisting[float=*ht,language=Python,label={fds},caption={Passing down FDs}]
 {examples/fds/direct.py}
 In Listing \ref{fds},
-we first open a file with read-write permission.
+we first open a file with read-write permission in the local process.
 Then we create a child process,
 which inherits all file descriptors from its parent.
 We indicate that we want to operate on the child's inherited copy of the file descriptor with \verb|child.inherit_fd|.
 Then we disable \texttt{CLOEXEC} on the child's file descriptor,
 which on Linux we can do by clearing the FD flags with \verb|fcntl(fd, F_SETFD, 0)|.
-Finally, we execute some executable,
+Finally, we execute some executable in the child process,
 passing the file descriptor number as an argument;
 since we disabled \texttt{CLOEXEC} on the file descriptor,
 the executable will be able to use that file descriptor through that file descriptor number.
@@ -463,10 +464,10 @@ or produce multiple outputs.
 In listing \ref{pipe},
 we execute a few programs in parallel,
 connected by pipes.
-We first create two pipes,
-then inherit them down to several processes using a helper function, \verb|as_argument|,
+We first create two pipes in the local process,
+then inherit them down to several child processes using a helper function, \verb|as_argument|,
 which uses \verb|inherit_fd| and \texttt{fcntl} as described in section \ref{fd_abstraction}.
-We exec each program passing some file descriptors as arguments.
+We call exec in each child process, passing some file descriptors as arguments to the new programs.
 The whole system then runs in parallel,
 as normal child processes.
 \subsection{Customization without explicit support}
@@ -519,7 +520,7 @@ This is a key part of creating a secure sandbox for potentially malicious code.
 {examples/unmount/direct.py}
 In listing \ref{unmount}
 we create a new child process,
-again in a new mount namespace using \texttt{CLONE.NEWNS}.
+again in a new mount namespace using \verb|CLONE_NEWNS|.
 We open the executable that we'll later exec in this child process,
 as well as another file as in listing \ref{fds},
 since we won't be able to do exec or open files normally after the next step.
@@ -615,11 +616,11 @@ can allow similar behavior without sharing the file descriptor table,
 but is substantially more complex for the user.
 Nevertheless, for fork-style and spawn-style process creation,
 file descriptor passing over a Unix domain socket
-is our only option to do something like this.
+is our only option.
 \section{Implementation}\label{implementation}
 In this section, we'll give a brief overview of the implementation of \texttt{rsyscall},
 and then focus on implementation issues specific to process creation.
-\subsection{Cross-process syscalls}
+
 \texttt{rsyscall} can be conceptually divided in two parts:
 the basic cross-process syscall primitive,
 and a language-specific library built on top.
@@ -650,7 +651,7 @@ and require the caller to read or write that memory to provide arguments or rece
 Therefore, an \texttt{rsyscall} library needs a way to access memory in the target process.
 
 The most simple way to access memory is for the local process to be in the same address space as the target process.
-This is the case most of the time; we pass \texttt{CLONE.VM} to \texttt{clone} by default in the Python wrapper.
+This is the case most of the time; we pass \verb|CLONE_VM| to \texttt{clone} by default in the Python wrapper.
 
 Sometimes, the target process may be in another address space;
 for example, if the target process is at a different privilege level,
@@ -672,13 +673,14 @@ For example, with \texttt{fork},
 we could not create child processes which share the parent's address space,
 which would complicate memory access.
 
-\texttt{clone} creates a new process
+The raw \texttt{clone} system call creates a new process
 which immediately starts executing at the next instruction after the syscall instruction,
 in parallel with the parent process,
 with its registers in generally the same state as the parent process.
 
-\texttt{clone} lets us change the stack for the new process;
-we use this to call an arbitrary function address stored on the stack.
+\texttt{clone} lets us change the stack for the new process.
+We can use this to make the new process call an arbitrary function,
+by storing its address on the new stack.
 Further arguments can also be passed on the stack,
 with the aid of a trampoline to match C calling conventions if necessary.
 
@@ -686,14 +688,14 @@ We use this to create processes running the syscall server.
 After this,
 the parent process can be begin to call system calls in the child process.
 Most system calls work as normal;
-the new process can be modified freely through \texttt{chdir}, \texttt{dup2}, and other system calls.
+the new child process can be modified freely through \texttt{chdir}, \texttt{dup2}, and other system calls.
 From the system calls related to process creation,
 only \texttt{execve} and \texttt{unshare} need substantial further attention.
 \subsection{\texttt{exec}}\label{execve}
 \texttt{execve} is unusual and requires careful design,
 because when it is successful, it does not return.
 We need a way to determine if \texttt{execve} is successful;
-naively waiting for a response to the syscall request will leave us waiting forever.
+naively waiting for a response to the syscall request may leave us waiting forever.
 
 There is a traditional technique used with \texttt{fork}
 to detect a successful \texttt{execve} using a pipe,
@@ -731,7 +733,6 @@ but the relevant detail for us here is that we can wait on an address
 until a futex wakeup is performed on that address.
 This means we can wait on \texttt{ctid} until the futex wakeup is performed,
 and in this way get notified of the child process calling \texttt{execve} or exiting.
-
 A process can only wait on one futex at a time;
 to monitor multiple futexes from a single event loop,
 we need to create a dedicated child process for each futex we want to wait on,
@@ -880,21 +881,25 @@ when the process calling \texttt{execve} has a shared file descriptor table,
 because some other process might call \texttt{execve} as well,
 and erroneously inherit the file descriptor.
 \section{Evaluation}\label{evaluation}
-We answer the following questions:
+Our goal is a powerful approach to process creation that is easy to use correctly.
+Performance of our implementation is secondary,
+but the overhead of our implementation must be low
+relative to alternative approaches.
+
+We evaluate the degree to which we meet this goal by answering the following questions:
 \begin{compactitem}
 \item
   Does direct-style process creation on Linux allow for simpler programs than the alternatives?
-  We implement and compare similar functionality using both direct-style and fork-style in \ref{ease}.
+  We compare implementations of similar functionality using both direct-style and fork-style in \ref{ease},
+  and find substantial benefits for direct-style.
 \item
-  Does a clone-based implementation avoid the well-known performance overheads of fork?
-  We evaluate clone against fork on several microbenchmarks in \ref{microbench}.
+  Does our \texttt{rsyscall}-based Python direct-style process creation interface
+  have acceptable performance relative to the Python standard library's spawn-style \texttt{subprocess.run}?
+  We benchmark direct-style process creation against spawn-style in \ref{subprocess_bench},
+  and find an acceptable level of overhead.
 \item
-  Does a high-level Python direct-style process creation interface
-  have acceptable performance relative to the Python standard library's spawn-style interface?
-  We benchmark direct-style process creation against spawn-style in \ref{subprocess_bench}.
-\item
-  Does direct-style process creation work in the ``real world''?
-  We discuss our experience with using direct-style process creation at \twosigma in \ref{realworld}.
+  Does direct-style process creation perform well in the ``real world''?
+  We discuss our positive experience with using direct-style process creation at \twosigma in \ref{realworld}.
 \end{compactitem}
 \subsection{Ease of programming with direct-style}\label{ease}
 \begin{table}
@@ -902,14 +907,19 @@ We answer the following questions:
 \caption{Line counts with direct-style vs fork-style}
 \label{tab:ease}
 \end{table}
-We implement a variety of simple but powerful techniques with processes
-using both direct-style and fork.
-Our results are summarized in table \ref{tab:ease}.
-Direct-style consistently takes under half the lines the express the same thing.
-\lstinputlisting[float=*ht,language=Python,label={basic_fork},caption={Fork-style: Creating a new process, changing CWD, and execing}]
+Does direct-style process creation on Linux allow for simpler programs than the alternatives?
+To answer this, we compare the direct-style examples shown in section \ref{examples}
+to programs with the same behavior implemented in fork-style.
+Most of the examples cannot be implemented with typical Linux spawn-style interfaces such as \verb|posix_spawn|,
+so we compare only to fork-style.
+
+The line counts of the direct-style and fork-style implementations are listed in table \ref{tab:ease}.
+Direct-style consistently takes under half the lines to express the same functionality.
+
+\lstinputlisting[float=ht,language=Python,label={basic_fork},caption={Fork-style: Creating a new process, changing CWD, and execing}]
 {examples/basic/fork.py}
-An example of one of the fork-style implementations is in listing \ref{basic_fork}.
-It corresponds to the direct-style example in listing \ref{basic}.
+Listing \ref{basic_fork} gives an example of one of our fork-style implementations,
+corresponding to the direct-style example in listing \ref{basic}.
 
 In our fork-style implementations,
 we assume a great deal of infrastructure is available to make fork-style simpler.
@@ -917,112 +927,119 @@ We assume the existence of a robust IPC system,
 with an already-defined protocol which can cover all errors from all system calls.
 Despite this, fork-style implementations are still significantly more verbose than direct-style.
 
-We ensure that errors are reported back to the main program;
-this is a significant source of boilerplate in fork,
-because reporting an error back to the main program requires IPC.
-\subsection{Clone versus fork}\label{microbench}
-\begin{figure}[h!]
-\centering
- \includegraphics[width=0.5\textwidth]{microbench}
- \caption{fork and clone performance under varying memory usage}
- \label{fig:microbench}
-\end{figure}
+The main source of additional code in the fork-style implementation
+is reporting errors back to the main program using IPC.
+If a program that is already reporting errors to some other destination,
+such code is not necessary;
+for example, a process supervisor or a shell might write process startup errors
+as textual logs which are read by a human.
+If a program does not already have such a destination for errors,
+then robustly dealing with errors in \texttt{fork} requires this additional IPC code.
 
-We run a benchmark which times how long process creation takes
-with \texttt{fork}, \texttt{clone}, and \verb|clone(CLONE_VM)|
-with varying amounts of anonymous memory mapped in the parent process
-before running the benchmark.
-Note that \texttt{clone} without \verb|CLONE_VM| is expected to function identically to fork.
-
-All benchmarks are run pinned to an isolated core,
-running on an Intel i9-9900K CPU with hyperthreading enabled.
-Our benchmarks are intended to give a sense of relative, not absolute, performance,
-and we have no reason to believe a more controlled benchmarking setup
-would have differential effects on the performance of \texttt{fork} and \texttt{clone}.
-
-The results are in figure \ref{fig:microbench}.
-Without \verb|CLONE_VM|,
-process creation time is linear in the amount of memory mapped in the parent process.
-At the upper end of our benchmark, with 4 GB of memory mapped ($10^6$ pages),
-\texttt{fork} takes an average of 42.6 milliseconds to create a process,
-while \verb|clone(CLONE_VM)| stays flat at 21.1 microseconds.
-\texttt{clone} without \verb|CLONE_VM| is comparable to fork.
-
-This is because \texttt{fork}, and \texttt{clone} without \verb|CLONE_VM|,
-must set up memory mappings in the child process for all the memory mapped in the parent process.
-\verb|clone(CLONE_VM)| does not have to do this bookkeeping,
-so its process creation time is constant in the amount of memory used in the parent process.
-\subsection{High-level direct-style versus spawn-style}\label{subprocess_bench}
+Direct-style does not require any extra work to report errors;
+errors are reported just like any other system call.
+\subsection{Microbenchmark results}\label{subprocess_bench}
 \begin{figure}[h!]
 \centering
  \includegraphics[width=0.5\textwidth]{subprocess_bench}
  \caption{Python spawn-style vs direct-style performance under varying memory usage}
  \label{fig:subprocess_bench}
 \end{figure}
+Does our \texttt{rsyscall}-based Python direct-style \texttt{clone}
+have acceptable performance relative to the Python standard library's spawn-style \texttt{subprocess.run}?
 
-We create a child process, exec the \texttt{true} binary, and wait for it to exit
-using both the Python standard library's \texttt{subprocess.run},
-and direct-style with \texttt{rsyscall}.
-We benchmark the time each implementation takes
-with varying amounts of mapped memory, as in section \ref{microbench}.
-Both are running under CPython 3.7.7,
-again pinned to an isolated core as with section \ref{microbench}.
+We first evaluate a simple process creation workload:
+create a child process, exec the \texttt{true} binary, and wait for it to exit.
+We implement this using both direct-style \texttt{clone}
+and the standard library's \texttt{subprocess.run}.
+We benchmark both implementations under CPython 3.7.7, on Linux 4.19.93,
+pinned to an isolated single core on an Intel i9-9900K CPU with 60GB of RAM.
+We vary the amount of anonymous memory mapped in the parent process
+to demonstrate how each implementation scales with memory usage.
 The results are in Figure \ref{fig:subprocess_bench}.
 
 The direct-style implementation stays around 2.2 milliseconds regardless of memory usage.
 \texttt{subprocess.run}, which uses \texttt{fork},
 starts at 1.4 milliseconds,
-and then scales linearly with the amount of memory mapped, as expected.
-Direct-style starts being faster than \texttt{subprocess.run}
-at about 40 megabytes of memory mapped.
+and then scales linearly with the amount of memory mapped, as expected,
+up to 48.5 milliseconds at 4 GBs of mapped memory.
+The cross-over point for this micro-benchmark is about 40 megabytes of memory mapped.
 
-These results are acceptable.
+We perform another microbenchmark to evaluate the overhead of modifying the child process.
+We simply run \texttt{getpid} in the child process on the same benchmark setup;
+the average time per \texttt{getpid} call is .561 milliseconds.
+The \texttt{getpid} syscall returns essentially instantly,
+so we can regard this time as the amount of overhead incurred
+by performing our child process setup system calls through \texttt{rsyscall}.
+Through profiling, we've found that most of this per-syscall overhead is spent in Python,
+rather than waiting for syscall responses from the child task.
+
+These slowdowns in process creation and modification are substantial,
+but we found that this overhead is acceptable in practice.
 Process creation in Python is already slow, taking milliseconds of time,
 so it is not expected to be on the fast path.
 In that context, \texttt{rsyscall} has a reasonable cost compared to \texttt{subprocess.run},
 and avoids the bad scaling of \texttt{fork} which might be unexpected by the naive programmer.
 
-Furthermore,
-our implementation of \texttt{rsyscall} is barely-optimized pure-Python,
-all the way down the syscall primitive,
-whereas \texttt{subprocess.run} is entirely in C.
-If we need to speed up our implementation,
-we can perform some targeted optimizations,
-reimplement some parts of the Python \texttt{rsyscall} library in native code,
-or run our code using a faster Python interpreter such as PyPy.
+Furthermore, as we'll discuss in section \ref{realworld},
+we've found that the greater expressivity of direct-style
+provides for programs that are more efficient on a large scale,
+which makes up for the performance cost in micro-benchmarks.
+We've also found that, for many interesting applications,
+the performance overhead of direct-style process creation (or Python, for that matter)
+is dwarfed by the execution time of the native-code programs we ultimately run.
+
+As a result, though implementations in native code and in the kernel would likely remove most of this overhead,
+we have chosen to not invest effort into optimizing process creation at this micro-level,
+to preserve implementation simplicity;
+such optimization is reserved for future work.
 \subsection{Usage in the real world}\label{realworld}
 At \twosigma we have used \texttt{rsyscall} and direct-style process creation
-as a component of a distributed system deployment library.
+as a component of an internal distributed system deployment library, written in Python.
 This library is in use in production,
 and is extensively used as part of testing and development.
 
-With direct-style process creation,
-we can robustly and easily write custom code to start up each program,
-passing down file descriptors and initializing process attributes according to each program's needs,
-all of which can be done directly from a single parent process.
-This has allowed us to make more use of file descriptor abstraction;
-for example, connections over our shared memory transport are bootstrapped over passed-down file descriptors,
-and our management interfaces listen on passed-in sockets,
-allowing them to be easily swapped between network-accessible TCP sockets and host-local Unix domain sockets.
-We can also flexibly use namespaces where appropriate;
-for example, for legacy applications which directly start subprocesses,
-we prevent process leaking with pid namespaces.
+Each service deployed by this library is started with custom code,
+written using direct-style process creation.
+This allows us to pass down file descriptors and initialize process attributes
+according to each program's needs;
+which in turn has let us make optimizations which previously required too much program-specific customization.
 
-All this has allowed us to run our systems in a much more dynamic way than before;
-we can freely start up arbitrary subsets of our systems on-demand,
+For example,
+we are able to bootstrap connections over our internal shared memory transports over passed-down file descriptors,
+and our management interfaces listen on passed-down sockets.
+This allows substantial parallelism in the startup of services.\cite{socketactivation}
+Taking one representative example,
+one test built with an old library took an average of 221 seconds to run,
+mostly spent in system startup time as processes started up serially.
+With parallelized system startup, the same test takes an average of 16 seconds.
+
+We've found that programmers
+are able to use file descriptor passing as a normal feature of their development process with relative ease.
+Programmers without substantial prior experience with Unix programming
+are able to write code to support new services
+nd pass down file descriptors to the program without encountering significant issues.
+
+We also flexibly use namespaces where appropriate.
+For example, for legacy applications which directly start subprocesses,
+we prevent process leaking with a pid namespace.
+
+All this has allowed us to run our systems in a much more dynamic way than before.
+We can freely start up arbitrary subsets of our systems on-demand,
 spread across one or more hosts,
 for development, testing, or production,
 regardless of the configuration of that host,
 without worrying about interference between instances,
 and without a dependency on any external privileged services,
 such as container runtimes.
-This has become a key part of our new development workflow.
+This has become a key part of our development workflow.
 \section{Related work}\label{related_work}
 \subsection{Direct-style process creation}
 Baumann 2019\cite{forkroad} briefly suggests cross-process operations as a possible replacement for fork on Unix,
 positing many of the same advantages we find in practice.
-This work, though developed independently and largely completed before that paper,
-is in many ways an elaboration on and implementation of that idea.
+Our work, though developed independently and largely completed before that paper,
+is in many ways an elaboration on and implementation of that idea,
+to which we owe a great debt.
 
 As we discuss in section \ref{background},
 many academic operating systems have direct-style process creation.
@@ -1136,5 +1153,5 @@ which, though widespread,
 are still not used to their full potential.
 
 \bibliographystyle{plain}
-\bibliography{bibliography}
+% \bibliography{bibliography}
 \end{document}

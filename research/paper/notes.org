@@ -1158,7 +1158,7 @@ parent_fd = local_thread.use_fd(fd)
 
    but, yes, we should mention it's entirely in userspace in the intro.
 ** notes about changes
-*** baumann
+*** DONE baumann
     he's on the PC!
     we need to really mention him then - especially in related work.
 *** userspace
@@ -1172,6 +1172,8 @@ parent_fd = local_thread.use_fd(fd)
 
     what might be ideal is a BPF program associated with a process context;
     that would work nicely to lower the overhead.
+
+    maybe justify it...
 *** builder pattern
     should we mention that?
     eh no. eh. maybe.
@@ -1202,17 +1204,171 @@ parent_fd = local_thread.use_fd(fd)
      need to cite it I guess he says
 
      I guess just the github url
-*** we is ambiguous
+*** DONE we is ambiguous
     I see, this is unclear,
     because we don't know if "we" is calling in the parent process or the child process.
 
     Yeah that's a good point.
-*** clone newns stuff
+
+    eh I disregard it
+*** DONE remove periods from clone newns stuff
     they seem to think it's a wrapper over clone. hm.
     I should get rid of the periods, I guess.
-*** name the syscall response loop
+*** DONE name the syscall response loop
 well what do I call it?
 
 the rsyscall server I guess?
 
 the syscall server.
+*** evaluation
+    when is fork better and when worse?
+    I guess that would be a fine thing to say.
+    but first we need to know a time when fork is better!
+
+    well, some uses of fork that involve actually concurrent user code, it's better;
+    or for other things like memory snapshots.
+
+    but for anything ending in an exec, probably not.
+    well you could want to be concurrent when ending in exec - but wait you still can with rsyscall lol.
+
+    ok so let's focus on when fork is better...???
+**** low level benchmarks
+     ok so the main performance thing is memory.
+
+     so what else do we even compare??? i guess this is fine but trivial
+
+     just need more stuff.
+**** high level benchmarks
+***** more operations
+     we need to do more operations,
+     and compare them.
+
+     a real complicated setup.
+
+     comparing all the fork-style and direct-style things would be good...
+
+     well doing them spawn-style would also be fine.
+
+
+     ok so we'll do a chdir, sure,
+     and...
+     a cloexec disable, sure, too.
+
+     it would be good to do something that 
+
+     i could do a mount maybe
+
+     except it wouldn't work because of the lack of clone_newns
+
+     let's just compare listing 1, that's easy.
+
+     aha ok we don't need to use preexec_fn if we pass pass_fds.
+
+     or cwd for that matter! nice haha ha hAAHHAHAH.
+***** benchmark syscall overhead
+      ugh.
+      it's going to be like half a milli.
+
+      but we have to, I guess.
+
+      we'll test with getpid
+
+      ugh but it's SOOO slow fug.
+
+      "this suggests that our decision to be all Python is too slow"
+
+      I feel we can own up to that.
+
+      "Native optimizations will be needed for more serious use"?
+      no way
+
+      we can use it seriously
+
+      the scaling behavior is immediate and straightforward
+      with the number of syscalls made.
+
+      The constant cost of each is high,
+      but that can be brought down over time
+      with optimizations and
+**** other evaluation
+     hm m m m m m
+
+     ok so 
+**** macro-performance
+     maybe we should talk about tss integration's performance?
+
+     we haven't had any perf issues.
+
+     micro-benchmarks of individual things: fine.
+
+     comparison to state of the art: ok.
+
+     so we need to benchmark individual syscalls.
+
+     and expand this comparison to Python subprocess?
+**** mention in evaluation
+     Our goal is a powerful approach to process creation that is easy to use correctly.
+     Performance of our implementation is secondary,
+     but the overhead of our implementation must be low
+     relative to alternative approaches.
+**** benchmark tss integration vs previous things
+     vaguely
+
+     oh oh, we can mention that previous techniques took minutes or hours to start up a system,
+     whereas ours take seconds.
+
+     detailed benchmarking is difficult,
+     because previous systems are not directly comparable -
+     the system we have built with direct-style process creation is much more functional.
+
+     maybe I could run mmia integration and see its speed?
+
+     run egregression! perfect
+
+     Taking one representative example, one test built with an old library took
+     370 seconds to run,
+     mostly spent in system startup time.
+     With the new library, the same test took 16 seconds.
+
+     maybe 
+**** mention socket activation
+http://0pointer.de/blog/projects/socket-activation.html
+**** syscall performance
+     gotta do it.
+
+     ok let's do it.
+
+     ok so we did it.
+     ugh. ok. ok ok ok.
+
+     ok ok.
+**** benchmark both ways of writing
+     ugh. this means we have to get them running.
+     that's something we could do in theory.
+     but, tricky.
+**** evaluation feedback from my booper
+     kill 6.2
+
+     be more explicit about what we're evaluating and WHY we care in 6.3
+
+
+     i should explicitly state that performance is not a priority
+     but it's satisfactory
+     and say that right away in 6.3!
+
+     "custom code"? no, code specific to each daemon,
+     all code is custom!!! duhhhh just say code
+**** mention that
+     programmers without experience with Unix
+     can program with direct-style process creation,
+     passing down file descriptors,
+     without getting it wrong.
+**** notes
+     just answer the quesion immediately!
+     is it simpler? yes!
+     but say it good
+
+     maybe not even need question! combine into one statement
+**** TODO thicker lines on graph
+**** TODO make graph lower height
+
