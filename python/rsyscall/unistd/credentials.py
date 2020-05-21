@@ -15,6 +15,9 @@ class CredentialsTask(rsyscall.far.Task):
     async def getgid(self) -> int:
         return (await _getgid(self.sysif))
 
+    async def getpid(self) -> near.Process:
+        return (await _getpid(self.sysif))
+
     async def getpgid(self) -> near.ProcessGroup:
         return (await _getpgid(self.sysif, None))
 
@@ -40,6 +43,9 @@ async def _getuid(sysif: SyscallInterface) -> int:
 
 async def _getgid(sysif: SyscallInterface) -> int:
     return (await sysif.syscall(SYS.getgid))
+
+async def _getpid(sysif: SyscallInterface) -> near.Process:
+    return near.Process(await sysif.syscall(SYS.getpid))
 
 async def _getpgid(sysif: SyscallInterface, pid: t.Optional[near.Process]) -> near.ProcessGroup:
     if pid is None:

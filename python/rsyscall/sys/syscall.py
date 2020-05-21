@@ -36,6 +36,7 @@ class SYS(enum.IntEnum):
     getgid = lib.SYS_getgid
     getpeername = lib.SYS_getpeername
     getpgid = lib.SYS_getpgid
+    getpid = lib.SYS_getpid
     getpriority = lib.SYS_getpriority
     getsockname = lib.SYS_getsockname
     getsockopt = lib.SYS_getsockopt
