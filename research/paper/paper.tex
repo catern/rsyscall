@@ -883,8 +883,8 @@ and erroneously inherit the file descriptor.
 \section{Evaluation}\label{evaluation}
 Our goal is a powerful approach to process creation that is easy to use correctly.
 Performance of our implementation is secondary,
-but the overhead of our implementation must be low
-relative to alternative approaches.
+but the overhead of our implementation relative to alternative approaches
+must be low.
 
 We evaluate the degree to which we meet this goal by answering the following questions:
 \begin{compactitem}
@@ -893,8 +893,8 @@ We evaluate the degree to which we meet this goal by answering the following que
   We compare implementations of similar functionality using both direct-style and fork-style in \ref{ease},
   and find substantial benefits for direct-style.
 \item
-  Does our \texttt{rsyscall}-based Python direct-style process creation interface
-  have acceptable performance relative to the Python standard library's spawn-style \texttt{subprocess.run}?
+  In Python, does our \texttt{rsyscall}-based direct-style process creation interface
+  have acceptable performance relative to the standard library's spawn-style \texttt{subprocess.run}?
   We benchmark direct-style process creation against spawn-style in \ref{subprocess_bench},
   and find an acceptable level of overhead.
 \item
@@ -910,6 +910,7 @@ We evaluate the degree to which we meet this goal by answering the following que
 Does direct-style process creation on Linux allow for simpler programs than the alternatives?
 To answer this, we compare the direct-style examples shown in section \ref{examples}
 to programs with the same behavior implemented in fork-style.
+
 Most of the examples cannot be implemented with typical Linux spawn-style interfaces such as \verb|posix_spawn|,
 so we compare only to fork-style.
 
@@ -938,6 +939,13 @@ then robustly dealing with errors in \texttt{fork} requires this additional IPC 
 
 Direct-style does not require any extra work to report errors;
 errors are reported just like any other system call.
+This is the main immediately-visible simplification of using direct-style process creation.
+
+Direct-style also removes the need to be concerned about the state of the calling process,
+though this simplification is not immediately visible in a small example.
+The fork-style examples may break if there are multiple threads in the calling process,
+and may be slow if the calling process has large amounts of memory mapped, as we'll see in section \ref{subprocess_bench}.
+The direct-style examples do not have these limitations.
 \subsection{Microbenchmark results}\label{subprocess_bench}
 \begin{figure}[h!]
 \centering
@@ -945,8 +953,8 @@ errors are reported just like any other system call.
  \caption{Python spawn-style vs direct-style performance under varying memory usage}
  \label{fig:subprocess_bench}
 \end{figure}
-Does our \texttt{rsyscall}-based Python direct-style \texttt{clone}
-have acceptable performance relative to the Python standard library's spawn-style \texttt{subprocess.run}?
+In Python, does our \texttt{rsyscall}-based direct-style process creation interface
+have acceptable performance relative to the standard library's spawn-style \texttt{subprocess.run}?
 
 We first evaluate a simple process creation workload:
 create a child process, exec the \texttt{true} binary, and wait for it to exit.
@@ -959,17 +967,20 @@ to demonstrate how each implementation scales with memory usage.
 The results are in Figure \ref{fig:subprocess_bench}.
 
 The direct-style implementation stays around 2.2 milliseconds regardless of memory usage.
-\texttt{subprocess.run}, which uses \texttt{fork},
+\texttt{subprocess.run}, which is implemented with \texttt{fork},
 starts at 1.4 milliseconds,
 and then scales linearly with the amount of memory mapped, as expected,
 up to 48.5 milliseconds at 4 GBs of mapped memory.
 The cross-over point for this micro-benchmark is about 40 megabytes of memory mapped.
 
 We perform another microbenchmark to evaluate the overhead of modifying the child process.
-We simply run \texttt{getpid} in the child process on the same benchmark setup;
-the average time per \texttt{getpid} call is .561 milliseconds.
-The \texttt{getpid} syscall returns essentially instantly,
-so we can regard this time as the amount of overhead incurred
+We simply call \texttt{getpid} from Python
+in both the child process and the parent process on the same benchmark setup.
+The average time per \texttt{getpid} call is
+3 microseconds when called in the parent process without going through \texttt{rsyscall},
+and 561 miroseconds when called through \texttt{rsyscall} in the child process.
+The difference, 558 microseconds,
+is the amount of overhead incurred
 by performing our child process setup system calls through \texttt{rsyscall}.
 Through profiling, we've found that most of this per-syscall overhead is spent in Python,
 rather than waiting for syscall responses from the child task.
@@ -1037,7 +1048,7 @@ This has become a key part of our development workflow.
 \subsection{Direct-style process creation}
 Baumann 2019\cite{forkroad} briefly suggests cross-process operations as a possible replacement for fork on Unix,
 positing many of the same advantages we find in practice.
-Our work, though developed independently and largely completed before that paper,
+Our work, though developed independently,
 is in many ways an elaboration on and implementation of that idea,
 to which we owe a great debt.
 
@@ -1153,5 +1164,5 @@ which, though widespread,
 are still not used to their full potential.
 
 \bibliographystyle{plain}
-% \bibliography{bibliography}
+\bibliography{bibliography}
 \end{document}

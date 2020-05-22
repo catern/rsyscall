@@ -1371,4 +1371,250 @@ http://0pointer.de/blog/projects/socket-activation.html
      maybe not even need question! combine into one statement
 **** TODO thicker lines on graph
 **** TODO make graph lower height
+**** bait and switch?
+     well, let's wait for another review;
+     maybe mentioning it's userspace in the intro will be enough.
 
+     ok he didn't mention bait and switch but he also didn't read it thoroughly hmmm
+
+     i think bulking up the intro will be sufficient.
+**** conflicts
+     vijay
+     larry
+     nico
+** VIJAY FEEDBACK!!!!
+every word of this is precious
+*** intro
+11:11
+The intro should also be beefed up, talk about related work more with
+citations, and should give a teaser of the results in the rest of the
+paper
+11:11 
+Try this: imagine the reader can read only the intro. By the end
+of the intro, you want them to be convinced to accept the paper
+(edited)
+**** ok intro ok
+     I can definitely beef it up more.
+     definitely can read it with the view of,
+     the reader can read only the intro!! they need to be!!
+     convinced!!!
+*** evaluation
+I do think the evaluation is a little slim
+11:09
+I think you want to empirically show different applications using the
+new primitive, and how it helps them
+11:09
+I'm not sure a python sub-process is a strong baseline
+11:09
+you should compare to something more optimized
+11:10
+I'd want to see more experiments evaluating different aspects of the system
+11:10
+and integration with applications that you can talk about in detail
+*** show different applications using the new primitive
+    and how it helps them
+*** compare to something more optimized than python sub-process
+    hm. well. it's slow but, that's not the intent here.
+
+    let's not build up my defence mechanism here so fast!
+
+    python subprocess is not a strong baseline.
+
+    ok there are at least two metrics of comparison:
+
+    performance, and
+    expressivity.
+
+    am I comparing to the most expressive style?
+    no! for sure not,
+    there are much better spawn-style libraries out there.
+    but, what's the good *baseline*?
+    y'know, standard, kinda thing?
+    posix_spawn I guess.
+
+    and certainly python isn't the best performance baseline.
+    we could compare to posix_spawn directly...?
+*** more experiements evaluating different aspects of the system
+    ok. what other aspects of the system are there?
+
+    we could start up many processs in parallel,
+    or serially,
+    we could measure the performance of some of the advanced things I'm doing in examples.
+
+    we could...
+    look at the performance of fork communicating errors back over IPC
+
+    we could look at UDS fd passings performance relative to shared fd table.
+
+    we could look at the cost of making a nested child?
+    that could be interesting.
+
+    or the cost of bookkeeping, like inherit_fd.
+
+    yeah we can show that performance doesn't decrease with nested children.
+
+    or with more unusual clone flags?
+
+    yeah we use nested children twice, should definitely talk about their performance.
+
+    we use a lot of unusual clone flags...
+    but is it clear that those don't affect performance?
+    we might as well just say it.
+
+    these are new features, they're kind of in a separate section.
+**** different clone flags
+     Passing different flags to clone has no significant effect on performance.
+
+     yeah, that seems fine,
+     let's actually test it though.
+**** nested children
+     we use these a lot, definitely good to bench them
+*** integration with applications that you can talk about in detail
+    OK, ok ok. I can talk about tss/integration in more detail,
+    that should be fine.
+
+    Just need to put more words there.
+
+    what can I say? hm.
+
+    well, what would people want to hear?
+    just more depth, I guess!
+
+    more specific details,
+    and also more benchmarking I suppose.
+
+    there's no immediate baseline.
+
+    right okay,
+    so we'll name it as the "integration" library.
+
+    we'll talk about performance I suppose:
+    much improved system startup times through techniques that were previously infeasible.
+
+    any other performance things?
+    this cascades through to many parts of our system,
+    allowing much faster iteration,
+    or binary search.
+
+    and pid namespaces, sure, sure.
+    what other features are we using?
+    let's see where we're passing down fds.
+
+    we should look at the parts where my insanity has most heavily breached through,
+    like test_tps or the pillar stuff,
+    to see my stuff.
+
+    oh, sims, is another thing.
+    hm.
+
+    i guess we are able to, pretty flexibly integrate shared memory things into our event loop,
+    by starting up processes and clients for them?
+
+    hmm is that really substantial though?
+    we could do that before. hm.
+
+    ok, so another thing is, i guess, passing fds around inside our program?
+    that's directly enabled by easy file descriptor inheritance, for sure.
+
+    yeah that seems plausible,
+    again, it's something enabled by easy file descriptor inheritance.
+
+    ok so I think that's all I have from just reading the code.
+
+    what else is there?
+    there's, the fact that we're running a lot more different unique programs, I guess;
+    which is enabled in part by easy process creation... but not a ton.
+
+    let's go ahead and do this.
+**** file descriptor inheritance
+     we should center this,
+     and talk about socket activation as a consequence.
+
+     and also, passing fds around as a consequence.
+
+     and also, easy connection to clients for shared memory as a consequence? maybe?
+
+     One of the major benefits has been easy use of file descriptor inheritance.
+     Programs can have file descriptors passed down flexibly.
+     We've found that programmers are able to use fd passing blah blah blah.
+     Our experience has been that with fork-style or spawn-style interfaces,
+     all file descriptor logic must be centralized,
+     whereas file descriptors in a new process can be built up over time using direct-style,
+     simplifying the implementation.
+
+     let's put the socket activation one first.
+***** socket activation
+      One benefit of easy fd passing has been socket activation,
+      blah blah speed up blah blah shared memory blah blah.
+
+
+     we can talk directly about passing down file descriptors
+     to perform socket activation for shared memory transports.
+
+     that would be a good detail.
+
+     oh and also the management interfaces I suppose,
+     socket activation of those too.
+
+     good performance thing
+***** fds as interface
+     how do the sims really fit in?
+     they are python programs,
+     which operate on file descriptors,
+     and which can be flexibly implemented "native" or efficiently by an external process,
+     with file descriptors serving as the interface.
+     on the other side,
+     a file descriptor can also be a native Unix domain or internet socket,
+     but can also be pointing to a client for some shared memory transport,
+     allowing such transports to be integrated efficiently along with everything else.
+     such file descriptor passing 
+     this is all thanks to a file descriptor based interface,
+     enabled by easy file descriptor inheritance.
+
+     This ease of fd passing has, in turn, allowed the file descriptor to be a key interface.
+     File descriptors can be used both by internal Python implementations,
+     or by external processes implemented with native code.
+
+     could we talk about performance here?
+     I guess we could find two things that implement the same thing,
+     and show the speed-up.
+
+     i guess i have the... nasdaq sim. that's the only one.
+
+     well, we can try it.
+
+     or the marketdata sims. yeah so those could be interesting to compare performance on,
+     except they're completely orthogonal,
+     so would be kind of pointless.
+**** complicated pipelines
+    we also create complicated pipelines for processes which directly speak to each other.
+    that's kind of an instance of socket activation.
+
+    we won't explicitly cite fd inheritance,
+    but we will talk about this after fd inheritance.
+
+    just, easier ability to make networks of processes.
+**** remote stuff
+    sure, we do use the remote hosts stuff.
+    can mention this as an aside.
+
+    we also use other features of rsyscall which are not covered in this paper,
+    such as the ability to operate on remote hosts through capabilities for remote processes,
+    and the ability to perform system calls in parallel across a pool of processes.
+
+    one aspect that we're using heavily,
+    but which hasn't been mentioned in this paper,
+    is remote operation.
+**** mention things I do in rsysapps?
+     hmm, that's not super proven;
+     I'm not sure it's useful.
+**** cpusets
+    we could talk about cpusets
+    but that could also be easily managed by traditional stuff?
+    well, not really! you'd need to wrap everything in taskset,
+    which is a hassle.
+    well, not too much of a hassle. it's just standard spawn-style.
+
+    could be worth it, at least i'll keep it in this list so I don't keep having the idea.
+
+     
