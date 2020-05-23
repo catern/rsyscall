@@ -1051,34 +1051,60 @@ Note also that the overhead of creating a new process inside a new namespace
 is around 15 milliseconds; subtantially greater than the overhead of \texttt{rsyscall}.
 \subsection{Usage in the real world}\label{realworld}
 At \twosigma we have used \texttt{rsyscall} and direct-style process creation
-as a component of an internal distributed system deployment library, written in Python.
-This library is in use in production,
+to implement an internal distributed system deployment library, written in Python,
+which we'll refer to here as Toplevel.
+Toplevel is in use in production,
 and is extensively used as part of testing and development.
+Toplevel consists of a collection of functions and modules
+for each component in our system,
+which start up components using direct-style process creation,
+all from a single Python parent process.
 
-Each service deployed by this library is started with custom code,
-written using direct-style process creation.
-This allows us to pass down file descriptors and initialize process attributes
-according to each program's needs;
-which in turn has let us make optimizations which previously required too much program-specific customization.
+One of the major benefits of direct-style process creation has been easy use of file descriptor inheritance.
+Our experience has been that with fork-style or spawn-style interfaces,
+all file descriptor logic must be centralized,
+whereas file descriptors in a new process can be built up over time using direct-style,
+simplifying the implementation.
+We've found that even programmers without substantial prior experience with Unix programming
+are able to use file descriptor passing as a normal feature of their development process with relative ease,
+writing code to support new programs and passing down file descriptors to those programs without issue.
 
-For example,
-we are able to bootstrap connections over our internal shared memory transports over passed-down file descriptors,
-and our management interfaces listen on passed-down sockets.
-This allows substantial parallelism in the startup of services.\cite{socketactivation}
-Taking one representative example,
-one test built with an old library took an average of 221 seconds to run,
-mostly spent in system startup time as processes started up serially.
-With parallelized system startup, the same test takes an average of 16 seconds.
+Easy file descriptor passing has, in turn, allowed us to heavily use socket activation techniques
+to start up services in parallel,
+substantially speeding up system startup.\cite{socketactivation}
+We are able to bootstrap connections over our internal shared memory transports
+over pre-created, passed-down file descriptors,
+and our management interfaces listen on passed-down sockets;
+this allows starting up services in parallel, rather than in dependency order.
+Benchmarking one test built with an old library and its equivalent built with Toplevel,
+the old test took an average of 221 seconds to run,
+mostly spent in system startup,
+while the new test takes an average of 16 seconds.
 
-We've found that programmers
-are able to use file descriptor passing as a normal feature of their development process with relative ease.
-Programmers without substantial prior experience with Unix programming
-are able to write code to support new services
-nd pass down file descriptors to the program without encountering significant issues.
+Easy file descriptor inheritance has also allowed us to treat file descriptors as a uniform interface in Toplevel.
+We pass around file descriptors freely inside Toplevel.
+A given component can implemented with a separate process which has the file descriptor passed down,
+running a program written in native code for performance,
+or implemented in-process with a Python implementation for flexibility;
+either is possible behind a uniform file descriptor interface.
 
-We also flexibly use namespaces where appropriate.
-For example, for legacy applications which directly start subprocesses,
+We've also been able to create complicated pipelines in Toplevel,
+as in section \ref{pipe}.
+
+We've also made use of namespaces,
+chiefly user namespaces and pid namespaces.
+For legacy applications which directly start subprocesses,
 we prevent process leaking with a pid namespace.
+This is part of strategy of noninterference and cleanup
+that ensures that multiple users of Toplevel
+can coexist simultaneously on the same host,
+even if running the same system.
+
+Toplevel also makes uses of other features of \texttt{rsyscall} which are not covered in this paper.
+These include the ability to operate on remote hosts through capabilities for remote processes,
+and the ability to perform system calls in parallel across a pool of processes.
+These have significant synergy with direct-style process creation
+in forming an overall powerful system.
 
 All this has allowed us to run our systems in a much more dynamic way than before.
 We can freely start up arbitrary subsets of our systems on-demand,

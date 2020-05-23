@@ -1616,6 +1616,21 @@ and integration with applications that you can talk about in detail
     the API didn't fundamentally change - although, we did get more able to do fd passing, for sure.
     let's look at the diffs since the rsyscall conversion?
     shrug, not much there. hm.
+**** naming
+     how do we name it?
+     "integration" doesn't make sense as a name.
+     Bloc is a synonym.
+
+     We'll refer to this library as Integration.
+     In Integration.
+     ummm.
+
+     I like names which are clearly defined.
+     integration is a stupid enterprisey name
+
+     i'd really call it something like Toplevel or Main.
+
+     yes okay, Toplevel.
 **** file descriptor inheritance
      we should center this,
      and talk about socket activation as a consequence.
