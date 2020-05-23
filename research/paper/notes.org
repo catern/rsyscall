@@ -1522,6 +1522,17 @@ of the intro, you want them to be convinced to accept the paper
       let's talk about it.
 
       ok yeah that's fine.
+**** hmm
+     maybe I should just skip a lot of the direct-style section,
+     and just describe the benefits as they relate to rsyscall?
+     that sounds like a good idea, yeah. boom boom boom.
+     allows me to stop repeating myself, that's for sure.
+
+     i guess the evaluation could repeat a little of it.
+
+     need a short break
+
+     ok let's first try and boil this paragraph down.
 *** evaluation
 I do think the evaluation is a little slim
 11:09

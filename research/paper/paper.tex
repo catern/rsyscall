@@ -59,7 +59,7 @@ Our implementation is immediately deployable without kernel modifications on any
 % BEGIN RECEIVE ORGTBL compare
  & fork & spawn & direct-style\\
 \hline
-Requirements on parent process & \tbad Single-threaded, small memory & \tgood None & \tgood None\\
+Parent process requirements & \tbad Single thread, small memory & \tgood None & \tgood None\\
 Programming model & \tbad Complex (returns twice) & \tgood Simple (single call) & \tgood Simple (imperative)\\
 Maximally powerful & \tgood Yes, can call any syscall & \tbad No, limited interface & \tgood Yes, can call any syscall\\
 Reporting of results & \tbad Requires IPC & \tbad Not fine-grained & \tgood From individual child syscalls\\
@@ -71,20 +71,20 @@ Non-inherited attributes & Mutated by code in child & Set by arguments & Mutated
 \end{table*}
 \begin{comment}
 #+ORGTBL: SEND compare orgtbl-to-latex :splice t
-|                                | fork                                | spawn                       | direct-style                          |
-|--------------------------------+-------------------------------------+-----------------------------+---------------------------------------|
-| Requirements on parent process | \tbad Single-threaded, small memory | \tgood None                 | \tgood None                           |
-| Programming model              | \tbad Complex (returns twice)       | \tgood Simple (single call) | \tgood Simple (imperative)            |
-| Maximally powerful             | \tgood Yes, can call any syscall    | \tbad No, limited interface | \tgood Yes, can call any syscall      |
-| Reporting of results           | \tbad Requires IPC                  | \tbad Not fine-grained      | \tgood From individual child syscalls |
-| Non-inherited attributes       | Mutated by code in child            | Set by arguments            | Mutated by code in parent             |
+|                             | fork                              | spawn                       | direct-style                          |
+|-----------------------------+-----------------------------------+-----------------------------+---------------------------------------|
+| Parent process requirements | \tbad Single thread, small memory | \tgood None                 | \tgood None                           |
+| Programming model           | \tbad Complex (returns twice)     | \tgood Simple (single call) | \tgood Simple (imperative)            |
+| Maximally powerful          | \tgood Yes, can call any syscall  | \tbad No, limited interface | \tgood Yes, can call any syscall      |
+| Reporting of results        | \tbad Requires IPC                | \tbad Not fine-grained      | \tgood From individual child syscalls |
+| Non-inherited attributes    | Mutated by code in child          | Set by arguments            | Mutated by code in parent             |
 % $
 \end{comment}
 The most well-known process creation interface on Linux, and Unix in general, is \texttt{fork}.
 When a parent process creates a child process through \texttt{fork},
-or other similar fork-style interface,
+or other similar fork-style interfaces,
 both processes execute concurrently,
-and the child process typically inherits all but a few attributes from the parent process.\cite{tlpi}
+and the child process typically inherits all but a few attributes from the parent process.\cite{manfork}
 The child process can call arbitrary system calls
 to mutate the new process until it reaches the desired state,
 typically ultimately calling \texttt{exec}.
@@ -117,7 +117,7 @@ Unlike \texttt{fork}, a spawn-style interface provides an API for process creati
 which is independent from existing system calls.\cite{spawn_h}\cite{subprocess_run}
 Spawn-style interfaces therefore often lack support for some features,
 and they also require learning a new interface distinct from the normal system call API,
-both of which encourage systems programmers to avoid them.\cite{tlpi}\cite{posix_spawn_lwn}
+both of which encourage programmers to avoid them.\cite{tlpi}\cite{posix_spawn_lwn}
 Also, spawn-style interfaces, by their nature as a single call,
 don't allow programs to branch on the results of individual modifications to the new process,
 and have complex, or substantially less information, error reporting for such modifications.
@@ -131,14 +131,14 @@ use another style of process creation.\cite{keykos}\cite{sel4}\cite{exokernel}\c
 We use the new term "direct-style" to refer to this,
 since we know of no pre-existing generic term for this style of process creation.
 
-Direct-style is more rarely seen, but gives a number of advantages.
-Direct-style involves creating a new child process in a non-running state,
-and then calling individual system calls from the parent to initialize the child.
-Direct-style does not constrain the calling process,
-easily branches at any step of the initialization,
-and can create any kind of process supported by the underlying system.
-
-We'll discuss each style in more detail in section \ref{background}.
+In direct-style, a process is created by its parent in a non-running state,
+then supplied with various resources,
+and then started running once it is fully set up.
+In operating systems with true direct-style process creation,
+the syscalls that can mutate a process
+take explicit arguments to indicate the process on which they should operate.\cite{keykos}\cite{sel4}
+In this way, the same syscalls that can mutate a process while it is running
+are called by the parent process to mutate the process while it is being set up.
 
 To perform direct-style process creation on Linux,
 we need an API where we explicitly specify in which process we want to make a syscall.
@@ -179,6 +179,10 @@ After that, the process is no longer under our control, and it functions like an
 The child process can be monitored using normal Linux child monitoring syscalls,
 such as \texttt{waitid}.
 
+Like a spawn-style interface,
+we can call \texttt{clone} through \texttt{rsyscall} from any parent process
+without concerns about memory usage or multi-threading.
+
 These child process capabilities are created and managed in userspace,
 by launching new processes running a syscall server,
 which receives syscall requests, performs the syscall, and returns the response.
@@ -202,11 +206,14 @@ and later use of this child process capability will fail with an exception.
 
 The behavior of system calls made on a remote process through \texttt{rsyscall}
 is identical to the behavior of system calls made implicitly on the current process through libc.
-This is an API that systems programmers are already familiar with,
-and which is already thoroughly documented through Linux system call manpages.
 The novelty is constrained to the newly explicit process capabilities.
-Besides flattening the learning curve,
-this also ensures that direct-style \texttt{clone} will always be at least as powerful as \texttt{fork}.
+This ensures that direct-style \texttt{clone} will always be at least as powerful as \texttt{fork}.
+Furthermore, this is an API that systems programmers are already familiar with,
+and which is thoroughly documented.\cite{manpages}\cite{tlpi}
+
+User code can easily branch on the results of system calls,
+and errors are reported in the same as any other system call called by Python:
+An exception thrown at the point of the call.
 
 We show more examples of direct-style process creation in section \ref{examples},
 including use of process features which are difficult to use on Linux with \texttt{fork} or \texttt{posix\_spawn}.
@@ -218,126 +225,6 @@ is comparable to the performance cost of creating processes while inside a Linux
 At \twosigma, we have deployed direct-style process creation in production
 inside a library for distributed system deployment, Toplevel.
 We evaluate in further detail in section \ref{evaluation}.
-\section{Background on process-creation}\label{background}
-As mentioned in the introduction,
-on most operating systems today,
-the available interfaces for process creation
-are either "fork-style" or "spawn-style".
-A few operating systems have a third style, which we refer to as "direct-style".
-
-\subsection{Fork-style}
-By far the most well-known fork-style interface is Unix's fork.\cite{forkhist}
-When a parent process creates a child process by fork,
-both processes execute concurrently,
-and the child process typically inherits all but a few attributes from the parent process.\cite{tlpi}
-The child process can call arbitrary system calls
-to mutate the new process until it reaches the desired state,
-typically ultimately calling \texttt{exec}.
-
-Since the child process runs concurrently with the parent process,
-communicating events in the child back to the parent requires some form of IPC,
-complicating process creation.\cite{posix_spawn_error_pipe}
-Even the basic interface of fork - one function call which returns twice - is unusual;
-such functions are generally considered to be complex, advanced topics in other settings.
-\cite{callcc_fork}\cite{continuations}\cite{bashcc}
-
-A user of fork must think carefully about the characteristics of the process from which fork is being called.
-Fork can have poor performance when called from processes with many memory mappings.\cite{forkroad}
-This can be mitigated to some degree, but inflicts further complexity on the caller.\cite{vfork}\cite{vfork_dangerous}
-Multi-threaded programs generally cannot use fork safely.\cite{forkroad}\cite{tlpi}
-Some thread libraries provide partial mitigations for multi-threading issues,
-but it's up to user code to make use of those mitigations.\cite{pthread_atfork}
-\subsection{Spawn-style}
-In a spawn-style interface,
-details about the new process are provided up-front as arguments to some function
-which creates the new process all at once.
-Other details, such as security context, are inherited from the parent process.\cite{tlpi}\cite{create_process}
-The most well known spawn-style interfaces are Unix's \texttt{posix\_spawn}
-and Windows \texttt{CreateProcess};
-the Unix shell also serves as a spawn-style process creation interface,
-especially when used with Bernstein chaining.\cite{posix_spawn}\cite{create_process}\cite{chainloading}
-
-Spawn-style APIs
-can be called from any parent process without concerns about memory usage or multi-threading,
-when used correctly.
-\cite{forkroad}\cite{posix_spawn_error_pipe}
-
-Unlike \texttt{fork}, a spawn-style interface provides an API for process creation
-which is independent from existing system calls.\cite{spawn_h}\cite{subprocess_run}
-Spawn-style interfaces therefore often lack support for some features,
-and they also require learning a new interface distinct from the normal system call API,
-both of which encourage systems programmers to avoid them.\cite{tlpi}\cite{posix_spawn_lwn}
-
-Spawn-style interfaces, by their nature as a single call,
-don't allow programs to branch on the results of individual modifications to the new process,
-and have complex, or substantially less information, error reporting for such modifications.
-\cite{posix_spawn}\cite{posix_spawn_error_pipe}
-This further reduces the power of spawn-style interfaces.
-\subsection{Direct-style}
-A few academic operating systems, such as KeyKOS \cite{keykos}, seL4 \cite{sel4}
-and some others \cite{exokernel} \cite{fuschia} \cite{singularity},
-use another style of process creation.
-We use the new term "direct-style" to refer to this,
-since we know of no pre-existing concise and generic term for this style of process creation.
-
-In direct-style, a process is created by its parent in a non-running state,
-then supplied with various resources,
-and then started running once it is fully set up.
-In operating systems with true direct-style process creation,
-the syscalls that can mutate a process
-take explicit arguments to indicate the process on which they should operate.
-In this way, the same syscalls that can mutate a process while it is running
-are called by the parent process to mutate the process while it is being set up.
-
-We refer to this as "direct-style" process creation,
-because the parent creating the process operates on it directly and imperatively
-rather than dispatching a distinct unit of code to perform setup from inside the context of the new process,
-as in fork-style,
-or building up a declarative specification of what the new process should look like ahead of time,
-as in spawn-style.
-
-Since everything happens directly from the parent process,
-direct-style process creation is compatible with a variety of techniques
-which are difficult with fork-style or spawn-style.
-For example, a REPL could be used to interactively create the new process,
-or a program might initialize several processes at once and share data between them.
-
-Significantly,
-since all operations are performed through syscalls called directly from the main program,
-errors are indicated in the same way as any other syscall error.
-This is unlike fork-style, which needs IPC to indicate errors,
-and unlike spawn-style, which typically indicates errors at a very coarse-grained level.
-
-Like fork-style interfaces,
-direct-style interfaces can set up arbitrary attributes in the new process.
-Any attribute that can be changed by a syscall
-can be manipulated by a direct-style interface,
-just as with fork-style interfaces.
-This is unlike spawn-style interaces,
-which only can change attributes that are supported by the interface.
-
-Like spawn-style interfaces,
-direct-style interfaces have no constraints on the calling process.
-Also like spawn-style interface,
-no user code runs in the child process, so
-direct-style interfaces can be used from multi-threaded or large-memory processes without issues.
-
-Direct-style can be more complex to use;
-it is most typically used in capability-oriented operating systems,
-where a great deal of resources and information must be provided explicitly to initialize the new process.
-In a truly capability-oriented operating system,
-nothing is copied implicitly to the new process;
-everything must be explicitly specified.
-This can appear more complex
-when compared to process creation on Unix systems or Windows.
-
-However, we believe that a natural port of direct-style process creation to Linux
-provides an interface that is just as simple to use as fork-style or spawn-style on Linux,
-without their disadvantages.
-Such an interface, like fork-style and spawn-style,
-would implicitly copy some attributes to the new process,
-rather than being capability-oriented and requiring all attributes to be specified explicitly.
-This is the kind of direct-style interface that we contribute in this paper.
 \section{Examples}\label{examples}
 In this section,
 we'll demonstrate direct-style process creation
@@ -1073,7 +960,7 @@ Our work, though developed independently,
 is in many ways an elaboration on and implementation of that idea,
 to which we owe a great debt.
 
-As we discuss in section \ref{background},
+As we discuss in section \ref{introduction},
 many academic operating systems have direct-style process creation.
 We are not aware of any previous instances of direct-style process creation in a Unix-like environment.
 
