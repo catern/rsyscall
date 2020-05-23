@@ -1472,13 +1472,56 @@ of the intro, you want them to be convinced to accept the paper
      one paragraph is enough for each.
 
      now we just need more background.
+
+     maybe my whole background section is a bit superfluous.
+
+     we should replace it with citations.
+
+     let's go bit by bit and try, sure.
+     where we can, we can replace paragraphs!
 **** background section balance
      maybe the background section should be "state of the art"?
      or "analysis"?
      or "related work"?
+
+     aha let's forget about making pronouncements for all operating systems,
+     let's just talk about Linux.
 **** other thought
      why not C
      why not kernel
+**** let's argue that fork is complex by analogy to continuations
+     While this is familiar
+
+     issues with returning twice:
+     1. communication requires IPC.
+
+     is the main thing.
+
+     let's focus that then.
+     might want to link that posix_spawn implementation post.
+***** mention continuations?
+      returning twice is notoriously hard to deal with.
+
+      Fork's execution model is 
+
+      no, let's just skip it.
+      returning twice isn't super painful.
+
+      oh we do list it as a thing though
+
+      ok so we'll mention them separately.
+
+      well, let's just link something saying "concurrent programming is hard".
+      except, that will be about shared memory concurrency.
+
+      concurrent programming in general is 
+
+      maybe I should just omit it?
+
+      no,
+      let's talk about it.
+
+      ok yeah that's fine.
 *** evaluation
 I do think the evaluation is a little slim
 11:09

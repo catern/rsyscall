@@ -54,8 +54,6 @@ Our implementation is immediately deployable without kernel modifications on any
 \end{abstract}
 
 \section{Introduction}\label{introduction}
-Existing process creation interfaces can be divided into three categories:
-Fork-style, spawn-style, and direct-style.
 \begin{table*}
 \begin{tabular}{l|l|l|l}
 % BEGIN RECEIVE ORGTBL compare
@@ -82,19 +80,56 @@ Non-inherited attributes & Mutated by code in child & Set by arguments & Mutated
 | Non-inherited attributes       | Mutated by code in child            | Set by arguments            | Mutated by code in parent             |
 % $
 \end{comment}
-Table \ref{tab:styles} summarizes the differences between each style.
+The most well-known process creation interface on Linux, and Unix in general, is \texttt{fork}.
+When a parent process creates a child process through \texttt{fork},
+or other similar fork-style interface,
+both processes execute concurrently,
+and the child process typically inherits all but a few attributes from the parent process.\cite{tlpi}
+The child process can call arbitrary system calls
+to mutate the new process until it reaches the desired state,
+typically ultimately calling \texttt{exec}.
 
-Fork-style (such as \texttt{fork}) and spawn-style (such as \texttt{posix\_spawn}) are the most popular,
-but have a number of disadvantages.
-Correct, performant use of fork-style places significant constraints on the calling process,
-and also has a complex programming model.
-Spawn-style lifts many of these constraints, and is simpler to program against,
-but is fundamentally limited in the kinds of processes it can create.
-With both fork-style and spawn-style,
-it is difficult to
-branch based on results or errors encountered while initializing the new process:
-fork-style requires IPC if it wishes to communicate errors back to the rest of the program,
-and robust indication of errors in spawn-style requires substantial expansion of the spawn interface.
+A user of fork must think carefully about the characteristics of the process from which fork is being called.
+Fork can have poor performance when called from processes with many memory mappings.\cite{forkroad}
+This can be mitigated to some degree, but inflicts further complexity on the caller.\cite{vfork}\cite{vfork_dangerous}
+Multi-threaded programs generally cannot use fork safely.\cite{forkroad}\cite{tlpi}
+Some thread libraries provide partial mitigations for multi-threading issues,
+but it's up to user code to make use of those mitigations.\cite{pthread_atfork}
+
+Since the child process runs concurrently with the parent process,
+communicating events in the child back to the parent requires some form of IPC,
+complicating process creation.\cite{posix_spawn_error_pipe}
+Even the basic interface of fork - one function call which returns twice - is unusual;
+such functions are generally considered to be complex, advanced topics in other settings.
+\cite{callcc_fork}\cite{continuations}\cite{bashcc}
+
+In a spawn-style interface,
+details about the new process are provided up-front as arguments to some function
+which creates the new process all at once;
+\texttt{posix\_spawn} is a typical example of this style.\cite{posix_spawn}\cite{create_process}\cite{chainloading}
+Other details, such as security context, are inherited from the parent process.\cite{tlpi}\cite{create_process}
+Spawn-style APIs
+can be called from any parent process without concerns about memory usage or multi-threading,
+when used correctly.
+\cite{forkroad}\cite{posix_spawn_error_pipe}
+
+Unlike \texttt{fork}, a spawn-style interface provides an API for process creation
+which is independent from existing system calls.\cite{spawn_h}\cite{subprocess_run}
+Spawn-style interfaces therefore often lack support for some features,
+and they also require learning a new interface distinct from the normal system call API,
+both of which encourage systems programmers to avoid them.\cite{tlpi}\cite{posix_spawn_lwn}
+Also, spawn-style interfaces, by their nature as a single call,
+don't allow programs to branch on the results of individual modifications to the new process,
+and have complex, or substantially less information, error reporting for such modifications.
+\cite{posix_spawn}\cite{posix_spawn_error_pipe}
+
+Table \ref{tab:styles} summarizes the differences between fork-style and spawn-style.
+Each has its own advantages and disadvantages.
+
+A few academic operating systems - KeyKOS, seL4, and some others, for example -
+use another style of process creation.\cite{keykos}\cite{sel4}\cite{exokernel}\cite{fuschia}\cite{singularity}
+We use the new term "direct-style" to refer to this,
+since we know of no pre-existing generic term for this style of process creation.
 
 Direct-style is more rarely seen, but gives a number of advantages.
 Direct-style involves creating a new child process in a non-running state,
@@ -192,102 +227,52 @@ A few operating systems have a third style, which we refer to as "direct-style".
 
 \subsection{Fork-style}
 By far the most well-known fork-style interface is Unix's fork.\cite{forkhist}
-With a fork-style interface,
-a process, called the parent process, calls \texttt{fork},
-and a copy of that process is made,
-called the child process,
-differing only in a few attributes such as process id.
-The same program continues executing in both processes,
-with a different return value from fork to allow it to distinguish whether it is running in the parent or the child.
-Typically, the program will branch based on the return value
-and, if running in the child,
-call various system calls to modify the state of the new process.
+When a parent process creates a child process by fork,
+both processes execute concurrently,
+and the child process typically inherits all but a few attributes from the parent process.\cite{tlpi}
+The child process can call arbitrary system calls
+to mutate the new process until it reaches the desired state,
+typically ultimately calling \texttt{exec}.
 
-Fork has a number of flaws,
-and much ink has been spilled detailing them.
-We'll cover the most egregious briefly here,
-but see Baumann 2019 \cite{forkroad} for a more detailed evaluation.
+Since the child process runs concurrently with the parent process,
+communicating events in the child back to the parent requires some form of IPC,
+complicating process creation.\cite{posix_spawn_error_pipe}
+Even the basic interface of fork - one function call which returns twice - is unusual;
+such functions are generally considered to be complex, advanced topics in other settings.
+\cite{callcc_fork}\cite{continuations}\cite{bashcc}
 
-Fork, when called successfully, returns twice,
-creating two different processes which execute concurrently.
-This immediately makes fork difficult to integrate;
-for example, errors can't be easily communicated between the two processes.
-If there is an error in the initialization of the child process,
-the part of the program running in the child process
-needs to use some form of inter-process communication (IPC) to communicate it back to the parent process.
-The child process can run arbitrary code to make decisions about its initialization,
-but that code needs to use IPC if it wishes to communicate with the rest of the program,
-which is still in the parent process.
-
+A user of fork must think carefully about the characteristics of the process from which fork is being called.
 Fork can have poor performance when called from processes with many memory mappings.\cite{forkroad}
-Fork copies many attributes about the parent process when creating the child process,
-including setting up copy-on-write memory mappings in the child process.
-This becomes slower as the parent process has more memory mappings,
-eventually taking a significant amount of time.
-This copying is required to robustly implement fork's model,
-where the same program continues executing without changes in both the parent process and child process;
-the copy of the program running in the child process might access any memory at any time.
-
-Multi-threaded programs generally cannot use fork safely.
-Typical Unix fork implementations duplicate only the thread calling fork from the parent process to the child process.
-In a multi-threaded program, this can cause various issues;
-for example, another thread might be holding a memory allocator lock at the time of the fork,
-which in the child process will never be unlocked,
-causing the child process to deadlock if it tries to allocate memory.
-Some thread libraries provide partial mitigations for this issue,
+This can be mitigated to some degree, but inflicts further complexity on the caller.\cite{vfork}\cite{vfork_dangerous}
+Multi-threaded programs generally cannot use fork safely.\cite{forkroad}\cite{tlpi}
+Some thread libraries provide partial mitigations for multi-threading issues,
 but it's up to user code to make use of those mitigations.\cite{pthread_atfork}
-In combination with fork's poor performance in large-memory programs,
-a user of fork must think carefully
-about the characteristics of the process from which fork is being called.
 \subsection{Spawn-style}
 In a spawn-style interface,
 details about the new process are provided up-front as arguments to some function
 which creates the new process all at once.
-The most well known spawn-style interfaces are Unix's \texttt{posix\_spawn} \cite{posix_spawn}
-and Windows \texttt{CreateProcess} \cite{create_process};
+Other details, such as security context, are inherited from the parent process.\cite{tlpi}\cite{create_process}
+The most well known spawn-style interfaces are Unix's \texttt{posix\_spawn}
+and Windows \texttt{CreateProcess};
 the Unix shell also serves as a spawn-style process creation interface,
-especially when used with Bernstein chaining\cite{chainloading}.
+especially when used with Bernstein chaining.\cite{posix_spawn}\cite{create_process}\cite{chainloading}
 
-Spawn-style interfaces typically still transparently copy some details from the parent process;
-for example, various security contexts,
-and any other process attribute which is not explicitly specified in the arguments to the spawn interface.
-The key difference between fork-style and spawn-style is not how much they copy,
-it is how the attributes which are not copied are specified:
-by mutation from code running in the new process in the case of fork-style,
-or by explicit argument passing in the case of spawn-style.
+Spawn-style APIs
+can be called from any parent process without concerns about memory usage or multi-threading,
+when used correctly.
+\cite{forkroad}\cite{posix_spawn_error_pipe}
 
-Spawn-style interfaces lift the constraints on the calling process that fork-style interfaces impose.
-Spawn-style interfaces don't run user code in the new process during initialization.
-This means there is no need to copy memory,
-so performance is good when a spawn-style interface is used from a process with many memory mappings.
-Likewise, there are no inherent issues when a spawn-style interface is used from a multi-threaded program,
-though operating systems, such as Linux,
-which implement spawn-style interfaces on top of \texttt{fork} can still have threading bugs.
+Unlike \texttt{fork}, a spawn-style interface provides an API for process creation
+which is independent from existing system calls.\cite{spawn_h}\cite{subprocess_run}
+Spawn-style interfaces therefore often lack support for some features,
+and they also require learning a new interface distinct from the normal system call API,
+both of which encourage systems programmers to avoid them.\cite{tlpi}\cite{posix_spawn_lwn}
 
-The arguments that can be provided to a spawn-style process creation syscall
-do not cover all the possible attributes that one might want to set for the new process.
-Most systems have a large number of syscalls which can mutate the state of a process during its lifetime;
-for a spawn-style interface to work in all scenarios,
-all those possible mutations must be reproduced in the interface.
-For example, the \texttt{posix\_spawn} function provided by glibc does not support creating processes in new namespaces,
-as is required for container functionality on Linux.
-
-Spawn-style process creation
-essentially creates a new domain-specific language for specifying the attributes of the process.
-Fork-style allows existing system calls,
-with which programmers are already familiar,
-to be used to set up the new process.
-Spawn-style requires some form of declarative description of the new process,
-which must be learned in addition to the normal system call interface.
-
-Spawn-style process creation also does not allow for conditional logic during the setup.
-If the setup of the new process encounters an error at some point,
-the only option is to return from the entire spawn call with an error.
-Such errors returned from spawn-style calls
-are typically much less informative
-than the errors returned by the syscalls which directly mutate the process attributes.
-Other forms of conditional logic are also impossible in spawn-style;
-one modification to the process cannot depend on the result of some other modification.
+Spawn-style interfaces, by their nature as a single call,
+don't allow programs to branch on the results of individual modifications to the new process,
+and have complex, or substantially less information, error reporting for such modifications.
+\cite{posix_spawn}\cite{posix_spawn_error_pipe}
+This further reduces the power of spawn-style interfaces.
 \subsection{Direct-style}
 A few academic operating systems, such as KeyKOS \cite{keykos}, seL4 \cite{sel4}
 and some others \cite{exokernel} \cite{fuschia} \cite{singularity},
