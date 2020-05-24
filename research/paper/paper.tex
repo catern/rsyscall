@@ -29,6 +29,14 @@
 \titleformat*{\subsubsection}{\normalsize\bfseries}
 \titlespacing{\subsection}{0pt}{1ex}{0.5ex}
 \titlespacing{\subsubsection}{0pt}{0.5ex}{0ex}
+\lstset{
+language=Python,
+basicstyle=\small\ttfamily,
+frame=tb,
+columns=fullflexible,
+showstringspaces=false,
+belowskip=0pt,
+}
 
 \begin{document}
 \newcommand{\twosigma}{[tech company]} 
@@ -48,7 +56,7 @@ which allows a program to create a child process in an non-running state
 and initialize the new process by operating on it from the outside.
 This method of process creation results in more comprehensible programs, 
 has better error handling,
-is more efficient,
+is comparably efficient,
 and is more amenable to abstraction.
 Our implementation is immediately deployable without kernel modifications on any recent Linux kernel version.
 \end{abstract}
@@ -81,8 +89,7 @@ Non-inherited attributes & Mutated by code in child & Set by arguments & Mutated
 % $
 \end{comment}
 The most well-known process creation interface on Linux, and Unix in general, is \texttt{fork}.
-When a parent process creates a child process through \texttt{fork},
-or other similar fork-style interfaces,
+When a parent process creates a child process through \texttt{fork} or other fork-style interfaces,
 both processes execute concurrently,
 and the child process typically inherits all but a few attributes from the parent process.\cite{manfork}
 The child process can call arbitrary system calls
@@ -92,13 +99,14 @@ typically ultimately calling \texttt{exec}.
 A user of fork must think carefully about the characteristics of the process from which fork is being called.
 Fork can have poor performance when called from processes with many memory mappings.\cite{forkroad}
 This can be mitigated to some degree, but inflicts further complexity on the caller.\cite{vfork}\cite{vfork_dangerous}
-Multi-threaded programs generally cannot use fork safely.\cite{forkroad}\cite{tlpi}
+Processes which are multi-threaded can encounter deadlocks and other issues if they call fork.
+\cite{forkroad}\cite{tlpi}\cite{posix_spawn_error_pipe}
 Some thread libraries provide partial mitigations for multi-threading issues,
 but it's up to user code to make use of those mitigations.\cite{pthread_atfork}
 
 Since the child process runs concurrently with the parent process,
 communicating events in the child back to the parent requires some form of IPC,
-complicating process creation.\cite{posix_spawn_error_pipe}
+adding complexity.\cite{posix_spawn_error_pipe}
 Even the basic interface of fork - one function call which returns twice - is unusual;
 such functions are generally considered to be complex, advanced topics in other settings.
 \cite{callcc_fork}\cite{continuations}\cite{bashcc}
@@ -116,11 +124,10 @@ when used correctly.
 Unlike \texttt{fork}, a spawn-style interface provides an API for process creation
 which is independent from existing system calls.\cite{spawn_h}\cite{subprocess_run}
 Spawn-style interfaces therefore often lack support for some features,
-and they also require learning a new interface distinct from the normal system call API,
-both of which encourage programmers to avoid them.\cite{tlpi}\cite{posix_spawn_lwn}
+and they also require learning a new interface distinct from the normal system call API.\cite{tlpi}\cite{posix_spawn_lwn}
 Also, spawn-style interfaces, by their nature as a single call,
 don't allow programs to branch on the results of individual modifications to the new process,
-and have complex, or substantially less information, error reporting for such modifications.
+and have worse error reporting for such modifications.
 \cite{posix_spawn}\cite{posix_spawn_error_pipe}
 
 Table \ref{tab:styles} summarizes the differences between fork-style and spawn-style.
@@ -145,19 +152,19 @@ we need an API where we explicitly specify in which process we want to make a sy
 This differs from the normal mode of operation on Linux,
 where programs making syscalls implicitly operate on the current process.
 
-Our contribution in this paper is this API, through the \texttt{rsyscall} library.
-The \texttt{rsyscall} project develops
-language-specific, object-capability-model, low-abstraction libraries for the Linux syscall interface,
-bypassing libc.
-\texttt{rsyscall} is currently focused on supporting Python,
-but can be ported to other languages;
-the examples we show in this paper will be in Python,
-but generalize easily to other languages.
+Our contribution in this paper is such an API, in the form of the \texttt{rsyscall} library.
+\texttt{rsyscall} is a
+language-specific, object-capability-model, low-abstraction library for the Linux system call interface,
+bypassing libc.\cite{capmyths}
+The \texttt{rsyscall} project is currently focused on supporting Python,
+but the library can be ported to other languages.
+The examples we show in this paper will be in Python,
+but generalize easily.
 \texttt{rsyscall} is open source and available from
 [Github url].
 
-Unlike POSIX C libraries such as glibc or musl,
-an \texttt{rsyscall} library is organized based on the object-capability model.
+Unlike typical C libraries such as glibc or musl,
+the \texttt{rsyscall} library is organized based on the object-capability model.\cite{capmyths}
 The capabilities to make syscalls in any given process are reified as language objects.
 If the capability to make syscalls in a specific process is not passed (in some way) to a function,
 then that function cannot make syscalls in that process.
@@ -169,74 +176,67 @@ and capabilities to child processes.
 The ``local'' process is the one which hosts the runtime for the running program,
 and in which a legacy libc would implicitly make syscalls.
 Every \texttt{rsyscall} program starts with the ``local'' process
-and uses it to bootstrap the initial capabilities for other processes.
+and uses it to bootstrap capabilities for other processes.
 
-To perform direct-style process creation,
-we use \texttt{rsyscall} to call \texttt{clone} on the ``local'' process to create a new child process.
-We call various syscalls in the child process to mutate it until it reaches the desired state,
-at which point we can call \texttt{exec} in the child process to start it running on its own.
-After that, the process is no longer under our control, and it functions like any other child process.
-The child process can be monitored using normal Linux child monitoring syscalls,
+\lstinputlisting[float,language=Python,label={basic},caption={Create new process, change CWD, and exec}]
+{examples/basic/direct.py}
+Listing \ref{basic} shows a Python program using \texttt{rsyscall}.
+We create a new child process using direct-style \texttt{clone} in the local process \verb|local|.
+Here, \texttt{local.clone()} does not create another task running the same user program,
+as with the usual \texttt{clone} system call,
+but instead returns a capability through which we can control the new child process.
+We can then call various syscalls in the child process to mutate it until it reachs the desired state.
+In this example,
+we call \texttt{chdir} in the child process to change its working directory,
+then call \texttt{execv} in the child to execute a new executable.
+Calling \texttt{execv} consumes the capability,
+releasing the process from our control;
+later use of this child process capability will fail with an exception.
+The child process can now be monitored using normal Linux child monitoring syscalls,
 such as \texttt{waitid}.
-
-Like a spawn-style interface,
-we can call \texttt{clone} through \texttt{rsyscall} from any parent process
-without concerns about memory usage or multi-threading.
 
 These child process capabilities are created and managed in userspace,
 by launching new processes running a syscall server,
 which receives syscall requests, performs the syscall, and returns the response.
-No kernel modifications are required, and \texttt{rsyscall} is immediately deployable on recent Linux kernel.
+No kernel modifications are required, and \texttt{rsyscall} is immediately deployable on recent Linux kernels.
 We discuss the implementation in depth in section \ref{implementation},
-and examine several difficult process-creation related details.
+and examine several difficult process-creation details.
 
-\lstinputlisting[float=h,language=Python,label={basic},caption={Create new process, change CWD, and exec}]
-{examples/basic/direct.py}
-Listing \ref{basic} shows a program using \texttt{rsyscall}.
-We create a new child process using \texttt{clone} on the local process \verb|local|,
-and receive back a capability to control it.
-We call \texttt{chdir} in the child process to change its working directory to \texttt{/dev}.
-Then we call \texttt{execv} in the child,
-passing the path of the \texttt{cat} executable
-and the arguments to the new executable.
-The name of the executable is passed as the first argument,
-as is typical in Unix.
-Calling \texttt{execv} consumes the capability,
-and later use of this child process capability will fail with an exception.
+System calls called in a child process through \texttt{rsyscall}
+behave identically to system calls called implicitly in the current process through libc.
+A system call returning an error is reported in the standard way for system calls in Python:
+An exception is thrown at the point of the call.
+User code can branch as normal on the results of system calls,
+and implement fallbacks or other error handling logic.
 
-The behavior of system calls made on a remote process through \texttt{rsyscall}
-is identical to the behavior of system calls made implicitly on the current process through libc.
-The novelty is constrained to the newly explicit process capabilities.
-This ensures that direct-style \texttt{clone} will always be at least as powerful as \texttt{fork}.
-Furthermore, this is an API that systems programmers are already familiar with,
-and which is thoroughly documented.\cite{manpages}\cite{tlpi}
-
-User code can easily branch on the results of system calls,
-and errors are reported in the same as any other system call called by Python:
-An exception thrown at the point of the call.
-
-We show more examples of direct-style process creation in section \ref{examples},
-including use of process features which are difficult to use on Linux with \texttt{fork} or \texttt{posix\_spawn}.
+Since we can call any syscall,
+we can access any feature available in Linux; we are therefore at least as powerful as \texttt{fork}.
+As we'll show in section \ref{examples},
+we can in fact use Linux features in ways that are impractical with the usual fork-style or spawn-style interfaces.
 
 Direct-style \texttt{clone} has acceptable performance cost,
 and can outperform \texttt{fork} in some cases.
+Like a spawn-style interface,
+we can call \texttt{clone}
+without worse performance in the presence of large memory usage,
+and without the possibility of bugs in the presence of multi-threading.
 The performance overhead of creating processes with direct-style clone
 is comparable to the performance cost of creating processes while inside a Linux namespace.
-At \twosigma, we have deployed direct-style process creation in production
-inside a library for distributed system deployment, Toplevel.
+At \twosigma, we have deployed direct-style process creation
+as part of a library for distributed system deployment, used in production.
 We evaluate in further detail in section \ref{evaluation}.
 \section{Examples}\label{examples}
 In this section,
 we'll demonstrate direct-style process creation
-by demonstrating several advanced uses of processes
+with several advanced uses of processes
 using more sophisticated Linux features.
-For concision, we assume in these examples that we are running with sufficient permissions in these examples,
+For concision, we assume that we are running with sufficient privileges,
 but these examples can all be run without privileges with appropriate use of \verb|CLONE_NEWUSER|.
+\cite{user_namespaces}\cite{unpriv_fuse}
 
 These examples are not novel, as such, as they use only conventional Linux system calls;
 but implementing them with \texttt{fork} or \verb|posix_spawn| requires substantially more code,
-or even a complete change in implementation approach,
-as described in section \ref{shared_fd_table}.
+or even a complete change in implementation approach as in section \ref{shared_fd_table}.
 We'll compare our direct-style implementations in this section
 to fork-style implementations
 in section \ref{evaluation}.
@@ -259,17 +259,17 @@ We'll discuss this important feature further in section \ref{fdtables}.
 
 % TODO need to clarify this more, this is v2, Larry didn't like v1 beyond first sentence
 Most resources in Linux are managed through file descriptors,
-so this feature allows the parent process to pass a variety of resources to the child process,
+so this allows the parent process to pass a variety of resources to the child process,
 such as files, network connections, pipes, or other resources.\cite{ucspi}
 Since the resource is created outside the child process and passed down as an opqaue file descriptor,
 the precise details and type of the resource are not available to the child.
 This is a form of abstraction,
-and we can know ``for free''\cite{theoremsforfree}
+and so we know ``for free''
 that the program running in the child process
 will not rely on the details of how the file descriptor was created,
-such as the filename that was opened or the hostname that was connected to.
+such as the filename that we opened or the hostname to which we connected.\cite{theoremsforfree}
 
-\lstinputlisting[float=*ht,language=Python,label={fds},caption={Passing down FDs}]
+\lstinputlisting[float,language=Python,label={fds},caption={Passing down FDs}]
 {examples/fds/direct.py}
 In Listing \ref{fds},
 we first open a file with read-write permission in the local process.
@@ -329,7 +329,7 @@ in ways that were not anticipated at development time
 by customizing the environment the process runs in.
 Other system calls such as \texttt{chroot} can also be used for this.
 
-\lstinputlisting[float=*ht,language=Python,label={mount},caption={Overriding absolute path using a mount namespace}]
+\lstinputlisting[float,language=Python,label={mount},caption={Overriding absolute path using a mount namespace}]
 {examples/mount/direct.py}
 One classic form of customization enabled by namespaces
 is overriding files at paths that were hardcoded into a program we can't change,
@@ -730,9 +730,9 @@ We evaluate the degree to which we meet this goal by answering the following que
   We compare implementations of similar functionality using both direct-style and fork-style in \ref{ease},
   and find substantial benefits for direct-style.
 \item
-  In Python, does our \texttt{rsyscall}-based direct-style process creation interface
-  have acceptable performance relative to the standard library's spawn-style \texttt{subprocess.run}?
-  We benchmark direct-style process creation against spawn-style in \ref{subprocess_bench},
+  Does our \texttt{rsyscall}-based direct-style process creation interface
+  have acceptable overhead relative to the alternatives?
+  We evaluate a number of microbenchmarks in \ref{subprocess_bench},
   and find an acceptable level of overhead.
 \item
   Does direct-style process creation perform well in the ``real world''?
@@ -784,34 +784,34 @@ The fork-style examples may break if there are multiple threads in the calling p
 and may be slow if the calling process has large amounts of memory mapped, as we'll see in section \ref{subprocess_bench}.
 The direct-style examples do not have these limitations.
 \subsection{Microbenchmark results}\label{subprocess_bench}
+\subsubsection{Basic process creation}
 \begin{figure}[h!]
 \centering
  \includegraphics[width=0.5\textwidth]{subprocess_bench}
  \caption{Python spawn-style vs direct-style performance under varying memory usage}
  \label{fig:subprocess_bench}
 \end{figure}
-In Python, does our \texttt{rsyscall}-based direct-style process creation interface
-have acceptable performance relative to the standard library's spawn-style \texttt{subprocess.run}?
-
-We first evaluate a simple process creation workload:
+We evaluate a simple process creation workload:
 create a child process, exec the \texttt{true} binary, and wait for it to exit.
-We implement this using both direct-style \texttt{clone}
-and the standard library's \texttt{subprocess.run}.
-We benchmark both implementations under CPython 3.7.7, on Linux 4.19.93,
-pinned to an isolated single core on an Intel i9-9900K CPU with 60GB of RAM.
+We implement this using Python \texttt{rsyscall} direct-style \texttt{clone},
+the Python standard library's \texttt{subprocess.run} (which is implemented primarily with \texttt{fork}),
+\texttt{fork} from C,
+and \texttt{posix\_spawn} from C.
+We run on CPython 3.7.7, glibc 2.30, Linux 4.19.93,
+pinned to an isolated single core on an Intel i9-9900K CPU at standard clock speed,
+with 60GB of RAM.
 We vary the amount of anonymous memory mapped in the parent process
 to demonstrate how each implementation scales with memory usage.
-The results are in Figure \ref{fig:subprocess_bench}.
+The results are summarized in figure \ref{fig:subprocess_bench}.
 
-The direct-style implementation stays around 2.2 milliseconds regardless of memory usage.
-\texttt{subprocess.run}, which is implemented with \texttt{fork},
-starts at 1.4 milliseconds,
-and then scales linearly with the amount of memory mapped, as expected,
-up to 48.5 milliseconds at 4 GBs of mapped memory.
-The cross-over point for this micro-benchmark is about 40 megabytes of memory mapped.
+Our true baseline for performance is the Python standard library's \texttt{subprocess.run};
+this takes an average of 1.4 milliseconds at low memory,
+while \texttt{rsyscall}'s \texttt{clone} takes an average of 2.2 milliseconds at any memory usage.
+As expected, the fork-based implementations scale poorly with memory usage,
+and the C implementations vastly outperform the Python implementations.
 
-We perform another microbenchmark to evaluate the overhead of modifying the child process.
-We simply call \texttt{getpid} from Python
+We perform another microbenchmark to evaluate the overhead of performing additional modifications of the child process.
+We call \texttt{getpid} from Python
 in both the child process and the parent process on the same benchmark setup.
 The average time per \texttt{getpid} call is
 3 microseconds when called in the parent process without going through \texttt{rsyscall},
@@ -819,8 +819,6 @@ and 561 miroseconds when called through \texttt{rsyscall} in the child process.
 The difference, 558 microseconds,
 is the amount of overhead incurred
 by performing our child process setup system calls through \texttt{rsyscall}.
-Through profiling, we've found that most of this per-syscall overhead is spent in Python,
-rather than waiting for syscall responses from the child task.
 
 These slowdowns in process creation and modification are substantial,
 but we found that this overhead is acceptable in practice.
@@ -841,15 +839,13 @@ As a result, though implementations in native code and in the kernel would likel
 we have chosen to not invest effort into optimizing process creation at this micro-level,
 to preserve implementation simplicity;
 such optimization is reserved for future work.
-
-\subsection{Microbenchmarks for nested processes}\label{clone_bench}
-\begin{figure}[h!]
+\subsection{Nested processes, \texttt{CLONE} flags}\label{clone_bench}
+\begin{figure}
 \centering
  \includegraphics[width=0.5\textwidth]{clone_bench}
- \caption{Time to create different processes, by variety of parent process}
+ \caption{Time to create different processes from \texttt{rsyscall}, by variety of parent process and child process}
  \label{fig:clone_bench}
 \end{figure}
-
 As demonstrated in sections \ref{pidns} and \ref{fuse},
 \texttt{rsyscall} supports nested operation.
 That is, we can spawn a child from one of our children;
@@ -863,9 +859,9 @@ a child (created with \texttt{clone()}),
 a grandchild (created with \texttt{clone().clone()}),
 or a child in a different namespace (created with \verb=clone(CLONE_NEWNS|CLONE_NEWPID)=).
 We've also specified different combinations of flags for the process being created in the benchmark.
-The results are in figure \ref{fig:clone_bench}.
 We don't include the Python standard library in these benchmarks
-as there's no way to specify \texttt{CLONE} flags in the Python stdlib.
+as there's no way to create nested child processes or specify \texttt{CLONE} flags in the Python standard library.
+The results are in figure \ref{fig:clone_bench}.
 
 Process creation in a child has a significant performance impact,
 primarily because of the overhead of performing syscalls in a child.
@@ -880,6 +876,7 @@ We perform the benchmark with no clone flags, and with the common clone flags
 \verb|CLONE_NEWNS| and \verb|CLONE_NEWPID|, first on their own and then together.
 This benchmark essentially measures the performance of the Linux namespaces system, not the work in this paper,
 but it is illustrative to compare it to the performance of \texttt{rsyscall}.
+
 Note that the cost of creating a new child process from a parent process that is already inside a namespace
 (the difference between the \texttt{clone()} and \texttt{clone(NS|PID)} parent processes)
 is around 2 milliseconds, comparable to the cost of running with \texttt{rsyscall}.
@@ -899,7 +896,7 @@ all from a single Python parent process.
 
 One of the major benefits of direct-style process creation has been easy use of file descriptor inheritance.
 Our experience has been that with fork-style or spawn-style interfaces,
-all file descriptor logic must be centralized,
+file descriptor logic must ultimately be centralized,
 whereas file descriptors in a new process can be built up over time using direct-style,
 simplifying the implementation.
 We've found that even programmers without substantial prior experience with Unix programming
@@ -913,20 +910,18 @@ We are able to bootstrap connections over our internal shared memory transports
 over pre-created, passed-down file descriptors,
 and our management interfaces listen on passed-down sockets;
 this allows starting up services in parallel, rather than in dependency order.
-Benchmarking one test built with an old library and its equivalent built with Toplevel,
-the old test took an average of 221 seconds to run,
+Benchmarking a representative example built with an old library
+and its equivalent built with Toplevel,
+the old example took an average of 221 seconds to run,
 mostly spent in system startup,
-while the new test takes an average of 16 seconds.
+while the new example takes an average of 16 seconds.
 
 Easy file descriptor inheritance has also allowed us to treat file descriptors as a uniform interface in Toplevel.
 We pass around file descriptors freely inside Toplevel.
-A given component can implemented with a separate process which has the file descriptor passed down,
+A given component can be implemented with a separate process which has the file descriptor passed down,
 running a program written in native code for performance,
 or implemented in-process with a Python implementation for flexibility;
 either is possible behind a uniform file descriptor interface.
-
-We've also been able to create complicated pipelines in Toplevel,
-as in section \ref{pipe}.
 
 We've also made use of namespaces,
 chiefly user namespaces and pid namespaces.
@@ -937,7 +932,8 @@ that ensures that multiple users of Toplevel
 can coexist simultaneously on the same host,
 even if running the same system.
 
-Toplevel also makes uses of other features of \texttt{rsyscall} which are not covered in this paper.
+Toplevel also makes uses of other features of \texttt{rsyscall} which are not covered in this paper,
+and will be covered in future work.
 These include the ability to operate on remote hosts through capabilities for remote processes,
 and the ability to perform system calls in parallel across a pool of processes.
 These have significant synergy with direct-style process creation
