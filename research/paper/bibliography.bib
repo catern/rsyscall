@@ -19,9 +19,15 @@ url = {https://www.microsoft.com/en-us/research/publication/a-fork-in-the-road/}
      note = {\url{https://pubs.opengroup.org/onlinepubs/9699919799/functions/posix_spawn.html}},
 }
 
+@MISC{spawn_h,
+     title = {spawn.h - spawn},
+     author = {The Open Group},
+     note = "\url{https://pubs.opengroup.org/onlinepubs/009695399/basedefs/spawn.h.html}",
+}
+
 @MISC{create_process,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {CreateProcessA function},
+     author = {Microsoft Corporation},
      note = "\url{https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa}",
 }
 
@@ -59,8 +65,8 @@ keywords = {minimality, seL4, IPC, formal verification, L4, virtualization, perf
 }
 
 @MISC{fuschia,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {zx\_process\_create},
+     author = {Google LLC},
      note = "\url{https://fuchsia.dev/fuchsia-src/reference/syscalls/process_create}",
 }
 
@@ -78,8 +84,9 @@ edition = {ACM SIGPLAN Workshop on Memory Systems Performance and Correctness},
 }
 
 @MISC{ucspi,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {UNIX Client-Server Program Interface},
+     author = {D. J. Bernstein},
+     year = 1996,
      note = "\url{https://cr.yp.to/proto/ucspi.txt}",
 }
 
@@ -92,16 +99,15 @@ edition = {ACM SIGPLAN Workshop on Memory Systems Performance and Correctness},
   pages={221-254}
 }
 
-@MISC{plan9ns,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://doc.cat-v.org/plan_9/4th_edition/papers/names}",
-}
-
-@MISC{rfork,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man.cat-v.org/plan_9/2/fork}",
+@article{plan9ns,
+  title={The use of name spaces in Plan 9},
+  author={Pike, Rob and Presotto, Dave and Thompson, Ken and Trickey, Howard and Winterbottom, Phil},
+  journal={ACM SIGOPS Operating Systems Review},
+  volume={27},
+  number={2},
+  pages={72--76},
+  year={1993},
+  publisher={ACM New York, NY, USA}
 }
 
 @inproceedings{flexsc,
@@ -163,21 +169,21 @@ isbn="978-3-540-69384-0"
 }
 
 @MISC{cloudabi,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {CloudABI: secure and testable software for UNIX},
+     author = {Nuxi},
      note = "\url{https://cloudabi.org/}",
 }
 
 @MISC{wasi,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {Standardizing WASI: A system interface to run WebAssembly outside the web},
+     author = {Lin Clark},
      note = "\url{https://hacks.mozilla.org/2019/03/standardizing-wasi-a-webassembly-system-interface/}",
 }
 
 @MISC{plash,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://www.cs.jhu.edu/~seaborn/plash/html/}",
+  title={PLASH: the principle of least authority shell, 2007},
+  author={Seaborn, Mark},
+  note = "\url{http://www.cs.jhu.edu/~seaborn/plash/html/}",
 }
 
 @inproceedings{popcorn,
@@ -196,15 +202,9 @@ isbn="978-3-540-69384-0"
   pages     = "323-356",
 }
 
-@MISC{pidfd,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man2/pidfd_open.2.html}",
-}
-
 @MISC{criu,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {Checkpoint/Restore In Userspace},
+     author = {CRIU Project},
      note = "\url{https://www.criu.org/Main_Page}",
 }
                   
@@ -233,93 +233,151 @@ year=2008,
 note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
 }
 
+
+@MISC{pidfd,
+     title = {Completing the pidfd API},
+     author = {Jonathan Corbet},
+     note = "\url{https://lwn.net/Articles/794707/}",
+}
+
 @MISC{pthread_atfork,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {pthread\_atfork(3)},
+     author = {man{-}pages},
      note = "\url{http://man7.org/linux/man-pages/man3/pthread_atfork.3.html}",
 }
 
+@MISC{signalfd,
+     title = {signalfd(2)},
+     author = {man{-}pages},
+     note = "\url{http://man7.org/linux/man-pages/man2/signalfd.2.html}",
+}
+
+@MISC{vfork,
+     title = {vfork(2)},
+     author = {man{-}pages},
+     note = "\url{http://man7.org/linux/man-pages/man2/vfork.2.html}",
+}
+
+@MISC{credentials,
+     title = {credentials(7)},
+     author = {man{-}pages},
+     note = "\url{http://man7.org/linux/man-pages/man7/credentials.7.html}",
+}
+
+@MISC{manfork,
+     title = {fork(2)},
+     author = {man{-}pages},
+     note = "\url{http://man7.org/linux/man-pages/man2/fork.2.html}",
+}
+
+@MISC{user_namespaces,
+     title = {Namespaces in operation, part 5: User namespaces},
+     author = {Michael Kerrisk},
+     note = "\url{https://lwn.net/Articles/532593/}",
+}
+
+@MISC{mount_namespaces,
+     title = {Mount namespaces and shared subtrees},
+     author = {Michael Kerrisk},
+     note = "\url{https://lwn.net/Articles/689856/}",
+}
+
+@MISC{pid_namespaces,
+     title = {Namespaces in operation, part 3: PID namespaces},
+     author = {Michael Kerrisk},
+     note = "\url{https://lwn.net/Articles/531419/}",
+}
+
+@MISC{mount,
+     title = {mount(2)},
+     author = {man{-}pages},
+     note = "\url{http://man7.org/linux/man-pages/man2/mount.2.html}",
+}
+
+@MISC{clone,
+     title = {clone(2)},
+     author = {man{-}pages},
+     note = "\url{http://man7.org/linux/man-pages/man2/clone.2.html}",
+}
+
+@MISC{execveat,
+     title = {execveat(2)},
+     author = {man{-}pages},
+     note = "\url{http://man7.org/linux/man-pages/man2/execveat.2.html}",
+}
+
+@MISC{seccomp,
+     title = {seccomp(2)},
+     author = {man{-}pages},
+     note = "\url{http://man7.org/linux/man-pages/man2/seccomp.2.html}",
+}
+
+@MISC{fuse,
+     title = {FUSE},
+     author = {Linux kernel development community},
+     note = "\url{https://www.kernel.org/doc/html/latest/filesystems/fuse.html}",
+}
+
+@MISC{ptrace,
+     title = {ptrace(2)},
+     author = {man{-}pages},
+     note = "\url{http://man7.org/linux/man-pages/man2/ptrace.2.html}",
+}
+
+@MISC{futex,
+     title = {A futex overview and update},
+     author = {Darren Hart},
+     note = "\url{https://lwn.net/Articles/360699/}",
+}
+
 @MISC{docker_pipe,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {Issue \#14221: Attach stdout of one container to stdin of another (pipe-like)},
+     author = {moby/moby},
      note = "\url{https://github.com/moby/moby/issues/14221}",
 }
 
 @MISC{freebsd_kqueue,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {kqueue, kevent},
+     author = {Jonathan Lemon},
      note = "\url{https://www.freebsd.org/cgi/man.cgi?kqueue}",
 }
 
-@MISC{signalfd,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man2/signalfd.2.html}",
-}
-
 @MISC{socketactivation,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {Socket Activation},
+     author = {Lennart Poettering},
      note = "\url{http://0pointer.de/blog/projects/socket-activation.html}",
 }
 
-@MISC{vfork,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man2/vfork.2.html}",
-}
-
 @MISC{vfork_dangerous,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {vfork considered dangerous},
+     author = {Rich Felker},
+     year = 2012,
      note = "\url{https://ewontfix.com/7/}",
 }
 
 @MISC{posix_spawn_error_pipe,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {Re: posix\_spawn() can expose the error pipe to the spawned process},
+     author = {Rich Felker},
+     year = 2019,                  
      note = "\url{https://www.openwall.com/lists/musl/2019/07/08/3}",
 }
 
 @MISC{continuations,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {Continuations by example: Exceptions, time-traveling search, generators, threads, and coroutines},
+     author = {Matt Might},
      note = "\url{http://matt.might.net/articles/programming-with-continuations--exceptions-backtracking-search-threads-generators-coroutines/}",
 }
 
 @MISC{callcc_fork,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {Continuations in C++ with fork},
+     author = {keegan},
+     year = 2012,
      note = "\url{http://mainisusuallyafunction.blogspot.com/2012/02/continuations-in-c-with-fork.html}",
 }
 
-@MISC{bashcc,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{https://github.com/catern/bashcc}",
-}
-
-@MISC{spawn_h,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{https://pubs.opengroup.org/onlinepubs/009695399/basedefs/spawn.h.html}",
-}
-
-@MISC{credentials,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man7/credentials.7.html}",
-}
-
-@MISC{posix_spawn_lwn,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{https://lwn.net/Articles/360556/}",
-}
-
 @MISC{manpages,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {The Linux man-pages project},
+     author = {man{-}pages},
      note = "\url{https://www.kernel.org/doc/man-pages/}",
 }
 
@@ -331,15 +389,9 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
 }
 
 @MISC{subprocess_run,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {subprocess — Subprocess management},
+     author = {Python Software Foundation},
      note = "\url{https://docs.python.org/3/library/subprocess.html}",
-}
-
-@MISC{manfork,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man2/fork.2.html}",
 }
 
 @techreport{capmyths,
@@ -350,15 +402,10 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
 }
 
 @MISC{unpriv_fuse,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {fuse: Allow fully unprivileged mounts},
+     author = {Eric W. Biederman},
+     year = 2018,
      note = "\url{https://patchwork.kernel.org/patch/10435567/}",
-}
-
-@MISC{user_namespaces,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man7/user_namespaces.7.html}",
 }
 
 @inproceedings{threads,
@@ -370,130 +417,82 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
   organization={San Diego, CA, USA}
 }
 
+@MISC{posix_spawn_lwn,
+     title = {Re: posix\_spawn is stupid as a system call},
+     author = {Helge Bahmann},
+     note = "\url{https://lwn.net/Articles/360556/}",
+}
+
 @MISC{lwn_namespaces,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {Namespaces in operation, part 1: namespaces overview},
+     author = {Kerrisk, Michael},
      note = "\url{https://lwn.net/Articles/531114/}",
 }
 
-@MISC{mount_namespaces,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man7/mount_namespaces.7.html}",
-}
-
-@MISC{mount,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man2/mount.2.html}",
-}
-
-@MISC{caternfork,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://catern.com/posts/fork.html}",
-}
-
 @MISC{lwn_checkpoint,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {Checkpoint/restart: it's complicated},
+     author = {Jonathan Corbet},
      note = "\url{https://lwn.net/Articles/414264/}",
 }
 
 @MISC{first_class_address_space,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {Introduce first class virtual address spaces},
+     author = {Till Smejkal},
      note = "\url{https://lwn.net/Articles/717069/}",
 }
 
-@MISC{clone,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man2/clone.2.html}",
-}
-
-@MISC{pid_namespaces,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man7/pid_namespaces.7.html}",
+@MISC{caternfork,
+     title = {The Unix process API is bad},
+     author = {catern},
+     note = "\url{http://catern.com/posts/fork.html}",
 }
 
 @MISC{tini,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {Tini - A tiny but valid init for containers},
+     author = {Thomas Orozco},
      note = "\url{https://github.com/krallin/tini}",
 }
 
 @MISC{dumb_init,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {dumb-init: A minimal init system for Linux containers},
+     author = {Yelp},
      note = "\url{https://github.com/Yelp/dumb-init}",
 }
 
-@MISC{execveat,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man2/execveat.2.html}",
-}
-
 @MISC{firejail,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{https://firejail.wordpress.com/}",
-}
-
-@MISC{seccomp,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man2/seccomp.2.html}",
-}
-
-@MISC{fuse,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man4/fuse.4.html}",
+     title = {firejail - Linux namespaces and seccomp-bpf sandbox},
+     author = {netblue30},
+     note = "\url{https://github.com/netblue30/firejail}",
 }
 
 @MISC{sshfs,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {sshfs - A network filesystem client to connect to SSH servers},
+     author = {libfuse},
      note = "\url{https://github.com/libfuse/sshfs}",
 }
 
 @MISC{encfs,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {EncFS: an Encrypted Filesystem for FUSE},
+     author = {Valient Gough},
      note = "\url{https://github.com/vgough/encfs}",
 }
 
 @MISC{mp3fs,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {mp3fs - FUSE-based transcoding filesystem from FLAC to MP3},
+     author = {K Henriksson},
      note = "\url{https://github.com/khenriks/mp3fs}",
 }
 
-@MISC{ptrace,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man2/ptrace.2.html}",
-}
-
-@MISC{futex,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{http://man7.org/linux/man-pages/man2/futex.2.html}",
-}
-
 @MISC{python_subprocess_errpipe,
-     title = {urltitle},
-     author = {urlauthor},
+     title = {\_posixsubprocess.c},
+     author = {Python Software Foundation},
      note = "\url{https://github.com/python/cpython/blob/v3.8.0/Modules/_posixsubprocess.c#L781}",
 }
 
 @MISC{io_uring,
-     title = {urltitle},
-     author = {urlauthor},
-     note = "\url{https://github.com/python/cpython/blob/v3.8.0/Modules/_posixsubprocess.c#L781}",
+     title = {The rapid growth of io\_uring},
+     author = {Jonathan Corbet},
+     note = "\url{https://lwn.net/Articles/810414/}",
 }
 
 @inproceedings {scone,

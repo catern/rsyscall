@@ -1541,6 +1541,8 @@ of the intro, you want them to be convinced to accept the paper
      we should really explicitly say why we didn't do a kernel implementation?
 
      eh no I think we sufficiently cover it.
+
+     ah ok yeah now we said it and that's good
 *** evaluation
 I do think the evaluation is a little slim
 11:09
