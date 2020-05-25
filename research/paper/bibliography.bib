@@ -14,15 +14,15 @@ url = {https://www.microsoft.com/en-us/research/publication/a-fork-in-the-road/}
 }
 
 @MISC{posix_spawn,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://pubs.opengroup.org/onlinepubs/9699919799/functions/posix_spawn.html}",
-     YEAR = "xxxx",
+     TITLE = {posix\_spawn, posix\_spawnp - spawn a process},
+     author = {The Open Group},
+     note = {\url{https://pubs.opengroup.org/onlinepubs/9699919799/functions/posix_spawn.html}},
 }
 
 @MISC{create_process,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa}",
 }
 
 @inproceedings{keykos,
@@ -59,9 +59,9 @@ keywords = {minimality, seL4, IPC, formal verification, L4, virtualization, perf
 }
 
 @MISC{fuschia,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://fuchsia.dev/fuchsia-src/reference/syscalls/process_create}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://fuchsia.dev/fuchsia-src/reference/syscalls/process_create}",
 }
 
 @InProceedings{singularity,
@@ -78,9 +78,9 @@ edition = {ACM SIGPLAN Workshop on Memory Systems Performance and Correctness},
 }
 
 @MISC{ucspi,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://cr.yp.to/proto/ucspi.txt}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://cr.yp.to/proto/ucspi.txt}",
 }
 
 @article{plan9,
@@ -93,15 +93,15 @@ edition = {ACM SIGPLAN Workshop on Memory Systems Performance and Correctness},
 }
 
 @MISC{plan9ns,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://doc.cat-v.org/plan_9/4th_edition/papers/names}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://doc.cat-v.org/plan_9/4th_edition/papers/names}",
 }
 
 @MISC{rfork,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man.cat-v.org/plan_9/2/fork}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man.cat-v.org/plan_9/2/fork}",
 }
 
 @inproceedings{flexsc,
@@ -163,21 +163,21 @@ isbn="978-3-540-69384-0"
 }
 
 @MISC{cloudabi,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://cloudabi.org/}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://cloudabi.org/}",
 }
 
 @MISC{wasi,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://hacks.mozilla.org/2019/03/standardizing-wasi-a-webassembly-system-interface/}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://hacks.mozilla.org/2019/03/standardizing-wasi-a-webassembly-system-interface/}",
 }
 
 @MISC{plash,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://www.cs.jhu.edu/~seaborn/plash/html/}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://www.cs.jhu.edu/~seaborn/plash/html/}",
 }
 
 @inproceedings{popcorn,
@@ -197,285 +197,331 @@ isbn="978-3-540-69384-0"
 }
 
 @MISC{pidfd,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man2/pidfd_open.2.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man2/pidfd_open.2.html}",
 }
 
 @MISC{criu,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://www.criu.org/Main_Page}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://www.criu.org/Main_Page}",
 }
                   
 @inproceedings{capsicum,
 author = {Watson, Robert N. M. and Anderson, Jonathan and Laurie, Ben and Kennaway, Kris},
 title = {Capsicum: Practical Capabilities for UNIX},
-year = {2010},
-isbn = {8887666655554},
+year = 2010,
+isbn = 8887666655554,
 publisher = {USENIX Association},
 address = {USA},
 booktitle = {Proceedings of the 19th USENIX Conference on Security},
-pages = {3},
-numpages = {1},
+pages = 3,
+numpages = 1,
 location = {Washington, DC},
 series = {USENIX Security’10}
 }
   
-@MISC{chainloading,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}",
-     YEAR = "xxxx",
+@inbook{chainloading,
+place={Boston},
+title={The Art of UNIX Programming: Security wrappers and Bernstein chaining},
+chapter=6,
+booktitle={The Art of UNIX Programming},
+publisher={Addison-Wesley},
+author={Raymond, Eric Steven},
+year=2008,
+note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
 }
 
 @MISC{pthread_atfork,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man3/pthread_atfork.3.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man3/pthread_atfork.3.html}",
 }
 
 @MISC{docker_pipe,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://github.com/moby/moby/issues/14221}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://github.com/moby/moby/issues/14221}",
 }
 
 @MISC{freebsd_kqueue,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://www.freebsd.org/cgi/man.cgi?kqueue}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://www.freebsd.org/cgi/man.cgi?kqueue}",
 }
 
 @MISC{signalfd,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man2/signalfd.2.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man2/signalfd.2.html}",
 }
 
 @MISC{socketactivation,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://0pointer.de/blog/projects/socket-activation.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://0pointer.de/blog/projects/socket-activation.html}",
 }
 
 @MISC{vfork,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man2/vfork.2.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man2/vfork.2.html}",
 }
 
 @MISC{vfork_dangerous,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://ewontfix.com/7/}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://ewontfix.com/7/}",
 }
 
 @MISC{posix_spawn_error_pipe,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://www.openwall.com/lists/musl/2019/07/08/3}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://www.openwall.com/lists/musl/2019/07/08/3}",
 }
 
 @MISC{continuations,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://matt.might.net/articles/programming-with-continuations--exceptions-backtracking-search-threads-generators-coroutines/}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://matt.might.net/articles/programming-with-continuations--exceptions-backtracking-search-threads-generators-coroutines/}",
 }
 
 @MISC{callcc_fork,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://mainisusuallyafunction.blogspot.com/2012/02/continuations-in-c-with-fork.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://mainisusuallyafunction.blogspot.com/2012/02/continuations-in-c-with-fork.html}",
 }
 
 @MISC{bashcc,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://github.com/catern/bashcc}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://github.com/catern/bashcc}",
 }
 
 @MISC{spawn_h,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://pubs.opengroup.org/onlinepubs/009695399/basedefs/spawn.h.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://pubs.opengroup.org/onlinepubs/009695399/basedefs/spawn.h.html}",
 }
 
 @MISC{credentials,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man7/credentials.7.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man7/credentials.7.html}",
 }
 
 @MISC{posix_spawn_lwn,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://lwn.net/Articles/360556/}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://lwn.net/Articles/360556/}",
 }
 
 @MISC{manpages,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://www.kernel.org/doc/man-pages/}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://www.kernel.org/doc/man-pages/}",
 }
 
-@MISC{tlpi,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://en.wikipedia.org/wiki/The_Linux_Programming_Interface}",
-     YEAR = "xxxx",
+@book{tlpi,
+  title={The Linux programming interface: a Linux and UNIX system programming handbook},
+  author={Kerrisk, Michael},
+  year={2010},
+  publisher={No Starch Press}
 }
 
 @MISC{subprocess_run,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://docs.python.org/3/library/subprocess.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://docs.python.org/3/library/subprocess.html}",
 }
 
 @MISC{manfork,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man2/fork.2.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man2/fork.2.html}",
 }
 
-@MISC{capmyths,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://srl.cs.jhu.edu/pubs/SRL2003-02.pdf}",
-     YEAR = "xxxx",
+@techreport{capmyths,
+  title={Capability myths demolished},
+  author={Miller, Mark S and Yee, Ka-Ping and Shapiro, Jonathan and others},
+  year=2003,
+  institution={Technical Report SRL2003-02, Johns Hopkins University Systems Research}
 }
 
 @MISC{unpriv_fuse,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://patchwork.kernel.org/patch/10435567/}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://patchwork.kernel.org/patch/10435567/}",
 }
 
 @MISC{user_namespaces,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man7/user_namespaces.7.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man7/user_namespaces.7.html}",
 }
 
-@MISC{threads,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://web.stanford.edu/~ouster/cgi-bin/papers/threads.pdf}",
-     YEAR = "xxxx",
+@inproceedings{threads,
+  title={Why threads are a bad idea (for most purposes)},
+  author={Ousterhout, John},
+  booktitle={Presentation given at the 1996 Usenix Annual Technical Conference},
+  volume={5},
+  year={1996},
+  organization={San Diego, CA, USA}
 }
 
 @MISC{lwn_namespaces,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://lwn.net/Articles/531114/}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://lwn.net/Articles/531114/}",
 }
 
 @MISC{mount_namespaces,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man7/mount_namespaces.7.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man7/mount_namespaces.7.html}",
 }
 
 @MISC{mount,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man2/mount.2.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man2/mount.2.html}",
 }
 
 @MISC{caternfork,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://catern.com/posts/fork.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://catern.com/posts/fork.html}",
 }
 
 @MISC{lwn_checkpoint,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://catern.com/posts/fork.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://lwn.net/Articles/414264/}",
 }
 
 @MISC{first_class_address_space,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://catern.com/posts/fork.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://lwn.net/Articles/717069/}",
 }
 
 @MISC{clone,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man2/clone.2.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man2/clone.2.html}",
 }
 
 @MISC{pid_namespaces,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man7/pid_namespaces.7.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man7/pid_namespaces.7.html}",
 }
 
 @MISC{tini,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://github.com/krallin/tini}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://github.com/krallin/tini}",
 }
 
 @MISC{dumb_init,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://github.com/Yelp/dumb-init}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://github.com/Yelp/dumb-init}",
 }
 
 @MISC{execveat,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man2/execveat.2.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man2/execveat.2.html}",
 }
 
 @MISC{firejail,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://firejail.wordpress.com/}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://firejail.wordpress.com/}",
 }
 
 @MISC{seccomp,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man2/seccomp.2.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man2/seccomp.2.html}",
 }
 
 @MISC{fuse,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man4/fuse.4.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man4/fuse.4.html}",
 }
 
 @MISC{sshfs,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://github.com/libfuse/sshfs}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://github.com/libfuse/sshfs}",
 }
 
 @MISC{encfs,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://github.com/vgough/encfs}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://github.com/vgough/encfs}",
 }
 
 @MISC{mp3fs,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://github.com/khenriks/mp3fs}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://github.com/khenriks/mp3fs}",
 }
 
 @MISC{ptrace,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man2/ptrace.2.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man2/ptrace.2.html}",
 }
 
 @MISC{futex,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{http://man7.org/linux/man-pages/man2/futex.2.html}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{http://man7.org/linux/man-pages/man2/futex.2.html}",
 }
 
 @MISC{python_subprocess_errpipe,
-     AUTHOR = "Placeholder",
-     TITLE = "\url{https://github.com/python/cpython/blob/v3.8.0/Modules/_posixsubprocess.c#L781}",
-     YEAR = "xxxx",
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://github.com/python/cpython/blob/v3.8.0/Modules/_posixsubprocess.c#L781}",
 }
+
+@MISC{io_uring,
+     title = {urltitle},
+     author = {urlauthor},
+     note = "\url{https://github.com/python/cpython/blob/v3.8.0/Modules/_posixsubprocess.c#L781}",
+}
+
+@inproceedings {scone,
+author = {Sergei Arnautov and Bohdan Trach and Franz Gregor and Thomas Knauth and Andre Martin and Christian Priebe and Joshua Lind and Divya Muthukumaran and Dan O{\textquoteright}Keeffe and Mark L. Stillwell and David Goltzsche and Dave Eyers and R{\"u}diger Kapitza and Peter Pietzuch and Christof Fetzer},
+title = {{SCONE}: Secure Linux Containers with Intel {SGX}},
+booktitle = {12th {USENIX} Symposium on Operating Systems Design and Implementation ({OSDI} 16)},
+year = {2016},
+isbn = {978-1-931971-33-1},
+address = {Savannah, GA},
+pages = {689--703},
+url = {https://www.usenix.org/conference/osdi16/technical-sessions/presentation/arnautov},
+publisher = {{USENIX} Association},
+month = nov,
+}
+
+@inproceedings{eleos,
+author = {Orenbach, Meni and Lifshits, Pavel and Minkin, Marina and Silberstein, Mark},
+title = {Eleos: ExitLess OS Services for SGX Enclaves},
+year = {2017},
+isbn = {9781450349383},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3064176.3064219},
+doi = {10.1145/3064176.3064219},
+booktitle = {Proceedings of the Twelfth European Conference on Computer Systems},
+pages = {238–253},
+numpages = {16},
+location = {Belgrade, Serbia},
+series = {EuroSys ’17}
+}
+  

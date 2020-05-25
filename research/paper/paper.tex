@@ -1,6 +1,7 @@
 \documentclass[letterpaper,twocolumn,10pt]{article}
 \usepackage{usenix2019_v3}
 
+\usepackage{microtype}
 \usepackage{tikz}
 \usepackage{dblfloatfix}
 \usepackage{amsmath}
@@ -501,12 +502,14 @@ In the past, attempts to upstream kernel support for novel features without exte
 has had a poor reception in the Linux kernel community.\cite{lwn_checkpoint}\cite{first_class_address_space}
 We believe proving viability in userspace first will be better in the long term.
 
-\texttt{ptrace} provides a way to perform arbitrary actions on other processes,
+\texttt{ptrace} provides a way to perform arbitrary actions on a target process,
 including system calls,
 but is not suitable for us.\cite{ptrace}
-Among other issues, it has the substantial disadvantage of not supporting multiple ptracers.
-A \texttt{ptrace}-based implementation would therefore prevent
-using \texttt{strace} or \texttt{gdb} on \texttt{rsyscall}-controlled processes,
+As we discuss in section \ref{related}, a number of systems, such as \texttt{gdb} and \texttt{strace},
+use \texttt{ptrace} to implement debuggers.
+But multiple processes cannot use \texttt{ptrace} on a single target process at the same time;
+thus, if we used \texttt{ptrace} to implement \texttt{rsyscall},
+such debugging tools would not work on \texttt{rsyscall}-controlled processes,
 which is an unacceptable limitation for a general-purpose utility.
 
 Many syscalls either take or return pointers to memory,
@@ -993,15 +996,14 @@ such as container runtimes.
 This has become a key part of our development workflow.
 \section{Related work}\label{related_work}
 \subsection{Direct-style process creation}
-Baumann 2019\cite{forkroad} briefly suggests cross-process operations as a possible replacement for fork on Unix,
-positing many of the same advantages we find in practice.
+Baumann (2019) briefly suggests cross-process operations as a possible replacement for fork on Unix,
+positing many of the same advantages we find in practice.\cite{forkroad}
 Our work, though developed independently,
-is in many ways an elaboration on and implementation of that idea,
-to which we owe a great debt.
+is in many ways an elaboration on and implementation of that idea.
 
 As we discuss in section \ref{introduction},
 many academic operating systems have direct-style process creation.
-We are not aware of any previous instances of direct-style process creation in a Unix-like environment.
+We are not aware of any other instances of direct-style process creation in a Unix-like environment.
 
 The closest related work known to us
 is efforts to build Unix compatibility environments, including fork-style process creation,
@@ -1010,52 +1012,67 @@ Such compatibility environments could theoretically be bypassed to perform direc
 using the underlying primitives,
 but regular Unix system calls could not be used to create new Unix processes in a direct-style way
 in such an environment.
-\subsection{Remote system calls}
-There are many Unix-based systems which do something called "remote system calls".
-Most such systems do not allow a single program to manipulate multiple processes.
+\subsection{Remote system calls}\label{related}
+Many Unix-based systems have features described as ``remote system calls''.
+Most such systems do not allow a single program to manipulate multiple processes;
+rather, a program implicitly makes system calls in a single remote process
+which is distinct from the process the program's code runs in.
 Those systems that do allow manipulating multiple processes
 are generally oriented towards debugging and introspection,
 and are unsuitable for a general purpose system.
 
-Many systems use system call forwarding to implement migration in a computing cluster.
-HTCondor\cite{condor} and Popcorn\cite{popcorn} are two examples.
-In both systems, processes can be live-migrated between hosts;
-when this occurs, the system will automatically forward IO-related system calls
+% probably we should rework this whole section to say "X and Y, among other systems, do Z."
+HTCondor\cite{condor} and Popcorn\cite{popcorn}, among others,
+use system call forwarding to implement migration between hosts in a computing cluster.
+In these systems, processes can be live-migrated between hosts;
+when this occurs, the system will transparently forward IO-related system calls
 back to the original host.
 
-Some systems intercept system calls and forward them to another process to be implemented
-as part of a virtualization system.
-gvisor\cite{gvisor} and ViewOS\cite{viewos} are two examples.
-In both systems,
-system calls made in one process are intercepted,
-and serviced by another process.
+gvisor\cite{gvisor} and ViewOS\cite{viewos}, among others,
+use system call interception as a means of virtualization.
+In these systems,
+system calls made in one process are intercepted and forwarded to another process,
+which performs the specified system call and returns the results back to the original process.
 
-Some systems forward system calls elsewhere for asynchronous execution.
-FlexSC\cite{flexsc} is one example.
-System calls in FlexSC are forwarded to a pool of dedicated system call execution threads.
-The recently added Linux feature \verb|io_uring| is, in some sense, another example;
-it supports sending a subset of system calls to the kernel,
-which executes them asynchronously,
-rather than blocking the thread.
+Many other systems have unusual system call invocation patterns,
+such as enclave systems like SCONE\cite{scone}\cite{eleos}
+or systems for exception-less system calls like FlexSC\cite{flexsc}.
+In these systems, for a variety of reasons,
+a system call in one process is not evaluated by directly entering the kernel,
+but instead is sent to some other process to be evaluated,
+and the results received from that process.
 
-Some systems call system calls in other processes for debugging or introspection purposes.
-strace, gdb, and CRIU\cite{criu} are examples of this.
-These systems typically uses ptrace,
-which is capable of operating on multiple processes at once.
-As discussed in section \ref{implementation},
-a ptrace-based has approach has limitations which make it unsuitable for \texttt{rsyscall}.
+A number of debugging or instrospection systems have the ability to perform or monitor system calls in other processes,
+typically using ptrace.
+Systems like gdb and CRIU
+retrieve information about the target process by forcing it to call various system calls to dump information.
+These systems typicaly use \texttt{ptrace},
+which can be used by a single ptracer process to operate on multiple target processes at once.
+Unfortunately, as discussed in section \ref{implementation},
+multiple ptracer processes cannot use \texttt{ptrace} on a single target process simultaneously,
+which means only one of these systems can be used on a process at a time.
+
+% maybe mention the notion of a formal interface definition for the linux syscall interface
+% that might go in future work even.
+% yeah it's not yet something developed.
+% a formal interface definition so that remote system calls can be employed without building a new system every time.
 \subsection{Process capabilities}
-The Capsicum system provides something called process descriptors\cite{capsicum},
-which is a file descriptor handle for a process.
-A similar feature has been recently added to Linux in the form of the pidfd API\cite{pidfd}.
+Many capability-oriented operating systems, such as KeyKOS and seL4,
+have process capabilities which allow one process to operate on another process.\cite{keykos}\cite{sel4}\cite{fuschia}
+These systems are our main inspiration for this work.
+
+On several Unix systems,
+Capsicum provides something called process descriptors,
+which is a file descriptor handle for a process.\cite{capsicum}
+A similar feature has been recently added to Linux in the form of the pidfd API.\cite{pidfd}
 These notions of process capability are quite limited, however;
 pidfds and process descriptors only allow sending signals to a process or waiting for its death,
 rather than exercising full control over the process.
 \subsection{Capability-secure libc replacements}
-The Capsicum system provides a set of system calls
+Capsicum provides a set of system calls
 which can be used to provide a capability-secure sandbox.\cite{capsicum}
-Latter efforts\cite{oblivious}, including CloudABI\cite{cloudabi} and WASI\cite{wasi},
-developed this into a partial or full replacement for a POSIX libc.
+Latter efforts, including CloudABI and WASI,
+developed this into a partial or full replacement for a POSIX libc.\cite{oblivious}\cite{cloudabi}\cite{wasi}
 Like all other Unix libcs that we know of,
 these libc-replacements implicitly make system calls on the current process,
 rather than using an explicit process capability as \texttt{rsyscall} does.
@@ -1066,18 +1083,17 @@ PLASH, like all spawn-style APIs, abstracts over the native Linux environment,
 and is therefore limited in what kind of processes it can create.
 \section{Future work}\label{future_work}
 \subsection{Other applications of \texttt{rsyscall}}
-Most avenues of future work focus on \texttt{rsyscall}.
 \texttt{rsyscall} was not developed solely for the purpose of this paper,
 and it has other uses unrelated to direct-style process creation,
-such as asynchronous system calls, exceptionless system calls\cite{flexsc}, cross-host operations, among others.
+such as asynchronous system calls, exceptionless system calls\cite{flexsc}, and cross-host operations, among others.
 We are actively exploring such applications,
 as well as broadening \texttt{rsyscall}'s language support.
 \subsection{Kernel support}
 \texttt{rsyscall}'s cross-process syscalls can be performed entirely in userspace,
-which has substantial benefits for deployability.
+which has substantial benefits for deployability and flexibility.
 Nevertheless, direct support in the Linux kernel
 for creating a stub process and performing syscalls in the context of that process
-may provide efficiency benefits, as well as reducing userspace-visible complexity.
+may provide efficiency benefits, as well as reducing overall complexity.
 
 Several other aspects of our implementation would also be improved by new features in the Linux kernel,
 as discussed in sections \ref{execve} and \ref{cloexec}.
@@ -1090,26 +1106,32 @@ but others may wish to explore porting these techniques to other operating syste
 % TODO maybe we could get rid of this paragraph?
 \subsection{Large scale open source usage}
 We would like to open source libraries built on top of direct-style process creation.
-From our experience using such libraries at \twosigma{},
-we believe this would greatly ease the development of complex systems involving processes,
-and would provide a substantial demonstration of the power of direct-style process creation.
+From our experience using such libraries, discussed in section \ref{realworld},
+we believe this would make it easier to develop complex systems involving processes.
 \section{Conclusions}\label{conclusions}
-Direct-style process creation is much less known and much less used than fork-style and spawn-style.
-We have implemented direct-style process creation for Linux.
-Our implementation is immediately deployable on today's Linux systems.
-We have discussed various applications of processes,
-and demonstrated the use of Linux direct-style process creation
-to implement them.
+We have introduced direct-style process creation on Linux for the first time,
+through \texttt{rsyscall}.
+This style of process creation is common on academic operating systems,
+but was previously not usable on Linux.
+We've provided a number of examples which demonstrate the usefulness
+of direct-style process creation in section \ref{examples}.
+Our current implementation of \texttt{rsyscall} is focused on supporting Python,
+works entirely in userspace,
+and is immediately deployable on today's Linux systems.
+\texttt{rsyscall} is open source and available from \githuburl{}.
 
-We believe that direct-style process creation is superior to fork-style and spawn-style,
-including on Linux.
-Our technique is immediately deployable and can be used for a wide variety of complex applications.
+We've found that direct-style process creation is more expressive than fork-style and spawn-style,
+and even with an unoptimized implementation, has comparable performance.
+We've used direct-style process creation successfully in production at \twosigma{}.
+Direct-style process creation is our technique of choice for new applications involving process management,
+including in container runtimes and distributed systems.
+Future work can make direct-style process creation more efficient
+and decrease the complexity of its implementation.
 
 We hope that a better process creation mechanism
-will help encourage more creative use of processes,
-which, though widespread,
-are still not used to their full potential.
-
+will help encourage more creative use of processes and the features available in Linux.
+Though processes are a long-standing, widespread feature,
+we believe there is still much to be learned about how to use processes to their full potential.
 \bibliographystyle{plain}
 \bibliography{bibliography}
 \end{document}
