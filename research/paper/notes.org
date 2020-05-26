@@ -1369,8 +1369,8 @@ http://0pointer.de/blog/projects/socket-activation.html
      but say it good
 
      maybe not even need question! combine into one statement
-**** TODO thicker lines on graph
-**** TODO make graph lower height
+**** DONE thicker lines on graph
+**** DONE make graph lower height
 **** bait and switch?
      well, let's wait for another review;
      maybe mentioning it's userspace in the intro will be enough.
@@ -1417,7 +1417,7 @@ of the intro, you want them to be convinced to accept the paper
 
      and if I'm doing that, then definitely some example stuff.
      should I maybe even include a code example in the intro?
-**** unrelated thought
+**** DONE unrelated thought
      should I really be laying out my opinions in the background?
      like, direct-style is a custom dsl?
      hm
@@ -1429,7 +1429,7 @@ of the intro, you want them to be convinced to accept the paper
      the implementation section seems small enough already.
 
      although moving the kernel additions to a different section to help skimming might be good.
-**** ok so again what are we changing about the intro
+**** DONE ok so again what are we changing about the intro
      - a little implementation stuff
      - cap-sec principles
      - maybe even an example
@@ -1479,17 +1479,17 @@ of the intro, you want them to be convinced to accept the paper
 
      let's go bit by bit and try, sure.
      where we can, we can replace paragraphs!
-**** background section balance
+**** DONE background section balance
      maybe the background section should be "state of the art"?
      or "analysis"?
      or "related work"?
 
      aha let's forget about making pronouncements for all operating systems,
      let's just talk about Linux.
-**** other thought
+**** DONE other thought
      why not C
      why not kernel
-**** let's argue that fork is complex by analogy to continuations
+**** DONE let's argue that fork is complex by analogy to continuations
      While this is familiar
 
      issues with returning twice:
@@ -1499,7 +1499,7 @@ of the intro, you want them to be convinced to accept the paper
 
      let's focus that then.
      might want to link that posix_spawn implementation post.
-***** mention continuations?
+***** DONE mention continuations?
       returning twice is notoriously hard to deal with.
 
       Fork's execution model is 
@@ -1522,7 +1522,7 @@ of the intro, you want them to be convinced to accept the paper
       let's talk about it.
 
       ok yeah that's fine.
-**** hmm
+**** DONE hmm
      maybe I should just skip a lot of the direct-style section,
      and just describe the benefits as they relate to rsyscall?
      that sounds like a good idea, yeah. boom boom boom.
@@ -1537,7 +1537,7 @@ of the intro, you want them to be convinced to accept the paper
      ok this is good, this is good.
 
      we need more cites though, boom boom boom.
-**** implementation
+**** DONE implementation
      we should really explicitly say why we didn't do a kernel implementation?
 
      eh no I think we sufficiently cover it.
@@ -1564,7 +1564,9 @@ and integration with applications that you can talk about in detail
      close_cloexec?
 *** show different applications using the new primitive
     and how it helps them
-*** compare to something more optimized than python sub-process
+
+    well we aren't really doing this, just showing one application.
+*** DONE compare to something more optimized than python sub-process
     hm. well. it's slow but, that's not the intent here.
 
     let's not build up my defence mechanism here so fast!
@@ -1585,7 +1587,9 @@ and integration with applications that you can talk about in detail
 
     and certainly python isn't the best performance baseline.
     we could compare to posix_spawn directly...?
-*** more experiements evaluating different aspects of the system
+
+    ok we compared it, nice
+*** DONE more experiements evaluating different aspects of the system
     ok. what other aspects of the system are there?
 
     we could start up many processs in parallel,
@@ -1668,7 +1672,7 @@ and integration with applications that you can talk about in detail
      ok so we definitely need a bar chart for this I guess.
 
      hm i don't see anything caring about colorblindness so I guess i'll just go with colors to distinguish.
-*** integration with applications that you can talk about in detail
+*** DONE integration with applications that you can talk about in detail
     OK, ok ok. I can talk about tss/integration in more detail,
     that should be fine.
 
