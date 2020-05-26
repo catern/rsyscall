@@ -45,7 +45,7 @@ belowskip=0pt,
 \newcommand{\twosigma}{{[tech company]}}
 \newcommand{\githuburl}{[Github url]}
 \date{}
-\title{\Large \bf Direct-style process creation on Linux}
+\title{\Large \bf DRAFT: Direct-style process creation on Linux}
 % \author{
 % {\rm Spencer Baugh}\\
 % Two Sigma
@@ -102,7 +102,8 @@ typically ultimately calling \texttt{exec}.
 
 A user of fork must think carefully about the characteristics of the process from which fork is being called.
 Fork can have poor performance when called from processes with many memory mappings.\cite{forkroad}
-This can be mitigated to some degree, but inflicts further complexity on the caller.\cite{vfork}\cite{vfork_dangerous}
+This can be mitigated to some degree through sytem calls like \texttt{vfork},
+but inflicts further complexity on the caller.\cite{vfork}\cite{vfork_dangerous}
 Processes which are multi-threaded can encounter deadlocks and other issues if they call fork.
 \cite{forkroad}\cite{tlpi}\cite{posix_spawn_error_pipe}
 Some thread libraries provide partial mitigations for multi-threading issues,
@@ -240,9 +241,7 @@ but these examples can all be run without privileges with appropriate use of \ve
 These examples are not novel, as such, as they use only conventional Linux system calls;
 but implementing them with \texttt{fork} or \verb|posix_spawn| requires substantially more code,
 or even a complete change in implementation approach as in section \ref{shared_fd_table}.
-We'll compare our direct-style implementations in this section
-to fork-style implementations
-in section \ref{evaluation}.
+We demonstrate this by comparison to fork-style implementations of these examples in section \ref{ease}.
 
 Several of these examples can be implemented by configuring and invoking existing software;
 such software effectively provides a specialized spawn-style interface.
@@ -839,6 +838,7 @@ create a child process, exec the \texttt{true} binary, and wait for it to exit.
 We implement this using Python \texttt{rsyscall} direct-style \texttt{clone},
 the Python standard library's \texttt{subprocess.run} (which is implemented primarily with \texttt{fork}),
 \texttt{fork} from C,
+\texttt{vfork} from C,
 and \texttt{posix\_spawn} from C.
 We run on CPython 3.7.7, glibc 2.30, Linux 4.19.93,
 pinned to an isolated single core on an Intel i9-9900K CPU at standard clock speed,
@@ -853,7 +853,8 @@ while \texttt{rsyscall}'s \texttt{clone} takes an average of 2.2 milliseconds at
 As expected, the fork-based implementations scale poorly with memory usage,
 and the C implementations vastly outperform the Python implementations.
 \texttt{posix\_spawn} takes an average of 440 microseconds to start a process,
-regardless of the memory usage of the calling process.
+and \texttt{vfork} takes 400 microseconds,
+regardless of the memory usage of the calling process,
 
 We perform another microbenchmark to evaluate the overhead of performing additional modifications of the child process.
 We call \texttt{getpid} from Python
