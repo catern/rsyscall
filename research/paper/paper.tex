@@ -2,15 +2,13 @@
 \usepackage{usenix2019_v3}
 
 \usepackage{microtype}
+\usepackage{calc}
 \usepackage{tikz}
 \usepackage{dblfloatfix}
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{pifont}
 \usepackage{comment}
-
-\newcommand{\cmark}{\ding{51}}
-\newcommand{\xmark}{\ding{55}}
 
 \usepackage{graphicx}
 \usepackage{hyperref}
@@ -20,11 +18,8 @@
 \usepackage{paralist}
 \usepackage{titlesec}
 
-% Ugh, these aren't the same size right now.
-\newcommand{\tbad}{\xmark:}
-\newcommand{\tgood}{\cmark:}
-% \newcommand{\tbad}{\text{\sffamily X} :}
-% \newcommand{\tgood}{\checkmark:}
+\newcommand{\tbad}{\makebox[\widthof{\ding{51}}]{\ding{55}}:}
+\newcommand{\tgood}{\ding{51}:}
 
 \titleformat*{\subsection}{\normalsize\bfseries}
 \titleformat*{\subsubsection}{\normalsize\bfseries}
@@ -100,11 +95,12 @@ The child process can call arbitrary system calls
 to mutate the new process until it reaches the desired state,
 typically ultimately calling \texttt{exec}.
 
-A user of fork must think carefully about the characteristics of the process from which fork is being called.
-Fork can have poor performance when called from processes with many memory mappings.\cite{forkroad}
-This can be mitigated to some degree through sytem calls like \texttt{vfork},
-but inflicts further complexity on the caller.\cite{vfork}\cite{vfork_dangerous}
-Processes which are multi-threaded can encounter deadlocks and other issues if they call fork.
+A user of \texttt{fork} must think carefully about the characteristics of the process
+from which \texttt{fork} is being called.
+\texttt{fork} can have poor performance when called from processes with many memory mappings.\cite{forkroad}
+This can be mitigated to some degree by using \texttt{vfork} or \texttt{CLONE\_VM},
+but those inflict further complexity on the caller.\cite{vfork_dangerous}
+Processes which are multi-threaded can encounter deadlocks and other issues if they call \texttt{fork}.
 \cite{forkroad}\cite{tlpi}\cite{posix_spawn_error_pipe}
 Some thread libraries provide partial mitigations for multi-threading issues,
 but it's up to user code to make use of those mitigations.\cite{pthread_atfork}
@@ -112,7 +108,7 @@ but it's up to user code to make use of those mitigations.\cite{pthread_atfork}
 Since the child process runs concurrently with the parent process,
 communicating events in the child back to the parent requires some form of IPC,
 adding complexity.\cite{posix_spawn_error_pipe}
-Even the basic interface of fork - one function call which returns twice - is unusual;
+Even the basic interface of \texttt{fork} --- one function call which returns twice --- is unusual;
 such functions are generally considered to be complex, advanced topics in other settings.
 \cite{callcc_fork}\cite{continuations}
 
@@ -139,7 +135,7 @@ Table \ref{tab:styles} summarizes the differences between fork-style and spawn-s
 Each has its own advantages and disadvantages.
 
 A few academic operating systems - KeyKOS, seL4, and some others, for example -
-use another style of process creation.\cite{keykos}\cite{sel4}\cite{exokernel}\cite{fuschia}\cite{singularity}
+use another style of process creation.\cite{keykos}\cite{sel4}\cite{exokernel}\cite{fuchsia}\cite{singularity}
 We use the new term "direct-style" to refer to this,
 since we know of no pre-existing generic term for this style of process creation.
 
@@ -282,7 +278,7 @@ Then we create a child process,
 which inherits all file descriptors from its parent.
 We indicate that we want to operate on the child's inherited copy of the file descriptor with \verb|child.inherit_fd|.
 \texttt{inherit\_fd} performs no system calls,
-it just updates bookkeeping to create a new handle for the inherited file descriptor;
+it just updates bookkeeping to return a new handle for the inherited file descriptor;
 we'll discuss it in more depth in section \ref{handles}.
 Then we disable \texttt{CLOEXEC} on the child's file descriptor,
 which on Linux we can do by clearing the FD flags with \verb|fcntl(fd, F_SETFD, 0)|;
@@ -346,7 +342,7 @@ pass an argument to \texttt{clone}.
 \verb|CLONE_NEWNS| causes \texttt{clone} to create the process in a new mount namespace,
 which allows us to manipulate the filesystem tree in a way that only this process will see,
 using the \texttt{mount} system call.\cite{mount_namespaces}\cite{clone}
-We call \texttt{mount}, passing \texttt{MS.BIND}, to make the file \verb|/home/foo/custom_foo.conf|
+We call \texttt{mount}, passing \texttt{MS\_BIND}, to make the file \verb|/home/foo/custom_foo.conf|
 appear at the path \verb|/etc/foo.conf|;
 this is known as a bind mount.\cite{mount}
 Then we execute some program,
@@ -436,10 +432,9 @@ and \texttt{grandchild} will be cleaned up.
 We can create a child process which shares its file descriptor table with the parent process.
 This can be useful for a variety of purposes,
 such as accessing resources in other namespaces, or in multiple namespaces at once.
-We'll give one example using FUSE.
+We'll give one example using the Filesystem in Userspace (FUSE) Linux subsystem.
 
-The Filesystem in Userspace (FUSE) Linux subsystem
-allows a filesystem to be implemented with a userspace program.\cite{fuse}
+FUSE allows a filesystem to be implemented with a userspace program.\cite{fuse}
 Many interesting filesystems have been implemented using FUSE,
 representing a variety of resources as files.\cite{sshfs}\cite{encfs}\cite{mp3fs}
 
@@ -567,7 +562,7 @@ to detect a successful \texttt{execve} using a pipe,
 which unfortunately won't work for us.
 With this technique, the parent process creates a pipe before forking,
 ensures both ends are marked \verb|O_CLOEXEC|,
-performs the fork,
+performs the \texttt{fork},
 closes the write end of the pipe,
 and \texttt{read}s the read end of the pipe.
 The child process either successfully calls \texttt{execve} or exits;
@@ -733,7 +728,7 @@ Therefore, we simply need to close all file descriptors that have \texttt{CLOEXE
 and which are not referenced by a live file descriptor handle;
 we refer to this operation as \verb|close_cloexec|.
 
-For \verb|unshare(CLONE_FILES)|, we perform \verb|close_cloexec| automatically in userspace.
+For \texttt{unshare(CLONE\_FILES)}, we perform \texttt{close\_cloexec} automatically in userspace.
 For \texttt{clone}, we perform \verb|close_cloexec| only on user request,
 so that the user can control when \verb|inherit_fd| stops working.
 Even if the user never requests that unused file descriptors be closed,
@@ -808,8 +803,8 @@ with an already-defined protocol which can cover all errors from all system call
 
 The main source of additional code in fork-style implementations
 is reporting errors back to the main program using IPC.
-This pattern is common in complex usage of fork.\cite{posix_spawn_error_pipe}\cite{python_subprocess_errpipe}
-Many users of fork avoid complex IPC
+This pattern is common in complex usage of \texttt{fork}.\cite{posix_spawn_error_pipe}\cite{python_subprocess_errpipe}
+Many users of \texttt{fork} avoid complex IPC
 by encoding a subset of the error information into the exit code of the child process
 when an error is encountered during child setup.
 Such an approach removes the need for IPC,
@@ -850,7 +845,7 @@ The results are summarized in figure \ref{fig:subprocess_bench}.
 Our true baseline for performance is the Python standard library's \texttt{subprocess.run};
 this takes an average of 1.4 milliseconds at low memory usage,
 while \texttt{rsyscall}'s \texttt{clone} takes an average of 2.2 milliseconds at any memory usage.
-As expected, the fork-based implementations scale poorly with memory usage,
+As expected, the \texttt{fork}-based implementations scale linearly with memory usage,
 and the C implementations vastly outperform the Python implementations.
 \texttt{posix\_spawn} takes an average of 440 microseconds to start a process,
 and \texttt{vfork} takes 400 microseconds,
@@ -998,7 +993,7 @@ such as container runtimes.
 This has become a key part of our development workflow.
 \section{Related work}\label{related_work}
 \subsection{Direct-style process creation}
-Baumann (2019) briefly suggests cross-process operations as a possible replacement for fork on Unix,
+Baumann (2019) briefly suggests cross-process operations as a possible replacement for \texttt{fork} on Unix,
 positing many of the same advantages we find in practice.\cite{forkroad}
 Our work, though developed independently,
 is in many ways an elaboration on and implementation of that idea.
@@ -1010,7 +1005,7 @@ We are not aware of any other instances of direct-style process creation in a Un
 The closest related work known to us
 is efforts to build Unix compatibility environments
 on academic operating systems which natively use direct-style process creation;
-examples include Exokernel and Fuschia.\cite{exokernel}\cite{fuschia_libc}
+examples include Exokernel and Fuchsia.\cite{exokernel}\cite{fuchsia_libc}
 Such compatibility environments could be bypassed to perform direct-style process creation
 using the underlying primitives,
 but regular Unix system calls could not be used to create new Unix processes in a direct-style way
@@ -1061,7 +1056,7 @@ which means only one of these systems can be used on a process at a time.
 % a formal interface definition so that remote system calls can be employed without building a new system every time.
 \subsection{Process capabilities}
 Many capability-oriented operating systems, such as KeyKOS and seL4,
-have process capabilities which allow one process to operate on another process.\cite{keykos}\cite{sel4}\cite{fuschia}
+have process capabilities which allow one process to operate on another process.\cite{keykos}\cite{sel4}\cite{fuchsia}
 These systems are our main inspiration for this work.
 
 On several Unix systems,
