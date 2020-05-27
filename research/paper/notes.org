@@ -1889,8 +1889,8 @@ and integration with applications that you can talk about in detail
 
      
 * irc feedback
-** move citations before period
-** consistent formatting fork and spawn
+** DONE move citations before period
+** DONE consistent formatting fork and spawn
 ** DONE have central contributions section
 ** DONE fix weird alignment in style comparison table
 ** DONE fix hideous whitespace

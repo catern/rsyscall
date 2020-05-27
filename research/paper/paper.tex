@@ -11,7 +11,6 @@
 \usepackage{comment}
 
 \usepackage{graphicx}
-\usepackage{hyperref}
 \usepackage{float}
 \usepackage{listings}
 \usepackage{booktabs}
@@ -64,7 +63,7 @@ Our implementation is immediately deployable without kernel modifications on any
 \begin{table*}
 \begin{tabular}{l|l|l|l}
 % BEGIN RECEIVE ORGTBL compare
- & fork & spawn & direct-style\\
+ & fork-style & spawn-style & direct-style\\
 \hline
 Parent process requirements & \tbad Single thread, small memory & \tgood None & \tgood None\\
 Programming model & \tbad Complex (returns twice) & \tgood Simple (single call) & \tgood Simple (imperative)\\
@@ -78,7 +77,7 @@ Non-inherited attributes & Mutated by code in child & Set by arguments & Mutated
 \end{table*}
 \begin{comment}
 #+ORGTBL: SEND compare orgtbl-to-latex :splice t
-|                             | fork                              | spawn                       | direct-style                          |
+|                             | fork-style                        | spawn-style                 | direct-style                          |
 |-----------------------------+-----------------------------------+-----------------------------+---------------------------------------|
 | Parent process requirements | \tbad Single thread, small memory | \tgood None                 | \tgood None                           |
 | Programming model           | \tbad Complex (returns twice)     | \tgood Simple (single call) | \tgood Simple (imperative)            |
@@ -90,59 +89,63 @@ Non-inherited attributes & Mutated by code in child & Set by arguments & Mutated
 The most well-known process creation interface on Linux, and Unix in general, is \texttt{fork}.
 When a parent process creates a child process through \texttt{fork} or other fork-style interfaces,
 both processes execute concurrently,
-and the child process typically inherits all but a few attributes from the parent process.\cite{manfork}
+and the child process typically inherits all but a few attributes from the parent process\cite{manfork}.
 The child process can call arbitrary system calls
 to mutate the new process until it reaches the desired state,
 typically ultimately calling \texttt{exec}.
 
 A user of \texttt{fork} must think carefully about the characteristics of the process
 from which \texttt{fork} is being called.
-\texttt{fork} can have poor performance when called from processes with many memory mappings.\cite{forkroad}
+\texttt{fork} can have poor performance when called from processes with many memory mappings\cite{forkroad}.
 This can be mitigated to some degree by using \texttt{vfork} or \texttt{CLONE\_VM},
-but those inflict further complexity on the caller.\cite{vfork_dangerous}
-Processes which are multi-threaded can encounter deadlocks and other issues if they call \texttt{fork}.
-\cite{forkroad}\cite{tlpi}\cite{posix_spawn_error_pipe}
+but those inflict further complexity on the caller\cite{vfork_dangerous}.
+Processes which are multi-threaded can encounter deadlocks and other issues if they call \texttt{fork}
+\cite{forkroad}\cite{tlpi}\cite{posix_spawn_error_pipe}.
+
 Some thread libraries provide partial mitigations for multi-threading issues,
-but it's up to user code to make use of those mitigations.\cite{pthread_atfork}
+but it's up to user code to make use of those mitigations\cite{pthread_atfork}.
 
 Since the child process runs concurrently with the parent process,
 communicating events in the child back to the parent requires some form of IPC,
-adding complexity.\cite{posix_spawn_error_pipe}
+adding complexity\cite{posix_spawn_error_pipe}.
 Even the basic interface of \texttt{fork} --- one function call which returns twice --- is unusual;
-such functions are generally considered to be complex, advanced topics in other settings.
-\cite{callcc_fork}\cite{continuations}
+such functions are generally considered to be complex, advanced topics in other settings
+\cite{callcc_fork}\cite{continuations}.
 
 Closely related to \texttt{fork}
 are process creation interfaces where the new process is launched running a function of the caller's choice,
-which can then call arbitrary system calls to mutate the new process.
-\cite{clone}\cite{sfork}
+which can then call arbitrary system calls to mutate the new process
+\cite{clone}\cite{sfork}.
 Such interfaces have similar issues as \texttt{fork},
 and we class them together as ``fork-style'' interfaces.
 
 On the other hand, in a spawn-style interface,
 details about the new process are provided up-front as arguments to some function
 which creates the new process all at once.
-\texttt{posix\_spawn} is a typical example of this style.\cite{posix_spawn}\cite{create_process}\cite{chainloading}
-Other details, such as security context, are inherited from the parent process.\cite{tlpi}\cite{create_process}
+\texttt{posix\_spawn} is a typical example of this style
+\cite{posix_spawn}\cite{create_process}\cite{chainloading}.
+Other details, such as security context, are inherited from the parent process\cite{tlpi}\cite{create_process}.
 Spawn-style APIs
 can be called from any parent process without concerns about memory usage or multi-threading,
-when used correctly.
-\cite{forkroad}\cite{posix_spawn_error_pipe}
+when used correctly
+\cite{forkroad}\cite{posix_spawn_error_pipe}.
 
 Unlike \texttt{fork}, a spawn-style interface provides an API for process creation
-which is independent from normal system calls.\cite{spawn_h}\cite{subprocess_run}
+which is independent from normal system calls\cite{spawn_h}\cite{subprocess_run}.
 Spawn-style interfaces therefore often lack support for some features,
-and they also require learning a new interface distinct from the existing system call API.\cite{tlpi}\cite{posix_spawn_lwn}
+and they also require learning a new interface distinct from the existing system call API
+\cite{tlpi}\cite{posix_spawn_lwn}.
 Also, spawn-style interfaces, by their nature as a single call,
 don't allow programs to branch on the results of individual modifications to the new process,
-and have worse error reporting for such modifications.
-\cite{posix_spawn}\cite{posix_spawn_error_pipe}
+and have worse error reporting for such modifications
+\cite{posix_spawn}\cite{posix_spawn_error_pipe}.
 
 Table \ref{tab:styles} summarizes the differences between fork-style and spawn-style.
 Each has its own advantages and disadvantages.
 
-A few academic operating systems --- KeyKOS, seL4, and some others, for example ---
-use another style of process creation.\cite{keykos}\cite{sel4}\cite{exokernel}\cite{fuchsia}\cite{singularity}
+A few academic operating systems
+--- KeyKOS\cite{keykos} and seL4\cite{sel4}, for example ---
+use another style of process creation\cite{exokernel}\cite{fuchsia}\cite{singularity}.
 We use the new term ``direct-style'' to refer to this,
 since we know of no pre-existing generic term for this style of process creation.
 
@@ -151,7 +154,7 @@ then supplied with various resources,
 and then started running once it is fully set up.
 In operating systems with true direct-style process creation,
 the syscalls that can mutate a process
-take explicit arguments to indicate the process on which they should operate.\cite{keykos}\cite{sel4}
+take explicit arguments to indicate the process on which they should operate\cite{keykos}\cite{sel4}.
 In this way, the same syscalls that can mutate a process while it is running
 are called by the parent process to mutate the process while it is being set up.
 
@@ -163,7 +166,7 @@ where programs making syscalls implicitly operate on the current process.
 Our main contribution in this paper is such an API, in the form of the \texttt{rsyscall} library.
 \texttt{rsyscall} is a
 language-specific, object-capability-model, low-abstraction library for the Linux system call interface,
-bypassing libc.\cite{capmyths}\cite{robust_composition}
+bypassing libc\cite{capmyths}\cite{robust_composition}.
 The \texttt{rsyscall} project is currently focused on supporting Python,
 but the library can be ported to other languages.
 The examples we show in this paper will be in Python,
@@ -172,7 +175,7 @@ but generalize easily.
 \githuburl{}.
 
 Unlike typical C libraries such as glibc or musl,
-the \texttt{rsyscall} library is organized based on the object-capability model.\cite{capmyths}
+the \texttt{rsyscall} library is organized based on the object-capability model\cite{capmyths}\cite{robust_composition}.
 The capability to make syscalls in any specific process is reified as a language object.
 If the capability to make syscalls in a specific process is not passed (in some way) to a function,
 then that function cannot make syscalls in that process.
@@ -247,8 +250,8 @@ In this section,
 we'll demonstrate direct-style process creation
 by using several sophisticated features of Linux processes.
 For concision, we assume that we are running with sufficient privileges,
-but these examples can all be run without privileges with appropriate use of \verb|CLONE_NEWUSER|.
-\cite{user_namespaces}\cite{unpriv_fuse}
+but these examples can all be run without privileges with appropriate use of \verb|CLONE_NEWUSER|
+\cite{user_namespaces}\cite{unpriv_fuse}.
 
 These examples are not novel, as such, as they use only conventional Linux system calls;
 but implementing them with \texttt{fork} or \verb|posix_spawn| requires substantially more code,
@@ -259,7 +262,7 @@ Several of these examples can be implemented by configuring and invoking existin
 such software effectively provides a specialized spawn-style interface.
 But such tools are often inflexible.
 For example, a shell allows the creation of pipelines and container systems like Docker allow sandboxing,
-but the two are difficult to combine.\cite{docker_pipe}
+but the two are difficult to combine\cite{docker_pipe}.
 
 With improved process creation techniques,
 these features can be used directly by programmers
@@ -281,21 +284,21 @@ We believe this absence of concurrency simplifies reasoning.
 \subsection{Abstraction through FD passing}\label{fd_abstraction}
 In Linux (and Unix in general),
 a program can pass file descriptors (FDs) from the parent process to a child process
-by using file descriptor inheritance.\cite{tlpi}
+by using file descriptor inheritance\cite{tlpi}.
 When a process is created, all open file descriptors are copied from the parent process to the child process.
 The child process can then make independent use of the file descriptors.
 We'll discuss this important feature further in section \ref{inheritance}.
 
 Most resources in Linux are managed through file descriptors,
 so this allows the parent process to pass a variety of resources to the child process,
-such as files, network connections, pipes, or other resources.\cite{ucspi}
+such as files, network connections, pipes, or other resources\cite{ucspi}.
 Since the resource is created outside the child process and passed down as an opqaue file descriptor,
 the precise details and type of the resource are not available to the child.
 This is a form of abstraction,
-and so we know ``for free''
+and so we know ``for free''\cite{theoremsforfree}
 that the program running in the child process
 will not rely on the details of how the file descriptor was created,
-such as the filename that we opened or the hostname to which we connected.\cite{theoremsforfree}
+such as the filename that we opened or the hostname to which we connected.
 
 \lstinputlisting[float,language=Python,label={lst:fds},caption={Passing down FDs}]
 {examples/fds/direct.py}
@@ -319,7 +322,7 @@ which enables modularity
 and allows exploiting the parallelism of the underlying hardware.
 Since processes don't share memory,
 they can provide a less complex parallel programming environment
-than shared-memory thread-based approaches.\cite{threads}
+than shared-memory thread-based approaches\cite{threads}.
 
 \lstinputlisting[float,language=Python,label={lst:pipe},caption={Creating a concurrent processing pipeline}]
 {examples/pipe/direct.py}
@@ -337,14 +340,14 @@ The whole system of connected processes then runs concurrently.
 While ideally all resources would be passed by file descriptor,
 Unix has a number of resources that are global,
 such as the process identifier space or the mount table,
-which cannot be changed on a per-process basis.\cite{capsicum}
+which cannot be changed on a per-process basis\cite{capsicum}.
 
 In Linux, many global resources have been made process-local
-through the namespaces system.\cite{lwn_namespaces}
+through the namespaces system\cite{lwn_namespaces}.
 Like other process-local resources such as the current working directory,
 namespaces are typically set up at process creation time.
 
-One key use of namespaces is to implement large-scale container systems such as Docker.\cite{lwn_namespaces}
+One key use of namespaces is to implement large-scale container systems such as Docker\cite{lwn_namespaces}.
 However, this is far from the only use.
 With an adaquate process creation primitive,
 namespaces can be used easily on a much smaller scale.
@@ -352,9 +355,9 @@ namespaces can be used easily on a much smaller scale.
 Namespaces, like all process-local resources,
 can be used to customize a program's behavior
 in ways that were not anticipated at development time
-by customizing the environment the process runs in.\cite{plan9ns}
+by customizing the environment the process runs in\cite{plan9ns}.
 Other system calls such as \texttt{chdir} and \texttt{chroot} can also be used for this,
-but namespaces allow new ways of customization.\cite{mount_namespaces}
+but namespaces allow new ways of customization\cite{mount_namespaces}.
 
 \lstinputlisting[float,language=Python,label={lst:mount},caption={Overriding absolute path using a mount namespace}]
 {examples/mount/direct.py}
@@ -368,17 +371,17 @@ pass an argument to \texttt{clone}.
 
 \verb|CLONE_NEWNS| causes \texttt{clone} to create the process in a new mount namespace,
 which allows us to manipulate the filesystem tree in a way that only this process will see,
-using the \texttt{mount} system call.\cite{mount_namespaces}\cite{clone}
+using the \texttt{mount} system call\cite{mount_namespaces}\cite{clone}.
 We call \texttt{mount}, passing \texttt{MS\_BIND}, to make the file \verb|/home/foo/custom_foo.conf|
 appear at the path \verb|/etc/foo.conf|;
-this is known as a bind mount.\cite{mount}
+this is known as a bind mount\cite{mount}.
 Then we execute some program,
 which, when it opens \verb|/etc/foo.conf|, will see the contents of our \verb|custom_foo.conf|.
 \subsection{Sandboxing}
 At process creation time,
 we can not only pass resources and customize the process's environment,
 we can also deny the process access to resources that it otherwise receives by default.
-This is a key part of creating a secure sandbox for potentially malicious code.\cite{seccomp}\cite{firejail}\cite{gvisor}
+This is a key part of creating a secure sandbox for potentially malicious code\cite{seccomp}\cite{firejail}\cite{gvisor}.
 
 \lstinputlisting[float,language=Python,label={lst:unmount},caption={Unmount all and run executable via fexec}]
 {examples/unmount/direct.py}
@@ -396,7 +399,7 @@ In this case we don't need to call \verb|inherit_fd|,
 since the file descriptor was opened directly from the child.
 We then run the executable we opened earlier using \texttt{fexec},
 which allows executing a file descriptor,
-and pass the database file descriptor number as an argument.\cite{execveat}
+and pass the database file descriptor number as an argument\cite{execveat}.
 Note that this executable must be statically linked,
 or it wouldn't work in an empty filesystem namespace
 with no libraries to dynamically link against.
@@ -405,7 +408,7 @@ By removing the filesystem tree from the view of this process,
 we can run this executable with greater confidence
 that it won't be able to tamper with the rest of the system.
 A sandbox which is truly robust against malicious or compromised programs requires additional steps,
-but this is a substantial start.\cite{firejail}\cite{gvisor}
+but this is a substantial start\cite{firejail}\cite{gvisor}.
 Such a technique can also be used when a full sandbox is not relevant,
 to ease reasoning about the behavior of the program being run
 and protect against bugs.
@@ -413,7 +416,7 @@ and protect against bugs.
 Even if the process needs additional resources,
 those can be explicitly passed down through file descriptor passing,
 as we do here with the database file descriptor.
-This allows us to approximate capability-based security.\cite{capsicum}
+This allows us to approximate capability-based security\cite{capsicum}.
 \subsection{Nested clone and pid namespaces}\label{pidns}
 Process-local resources can also be used to control the lifetime of resources used by that process.
 Some Linux resources are not automatically cleaned up on process exit;
@@ -424,19 +427,19 @@ leaving behind unused garbage on the system.
 One resource which is not automatically cleaned up is processes themselves;
 if we run a program which itself spawns subprocesses,
 those subprocesses may unintentionally leak,
-and be left running on the system even after the program itself has stopped.\cite{caternfork}
+and be left running on the system even after the program itself has stopped\cite{caternfork}.
 
 We can use a pid namespace to solve this issue.
 The lifetime of all processes in a pid namespace is tied to the first process created in it,
 the init process.
 When the init process dies,
-all other processes in the pid namespace are destroyed.\cite{pid_namespaces}
+all other processes in the pid namespace are destroyed\cite{pid_namespaces}.
 
 \lstinputlisting[float,language=Python,label={lst:pidns},caption={Nested clone and pid namespace}]
 {examples/pidns/direct.py}
 In listing \ref{lst:pidns},
 we create a child process which we'll name \texttt{init},
-passing \verb|CLONE_NEWPID| to create it in a new pid namespace.\cite{clone}
+passing \verb|CLONE_NEWPID| to create it in a new pid namespace\cite{clone}.
 
 To create another process in the pid namespace,
 we clone again, this time from \texttt{init}.
@@ -449,8 +452,8 @@ just as we would monitor \texttt{init} from its parent process.
 
 \texttt{init} in a pid namespace has some special powers and responsibilities.
 We can handle these responsibilities ourselves directly from our program,
-or we can continue on by \texttt{exec}ing an init daemon in \texttt{init} to handle it for us.
-\cite{pid_namespaces}\cite{tini}\cite{dumb_init}
+or we can continue on by \texttt{exec}ing an init daemon in \texttt{init} to handle it for us
+\cite{pid_namespaces}\cite{tini}\cite{dumb_init}.
 
 In either case, when \texttt{init} dies,
 the pid namespace will be destroyed,
@@ -461,9 +464,9 @@ This can be useful for a variety of purposes,
 such as accessing resources in other namespaces, or in multiple namespaces at once.
 We'll give one example using the Filesystem in Userspace (FUSE) Linux subsystem.
 
-FUSE allows a filesystem to be implemented with a userspace program.\cite{fuse}
-Many interesting filesystems have been implemented using FUSE,
-representing a variety of resources as files.\cite{sshfs}\cite{encfs}\cite{mp3fs}
+FUSE\cite{fuse} allows a filesystem to be implemented with a userspace program.
+Many interesting filesystems\cite{sshfs}\cite{encfs}\cite{mp3fs} have been implemented using FUSE,
+representing a variety of resources as files.
 
 For improved modularity, we might want to mount and use a FUSE filesystem in our program,
 in a way that no other process can see it,
@@ -475,7 +478,7 @@ We can do this by creating a child process that shares its file descriptor table
 In listing \ref{lst:fuse},
 we first create a child process \verb|ns_child| in a new mount namespace with \verb|CLONE_NEWNS|,
 and this time also pass \verb|CLONE_FILES|,
-which causes the file descriptor table to be shared between the parent process and the child process.\cite{clone}
+which causes the file descriptor table to be shared between the parent process and the child process\cite{clone}.
 We create another child from \verb|ns_child|
 and use it to \texttt{exec} a FUSE filesystem,
 which will appear only in the mount namespace of \verb|ns_child| and its descendents.
@@ -488,7 +491,7 @@ we'll discuss \texttt{use\_fd} in section \ref{inheritance}.
 
 File descriptor passing over a Unix domain socket
 can allow similar behavior without sharing the file descriptor table,
-but is substantially more complex.\cite{scm_rights}
+but is substantially more complex\cite{scm_rights}.
 Nevertheless, for fork-style and spawn-style process creation,
 file descriptor passing over a Unix domain socket
 is our only option.
@@ -525,19 +528,19 @@ and a complex program will likely have other requests to service concurrently.
 Even a relatively simple program may want to monitor multiple child processes at a time.
 To support this,
 our implementation fully supports asynchronous usage with a user-provided event loop,
-including the Python \texttt{async/await} coroutine support.\cite{python_coroutines}
+including the Python \texttt{async/await} coroutine support\cite{python_coroutines}.
 
 We have chosen to implement in userspace first,
 rather than immediately implementing this in the kernel,
 to aid deployability
 and to allow fast iteration while developing userspace code using these features.
 In the past, attempts to upstream kernel support for novel features without extensive userspace usage
-has had a poor reception in the Linux kernel community.\cite{lwn_checkpoint}\cite{first_class_address_space}
+has had a poor reception in the Linux kernel community\cite{lwn_checkpoint}\cite{first_class_address_space}.
 We believe proving viability in userspace first will be better in the long term.
 
 \texttt{ptrace} provides a way to perform arbitrary actions on a target process,
 including system calls,
-but is not suitable for us.\cite{ptrace}
+but is not suitable for us\cite{ptrace}.
 As we discuss in section \ref{related}, a number of systems, such as \texttt{gdb} and \texttt{strace},
 use \texttt{ptrace} to implement debuggers.
 But multiple processes cannot use \texttt{ptrace} on a single target process at the same time;
@@ -555,7 +558,7 @@ in the \texttt{rsyscall} wrapper for \texttt{clone}.
 
 Sometimes, the target process may be in another address space;
 for example, if the target process is at a different privilege level,
-we will want it to be in a different address space for security reasons.\cite{vfork_dangerous}
+we will want it to be in a different address space for security reasons\cite{vfork_dangerous}.
 There are a number of available techniques in that scenario;
 we choose to copy memory over a pair of pipes,
 again using file descriptors for the sake of easy event-loop integration.
@@ -567,7 +570,7 @@ Besides \texttt{clone}, \texttt{vfork} and \texttt{fork} also create processes,
 but they are not suitable for flexible direct-style process creation.
 \texttt{vfork} suspends execution of the parent process
 while waiting for the child process to exit or call \texttt{execve},
-which is immediately unsuitable.\cite{vfork}
+which is immediately unsuitable\cite{vfork}.
 \texttt{fork} lacks many features which are restricted to \texttt{clone}.
 For example, with \texttt{fork},
 we could not create child processes which share the parent's address space,
@@ -626,18 +629,18 @@ Fortunately, there is an alternative solution, which does work with \verb|CLONE_
 If the \verb|CLONE_CHILD_CLEARTID| \texttt{clone} flag is set,
 then when the child exits or execs,
 the kernel will set \texttt{ctid} to zero and then,
-crucially, perform a futex wakeup on it.\cite{clone}
+crucially, perform a futex wakeup on it\cite{clone}.
 
 Futexes are usually used for the implementation of userspace shared-memory synchronization constructs,
 but the relevant detail for us here is that we can wait on an address
-until a futex wakeup is performed on that address.\cite{futex}
+until a futex wakeup is performed on that address\cite{futex}.
 This means we can wait on \texttt{ctid} until the futex wakeup is performed,
 and in this way get notified of the child process calling \texttt{execve} or exiting.
 A process can only wait on one futex at a time;
 to monitor multiple futexes from a single event loop,
 we need to create a dedicated child process for each futex we want to wait on,
 and have this child process exit when the futex has a wakeup.
-We can then monitor these child processes from an event loop using standard techniques.\cite{signalfd}\cite{pidfd}
+We can then monitor these child processes from an event loop using standard techniques\cite{signalfd}\cite{pidfd}.
 
 So, we pass \texttt{ctid} whenever we call \texttt{clone},
 and set up a process to wait on that futex.
@@ -656,7 +659,7 @@ this ambiguity is unfortunate, but it is also present in the pipe-based approach
 
 Some other Unix-like systems natively provide the ability to wait for a child's \texttt{execve};
 our implementation would be simplified, and the ambiguity eliminated,
-if we had this ability on Linux.\cite{freebsd_kqueue}
+if we had this ability on Linux\cite{freebsd_kqueue}.
 One approach would be to add a new \texttt{clone} flag to
 opt-in to receiving \texttt{WEXECED} events through \texttt{waitid}.
 A new \texttt{waitid} flag alone is not sufficient,
@@ -742,7 +745,8 @@ by allowing us to create new FD handles on-demand
 referring to already-open FDs created by FD inheritance or FD table sharing;
 by creating new FD handles in new processes, we can call syscalls in those processes on those FDs.
 \texttt{rsyscall} provides two functions
-\texttt{inherit\_fd} and \texttt{use\_fd}, which support FD inheritance and FD table sharing, respectively.
+\texttt{inherit\_fd} (used in listings \ref{lst:fds} and \ref{lst:pipe})
+and \texttt{use\_fd} (used in listing \ref{lst:fuse}), which support FD inheritance and FD table sharing, respectively.
 Both functions take as arguments a process capability $A$ and an FD handle $H$ associated with some other process $B$,
 and return a new FD handle associated with process $A$.
 For \texttt{inherit\_fd},
@@ -803,7 +807,7 @@ with an already-defined protocol which can cover all errors from all system call
 
 The main source of additional code in fork-style implementations
 is reporting errors back to the main program using IPC.
-This pattern is common in complex usage of \texttt{fork}.\cite{posix_spawn_error_pipe}\cite{python_subprocess_errpipe}
+This pattern is common in complex usage of \texttt{fork}\cite{posix_spawn_error_pipe}\cite{python_subprocess_errpipe}.
 Many users of \texttt{fork} avoid complex IPC
 by encoding a subset of the error information into the exit code of the child process
 when an error is encountered during child setup.
@@ -818,7 +822,7 @@ This is the main immediately visible simplification of using direct-style proces
 It is possible to build an abstracted wrapper for fork-style process creation
 which abstracts away this error reporting code.
 We have built several such wrappers,
-but have ultimately discarded them in favor of direct-style process creation.\cite{sfork}
+but have ultimately discarded them in favor of direct-style process creation\cite{sfork}.
 
 We found that such wrappers, besides their complexity,
 don't provide any fundamental improvement
@@ -961,7 +965,7 @@ writing code to support new programs and passing down file descriptors to those 
 
 Easy file descriptor passing has, in turn, allowed us to heavily use socket activation techniques
 to start up services in parallel,
-substantially speeding up system startup.\cite{socketactivation}
+substantially speeding up system startup\cite{socketactivation}.
 We are able to bootstrap connections over our internal shared memory transports
 over pre-created, passed-down file descriptors,
 and our management interfaces listen on passed-down sockets;
@@ -1007,7 +1011,7 @@ This has become a key part of our development workflow.
 \section{Related work}\label{related_work}
 \subsection{Direct-style process creation}
 Baumann (2019) briefly suggests cross-process operations as a possible replacement for \texttt{fork} on Unix,
-positing many of the same advantages we find in practice.\cite{forkroad}
+positing many of the same advantages we find in practice\cite{forkroad}.
 Our work, though developed independently,
 is in many ways an elaboration on and implementation of that idea.
 
@@ -1018,7 +1022,7 @@ We are not aware of any other instances of direct-style process creation in a Un
 The closest related work known to us
 is efforts to build Unix compatibility environments
 on academic operating systems which natively use direct-style process creation;
-examples include Exokernel and Fuchsia.\cite{exokernel}\cite{fuchsia_libc}
+examples include Exokernel and Fuchsia\cite{exokernel}\cite{fuchsia_libc}.
 Such compatibility environments could be bypassed to perform direct-style process creation
 using the underlying primitives,
 but regular Unix system calls could not be used to create new Unix processes in a direct-style way
@@ -1068,28 +1072,28 @@ which means only one of these systems can be used on a process at a time.
 % yeah it's not yet something developed.
 % a formal interface definition so that remote system calls can be employed without building a new system every time.
 \subsection{Process capabilities}
-Many capability-oriented operating systems, such as KeyKOS and seL4,
-have process capabilities which allow one process to operate on another process.\cite{keykos}\cite{sel4}\cite{fuchsia}
+Many capability-oriented operating systems, such as KeyKOS\cite{keykos}, seL4\cite{sel4}, and others\cite{fuchsia},
+have process capabilities which allow one process to operate on another process.
 These systems are our main inspiration for this work.
 
 On several Unix systems,
-Capsicum provides something called process descriptors,
-which is a file descriptor handle for a process.\cite{capsicum}
-A similar feature has been recently added to Linux in the form of the pidfd API.\cite{pidfd}
+Capsicum\cite{capsicum} provides something called process descriptors,
+which is a file descriptor handle for a process.
+A similar feature has been recently added to Linux in the form of the pidfd API\cite{pidfd}.
 These notions of process capability are quite limited, however;
 pidfds and process descriptors only allow sending signals to a process or waiting for its death,
 rather than exercising full control over the process.
 \subsection{Capability-secure libc replacements}
-Capsicum provides a set of system calls
-which can be used to provide a capability-secure sandbox.\cite{capsicum}
-Latter efforts, including CloudABI and WASI,
-developed this into a partial or full replacement for a POSIX libc.\cite{oblivious}\cite{cloudabi}\cite{wasi}
+Capsicum\cite{capsicum} provides a set of system calls
+which can be used to provide a capability-secure sandbox.
+Latter efforts\cite{oblivious}, including CloudABI\cite{cloudabi} and WASI\cite{wasi},
+developed this into a partial or full replacement for a POSIX libc.
 Like all other Unix libcs that we know of,
 these libc-replacements implicitly make system calls on the current process,
 rather than using an explicit process capability as \texttt{rsyscall} does.
 
-PLASH provides a spawn-style API, in the form of a shell,
-to launch processes in a capability-secure environment.\cite{plash}
+PLASH\cite{plash} provides a spawn-style API, in the form of a shell,
+to launch processes in a capability-secure environment.
 PLASH, like all spawn-style APIs, abstracts over the native Linux environment,
 and is therefore limited in what kind of processes it can create.
 \section{Future work}\label{future_work}

@@ -32,10 +32,9 @@
 
 % refs and bib
 \usepackage{cite}               % order multiple entries in \cite{...}
-\usepackage{breakurl}           % break too-long urls in refs
-\usepackage{url}                % allow \url in bibtex for clickable links
+\usepackage[hyphens]{url}                % allow \url in bibtex for clickable links
 \usepackage{xcolor}             % color definitions, to be use for...
-\usepackage[]{hyperref}         % ...clickable refs within pdf...
+\PassOptionsToPackage{hyphens}{url}\usepackage[]{hyperref}         % ...clickable refs within pdf...
 \hypersetup{                    % ...like so
   colorlinks,
   linkcolor={green!80!black},

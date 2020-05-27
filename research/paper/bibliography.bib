@@ -32,11 +32,12 @@ url = {https://www.microsoft.com/en-us/research/publication/a-fork-in-the-road/}
 }
 
 @inproceedings{keykos,
-author = {Bomberger, Allen and Frantz, William and Hardy, Ann and Hardy, Norman and Landau, Charles and Shapiro, Jonathan},
-year = {1992},
-month = {01},
-pages = {95-112},
-title = {The KeyKOS nanokernel architecture}
+  title={The KeyKOS nanokernel architecture},
+  author={Bomberger, Alan C and Hardy, Norman and Peri, A and Charles, Frantz and Landau, R and Frantz, William S and Shapiro, Jonathan S and Hardy, Ann C},
+  booktitle={In Proc. of the USENIX Workshop on Micro-kernels and Other Kernel Architectures},
+  year=1992,
+  month = 01,
+  pages = {95-112},
 }
 
 @article{sel4,
@@ -58,10 +59,11 @@ numpages = {29},
 keywords = {minimality, seL4, IPC, formal verification, L4, virtualization, performance, message passing, worst-case execution time, real time, Microkernels}
 }
   
-@inproceedings{exokernel,
-  title={The exokernel operating system architecture},
-  author={Dawson R. Engler},
-  year={1998}
+@phdthesis{exokernel,
+  title={The Exokernel operating system architecture},
+  author={Engler, Dawson R},
+  year={1998},
+  school={Massachusetts Institute of Technology}
 }
 
 @MISC{fuchsia,
@@ -79,7 +81,7 @@ keywords = {minimality, seL4, IPC, formal verification, L4, virtualization, perf
 @InProceedings{singularity,
 author = {Aiken, Mark and Fahndrich, Manuel and Hawblitzel, Chris and Hunt, Galen and Larus, Jim},
 title = {Deconstructing Process Isolation},
-booktitle = {ACM SIGPLAN Workshop on Memory Systems Performance and Correctness},
+booktitle = {{ACM} {SIGPLAN} Workshop on Memory Systems Performance and Correctness},
 year = {2006},
 month = {October},
 abstract = {Most operating systems enforce process isolation through hardware protection mechanisms such as memory segmentation, page mapping, and differentiated user and kernel instructions. Singularity is a new operating system that uses software mechanisms to enforce process isolation. A software isolated process (SIP) is a process whose boundaries are established by language safety rules and enforced by static type checking. SIPs provide a low cost isolation mechanism that provides failure isolation and fast inter-process communication.To compare the performance of Singularity's SIPs against traditional isolation techniques, we implemented an optional hardware isolation mechanism. Protection domains are hardware-enforced address spaces, which can contain one or more SIPs. Domains can either run at the kernel's privilege level or be fully isolated from the kernel and run at the normal application privilege level. With protection domains, we can construct Singularity configurations that are similar to micro-kernel and monolithic kernel systems. We found that hardware-based isolation incurs non-trivial performance costs (up to 25–33%) and complicates system implementation. Software isolation has less than 5% overhead on these benchmarks.The lower run-time cost of SIPs makes their use feasible at a finer granularity than conventional processes. However, hardware isolation remains valuable as a defense-in-depth against potential failures in software isolation mechanisms. Singularity's ability to employ hardware isolation selectively enables careful balancing of the costs and benefits of each isolation technique.},
@@ -106,7 +108,7 @@ edition = {ACM SIGPLAN Workshop on Memory Systems Performance and Correctness},
 }
 
 @article{plan9ns,
-  title={The use of name spaces in Plan 9},
+  title={The use of name spaces in {Plan 9}},
   author={Pike, Rob and Presotto, Dave and Thompson, Ken and Trickey, Howard and Winterbottom, Phil},
   journal={ACM SIGOPS Operating Systems Review},
   volume={27},
@@ -117,7 +119,7 @@ edition = {ACM SIGPLAN Workshop on Memory Systems Performance and Correctness},
 }
 
 @inproceedings{flexsc,
-  title={FlexSC: Flexible System Call Scheduling with Exception-Less System Calls},
+  title={{FlexSC}: Flexible System Call Scheduling with Exception-Less System Calls},
   author={Livio Baldini Soares and Michael Stumm},
   booktitle={OSDI},
   year={2010}
@@ -139,15 +141,16 @@ location = {Imperial College, London, United Kingdom},
 series = {FPCA ’89}
 }
 
-@inproceedings{oblivious,
+@article{oblivious,
   title={Towards oblivious sandboxing with Capsicum},
-  author={Jonathan Anderson and Stanley Godfrey and Robert N MWatson},
+  author={Anderson, Jonathan and Godfrey, Stanley and Watson, Robert NM},
+  journal={FreeBSD Journal},
   year={2017}
 }
                   
 @inproceedings {gvisor,
 author = {Ethan G. Young and Pengfei Zhu and Tyler Caraza-Harter and Andrea C. Arpaci-Dusseau and Remzi H. Arpaci-Dusseau},
-title = {The True Cost of Containing: A gVisor Case Study},
+title = {The True Cost of Containing: A {gVisor} Case Study},
 booktitle = {11th {USENIX} Workshop on Hot Topics in Cloud Computing (HotCloud 19)},
 year = {2019},
 address = {Renton, WA},
@@ -187,20 +190,21 @@ isbn="978-3-540-69384-0"
 }
 
 @MISC{plash,
-  title={PLASH: the principle of least authority shell, 2007},
+  title={{PLASH}: the principle of least authority shell, 2007},
   author={Seaborn, Mark},
   note = "\url{http://www.cs.jhu.edu/~seaborn/plash/html/}",
 }
 
 @inproceedings{popcorn,
-  title={Popcorn : a replicated-kernel OS based on Linux},
-  author={Antonio Barbalace},
+  title={Popcorn: a replicated-kernel {OS} based on {Linux}},
+  author={Barbalace, Antonio and Ravindran, Binoy and Katz, David},
+  booktitle={Proceedings of the Linux Symposium, Ottawa, Canada},
   year={2014}
 }
 
 @article{condor, 
   author    = "Douglas Thain and Todd Tannenbaum and Miron Livny",
-  title     = "Distributed computing in practice: the Condor experience.",
+  title     = "Distributed computing in practice: the {Condor} experience.",
   journal   = "Concurrency - Practice and Experience",
   volume    = "17",
   number    = "2-4",
@@ -210,7 +214,7 @@ isbn="978-3-540-69384-0"
 
 @MISC{criu,
      title = {Checkpoint/Restore In Userspace},
-     author = {CRIU Project},
+     author = {{CRIU} Project},
      note = "\url{https://www.criu.org/Main_Page}",
 }
                   
@@ -230,9 +234,9 @@ series = {USENIX Security’10}
   
 @inbook{chainloading,
 place={Boston},
-title={The Art of UNIX Programming: Security wrappers and Bernstein chaining},
+title={The Art of {UNIX} Programming: Security wrappers and Bernstein chaining},
 chapter=6,
-booktitle={The Art of UNIX Programming},
+booktitle={The Art of {UNIX} Programming},
 publisher={Addison-Wesley},
 author={Raymond, Eric Steven},
 year=2008,
@@ -241,7 +245,7 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
 
 
 @MISC{pidfd,
-     title = {Completing the pidfd API},
+     title = {Completing the pidfd {API}},
      author = {Jonathan Corbet},
      note = "\url{https://lwn.net/Articles/794707/}",
 }
@@ -289,7 +293,7 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
 }
 
 @MISC{pid_namespaces,
-     title = {Namespaces in operation, part 3: PID namespaces},
+     title = {Namespaces in operation, part 3: {PID} namespaces},
      author = {Michael Kerrisk},
      note = "\url{https://lwn.net/Articles/531419/}",
 }
@@ -319,8 +323,8 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
 }
 
 @MISC{fuse,
-     title = {FUSE},
-     author = {Linux kernel development community},
+     title = {{FUSE}},
+     author = {{Linux} kernel development community},
      note = "\url{https://www.kernel.org/doc/html/latest/filesystems/fuse.html}",
 }
 
@@ -375,20 +379,20 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
 }
 
 @MISC{callcc_fork,
-     title = {Continuations in C++ with fork},
+     title = {Continuations in {C++} with fork},
      author = {keegan},
      year = 2012,
      note = "\url{http://mainisusuallyafunction.blogspot.com/2012/02/continuations-in-c-with-fork.html}",
 }
 
 @MISC{manpages,
-     title = {The Linux man-pages project},
+     title = {The {Linux} man-pages project},
      author = {man{-}pages},
      note = "\url{https://www.kernel.org/doc/man-pages/}",
 }
 
 @book{tlpi,
-  title={The Linux programming interface: a Linux and UNIX system programming handbook},
+  title={The {Linux} programming interface: a {Linux} and {UNIX} system programming handbook},
   author={Kerrisk, Michael},
   year={2010},
   publisher={No Starch Press}
@@ -455,7 +459,7 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
 }
 
 @MISC{caternfork,
-     title = {The Unix process API is bad},
+     title = {The {Unix} process {API} is bad},
      author = {catern},
      note = "\url{http://catern.com/posts/fork.html}",
 }
@@ -467,31 +471,31 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
 }
 
 @MISC{dumb_init,
-     title = {dumb-init: A minimal init system for Linux containers},
+     title = {dumb-init: A minimal init system for {Linux} containers},
      author = {Yelp},
      note = "\url{https://github.com/Yelp/dumb-init}",
 }
 
 @MISC{firejail,
-     title = {firejail - Linux namespaces and seccomp-bpf sandbox},
+     title = {firejail - {Linux} namespaces and seccomp-bpf sandbox},
      author = {netblue30},
      note = "\url{https://github.com/netblue30/firejail}",
 }
 
 @MISC{sshfs,
-     title = {sshfs - A network filesystem client to connect to SSH servers},
+     title = {sshfs - A network filesystem client to connect to {SSH} servers},
      author = {libfuse},
      note = "\url{https://github.com/libfuse/sshfs}",
 }
 
 @MISC{encfs,
-     title = {EncFS: an Encrypted Filesystem for FUSE},
+     title = {{EncFS}: an Encrypted Filesystem for {FUSE}},
      author = {Valient Gough},
      note = "\url{https://github.com/vgough/encfs}",
 }
 
 @MISC{mp3fs,
-     title = {mp3fs - FUSE-based transcoding filesystem from FLAC to MP3},
+     title = {mp3fs - {FUSE}-based transcoding filesystem from {FLAC} to {MP3}},
      author = {K Henriksson},
      note = "\url{https://github.com/khenriks/mp3fs}",
 }
@@ -515,7 +519,7 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
 }
 
 @MISC{python_coroutines,
-     title = {{PEP} 492 -- {Coroutines} with async and await syntax},
+     title = {{PEP} 492 -- Coroutines with async and await syntax},
      author = {Yury Selivanov},
      note = "\url{https://www.python.org/dev/peps/pep-0492/}",
 }
@@ -528,7 +532,7 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
 
 @inproceedings {scone,
 author = {Sergei Arnautov and Bohdan Trach and Franz Gregor and Thomas Knauth and Andre Martin and Christian Priebe and Joshua Lind and Divya Muthukumaran and Dan O{\textquoteright}Keeffe and Mark L. Stillwell and David Goltzsche and Dave Eyers and R{\"u}diger Kapitza and Peter Pietzuch and Christof Fetzer},
-title = {{SCONE}: Secure Linux Containers with Intel {SGX}},
+title = {{SCONE}: Secure {Linux} Containers with {Intel} {SGX}},
 booktitle = {12th {USENIX} Symposium on Operating Systems Design and Implementation ({OSDI} 16)},
 year = 2016,
 isbn = {978-1-931971-33-1},
@@ -541,7 +545,7 @@ month = nov,
 
 @inproceedings{eleos,
 author = {Orenbach, Meni and Lifshits, Pavel and Minkin, Marina and Silberstein, Mark},
-title = {Eleos: ExitLess OS Services for SGX Enclaves},
+title = {Eleos: ExitLess OS Services for {SGX} Enclaves},
 year = {2017},
 isbn = {9781450349383},
 publisher = {Association for Computing Machinery},
