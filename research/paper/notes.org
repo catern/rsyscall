@@ -1893,10 +1893,12 @@ and integration with applications that you can talk about in detail
 ** consistent formatting fork and spawn
 ** DONE have central contributions section
 ** DONE fix weird alignment in style comparison table
-** fix hideous whitespace
+** DONE fix hideous whitespace
 section 3.3.2
 
 For \texttt{unshare(CLONE\_FILES)}, we perform \texttt{close\_cloexec} automatically in userspace.
+
+baleeted!
 ** DONE clarify how local syscalls are made
 catern: in Sec. 3.0, I’m missing something on “syscall server”. After going in order through Sec. 2, I still do.
 Is the syscall server a separate thread?
@@ -2115,7 +2117,7 @@ allowing the use of
    maybe say this in the examples section?
 
    
-** fd gc motivation
+** DONE fd gc motivation
 <pgiarrusso> catern: now 3.3.2 provides some motivation that was needed earlier
  — "leaving unwanted file descriptors open [...] causes bugs"
 <pgiarrusso> that belongs in 3.3.0, methinks
@@ -2136,3 +2138,100 @@ you need to manually write  `{WASI}` and `{WebAssembly}` in the source bibtex
 *** weird linebreaking on USENIX Association cite
 ** talk about using clone directly
    and how hard that would be
+** DONE ok so the fd gc stuff is all
+   worthless.
+
+   it's just overcomplicated and bad.
+
+   we should mostly cut it.
+
+   what do we want from it?
+   inherit_fd, yes,
+   and use_fd.
+
+   which...
+   does that even need us to mention that we have garbage collected file descriptors?
+   honestly, doesn't it only need, um. hmm..
+
+   ok so when creating processes and inheriting file descriptors,
+   we need to clean up the file descriptor table.
+
+   that's the only thing that matters.
+
+   but, really, that doesn't have anything to do with direct-style process creation!
+
+   like, nothing at all!
+   no-one in existing fork-style cleans up the file descriptor table.
+   it's irrelevant!
+
+   ok, so what is novel from direct-style here?
+
+   well, fork isn't. and unshare isn't.
+
+   now that we default to clone_files off, that's not relevant either.
+   clone_files is a special case, as before.
+
+   oh hey we can always bulk up by just reverting those style changes :) let's do that now.
+
+   lol ok so now we're at 12 pages
+
+   anyway, so what's the point of this fd section?
+
+   what does direct style bring here?
+
+   well, ok.
+
+   one thing is that,
+   we need to be able to operate across multiple processes.
+   raw file descriptor numbers are not suitable.
+
+   so using GC'd FD handles is necessary.
+
+   and that's where those methods come from.
+
+   Many Unix resources are referred to by integers,
+   which are valid only within the context of a given process;
+   file descriptors numbers, memory addresses, and others.
+   A program using a POSIX libc, which operates in only one process,
+   can deal with these resources by just passing around these integers
+   and directly access them through syscalls and instructions.
+   A program using \texttt{rsyscall}, however,
+   operates in multiple processes,
+   and dealing with these resources as raw integers incurs the risk of a new kind of error:
+   using the wrong process to try to access a given resource.
+
+   We'll discuss our approach to this problem for file descriptors;
+   our approach for other resources is similar.
+
+   We deal with file descriptors only through file descriptor handles.
+   A file descriptor handle is a pair of a file descriptor number, and a process capability.
+
+   To perform a system call on a file descriptor through a given process,
+   we must obtain a handle for that file descriptor with that process capability.
+   There are three ways to do this.
+
+   First, all system calls which, in a POSIX libc, would return a file descriptor number,
+   now return file descriptor handles
+   consisting of the file descriptor number they would have otherwise returned,
+   and the process capability for the process in which the system call was made.
+   In this way, file descriptors are usable, by default, in the process that originally created them,
+   through the handle that was created at the time of the file descriptor's creation.
+   This is the basic and simple case;
+   a file descriptor is usable in the process that created it.
+   
+   Second, file descriptors can be inherited by creating a new process.
+   When \texttt{clone} (without \verb|CLONE_FILES|) is called,
+   it creates a new child process with a new file descriptor table,
+   containing copies of all the file descriptors existing in the parent process at the time of the system call.
+   These file descriptors can be used from the child process
+   by creating handles for them using the \texttt{inherit\_fd} func
+
+This is known as file descriptor inheritance.
+
+   a new
+
+   
+   
+   
+
+   These handles are garbage

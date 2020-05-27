@@ -21,10 +21,10 @@
 \newcommand{\tbad}{\makebox[\widthof{\ding{51}}]{\ding{55}}:}
 \newcommand{\tgood}{\ding{51}:}
 
-\titleformat*{\subsection}{\normalsize\bfseries}
-\titleformat*{\subsubsection}{\normalsize\bfseries}
-\titlespacing{\subsection}{0pt}{1ex}{0.5ex}
-\titlespacing{\subsubsection}{0pt}{0.5ex}{0ex}
+% \titleformat*{\subsection}{\normalsize\bfseries}
+% \titleformat*{\subsubsection}{\normalsize\bfseries}
+% \titlespacing{\subsection}{0pt}{1ex}{0.5ex}
+% \titlespacing{\subsubsection}{0pt}{0.5ex}{0ex}
 \lstset{
 language=Python,
 basicstyle=\small\ttfamily,
@@ -269,7 +269,7 @@ individual real-world applications can pick and choose the features that are use
 as we describe in section \ref{realworld}.
 
 In these examples and in this paper,
-we'll have multiple processes,
+we will have multiple processes,
 all of which are under the control of a single program with a single flow of control.
 Because of the absence of multiple concurrent control flows,
 these examples could be executed interactively by a human operator,
@@ -277,13 +277,14 @@ typing them in line by line in a REPL.
 We'll always be working from the perspective of this single program;
 never from the perspective of a child process, because (until we call \texttt{exec} and give up control)
 there is no meaningful program running in the child processes.
-\subsection{Abstraction through file descriptor passing}\label{fd_abstraction}
+We believe this absence of concurrency simplifies reasoning.
+\subsection{Abstraction through FD passing}\label{fd_abstraction}
 In Linux (and Unix in general),
-a program can pass file descriptors from the parent process to a child process
+a program can pass file descriptors (FDs) from the parent process to a child process
 by using file descriptor inheritance.\cite{tlpi}
 When a process is created, all open file descriptors are copied from the parent process to the child process.
 The child process can then make independent use of the file descriptors.
-We'll discuss this important feature further in section \ref{fdtables}.
+We'll discuss this important feature further in section \ref{inheritance}.
 
 Most resources in Linux are managed through file descriptors,
 so this allows the parent process to pass a variety of resources to the child process,
@@ -305,7 +306,7 @@ which inherits all file descriptors from its parent.
 We indicate that we want to operate on the child's inherited copy of the file descriptor with \verb|child.inherit_fd|.
 \texttt{inherit\_fd} performs no system calls,
 it just updates bookkeeping to return a new handle for the inherited file descriptor;
-we'll discuss it in more depth in section \ref{handles}.
+we'll discuss it in more depth in section \ref{inheritance}.
 Then we disable \texttt{CLOEXEC} on the child's file descriptor,
 which on Linux we can do by clearing the FD flags with \verb|fcntl(fd, F_SETFD, 0)|;
 this ensures that the file descriptor will be usable by the new program after we call \texttt{exec}.
@@ -483,7 +484,7 @@ and use those files in \texttt{local},
 through the shared file descriptor table.
 We call \texttt{use\_fd} which, like \texttt{inherit\_fd},
 updates bookkeeping to create a new handle for the file descriptor existing in the shared fd table;
-we'll discuss \texttt{use\_fd} in section \ref{handles}.
+we'll discuss \texttt{use\_fd} in section \ref{inheritance}.
 
 File descriptor passing over a Unix domain socket
 can allow similar behavior without sharing the file descriptor table,
@@ -589,7 +590,7 @@ the parent process can be begin to call system calls in the child process.
 Most system calls work as normal;
 the new child process can be modified freely through \texttt{chdir}, \texttt{dup2}, and other system calls.
 From the system calls related to process creation,
-only \texttt{execve} and \texttt{unshare} need substantial further attention.
+only \texttt{execve} needs substantial further attention.
 \subsection{\texttt{exec}}\label{execve}
 \texttt{execve} is unusual and requires careful design,
 because when it is successful, it does not return.
@@ -662,136 +663,95 @@ A new \texttt{waitid} flag alone is not sufficient,
 since, to integrate this feature into an event loop,
 it's necessary to receive \texttt{SIGCHLD} signals or readability notifications on a pidfd
 when the \texttt{WEXECED} event happens.
-\subsection{Managing file descriptor tables}\label{fdtables}
-\texttt{clone} (without \verb|CLONE_FILES|) and \texttt{fork}
-deal with file descriptor tables in the same way:
-The new child process has a new file descriptor table,
-containing copies of all the file descriptors existing in the parent at the time of the system call.
-This is known as file descriptor inheritance.
+\subsection{Handling file descriptors}\label{fd_handles}
+In Unix, there are many types of resources maintained inside the kernel,
+such as file descriptors or memory mappings,
+which are referred to by identifiers which are valid only within a certain context\cite{tlpi}.
+For example, file descriptors are referred to by file descriptor numbers
+which are valid only in a certain file descriptor table;
+memory and memory mappings are referred to by memory addresses
+which are valid only in a certain address space;
+the same pattern is followed for a number of other resources.
+Each process has one file descriptor table, one address space, and one of each of the other contexts.
+Two or more processes can share individual contexts;
+for example, two processes might share an address space, but not a file descriptor table.
 
-As demonstrated in section \ref{shared_fd_table},
-when the \verb|CLONE_FILES| flag is passed to \texttt{clone},
-the parent process and the child process will share a single file descriptor table,
-so changes to the file descriptor table made in one process will affect the other.
+The core issues here are the same for all such resources,
+so we'll focus on file descriptors.
+For concision and clarity, we'll abbreviate ``file descriptor'' as ``FD'' in this section.
 
-The file descriptor table can then be unshared by calling \verb|unshare(CLONE_FILES)| or \texttt{execve}.
-After either system call, the process will have a new file descriptor table
-which is no longer shared with any other process.
-All the file descriptors existing in the old table at the time of the system call
-will be copied into the new file descriptor table,
-except for, in the case of \texttt{execve}, file descriptors with the \texttt{CLOEXEC} flag set.
-\subsubsection{Tracking file descriptors through handles}\label{handles}
-After \texttt{clone}, \verb|unshare(CLONE_FILES)|, or \texttt{execve}
-has copied all the file descriptors from some old table into a new table,
-we need to decide which file descriptors we want to keep open in the new table,
-and which file descriptors should be closed.
+A typical POSIX program operates within only one process,
+and so only needs to concern itself with one of each kind of context.
+To identify and operate on an FD, it can use just an FD number,
+which is valid within the global implicit process's FD table.
+That's sufficient to make syscalls involving that FD.
 
-In general, if a certain file descriptor is in use by our program,
-through a certain process,
-that file descriptor should stay open in that process's file descriptor table.
+A program using \texttt{rsyscall}, however,
+operates in multiple processes,
+and has to deal with resources across multiple contexts.
+To identify an FD,
+it needs not just a FD number,
+but also some kind of identifier for an FD table.
+To then operate on that FD,
+it needs a capability for a process with that FD table,
+so that it can make syscalls in that process.
 
-To achieve this, file descriptors are used through garbage-collected handles;
-each handle is associated with a process and contains a specific file descriptor number.
-A handle is ``valid''
-when that file descriptor number refers to an open file descriptor in that process.
-A handle is ``live''
-when the handle is in use by the program, which we can determine
-from Python's garbage collection system.
-We then keep open exactly those file descriptors which are necessary to keep all live handles, valid.
+To manage this, we add a new concept alongside FD, FD number, and FD table:
+The FD handle.
+An FD handle is a pair of an FD number and a process capability.
+This both precisely identifies an FD, and allows operating on it.
+We say an FD handle is associated with a process
+if that FD handle contains that process capability.
 
-When a process changes file descriptor table through \verb|unshare(CLONE_FILES)|,
-we need to make sure all the live file descriptor handles associated with that process continue to be valid.
-This is straightforward:
-we enumerate all the handles associated with the process,
-and don't close the file descriptors that those handles refer to.
+All system calls which would otherwise return FD numbers or take FD numbers as an argument,
+now instead return FD handles or take FD handles as an argument.
+For convenience, as shown in section \ref{examples} for \texttt{fcntl},
+helper methods on the FD handle object are provided for many system calls dealing with a single FD;
+these methods simply call the corresponding underlying system call
+using the process capability contained in the FD handle.
 
-Likewise, if a process changes file descriptor table through \texttt{execve}
-in a way that allows the program to keep control of the process,
-we make sure to keep all the file descriptors with live handles open.
-This requires careful management of \texttt{CLOEXEC}.
+In this way, we can work with FDs without the ambiguity of dealing with raw FD numbers in a multi-process context.
+\subsubsection{File descriptor inheritance and table sharing}\label{inheritance}
+The picture is complicated by the need to support some FD behaviors which implicitly cross between processes.
+FDs are copied between processes at process creation time through FD inheritance,
+and two processes can share the same FDs through a shared FD table.
 
-When a child process is created,
-there are no file descriptor handles associated with it.
-We can make file descriptor handles by opening file descriptors in the child,
-or by creating new handles for file descriptors opened in other processes.
+FD inheritance is a behavior exhibited by \texttt{clone} (without \verb|CLONE_FILES|) and by \texttt{fork}.
+When these system calls are called,
+they create a new child process with a new FD table.
+The new FD table contains copies of all the FDs existing in the parent process's FD table at the time of the system call,
+at the same FD numbers.
 
-We can use the \verb|inherit_fd| function to create handles for inherited file descriptors.
-\verb|inherit_fd| takes a file descriptor handle associated with the parent process,
-and, if that file descriptor was open at the time the child process was created,
-returns a new handle associated with the child process
-for the child process's copy of that file descriptor.
-Once the inherited file descriptors are closed as described in section \ref{cloexec},
-\verb|inherit_fd| can no longer be used.
+FD table sharing occurs when \texttt{clone} \textit{with} \texttt{CLONE\_FILES} is called;
+this creates a new child process that shares its FD table with its parent.
+As a result, either process can operate on any FD in the table,
+through the same FD numbers.
 
-If the process shares its file descriptor table with any other processes,
-we can use the \verb|use_fd| function to create handles for file descriptors
-in the shared file descriptor table.
-\verb|use_fd| takes as arguments a process $A$
-and a file descriptor handle associated with any process sharing process $A$'s file descriptor table;
-it returns a new handle associated with process $A$ for that file descriptor.
-\subsubsection{Closing file descriptors after inheritance}\label{cloexec}
-After creating a new file descriptor table,
-and determining which file descriptors should be kept open,
-we must promptly close other file descriptors.
-Leaving unwanted file descriptors open in the new table wastes resources,
-and can also cause bugs.
-For example, it's common practice to close the write end of a pipe
-and expect an EOF on the read end;
-if the write end is copied into a new file descriptor table between creating and closing,
-and the write end is never closed in the new table,
-the read end will never get an EOF.
+These behaviors are unusual in that they operate on all open FDs at once,
+rather than individual FDs explicitly denoted by system call arguments.
+There are other ways to pass FDs between processes,
+such as \texttt{SCM\_RIGHTS}\cite{scm_rights},
+but those operate on individual FDs through explicit arguments to system calls.
+One or more FD handles are explicitly passed to a system call in one process,
+and one or more FD handles are explicitly returned from another system call in another process.
+The behaviors of FD inheritance and FD table sharing happen for all FDs, implicitly,
+and so they must be dealt with differently to be fully supported.
 
-% TODO should definitely cite this
-However, we can't simply close all other file descriptors,
-because we must preserve the semantics of implicit file descriptor inheritance.
-The possibility of implicit inheritance of file descriptors is an old Unix feature,
-which is useful in a wide variety of situations,
-in much the same way as environment variables, which are also implicitly inherited.
-As with environment variables,
-implicitly inherited file descriptors allow a resource to be passed down a process hierarchy
-without intervening programs being aware;
-this is a form of dynamic scope, which, though notorious, is sometimes useful.\cite{implicit_params}
-
-Fortunately, file descriptors which should be implicitly inherited are marked:
-they have \texttt{CLOEXEC} turned off.
-For implicit inheritance to function, \texttt{CLOEXEC} must not be set;
-otherwise, the file descriptor will be closed, rather than inherited,
-the next time the process calls \texttt{execve}.
-And since \texttt{execve} can be called at any time in a general purpose program,
-any library that does not want its file descriptors to be inherited across \texttt{execve}
-must keep \texttt{CLOEXEC} turned on at all times.
-So, at any time, we know that the file descriptors with \texttt{CLOEXEC} off
-are exactly the file descriptors which should be implicitly inherited.
-
-Therefore, we simply need to close all file descriptors that have \texttt{CLOEXEC} set,
-and which are not referenced by a live file descriptor handle;
-we refer to this operation as \verb|close_cloexec|.
-
-When we call \texttt{unshare(CLONE\_FILES)},
-we perform \texttt{close\_cloexec} automatically in userspace.
-For \texttt{clone}, we perform \verb|close_cloexec| only on user request,
-so that the user can control when \verb|inherit_fd| stops working.
-Even if the user never requests that unused file descriptors be closed,
-as long as they call \texttt{execve}, the table will be cleaned at that point.
-In both of these cases,
-we would benefit from a new system call which takes a list of file descriptors
-and closes all \texttt{CLOEXEC} file descriptors except for those on the list;
-this would replace our userspace implementation of \verb|close_cloexec|.
-
-For \texttt{execve}, \verb|close_cloexec| is, in some sense, done automatically for us by the kernel;
-except we don't get the chance to preserve live file descriptors handles,
-other than by unsetting \texttt{CLOEXEC} on them before calling \texttt{execve}.
-Again an extension to the kernel would be useful:
-A new argument to \texttt{execve} which allows specifying a list of file descriptors
-which should be inherited across \texttt{execve} even if \texttt{CLOEXEC} is set on them.
-This new argument would allow programs to avoid the pattern
-of unsetting \texttt{CLOEXEC}, calling \texttt{execve}, and then immediately re-setting \texttt{CLOEXEC},
-just to inherit a file descriptor across a single \texttt{execve}.
-Avoiding that pattern would primarily be useful
-when the process calling \texttt{execve} has a shared file descriptor table;
-in that case, unsetting \texttt{CLOEXEC} before \texttt{execve} is not possible,
-because some other process might also call \texttt{execve}
-and erroneously inherit the file descriptor from the shared file descriptor table.
+\texttt{rsyscall} supports both behaviors in the same way,
+by allowing us to create new FD handles on-demand
+referring to already-open FDs created by FD inheritance or FD table sharing;
+by creating new FD handles in new processes, we can call syscalls in those processes on those FDs.
+\texttt{rsyscall} provides two functions
+\texttt{inherit\_fd} and \texttt{use\_fd}, which support FD inheritance and FD table sharing, respectively.
+Both functions take as arguments a process capability $A$ and an FD handle $H$ associated with some other process $B$,
+and return a new FD handle associated with process $A$.
+For \texttt{inherit\_fd},
+this new handle refers to an \textit{inherited copy} of the FD which $H$ refers to;
+\texttt{inherit\_fd} will fail if $B$ is not $A$'s parent process,
+or if $H$ was not open at the time $A$ was created.
+For \texttt{use\_fd},
+this new handle refers to the \textit{same} FD that $H$ refers to, through the shared FD table;
+\texttt{use\_fd} will fail if $A$ and $B$ don't share the same FD table.
 \section{Evaluation}\label{evaluation}
 Our goal is a powerful approach to process creation that is easy to use correctly.
 Performance of our implementation is secondary,
@@ -1146,8 +1106,8 @@ Nevertheless, direct support in the Linux kernel
 for creating a stub process and performing syscalls in the context of that process
 may provide efficiency benefits, as well as reducing overall complexity.
 
-Several other aspects of our implementation would also be improved by new features in the Linux kernel,
-as discussed in sections \ref{execve} and \ref{cloexec}.
+Other aspects of our implementation would also be improved by new features in the Linux kernel;
+one examples is discussed in section \ref{execve}.
 \subsection{Portability to other Unix systems}
 Other non-Linux systems
 could adopt the techniques of this paper

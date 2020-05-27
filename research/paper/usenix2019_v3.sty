@@ -81,7 +81,7 @@
     \long\def\@makefntext##1{\parindent 1em\noindent
             \hbox to1.8em{\hss$\m@th^{\@thefnmark}$}##1}%
    \if@twocolumn
-     \twocolumn[\@maketitle\vspace{-4em}]%
+     \twocolumn[\@maketitle]%
      \else \newpage
      \global\@topnum\z@
      \@maketitle \fi\@thanks
@@ -119,5 +119,5 @@
 %
 % Main section titles are 12-pt bold.  Others can be same or smaller.
 %
-\def\section{\@startsection {section}{1}{\z@}{-1.4ex plus-1ex minus
-    -.2ex}{1ex plus.2ex}{\reset@font\large\bf}}
+\def\section{\@startsection {section}{1}{\z@}{-3.5ex plus-1ex minus
+    -.2ex}{2.3ex plus.2ex}{\reset@font\large\bf}}
