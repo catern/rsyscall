@@ -38,7 +38,7 @@ belowskip=0pt,
 
 \begin{document}
 \newcommand{\twosigma}{{[tech company]}}
-\newcommand{\githuburl}{[Github url]}
+\newcommand{\githuburl}{[Github url removed]}
 \date{}
 \title{\Large \bf DRAFT: Direct-style process creation on Linux}
 % \author{
@@ -48,7 +48,7 @@ belowskip=0pt,
 \maketitle
 \begin{abstract}
 Traditional process creation interfaces,
-such as fork and spawn,
+such as \texttt{fork} and \texttt{spawn},
 are complex to use, limited in power, and difficult to abstract over.
 We develop a new process creation interface for Linux
 which allows a program to create a child process in a non-running state
@@ -160,7 +160,7 @@ we need an API where we explicitly specify in which process we want to make a sy
 This differs from the normal mode of operation on Linux,
 where programs making syscalls implicitly operate on the current process.
 
-Our contribution in this paper is such an API, in the form of the \texttt{rsyscall} library.
+Our main contribution in this paper is such an API, in the form of the \texttt{rsyscall} library.
 \texttt{rsyscall} is a
 language-specific, object-capability-model, low-abstraction library for the Linux system call interface,
 bypassing libc.\cite{capmyths}\cite{robust_composition}
@@ -233,6 +233,15 @@ is comparable to the performance cost of creating processes while inside a Linux
 At \twosigma{}, we've used direct-style process creation
 to implement a production library for distributed system deployment.
 We evaluate in further detail in section \ref{evaluation}.
+
+In summary, this paper makes the following contributions:
+\begin{compactitem}
+\item We coin the term ``direct-style process creation''
+  to refer to a previously-unnamed style of process creation which is common on academic operating systems.
+\item We built \texttt{rsyscall}, a library for the Linux system call interface following the object-capability model.
+\item Using \texttt{rsyscall}, we built the first implementation of direct-style process creation on a Unix-like kernel.
+\end{compactitem}
+\texttt{rsyscall} is open source and available from \githuburl{}.
 \section{Examples}\label{examples}
 In this section,
 we'll demonstrate direct-style process creation
@@ -258,6 +267,15 @@ instead of by configuring stand-alone software.
 In this way,
 individual real-world applications can pick and choose the features that are useful for them,
 as we describe in section \ref{realworld}.
+
+In these examples and in this paper,
+we'll have multiple processes,
+all of which are under the control of a single program with a single flow of control.
+Because of the absence of multiple concurrent control flows,
+these examples could be executed interactively by a human operator,
+typing them in line by line in a REPL.
+To emphasize this point, we use the first person plural --- ``we'' ---
+when describing the actions of the single program in these examples and in later sections.
 \subsection{Abstraction through file descriptor passing}\label{fd_abstraction}
 In Linux (and Unix in general),
 a program can pass file descriptors from the parent process to a child process
@@ -748,7 +766,8 @@ Therefore, we simply need to close all file descriptors that have \texttt{CLOEXE
 and which are not referenced by a live file descriptor handle;
 we refer to this operation as \verb|close_cloexec|.
 
-For \texttt{unshare(CLONE\_FILES)}, we perform \texttt{close\_cloexec} automatically in userspace.
+When we call \texttt{unshare(CLONE\_FILES)},
+we perform \texttt{close\_cloexec} automatically in userspace.
 For \texttt{clone}, we perform \verb|close_cloexec| only on user request,
 so that the user can control when \verb|inherit_fd| stops working.
 Even if the user never requests that unused file descriptors be closed,
@@ -913,7 +932,7 @@ As a result, though implementations in native code and in the kernel would likel
 we have chosen to not invest effort into optimizing process creation at this micro-level,
 to preserve implementation simplicity;
 such optimization is reserved for future work.
-\subsection{Nested processes, \texttt{CLONE} flags}\label{clone_bench}
+\subsubsection{Nested processes, \texttt{CLONE} flags}\label{clone_bench}
 \begin{figure}
 \centering
  \includegraphics[width=0.5\textwidth]{clone_bench}

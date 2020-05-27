@@ -1891,7 +1891,7 @@ and integration with applications that you can talk about in detail
 * irc feedback
 ** move citations before period
 ** consistent formatting fork and spawn
-** have central contributions section
+** DONE have central contributions section
 ** DONE fix weird alignment in style comparison table
 ** fix hideous whitespace
 section 3.3.2
@@ -2109,10 +2109,12 @@ allowing the use of
    we should be able to integrate with an event loop to remove
    We take care to function asynchronously;
    our Python implementation has full support for asynchronous op
-** talk about "only one program is in scope"
+** DONE talk about "only one program is in scope"
    "we" means the program controlling multiple processes
 
    maybe say this in the examples section?
+
+   
 ** fd gc motivation
 <pgiarrusso> catern: now 3.3.2 provides some motivation that was needed earlier
  — "leaving unwanted file descriptors open [...] causes bugs"
@@ -2132,3 +2134,5 @@ allowing the use of
 you need to manually write  `{WASI}` and `{WebAssembly}` in the source bibtex
 <pgiarrusso> (the braces belong to latex, the backquotes are markdown-like formatting)
 *** weird linebreaking on USENIX Association cite
+** talk about using clone directly
+   and how hard that would be
