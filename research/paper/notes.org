@@ -1902,7 +1902,7 @@ catern: in Sec. 3.0, I’m missing something on “syscall server”. After goin
 Is the syscall server a separate thread?
 
 quite important!
-** discuss clone directly
+** DONE discuss clone directly
    and implementing the necessary parts.
 
    probably should explicitly talk about clone!
@@ -1930,6 +1930,137 @@ quite important!
    that also discusses clone directly.
 
    we can talk about that in the evaluation?
+
+   yeah ok so let's see.
+
+   this will clear things up for sure.
+*** fork-style
+    Closely related to \texttt{fork}
+    are interfaces where the new process is launched running a function of the caller's choice;
+    for example, glibc provides a wrapper over the \texttt{clone} system call
+    which allows specifying a function pointer to execute in the new process.\cite{clone}\cite{sfork}\cite{afork}
+    The new process may be created sharing its address space with the parent,
+    which negates the inefficiency when used from a large memory process,
+    with some restrictions.\cite{vfork_dangerous}
+    However, the other issues still remain;
+    we class these also as "fork-style" interfaces.
+
+    One might imagine a wrapper for process creation
+    which automatically propagates exceptions thrown in a child process creation function.
+    This would abstract away the error-reporting code we show here.
+    But such a wrapper has no obvious implementation in..
+
+
+    ok why don't we like the wrapper?
+    - it doesn't let you coordinate the program
+    - it still won't let you work in threads... or will it? yes, I guess it will.
+    - it's complex (but that's just because it's concurrent)
+    - it doesn't make sense.
+
+    Like how would you implement it?
+    it would just be implemented via fork I guess.
+    or, by creating a thread, rather.
+    like you'd create a thread which runs in the new process.
+
+    that has the vfork issues, sure.
+    why does baumann not like stuff
+    hmm he doesn't mention the concept.
+    thread-safe, fine
+    insecure, fine
+    all of his things are fine with the thread idea. and he got published! lol.
+
+    maybe we should compare the impls..?
+
+    It is possible to build an abstracted wrapper for fork-style process creation
+    which abstracts away this error reporting code.
+    We built several such wrappers before building \texttt{rsyscall}.
+
+    Such wrappers don't solve the core issue with fork-style process creation:
+    Concurrent communication is complex.
+    A wrapper may explicitly support returning errors
+
+    We found that such wrappers, besides their complexity,
+    don't provide any fundamental improvement
+    for the issue of communication between concurrently executing programs in the child process and parent process.
+    As a result, while such wrappers can remove some boilerplate in easy cases,
+    they remain complex in difficult cases like in sections \ref{pidns} and \ref{shared_fd_table},
+    which rely on a single program being able to coordinate multiple processes.
+    Only direct-style process creation is able to easily express such functionality.
+
+    they don't allow
+
+    ok so we could vfork again I guess...
+
+    don't solve one of the fundamental issues with fork-style process creation:
+    Concurrent execution is difficult.
+    As such, while 
+    Concurrent execution of the parent process and the child process
+
+    Explicitly supported 
+    It is difficult for to 
+
+    The primary problem with such wrappers
+    is that 
+
+    Such wrappers have two problems:
+    Their abstraction obscures the low-level primitive actually available on Linux and is difficult to understand
+
+    which allow launching the new process running a function of the caller's choice,
+    as the glibc wrapper for \texttt{clone} does, as mentioned in section \ref{introduction}.
+    What we found is that
+    such a wrapper cannot solve the core problem with fork-style process creation:
+    Concurrent execution of the process creation 
+
+    hmm ugh.
+    maybe we should do some fallback behavior...
+
+
+is there a good adjective that covers normal "concurrency" i.e. two threads concurrently executing, but also covers the
+nature of
+  running something under a function like bracket?  like, basically I want a more
+
+
+two concurrently executing threads can't easily interact with each other, not like a single-threaded program which can just call a function and get a return value.
+when function A passes a function B to some higher-order function, function B can't easily interact with A, in the same way. but they're not (necessarily) executing concurrently. what's a good word for that?
+
+    which allowed a 
+allowing the use of 
+    which automatically propagates exceptions thrown in a child process creation function to the parent.
+    which automatically propa
+    
+
+    One might imagine a heavily abstracted interface,
+    which automatically propagates errors from the child process initialization function
+    back to the parent process.
+    We created such an interface,
+    but found that the other issues of fork-style process creation still remained.\cite{sfork}
+    Errors could not be handled on an individual basis,
+    and the programming model was complex;
+
+    In general, any fork-style interface for process creation ---
+    one which runs the process initialization code in a separate context from the main program ---
+    h
+    a program must
+    
+
+    Such interfaces can remove the issues with memory,
+    while maintaining the fork-style arbitrary code initializing the new process.
+
+    With sufficient abstraction,
+    they can also provide an easier error reporting interface.
+
+    (They can also provide an easier error reporting interface, hm.)
+
+    Such interfaces can provide an easier error reporting interface.
+
+    (hmm if we just let the exception propagate in fork-style then...
+    well then we'll have bad things happen when we unwind the stack.
+    it's just not safe!)
+
+    However they still don't allow reacting to errors in individual syscalls without IPC,
+    they still constrain the parent process to be single-threaded,
+    and they still have a complex programming model that doesn't allow coordination with the main program.
+    and they still don't all
 ** include other fork-style implementations in appendix
    mmm okayyyy maybe
 ** talk about correctness?
@@ -1980,6 +2111,8 @@ quite important!
    our Python implementation has full support for asynchronous op
 ** talk about "only one program is in scope"
    "we" means the program controlling multiple processes
+
+   maybe say this in the examples section?
 ** fd gc motivation
 <pgiarrusso> catern: now 3.3.2 provides some motivation that was needed earlier
  — "leaving unwanted file descriptors open [...] causes bugs"

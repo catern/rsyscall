@@ -112,6 +112,13 @@ Even the basic interface of \texttt{fork} --- one function call which returns tw
 such functions are generally considered to be complex, advanced topics in other settings.
 \cite{callcc_fork}\cite{continuations}
 
+Closely related to \texttt{fork}
+are process creation interfaces where the new process is launched running a function of the caller's choice,
+which can then call arbitrary system calls to mutate the new process.
+\cite{clone}\cite{sfork}
+Such interfaces have similar issues as \texttt{fork},
+and we class them together as ``fork-style'' interfaces.
+
 On the other hand, in a spawn-style interface,
 details about the new process are provided up-front as arguments to some function
 which creates the new process all at once.
@@ -134,9 +141,9 @@ and have worse error reporting for such modifications.
 Table \ref{tab:styles} summarizes the differences between fork-style and spawn-style.
 Each has its own advantages and disadvantages.
 
-A few academic operating systems - KeyKOS, seL4, and some others, for example -
+A few academic operating systems --- KeyKOS, seL4, and some others, for example ---
 use another style of process creation.\cite{keykos}\cite{sel4}\cite{exokernel}\cite{fuchsia}\cite{singularity}
-We use the new term "direct-style" to refer to this,
+We use the new term ``direct-style'' to refer to this,
 since we know of no pre-existing generic term for this style of process creation.
 
 In direct-style, a process is created by its parent in a non-running state,
@@ -387,7 +394,7 @@ Even if the process needs additional resources,
 those can be explicitly passed down through file descriptor passing,
 as we do here with the database file descriptor.
 This allows us to approximate capability-based security.\cite{capsicum}
-\subsection{Nested clone and pid namespaces}
+\subsection{Nested clone and pid namespaces}\label{pidns}
 Process-local resources can also be used to control the lifetime of resources used by that process.
 Some Linux resources are not automatically cleaned up on process exit;
 a poorly coded program may allocate global resources
@@ -405,9 +412,9 @@ the init process.
 When the init process dies,
 all other processes in the pid namespace are destroyed.\cite{pid_namespaces}
 
-\lstinputlisting[float,language=Python,label={pidns},caption={Nested clone and pid namespace}]
+\lstinputlisting[float,language=Python,label={lst:pidns},caption={Nested clone and pid namespace}]
 {examples/pidns/direct.py}
-In listing \ref{pidns},
+In listing \ref{lst:pidns},
 we create a child process which we'll name \texttt{init},
 passing \verb|CLONE_NEWPID| to create it in a new pid namespace.\cite{clone}
 
@@ -443,9 +450,9 @@ in a way that no other process can see it,
 without entering a new namespace ourselves.
 We can do this by creating a child process that shares its file descriptor table with the parent process.
 
-\lstinputlisting[float,language=Python,label={fuse},caption={Shared file descriptor tables}]
+\lstinputlisting[float,language=Python,label={lst:fuse},caption={Shared file descriptor tables}]
 {examples/fuse/direct.py}
-In listing \ref{fuse},
+In listing \ref{lst:fuse},
 we first create a child process \verb|ns_child| in a new mount namespace with \verb|CLONE_NEWNS|,
 and this time also pass \verb|CLONE_FILES|,
 which causes the file descriptor table to be shared between the parent process and the child process.\cite{clone}
@@ -470,22 +477,35 @@ In this section, we'll give a brief overview of the implementation of \texttt{rs
 and then focus on implementation issues specific to process creation.
 
 \texttt{rsyscall} can be conceptually divided in two parts:
-the basic cross-process syscall primitive,
+the basic syscall primitive,
 and a language-specific library built on top.
 The Python language-specific library has already been demonstrated above.
 Such libraries only need to be able to call syscalls and explicitly specify a process in some way;
-they are, for the most part, agnostic to how the cross-process syscall is implemented.
-The cross-process syscall primitive takes a syscall number, and some number of register-sized integer arguments,
-and arranges to call that syscall in the target process,
+they are, for the most part, agnostic to how the syscall primitive is implemented.
+The syscall primitive takes a syscall number, and some number of register-sized integer arguments,
+and arranges to call that syscall in the specified process,
 returning the response as a single register-sized integer.
 
+When making a syscall in the local process, the syscall is performed normally,
+directly on the local thread.
+
+When making a syscall in another process,
 \texttt{rsyscall}'s default userspace cross-process syscall primitive sends the syscall request
 to a userspace ``syscall server'' running in the target process,
 which performs the syscall and sends the response back.
 Communication to the syscall server happens over file descriptors,
 typically a pair of pipes.
+
 We use file descriptors for transport of data rather than shared memory
-to support straightforward integration with event loops.
+to support straightforward integration with existing event loops;
+this is a key design constraint.
+While we only show synchronous programs in this paper,
+calling a syscall in another process may block at any time,
+and a complex program will likely have other requests to service concurrently.
+Even a relatively simple program may want to monitor multiple child processes at a time.
+To support this,
+our implementation fully supports asynchronous usage with a user-provided event loop,
+including the Python \texttt{async/await} coroutine support.\cite{python_coroutines}
 
 We have chosen to implement in userspace first,
 rather than immediately implementing this in the kernel,
@@ -647,7 +667,7 @@ has copied all the file descriptors from some old table into a new table,
 we need to decide which file descriptors we want to keep open in the new table,
 and which file descriptors should be closed.
 
-In general, if a certain file descriptor is in use by the program,
+In general, if a certain file descriptor is in use by our program,
 through a certain process,
 that file descriptor should stay open in that process's file descriptor table.
 
@@ -815,6 +835,19 @@ Direct-style does not require any extra work to report errors from the child pro
 errors are reported just like any other system call.
 This is the main immediately visible simplification of using direct-style process creation.
 
+It is possible to build an abstracted wrapper for fork-style process creation
+which abstracts away this error reporting code.
+We have built several such wrappers,
+but have ultimately discarded them in favor of direct-style process creation.\cite{sfork}
+
+We found that such wrappers, besides their complexity,
+don't provide any fundamental improvement
+for the issue of communication between the concurrently executing child process and parent process.
+As a result, while such wrappers can remove some boilerplate in easy cases,
+they remain complex in difficult cases like in sections \ref{pidns} and \ref{shared_fd_table},
+which rely on a single program being able to coordinate multiple processes.
+We believe only direct-style process creation is able to easily express such functionality.
+
 Direct-style also removes the need to be concerned about the state of the calling process,
 though this simplification is not immediately visible in a small example.
 The fork-style implementations may break if there are multiple threads in the calling process,
@@ -887,7 +920,7 @@ such optimization is reserved for future work.
  \caption{Time to create different processes from \texttt{rsyscall}, by variety of parent process and child process}
  \label{fig:clone_bench}
 \end{figure}
-As demonstrated in sections \ref{pidns} and \ref{fuse},
+As demonstrated in sections \ref{lst:pidns} and \ref{lst:fuse},
 \texttt{rsyscall} supports nested operation.
 That is, we can spawn a child from one of our children;
 this can impact performance.
