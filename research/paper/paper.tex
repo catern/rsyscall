@@ -186,9 +186,9 @@ and in which a legacy libc would implicitly make syscalls.
 Every \texttt{rsyscall} program starts with the capability for the ``local'' process
 and uses it to bootstrap capabilities for other processes.
 
-\lstinputlisting[float,language=Python,label={basic},caption={Create new process, change CWD, and exec}]
+\lstinputlisting[float,language=Python,label={lst:basic},caption={Create new process, change CWD, and exec}]
 {examples/basic/direct.py}
-Listing \ref{basic} shows a Python program using \texttt{rsyscall}.
+Listing \ref{lst:basic} shows a Python program using \texttt{rsyscall}.
 We create a new child process using direct-style \texttt{clone} in the local process \verb|local|.
 Here, \texttt{local.clone()} does not create another task running the same user program,
 as with the usual \texttt{clone} system call,
@@ -277,9 +277,9 @@ that the program running in the child process
 will not rely on the details of how the file descriptor was created,
 such as the filename that we opened or the hostname to which we connected.\cite{theoremsforfree}
 
-\lstinputlisting[float,language=Python,label={fds},caption={Passing down FDs}]
+\lstinputlisting[float,language=Python,label={lst:fds},caption={Passing down FDs}]
 {examples/fds/direct.py}
-In Listing \ref{fds},
+In Listing \ref{lst:fds},
 we first open a file with read-write permission in the local process.
 Then we create a child process,
 which inherits all file descriptors from its parent.
@@ -301,9 +301,9 @@ Since processes don't share memory,
 they can provide a less complex parallel programming environment
 than shared-memory thread-based approaches.\cite{threads}
 
-\lstinputlisting[float,language=Python,label={pipe},caption={Creating a concurrent processing pipeline}]
+\lstinputlisting[float,language=Python,label={lst:pipe},caption={Creating a concurrent processing pipeline}]
 {examples/pipe/direct.py}
-In listing \ref{pipe},
+In listing \ref{lst:pipe},
 we execute a few programs concurrently,
 connected by pipes.
 The \texttt{source} program generates two outputs, which go to \texttt{video\_sink} and \texttt{audio\_sink}.
@@ -336,12 +336,12 @@ by customizing the environment the process runs in.\cite{plan9ns}
 Other system calls such as \texttt{chdir} and \texttt{chroot} can also be used for this,
 but namespaces allow new ways of customization.\cite{mount_namespaces}
 
-\lstinputlisting[float,language=Python,label={mount},caption={Overriding absolute path using a mount namespace}]
+\lstinputlisting[float,language=Python,label={lst:mount},caption={Overriding absolute path using a mount namespace}]
 {examples/mount/direct.py}
 One classic form of customization
 is overriding files at paths that were hardcoded into a program,
 without changing those files for the rest of the system.
-In listing \ref{mount},
+In listing \ref{lst:mount},
 we create a new child process as normal,
 but for the first time,
 pass an argument to \texttt{clone}.
@@ -360,9 +360,9 @@ we can not only pass resources and customize the process's environment,
 we can also deny the process access to resources that it otherwise receives by default.
 This is a key part of creating a secure sandbox for potentially malicious code.\cite{seccomp}\cite{firejail}\cite{gvisor}
 
-\lstinputlisting[float,language=Python,label={unmount},caption={Unmount all and run executable via fexec}]
+\lstinputlisting[float,language=Python,label={lst:unmount},caption={Unmount all and run executable via fexec}]
 {examples/unmount/direct.py}
-In listing \ref{unmount}
+In listing \ref{lst:unmount}
 we create a new child process,
 again in a new mount namespace using \verb|CLONE_NEWNS|.
 Since we won't be able to open files or use \texttt{execv} in the child process after the next step,
@@ -371,7 +371,7 @@ Then we use \texttt{umount},
 passing \texttt{MNT.DETACH} to perform a recursive unmount of the entire filesystem tree,
 removing it all from the view of this process.
 
-Then, as in listing \ref{fds}, we prepare to pass \texttt{db\_fd} to the new program by unsetting \texttt{CLOEXC}.
+Then, as in listing \ref{lst:fds}, we prepare to pass \texttt{db\_fd} to the new program by unsetting \texttt{CLOEXC}.
 In this case we don't need to call \verb|inherit_fd|,
 since the file descriptor was opened directly from the child.
 We then exec the executable we opened earlier using \texttt{fexec},
@@ -812,7 +812,7 @@ Direct-style consistently takes under half the lines to express the same functio
 \lstinputlisting[float,language=Python,label={basic_fork},caption={Fork-style: Creating a new process, changing CWD, and execing}]
 {examples/basic/fork.py}
 Listing \ref{basic_fork} shows one of our fork-style implementations,
-corresponding to the direct-style implementation in listing \ref{basic}.
+corresponding to the direct-style implementation in listing \ref{lst:basic}.
 
 In our fork-style implementations,
 we assume substantial infrastructure is available to make fork-style simpler;
@@ -920,7 +920,7 @@ such optimization is reserved for future work.
  \caption{Time to create different processes from \texttt{rsyscall}, by variety of parent process and child process}
  \label{fig:clone_bench}
 \end{figure}
-As demonstrated in sections \ref{lst:pidns} and \ref{lst:fuse},
+As demonstrated in sections \ref{pidns} and \ref{shared_fd_table},
 \texttt{rsyscall} supports nested operation.
 That is, we can spawn a child from one of our children;
 this can impact performance.

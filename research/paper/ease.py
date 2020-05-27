@@ -25,7 +25,7 @@ for label in listing_labels:
     fork_wc = len(list(fork_path.open())) if fork_path.exists() else "n/a"
     rows.append((
         label,
-        "\\ref{" + label + "}",
+        "\\ref{lst:" + label + "}",
         direct_wc,
         fork_wc,
     ))
