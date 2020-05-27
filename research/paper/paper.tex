@@ -274,8 +274,9 @@ all of which are under the control of a single program with a single flow of con
 Because of the absence of multiple concurrent control flows,
 these examples could be executed interactively by a human operator,
 typing them in line by line in a REPL.
-To emphasize this point, we use the first person plural --- ``we'' ---
-when describing the actions of the single program in these examples and in later sections.
+We'll always be working from the perspective of this single program;
+never from the perspective of a child process, because (until we call \texttt{exec} and give up control)
+there is no meaningful program running in the child processes.
 \subsection{Abstraction through file descriptor passing}\label{fd_abstraction}
 In Linux (and Unix in general),
 a program can pass file descriptors from the parent process to a child process
@@ -328,7 +329,7 @@ The \texttt{source} program generates two outputs, which go to \texttt{video\_si
 We first create two pipes in the local process,
 then inherit them down to several child processes using a helper function, \verb|argfd|,
 which uses \verb|inherit_fd| and \texttt{fcntl} as described in section \ref{fd_abstraction}.
-We call exec in each child process to run the desired programs,
+We call \texttt{execv} in each child process to run the desired programs,
 passing some file descriptors as arguments to each.
 The whole system of connected processes then runs concurrently.
 \subsection{Customization without explicit support}
@@ -392,8 +393,8 @@ removing it all from the view of this process.
 Then, as in listing \ref{lst:fds}, we prepare to pass \texttt{db\_fd} to the new program by unsetting \texttt{CLOEXC}.
 In this case we don't need to call \verb|inherit_fd|,
 since the file descriptor was opened directly from the child.
-We then exec the executable we opened earlier using \texttt{fexec},
-which allows execing a file descriptor,
+We then run the executable we opened earlier using \texttt{fexec},
+which allows executing a file descriptor,
 and pass the database file descriptor number as an argument.\cite{execveat}
 Note that this executable must be statically linked,
 or it wouldn't work in an empty filesystem namespace
@@ -441,13 +442,13 @@ we clone again, this time from \texttt{init}.
 This is the first example in which we've cloned from one of our child processes;
 as normal, this gives us a capability for a new process, a grandchild,
 which can be used exactly like a direct child process.
-We exec in the grandchild,
+We \texttt{exec} in the grandchild,
 and we can monitor the grandchild process from \texttt{init},
 just as we would monitor \texttt{init} from its parent process.
 
 \texttt{init} in a pid namespace has some special powers and responsibilities.
 We can handle these responsibilities ourselves directly from our program,
-or we can continue on by execing an init daemon in \texttt{init} to handle it for us.
+or we can continue on by \texttt{exec}ing an init daemon in \texttt{init} to handle it for us.
 \cite{pid_namespaces}\cite{tini}\cite{dumb_init}
 
 In either case, when \texttt{init} dies,
@@ -475,7 +476,7 @@ we first create a child process \verb|ns_child| in a new mount namespace with \v
 and this time also pass \verb|CLONE_FILES|,
 which causes the file descriptor table to be shared between the parent process and the child process.\cite{clone}
 We create another child from \verb|ns_child|
-and use it to exec a FUSE filesystem,
+and use it to \texttt{exec} a FUSE filesystem,
 which will appear only in the mount namespace of \verb|ns_child| and its descendents.
 Then we can open FUSE files in \verb|ns_child|
 and use those files in \texttt{local},
