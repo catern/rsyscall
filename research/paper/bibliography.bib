@@ -1,4 +1,7 @@
-@ARTICLE{forkhist, author={L. Nyman and M. Laakso},  journal={IEEE Annals of the History of Computing},  title={Notes on the History of Fork and Join},   year={2016},  volume={38},  number={3},  pages={84-87},}
+@ARTICLE{forkhist,
+author={L. Nyman and M. Laakso},  journal={IEEE Annals of the History of Computing},  title={Notes on the History of Fork and Join},   year={2016},  volume={38},  number={3},  pages={84-87},
+note = "\url{https://pdfs.semanticscholar.org/ee8b/ece5d6d3270df9a22211aeaa84919a9251b3.pdf}",
+}
 
 @InProceedings{forkroad,
 author = {Baumann, Andrew and Appavoo, Jonathan and Krieger, Orran and Roscoe, Timothy},
@@ -11,6 +14,7 @@ abstract = {The received wisdom suggests that Unix's unusual combination of fork
 As the designers and implementers of operating systems, we should acknowledge that fork's continued existence as a first-class OS primitive holds back systems research, and deprecate it. As educators, we should teach fork as a historical artifact, and not the first process creation mechanism students encounter.},
 publisher = {ACM},
 url = {https://www.microsoft.com/en-us/research/publication/a-fork-in-the-road/},
+note = "\url{https://www.microsoft.com/en-us/research/publication/a-fork-in-the-road/}",
 }
 
 @MISC{posix_spawn,
@@ -38,6 +42,7 @@ url = {https://www.microsoft.com/en-us/research/publication/a-fork-in-the-road/}
   year=1992,
   month = 01,
   pages = {95-112},
+  note = "\url{https://www.researchgate.net/publication/221397234_The_KeyKOS_nanokernel_architecture}"
 }
 
 @article{sel4,
@@ -56,14 +61,16 @@ journal = {ACM Trans. Comput. Syst.},
 month = apr,
 articleno = {Article 1},
 numpages = {29},
-keywords = {minimality, seL4, IPC, formal verification, L4, virtualization, performance, message passing, worst-case execution time, real time, Microkernels}
+keywords = {minimality, seL4, IPC, formal verification, L4, virtualization, performance, message passing, worst-case execution time, real time, Microkernels},
+note = "\url{https://ts.data61.csiro.au/publications/nicta_full_text/8988.pdf}",
 }
   
 @phdthesis{exokernel,
   title={The Exokernel operating system architecture},
   author={Engler, Dawson R},
   year={1998},
-  school={Massachusetts Institute of Technology}
+  school={Massachusetts Institute of Technology},
+  note="\url{https://pdfs.semanticscholar.org/5f11/b6bd3f7dcb892b226ec734730081d5716c55.pdf}",
 }
 
 @MISC{fuchsia,
@@ -89,6 +96,7 @@ publisher = {ACM},
 url = {https://www.microsoft.com/en-us/research/publication/deconstructing-process-isolation/},
 pages = {1-10},
 edition = {ACM SIGPLAN Workshop on Memory Systems Performance and Correctness},
+note = "\url{https://www.microsoft.com/en-us/research/publication/deconstructing-process-isolation/}",
 }
 
 @MISC{ucspi,
@@ -115,14 +123,16 @@ edition = {ACM SIGPLAN Workshop on Memory Systems Performance and Correctness},
   number={2},
   pages={72--76},
   year={1993},
-  publisher={ACM New York, NY, USA}
+  publisher={ACM New York, NY, USA},
+  note="\url{http://doc.cat-v.org/plan_9/4th_edition/papers/names}"
 }
 
 @inproceedings{flexsc,
   title={{FlexSC}: Flexible System Call Scheduling with Exception-Less System Calls},
   author={Livio Baldini Soares and Michael Stumm},
   booktitle={OSDI},
-  year={2010}
+  year={2010},
+  note="\url{https://www.usenix.org/legacy/events/osdi10/tech/full_papers/Soares.pdf}"
 }
                   
 @inproceedings{theoremsforfree,
@@ -138,14 +148,16 @@ booktitle = {Proceedings of the Fourth International Conference on Functional Pr
 pages = {347–359},
 numpages = {13},
 location = {Imperial College, London, United Kingdom},
-series = {FPCA ’89}
+series = {FPCA ’89},
+note="\url{https://people.mpi-sws.org/~dreyer/tor/papers/wadler.pdf}",
 }
 
 @article{oblivious,
   title={Towards oblivious sandboxing with Capsicum},
   author={Anderson, Jonathan and Godfrey, Stanley and Watson, Robert NM},
   journal={FreeBSD Journal},
-  year={2017}
+  year=2017,
+  note="\url{https://www.semanticscholar.org/paper/Towards-oblivious-sandboxing-with-Capsicum-Anderson-Godfrey/453ba6d5377d2a9c48b75eb0a8dbdd2e44c33561}",
 }
                   
 @inproceedings {gvisor,
@@ -157,6 +169,7 @@ address = {Renton, WA},
 url = {https://www.usenix.org/conference/hotcloud19/presentation/young},
 publisher = {USENIX Association},
 month = jul,
+note = "\url{https://www.usenix.org/conference/hotcloud19/presentation/young}",
 }
 
 @InProceedings{viewos,
@@ -174,7 +187,8 @@ publisher="Springer Berlin Heidelberg",
 address="Berlin, Heidelberg",
 pages="287--296",
 abstract="One traditional characteristic of operating systems is that all the processes share the same view of the environment. This global view assumption (GVA) means that for processes running on the same computer, the same pathname points to the same file, the processes share the same network stack and therefore the same IP addresses, the routing characteristics are identical, etc. There have been many proposals for ``bending'' the GVA for either individual processes or for the system as a whole. Some of these proposals include microkernels or specialized virtual machines. Most proposals are for system administrators, others are tailored to specific applications.",
-isbn="978-3-540-69384-0"
+isbn="978-3-540-69384-0",
+note = "\url{https://link.springer.com/chapter/10.1007/978-3-540-69384-0_34}",
 }
 
 @MISC{cloudabi,
@@ -199,7 +213,8 @@ isbn="978-3-540-69384-0"
   title={Popcorn: a replicated-kernel {OS} based on {Linux}},
   author={Barbalace, Antonio and Ravindran, Binoy and Katz, David},
   booktitle={Proceedings of the Linux Symposium, Ottawa, Canada},
-  year={2014}
+  year={2014},
+  note = "\url{https://www.linuxsecrets.com/kdocs/ols/2014/ols2014-barbalace.pdf}",
 }
 
 @article{condor, 
@@ -210,6 +225,7 @@ isbn="978-3-540-69384-0"
   number    = "2-4",
   year      = "2005",
   pages     = "323-356",
+  note = "\url{https://research.cs.wisc.edu/htcondor/doc/condor-practice.pdf}",
 }
 
 @MISC{criu,
@@ -229,7 +245,8 @@ booktitle = {Proceedings of the 19th USENIX Conference on Security},
 pages = 3,
 numpages = 1,
 location = {Washington, DC},
-series = {USENIX Security’10}
+series = {USENIX Security’10},
+note = "\url{https://www.usenix.org/legacy/event/sec10/tech/full_papers/Watson.pdf}",
 }
   
 @inbook{chainloading,
@@ -401,7 +418,8 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
   title={The {Linux} programming interface: a {Linux} and {UNIX} system programming handbook},
   author={Kerrisk, Michael},
   year={2010},
-  publisher={No Starch Press}
+  publisher={No Starch Press},
+  note="\url{http://1.droppdf.com/files/87BCs/the-linux-programming-interface.pdf}"
 }
 
 @MISC{subprocess_run,
@@ -414,14 +432,16 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
   title={Capability myths demolished},
   author={Miller, Mark S and Yee, Ka-Ping and Shapiro, Jonathan and others},
   year=2003,
-  institution={Technical Report SRL2003-02, Johns Hopkins University Systems Research}
+  institution={Technical Report SRL2003-02, Johns Hopkins University Systems Research},
+  note="\url{https://srl.cs.jhu.edu/pubs/SRL2003-02.pdf}"
 }
 
 @article{robust_composition,
-  title={Robust composition: Towards a unified approach to access control and concurrency control 2006},
+  title={Robust composition: Towards a unified approach to access control and concurrency control},
   author={Miller, M},
   journal={Johns Hopkins: Baltimore, MD},
-  year=2006
+  year=2006,
+  note="\url{http://www.erights.org/talks/thesis/markm-thesis.pdf}",
 }
 
 @MISC{unpriv_fuse,
@@ -437,7 +457,8 @@ note={\url{http://www.catb.org/~esr/writings/taoup/html/ch06s06.html}}
   booktitle={Presentation given at the 1996 Usenix Annual Technical Conference},
   volume={5},
   year={1996},
-  organization={San Diego, CA, USA}
+  organization={San Diego, CA, USA},
+  note="\url{https://web.stanford.edu/~ouster/cgi-bin/papers/threads.pdf}",
 }
 
 @MISC{posix_spawn_lwn,
@@ -547,6 +568,7 @@ pages = {689--703},
 url = {https://www.usenix.org/conference/osdi16/technical-sessions/presentation/arnautov},
 publisher = {{USENIX} Association},
 month = nov,
+note = "\url{https://www.usenix.org/conference/osdi16/technical-sessions/presentation/arnautov}",
 }
 
 @inproceedings{eleos,
@@ -562,7 +584,8 @@ booktitle = {Proceedings of the Twelfth European Conference on Computer Systems}
 pages = {238–253},
 numpages = {16},
 location = {Belgrade, Serbia},
-series = {EuroSys ’17}
+series = {EuroSys ’17},
+note = "\url{https://marksilberstein.com/wp-content/uploads/2020/02/cr-eurosys17sgx.pdf}",
 }
   
 @inproceedings{implicit_params,
@@ -570,5 +593,6 @@ series = {EuroSys ’17}
   author={Lewis, Jeffrey R and Launchbury, John and Meijer, Erik and Shields, Mark B},
   booktitle={Proceedings of the 27th ACM SIGPLAN-SIGACT symposium on Principles of programming languages},
   pages={108--118},
-  year={2000}
+  year={2000},
+  note = "\url{https://dl.acm.org/doi/pdf/10.1145/325694.325708}",
 }

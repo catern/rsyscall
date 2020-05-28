@@ -39,7 +39,7 @@ belowskip=0pt,
 \newcommand{\twosigma}{{[tech company]}}
 \newcommand{\githuburl}{[Github url removed]}
 \date{}
-\title{\Large \bf DRAFT: Direct-style process creation on Linux}
+\title{\Large \bf Direct-style process creation on Linux}
 % \author{
 % {\rm Spencer Baugh}\\
 % Two Sigma
@@ -502,7 +502,7 @@ Such libraries only need to be able to call syscalls and explicitly specify a pr
 they are, for the most part, agnostic to how the syscall primitive is implemented.
 The syscall primitive takes a syscall number, and some number of register-sized integer arguments,
 and arranges to call that syscall in the specified process,
-returning the response as a single register-sized integer.
+returning the result as a single register-sized integer.
 
 When making a syscall in the local process, the syscall is performed normally,
 directly on the local thread, as one might expect.
@@ -510,12 +510,12 @@ directly on the local thread, as one might expect.
 When making a syscall in another process,
 \texttt{rsyscall}'s default userspace cross-process syscall primitive sends the syscall request
 to a userspace ``syscall server'' running in the target process,
-which performs the syscall and sends the response back.
+which performs the syscall and sends the result back.
 Communication to the syscall server happens over file descriptors,
 typically a pair of pipes.
 The syscall server runs on the main and only thread of the target process,
 and is the only userspace code running in an rsyscall-controlled child process;
-when not executing a syscall or writing out the response,
+when not executing a syscall or writing out the result,
 an rsyscall-controlled child process spends all its time blocked in \texttt{read},
 waiting for new syscall requests.
 
@@ -538,9 +538,9 @@ In the past, attempts to upstream kernel support for novel features without exte
 have had a poor reception in the Linux kernel community\cite{lwn_checkpoint}\cite{first_class_address_space}.
 We believe proving viability in userspace first will be better in the long term.
 
-\texttt{ptrace} already provides an in-kernel way to perform arbitrary actions on a target process,
+\texttt{ptrace}\cite{ptrace} already provides an in-kernel way to perform arbitrary actions on a target process,
 including system calls,
-but is not suitable for us\cite{ptrace}.
+but is not suitable for us.
 As we discuss in section \ref{related}, a number of systems, such as \texttt{gdb} and \texttt{strace},
 use \texttt{ptrace} to implement debuggers.
 But multiple processes cannot use \texttt{ptrace} on a single target process at the same time;
