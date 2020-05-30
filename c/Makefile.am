@@ -23,8 +23,15 @@ rsyscall_stdin_bootstrap_LDADD = librsyscall.la
 rsyscall_server_SOURCES = src/rsyscall_server_main.c
 rsyscall_server_LDADD = librsyscall.la
 
+# This is the only executable that really really needs to be static.  The real use case that demands that is when using
+# it to bootstrap an rsyscall-controlled process over ssh, where it will be copied from the source host to a target host
+# which may have a completely different library setup, or no glibc, or other issues like that.
+# Another use case for a static executable might be, for example, to use it as init and start it in an empty filesystem;
+# but we probably aren't going to be able to use the same executable for that purpose as we use for ssh bootstrapping,
+# as nice as that would be.
 rsyscall_bootstrap_SOURCES = src/rsyscall_bootstrap.c
 rsyscall_bootstrap_LDADD = librsyscall.la
+rsyscall_bootstrap_LDFLAGS = -all-static
 
 rsyscall_unix_stub_SOURCES = src/rsyscall_unix_stub.c
 rsyscall_unix_stub_LDADD = librsyscall.la
