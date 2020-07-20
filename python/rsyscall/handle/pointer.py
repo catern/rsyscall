@@ -108,6 +108,9 @@ class Pointer(t.Generic[T]):
 
         """
         self._validate()
+        if size > self.size():
+            raise Exception("can't split with size", size,
+                            "greater than pointer size", self.size())
         # TODO uhhhh if split throws an exception... don't we need to free... or something...
         self.valid = False
         # TODO we should only allow split if we are the only reference to this allocation
@@ -162,12 +165,14 @@ class Pointer(t.Generic[T]):
         """
         # TODO hmm should maybe validate that this fits in the bounds of the mapping I guess
         self._validate()
+        addr_start = self.mapping.near.as_address()
         try:
-            return self.mapping.near.as_address() + self.allocation.offset()
+            return addr_start + self.allocation.offset()
         except UseAfterFreeError as e:
             raise UseAfterFreeError(
                 "Allocation inside this Pointer", self,
                 "is freed, but the pointer is still valid; someone violated some invariants",
+                offset=e.offset,
             ) from e
 
     def check_address_space(self, task: rsyscall.far.Task) -> None:
@@ -244,10 +249,13 @@ class Pointer(t.Generic[T]):
     def __repr__(self) -> str:
         name = type(self).__name__
         typname = self.typ.__name__
+        addr_start = self.mapping.near.as_address()
         try:
-            return f"{name}[{typname}]({self.near}, {self.size()})"
-        except UseAfterFreeError:
-            return f"{name}[{typname}](valid={self.valid}, {self.mapping}, {self.allocation}, {self.serializer})"
+            address = addr_start + self.allocation.offset()
+            return f"{name}[{typname}]({address}, {self.size()})"
+        except UseAfterFreeError as e:
+            address = addr_start + e.offset
+            return f"{name}[{typname}](freed, {address}, {self.size()})"
 
     #### Various ways to create new Pointers by changing one thing about the old pointer. 
     def _with_mapping(self: T_pointer, mapping: MemoryMapping) -> T_pointer:

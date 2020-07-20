@@ -35,6 +35,9 @@ from dataclasses import dataclass
 from os import fsdecode
 from sortedcontainers import SortedList
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 ElemStr = t.Union[ET.Element, str]
 ListElemStr = t.List[ElemStr]
@@ -203,17 +206,22 @@ class HTTPServer:
 def a_by_id(obj: t.Any, name: str=None) -> ET.Element:
     return a(name or str(obj), href="#" + str(id(obj)))
 
+def span_by_id(obj: t.Any) -> ET.Element:
+    return span(str(obj), id=str(id(obj)))
+
 @dataclass
 class Result:
     val: t.Any
-    method_name: str
     obj: t.Any
+    method_name: str
+    bound_args: inspect.BoundArguments
 
     def _render_val(self, val: t.Any) -> t.List[ElemStr]:
-        if isinstance(val, (int, str, bytes, ChildState)):
+        if isinstance(val, (int, str, bytes, ChildState, type, type(None))):
             return [str(val)]
         elif isinstance(val, Exception):
-            return ["Exception ", str(val)]
+            # TODO put traceback in a details element
+            return ["Raised ", repr(val)]
         elif isinstance(val, tuple):
             elems: t.List[ElemStr] = ["("]
             for x in val:
@@ -231,16 +239,34 @@ class Result:
         else:
             return [a_by_id(val)]
 
+    def _render_call(self) -> t.List[ElemStr]:
+        elems: t.List[ElemStr] = ['(']
+        for arg in self.bound_args.args:
+            elems.extend(self._render_val(arg))
+            elems.append(",")
+        for key, arg in self.bound_args.kwargs.items():
+            elems.append(f'{key}=')
+            elems.extend(self._render_val(arg))
+            elems.append(",")
+        if len(elems) > 1:
+            elems.pop()
+        elems.append(')')
+        return elems
+
     def render_result(self) -> ET.Element:
         if self.val is None:
             return span(
                 a_by_id(self.obj),
-                '.' + self.method_name + ' ran and returned None.',
+                '.' + self.method_name,
+                *self._render_call(),
+                ' ran and returned None.',
             )
         else:
             return span(
                 a_by_id(self.obj),
-                "." + self.method_name + ":",
+                "." + self.method_name,
+                *self._render_call(),
+                ":",
                 *self._render_val(self.val),
             )
 
@@ -366,8 +392,10 @@ class HTMLUI:
                          for flag in flags]
             elif issubclass(typ, enum.IntEnum):
                 return [label(param.name, select(
-                    *[option(typ.__name__ + '.' + variant.name, value=variant.name)
-                      for variant in typ],
+                    *[option(
+                        typ.__name__ + '.' + variant.name, value=variant.name,
+                        selected=param.default == variant,
+                    ) for variant in typ],
                     name=param.name,
                 ))]
             elif issubclass(typ, int):
@@ -617,39 +645,41 @@ class HTMLUI:
     def render_thread(self, index: int, thread: ChildThread) -> ET.Element:
         # TODO this is an approximation...
         is_running_syscall = bool(thread.task.sysif.running_read.running)
-        if not thread.released:
+        process_block = details(summary(span_by_id(thread.process)),
+                                self.render_method(thread.process, 'wait'),
+                                self.render_method(thread.process, 'kill'),
+                                open=thread.released or is_running_syscall)
+        if thread.process.process.death_state:
+            return details(summary(tag('del', span_by_id(thread.process))),
+                           str(thread.process.process.death_state),
+                           form(button('Clear'),
+                                action=f'/thread/{index}/clear', method='post'),
+                           open=True)
+        elif thread.released:
+            # thread is no longer under our control, but not dead yet
+            return process_block
+        else:
             # thread is alive and well
             return details(
-                summary(*(["BLOCKED in syscall: "] if is_running_syscall else []),
-                        str(thread), id=str(id(thread))),
-                self.render_method(thread, 'clone'),
-                self.render_method(thread, 'exit'),
-                self.render_method(thread, 'exec'),
-                self.render_method(thread.task, 'socket'),
-                self.render_method(thread, 'malloc'),
-                self.render_method(thread.task, 'pipe'),
-                details(summary("File descriptors"), *[
-                    self.render_complex_fd(index, fd_idx, fd)
-                    for fd_idx, fd
-                    in enumerate(self.task_to_fds.get(thread.task, []))
-                ], open=True), open=True,
-                style='color: gray;' if is_running_syscall else None)
-        else:
-            # thread is no longer under our control
-            heading = span(str(thread.process),
-                           # used by Result to link to here
-                           id=str(id(thread.process)))
-            if thread.process.process.death_state:
-                return details(summary(tag('del', heading)),
-                               str(thread.process.process.death_state),
-                               form(button('Clear'),
-                                    action=f'/thread/{index}/clear', method='post'),
-                               open=True)
-            else:
-                return details(summary(heading),
-                               self.render_method(thread.process, 'wait'),
-                               self.render_method(thread.process, 'kill'),
-                               open=True)
+                summary(span_by_id(thread)),
+                ul(li(process_block),
+                   li(details(
+                       summary(*(["BLOCKED in syscall: "] if is_running_syscall else []),
+                               str(thread.task), id=str(id(thread.task))),
+                       self.render_method(thread, 'clone'),
+                       self.render_method(thread, 'exit'),
+                       self.render_method(thread, 'exec'),
+                       self.render_method(thread.task, 'socket'),
+                       self.render_method(thread, 'malloc'),
+                       self.render_method(thread.task, 'pipe'),
+                       details(summary("File descriptors"), *[
+                           self.render_complex_fd(index, fd_idx, fd)
+                           for fd_idx, fd
+                        in enumerate(self.task_to_fds.get(thread.task, []))
+                       ], open=True), open=True,
+                       style=('color: gray; background-color: lightgray;'
+                              if is_running_syscall else None)))),
+                open=True)
 
     def render_threads(self) -> ET.Element:
         return details(summary("Threads"), ul(
@@ -869,14 +899,16 @@ select option[value=""] {
                 keyword[param.name] = val
             else:
                 raise Exception("unsupported param kind", param)
+        bound_arguments = sig.bind(*positional, **keyword)
         try:
-            print("Calling", method, positional, keyword)
+            logger.info("Calling %s %s %s", method, positional, keyword)
             result = method(*positional, **keyword)
             if inspect.isawaitable(result):
                 result = await result
         except Exception as e:
+            logger.exception("Got exception during call")
             result = e
-        self.handle_result(Result(result, method_name, obj))
+        self.handle_result(Result(result, obj, method_name, bound_arguments))
 
     def process(self, target: t.List[bytes], query: t.Dict[bytes, t.List[bytes]]) -> None:
         if target[0] == b'command':
@@ -947,9 +979,7 @@ class Connection:
     async def run(self, *, task_status) -> None:
         started = False
         while True:
-            print("before next_event", self.server.connection.states, file=sys.stderr)
             ev = await self.server.next_event()
-            print(ev)
             if isinstance(ev, h11.Request):
                 request = ev
                 # start accumulating body
@@ -960,7 +990,6 @@ class Connection:
                         break
                     assert isinstance(ev, h11.Data)
                     request_body += ev.data
-                print(request_body)
                 if request.method == b'POST':
                     queries = (urllib.parse.parse_qs(
                         request_body, keep_blank_values=True, strict_parsing=True)
@@ -979,7 +1008,6 @@ class Connection:
                 await self.server.respond(page.encode(), 'application/xhtml+xml')
                 self.server.connection.start_next_cycle()
             elif isinstance(ev, h11.ConnectionClosed):
-                print(self.server.connection.states, file=sys.stderr)
                 await self.connfd.close()
                 break
         if not started:
@@ -993,7 +1021,6 @@ async def main() -> None:
     await sockfd.handle.bind(zero_addr)
     await sockfd.handle.listen(10)
     addr = await (await (await sockfd.handle.getsockname(await local_thread.ptr(Sockbuf(zero_addr)))).read()).buf.read()
-    print(addr, file=sys.stderr)
     main = await local_thread.clone()
     htmlui = HTMLUI()
     htmlui._add_thread(main)
@@ -1015,7 +1042,6 @@ async def main() -> None:
 # ok soooo
 
 if __name__ == "__main__":
-    import logging
     logging.basicConfig(level=logging.INFO)
     import trio
     trio.run(main)

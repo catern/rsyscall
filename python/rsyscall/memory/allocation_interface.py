@@ -4,7 +4,9 @@ import abc
 import typing as t
 
 class UseAfterFreeError(Exception):
-    pass
+    def __init__(self, *args, offset=None) -> None:
+        super().__init__(*args)
+        self.offset = offset
 
 class AllocationInterface:
     """Represents an allocation of a range of bytes in some file

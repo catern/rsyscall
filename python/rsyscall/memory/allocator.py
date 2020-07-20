@@ -57,6 +57,7 @@ class Allocation(AllocationInterface):
                 self,
                 "idx", idx,
                 "self.arena.allocations", self.arena.allocations,
+                offset=self.start,
             )
         return self.start
 
@@ -110,7 +111,7 @@ class Allocation(AllocationInterface):
         if self.valid:
             return f"Alloc({str(self.arena)}, {self.start}, {self.end})"
         else:
-            return f"Alloc(FREED, {str(self.arena)}, {self.start}, {self.end})"
+            return f"Alloc(FREED, {self.start}, {self.end})"
 
     def __repr__(self) -> str:
         return str(self)
