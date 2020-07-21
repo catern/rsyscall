@@ -23936,6 +23936,195 @@ fds? that would be nice.
    just through the results!
 
    very good.
+
+   little bit ugly with the valid=False, maybe should shorten that
+** TODO merge breakage
+   really I want them sorted by their order in the allocation list,
+   but instead I'm sorting them by their offset,
+   which breaks when there are 0-ones. hm.
+
+   i could consider merging over it, but.
+
+   well if I merge with the real adjacent thing,
+   then it's confusing because my size doesn't change;
+
+   and if I merge with the thing passed,
+   then the 0-pointer gets invalidated, hm...
+
+   zero-length pointers are a bit of a drag, hm.
+
+   well, ok, so, really I just want to make sure I'm merging with the truly adjacent thing,
+   according to the allocator. it's not a matter of my offset!
+
+   it would be nice if we always knew our index in the array... why?
+   to know what's next and before. a linked list would be good, sigh.
+
+   how would we sort the list by order in linked list tho?
+
+   we would want to take a subset of the list, h m m.
+
+   ugh this would be simpler with a C array, then I could just do pointer arithmetic
+   
+   well I guess I wouldn't have easy growth then
+
+   ok so what I have is this list of allocations,
+   and I want to sort them by their order, um.
+
+   and I have some pointers
+
+   hm it would sure be a lot simpler if I just maintained the index.
+
+   i mean, the fact that we can have multiple pointers at a single addresss,
+   is annoying.
+   it's only because I support 0-length pointers.
+
+   maybe I should just special-cased 0-pointers? hm! that could be interesting.
+
+   ok so maybe they don't have an index, and when i go to merge them,
+   i detect the special-case. sure sure.
+
+   but, still, we're able to split off and get a zero-len-pointer.
+
+   we need to be able to merge that back in,
+   and furthermore, know that we're able to merge that back in.
+
+   a linked list would make split/merge faster, for sure...
+
+   ok so if a zero-pointer is special-cased,
+   how would i sort it adjacent to the source?
+
+   it might be interesting to have the iterator or next/pref in the alloc interface, hm.
+
+   ok let's list the desires:
+
+   i have my list of allocations,
+   and things which are adjacent in this list are mergable.
+   this list is sorted by offset of the allocation in memory - basically its address.
+   when there are ties, the order is arbitrary
+   
+   given one allocation, I would like to know if it's mergeable with another allocation.
+   and I would also like to sort another list of allocations,
+   which is a subset of the main one,
+   so that they are in the same order as the main one.
+
+   note that these are separate problems:
+   - merely being adjacent in the subset list doesn't mean they're mergable,
+   because they might not be mergeable in the main list.
+   - and knowing if something is mergable doesn't give me enough information
+   to sort a sparse list.
+
+   so what do I do?
+   well, the mergeability could be tested
+   by storing the list of allocations as a doubly-linked list,
+   and then checking adjacency.
+   but that doesn't help with sorting, I don't think.
+
+   sorting could be solved by knowing the index of the allocations in the allocation list;
+   but that's a hassle to maintain,
+   since I'm constantly inserting things into that list and removing them from that list.
+
+   i could maybe... use the next/prev pointers from a linked list to...
+   determine an... offset into the pointers with the same offset?
+   so their position is determined by two things? their offset, and their,
+   relative position?
+
+   how do we calculate that relative position?
+
+   if there's one, it has relpos 0
+   if there's some, and one is added...
+   it's either added to the front or the back,
+   based on the "direction" it's created from.... . . .......
+
+   if it has non-zero size it has to be at the end,
+   and there can be only one of those.
+
+   so actually...
+
+   my relpos is negative "the number of 0-length-pointers in front of me".
+   minus 1 if i'm a zero length pointer.
+
+   well... 
+
+   we can be in the same layout situation but have different adjacencies.
+
+   er wait no we can't..
+
+   i mean that we can... do...
+
+   um...
+
+   like we can have 0 0 0
+  
+   then split in center to 0 0-0 0
+
+   and have to update numbers ya lame
+
+   ok this is pretty tricky h m m.
+
+   ok this is actually an interesting algorithms question
+
+   how do I number the tree such that adjacent nodes are adjacent?
+   or.. okay yeah.
+
+   so say I have a binary tree,
+   and at any point, a leaf node in this tree can split to become an internal node,
+   with two child leaf nodes.
+
+   and I want to maintain a cheap-to-compute ordering on this tree,
+   so that at any point...
+
+   right I want to be able to...
+   know the...
+
+   depth-first ordering on the leaves of the tree.
+
+   er, left to right ordering on the leaves of the tree.
+
+   how do I do it?
+
+   ok, creating a tree of the whole memory space, sure sure.
+
+   and using that to do the ordering.
+
+   on the other hand.. oh I guess we can still linked-list it.
+   well, but then how do we remove ourselves from allocation list?
+   bah.
+
+   can i maintain a freelist after all?
+
+   with allocations? urgh.
+   well, I feel sick at the prospect of doing more allocation reworking,
+   but I do think a freelist is an obvious good optimization.
+
+   instead of having it be implicit as it is right now.
+
+   let's see, the next/prev will go across the whole memory space I think.
+
+   and... if i'm at the beginning, is there some optimization I can do?
+
+   like, I don't want to, uh, have my depth get really large really fast
+
+   oh wait ok but...
+
+   right, when we free, we need to merge in to the adjacent blocks.
+
+   just once
+
+   okay so yeah this binary fraction strategy works for arbitrary linked lists actually
+
+   you can just insert yourself anywhere,
+   and number yourself halfway between your two neighbors
+
+   no need for the tree
+
+   efficient binary fractions
+
+   https://c-for-dummies.com/blog/?p=2037
+
+   this allows using them as regular arithmetic!
+   but, alas, it relies on the fixed bit-width
+
+   we want the MSB to be represented with the LSB of the native integer
 ** DONE put class in pointer
    among other benefits, it's useful for showing what type the pointer will return!
 
@@ -23967,7 +24156,39 @@ fds? that would be nice.
 
   but if we embed the cap,
   then we're good!
+* need more concurrency background
+  I have a lot of things I can think about and reference,
+  for normal programming and modularity;
+  type theory and encodings of various things.
+  like I can think about modeling things with various PLT features.
+  and this is very applicable for normal programming,
+  I can be writing C++ and wish I had existentials or something,
+  there's a lot of correspondence and material to think about.
 
+  but I don't feel like I have this body of reference material for concurrent programming.
+  there are lots of concurrency things that I do that feel totally novel to me.
+  I know of one technique - flat combining - which is useful to me.
+
+  (maybe I should read those papers for real)
+
+https://www.cs.utah.edu/plt/publications/pldi04-ff.pdf
+
+ffwd: delegation is (much) faster than you think
+https://dl.acm.org/doi/10.1145/3132747.3132771
+
+flat combining:
+http://people.csail.mit.edu/shanir/publications/Flat%20Combining%20SPAA%2010.pdf
+
+i guess i should just read some papers
+
+i know many concurrency paradigms but none of them seem particularly usefully fundamental.
+i can reduce everything to CPS or CSP or whatever, but that doesn't give me much help.
+well actually i guess it's partly that I don't know the reduction, hm.
+for like. this kind of fifo behavior.
+i imagine it's implementable,
+and i can imagine how i'd go about doing it,
+and it seems like i could do it,
+but it's not immediately obvious
 * paper response
 My main concern is that the paper seems to mix the syscall interface
 and the application programming interface (API). It's defensible to
