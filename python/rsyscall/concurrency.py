@@ -27,6 +27,22 @@ class OneAtATime:
     will handle waiting for the working coroutine to complete their
     work.
 
+    This is different from a lock in that once the coroutine doing the
+    work has released the lock, *all* waiting threads are woken up
+    instead of just one, like a condition variable. This is important
+    because any of the waiting coroutine might have had their work
+    done, and no longer need to wait.
+
+    This is different from both a condition variable and a lock in
+    that when the threads are woken up, they're informed whether
+    someone has already done some work. This is important in our use
+    case, where the same coroutines that are waiting for work to be
+    done, are also the ones doing the work.
+
+    You could add this information to a condition variable, but it
+    would be a separate bit of state that you'd have to maintain; this
+    class abstracts it away.
+
     This is a terrible API, but it works for now.
 
     A better API would be a "shared coroutine" which runs whenever any
@@ -34,6 +50,9 @@ class OneAtATime:
     coroutine is waiting on it. A shared coroutine also must not
     require entering a contextmanager to create. We should try to get
     that kind of API merged into trio/asyncio.
+
+    This is basically the primitive we need to do "combining", ala
+    "flat combining".
 
     """
     running: t.Optional[trio.Event] = None

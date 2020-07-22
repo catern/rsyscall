@@ -67,14 +67,26 @@ class SyscallInterface:
 
         Since most syscalls use this method, this guarantee applies to most syscalls.
 
+        This prevents us from cancelling an in-progress syscall if it has already been
+        submitted to the process; meaning, we can't discard the result of the syscall, we
+        have to wait for it.
+
+        This may seem excessive, but the question is, what should we assume as our default?
+        That syscall results can be dropped safely, or that they cannot be dropped?
+        Most syscalls are side-effectful: even a simple read usually consumes data in a
+        side-effectful matter, and others allocate resources which might be leaked, or can
+        cause state changes. Thus, "weakening" (droppability) is not generally true for
+        syscall results: syscall results cannot, in most cases, be safely ignored.
+
         For callers who want to preserve the ability for their coroutine to be cancelled
         even while waiting for a syscall response, the `submit_syscall` API can be used.
 
         Note that this Python-level cancellation protection has nothing to do with
-        actually cancelling a syscall. That ability is still preserved with this
+        actually interrupting a syscall. That ability is still preserved with this
         interface; just send a signal to trigger an EINTR in the syscalling process, and
         we'll get back that EINTR as the syscall response. If you just want to be able to
-        cancel deadlocked processes, you should do that.
+        cancel deadlocked processes, you should do that. That's the true API for
+        "cancellation" of syscalls on Linux.
 
         Likewise, if the rsyscall server dies, or we get an EOF on the syscall connection,
         or any other event causes response.receive to throw an exception, we'll still
