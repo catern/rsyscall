@@ -19012,6 +19012,800 @@ waiting for death, at least.
 
    yeah I don't think people would expect setns or exec to be fd methods,
    even despite the uniformity.
+** TODO AFD lets you write on fds which will never be writable, and blocks forever
+   maybe we *should* optimistically try to write?
+
+   or, just, assume all bits are set when we create the mask the first time?
+
+   then we'll try to write - and, indeed, something will happen!
+
+   that kind of seems correct, yeah.
+
+   hmm it seems I've been reading pessimistically for a long time
+
+   let's see if I can find some old comments about it?
+
+   hmmMMM waaait a second, isn't that isomorphic? maybe?
+
+   like, ok, we start off, we try to read.
+
+   if we ever get an eagain, we need to block until we get posedge.
+   then we have a posedge until we next eagain. hm.
+
+   yeah so I think they're equivalent-ish...
+
+   or rather.
+
+   suppose we optimistically read every time.
+   oh, right, that interferes if we're blocked in epoll, right?
+   I guess we need to wake up anyone blocked in epoll, yeah yeah.
+
+   right ok. so.
+
+   but, alternatively. if instead we. hm.
+   just assume there's a posedge and only do it once -
+
+   but wait, does this deadlock happen even right now?
+
+   what if I do wait_for(EPOLL.IN),
+   then epoll happens, and...
+
+   and I read, and I negedge - then things are good.
+
+   what if I get an epoll.in,
+   i block before reading,
+   someone else negedges,
+   someone else blocks in epoll,
+   and then I return from read with data? hm.
+   well, can that happen?
+   (jeese, this is complex)
+
+   so ok. suppose there's someone about to negedge... well ok that can't happen right...
+
+   well ok suppose there's one thread that just finished a read,
+   and got EAGAIN.
+   another thread is about to read, and passed the wait_for gate;
+   they just sent a read syscall.
+   then the first thread returns from their read, and goes ahead and negedges.
+   then another thread blocks in wait_for.
+
+   then the posedge may never be delivered since we get it through reading.
+
+   ok the obvious fix is to posedge after reading successfully.
+   but! that doesn't work either, because,
+   a reordering could cause, like...
+
+   i do the read, i posedge,
+but then someone else wipes out the posedge with their negedge.
+
+   like:
+   A: read -> EAGAIN
+   B: read -> 16
+   B: posedge
+   A: negedge
+
+   i mean, then i've intercepted the posedge from the thing thing...
+
+   maybe we need to totally order these?
+   we could put an ordering on the reads.
+   but is it legal to read outside AFD then? sad if not.
+
+   i mean, i do need an actual syscall order, not just order in python, too.
+
+   like, I need to know when the syscall was made,
+   and order them relative to each other. hm.
+   troubling!
+   i mean we could always lock the afd and only allow one read at a time,
+   but that seems distasteful...?
+
+   i mean. ok. so suppose I have... well, these reads are all through a single thread.
+   so actually I *could* get the ordering, maybe. hm.
+   that would be nicer, sure. hm.
+   (i could get it back through some kind of implicit parameter/implicit return value;
+   pass down some state or something where some id can be put...)
+
+   hmmmm
+
+   sigprocmask also needs to know order, to resolve exactly what happened.
+   like, it's not a *lock* as such. but rather.
+   some kind of...
+   they'll be ordered in some way, *tell me* that order.
+   oh hey okay how about this:
+   lock so that all the syscalls I issue have completed,
+   and the other locks around those syscalls have exited,
+   before I return.
+
+   then I don't have to think about the order actually;
+   i just run in the order of the syscalls. hm.
+** TODO provide fifo semantics for syscalls
+*** thoughts
+   why doesn't it work this way by default?
+
+   ah...
+
+   got it... so the connection is, um...
+
+   so it's because we're going through this OneAtATime.
+   and the responses come back in non-det order.
+   and so. we don't know whether a coroutine running a syscall first,
+   will return first.
+
+   but we can make that guarantee. right?
+
+   hmm lol how the heck do we do that, because,
+   receive is a separate method,
+   so.
+
+   do we block other SyscallResponse receives until the first one is done?
+   which is basically what we were talking about doing implicitly...?
+
+   i guess not: um.
+   no wait we could make two atomicity guarantees?
+   writes return in order, and so do receives,
+   *among the active calls*?
+
+   then if we make the write call first,
+   we'll return first.
+   and if we make the read call first,
+   we'll return first.
+
+   right? and also specifically that...
+   the order in which we make the calls is the order that our syscalls will be in?
+   sure, that sounds plausible.
+
+   the one who starts first goes first - I don't see why that couldn't be true.
+   it's just that right now we return in an undefined, arbitrary order...
+   I think.
+
+   ok so we return from write calls in fifo order,
+   syscalls are made in order of write calls,
+   and we also return from read calls in fifo order.
+
+   combining these things means that when making a syscall,
+   we return first if we're the one to execute first.
+*** detailed design
+   hey trio people, has anyone seen any async APIs with any function which is
+   1. async-safe, that is, can be called concurrently from multiple coroutines without causing problems, and which further
+   2. provides FIFO semantics, that is, the first coroutine to call the API is the first one to return out, and finally
+   3. provides FIFO semantics for the underlying operation, 
+   that is, the underlying operation will be performed in the order that the function was called (which is significant for operations which aren't commutative)
+
+   the ultimate reason I want this for my API is because my underlying operations aren't commutative,
+   and providing these FIFO semantics for my API seems like a pretty reasonable way to let user code perform them concurrently
+   while still having some way to reason about what order things ended up actually being in.
+   (e.g. synchronously updating some tracking information about what the underlying state is after each FIFO call)
+
+   yeah okay!
+   this sounds good, we should do this.
+*** how in preemptive
+    hmm so this only works because of cooperative concurrency.
+
+    how would I do this in preemptive concurrency?
+    well there are many ways
+    
+    - something returned by the API which has to be consumed for later calls to return
+    - some kind of fifo lock that has to be held at the time that you call into the API
+    - the API is called in a context-manager style and then the body is executed afterwards
+
+    hm.
+    hmmmm.
+
+    i mean...
+    so i want to be able to run a sync function after the syscall...
+
+    h m m.
+
+    maybe the just native fifo cooperative thing is good.
+
+    or maybe, like, the take a lock in advance thing?
+#+BEGIN_SRC python
+async with sysif.syscall_lock():
+    await fd.read()
+    # uhhhhhh
+#+END_SRC
+    what if I do multiple syscalls...?
+    what even are the semantics, like...
+    it's not really a lock, but rather some kind of...
+    mutex inserted in the return flow of syscalls in this task?
+    so i can make several but i leave a mutex behind me...
+    but like how do i return from multiple? seems sketchy
+    i mean the property i want is,
+    no other syscall can return until i'm finished with this part?
+
+    like I guess syscalls implicitly take a mutex and then immediately release it.
+    but i'm extending the life of that?
+    
+    and i guess other syscalls could return fine.
+    hm.
+
+    but it would be very convenient if this just worked, right? like.
+    that would make user programs more likely to work.
+    like it's obvious that i'm going to do it the fifo way.
+
+    we're just considering the preemptive semantics of that.
+
+    ok so yeah returning from a syscall takes a mutex,
+    is one way to model it, sure.
+    a mutex for "the rest of the program", kinda weird but whatever.
+*** impl
+    so submit_syscall is fifo...
+
+    hmm
+
+    so how do we test this?
+
+    I guess we can write a test that, say.
+
+    has one syscall return and...
+
+    maybe we can like, suspend the thread? hm.
+
+    we basically want to issue two syscalls simultaneously,
+    then..
+
+    i guess we want to validate that they happen in the same order as they return.
+
+    hm. what's a simple example?
+
+    oh we can use submit_syscall for sure. that's... easy...
+
+    nothing will be reading responses and...
+    hm.
+
+    so isn't it already a property that the syscalls happen
+    in the order that they're called? hm.
+
+    we just need to guarantee the return order . . .
+
+    ok so maybe we can simplify the oneatatime.
+    basically, it's a fifo lock,
+    where the first one in, uh, gets to set up some stuff which...
+
+    right so there's a running request,
+    you store that,
+    if you get inside the fifolock and it's the same, you do it,
+    if it's different, you exit.
+
+    how can we ensure this better h m m.
+
+    i'm also not sure how to test this
+
+    maybe I should have some serializer in front? hm.
+
+    ok so how would the interface look ideally I guess?
+    i submit operations, and at some point i learn the order of them,
+    and then I return in that order. hm.
+
+    ok so like. hm.
+    ok this seems like something that people have dealt with for sure.
+    something where, I submit some operations,
+    and then somehow an ordering of those operations is arbitrarily decided,
+    and. returned back...
+
+    well, I mean, it's already determined from my perspective.
+
+    so really I just send operations in some order,
+    and I get responses back in the same order...
+
+    there's some serializer...
+
+    I send a request with a response queue back;
+    and the responses get sent back in the same order.
+
+    ok, sure, that's fine and all.
+
+    but. . . . .
+
+    i need to make sure that the person *receiving* the message runs first.
+    if we're doing this fifo stuff.
+
+    like I need to send them my timeslice, is yet another sense.
+    but. isn't it more like...
+
+    i have a fifo lock... so i enter the fifo.
+    or actually really it's just a lock.
+
+    i enter the lock,
+    i do the thing,
+    i'm done.
+
+    but not really. because, i do the thing,
+    and that also determines in what order we get the lock. sure.
+
+    i mean, yeah, returning the holding-the-lock token with the syscall is interesting.
+
+    but because you're holding it, you can't call more syscalls I guess.
+    cuz concurrent. it'd block.
+    yeah some kind of lock where you take the... syscall ordering lock,
+    which doesn't block?
+
+    and then the syscall returns to you first?
+
+    right? others block until you release?
+
+    i mean the notion is like,
+    you hold the result and the timeslice... kind of thing.
+    you get the timeslice/lock/mutex returned to you,
+
+    (i guess callback-based is cooperative;
+    you could call the callbacks in order and do a thing in them.)
+
+    anyway you hold the lock...
+
+    I feel like I need to read some seminal papers on locks and stuff.
+    what they really mean/are.
+    
+    blah ok i feel fine with the fifo returns,
+    i just am not sure i'll implement it correctly!
+    that's why I'm talking about more explicit, lock-based ways.
+
+    so. I guess we could be fifo about responses? but...
+    that's confusing with how all this is structured.
+
+    we could more explicitly activate blocked threads?
+    we could use that trio parkinglot stuff I guess.
+
+    no unpark isn't blocking, which means it can't guarantee order.
+    i mean one easy way could be...
+
+    some kind of thing in receive.... in...
+
+    ok so why don't we just provide the fifo guarantee for send and receive,
+    and then we're good.
+
+    nice and cancelscope isn't async so it can't break it
+
+    ok but we do this in a loop, hm.
+
+    we keep looping until we find our one result. hm, not sure I like that.
+
+    we should take advantage of the in-order-ness maybe?
+
+    yeah we do it in write_request too. lame. hm.
+
+    so like, there's an in-order queue...
+
+    we should wake up the ones that were sent,
+    and then also one more,
+    which will be the one to do the next call?
+
+    I guess we would just check if there was anything pending, then wake up one.
+
+    hmmmmmmmm
+
+    let's just use the low level trio API for god's sake, this is horrible.
+
+    so we'll have a queue
+
+    then we wake up the responses one by one...
+
+    wait but...
+
+    ugh! we want actual fifo behavior.
+    this doesn't guarantee it runs immediately!
+
+    argh hmm.
+
+    what about some kind of fifo lock thing where...
+
+    while we're inside, we wait for our event? that could work actually.
+
+    ok but how do we know we actually succeeded?
+
+    i guess we have a result event?
+
+    and we wait on that, sure...
+
+    ok so... we take the fifolock, then...
+
+    ok right so...
+
+    we wait for our event. if our event is set,
+    then we need to check for our result.
+    if we don't have a result,
+    then we need to run until we have one.
+
+    hmm wait, what's the difference between this and a lock?
+
+    while no response,
+    take lock,
+    check still no response (if so, return),
+    and do operation.
+
+    I guess that works?
+
+    we can have a StrictFIFOLock,
+    and when we get it, we check to see if we have the response,
+    and if so, return it.
+    otherwise, do the thing... er. yeah, do the thing, in a loop, checking.
+    and once we get it, return. that seems pretty simple tbh!
+
+    ugh we should support cancelling before writing out.
+
+    we could do that easily with the low level api I think.
+
+    but the specific ordering is tricky.
+
+    hmm why do I even need oneatatime.
+
+    oh, because of the random order.
+    right right.
+    if the work done by one can complete tasks from the others,
+    we need to wake up *everyone* to check that they can progress.
+    that's the difference from a lock.
+
+    wait so it's basically a condvar though:
+    >This is different from a lock in that *everyone* wakes up when one person exits.
+
+    ummm yeah.
+
+    ok so anyway, strictfifolock works for syscalls,
+    because they're performed in strict order.
+
+    so let's just do that?
+
+    okaaay so.
+
+    i guess the reading of the responses doesn't...
+
+    necessarily have to be in the order that we read them.
+    unfortunately.
+
+    it can be a subset, and it can be out of order.
+
+    so i guess we can order it correctly afterwards? hm.
+
+    we'd ideally do that in connection i guess?
+    or somewhere else... even more fundamental.
+
+    can we make the request/response thing ordered?
+
+    no we can't because we can interrupt a request with another syscall,
+    and get its response,
+    and only then read the original request's response. 
+    we gotta support the reordering then.
+*** more impl thoughts
+    so it would be nice if we could just make syscalls and order things in that way.
+
+    but we need to be able to interrupt a thing and read its result only later. right?
+
+    i mean we could argue for... waking up a sleeping task when we get its result.
+    and then suspending it again on next block.
+
+    then the cancellation would only let us skip results, not reorder them?
+    if the syscall actually was sent, that is.
+
+    if it's sent, then, we don't want to be able to skip?
+    except when we do want to discard results hmm
+
+    detaching from the call stack seems weird.
+    i guess it could be reasonable though hmm
+
+    so basically we would uhhh call a function which needs to interrupt its syscalls,
+    through a different interface.
+    where, when we get a cancel,
+    we would, uh, 
+    just suspend the function, and then return.
+
+    ugh should I do this?
+    it would be nice to finally have this.
+    and also then I'm async-stack-independent, innit?
+
+    so basically I'd run it until one of the ops hits a None/Cancelled,
+    then I'd save it until I need it again...
+
+    and what about when I want to run it? um. well.
+    i want to run it from the syscall i guess. so.
+    i want to wake it up. i want to do a sync send to it. um.
+
+    so basically i want to...
+
+    ok so I'm running and i'm looking at what the next result is.
+    and if it's not running... if it was detached...
+    then I need to run it.
+
+    and so this only affects things when we get cancelled in,
+    the middle of a,
+    syscall response read thing.
+    i guess what we'd do is.
+    we'd save the coroutine. uh.
+
+    ok so we want to support cancellation.?
+
+    i guess reading a response is already not cancellable?
+
+    and we're saying we'd relax that with this thing. ok.
+
+    basically if we do a thing,
+    and we get a cancel result back...
+
+    then can't we just retry later? uh. maybe. maybe not.
+
+    i guess uh.
+    we'd get a cancel back,
+    we'd stash our coroutine,
+    and propagate the cancel up?
+
+    but then how would we resume?
+    oh I guess we just do like,
+    await suspend_me()
+
+    but no we don't want to propagate up. hm.
+    ok so maybe we could let the cancels propagate,
+    but we check to see if we're in a handler loop,
+    and if so, we suspend ourselves on cancellation. sure.
+    and then we can later be resumed when we want to try again.
+
+    i guess we can do that deep down? well.
+
+    maybe we shouldn't be hitting any trio primitives?
+    i guess we're talking about something,
+    that will only work if we get cancelled mid-syscall?
+
+    i mean the main thing we want is...
+    we want a handler somewhere on the stack,
+    which will receive the cancel, in some sense...
+    I guess it can just, say... check to see if it's cancelled?
+    without receiving the exception.
+*** async thing
+    yeah I think a new approach to asynchronicity and cancellation and stuff,
+    would be good.
+
+    actually it would even allow me to be more pluggable for cancellation even.
+
+    so I guess the notion is,
+    syscalls are uncancellable by default,
+    but you can put a contextmanager on the stack,
+    which, when the async code below it gets a cancel in a syscall,
+    will receive the async object.
+
+    and that async object is actually still owned by the syscall response event loop thing.
+    and it will progress it when it has data for it.
+    and then stop progressing it at the very next yield.
+    and that next yield is your responsibility.
+
+    so basically it's an object that you can await on to enter back into the thing.
+
+    so I guess you can, instead, you can,
+    run a coroutine object with a certain function,
+    which will return either the blocked coroutine,
+    in the case of cancellation during syscall,
+    or the result,
+    or a normal cancel.
+
+    (oh and that result will be one of two classes inheriting from some base class,
+    which either has the coroutine or any-value)
+
+    and then you can await on it again to get the result.
+    or if you got cancelled, well, then. uh.
+    I guess you can re-raise the cancel.
+
+    ok so this seems like a nice, simple API, which gives me exactly what I want.
+
+    and specifically, deep in there,
+    I have some MyCancelShield,
+    which if I get a cancel during,
+    I don't propagate it, kind of thing.
+
+    (although aren't I normally fine with being cancelled during syscalls?)
+    (in which case, if I'm not fine, I can add the cancel scope myself)
+    (the thing is, also, I sometimes might be fine with being cancelled before send,
+    but not fine after it's sent. hm.)
+
+    which I can't express by wrapping a cancel scope.
+
+    so in this proposed API, I guess...
+    we're always fine with being cancelled before send.
+    and by default we're not cancellable during read.
+    (to preserve ordering)
+    and if we want to be cancellable during read,
+    we have to uh.
+
+    i mean the thing is, the real cancellation API is,
+    y'know, sending a signal.
+
+    hm.
+    i guess with the batching thing we might want to cancel easily, hm...
+    i mean waitid is the pre-eminent example of cancellation.
+
+    i mean, you can't just drop the result.
+    
+    there would be resource leaks too, besides the event state mismatches.
+
+    the question is, should one assume as the default that syscall results can be dropped,
+    or assume that they cannot be dropped?    
+    assume that syscalls are idempotent, or side-effectful?
+    assume weakening, or lack of weakening?
+
+    so most syscalls are side-effectful,
+    and yet you probably expect to be able to cancel them... hm...
+    yeah I feel comfortable with that.
+
+    ok, ok. so we don't allow dropping.
+    and we want to preserve ordering even;
+    kind of like dropping the exchange rule for syscall results?
+
+    so to avoid dropping, the only way to cancel a syscall,
+    is to remand the coroutine into the custody of the syscaller.
+    which will progress it when the result arrives.
+    (to the next yield? that could have unexpected side-effects...?)
+    (but probably fine)
+    and then discard it.
+
+    it, presumably, will arrange for itself to continue running?
+    specifically:
+    it internally sees no difference.
+    but its parent will need to await on it again - i guess.
+
+    uh, wait, but, what if it makes another syscall?
+    like. uh.
+    well I guess it's all synchronous so it's fine anyway...
+    so it goes and submits another syscall, sure...
+    that's actually fine, isn't it?
+    but who will respond to it? how will we make that next syscall cancellable?
+    we need to intercept it don't we?
+
+    well...
+    i guess uh...
+
+    i mean we aren't even really running...
+    so we shouldn't really get to run the syscall loop, we should just wait on it...
+    hm.
+    but yeah what if we get stuck in something that needs to run,
+    that other people are blocking on?
+    well, can we solve this the same way?
+    we loan our timeslice, but get interrupted...
+
+    hm. it seems a bit confusing for user code though, if we're relying on them running...
+    what if we send them the cancel?
+    right, what if they get the cancel immediately after, on the next yield?
+
+    i mean, how does this compare to detached tasks?
+
+    i guess we can just say,
+    if you're writing a detached task,
+    you have to be careful?
+
+    and writing a detached task is the only way to get cancelled, though,
+    so it's hard to be careful.
+
+    but ok, suppose it's a detached task...
+    i mean... hm...
+
+    alright okay is there any kind of prior art in unix here?
+    blah.
+
+    ok suppose it's a detached task.
+    when it gets cancelled,
+    the coroutine is both returned,
+    and stored in the syscall thingy.
+
+    actually. cancellation...
+    cancellation while running a detached task - not really possible.
+    it would just detach the task inside.
+    and then we'd cancel up...?
+    i guess as long as we get the cancellation deep inside, it's fine.
+
+    can't I just do this all myself actually?
+    some coroutine starts "running" the shared task,
+    meaning it forwards its yields,
+    one of the yields gets cancelled,
+    and uh, I guess we have to retry?
+    we throw "interrupted" into the shared task, and let it retry?
+    sure...
+
+    ok ok ok ok sure but, that's a separate issue from,
+    when a syscall is cancelled, it needs to get resumed in order.
+
+    so I guess um.
+
+    normally, we... ok we call methods,
+    those may yield,
+    all fine.
+
+    i *suppose* that the reason it's related is because,
+    actually we're running a shared task.
+
+    and so, ok, we normally block on the shared task,
+    until it returns with our result. fine, fine. something like that.
+    (it would sure be nice to be able to deterministically have the shared task return)
+
+    but sometimes we, uh,
+    we go to perform something, and we get, uh,
+    Interrupted?
+
+    well actually that's fine, we'll just retry I guess?
+    we throw up and...
+
+    the semantics here suck. argh.
+    ok so what would be *nice* is if I could just re-yield that stuff again,
+    to re-do it.
+
+    bah. hm. argh.
+*** framing of question
+    I'm thinking about supporting a form of "resumable cancellation".
+
+    It seems to me a good API for this would be a coroutine function, say "drun", which takes a coroutine function F and some arguments.  When `await drun(F, args)` is run, it either returns/throws the result of performing `await F(args)` to completion, including propagating any normal Cancelled thrown inside F; or, if F enters a region marked (in some way) as desiring resumable cancellation, and the current task is cancelled, then it returns an object `O` which can be resumed with `await O.run()` (no arguments), which functions the same as the original `await drun(F, args)` call.
+
+    The specific API inside `F` is not what I'm asking about right now, nor most of the implementation.  The basic implementation would require intercepting `yield`s inside F, and re-yielding those up to `trio`, and intercepting Cancelled exceptions.
+
+    Specfically, though, I'm wondering about two details of trio: Does trio directly .throw Cancelled exceptions into coroutines?  And, assuming that's the case, if a trio task yields some value, receives a Cancelled, which I intercept and discard, and then I yield that same value in another task and .send its result into the coroutine object, and then some other task yields the same thing, will that suffice to retry the operation?
+
+    Specifically, I'm wondering about one detail of trio:
+    suppose I intercepted the yield
+    when a trio library coroutine function yields some value,
+    and 
+
+    returns 
+    returns an object which can be
+    and which when run,
+    returns either the result of funning
+*** hmm
+    could i implement a callcc in trio?
+
+    ok so I guess the thing is,
+    I have some yield primitive which lets me grab my current continuation.
+    and/or do a callcc I guess.
+
+    so yeah I guess what I could do is,
+    when I get a cancel,
+    I do a callcc to bail out early, if I can.
+    and throw the cancelled up there.
+    and I store my coroutine.
+
+    actually that seems pretty robust and generic and nice.
+
+    ok sure. so let's suppose I just do that.
+    and open-code the cancellation handling, annoying as that is.
+
+    better to do it that way, so that I can retry,
+    instead of trying to automatically do things. yeah.
+
+    ok that sounds cool. and it'll be just a callcc, that's easy,
+    we just pass it a function which gets the coroutine object and stashes it.
+
+    and then the runner just returns the result of that?
+    neat.
+*** ok so
+    how does that get me any closer?
+    well.
+
+    if I want to be cancellable, then.
+    I need to put it in a special cancellable-syscall part thing.
+
+    which. if it gets cancelled.
+    can just return nothing I guess, if that's what's inside.
+    and I don't mark the region or anything...
+
+    well ok so suppose I'm in a delimited continuation, fine.
+
+    and I get a cancellation deep in there.
+    now...
+    if I'm not in the scope of a cancellable syscall,
+    I just ignore the cancellation.
+
+    but if I *am* in the scope of a cancellable syscall thing,
+    then, probably I...
+
+    well I first break out of the detached syscall run loop thing.
+    and propagate cancelled up.
+
+    and ok so if I get cancelled out of,
+    wait-for-syscall-result,
+    what do I do?
+
+    I callcc and register my coroutine as waiting for a syscall result,
+    in the syscall connection.
+    and the callcc returns...
+
+    i guess my coroutine, wrapped?
+    so that I can resume it? I guess?
+
+    ok so this seems good and simple, I like all of it!
+
+    a simple primitive.
+** add delimcc runner and use
+   it's time!!!
 * fuse stuff
   ok so one thing we noticed in fuse is,
   if we don't close the devfuse, then other threads making syscalls will get stuck in D-wait,
