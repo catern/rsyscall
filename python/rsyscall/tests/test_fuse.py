@@ -30,7 +30,9 @@ import os
 import trio
 import typing as t
 from dataclasses import dataclass
+import unittest
 
+@unittest.skip("not compatible with all kernels")
 class TestFUSE(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.tmpdir = await local.thread.mkdtemp()
