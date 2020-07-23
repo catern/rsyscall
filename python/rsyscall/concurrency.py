@@ -3,6 +3,7 @@ import trio
 import contextlib
 from dataclasses import dataclass
 import typing as t
+import types
 
 @dataclass
 class OneAtATime:
@@ -118,3 +119,37 @@ async def run_all(callables: t.List[t.Callable[[], t.Awaitable[T]]]) -> t.List[T
         for i in range(count):
             nursery.start_soon(open_nth, i)
     return results
+
+@dataclass
+class Shift:
+    func: t.Callable[[t.Coroutine], t.Any]
+
+@types.coroutine
+def _yield(value: t.Any) -> t.Any:
+    return (yield value)
+
+async def reset(body: t.Coroutine[t.Any, t.Any, T], next_value: t.Any=None) -> t.Any:
+    is_value = True
+    next_exn: BaseException
+    while True:
+        try:
+            if is_value:
+                yielded_value = body.send(next_value)
+            else:
+                yielded_value = body.throw(next_exn)
+        except StopIteration as e:
+            return e.value
+        if isinstance(yielded_value, Shift):
+            # sure wish I had an effect system to tell me what this value is
+            return yielded_value.func(body)
+        else:
+            try:
+                next_value = await _yield(yielded_value)
+                is_value = True
+            except BaseException as e:
+                next_exn = e
+                is_value = False
+
+# again, sure wish I had an effect system to constrain this type
+async def shift(func: t.Callable[[t.Coroutine], t.Any]) -> t.Any:
+    return await _yield(Shift(func))
