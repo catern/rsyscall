@@ -177,10 +177,14 @@ class SyscallConnection:
                 if valid.size() == 0:
                     raise SyscallHangup()
                 self.valid = valid
+                did_read = True
+            else:
+                did_read = False
             data = await self.valid.read()
             self.valid = None
             self.buffer.feed_bytes(data)
-            buf = valid.merge(rest)
+            if did_read:
+                buf = valid.merge(rest)
             vals = self.buffer.read_all_structs(SyscallResponse)
         self._got_responses(vals)
 
