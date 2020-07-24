@@ -72,6 +72,7 @@ class LocalSyscall(SyscallInterface):
         does, which is sadly quite expensive.
 
         """
+        await trio.sleep(0)
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         result = await _direct_syscall(
             number,
@@ -96,6 +97,7 @@ class LocalSyscall(SyscallInterface):
         we call raise_if_error to check and throw if we're in that range.
 
         """
+        await trio.sleep(0)
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         result = await _direct_syscall(
             number,
@@ -115,12 +117,14 @@ class LocalMemoryTransport(MemoryTransport):
         return self
 
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
+        await trio.sleep(0)
         for dest, data in ops:
             if dest.mapping.task.address_space != self.local_task.address_space:
                 raise Exception("trying to write to pointer", dest, "not in local address space")
             ffi.memmove(ffi.cast('void*', int(dest.near)), data, len(data))
 
     async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
+        await trio.sleep(0)
         ret: t.List[bytes] = []
         for src in ops:
             if src.mapping.task.address_space != self.local_task.address_space:
