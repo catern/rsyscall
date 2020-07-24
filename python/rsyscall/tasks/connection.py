@@ -79,6 +79,7 @@ class SyscallResponse(Struct):
 @dataclass
 class ConnectionResponse:
     "The mutable object that will eventually contain the decoded syscall return value"
+    syscall: Syscall
     result: t.Optional[int] = None
 
 @dataclass
@@ -218,7 +219,7 @@ class SyscallConnection:
             # not just the one calling us; otherwise they'll block forever.
             raise ConnectionError() from e
         # set the response field on the requests to indicate that they've been written
-        responses = [ConnectionResponse() for _ in requests]
+        responses = [ConnectionResponse(req.syscall) for req in requests]
         for request, response in zip(requests, responses):
             request.response = response
         self.pending_responses += responses

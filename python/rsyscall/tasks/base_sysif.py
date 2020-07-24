@@ -21,6 +21,8 @@ class BaseSyscallResponse(SyscallResponse):
             if logger:
                 logger.debug("exited process responses for %s", self.response)
         raise_if_error(self.response.result)
+        if logger:
+            logger.debug("%s -> %s", self.response.syscall, self.response.result)
         return self.response.result
 
 class BaseSyscallInterface(SyscallInterface):
