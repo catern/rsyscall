@@ -196,6 +196,12 @@ class AsyncChildProcess:
             await self.process.read_siginfo()
         await self.process.kill(sig)
 
+    async def killpg(self, sig: SIG=SIG.KILL) -> None:
+        "Send a signal to the process group corresponding to this child"
+        if self.process.unread_siginfo:
+            await self.process.read_siginfo()
+        await self.process.killpg(sig)
+
     async def __aenter__(self) -> None:
         pass
 

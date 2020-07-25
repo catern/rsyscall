@@ -78,7 +78,7 @@ class TestPersistent(TrioTestCase):
         await sacr_thr.task.setpgid()
         per_thr = await clone_persistent(sacr_thr, self.sock_path)
         # kill sacr_thr's process group to kill per_thr too
-        await sacr_thr.task.process.killpg(SIG.KILL)
+        await sacr_thr.process.killpg(SIG.KILL)
         # the persistent thread is dead, we can't reconnect to it
         with self.assertRaises(BaseException): # type: ignore
             await per_thr.reconnect(self.thread)
@@ -92,7 +92,7 @@ class TestPersistent(TrioTestCase):
         # make the persistent thread, actually persistent.
         await per_thr.make_persistent()
         # kill sacr_thr's process group
-        await sacr_thr.task.process.killpg(SIG.KILL)
+        await sacr_thr.process.killpg(SIG.KILL)
         # the persistent thread is still around!
         await per_thr.reconnect(self.thread)
         await assert_thread_works(self, per_thr)
