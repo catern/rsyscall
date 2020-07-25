@@ -223,7 +223,7 @@ class Epoller:
         # TODO where should we store this, so that we don't deregister the activity_fd?
         epolled = await center.register(
             # not edge triggered; we don't want to block if there's anything that can be read.
-            activity_fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP, devnull)
+            activity_fd, EPOLL.IN|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP, devnull)
         return center
 
     def __init__(self, epoll_waiter: EpollWaiter, ram: RAM, epfd: FileDescriptor) -> None:
