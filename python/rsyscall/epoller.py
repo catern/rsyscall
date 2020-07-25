@@ -168,9 +168,6 @@ class EpollWaiter:
         """
         async with self.running_wait.needs_run() as needs_run:
             if needs_run:
-                for number in self.pending_remove:
-                    del self.number_to_cb[number]
-                self.pending_remove = set()
                 maxevents = 32
                 if self.input_buf is None:
                     self.input_buf = await self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof())
@@ -189,6 +186,9 @@ class EpollWaiter:
                 for event in received_events:
                     if event.data not in self.pending_remove:
                         self.number_to_cb[event.data](event.events)
+                for number in self.pending_remove:
+                    del self.number_to_cb[number]
+                self.pending_remove = set()
 
 class Epoller:
     "Terribly named class that allows registering fds on epoll, and waiting on them."
