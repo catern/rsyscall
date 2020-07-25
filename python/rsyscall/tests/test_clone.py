@@ -53,7 +53,7 @@ class TestClone(TrioTestCase):
         # have to use an epoller for this specific task
         epoller = await Epoller.make_root(self.thr.ram, self.thr.task)
         sigfd = await AsyncSignalfd.make(self.thr.ram, self.thr.task, epoller, Sigset({SIG.INT}))
-        await self.thr.task.process.kill(SIG.INT)
+        await self.thr.process.kill(SIG.INT)
         buf = await self.thr.ram.malloc(SignalfdSiginfo)
         sigdata, _ = await sigfd.afd.read(buf)
         self.assertEqual((await sigdata.read()).signo, SIG.INT)
