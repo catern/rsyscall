@@ -83,7 +83,8 @@ import errno
 import os
 import math
 import typing as t
-from rsyscall.concurrency import OneAtATime
+import contextlib
+from rsyscall.concurrency import shift, reset
 from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 import trio
@@ -130,11 +131,8 @@ class EpollWaiter:
         self.next_number = 0
         self.number_to_cb: t.Dict[int, t.Callable[[EPOLL], None]] = {}
         self.pending_remove: t.Set[int] = set()
-        self.running_wait = OneAtATime()
-        # resumability
-        self.input_buf: t.Optional[Pointer[EpollEventList]] = None
-        self.syscall_response: t.Optional[SyscallResponse] = None
-        self.valid_events_buf: t.Optional[Pointer[EpollEventList]] = None
+        self.epoll_wait_coro: t.Optional[t.Coroutine] = None
+        self.epoll_wait_lock = trio.Lock()
 
     def add_and_allocate_number(self, cb: t.Callable[[EPOLL], None]) -> int:
         """Add a callback which will be called on EpollEvents with data == returned number.
@@ -160,38 +158,58 @@ class EpollWaiter:
         """
         self.pending_remove.add(number)
 
-    async def do_wait(self) -> None:
-        """Perform an interruptible epoll_wait, calling callbacks with any events.
+    async def drive_epoll_wait(self) -> None:
+        async with self.epoll_wait_lock:
+            if self.epoll_wait_coro is None:
+                self.epoll_wait_coro = self._run()
+            await reset(self.epoll_wait_coro)
 
-        We take care to store the running state of this method on the object, so that if
-        we're cancelled, someone else can continue the call without dropping any events.
-        It would be nice if we didn't have to do that manually; see "shared coroutine"
-        notion in the docstring of OneAtATime for what we'd prefer.
-
-        """
-        async with self.running_wait.needs_run() as needs_run:
-            if needs_run:
-                maxevents = 32
-                if self.input_buf is None:
-                    self.input_buf = await self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof())
-                if self.syscall_response is None:
+    async def _run(self) -> None:
+        @contextlib.asynccontextmanager
+        async def suspend_if_cancelled() -> t.AsyncIterator[None]:
+            cancels = []
+            def handle_cancelled(exn: BaseException) -> t.Optional[BaseException]:
+                if isinstance(exn, trio.Cancelled):
+                    cancels.append(exn)
+                    return None
+                else:
+                    return exn
+            with trio.MultiError.catch(handle_cancelled):
+                yield
+            if cancels:
+                def set_epoll_wait_coro(coro) -> None:
+                    self.epoll_wait_coro = coro
+                    raise trio.MultiError(cancels)
+                await shift(set_epoll_wait_coro)
+        while True:
+            maxevents = 32
+            while True:
+                async with suspend_if_cancelled():
+                    input_buf = await self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof())
+                    break
+            while True:
+                async with suspend_if_cancelled():
                     if self.wait_readable:
                         await self.wait_readable()
-                    self.syscall_response = await self.epfd.task.sysif.submit_syscall(
-                        SYS.epoll_wait, self.epfd.near, self.input_buf.near, maxevents, self.timeout)
-                if self.valid_events_buf is None:
-                    count = await self.syscall_response.receive()
-                    self.valid_events_buf, _ = self.input_buf.split(count * EpollEvent.sizeof())
-                received_events = await self.valid_events_buf.read()
-                self.input_buf = None
-                self.valid_events_buf = None
-                self.syscall_response = None
-                for event in received_events:
-                    if event.data not in self.pending_remove:
-                        self.number_to_cb[event.data](event.events)
-                for number in self.pending_remove:
-                    del self.number_to_cb[number]
-                self.pending_remove = set()
+                    syscall_response = await self.epfd.task.sysif.submit_syscall(
+                        SYS.epoll_wait, self.epfd.near, input_buf.near, maxevents, self.timeout)
+                    break
+
+            while True:
+                async with suspend_if_cancelled():
+                    count = await syscall_response.receive()
+                    break
+            valid_events_buf, _ = input_buf.split(count * EpollEvent.sizeof())
+            while True:
+                async with suspend_if_cancelled():
+                    received_events = await valid_events_buf.read()
+                    break
+            for event in received_events:
+                if event.data not in self.pending_remove:
+                    self.number_to_cb[event.data](event.events)
+            for number in self.pending_remove:
+                del self.number_to_cb[number]
+            self.pending_remove = set()
 
 class Epoller:
     "Terribly named class that allows registering fds on epoll, and waiting on them."
@@ -278,10 +296,6 @@ class EpolledFileDescriptor:
     def __str__(self) -> str:
         return f"EpolledFileDescriptor({self.fd.near}, {self.number})"
 
-    async def do_wait(self) -> None:
-        "Perform one epoll_wait, which may call some callbacks."
-        await self.epoller.epoll_waiter.do_wait()
-
     async def modify(self, events: EPOLL) -> None:
         "Change the EPOLL flags that this fd is registered with."
         await self.epoller.epfd.epoll_ctl(
@@ -359,20 +373,22 @@ class AsyncFileDescriptor:
 
         """
         status = FDStatus(EPOLL.NONE)
-        epolled = await epoller.register(
+        self = AsyncFileDescriptor(ram, fd, status)
+        self.epolled = await epoller.register(
             fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET,
-            status.posedge,
+            self._update_for_epoll_event,
         )
-        return AsyncFileDescriptor(ram, fd, status, epolled)
+        return self
 
     def __init__(self, ram: RAM, handle: FileDescriptor,
-                 status: FDStatus, epolled: EpolledFileDescriptor,
+                 status: FDStatus,
     ) -> None:
         "Don't construct directly; use the AsyncFileDescriptor.make constructor instead."
         self.ram = ram
         self.handle = handle
         self.status = status
-        self.epolled = epolled
+        self.epolled: EpolledFileDescriptor
+        self.event = trio.Event()
 
     def __str__(self) -> str:
         return f"AsyncFileDescriptor({self.epolled}, {self.status})"
@@ -384,8 +400,18 @@ class AsyncFileDescriptor:
 
     async def _wait_for(self, flags: EPOLL) -> None:
         "Call epoll_wait until at least one of the passed flags is set in our status."
-        while not self.status.mask & flags:
-            await self.epolled.do_wait()
+        if self.status.mask & flags:
+            return
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(self.epolled.epoller.epoll_waiter.drive_epoll_wait)
+            while not self.status.mask & flags:
+                await self.event.wait()
+            nursery.cancel_scope.cancel()
+
+    def _update_for_epoll_event(self, flags: EPOLL) -> None:
+        self.status.posedge(flags)
+        self.event.set()
+        self.event = trio.Event()
 
     async def wait_for_rdhup(self) -> None:
         "Call epoll_wait until this file descriptor has a hangup."
@@ -497,7 +523,9 @@ class AsyncFileDescriptor:
         using this AFD.
 
         """
-        return AsyncFileDescriptor(self.ram, fd, self.status, self.epolled)
+        new = AsyncFileDescriptor(self.ram, fd, self.status)
+        new.epolled = self.epolled
+        return new
 
     async def close(self) -> None:
         "Remove this FD from Epoll and invalidate the FD handle."
