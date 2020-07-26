@@ -76,7 +76,12 @@ class LocalSyscall(SyscallInterface):
             number,
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
             arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        raise_if_error(result)
+        try:
+            raise_if_error(result)
+        except OSError as exn:
+            self.logger.debug("%s -> %s", number, exn)
+            raise
+        self.logger.debug("%s -> %s", number, result)
         return result
 
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> LocalSyscallResponse:
