@@ -19804,8 +19804,361 @@ async with sysif.syscall_lock():
     ok so this seems good and simple, I like all of it!
 
     a simple primitive.
+
+    run with cancellable syscalls is what it will be called
+
+    and it will return a resumable thunk
 ** add delimcc runner and use
    it's time!!!
+
+   what shall I attack first?
+   let's do epoller, I understand that one best, and it's the ugliest
+
+   wait um, lol. ok.
+
+   i want to block in epoll.
+
+   but then, i get interrupted with another syscall,
+   which is the command to read the epoll results?????
+   how... does that work???
+
+   maybe it's that i'm sending syscall requests and so the pipeline is always full? hm.
+
+   yeah the question is, why are there requests in the pipe,
+   while I'm just sitting there waiting?
+
+   maybe, could I have two loops running?
+
+   aha my refactoring has revealed that persistent thing was always broken.
+
+   i think? i think it's like, reusing the wrong, thingy.
+
+   ohhhhhh
+   we need to actually checkpoint because other threads need to run to cancel us.
+   I see now.
+   although I don't get why the combo isn't working. but at least this makes sense.
+   and so yeah we do have to insert checkpoints, sigh.
+
+   aha, ok, don't I need to propagate the. exception.
+   ???
+
+   wait, I see....
+
+   maybe I want wrap the yield in a while true? hm.
+   the issue is that i'm getting cancelled,
+   then suspending,
+   and throwing the cancelled up at the reset,
+   and exiting the contextmanager without ever yielding.
+   which isn't legal!
+   i can't just skip the body.
+   i need to yield...
+   
+   ok adding the extra checkpoint didn't help alas.
+
+   ok well still, the issue is epoll keeps returning.
+   we should figure out why it's running!
+   and if this is viable at all...
+   cuz, it must be!! we did this plenty before!!
+
+   ok, so, showing pending syscalls would probably be useful.
+
+   okaay...
+   so the syscall never makes it through. interesting.
+
+   why isn't it getting written?
+
+   ok so indeed it works before our change. argh.
+
+   so, so, so.
+
+   ok so the syscall doesn't make it through.
+   but it does get written (it looks like) to a local fd.
+   is that weird?
+
+   not that weird - we open async channels,
+   one end of which are on the local side.
+
+   ok so...
+
+   oh the write isn't actually happening!
+
+   is it getting cancelled and never retried?
+
+   whaaaaat the heeeckkkk
+
+   the write is happening actually. but the read never gets it? why not...
+
+   ugh ok maybe, maybe it's due to ssh getting overloaded with,
+   traffic on the other socket?
+
+   maybe.
+   
+   so let's see why that's getting overloaded.
+
+   hm the syscall fd is added without EPOLLET, but that's fine and expected
+
+   it really just has to be two loops! it's gotta be! gotta gotta!
+
+   ugh, if it is, it's not in an obvious way.
+
+   ok so it seems like there are two bugs:
+
+   1. the write of the getpid syscall never makes it to the remote task, and,
+   2. the first remote thread is spinning in its epoller, for some reason.
+
+   WAIT wait waiT
+
+   the sshes dont't even share anything!
+   so it couldn't possibly be blocking the first read...
+
+   let's try a call-response
+
+   ok so interesting.
+
+   it seems that if we do an unrelated call response in the reconnect function,
+   the reconnection works every time.
+
+   maybe it's just sleeping, but maybe it's some real effect.
+
+   we'll try replacing with a sleep.
+
+   ok it seems it's just a matter of a sleep, very interesting.
+
+   so i guess i need to sleep after opening the async channels. inttteresting.
+
+   ok and even with a long sleep before opening the channels,
+   maaaaybe it gets a little better,
+   but it's not guaranteed to work like the sleep after...
+
+   now how's that work?
+
+   no.... nOOOOOO NOOOOOOO
+   it failed even with the sleep, sigh.
+
+   i guess we can try and see if the first remote thread is busylooping even when,
+   we are,
+   sleeping before reconnect? or during reconnect?
+
+   basically when it starts busy looping.....
+
+   huh even with a super long sleep it sommeettimmmesss happens.
+   very interesting.
+   I think finding out when the busy looping starts will be productive.
+
+   hm! interesting.
+   it doesn't seem to busy loop at all on the passing runs. very interesting.
+
+   ok so uhhhh
+
+   I need some way to detect the busy loop I guess?
+
+   yeah before the getpid
+
+   I could try the test repeatedly?
+
+   so, ok, the old thread is involved because it's still a ChildSyscallInterface.
+   hm.
+   ok i guess that's expected...
+
+   er wait, we never call make_persistent, I guess, which is why it's not a NonChild.
+
+   okay, so...
+
+   i'm the only one waiting on epoll wait, fine, fine.
+
+   ok so that means if I don't waitpid I won't get the result
+
+   also I can kick it off early with waitpid! nice!
+
+   ok, ok, cool! it's the waitpid!
+
+   ok! so why are we spinning? let's find out!
+
+   heck, can we even just, test this locally?
+   or with a normal thread instead of a persistent thread?
+
+   amazing! yes! it also happens with regular children of ssh threads!
+
+   ok, and interestingly doesn't seem to happen with...
+   local threads.
+   I think we're clone_parenting up to make the local thread the parent here though.
+   maybe if we disable clone_parenting...
+   it might still happen with non-ssh threads
+
+   ok so we have to disable clone_parent.
+
+   nice. nice. when we don't make a clone parent one, it fails in the same way.
+   beautiful.
+   ok so it's a problem with all threads.
+   for some reason we're busy-looping... but only when calling waitpid?
+   and monitoring the sigfd? hm.
+
+   very interesting.
+   let's try some other syscall I *guess* maybe?
+
+   so okay this is happening when calling waitpid in the child.
+   on the grandchild.
+
+   so what if we call another epoll waiting thing in the child?
+
+   let's try reading a pipe indefinitely?
+
+   ok! cool!
+
+   it seems any async operation is hitting this! lol!
+
+   how should we write a test for this?
+   hm.
+
+   also the fact that this is breaking stuff is also weird,
+   since busy looping should just be a performance hit,
+   but we can ignore that.
+
+   ok so we should check whether we were busy looping before.
+
+   oh interesting. if we use the epoller in the parent, we're fine.
+   we don't busy loop.
+   guess that's because we're reyling on trio's wait_readable.
+
+   HMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM OK
+
+   well it seems it's always busy looped, lol.
+
+   well at least recently. guess I should try an old commit...
+
+   okaaaaay so even late 2019 it was busy looping.
+   looooool.
+   ok so then I guess I have to conclude the unfortunate conclusion:
+   this approach to wakeups doesn't work! lol
+
+   maybe I just need ET?
+
+   ok but at least we're getting closer to the truth.
+
+   I p. much don't understand how this is happening though.
+
+   can we try just a naive, basic, epoll wait syscall,
+   on an epfd that we register the syscall infd on?
+
+   cuz like..
+
+   WAIT OMG FML
+
+   WE JUST NEED TO REMOVE EPOLL.OUT LOL
+
+   BEAAUUUTIFUL!
+
+   amazing.
+
+   yay yay yay.
+** remaining bug in persistent
+   ok so now that i've fixed that, it looks like there's still an unrelated bug in persistent.
+
+   which hopefully is easier to pin down now.
+
+   hm very interesting there are several bugs
+
+   let's try running through the rest of the suite
+** DONE waitpid hang
+   welp I guess maybe that epoll.out busy looping was masking some stuff.
+
+   a waitpid issue, it looks like.
+   blocking indefinitely when waitpiding
+
+   specifically we're seeing it when executing copy_tree in enter_nix_container in test_nix.
+
+   which just runs cp.
+   very interesting that it's hanging.
+
+   because, we see this much more frequently after the epoll change.
+
+   doesn't seem particularly unusual, we aren't yet in namespaces at the time we copy.
+
+   let's try a simpler test...
+
+   hm ok so if we just copy_tree it indeed triggers it.
+
+   but it seems to only trigger on the second check? hm.
+
+   maybe let's try...
+
+   cloning some threads, execing something simple in each (sleeps?),
+   and then checking each.
+
+   GOT EM
+
+   ok I can semi-reliably trigger it now..
+
+   ok so maybe it's something with, getting a single signalfd wakeup for both of them?
+
+   and then we never get the wakeup on the second?
+   sure that seems plausible.
+
+   aha!
+   we use the cached waitid result
+   from BEFORE the sigchld,
+   which had no event in it.
+
+   so we don't get the event!
+   and then we never get the sigchld!
+
+   ok. so... that seems bad, for sure.
+
+   we need to uh...
+
+   if we get an event from the read_siginfo, then there's no problem.
+   if we *don't*, then we need to waitid.
+** DONE more waitpid problems
+   this happens only when not using CLONE_PARENT in a child process. hm.
+
+   it hangs on waiting for a sigchld. hm.
+
+   hmmmmm very interesting.
+
+   a... SIG.CONT? huh?
+
+   oh that must be on, uh, the futex thread.
+
+   ok so there's a sigchld waiting, but we aren't waking up. interesting.
+
+   oh hm maybe this is a pure epoll ET issue,
+   maybe I'm genuinely not getting the epoll wakeup...
+
+   why tho, the refactor shouldn't have changed much...
+
+   ok so I think the thing to look at is,
+   what happened the last time I read a sigfd in the hanging case?
+   and in the normal case.
+
+   wait wait in the passing case I don't even read the sigfd. hm.
+
+   but I am blocked though
+
+   I mean, it's clear as day: we're not reading the sigfd even though it's readable.
+
+   oh argh. it's because we're getting cancelled,
+   and I still have that bug where I clear the coro after cancellation,
+   and drop epoll results :(
+   easy fix, already fixed.
+** DONE test_ssh_new still failing
+   in reconnect! very interesting.
+
+   I guess the busy loop was unrelated...
+
+   luckily it seems like test_ssh_new is the only failing thing
+
+   ok well let's crack open the ole getpid etc
+
+   woah! progress!
+
+   the channel is sometimes broken!
+
+   aha it was just a simple race condition in open_channels
+** cancellation
+   maybe I should automatically signal on cancellation :)
+   to interrupt syscalls
+
+   alternatively, that's a huge mistake.
 ** DONE tolerate non-empty sigprocmask on startup in local thread
    So there are a couple options:
 
