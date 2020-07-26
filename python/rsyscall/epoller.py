@@ -151,10 +151,13 @@ class EpollWaiter:
         self.number_to_cb[number] = cb
         return number
 
-    def remove_number(self, number: int) -> None:
-        "Remove the callback for this number."
-        # we mark this number to be removed before we call epoll again; we can't
-        # immediately remove it since we might be in the middle of a call right now.
+    def remove_number_after_next_epoll_wait(self, number: int) -> None:
+        """Remove the callback for this number after the next time we call epoll_wait.
+
+        We don't want to remove it immediately, since even if this
+        number was just removed, we might still get an event for it if
+        an epoll_wait call was in progress.
+        """
         self.pending_remove.add(number)
 
     async def do_wait(self) -> None:
@@ -288,7 +291,7 @@ class EpolledFileDescriptor:
         "Delete this fd from the epollfd."
         if self.in_epollfd:
             await self.epoller.epfd.epoll_ctl(EPOLL_CTL.DEL, self.fd)
-            self.epoller.epoll_waiter.remove_number(self.number)
+            self.epoller.epoll_waiter.remove_number_after_next_epoll_wait(self.number)
             self.in_epollfd = False
 
 @dataclass
