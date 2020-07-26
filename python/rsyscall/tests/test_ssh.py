@@ -47,6 +47,21 @@ class TestSSH(TrioTestCase):
         self.assertEqual(len(data), valid.size())
         self.assertEqual(data, await valid.read())
 
+    async def test_connection_multiple_channels(self) -> None:
+        """Test that using open_channels(n) for n > 1 produces working channels.
+
+        Our parallelization for this function was previously buggy and broke the channels.
+        """
+        [
+            (local_sock, remote_sock),
+            *rest,
+        ] = await self.remote.open_channels(10)
+        data = b'foobar'
+        _, rest = await local_sock.write(await local.thread.ptr(data))
+        self.assertEqual(rest.size(), 0, msg="Got partial write")
+        read_data, _ = await remote_sock.read(await self.remote.malloc(bytes, len(data)))
+        self.assertEqual(data, await read_data.read())
+
     async def test_exec_true(self) -> None:
         bash = await self.store.bin(bash_nixdep, "bash")
         await self.remote.run(bash.args('-c', 'true'))

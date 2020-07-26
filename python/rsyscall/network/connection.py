@@ -204,7 +204,7 @@ class ListeningConnection(Connection):
         return access_sock, sock
 
     async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
-        return await make_n_in_parallel(self.open_async_channel, count)
+        return [await self.open_async_channel() for _ in range(count)]
 
     async def open_channel(self) -> t.Tuple[FileDescriptor, FileDescriptor]:
         access_sock = await self.access_task.socket(self.access_address.value.family, SOCK.STREAM)
@@ -215,7 +215,7 @@ class ListeningConnection(Connection):
         return access_sock, sock
 
     async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
-        return await make_n_in_parallel(self.open_channel, count)
+        return [await self.open_channel() for _ in range(count)]
 
     async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, RAM, FileDescriptor], Connection]]:
         return self.listening_fd.handle, self.for_task_with_fd
