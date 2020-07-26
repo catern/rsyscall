@@ -83,14 +83,14 @@ class UioFileDescriptor(BaseFileDescriptor):
         with contextlib.ExitStack() as stack:
             stack.enter_context(iov.borrow(self.task))
             ret = await _preadv2(self.task.sysif, self.near, iov.near, len(iov.value), -1, flags)
-            return split_iovec(iov, ret)
+        return split_iovec(iov, ret)
 
     async def writev(self, iov: WrittenPointer[IovecList], flags: RWF=RWF.NONE
     ) -> t.Tuple[WrittenPointer[IovecList], t.Optional[t.Tuple[Pointer, Pointer]], WrittenPointer[IovecList]]:
         with contextlib.ExitStack() as stack:
             stack.enter_context(iov.borrow(self.task))
             ret = await _pwritev2(self.task.sysif, self.near, iov.near, len(iov.value), -1, flags)
-            return split_iovec(iov, ret)
+        return split_iovec(iov, ret)
 
 #### Raw syscalls ####
 import rsyscall.near.types as near
