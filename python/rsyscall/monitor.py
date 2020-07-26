@@ -135,8 +135,17 @@ class AsyncChildProcess:
         self.next_sigchld: t.Optional[MultiplexedEvent] = None
 
     async def _waitid_nohang(self) -> t.Optional[ChildState]:
-        if self.process.unread_siginfo is None:
-            await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.NOHANG, await self.ram.malloc(Siginfo))
+        if self.process.unread_siginfo:
+            # if we performed a waitid before, and it contains an event, we don't need to
+            # waitid again.
+            result = await self.process.read_siginfo()
+            # but if there's no event in this previous waitid, we need to waitid now; if
+            # we don't, we might erroneously block waiting for a SIGCHLD that happened
+            # between the previous waitid and now, and was consumed at that time.
+            if result:
+                return result
+        await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.NOHANG,
+                                  await self.ram.malloc(Siginfo))
         return await self.process.read_siginfo()
 
     async def waitpid(self, options: W) -> ChildState:

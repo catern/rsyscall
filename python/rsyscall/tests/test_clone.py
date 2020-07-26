@@ -23,6 +23,22 @@ class TestClone(TrioTestCase):
         async with thread:
             await thread.exit(0)
 
+    async def test_two_children_exec(self) -> None:
+        """Start two child and exec in each of them.
+
+        This test would (sometimes) catch a race condition we had where waitpid
+        on one child would consume the SIGCHLD for another child, and our logic
+        to eagerly call waitid was wrong, so waitpid on the other child would
+        block forever.
+
+        """
+        thr2 = await local.thread.clone()
+        cmd = self.thr.environ.sh.args('-c', 'true')
+        child1 = await self.thr.exec(cmd)
+        child2 = await thr2.exec(cmd)
+        await child1.check()
+        await child2.check()
+
     async def test_async(self) -> None:
         epoller = await Epoller.make_root(self.thr.ram, self.thr.task)
         await do_async_things(self, epoller, self.thr)
