@@ -4,6 +4,7 @@ import contextlib
 from dataclasses import dataclass
 import typing as t
 import types
+import outcome
 
 @dataclass
 class OneAtATime:
@@ -121,6 +122,45 @@ async def run_all(callables: t.List[t.Callable[[], t.Awaitable[T]]]) -> t.List[T
     return results
 
 @dataclass
+class Future(t.Generic[T]):
+    "A value that we might have to wait for."
+    _outcome: t.Optional[outcome.Outcome]
+    _event: trio.Event
+
+    async def get(self) -> T:
+        await self._event.wait()
+        assert self._outcome is not None
+        return self._outcome.unwrap()
+
+@dataclass
+class Promise(t.Generic[T]):
+    "Our promise to provide a value for some Future."
+    _future: Future[T]
+
+    def _check_not_set(self) -> None:
+        if self._future._outcome is not None:
+            raise Exception("Future is already set to", self._future._outcome)
+
+    def send(self, val: T) -> None:
+        self._check_not_set()
+        self._future._outcome = outcome.Value(val)
+        self._future._event.set()
+
+    def throw(self, exn: BaseException) -> None:
+        self._check_not_set()
+        self._future._outcome = outcome.Error(exn)
+        self._future._event.set()
+
+    def set(self, oc: outcome.Outcome) -> None:
+        self._check_not_set()
+        self._future._outcome = oc
+        self._future._event.set()
+
+def make_future() -> t.Tuple[Future[T], Promise[T]]:
+    fut = Future[T](None, trio.Event())
+    return fut, Promise(fut)
+
+@dataclass
 class Shift:
     func: t.Callable[[t.Coroutine], t.Any]
 
@@ -136,12 +176,12 @@ async def reset(body: t.Coroutine[t.Any, t.Any, T], next_value: t.Any=None) -> t
             if is_value:
                 yielded_value = body.send(next_value)
             else:
-                yielded_value = body.throw(next_exn)
+                yielded_value = body.throw(next_exn) # type: ignore
         except StopIteration as e:
             return e.value
         if isinstance(yielded_value, Shift):
             # sure wish I had an effect system to tell me what this value is
-            return yielded_value.func(body)
+            return yielded_value.func(body) # type: ignore
         else:
             try:
                 next_value = await _yield(yielded_value)
