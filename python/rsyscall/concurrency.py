@@ -1,4 +1,5 @@
 "Miscellaneous concurrency-management utilities."
+from __future__ import annotations
 import trio
 import contextlib
 from dataclasses import dataclass
@@ -193,3 +194,41 @@ async def reset(body: t.Coroutine[t.Any, t.Any, T], next_value: t.Any=None) -> t
 # again, sure wish I had an effect system to constrain this type
 async def shift(func: t.Callable[[t.Coroutine], t.Any]) -> t.Any:
     return await _yield(Shift(func))
+
+class SuspendableCoroutine:
+    def __init__(self, run_func: t.Callable[[SuspendableCoroutine], t.Coroutine]) -> None:
+        self._run_func = run_func
+        self._lock = trio.Lock()
+        # TODO it would be nice to just pass in the coro object,
+        # but we need to suppress the warning about unawaited coroutines...
+        self._coro: t.Optional[t.Coroutine] = None
+
+    async def drive(self) -> None:
+        async with self._lock:
+            if self._coro is None:
+                self._coro = self._run_func(self)
+            await reset(self._coro)
+
+    @contextlib.asynccontextmanager
+    async def running(self) -> t.AsyncIterator[None]:
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(self.drive)
+            yield
+            nursery.cancel_scope.cancel()
+
+    @contextlib.asynccontextmanager
+    async def suspend_if_cancelled(self) -> t.AsyncIterator[None]:
+        cancels = []
+        def handle_cancelled(exn: BaseException) -> t.Optional[BaseException]:
+            if isinstance(exn, trio.Cancelled):
+                cancels.append(exn)
+                return None
+            else:
+                return exn
+        with trio.MultiError.catch(handle_cancelled):
+            yield
+        if cancels:
+            def set_coro(coro) -> None:
+                self._coro = coro
+                raise trio.MultiError(cancels)
+            await shift(set_coro)
