@@ -6,7 +6,7 @@ Nothing special here, this is just normal inotify usage.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.concurrency import reset, shift
+from rsyscall.concurrency import SuspendableCoroutine
 import contextlib
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.memory.ram import RAM
@@ -39,10 +39,8 @@ class Watch:
         "Wait for some events to happen at this inode"
         if self.removed:
             raise Exception("watch was already removed")
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(self.inotify._drive_read)
+        async with self.inotify.suspendable.running():
             event = await self.channel.receive()
-            nursery.cancel_scope.cancel()
         if event.mask & IN.IGNORED:
             # the name is confusing - getting IN.IGNORED means this watch was removed
             self.removed = True
@@ -82,8 +80,7 @@ class Inotify:
         self.ram = ram
         self.buf = buf
         self.wd_to_watch: t.Dict[WatchDescriptor, Watch] = {}
-        self.read_lock = trio.Lock()
-        self.read_coro = None
+        self.suspendable = SuspendableCoroutine(self._run_read)
 
     @staticmethod
     async def make(thread: Thread) -> Inotify:
@@ -113,38 +110,16 @@ class Inotify:
             self.wd_to_watch[wd] = watch
         return watch
 
-    async def _drive_read(self) -> None:
-        async with self.read_lock:
-            if self.read_coro is None:
-                self.read_coro = self._run_read()
-            await reset(self.read_coro)
-
-    async def _run_read(self) -> None:
-        @contextlib.asynccontextmanager
-        async def suspend_if_cancelled() -> t.AsyncIterator[None]:
-            cancels = []
-            def handle_cancelled(exn: BaseException) -> t.Optional[BaseException]:
-                if isinstance(exn, trio.Cancelled):
-                    cancels.append(exn)
-                    return None
-                else:
-                    return exn
-            with trio.MultiError.catch(handle_cancelled):
-                yield
-            if cancels:
-                def set_read_coro(coro) -> None:
-                    self.read_coro = coro
-                    raise trio.MultiError(cancels)
-                await shift(set_read_coro)
+    async def _run_read(self, suspendable: SuspendableCoroutine) -> None:
         while True:
             while True:
-                async with suspend_if_cancelled():
+                async with suspendable.suspend_if_cancelled():
                     valid, rest = await self.asyncfd.read(self.buf)
                     break
             if valid.size() == 0:
                 raise Exception('got EOF from inotify fd? what?')
             while True:
-                async with suspend_if_cancelled():
+                async with suspendable.suspend_if_cancelled():
                     events = await valid.read()
                     break
             for event in events:
