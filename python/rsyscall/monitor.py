@@ -50,7 +50,7 @@ of child monitoring through centralization into thread A.
 """
 from __future__ import annotations
 from dataclasses import dataclass
-from rsyscall.concurrency import shift, reset
+from rsyscall.concurrency import SuspendableCoroutine
 from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Pointer, ChildProcess
 from rsyscall.memory.ram import RAM
@@ -117,35 +117,12 @@ class AsyncSignalfd:
         self.signal_block = signal_block
         self.buf = buf
         self.next_signal = trio.Event()
-        self.read_lock = trio.Lock()
-        self.read_coro: t.Optional[t.Coroutine] = None
+        self.suspendable = SuspendableCoroutine(self._run_read)
 
-    async def _drive_read(self) -> None:
-        async with self.read_lock:
-            if self.read_coro is None:
-                self.read_coro = self._run_read()
-            await reset(self.read_coro)
-
-    async def _run_read(self) -> None:
-        @contextlib.asynccontextmanager
-        async def suspend_if_cancelled() -> t.AsyncIterator[None]:
-            cancels = []
-            def handle_cancelled(exn: BaseException) -> t.Optional[BaseException]:
-                if isinstance(exn, trio.Cancelled):
-                    cancels.append(exn)
-                    return None
-                else:
-                    return exn
-            with trio.MultiError.catch(handle_cancelled):
-                yield
-            if cancels:
-                def set_read_coro(coro) -> None:
-                    self.read_coro = coro
-                    raise trio.MultiError(cancels)
-                await shift(set_read_coro)
+    async def _run_read(self, suspendable: SuspendableCoroutine) -> None:
         while True:
             while True:
-                async with suspend_if_cancelled():
+                async with suspendable.suspend_if_cancelled():
                     valid, rest = await self.afd.read(self.buf)
                     break
             # discard the signal information...
@@ -188,10 +165,8 @@ class AsyncChildProcess:
         while True:
             # If a previous call has given us a next_sigchld to wait on, then wait we shall.
             if self.next_sigchld:
-                async with trio.open_nursery() as nursery:
-                    nursery.start_soon(self.sigchld_sigfd._drive_read)
+                async with self.sigchld_sigfd.suspendable.running():
                     await self.next_sigchld.wait()
-                    nursery.cancel_scope.cancel()
                 # we shouldn't wait for SIGCHLD the next time we're called, we should eagerly call
                 # waitid, since there may still be state changes to fetch.
                 self.next_sigchld = None
