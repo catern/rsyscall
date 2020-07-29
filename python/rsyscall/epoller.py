@@ -84,7 +84,7 @@ import os
 import math
 import typing as t
 import contextlib
-from rsyscall.concurrency import shift, reset
+from rsyscall.concurrency import SuspendableCoroutine
 from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 import trio
@@ -131,8 +131,7 @@ class EpollWaiter:
         self.next_number = 0
         self.number_to_cb: t.Dict[int, t.Callable[[EPOLL], None]] = {}
         self.pending_remove: t.Set[int] = set()
-        self.epoll_wait_coro: t.Optional[t.Coroutine] = None
-        self.epoll_wait_lock = trio.Lock()
+        self.suspendable = SuspendableCoroutine(self._run)
 
     def add_and_allocate_number(self, cb: t.Callable[[EPOLL], None]) -> int:
         """Add a callback which will be called on EpollEvents with data == returned number.
@@ -158,37 +157,15 @@ class EpollWaiter:
         """
         self.pending_remove.add(number)
 
-    async def drive_epoll_wait(self) -> None:
-        async with self.epoll_wait_lock:
-            if self.epoll_wait_coro is None:
-                self.epoll_wait_coro = self._run()
-            await reset(self.epoll_wait_coro)
-
-    async def _run(self) -> None:
-        @contextlib.asynccontextmanager
-        async def suspend_if_cancelled() -> t.AsyncIterator[None]:
-            cancels = []
-            def handle_cancelled(exn: BaseException) -> t.Optional[BaseException]:
-                if isinstance(exn, trio.Cancelled):
-                    cancels.append(exn)
-                    return None
-                else:
-                    return exn
-            with trio.MultiError.catch(handle_cancelled):
-                yield
-            if cancels:
-                def set_epoll_wait_coro(coro) -> None:
-                    self.epoll_wait_coro = coro
-                    raise trio.MultiError(cancels)
-                await shift(set_epoll_wait_coro)
+    async def _run(self, suspendable: SuspendableCoroutine) -> None:
+        maxevents = 32
         while True:
-            maxevents = 32
+            async with suspendable.suspend_if_cancelled():
+                input_buf = await self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof())
+                break
+        while True:
             while True:
-                async with suspend_if_cancelled():
-                    input_buf = await self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof())
-                    break
-            while True:
-                async with suspend_if_cancelled():
+                async with suspendable.suspend_if_cancelled():
                     if self.wait_readable:
                         await self.wait_readable()
                     syscall_response = await self.epfd.task.sysif.submit_syscall(
@@ -196,14 +173,15 @@ class EpollWaiter:
                     break
 
             while True:
-                async with suspend_if_cancelled():
+                async with suspendable.suspend_if_cancelled():
                     count = await syscall_response.receive()
                     break
-            valid_events_buf, _ = input_buf.split(count * EpollEvent.sizeof())
+            valid_events_buf, rest = input_buf.split(count * EpollEvent.sizeof())
             while True:
-                async with suspend_if_cancelled():
+                async with suspendable.suspend_if_cancelled():
                     received_events = await valid_events_buf.read()
                     break
+            input_buf = valid_events_buf + rest
             for event in received_events:
                 if event.data not in self.pending_remove:
                     self.number_to_cb[event.data](event.events)
@@ -402,11 +380,9 @@ class AsyncFileDescriptor:
         "Call epoll_wait until at least one of the passed flags is set in our status."
         if self.status.mask & flags:
             return
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(self.epolled.epoller.epoll_waiter.drive_epoll_wait)
+        async with self.epolled.epoller.epoll_waiter.suspendable.running():
             while not self.status.mask & flags:
                 await self.event.wait()
-            nursery.cancel_scope.cancel()
 
     def _update_for_epoll_event(self, flags: EPOLL) -> None:
         self.status.posedge(flags)
