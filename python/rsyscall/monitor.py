@@ -50,7 +50,7 @@ of child monitoring through centralization into thread A.
 """
 from __future__ import annotations
 from dataclasses import dataclass
-from rsyscall.concurrency import MultiplexedEvent
+from rsyscall.concurrency import shift, reset
 from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Pointer, ChildProcess
 from rsyscall.memory.ram import RAM
@@ -105,26 +105,53 @@ class AsyncSignalfd:
         else:
             sigset_ptr = signal_block.newset
         afd = await AsyncFileDescriptor.make(epoller, ram, await task.signalfd(sigset_ptr, SFD.NONBLOCK))
-        return cls(afd, signal_block)
+        return cls(afd, signal_block, await ram.malloc(SignalfdSiginfo))
 
     def __init__(self,
                  afd: AsyncFileDescriptor,
                  signal_block: SignalBlock,
+                 buf: Pointer[SignalfdSiginfo],
     ) -> None:
         "Use the constructor method AsyncSignalfd.make"
         self.afd = afd
         self.signal_block = signal_block
-        self.next_signal = MultiplexedEvent(self._wait_for_some_signal)
+        self.buf = buf
+        self.next_signal = trio.Event()
+        self.read_lock = trio.Lock()
+        self.read_coro: t.Optional[t.Coroutine] = None
 
-    async def _wait_for_some_signal(self):
-        """Wait for a signal, discarding the information received from it
+    async def _drive_read(self) -> None:
+        async with self.read_lock:
+            if self.read_coro is None:
+                self.read_coro = self._run_read()
+            await reset(self.read_coro)
 
-        We don't care about the information from the signal, we just want to sleep until
-        some signal happens.
-
-        """
-        await self.afd.read(await self.afd.ram.malloc(SignalfdSiginfo))
-        self.next_signal = MultiplexedEvent(self._wait_for_some_signal)
+    async def _run_read(self) -> None:
+        @contextlib.asynccontextmanager
+        async def suspend_if_cancelled() -> t.AsyncIterator[None]:
+            cancels = []
+            def handle_cancelled(exn: BaseException) -> t.Optional[BaseException]:
+                if isinstance(exn, trio.Cancelled):
+                    cancels.append(exn)
+                    return None
+                else:
+                    return exn
+            with trio.MultiError.catch(handle_cancelled):
+                yield
+            if cancels:
+                def set_read_coro(coro) -> None:
+                    self.read_coro = coro
+                    raise trio.MultiError(cancels)
+                await shift(set_read_coro)
+        while True:
+            while True:
+                async with suspend_if_cancelled():
+                    valid, rest = await self.afd.read(self.buf)
+                    break
+            # discard the signal information...
+            self.next_signal.set()
+            self.next_signal = trio.Event()
+            self.buf = valid + rest
 
 class AsyncChildProcess:
     "A child process which can be monitored without blocking the thread"
@@ -132,7 +159,7 @@ class AsyncChildProcess:
         self.process = process
         self.ram = ram
         self.sigchld_sigfd = sigchld_sigfd
-        self.next_sigchld: t.Optional[MultiplexedEvent] = None
+        self.next_sigchld: t.Optional[trio.Event] = None
 
     def __repr__(self) -> str:
         name = type(self).__name__
@@ -161,7 +188,10 @@ class AsyncChildProcess:
         while True:
             # If a previous call has given us a next_sigchld to wait on, then wait we shall.
             if self.next_sigchld:
-                await self.next_sigchld.wait()
+                async with trio.open_nursery() as nursery:
+                    nursery.start_soon(self.sigchld_sigfd._drive_read)
+                    await self.next_sigchld.wait()
+                    nursery.cancel_scope.cancel()
                 # we shouldn't wait for SIGCHLD the next time we're called, we should eagerly call
                 # waitid, since there may still be state changes to fetch.
                 self.next_sigchld = None
