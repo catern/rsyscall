@@ -6,7 +6,8 @@ Nothing special here, this is just normal inotify usage.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.concurrency import OneAtATime
+from rsyscall.concurrency import reset, shift
+import contextlib
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.memory.ram import RAM
 from rsyscall.near.types import WatchDescriptor
@@ -38,19 +39,14 @@ class Watch:
         "Wait for some events to happen at this inode"
         if self.removed:
             raise Exception("watch was already removed")
-        events: t.List[InotifyEvent] = []
-        while True:
-            try:
-                event = self.channel.receive_nowait()
-                if event.mask & IN.IGNORED:
-                    # the name is confusing - getting IN.IGNORED means this watch was removed
-                    self.removed = True
-                events.append(event)
-            except trio.WouldBlock:
-                if len(events) == 0:
-                    await self.inotify._do_wait()
-                else:
-                    return events
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(self.inotify._drive_read)
+            event = await self.channel.receive()
+            nursery.cancel_scope.cancel()
+        if event.mask & IN.IGNORED:
+            # the name is confusing - getting IN.IGNORED means this watch was removed
+            self.removed = True
+        return [event]
 
     async def wait_until_event(self, mask: IN, name: t.Optional[str]=None) -> InotifyEvent:
         """Wait until an event in this mask, and possibly with this name, happens
@@ -78,19 +74,24 @@ assert _inotify_read_size > _inotify_minimum_size_to_read_one_event
 
 class Inotify:
     "An inotify file descriptor, which allows monitoring filesystem paths for events."
-    def __init__(self, asyncfd: AsyncFileDescriptor, ram: RAM) -> None:
+    def __init__(self, asyncfd: AsyncFileDescriptor, ram: RAM,
+                 buf: Pointer[InotifyEventList],
+    ) -> None:
         "Private; use Inotify.make instead."
         self.asyncfd = asyncfd
         self.ram = ram
+        self.buf = buf
         self.wd_to_watch: t.Dict[WatchDescriptor, Watch] = {}
-        self.running_wait = OneAtATime()
+        self.read_lock = trio.Lock()
+        self.read_coro = None
 
     @staticmethod
     async def make(thread: Thread) -> Inotify:
         "Create an Inotify file descriptor in `thread`."
         asyncfd = await AsyncFileDescriptor.make(
             thread.epoller, thread.ram, await thread.task.inotify_init(InotifyFlag.NONBLOCK))
-        return Inotify(asyncfd, thread.ram)
+        buf = await thread.ram.malloc(InotifyEventList, _inotify_read_size)
+        return Inotify(asyncfd, thread.ram, buf)
 
     async def add(self, path: handle.Path, mask: IN) -> Watch:
         """Start watching a given path for events in the passed mask
@@ -112,18 +113,46 @@ class Inotify:
             self.wd_to_watch[wd] = watch
         return watch
 
-    async def _do_wait(self) -> None:
-        async with self.running_wait.needs_run() as needs_run:
-            if needs_run:
-                valid, _ = await self.asyncfd.read(
-                    await self.ram.malloc(InotifyEventList, _inotify_read_size))
-                if valid.size() == 0:
-                    raise Exception('got EOF from inotify fd? what?')
-                for event in await valid.read():
-                    self.wd_to_watch[event.wd].send_channel.send_nowait(event)
-                    if event.mask & IN.IGNORED:
-                        # the name is confusing - getting IN.IGNORED means this watch was removed
-                        del self.wd_to_watch[event.wd]
+    async def _drive_read(self) -> None:
+        async with self.read_lock:
+            if self.read_coro is None:
+                self.read_coro = self._run_read()
+            await reset(self.read_coro)
+
+    async def _run_read(self) -> None:
+        @contextlib.asynccontextmanager
+        async def suspend_if_cancelled() -> t.AsyncIterator[None]:
+            cancels = []
+            def handle_cancelled(exn: BaseException) -> t.Optional[BaseException]:
+                if isinstance(exn, trio.Cancelled):
+                    cancels.append(exn)
+                    return None
+                else:
+                    return exn
+            with trio.MultiError.catch(handle_cancelled):
+                yield
+            if cancels:
+                def set_read_coro(coro) -> None:
+                    self.read_coro = coro
+                    raise trio.MultiError(cancels)
+                await shift(set_read_coro)
+        while True:
+            while True:
+                async with suspend_if_cancelled():
+                    valid, rest = await self.asyncfd.read(self.buf)
+                    break
+            if valid.size() == 0:
+                raise Exception('got EOF from inotify fd? what?')
+            while True:
+                async with suspend_if_cancelled():
+                    events = await valid.read()
+                    break
+            for event in events:
+                self.wd_to_watch[event.wd].send_channel.send_nowait(event)
+                if event.mask & IN.IGNORED:
+                    # the name is confusing - getting IN.IGNORED means this watch was removed
+                    del self.wd_to_watch[event.wd]
+            self.buf = valid + rest
 
 
     async def close(self) -> None:
