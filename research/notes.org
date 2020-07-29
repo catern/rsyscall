@@ -19808,7 +19808,7 @@ async with sysif.syscall_lock():
     run with cancellable syscalls is what it will be called
 
     and it will return a resumable thunk
-** add delimcc runner and use
+** DONE add delimcc runner and use in epoll
    it's time!!!
 
    what shall I attack first?
@@ -20051,7 +20051,9 @@ async with sysif.syscall_lock():
    amazing.
 
    yay yay yay.
-** remaining bug in persistent
+
+   ok great! I fixed all the bugs and now epoll is working.
+** DONE remaining bug in persistent
    ok so now that i've fixed that, it looks like there's still an unrelated bug in persistent.
 
    which hopefully is easier to pin down now.
@@ -20154,6 +20156,288 @@ async with sysif.syscall_lock():
    the channel is sometimes broken!
 
    aha it was just a simple race condition in open_channels
+** TODO fully replace OneAtATime with shift/reset
+   ok so let's do this.
+
+   syscall connection first
+
+   okaaaay soooo
+
+   i guess we need to nest drive calls inside throw_on_child_exit?
+
+   hmmm
+
+   i guess theoretically all of them could be inside there...
+
+   we want a cancellation...
+
+   ok ok ok. so yeah really I like the idea of throw on child exit.
+   it's very clean!
+
+   on the other hand...
+
+   hm. do we really need it?
+   suppose we had several coroutines...
+
+   well we can't really have the nursery inside the resumable task unfortunately, lol.
+
+   hmmmmmmmmmm
+
+   or wait, we could I guess. we just need to cancel the tasks when we break out.
+
+   hm. hm.
+
+   maybe could have two resumable tasks nested?
+
+   heck, can we just have a queue of syscall responses, and read them off one by one?
+   although...
+
+   yeah sure that makes sense, and we'll have the nursery outside that.
+
+   although that's stateless...
+
+   yeah so we'll keep the oneatatime in the sysif,
+   and remote it from the connection. that seems fine.
+
+   ummmm wait though...
+   how will we get the results?
+   seems weird.
+
+   ok ok ok I think I get it.
+
+   we'll put it in base_sysif, the stuff to... do the... thing..
+
+   we'll call drive from there.
+   ok the basics work, let's check on the other things...
+
+   like publishing the exceptions everywhere.
+
+   i guess we could use outcome.
+
+   ok sure I wrote a simple future/promise class with outcome, SIGH
+
+   now let's see.
+   after the hangup we want to mark the thing as closed.
+
+   what about requests currently being sent?
+
+   hmm wait a second. don't we... basically not need this split?
+
+   if we're doing the cancellable thing, anyway?
+
+   mmm no, we do want to enter the loop,
+   but I guess they're separate...?
+
+   I think it's probably better to, uh, save this one for later.
+
+   because we want to do other major changes to the syscall interface.
+
+   so ok let's look at a different one.
+*** inotify
+was easy
+*** multiplexedevent
+    ok we can tackle this
+
+    I feel like in a lot of these, I'm doing,
+
+    run background task, do other async stuff which depend on that task.,
+    then when those are done, stop (contributing to) running background task
+
+    of course, even better would be if.
+    our concurrency primitives did that automatically;
+    e.g., waiting on a pipe woke up the other side.
+
+    or more specifically, donated our timeslice to the other side.
+
+    i mean. it's kind of a combining issue? right...
+    and kind of like kill safe abstractions.
+
+    i mean we just want to be able to say, y'know,
+    this event or whatever, when you're waiting on it,
+    you gotta run the task too.
+
+    that's kind of like a lock, actually;
+    I guess we could put the event things inside a lock?
+
+    but that's a little annoying.
+
+    maybe let's just do the, drive_in_background thing,
+    and then we can make even nicer primitives which do that under the hood.
+
+    just a Channel and an Event I guess.
+
+    hmm here with waitid... this is interesting.
+
+    maybe we should do the next_signal thing, and...
+
+    do some cancellation stuff maybe? hm. hm.
+
+    oh well uhhh I guessss theeee
+
+    I guess this is fine really
+
+    although, if it ran forever.. then...
+
+    we could still miss sigchlds, but, we would have less class state I guess...
+
+    yeah I think waitpid is a decent model for now.
+
+    wait_for_some_signal is even kind of nice too.
+
+    multiplexedevent is very much in the vein of,
+    drive this loop with this event. mmm.
+
+    I guess a rework to be based on a loop could be fairly close to as simple.
+
+    we'd set the event once we receive the signal...
+    with the future value of the signal we read, i guess...
+    which is handy, deal with it....
+
+    wait, wait, wait, this should really be a queue
+    for sure, right? it should be a queue that we're reading.
+    same with... inotify, I guess.
+
+    ok so all of these should be queues. that seems fine to me!
+
+    well, should they tho?
+    I guess the inotify and epoll ones are a bunch of queues.
+
+    the epoll one, also, we want to support concurrency in the asyncfd. hm.
+
+    i mean, condvars...
+    well yeah condvars seem appropriate when we're just checking for changing flags!
+
+    afd isn't actually concurrent right now anyway...
+
+    but if we wanted it to be, then...
+    ok well the easiest way is to just have a thread reading the queue,
+    and updating the flags and signaling a condvar (I guess)
+
+    I mean, synchronizing in this way seems... bad.
+
+    like... requiring each blocking thread to wake up and check and go back to sleep...
+    that sucks!
+
+    we want to just wake up the threads that need to care, innit...?
+    and also keep running in the thread reading the queue.
+
+    i mean...
+    I *guess* we could have some kind of thing where we submit requests for,
+    some flag in a mask of flags to be set,
+    and get a response when that condition is true.
+
+    actually wait a second the current way afd works *is* async-safe.
+
+    it doesn't have multiple epoll wait drivers,
+    and all the work is done in the sync callback.
+
+    it's actually fine. hm.
+
+    i mean we don't really need the thread pulling off epoll events...
+
+    we just need the callback.
+
+    oh well I guess the reason we want thread is...
+    so we can have a queue on which to wait for the events, and...
+
+    if we do it that way, then...
+
+    we can have waiting on the queue drive epoll wait.
+
+    but we can't really have waiting on the event drive epoll wait...
+
+    i mean, having it be arranged with a callback,
+    doesn't really work for the drive stuff.
+
+    we'd really benefit more from the queue...
+
+    i guess we could maybe have something pluggable where,
+    we have a DrivableCoroutine which, is,
+    something we can pass to a Queue so it will know to drive the coroutine,
+    when blocking.
+
+    ok, ok.
+    let's just build the resumable abstraction,
+    and the replacement for multiplexedevent on top,
+    and it will be fine.
+
+    let's do the raw shift/reset for signalfd first.
+    it's... a bit of a hassle. since we need to drive while waiting on next_signal...
+
+    nice ok, we did the raw thing.
+    now let's abstract.
+
+    cool cool cool cool cool.
+
+    the abstraction even is pretty nice!
+
+    although it would be nicer if we could remove the three lines of boilerplate,
+    around suspendable operations...
+
+    hmmmmmmmm
+
+    so at the end of the async with I could do something to break the while loop...
+    i can't intercept the exception if I just run in the while condition...
+
+    retrying with an async with..
+
+    and python blocks are not very short...
+    and there are no async decorators; although I guess I could do it at the end, hm.
+    also a function can't return a value, sigh, lol...
+
+    maybe if...
+#+BEGIN_SRC python
+input_buf = await suspendable.do(
+    lambda: self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof()))
+#+END_SRC
+    there's no async lambdas too, ugh.
+#+BEGIN_SRC python
+while suspendable.notpast:
+    async with suspendable.suspendable():
+        input_buf = await self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof())
+#+END_SRC
+    no break... i guess that's nice.
+
+    ok cool.
+    and I don't think I really need multiplexedevent, it's actually just one line.
+    (assuming correct usage lol)
+
+    so now it's just over to syscalls.
+*** syscalls syscalls syscalls
+    whatever will I do...
+
+    so i want to be able to suspend the coroutine...
+    from a nested function call...
+    which should work fine, right?
+    and then the person running it will get an early return
+    (or maybe actually just get the cancel?)
+    and the object they're working with will get updated,
+    and that object will allow them to reattach to the function.
+
+    meanwhile when we suspended it deep inside,
+    we got passed the coroutine, or something,
+    and then we returned back out some stuff which the wrapper object will use.
+
+    then we just...
+
+    I guess in theory we should treat everything uniformly.
+    so use a future, maybe?
+    or, no, we do want *immediate* evalution.
+    we want to call a *synchronous* callback on each syscall result.
+
+    still, uniformly...
+
+    ok I guess the real issue is the resume.
+    like, we can't just run it until the next yield;
+    because we can't suspend at the next yield.
+
+    we could insert our own yield at which we *can* suspend.
+    i guess it would be like...
+    maybe_suspend.
+
+    and we'd have to do that after every syscall.
+    I guess we only have one syscall where we use submit_syscall though.
+    so maybe it's fine?
 ** cancellation
    maybe I should automatically signal on cancellation :)
    to interrupt syscalls
