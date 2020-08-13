@@ -188,17 +188,24 @@ async def shift(func: t.Callable[[t.Coroutine], t.Any]) -> t.Any:
 
 class SuspendableCoroutine:
     def __init__(self, run_func: t.Callable[[SuspendableCoroutine], t.Coroutine]) -> None:
+        self._coro: t.Optional[t.Coroutine] = run_func(self)
         self._run_func = run_func
         self._lock = trio.Lock()
-        # TODO it would be nice to just pass in the coro object,
-        # but we need to suppress the warning about unawaited coroutines...
-        self._coro: t.Optional[t.Coroutine] = None
+
+    def __del__(self) -> None:
+        # suppress the warning about unawaited coroutine that we'd get
+        # if we never got the chance to drive this coro
+        if self._coro:
+            self._coro.close()
 
     async def drive(self) -> None:
         async with self._lock:
             if self._coro is None:
-                self._coro = self._run_func(self)
-            await reset(self._coro)
+                raise Exception("no coro to run")
+            coro = self._coro
+            # this will be set back to the coroutine by set_coro
+            self._coro = None
+            await reset(coro)
 
     @contextlib.asynccontextmanager
     async def running(self) -> t.AsyncIterator[None]:
