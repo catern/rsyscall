@@ -20438,6 +20438,361 @@ while suspendable.notpast:
     and we'd have to do that after every syscall.
     I guess we only have one syscall where we use submit_syscall though.
     so maybe it's fine?
+
+    and I guess we would drive it with a no-op... when...
+    attached regularly...
+
+    well actually I guess it would be transferred to the control of the syscall regardless,
+    and,
+    we would just be waiting for the event to be set by that yield,
+    which is the point at which it's transferred back to us.
+
+    we could do a contextmanager I guess? hm.
+    cancellable-syscall...
+
+    that would be cool actually.
+    
+    suspend on cancel, I guess...
+
+    except that we don't catch the cancel, because we have the power.
+
+    and it just resumes us...
+
+    yeah a contextmanager seems good.
+
+    i guess it's, that, if i know i'm only working with rsyscall stuff,
+    i won't wait on a trio thing and get a cancel midway.
+
+    but that seems iffy.
+    it should be an optimization, maybe?
+    like I guess the idea is that rsyscall stuff isn't normally cancellable...
+
+    but we can enable "cancellability" by telling it about the suspendable coroutine?
+
+    and it uses that to suspend when it would have otherwise ignored a cancel.
+
+    but the write part can still be cancelled.
+    so we still need to support retrying, I guess.
+
+    ok so that seems fine. it's a bit weird, but fine. hm.
+
+    so I guess we would have a... sysif context manager to register it?
+    do we want to register it for a specific sysif... or for all?
+    like what if we wait on the afd to write,
+    it says we can write,
+    we write,
+    and then we want to suspend while waiting for the write response...
+
+    i guess working for all syscalls would prroobbbabbbllyyy be fine?
+
+    the contextmanager is nice, I think that would be quite clean.
+    it would be an asynccontextmanager of course since we need to yield in aexit
+
+    yeah. i like the idea of passing the suspendable cap to the contextmanager,
+    so that the syscall can get it and suspend.
+
+    it also helpfully allows me to do the yield after the syscall.
+
+    it's weird that it only allows one await operation...
+
+    let's not over think it, I think we can fix that with experience.
+    we only do this in one place anyway.
+
+    okaaay sooo.
+    we've removed the only use of submit_syscall.
+
+    let's move on?
+    actually let's start by refactoring writing
+*** handling the nursery in the refactored implementation of writing syscalls
+    m m m.
+
+    need to make the pointer and write in parallel with trio I guess.
+
+    ummmmm
+
+    ok so my beautiful amazing beautiful... beautiful thing.
+
+    needs to be ... carefully handled.
+
+    I... suppose we can cancel the do_write. hm hm hm hm.
+
+    but, wait. actually. ummmm.
+
+    ok yeah we will get legit cancels I guess.
+
+    but... not while in write_all, hm.
+
+    ok but . . .
+    suppose we got a cancel in the driver. ok, then we'd get cancel from write_all.
+
+    but, that's not exactly... suspendable...
+
+    ugghhhh. UGHHHHHHGHHH.
+
+    i could make my own nursery....
+
+    ok so clearly we can't have this nursery. hm . hm . hmmm!!!!
+
+    i mean what the heck is the point of it anyway... hmmm....
+
+    hmmmmmmmmmmm
+
+    i mean, suspending seems PRETTY easy.
+
+    all I have to do is... um...
+
+    well, suspend inside the coroutine that's being run and...
+
+    that should really go up to the outer prompt...?
+
+    no the yield will get intercepted....
+
+    oh yeah! that's a pretty fundamental issue! the runner for that coro is,
+    this other random thing! there's no reset on it!
+
+    we really need to yield up past that prompt, i guess.
+    multiprompt drifting!
+
+    multiprompt... drifting... yes...
+
+    that would allow it to work, if we yielded past the coro runner.
+
+    how do we get the main one to work tho? hm.
+
+    i guess it... is fine actually. the other thread will... be...
+
+    how will it be multiplexed together? I guess only at yields, yeah...
+    and we'll just... uh... hm........
+
+    how do we actually multiplex them together? we can only yield one thing at a time...
+
+    well how does it normally work? I guess we yield to the runner,
+    and it pauses us until that response can be acquired.
+
+    but here we're just naively passing things up. so that doesn't work.
+    right? maybe there's a way....
+
+    hmm mhmmm hmhmmm
+
+    well ok so i guess we want to detach... or something...
+
+    let's not try to match trio, let's just think about the ideal behavior.
+
+    there's some thing that gives us... multiple... yields?
+    it runs another thing of ours while the other yield is performed - sure, fine.
+
+    mmmmmmmmm
+
+    blah ok, how do I handle this, hm hm hm.
+    we can't just multiplex them, because we don't get parallelism.
+    we need to multiplex them onto multiple underlying threads - fine, easy.
+
+    but then in the event of cancellation, things are broken. hm.
+
+    well, we'll cancel and suspend each of them separately, I guess? and retry?
+    to detach each of them from their threads.
+
+    wait if we do that, then. . . . .
+    can we just use a normal nursery
+
+    well, we still need the nursery to wait on things I guess,
+    yet we still need to get rid of the nursery because it introduces a cancel scope.
+
+    so ok. the suspendable prompt will be inside a nursery.
+    so we can start threads as part of the suspendable.
+    and. they will also be part of the suspendable.
+
+    and they can suspend also...
+
+    ok so it's a bit more complicated implementation.
+
+    the cap for starting things...
+
+    hey wait could we just pass in a nursery cap anyway?
+
+    and have... it run the things in parallel, suspendably?
+
+    i mean... hmm.......
+
+    so the notion of... making calls instead of callbacks, I guess is fine.
+
+    it would be... easier with callbacks. that's more raw.
+
+    on the other hand... the multiplexing works if we have multiple coros.
+    what exactly is the API we want for parallelism anyway?
+
+    something like... run this coro is one, sure.
+    i mean what we really want is...
+    "yield this thing up, and send me back what you get sent".
+
+    like...
+
+    i mean that's kind of a continuation API, right? well how do we make it one?
+
+    should it really be sync?
+
+    i mean what's the ideal? the ideal is,
+    i have some handler,
+    which when I yield to it,
+    it's able to multiplex multiple of us.
+
+    and that's dynbound (or passed in),
+    so I can use it.
+
+    so that sounds a lot like suspendable.
+     
+    well I guess the reason the sync is suspicious is,
+    I shouldn't be able to mutate things through sync calls.
+
+    so yeah I don't like that a sync thing that can start up async stuff.
+    cuz that's mutation, and mutation should only be monadic (aka async)
+    but anyway.
+
+    so we'll have the async API to the suspendable prompt,
+    to start another thread.
+
+    and internally... it will...
+    do some stuff.
+
+    I guess we pass it a coro and it... it could even create a hierarchy.
+
+    do I really want to make my own async library?
+
+    ok so the deal is, I'm...
+    passing the nursery cap in to functions
+
+    ok so also, this will make it harder to do async things.
+    because... we won't be able to wait until the async things are done.
+    because we won't have the nursery contextmanager. hm.
+
+    how would we do this even?
+    hm.
+
+    well we could just clone trio's API instead.
+
+    do it sync, that's fine.
+    and... don't necessarily run the nested thing in a nested runner.
+
+    (i'm busy but that shouldn't stop me from deciding to do this)
+
+    i don't reaalllyy want to stop using trio.
+
+    anyway how would we wait with the other style?
+
+    we'd do... await func(nursery.nested())
+    then when it's done, the nested nursery is fully exited.
+    er wait
+
+    await nursery.nested().run(func)
+
+    right? or...
+
+    does each func automatically get a nested nursery?
+
+    #+BEGIN_SRC python
+    await nursery.run_until_done(func)
+    #+END_SRC
+    this will wait for it to finish like the contextmanager style.
+
+    #+BEGIN_SRC python
+    await nursery.start(func)
+    #+END_SRC
+
+    this will start it in the background like trio start_soon.
+
+    h m m.
+
+    i guesssss creating a nested nursery for each one is weird and excessive,
+    because it doesn't allow us to start something up which puts tasks in our nursery.
+
+    so...
+    each task will get a ref to its current nursery? or..
+    no ref at all.
+
+    but... it should be able to start up multiple things and do them in parallel?
+
+    but no, how can it do that without the cap for parallelism?
+    I mean, it can always start its own internal parallelism.
+
+    but it can't... parallelize externally...
+    so if it uses a library which tries to go to an external prompt,
+    instead of its internal prompt - it can only do one of those at a time.
+
+    so it can't go to multiple external prompts at a time.
+    without some parallelism cap.
+
+    ON the other hand!
+    why can't I handle these shifts internally?
+    after all... they're just simple async things.
+    I should be able to handle the non-mutable ones... internally.
+    and I can write my own async operations which work this way
+
+    yeah, ok, I think that's the key, I can handle them internally.
+
+    but, what about wait_readable? hm.
+    well, we can probably resolve that.
+
+    the real trouble is reimplementing all these async operations.
+    i guess basically we'll follow the principle of,
+    not using actual async stuff.
+
+    i like the nurseries...
+
+    but I guess to achieve the ability for them to provide internal parallelism,
+    we need to,
+    intercept yields...
+
+    ok so all of this is a little difficult.
+    if we did all this, would we be able to have parallelism in something we're suspending?
+    i guess so
+
+    but wait how do we even implement locks in such a way? hm.
+    well I'm sure we could figure something out.
+
+    hm but we do expose locks to the outside don't we?
+
+    like we have async functions which block on locks,
+    which we want to be both user callable,
+    and internally callable...
+
+    we could wrap them I suppose?
+    and... detect if we have a prompt above us?
+    right, detect the runner?
+    and then do the right thing?
+
+    anyio is no help, it's effectively import-time dynamic,
+    it doesn't make the yield protocol compatible or anything.
+
+    ok so yeah what i'm talking about is,
+    a yield-protocol-agnostic set of things,
+    which can be used with any,
+    but also comes with *additional* functionality.
+    namely resumability...
+
+    so I guess that... I would...
+
+    hm. hm hm.
+*** oremanj's implementation of suspendability
+    suspension points are clever
+
+    but wait, they defeat the point, since there's no way to cancel mid-operation.
+
+    yeah cuz he shields cancels
+
+    synchronous completion, that's what I'm interested in, sure.
+
+    his thing doesn't allow for nesting... right? hm no it does.
+    cuz the "suspendable_parent" is always immediately above!
+
+    the yield thing...
+
+    the implementation is hard to understand
+    how can detach change what task it's running in...?
+    oh it means task as in trio task.
+
+    this super-imperative task detaching API is quite wacky.
+    I wish NJS would respect programming language theory,
+    instead of bashing it then making this bespoke imperative API for coroutines.
 ** cancellation
    maybe I should automatically signal on cancellation :)
    to interrupt syscalls
@@ -22476,3 +22831,930 @@ I want to do things inside emacs
 
 I guess if I make a game eventually or something,
 I *will* be making my own programming language!
+
+* paper response
+My main concern is that the paper seems to mix the syscall interface
+and the application programming interface (API). It's defensible to
+argue that clone/fork can be improved as the syscall interface: in
+that case, one would demonstrate how a new syscall interface would
+enable a better kernel implementation (as many systems cited in the
+paper have). One way to look this: the fact that rsyscall is
+implemented on top of fork/clone shows that the existing syscall
+interface is good enough for your purpose. But the paper jumps between
+the syscall interface and API arguments, and starts to focus on the
+Python API. Do people directly use fork/clone in Python? I don't think
+that's the case. If one wants to argue that rsyscall is a better API,
+then it would make more sense to compare to the existing Python API
+for process creation and manipulation.
+
+
+Yes, it's true that the existing syscall interface on Linux is capable of implementing, to a limited extent, the user API we propose.
+But, as we discussed in our implementation and evaluation section,
+our userspace emulation of the API has several issues which would be removed by direct kernel support;
+we believe it is not possible to do better without some form of kernel support.
+So, the existing syscall interface is not good enough to provide a high-quality implementation of the direct-style process creation user API.
+
+Since the existing syscall interface cannot fully support this user API,
+changes in the kernel-level syscall interface are needed.
+Ideally, we would like a syscall interface that looks identical to the user API we propose,
+with process capabilities through which syscalls can be made.
+
+We compare primarily against fork/clone because that's what the current kernel syscall interface looks like.
+Comparison to specific existing Python APIs wouldn't be illuminating because those APIs, like the process spawning APIs in most languages,
+are all trivial variations on spawn-style interfaces, built in userspace on top of calls to fork.
+
+We discuss the comparison be
+
+# hmmm
+
+# hmm we don't want a syscall interface that looks like this API
+# we do want abstractions
+# no actually we would love just this API, but we'll have to compromise for Linux
+
+* future work
+  hmmm
+
+  the arbitrary function calls thing would be nice.
+
+  linking against executables...
+
+  but that's long-term, I'll do that eventually.
+
+
+  improving the async stuff in python...
+  sigh, I hate python, but it has benefits,
+  and C isn't really practical.
+
+  I could use SML or OCaml or Haskell,
+  but....
+
+
+  
+* concurrency thing
+  so we could have a bunch of things calling other things but in the end,
+  wait_readable is the only thing that blocks, and does an actually return from the reset function.
+
+  the rest just make tail calls to each other inside the reset.
+  i suppose that could work?
+
+  i mean we're talking about a polycentric implementation of coroutines.
+  instead of having a central event loop,
+  you shift right into the lock.
+
+  m m mhmm that's what I was working on before...
+  do I still have any of my notes lol?
+
+  well, I know a lot more now. maybe.
+  so I should be able to do better.
+
+  ok so the python objects are single-shot delimited continuations...
+  and...
+  we should imagine that they have a linear discipline instead of using mutability, for sure.
+
+  hmm
+
+  ok let's just do it.
+** locks
+   ok so...
+
+   yeah let's do it.
+
+   we'll take a lock, hm hm
+
+   ok we need concurrency, aka, multiple coroutines, I guess,
+   to take the lock.
+
+   no we can block ourselves. let's do that.
+** operator
+   ok so what are the things we want to do?
+
+   we kind of need to design a control operator.
+
+   so 1. we want to be able to resume a stack.
+   and 2. we want to be able to create new stacks.
+   and 3. I guess, we want to be able to get our own stack.
+
+   so, 1 is usually application, but we won't do it with application.
+   because, we, don't have tail call optimization, so we need to resume at the top,
+   with no wrapping.
+
+   we can use wrapping classes to have multi-prompt support.
+
+   fine fine
+
+   ok so we can have, resume (which takes a stack, and a value to send to it),
+   create (which takes an async function and begins running it),
+   and get (which... immediately returns our stack? hmm...)
+
+   so if we want to stash the stack, and then do some other thing,
+   and then resume that stack,
+   we can't just pass it down, right?
+
+   right if we want statefulness we have to...
+   be able to invoke directly while being stackful, sure.
+
+   well, so. we might want to have something like...
+
+   we're resuming some stack...
+   with our own stack.
+
+   and that means it can then go back and invoke us.
+   at some other point after it changed, not by returning.
+   right so it suspends at some point,
+   and gets our stack back.
+
+   so okay, how about that then.
+   
+   the only operation is,
+   you resume some other stack,
+   with your own stack.
+
+   well... maybe not.
+
+   ugh! distractions!
+   ok, um.
+
+   what does a lock look like?
+   
+   well. suppose some stack resumes the lock.
+   and, ok, that's fine, thank you for running me, says the lock,
+   i was blocked waiting for someone to run me...
+
+   is that right?
+   or was it actually blocked waiting for the stack it's running,
+   to release the lock?
+
+   or maybe it can be invoked by either? uhhh.. that sucks though.
+
+   ok, so suppose the lock was blocked on the stack it's running.
+
+   which then enters into another lock which is already taken,
+   and so it has to wait for that other lock's thread to finish.
+
+   well, what if we had the locks run as effect handlers, how about that?
+
+   so a lock is outside a reset,
+   waiting for shifts up to its prompt.
+   when it gets one,
+   it goes and either locks or unlocks the lock,
+   or, crucially...
+
+   does what?
+
+   well, ok. so.
+
+   if it's running some thing after locking,
+   that thing might yield past the lock handler,
+   or within the lock handler.
+
+   if it yields within the lock handler, uh.
+
+   ok well...
+
+   if it yields within the lock handler,
+   then different wacky things will happen, etc etc,
+   and eventually we'll get back to, uh.
+
+   the person who took the lock. right?
+
+   well, not neceesarily...
+
+   that guy could get cancelled!
+
+   or, just, never resumed.
+
+   but maybe... some other guy...
+   takes the lock, and resumes him.
+
+   well, i mean, the idea is that i'm coroutining between stacks,
+   i mean, i can take the lock in either one, innit?
+
+   well not if it's unwound into a single synchronous program.
+
+   when one guy takes the lock, others can't...
+
+   maybe I don't even need locks, for that matter.
+
+   like... can I just have a different primitive instead?
+
+   which is like, the combiner primitive.
+
+   there's some thread that I go into...
+
+   well maybe i just eagerly do all work until...
+
+   ummm ok ok ok.
+
+   someone calls into the combiner.
+   they start running it.
+   it performs a fundamental blocking operation -
+   what do we do?
+
+   well, if that's all, then nothing.
+   what if... in some sense... through some means...
+
+   we have multiple threads?
+
+   how can we cleanly have those...?
+
+   well, anyway, simply proceeding, then,
+   we,
+   just,
+   start running them.
+
+   um. how?
+
+   well ok so we're thinking like,
+   an actual blocking operation, what does it do?
+   do we even run it? or just delay?
+
+   so ok ok ok ok.
+
+   we skip it? and run the other one?
+   and it... also goes to do the same blocking operation?
+   or, perhaps, even, a different one?
+
+   maybe it yields up the blocking operation it wants to do.
+   so that we can do the operation for it.
+
+   i mean, let's think about this simply.
+
+   suppose there's a "lock".
+   well, this "lock" is associated with a combiner.
+   so actually, suppose there's a combiner. whatever.
+   anyway, when we block on the lock we submit some task to do,
+   and then, we...
+   dedicate our timeslice to run that combiner, I guess.
+
+   so what we've basically done is,
+   saved our coro to wake up until,
+   the combiner signals our result is done.
+
+   and now suppose I have two threads which are talking about this.
+   well, before we run the combiner, perhaps we should do the other thread?
+
+   i mean we're talking about the opposite operation right?
+
+   with the combiner, many are blocked on one.
+
+   with the nursery, one is blocked on many.
+   and it multiplexes, I guess.
+
+   and so in the combiner we basically just say,
+   hey run this guy, ok? just run him.
+   i mean that's a pretty awful interface isn't it...
+   like there's no values, no effects,
+   just us invoking the combiner.
+
+   well okay so I guess we would,
+   shift into something which stores our coroutine with the request,
+   and which then...
+
+   well, just keeps doing that, I guess.
+
+   but wait, no, if the combiner is not running then I guess,
+   it would go ahead and run the combiner.
+
+   what if we request the combiner while inside the combiner?
+   deadlock time!
+   well, directly, or in something that the combiner is requesting?
+   directly, then I guess we get our coroutine stored, lol.
+   indirectly...
+   indirectly would mean a loop in combiners I guess.
+   which would also deadlock.
+
+   well, we will just not do that lol.
+
+   ok so at every step,
+   the combiner ultimately sends a request to another deeper combiner.
+   OR,
+   the combiner does, what?
+
+   well, we want a maximum number of combined requests at any time.
+   so. hm.
+
+   i mean, we need a model for what this,
+   splitting operation is.
+
+   I like this nursery model, it's cute,
+   but is it really what I want?
+
+   well, ok, it is what I was trying before
+   I always liked the nursery model.
+
+   but what is it really?
+
+   Combiner - the combiner will be blocked if we get to it from something else.
+   So that something else should just perform the same blocking operation!
+   They should all want to do that single op!
+
+   so then basically we can just keep run until everything has an op it wants to block on.
+   then... combine them all?
+   with concurrent ML style stuff?
+
+   the kill safe abstractions paper is about concurrent ML
+
+   maybe I could dynamic-wind to do something...
+   when i yield out of a combiner
+
+   ok so i yield up this blocking op,
+   and, that gets propagated up through whoever is blocking on the combiner, right?
+
+   well, I mean, the question is,
+   how do I merge the events which are all blocking on one combiner?
+
+   do I just do it through one...?
+
+   but ok sure, what happens after I... return out of a reset,
+   which is blocking on a combiner?
+
+   well, I guess I just run the next thing?
+
+   how do I start running the old thing again then?
+
+   i guess when it invokes me, i...
+
+   run directly, sure... and...
+
+   i invoke some other coroutines up and...
+
+   eventually reach some operation which is not a combiner coroutine,
+
+   and which has a result, which it returns?
+   how does that escape out?
+
+   well yeah there's your question,
+   if I'm storing my coroutine on the combiner...
+   how do I achieve that...?
+
+   i mean lets' say that's fine. um...
+
+   right because... in practice I'm... running this from, ugh, trio?
+   no no no let's not think about that detail.
+
+   if we're storing my coroutine on the combiner,
+   then we can get run immediately.
+
+   and, right, there's two kinds of things we can do.
+
+   we can...
+   block on another combiner.
+   which just returns nothing out of the reset we used to resume the coroutine.
+
+   or we can...
+   perform a primitive yield
+   which... gets to inside this combiner that resumed it. not good!
+
+   we want to resume the stack under the runner that ran it,
+   which, lol sounds a lot like trio's primitive.
+
+   so we probably don't really want to do that...
+   let's see.
+   ok.
+   so suppose the combiner is... currently running somewhere.
+   and we have a continuation which...
+   needs to be running under the appropriate handlers?
+   for its effects?
+
+   again, an effect system would be good.
+   because it would make it clear that directly resuming doesn't handle the possible effects!
+   but can it, actually?
+
+   suppose we never yield as such.
+   suppose we only use explicit object capabilities for effects;
+   then the handlers are embedded inside the coroutine,
+   and all is good.
+
+   so... really we just want to make sure that primitive yields propagate "out",
+   to the common environment which we assume is the same.
+
+   and as long as we're resuming the coroutine under a reset,
+   it can have other effects just fine on its own,
+   by storing its coro.
+
+   can we actually dodge the need to do primitive yields?
+
+   maybe we can store the coro on the outside runner...
+   to do a primitive yield.
+
+   and when we return up there, we'll keep running until we only have primitive yields,
+   then perform all of them.
+
+   yes, yes. perfect.
+
+   hey I can even do all of the primitive ops in parallel using a top-level trio nursery!
+   perfect!
+
+   or, rather, not top-level, but reset-level, anyway.
+
+   ok so that's how I can achieve pure coro-ness.
+
+   and I'm also event-loop-independent,
+   in that I can do, e.g., await trio_runner.op(lambda: lock.wait()) or whatever,
+   in the same function as a asyncio_runner or whatever_runner.
+
+   ok cool I like it. so my coro goes around to whoever can actually run me.
+
+   and they decide what runs next.
+
+   so let's again think about, say, locks.
+
+   with a lock... I guess we would just return... from the... reset...
+
+   but it's weird, because, we definitely want to keep running,
+   although the coro with the lock might be held by someone else.
+
+   well, anyway, with a combiner, we...
+   well, with a combiner, we just um, store the coro, sure,
+   and.
+
+   again I guess we return.
+
+   i suppose the notion is always,
+   hey i'm giving this guy my continuation,
+   and he can resume me when he likes.
+
+   it's just a little unexpected that we can't directly yield to him?
+
+   i mean, if we're running, it means he is blocked, hmm...
+
+   and we're also blocking on him...
+
+   so I guess returning from the reset is our way of sched_yield-ing?
+
+   well, what if everything returns and there's nothing left to run?
+
+   then I guess it's a deadlock lol. cool if this really works to detect that.
+
+   i guess in other callback scenarios, callbacks return after registering more callbacks.
+
+   and they return void, and that's fine...
+
+   i guess this isn't really shift/reset, though the interface seems the same;
+   because we're abusing mutability to register callbacks,
+   which you'd normally have to do through returning from the reset.
+
+   so let's think about that...
+   i guess it's more like callcc, where returning from the callcc func is somewhat undefined.
+
+   although, let's note that when we resume a coro, we'll need to do that as a yield.
+
+   man! the idea of not yielding to perform effects - really good!
+   obvious in retrospect - using caps is my whole point!
+   but was just caught in the illusion of the need to yield,
+   since python is so focused on it.
+
+   so ok hm hm hm
+   our ops are still,
+   resume stack,
+   create stack,
+   and get our own stack (and pass it to a function).
+
+   to invoke a stack takes a yield I guess...?
+
+   and leaves your own stack behind.
+   I guess that's pretty important.
+
+   so I guess there's an op which,
+   takes a function (which is what to do with your stack),
+   and takes a stack (which will be run after yours)
+
+   alternatively, it could take a function stack -> stack,
+   which stores your stack and then returns a new stack to run.
+
+   ah - that's better isn't it.
+   because then we aren't yielding to a handler ever.
+   we're only ever going into an object... hmm...
+
+   can we even do that?
+
+   so suppose we were talking about the combiner.
+
+   and let's call this op Q
+
+   we'd do Q on a func which,
+   takes our stack, stores it,
+   checks if the combiner is running,
+   and returns the combiner stack to run it if not.
+
+   oh, what does Q return tho?
+   we obviously want a resume value...
+
+   i guess the func can return that too? hmm.
+
+   so let's imagine the func tail-calls some other stack.
+   that would be a bit ugly...
+
+   we can use outcome I guess to return the value from the func.
+
+   anyway, we store our stack,
+   and return the combiner stack if the combiner isn't running.
+   if combiner *is* running, it...
+
+   uses a sched_yield cap I guess? yeah, I suppose that's valuable...
+
+   I mean, we're talking about linearity here I guess.
+
+   it's not possible to just "stop running" and return.
+
+   (that's codata for you! lol i barely know what that is)
+
+   so, I mean, ok, a sched_yield cap.
+   to just say, do nothing.
+
+   is that actually what we want?
+   or really it's a sched() cap.
+   to invoke the scheduler so someone else can run.
+
+   don't we always know what we want to run next...?
+   our lock shouldn't need the sched cap...
+   we want to run the coro next!
+
+   well what if the coro is inextricably blocked...
+   i mean we want to delegate our timeslice to whatever the coro is blocked on!
+
+   also, what even happens if a coro... returns?
+
+   I guess that only happens at the reset level?
+   seems ILLEGAL
+
+   but possibly fine.
+   i mean maybe we just wrap all stacks so that when they exit they sched()?
+
+   (ugh can't believe I got a bad grade on my kernel for OS :( )
+   I bet they thought I cheated cuz I called my sched function, sched, like Linux)
+
+   we do want to allow one (or maybe several?) coros to return though.
+
+   like the main one that gets passed caps, I guess!
+   so yeah, we'll just wrap other coros in a call to sched when they return,
+   and throw away their stack. very elegant.
+
+   ok so, still, I don't know if I want to be able to sched_yield?
+   I guess I do want to allow exit(). well, by returning, so not really the same.
+
+   how else do I know how to run the coro, hm.
+
+   so... maybe when I...
+   swap stacks with Q, I can record some info to know who is blocked on whom?
+   just specially with my own Q impl.
+
+   but, like, suppose I know it bottoms out in a trio op.
+   what do I do then? I can't run that...
+
+   that coro will already be resumed with the results of the op, hmmm mmmm
+
+   i could maybe... register myself as also waiting for that to be done, or something?
+   h m m
+
+   on the other hand if I sched_yield here, I will get resumed.
+   so really I want to, like, grab my coro and store it,
+   and start running something totally unrelated.
+   not sched() in the sense of adding myself to the scheduler.
+
+   ok, fine, fine...
+
+   although when do things get added to the scheduler?
+   i guess this is the same thing that will handle trio ops? hmm.
+
+   i can just bake a cap for this into the lock, right?
+   that seems fine...
+   i like that this fully removes the need for an external/central event handler.
+   fully polycentric.
+
+   "it's effekt-style", is I guess how we can brand it.
+
+   anyway, I still find the fact that we...
+   re-enter the lock while it's still blocked on running some other thing...
+   kind of weird!
+
+   so hm if that task gets dropped on the floor - if it just exits without resuming...
+
+   then how will we keep running it?
+   that's the flaw with the sched() approach, it assumes there's some global side effect,
+   which will keep running that thing.
+
+   we need something more focused instead...
+
+   what if... ok so... what if, when we sched,
+   we go to the lock?
+   i.e. what if the lock has a sched handler?
+
+   or more generally the idea is that the thread taking the lock runs *under* the lock,
+   so it can't get destroyed. it can just keep running...
+
+   and again, the goal here is for another person blocked on the combiner,
+   to be able to keep running the combiner;
+   and also for the combiner or lock or whatever to be released eventually,
+   i.e. the combiner coro doesn't just get thrown away.
+
+   so recursively, if a combiner blocks on a combiner, then it either runs it directly,
+   on its stack (rather than swapping stacks to it, we'll just do a nested reset),
+   or uses the same technique for driving an already-running combiner
+   (which, we don't know what those are)
+
+   so a combiner can do something else instead...
+   it can perform a primitive blocking op,
+   by putting its coro on trio runner along with a lambda or whatever.
+
+   how do we handle that...?
+
+   well we could intercept it if it's dynamically bound, i guess.
+   but then we'd really need an effect system to know possible effects...
+   and also even then we couldn't cover all the effects.
+
+   hmmmm m m mm.
+   so maybe we could... tell it, it has a different coro,
+   than it actually does?
+   that's one manipulation we could do, sure.
+
+   or also, it swaps stacks to the trio runner, doesn't it?
+
+   no, it runs it directly, innit.
+   below it in a reset, or whatever.
+   and we can yield those up?
+
+   i guess the trio runner can do actual stack swapping, just to truncate the blocking.
+
+   or maybe not; let's suppose it doesn't.
+   so the trio runner gets directly run,
+   then resets into some other task.
+
+   and that task might call into the lock.
+   which is already running above on the stack!
+
+   i could have some dynscope detect that.. hmm... hmm...
+
+   I guess the thing with the lock is,
+   i give the lock my coro,
+   and then it runs me under itself.
+   i migrate under it - kind cool.
+
+   does that work perpetually?
+   i guess yes, the lock is the nearest thing above me on the stack.
+
+   ok so the only thing that will actually run other tasks,
+   that aren't necessarily... going to...
+
+   ok wait so yeah I can detect deadlocks by stack inspection, sure.
+   that gives me dependencies between tasks.
+
+   and the primitive blocking ops;
+   those I can... um...
+   ok so primtive ops, those are handled by a trio runner,
+   which I guess,
+   is running above me on the stack already?
+   so that it can yield up?
+
+   or do I keep it below me on the stack?
+
+   ok wait a second, let's be a little more careful.
+
+   why do I even want multiple coros at once anyway?
+
+   well, I have two things I want to do in parallel.
+   also... there's the value of concurrency, where I wait for an event,
+   then react to it.
+
+   but. that's not really running simultaneously, two primitive ops...
+
+   everything will unify onto one combiner anyway...
+
+   ok so let's get back into thinking about it woo.
+
+   why do I want multiple things in parallel?
+   i want to be able to do one sequence of operations...
+   in parallel with another sequence of operations...
+
+   ugh i wish i had my concurrent ml book!
+
+   cuz I want to know what mechanism there is for aggregating CML events,
+   into one event!
+
+   so I guess CML is for real, open-coded concurrency,
+   where you're not just doing synchronous stuff in a bunch of threads!
+
+   but instead, are doing actual logic...
+
+   bah... I don't like nurseries...
+
+   well, no. I do like the ability to start a thread mid-way through,
+   and then have everything block at the end until it's done.
+
+   but what's the primitive here?
+   well if it was CML then...
+   how would I combine an event?
+
+   yeah, for that matter, how would I implement CML with shift/reset?
+   in a polycentric fashion?
+   that's an interesting question
+
+   maybe I should try to do that?
+
+   >If no base events are enabled we execute the blocking phase, which has the following steps:
+   >(a) Enqueue a continuation for the calling thread on each of the base events using its blockFn.
+   >(b) Switch to some other thread.
+   >(c) Eventually, some other thread will complete the synchronization.
+
+   hey that sounds great, enqueue a continuation, great.
+
+   but, on the other hand,
+   I don't like that we switch "somewhere" else to complete the synchronization.
+   very weird.
+
+   anyway, sure... I could do CML with shift/reset maybe...
+
+   uh lol I guess I'm reading the continuation thing wrong.
+   it's a pretty lame continuation -
+   it's dynamically single-shot! or something.
+   cuz it might be called by multiple.
+
+   ugh! i really just don't like the idea of blindly yielding to somewhere else!
+   and relying on the side effect to resume you!
+
+   i want to be more robust!
+
+   hmm I'm working on some concurrency stuff and I really don't like that most implementations just block and yield to "anyone".
+   for example, one concurrent ML paper says: 
+   If no base events are enabled we execute the blocking phase, which has the following steps:
+   (a) Enqueue a continuation for the calling thread on each of the base events using its blockFn.
+   (b) Switch to some other thread.
+   (c) Eventually, some other thread will complete the synchronization.
+
+   crazy! side-effectful!
+
+   does this maybe come from process calculi and their implicit global parallelism?
+
+   (maybe it's non-determinism that's the problem?)
+
+   but i guess we inherently have non-det when interacting with a non-det outside world...
+
+   so ok i run that guy... and eventually he gets to blocking on the outside world...
+
+   in which case, I could run other guys who also want to block on the outside world!...
+
+   i mean, well.
+
+   suppose we have no outside world, just a concurrent sequence.
+   i guess we could deterministically coroutine between things.
+
+   but, ok! so!
+
+   if I try to enter a combiner that is already running,
+   it means the combiner blocked on the outside world!
+
+   and! that means I too will block on the outside.. world... wait a second...
+
+   ok! when I block on the outside world, how about instead, I, try and run the next thread?
+
+   until there's nothing left...?
+
+   like ok, here's some combiner.
+   it's like, "please help me, run my operation, pls.... boulder"
+
+   ok.. so... i guess the point is,
+   i ask someone to run my op,
+   they say "ok but I have to run everyone else who might want to run an op first, then collect all their ops".
+
+   i mean, sure, suppose we do that.
+   that still doesn't tell me - how do I merge into the combiner?
+   without just disappearing...
+
+   i mean maybe disappearing is exactly how i merge into the combiner.
+   i update the list of things the combiner will return into...
+
+   but then again...
+
+   i guess it's kind of,
+   we have the combiner thread and we resume it with a specific event saying,
+   a new guy is waiting on you.
+
+   maybe?
+   like, it's side-effectful.
+   to resume this combiner, is side-effectful
+
+   or rather, to add a continuation to its list of wakeups,
+   is side-effectful.
+
+   so I guess if... we could maybe..
+
+   resume the thread? to store the coro...
+
+   and then it would go right back to waiting on the op?
+
+   hm, interesting.
+   ok so if we selected on, "get new coro to wake up", or, "wait on this op",
+   then I guess we can resume the combiner with the coro,
+   and then go back to waiting on the op?
+
+   well, ok, that's interesting, sure.
+
+   and then we'd wait on, um...
+
+   well ok so I guess we'd resume the immediate next combiner,
+   which would then go back to waiting on some other deeper combiner?
+
+   it's kind of like the CML events.
+
+   like, but, how do we ensure that only one happens...?
+
+   i guess the nice part of this is that it keeps a really nice stacktrace for everything.
+   because, whenever something is running,
+   it's below someone depending on it, and, also,
+   whenever someone calls into something and that something is running,
+   they're above that thing...
+
+   well anyway at least one of them is.
+
+   ok, so how do I implement this thing where,
+   multiple different people could resume a thread?
+   it's not just a simple continuation anymore...
+
+   i could see who they're blocking on and interrupt it...
+
+   ok so this would just disturb the entire stack of combiners,
+   until it reaches the... primitive op we're performing?
+
+   hey wait a minute, for that matter..
+   when we reset on the combiner directly,
+   and it shifts,
+   what do we do?
+
+   lol well ok so it disappeared before our eyes, but...
+
+   it has the things to restart us inside it? right? hm.
+
+   no, we should... shift into the list. huh.
+
+   right so if the combiner is currently blocking,
+   there's the question, what do we do?
+
+   yeah cuz if we were running it, and it shifted away,
+   that's the same problem!
+
+   someone else is "running" it now! and we don't know who.
+
+   but, at the same time...
+   i guess if it shifts into another stack,
+   then we'll run that.
+
+   and what about if it does a primitive op...
+   or runs something which itself wants to switch to another thread...
+
+   well, there will be no thread-switching on my watch, eh wot.
+
+   ok so we run a coro,
+   it keeps shifting around to different stacks,
+   and eventually... what happens?
+   it returns?
+
+   indicating that it wants to sched_yield...?
+
+   and so then we do the same thing...?
+
+   i don't think we should run the coro directly on our stack like that...
+   or maybe it's fine...
+
+   i mean i'm just turned off by the "just return to do sched()" thing.
+
+   but what if... we.
+
+   wait wait
+   ok ok ok.
+*** we need to focus on the actual situations we'll use it
+    and what we can do in those situations.
+
+    so we'll have a reset, around some function,
+    which will enter a combiner.
+
+    and it may be that that combiner is already running
+
+    and i guess it will need to return
+
+    or wait no
+    it will need to do a trio suspend
+    well, not if it's invoked from some other combiner
+
+    well what if it's in a reset
+    can it avoid a trio suspend? by just... suspending the coro
+    uh by shifting, i mean
+    and no
+
+    anyway, anyway.
+
+    it will do... a...
+    ugh I don't want to use these stupid hazmat primitives
+    because they're not just primitive, they're absurd!
+
+    oh wait but i can do the thing where I perform a lambda wrapped around a trio op.
+
+    and...
+
+    ok anyway, so,
+    i do a reset into some method on a combiner,
+
+    bah! let's just do some stuff.
+
+    ok I'll umm,
+    remove the need for parallelism and then proceed with,
+    more achievable things.
