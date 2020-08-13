@@ -232,3 +232,8 @@ class SuspendableCoroutine:
                 self._coro = coro
                 raise trio.MultiError(cancels)
             await shift(set_coro)
+
+    async def wait(self, func) -> t.Any:
+        while True:
+            async with self.suspend_if_cancelled():
+                return await func()

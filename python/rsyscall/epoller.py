@@ -157,30 +157,18 @@ class EpollWaiter:
         """
         self.pending_remove.add(number)
 
-    async def _run(self, suspendable: SuspendableCoroutine) -> None:
+    async def _run(self, susp: SuspendableCoroutine) -> None:
         maxevents = 32
+        input_buf = await susp.wait(
+            lambda: self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof()))
         while True:
-            async with suspendable.suspend_if_cancelled():
-                input_buf = await self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof())
-                break
-        while True:
-            while True:
-                async with suspendable.suspend_if_cancelled():
-                    if self.wait_readable:
-                        await self.wait_readable()
-                    syscall_response = await self.epfd.task.sysif.submit_syscall(
-                        SYS.epoll_wait, self.epfd.near, input_buf.near, maxevents, self.timeout)
-                    break
-
-            while True:
-                async with suspendable.suspend_if_cancelled():
-                    count = await syscall_response.receive()
-                    break
+            if self.wait_readable:
+                await susp.wait(lambda: self.wait_readable())
+            syscall_response = await susp.wait(lambda: self.epfd.task.sysif.submit_syscall(
+                SYS.epoll_wait, self.epfd.near, input_buf.near, maxevents, self.timeout))
+            count = await susp.wait(lambda: syscall_response.receive())
             valid_events_buf, rest = input_buf.split(count * EpollEvent.sizeof())
-            while True:
-                async with suspendable.suspend_if_cancelled():
-                    received_events = await valid_events_buf.read()
-                    break
+            received_events = await susp.wait(lambda: valid_events_buf.read())
             input_buf = valid_events_buf + rest
             for event in received_events:
                 if event.data not in self.pending_remove:
