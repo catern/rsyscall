@@ -11,11 +11,12 @@ out all at once.
 """
 from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
-from rsyscall.handle import Pointer, Task
-from rsyscall.concurrency import OneAtATime
+from rsyscall.handle import Pointer, Task, WrittenPointer
+from rsyscall.concurrency import OneAtATime, SuspendableCoroutine, Future, Promise, make_future
 from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.near.sysif import SyscallHangup
+import math
 import typing as t
 import trio
 
@@ -85,7 +86,8 @@ class ConnectionResponse:
 @dataclass
 class ConnectionRequest:
     syscall: Syscall
-    response: t.Optional[ConnectionResponse] = None
+    response_future: Future[ConnectionResponse]
+    response_promise: Promise[ConnectionResponse]
 
 class ReadBuffer:
     "A simple buffer for deserializing structs"
@@ -117,6 +119,36 @@ class ReadBuffer:
                 return ret
             ret.append(x)
 
+async def add_batch_to_list(requests: t.List, chan: trio.abc.ReceiveChannel) -> t.List:
+    # if there are no current requests, block until there's something to do
+    if not requests:
+        requests.append(await chan.receive())
+    # grab everything else in the channel
+    try:
+        while True:
+            requests.append(chan.receive_nowait())
+    except (trio.WouldBlock, trio.Cancelled):
+        return requests
+
+def find_uncancelled_part(
+        ptr: WrittenPointer[StructList[Syscall]],
+        reqs: t.List[ConnectionRequest],
+) -> t.Tuple[
+    t.Optional[t.Tuple[
+        WrittenPointer[StructList[Syscall]], t.List[ConnectionRequest],
+    ]],
+    t.List[ConnectionRequest],
+]:
+    """Finds the first part of this pointer referring to uncancelled ConnectionRequests
+
+    Also returns all other uncancelled requests not covered by that pointer.
+
+    Don't fear the type signature, it's really quite simple!
+    """
+    # TODO actually support cancellation of syscall requests...
+    return (ptr, reqs), []
+
+
 class SyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
@@ -127,14 +159,14 @@ class SyscallConnection:
         self.fromfd = fromfd
         self.buffer = ReadBuffer(self.fromfd.handle.task)
         self.valid: t.Optional[Pointer[bytes]] = None
-        self.sending_requests = OneAtATime()
-        self.pending_requests: t.List[ConnectionRequest] = []
+        self.request_channel, self.pending_requests = trio.open_memory_channel(math.inf)
+        self.suspendable_write = SuspendableCoroutine(self._run_write)
         self.reading_responses = OneAtATime()
         self.pending_responses: t.List[ConnectionResponse] = []
 
     async def close(self) -> None:
         "Close this SyscallConnection; will throw if there are pending requests"
-        if self.pending_requests:
+        if self.pending_requests.statistics().current_buffer_used:
             # TODO we might want to do this, maybe we could cancel these instead?
             # note that we don't check responses - exit, for example, doesn't get a response...
             # TODO maybe we should cancel the response when we detect death of task in the enclosing classes?
@@ -150,15 +182,53 @@ class SyscallConnection:
         the connection until that happens.
 
         """
-        request = ConnectionRequest(syscall)
-        self.pending_requests.append(request)
+        future, promise = make_future()
+        request = ConnectionRequest(syscall, future, promise)
         # TODO as a hack, so we don't have to figure it out now, we don't allow
         # a syscall request to be cancelled before it's actually made. we could
         # make this work later, and that would reduce some blocking from waitid
         with trio.CancelScope(shield=True):
-            while request.response is None:
-                await self._write_pending_requests()
-        return request.response
+            async with self.suspendable_write.running():
+                await self.request_channel.send(request)
+                response = await request.response_future.get()
+        return response
+
+    async def _run_write(self, susp: SuspendableCoroutine) -> None:
+        remaining_reqs: t.List[ConnectionRequest] = []
+        while True:
+            # wait until we have a batch to do, received from self.pending_requests
+            await susp.wait(lambda: add_batch_to_list(remaining_reqs, self.pending_requests))
+            # write remaining_reqs to memory
+            ptr = await susp.wait(lambda: self.tofd.ram.ptr(
+                StructList(Syscall, [req.syscall for req in remaining_reqs])))
+            # find the first part of ptr containing uncancelled requests,
+            # and return the tuple containing that pointer and those uncancelled requests.
+            # Also returns all other uncancelled requests not covered by that pointer.
+            to_write, remaining_reqs = find_uncancelled_part(ptr, remaining_reqs)
+            # TODO write requests to tofd in parallel with receiving more
+            # requests from the channel and writing them to memory
+            if to_write:
+                (ptr_to_write, reqs_to_write) = to_write
+                try:
+                    try:
+                        while ptr_to_write.size() > 0:
+                            _, ptr_to_write = await susp.wait(
+                                lambda: self.tofd.write(ptr_to_write))
+                            # TODO mark the requests as complete incrementally,
+                            # so if we do have a partial write,
+                            # we don't block earlier requests on later ones.
+                    except OSError as e:
+                        # we raise a different exception so that users can distinguish
+                        # syscall errors from transport errors
+                        raise ConnectionError() from e
+                except ConnectionError as e:
+                    for req in reqs_to_write:
+                        req.response_promise.throw(e)
+                else:
+                    for req in reqs_to_write:
+                        response = ConnectionResponse(req.syscall)
+                        req.response_promise.send(response)
+                        self.pending_responses.append(response)
 
     async def read_pending_responses(self) -> None:
         "Process some syscall responses, setting their values on the appropriate ConnectionResponse"
@@ -194,32 +264,3 @@ class SyscallConnection:
         self.pending_responses = self.pending_responses[len(vals):]
         for response, val in zip(responses, vals):
             response.result = val.value
-
-    async def _write_pending_requests(self) -> None:
-        "Batch together all pending requests and write them out"
-        async with self.sending_requests.needs_run() as needs_run:
-            if needs_run:
-                await self._write_pending_requests_direct()
-
-    async def _write_pending_requests_direct(self) -> None:
-        requests = self.pending_requests
-        self.pending_requests = []
-        syscalls = StructList(Syscall, [request.syscall for request in requests])
-        try:
-            ptr = await self.tofd.ram.ptr(syscalls)
-            # TODO should mark the requests complete incrementally as we write them out,
-            # instead of only once all requests have been written out
-            to_write: Pointer = ptr
-            while to_write.size() > 0:
-                written, to_write = await self.tofd.write(to_write)
-        except OSError as e:
-            # we raise a different exception so that users can distinguish syscall errors from
-            # transport errors
-            # TODO we should copy the exception to all the requesters,
-            # not just the one calling us; otherwise they'll block forever.
-            raise ConnectionError() from e
-        # set the response field on the requests to indicate that they've been written
-        responses = [ConnectionResponse(req.syscall) for req in requests]
-        for request, response in zip(requests, responses):
-            request.response = response
-        self.pending_responses += responses
