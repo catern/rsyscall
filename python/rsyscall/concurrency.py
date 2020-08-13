@@ -170,26 +170,17 @@ def _yield(value: t.Any) -> t.Any:
     return (yield value)
 
 async def reset(body: t.Coroutine[t.Any, t.Any, T], next_value: t.Any=None) -> t.Any:
-    is_value = True
-    next_exn: BaseException
+    next_outcome: outcome.Outcome = outcome.Value(next_value)
     while True:
         try:
-            if is_value:
-                yielded_value = body.send(next_value)
-            else:
-                yielded_value = body.throw(next_exn) # type: ignore
+            yielded_value = next_outcome.send(body)
         except StopIteration as e:
             return e.value
         if isinstance(yielded_value, Shift):
             # sure wish I had an effect system to tell me what this value is
             return yielded_value.func(body) # type: ignore
         else:
-            try:
-                next_value = await _yield(yielded_value)
-                is_value = True
-            except BaseException as e:
-                next_exn = e
-                is_value = False
+            next_outcome = await outcome.acapture(_yield, yielded_value)
 
 # again, sure wish I had an effect system to constrain this type
 async def shift(func: t.Callable[[t.Coroutine], t.Any]) -> t.Any:
