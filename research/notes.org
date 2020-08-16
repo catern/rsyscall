@@ -23758,3 +23758,687 @@ We discuss the comparison be
     ok I'll umm,
     remove the need for parallelism and then proceed with,
     more achievable things.
+** pipelining
+    ok so what if we like... launch the tasks so that they run until their first yield,
+    and then we can move on?
+
+    that's pretty hacky and gross tho.
+
+    you could say, hey, uh,
+    perform this op and then call this callback?
+
+    but no that's lame.
+    because it doesn't allow libraries to create abstractions
+
+    well, unless they... expose their internals kinda.
+
+    I mean, what does it look like in practice? well.
+
+    I guess I call some thing,
+    and...
+    
+    The tension manifests as an ugly interface, but that's fine by me :)
+
+    Right, so my thought about one possible implementation was, we'd have some like (this is just an analogy) nursery.start and the task_status callback,
+    which is dynamically scoped instead of being directly passed to the function being run.
+    At some point in the call stack, the pipelined operation would be put into the pipeline,
+    and at that point we'd do something like calling task_status.started;
+    and the task would yield,
+    so we could start more tasks so that their operations would get into the pipeline as well.
+
+    Semantically inside each "task" started with pipeline_nursery.start,
+    they're just running normal code - code which can just as well be run outside the pipeline_nursery -
+    they just have 
+    1. an efficiency benefit from how the code outside is running them and
+    2. knowledge that their main operation is ordered against some other tasks started before them
+
+    though saying 2. in that way makes it a little more clear that one would want to explicitly reify that knowledge in the values that are passed around or the type system or something...
+
+    i guess hmm, maybe they get passed the results from the previous run?
+
+    how do they know that by the time their op returns,
+    the previous op has also been done?
+
+    i guess uh...
+
+    oh ok how about this, there's some kind of pipeliner.op(some_function_which_does_an_operation_that_can_be_pipelined)...
+
+    wait no that's futures.
+    
+    well it could be uhhh
+    wait_all at the end?
+    but also this then doesn't allow
+
+    >hm hm, how does each block of code know that by the time it gets a value back from its operation, the previous blocks are all also done...
+
+    ok lol so when I say that, it's obviously just like,
+    semicolon lol!
+    use a monad!
+
+    at each point we...
+    start the op, then proceed to the next.
+    so the...
+    calling of the operation can't use arguments from the previous.
+
+    putting it clearly:
+    each operation can be called with only the values available at the start of this whole process,
+    but when they return,
+    they return in order into scopes where the previous operation's result is available
+
+    now how do we achieve that, huh?
+
+    I *guess* maybe a batching interface could work?
+    a batching interface which uses magic dynamic scope to reach into the implementation of a function to pipeline the underlying operations?
+
+    let's see, would that prevent anything?
+
+    ok, well, one thing it prevents is,
+    incrementally responding to responses as they come in.
+
+    yeah hm m.
+
+    also, shouldn't we be able to, like, block on previous responses,
+    to send new ones?
+    well a batching interface lets us do that, actually.
+
+    well...
+
+    what about multi-shot continuations kinda stuff?
+
+    ok, sure, yeah, how about that?
+
+    what if we run everything once to see what operations it performs,
+    then actually do it again with blocking for real!
+
+    we'd need some dynscope stuff.
+    so that the syscalls get performed pipelined.
+
+    yeah I mean that's really quite difficult, to do it with TFS.
+    we'd want to call the same functions and everything, on the same stacks,
+    I'm not sure how it would even work.
+
+    so that makes abstraction really hard...
+
+    ah okay what if we do TFS,
+    and we do the op thing?
+    we can put each function call on a separate stack,
+    and suspend it at the point it gets pipelined.
+    
+    we could have a thing which turns arbitrary syscalls into a future...
+
+    it would be a task method I guess.
+
+    it's basically, run the syscall wrapper on a separate stack,
+    and thanks to the immediate-return-on-completion thing,
+    we get run.
+
+    um well having a future for this actually kind of defeats the in-order part.
+    we don't want to detach those stacks.
+
+    so, ok. we want to, like...
+    get all the requests up front and perform them.
+    and then we want to, um,
+
+    do it again, I guess.
+
+    ok so we'll do all the ops,
+    then at the first .val access we'll yield out to terminate.
+    or, meh, we'll just throw out.
+    so that gets us the ops.
+
+    but again, having a future you do .val on defeats the in-order part.
+
+    ah but we can have it all on the single stack...?
+
+    like, when the result comes,
+    we'll resume the coro, and,
+    
+    that will synchronously return up to the wrapping coro for the future...
+    and then run the main coro
+
+    but i guess we really want to be on the main coro hm.
+
+    well we also want multiple stacks in the syscalls at the same time,
+    so we can't really be on the main coro.
+
+    ugh but what if we like,
+    statically walked the function to find out the variables used?
+
+    hmm i guess the idea of doing a barrier after which the variables are present,
+    is not too different from the idea of a batch op.
+
+    except that,
+    with the barrier...
+
+    well I guess we couldn't walk past the barrier anyway.
+
+    yeah! if we do a .val and then stop looking for ops there,
+    that's equivalent to doing it with a batch op
+
+    absolutely no good!
+
+    so we need something different...
+    something where we make it statically impossible to use a variable from an earlier step,
+    in the arguments of a later step.
+
+    how would we do this even monadically?
+    dunno but anyway.
+
+    it needs to be statically, visibly impossible to use a variable from an earlier block.
+
+    ok, well.
+    what about an op which takes a syscall and returns its result and the result of the previous block?
+
+    we can thread together blocks.
+
+    what if I just have like...
+    batching, with an async callback run after?
+
+    so you say, here's my set of things,
+    run these callbacsk.
+
+
+    i could do futures,
+    but then I don't get run in fifo order on completion.
+
+    is there even a way to guarantee fifo order when we're not suspended? hm.
+    well yeah.
+    i mean most complicated-ly naively,
+    we can have some kind of lock which is synchronously released
+    by the one receiving the data.
+
+    I guess we might as well guarantee that for all combiners?
+    well that would require making a new abstracted combiner future; maybe not.
+
+    ok but so that works when the stuff returning to you is above you on the stack;
+    not when you just say "hey lol finish this thing, and someone's blocking on it, who cares who"
+
+    although, we could use the same lock trick I guess;
+    lock in the completing future,
+    then wait for it to be unlocked.
+
+    better yet, an event;
+    when completing a result,
+    we register an event, to wait for the result to be picked up.
+
+    that's a weird way to achieve continuation-like behavior, but fine.
+
+    anyway, so my futures could work like that...
+    both for the regular combiner result,
+    and for the higher-level ones.
+
+    so, ok, you would submit a bunch of things up front,
+    by calling fut = pipeliner.op(func(args)) or something.
+    and then you would call fut.get to get the result.
+    and, fut.get would be one of those that guarantees fifo-ness.
+
+    and we get abstraction.
+    and I guess we'd have the pipeliner as some kind of contextmanager like njsmith suggests,
+    which, uh, waits for all the futures and raises a multierror?
+
+    maybe we could just use a nursery?
+    we do nursery.start, kinda thing...
+    and put the task_status in a contextvar...
+    and then mark it as started once we've sent the thing.
+
+    but wait, we need the result too.
+    i mean that's why this nursery stuff sucks, it requires mutation just to get the result of an async procedure.
+    forget that.
+
+    but we can use a nursery anyway as an implementation detail...
+
+    no this really sucks though.
+    why can't we just make the calls directly...
+    ok so how about this, we have some kind of contextmanager or even just op() thing,
+    which task the task status and contextvars it down
+    and that can be a totally normal nursery usage with nursery.start other than that.
+
+    hm I kind of like that I guess,
+    but there's still the weirdness of,
+    how do I know that I'm being done in order?
+
+    I guess I can just get the return value of the previous step? that should be fine?
+    I mean, I don't think the plumbing it requires,
+    but it's probably fine... hmm...
+
+    yeah yeah! let's not try and figure out a simpler way to do it now!
+    it just works, ok! so let's do it!
+
+    so we'll nursery.start them and boom, we're good.
+
+    I guess we could .started up something? hmm, what would be useful there?
+    something to indicate that the syscall is started or somefin
+
+    ok so .op(syscall(args)) will return two things,
+    one.. is...
+    the syscall result, and the other is the result of the previous func in the order.
+
+    but, wait! how do we know what the previous func was,
+    if we're just running with nursery.start?
+
+    also for that matter,
+    the previous func can't block - 
+    that would force us to wait on doing the functions in order!
+    we couldn't immediately send up the syscall results in fifo order!
+    later results would be blocked by this random other async operation!
+
+    blargh! blargh.
+    maybe we should just have some batching interface with synchronous callbacks after each step, then?
+
+    i mean, ok, so if it's clear that things are synchronous,
+    then maybe it's not so bad?
+
+    what if we just do regular tfs kinda binding of results to handlers, uhhhh
+
+    like,
+    #+BEGIN_SRC python
+    op(syscall(args), func,
+    op(syscall(args), func,
+    op(syscall(args), func,
+    )))
+    #+END_SRC
+
+    where I guess each func gets the result of the previous one?
+    ugh but it's such a hassle to put code into funcs.
+
+    i wish there was... some way to look at the synchronous continuation code and... not run it,
+    so that we can walk the block with TFS and collect the syscalls.
+
+    one thing that's weird is that we need to lift the future ops up to the start so we can do them in parallel, hm.
+    we want to do everything in a way that statically guarantees no references to previous results...
+
+    but also allow simple synchronous operation on results...
+
+    maybe we... *can* just walk the syntax tree? hm.
+
+    ok wait, is there a way we can do the async operation in a block and...
+    then enforce only doing sync operations after? hmmm
+
+    okay wait a second, if I really want this kind of pipelining,
+    I should go for the full thing - real promise pipelining stuff.
+
+    cuz, the second call needs to happen after the first!
+
+    so how do we handle that?
+    especially with abstracting over syscalls hm MMmmmm.
+
+    well the essence of promise pipelining...
+
+    well ok so maybe the return value doesn't get predicted and passable as a promise.
+
+    but, still, we need the primitive ordering ability since we're implicitly imperative.
+
+    so how about some kind of... world,
+    world.op,
+    kinda thing?
+
+    where each op returns a new world so that we can do ordering?
+    ok sure so we'd definitely want something like that.
+
+    kinda primitive for something that might be sequential, but still.
+    (if it's sequential then we don't need that control)
+
+    ok so we do a thing,
+    and it immediately returns,
+    so we can call some ops on it.
+
+    and then also it later actually returns.
+    it's all tricky eh.
+
+    hmmmmmmm
+    so if we imagine that's a way to sequence things...
+    well... hmm...
+    a way to perform ops that have dependencies on earlier ops that have been pipelined.
+
+    we could say, like..
+    oh hey yeah, that's what the thing returns out of task_status.started!
+
+    (which gets called before we actually perform the syscall I guess?)
+
+    hmm.
+
+    practically, how do we do this?
+    we make all the calls simultaneously,
+    but also, sequentially, as the started things return?
+
+    i guess we could have a future which also uhh
+
+    no, not a future, a task,
+    which just does the started thing?
+    and we sequence them all externally?
+
+    hmmmmm.
+    but what about their actual results?
+
+    blah futures still seem nice here!
+
+    a single thing which allows sequencing after and also contains the value
+    
+    blah.
+
+    hmm hmm.
+    i mean, what if we enforce some kind of thing where,
+    the code outside preps the calls,
+    and then the code inside reacts to it?
+
+    i guess, continuing on is good...
+
+    OK for god's sake let's list all the issues
+
+| solution                                    | pro                                    | con                                                                                  |
+|---------------------------------------------+----------------------------------------+--------------------------------------------------------------------------------------|
+| futures with .op for sequencing             | lets me sequence things nicely         | doesn't allow synchronously running the code after the syscall - so we lose FIFOness |
+| async tasks with dynscoped syscall_started  | preserves FIFOness after syscall       | doesn't allow passing data from each task to the next except by mutability           |
+| previous, also each task waits for previous | can pass data from task to task        | can block again in the task after the syscall, delaying FIFOness arbitrarily         |
+| batching with sync callback after           | can sequence and pass data and be FIFO | ugly, I guess? hm.                                                                   |
+
+    well, ok, so,
+    tasks.
+    we have a bunch of blocks, which we sequence externally
+    which chops up the logic.
+    the block, let's see... how does it know it's running after the previous one?
+    the op can return the value, but...
+    we don't want to allow future 
+
+
+    
+    aha ok so the batching interface seems best.
+    at least as a high level interface;
+    async tasks seem better as a low level one.
+
+    hm.
+    
+    but i still want some way to indicate that the previous syscall is done. hm.
+
+    i mean, the async tasks interface is basically identical to the low level one.
+
+    which is very desirable.
+
+    cuz, like, the invariant is that if you don't block after a syscall, you go in fifo order.
+
+    which is an invariant I have to have anywa, so the async tasks thing makes sense.
+
+    right and I shouldn't have to block... when... doing a FIFO thing.
+
+    although maybe I would? hm.
+
+    maybe I can only guarantee the FIFO thing when you, the caller, are running under a reset,
+    and have given me your coroutine?
+
+    instead of this waiting-for-event-to-be-signaled thing?
+
+    cuz if I wait for the event, I might (in theory) block.
+
+    alternatively, is there a way I can preserve the FIFO-ness with a reset even when called from trio not reset?
+
+    nnnno...? yess?
+
+    some kind of... adapter around the coro and the syscall?
+
+    where... when the coro gets resumed...
+
+    i mean it would all still require like,
+    the combiners to shift into me,
+    is what the coro approach requires.
+
+    and then when the coro returns,
+    or otherwise, invokes some other coro that it's combining for, then...
+
+    that works to stay synchronous. but...
+
+    if one of those coros tries to block on an event...
+
+    that would propagate back through the task running the syscall combiner...
+
+    and block them so that...
+
+    the task that's actually receiving the result would be able to run and set the event, right?
+
+    so, it would work?
+
+    well no, I guess with the synchronous resumption,
+    we were assuming, like.
+    oh dang it I already thought about all this didn't I.
+
+    I decided we needed a contextmanager or something,
+    to run after the syscall return,
+    to guarantee fifoness.
+    or did I?
+
+    riiight preserving fifoness is the entire reason I want to get rid of submit_syscall.
+
+    what if we just augment submit_syscall so it works with abstractions, and returns a future,
+    instead of fully redesigning everything?
+
+    ok, I think that's for sure what we should do.
+    that will at least provide the meaningful primitives we need.
+
+    aha that will also make the suspendability thing less troublesome.
+*** should we be able to do the syscall ops synchronously when pipelining?
+    maybe we should be able to do these syscall ops synchronously? maybe that's the key?
+
+    cuz, they should be able to enqueue themselves synchronously, right?
+    and that guarantees their order?
+
+    at least unless they're canceled.
+
+    we don't, and shouldn't, wait for them to actually be written out.
+
+    rewording with my submit_syscall resolution,
+    should submit_syscall even be async?
+    it wouldn't neceesssarrrillly need to be
+    should the new submit_syscall be async?
+    maaaaybe nooottt
+
+    if they aren't async that forces a kind of good design.
+*** conclusion
+    we will just improve submit_syscall to work with abstracted methods.
+
+    or, something like that anyway.
+
+    can that also support the suspending stuff I want to do?
+    yes, I think so.
+
+    although, I won't get the FIFO behavior... maybe?
+
+    yeah so three things:
+    1. pipelining multiple calls in order
+    2. suspending mid call and coming back to get the result later
+    3. returning back in FIFO order
+
+    I won't get the last from just improving submit_syscall; but...
+
+    I need it for arbitrary random syscalls anyway.
+    like inside AFD
+
+    well, we could allow a locking thing as part of it?
+    to guarantee we can get our response back? hm.
+
+    no but then if something reads it directly, won't they go ahead?
+    no, not if we block on them completing, so I guess that's fine
+
+    ok ok better yet, we can just, um.
+
+    wait a second how do we know the wrapper syscall doesn't go async within it? hm.
+    we don't know there's not arbitrary blocking in there. hmmmmm
+
+    ok ok ok ok. so we need a better solution. hm.
+    well, the run-inside-reset approach could work.
+
+    that uniformly gets all of our desired things.
+
+    not quite.
+    how do we know where to stop with the FIFO sync callback from syscalls?
+
+    it has to be explicit, right..?
+
+    well, it sucks if it's this explicit yield. that's very unfortunate.
+
+    i mean that solves the problem of other things blocking by,
+    breaking loudly if we await before the explicit yield marking the end of the callback.
+
+    although...
+    if we allowed a shift to do it...
+    then we might be fine.
+
+    although we can't shift into something making an actual async call!
+
+    well ah yeah if we shift into a combiner,
+    either we'll return out of the await,
+    or we'll eventually perform an op, hm.
+
+    actually, ok, if we are careful to use trio_runner.op or whatever always,
+    then we'll be fine.
+    will we?
+    well, the runner, when it resumes the task,
+    will be able to perform the op, I guess.
+
+    ugh that's distasteful though.
+
+    ok what if we just...
+
+    | issues                                                         | solutions                                        |
+    |----------------------------------------------------------------+--------------------------------------------------|
+    | the async wrapper we make into a future might block internally | handle that blocking by suspending at that point |
+    | can't suspend in raw trio yields                               | yield up trio.op things instead                  |
+
+    that means even if we just register a sync callback,
+    it won't work.
+    we need to be able to handle arbitrary async things;
+    because exploding when someone blocks is not good...
+ 
+    we could clear the trio task thing?
+    yeah they have GLOBAL_RUN_CONTEXT, guess we can just clear and reset that,
+    so that trio calls fail loudly.
+
+    hmmmmm
+    so this would require me to,
+    wrap all primitive trio ops.
+    which I guess I can do.
+    and it would also require that for anyone else wanting to use the fifo stuff.
+    right, basically the futur-ification requires running under a reset;
+    or rather, it exactly runs under a reset.
+
+    uggghhh
+    if I built shift/reset on top of the trio primitives,
+    then I wouldn't have to wrap, right?
+
+    wait, no, that makes no sense. I still think I would need to wrap.
+    I don't know how building it natively would allow me to avoid the,
+    problem of,
+    wanting to suspend mid trio op.
+
+    and like, the problem of doing my own run-loop...?
+    certainly I wouldn't be able to do the fifo thing.
+
+    so I'll have the future making thing,
+    associated with sysif,
+    and it will guarantee fifo return from calls to syscall,
+    and also note that all Task syscall wrappers return directly from syscall.
+
+    again three things:
+    1. pipelining multiple calls in order
+    2. suspending mid call and coming back to get the result later
+    3. returning back in FIFO order
+
+    I care about 3 only so e.g. in AFD,
+    I will need to mitigate 2 by wrapping in a cancel shield.
+    and... I guess 1. is just an effect of the call syntax.
+
+    okaaaaaaaaay soooooooo.
+    I guess we'll just do the wrapping of trio ops.
+*** final conclusion
+    To achieve these goals:
+    1. Ability pipelining multiple calls in order
+    2. Allow being cancelled mid-syscall (so we'll still be given the result)
+    3. Syscalls return back in FIFO order
+
+    We will add a make_future primitive, associated with SyscallInterface,
+    which take an coroutine object (e.g. the result of applying an async function),
+    and runs it under reset.
+    - Native trio calls will be performed through a trio_op function,
+      which takes a no-argument function and returns it from a shift
+      to be performed by the handler outside the reset.
+    - To reduce risk of users directly calling trio async functions,
+      we'll clear trio's GLOBAL_RUN_CONTEXT inside make_future.
+
+    This allows the SysIf to shift the stack into 
+    It informs 
+**** hmm
+     doesn't this also mean we can suspend normally?
+     like. hm.
+
+     that's the same kind of interface as susp.wait.
+
+     aha okay so how about this,
+     we automatically make everything suspendable.
+     if there's someone waiting on the future for a result,
+     they get driven again.
+
+     but they can be cancelled to stop waiting on the future for a result.
+
+     and the syscall suspendability thing just uses this cap - it's not tied to sysif.
+     the feeling of a good idea... it fills me with suspicion at this point!
+
+     ok so let's say we'll have syscall automatically suspend itself on cancel,
+     if a Suspendable is available.
+
+     that does sound elegant.
+
+     also then I guess we... don't have to worry about trio calls?
+     no we do, because that's not everything
+
+     what about 1 and 3?
+     well, 1 can be achieved by making some kind of...
+     well, just using the regular suspendable thing?
+     or some kind of reset?
+
+     3, well, 3...
+     I guess if we have a coro suspended, we can just directly call it,
+     that's fine.
+     like... we'll call suspend and...
+     well, we'll actually call shift or something.
+     but we'll be able to wait on something shifted?
+
+     hm, maybe we can even achieve 3 without 2?
+     like, ok.. assume that someone is...
+     waiting on us. well if they're waiting with a lock, there's not much we can do.
+     we can cause them to resume and drop the lock, but that's weird.
+     but also is fine... ugh.
+     well yeah so we could just start them running with an event,
+     we start them, they event to us.
+     suspended coros for 2, on the other hand,
+     can be run directly,
+     and will also require the trio.op stuff.
+
+     and 1, well... hm.
+     i'm sure we'll figure it out.
+**** hmm again
+     or maybe if we're Suspendable at all,
+     we'll just always suspend?
+     We'll always do the shift in,
+     so that we can get the syscall result in FIFO order?
+     and, that will allow us to resume in FIFO.
+     so no need to do the trio.Event thing,
+     Suspendable is required if you want FIFO.
+
+     but wait, how does that even work?
+
+     I guess when we're waiting on some trio op thing.. or some lower combiner...
+
+     ah right this depends on being able to do a combiner using shift.
+     which we can't always do.
+*** final conclusion 2
+    We will achieve these goals:
+    1. Ability pipelining multiple calls in order
+    2. Allow being cancelled mid-syscall (so we'll still be given the result)
+    3. Syscalls return back in FIFO order
+
+    In the following ways:
+    1. Some kind of future thing built on the below things
+    2. We will make SyscallInterface.syscall automatically use a Suspendable cap,
+       if dynscope-available.
+    3. If a task is suspended with Suspendable,
+       we'll resume it immediately upon receiving the result;
+       otherwise, we'll use a trio.Event to cause it to run.
+
