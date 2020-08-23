@@ -19,6 +19,3 @@ class NonChildSyscallInterface(BaseSyscallInterface):
                  identifier_process: near.Process) -> None:
         super().__init__(rsyscall_connection)
         self.logger = logging.getLogger(f"rsyscall.SyscallConnection.{identifier_process.id}")
-
-    async def _read_pending_responses(self) -> None:
-        await self.rsyscall_connection.read_pending_responses()

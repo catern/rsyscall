@@ -6,7 +6,6 @@ That is to say, make a new thread the normal way.
 from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall._raw import ffi # type: ignore
-from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.handle import Stack, WrittenPointer, Pointer, FutexNode, FileDescriptor, Task, FutexNode
 from rsyscall.loader import Trampoline, NativeLoader
@@ -94,7 +93,6 @@ class ChildSyscallInterface(BaseSyscallInterface):
         self.server_process = server_process
         self.futex_process = futex_process
         self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{int(self.server_process.process.near)}")
-        self.running_read = OneAtATime()
 
     @contextlib.asynccontextmanager
     async def _throw_on_child_exit(self) -> t.AsyncGenerator[None, None]:
@@ -141,17 +139,10 @@ class ChildSyscallInterface(BaseSyscallInterface):
         elif futex_exited:
             raise MMRelease()
 
-    async def _read_syscall_responses_direct(self) -> None:
+    @contextlib.asynccontextmanager
+    async def _throw_on_conn_error(self) -> t.AsyncGenerator[None, None]:
         async with self._throw_on_child_exit():
-            await self.rsyscall_connection.read_pending_responses()
-        self.logger.debug("returning after reading some syscall responses")
-
-    async def _read_pending_responses(self) -> None:
-        async with self.running_read.needs_run() as needs_run:
-            if needs_run:
-                self.logger.debug("running read_syscall_responses_direct")
-                await self._read_syscall_responses_direct()
-                self.logger.debug("done with read_syscall_responses_direct")
+            yield
 
 async def launch_futex_monitor(ram: RAM,
                                loader: NativeLoader, monitor: ChildProcessMonitor,
