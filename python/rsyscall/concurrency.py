@@ -157,7 +157,7 @@ class Promise(t.Generic[T]):
         self._future._outcome = oc
         self._future._event.set()
 
-def make_future() -> t.Tuple[Future[T], Promise[T]]:
+def make_future() -> t.Tuple[Future, Promise]:
     fut = Future[T](None, trio.Event())
     return fut, Promise(fut)
 
