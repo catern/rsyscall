@@ -91,7 +91,8 @@ import trio
 from dataclasses import dataclass
 from rsyscall.near.sysif import SyscallResponse
 
-from rsyscall.struct import Int32
+from rsyscall.struct import Int32, T_fixed_size
+
 from rsyscall.sys.syscall import SYS
 from rsyscall.sys.socket import SOCK, SOL, SO, Sockaddr, SockaddrStorage, T_sockaddr, Sockbuf
 from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EPOLL_CTL, EpollFlag
@@ -557,6 +558,14 @@ class AsyncReadBuffer:
         src = ffi.cast(nameptr, ffi.from_buffer(data))
         ffi.memmove(dest, src, size)
         return dest[0]
+
+    async def read_struct(self, cls: t.Type[T_fixed_size]) -> T_fixed_size:
+        "Read one fixed-size struct from the buffer, or return None if that's not possible"
+        size = cls.sizeof()
+        data = await self.read_length(size)
+        if data is None:
+            raise EOFException("got EOF while expecting to read a", cls)
+        return cls.get_serializer(self.fd.handle.task).from_bytes(data)
 
     async def read_length_prefixed_string(self) -> bytes:
         "Read a bytestring which is prefixed with a 64-bit native-byte-order size."

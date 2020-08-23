@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from rsyscall.handle import Pointer, Task, WrittenPointer
 from rsyscall.concurrency import OneAtATime, SuspendableCoroutine, Future, Promise, make_future
 from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
-from rsyscall.epoller import AsyncFileDescriptor
+from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer, EOFException
 from rsyscall.near.sysif import SyscallHangup
 import math
 import typing as t
@@ -78,16 +78,10 @@ class SyscallResponse(Struct):
         return ffi.sizeof('long')
 
 @dataclass
-class ConnectionResponse:
-    "The mutable object that will eventually contain the decoded syscall return value"
-    syscall: Syscall
-    result: t.Optional[int] = None
-
-@dataclass
 class ConnectionRequest:
     syscall: Syscall
-    response_future: Future[ConnectionResponse]
-    response_promise: Promise[ConnectionResponse]
+    response_future: Future[Future[int]]
+    response_promise: Promise[Future[int]]
 
 class ReadBuffer:
     "A simple buffer for deserializing structs"
@@ -118,7 +112,7 @@ class ReadBuffer:
             if x is None:
                 return ret
             ret.append(x)
-
+    
 async def add_batch_to_list(requests: t.List, chan: trio.abc.ReceiveChannel) -> t.List:
     # if there are no current requests, block until there's something to do
     if not requests:
@@ -148,12 +142,18 @@ def find_uncancelled_part(
     # TODO actually support cancellation of syscall requests...
     return (ptr, reqs), []
 
+class ConnectionDefunctMonitor:
+    @contextlib.asynccontextmanager
+    async def throw_on_connection_defunct(self) -> t.AsyncGenerator[None, None]:
+        async with self._throw_on_child_exit():
+            yield
 
 class SyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
                  tofd: AsyncFileDescriptor,
                  fromfd: AsyncFileDescriptor,
+                 defunct_monitor: t.Optional[ConnectionDefunctMonitor],
     ) -> None:
         self.tofd = tofd
         self.fromfd = fromfd
@@ -161,8 +161,9 @@ class SyscallConnection:
         self.valid: t.Optional[Pointer[bytes]] = None
         self.request_channel, self.pending_requests = trio.open_memory_channel(math.inf)
         self.suspendable_write = SuspendableCoroutine(self._run_write)
-        self.reading_responses = OneAtATime()
-        self.pending_responses: t.List[ConnectionResponse] = []
+        self.response_channel, self.pending_responses = trio.open_memory_channel(math.inf)
+        self.suspendable_read = SuspendableCoroutine(self._run_read)
+        self.defunct_monitor = defunct_monitor or ConnectionDefunctMonitor()
 
     async def close(self) -> None:
         "Close this SyscallConnection; will throw if there are pending requests"
@@ -174,12 +175,8 @@ class SyscallConnection:
         await self.tofd.close()
         await self.fromfd.close()
 
-    async def write_request(self, syscall: Syscall) -> ConnectionResponse:
-        """Write a syscall request, returning a ConnectionResponse
-
-        The ConnectionResponse will eventually have .result set to contain the
-        syscall return value; you can call read_pending_responses to do work on
-        the connection until that happens.
+    async def write_request(self, syscall: Syscall) -> Future:
+        """Write a syscall request, returning a Future for the result.
 
         """
         future, promise = make_future()
@@ -226,41 +223,22 @@ class SyscallConnection:
                         req.response_promise.throw(e)
                 else:
                     for req in reqs_to_write:
-                        response = ConnectionResponse(req.syscall)
-                        req.response_promise.send(response)
-                        self.pending_responses.append(response)
+                        future, promise = make_future()
+                        req.response_promise.send(future)
+                        self.response_channel.send_nowait(promise)
 
-    async def read_pending_responses(self) -> None:
-        "Process some syscall responses, setting their values on the appropriate ConnectionResponse"
-        async with self.reading_responses.needs_run() as needs_run:
-            if needs_run:
-                await self._read_pending_responses_direct()
-
-    async def _read_pending_responses_direct(self) -> None:
-        vals = self.buffer.read_all_structs(SyscallResponse)
-        if vals:
-            self._got_responses(vals)
-            return
-        buf = await self.fromfd.ram.malloc(bytes, 1024)
-        while not vals:
-            if self.valid is None:
-                valid, rest = await self.fromfd.read(buf)
-                if valid.size() == 0:
-                    raise SyscallHangup()
-                self.valid = valid
-                did_read = True
+    async def _run_read(self, susp: SuspendableCoroutine) -> None:
+        buffer = AsyncReadBuffer(self.fromfd)
+        while True:
+            promise = await susp.wait(lambda: self.pending_responses.receive())
+            try:
+                while True:
+                    async with susp.suspend_if_cancelled():
+                        async with self.defunct_monitor.throw_on_connection_defunct():
+                            resp = await buffer.read_struct(SyscallResponse)
+            except EOFException:
+                promise.throw(SyscallHangup())
+            except Exception as e:
+                promise.throw(SyscallHangup())
             else:
-                did_read = False
-            data = await self.valid.read()
-            self.valid = None
-            self.buffer.feed_bytes(data)
-            if did_read:
-                buf = valid.merge(rest)
-            vals = self.buffer.read_all_structs(SyscallResponse)
-        self._got_responses(vals)
-
-    def _got_responses(self, vals: t.List[SyscallResponse]) -> None:
-        responses = self.pending_responses[:len(vals)]
-        self.pending_responses = self.pending_responses[len(vals):]
-        for response, val in zip(responses, vals):
-            response.result = val.value
+                promise.send(resp.value)

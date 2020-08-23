@@ -4,7 +4,7 @@ import math
 import trio
 from rsyscall.concurrency import SuspendableCoroutine, Future, make_future
 from rsyscall.near.sysif import SyscallInterface, SyscallResponse
-from rsyscall.tasks.connection import Syscall, SyscallConnection, ConnectionResponse
+from rsyscall.tasks.connection import Syscall, SyscallConnection
 from rsyscall.tasks.util import log_syscall, raise_if_error
 from rsyscall.handle import FileDescriptor
 from dataclasses import dataclass
@@ -70,16 +70,18 @@ class BaseSyscallInterface(SyscallInterface):
 
     async def _run(self, susp: SuspendableCoroutine) -> None:
         while True:
-            promise, resp = await susp.wait(lambda: self.pending_responses.receive())
+            promise, fut = await susp.wait(lambda: self.pending_responses.receive())
             try:
-                while resp.result is None:
+                while True:
                     async with susp.suspend_if_cancelled():
                         async with self._throw_on_conn_error():
-                            await self.rsyscall_connection.read_pending_responses()
+                            async with self.rsyscall_connection.suspendable_read.running():
+                                ret = await fut.get()
+                                break
             except Exception as e:
                 promise.throw(e)
             else:
-                promise.send(resp.result)
+                promise.send(ret)
 
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0
     ) -> BaseSyscallResponse:
@@ -89,8 +91,7 @@ class BaseSyscallInterface(SyscallInterface):
             number,
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
             arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        conn_response = await self.rsyscall_connection.write_request(syscall)
-        future, promise = make_future()
-        self.response_channel.send_nowait((promise, conn_response))
-        response = BaseSyscallResponse(syscall, self.suspendable, future)
+        response_future = await self.rsyscall_connection.write_request(syscall)
+        self.response_channel.send_nowait((promise, conn_response_future))
+        response = BaseSyscallResponse(syscall, self.suspendable, response_future)
         return response

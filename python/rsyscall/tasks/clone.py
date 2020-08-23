@@ -50,49 +50,13 @@ class MMRelease(SyscallHangup):
     """
     pass
 
-
-class ChildSyscallInterface(BaseSyscallInterface):
-    """A connection to an rsyscall server that is one of our child processes
-
-    We take as arguments here not only a SyscallConnection, but also an
-    AsyncChildProcess monitoring the child process to which we will send
-    syscalls.
-
-    This is useful for situations where we can't rely on getting an EOF if the
-    other side of a connection dies. That will happen, for example, whenever the
-    child process is sharing a file descriptor table with us. In those
-    situations, we need some other means to detect that a syscall will never be
-    responded to, and signal it to the caller by throwing SyscallHangup.
-
-    In this class, we detect a hangup while waiting for a syscall response by
-    simultaneously monitoring the child process. If the child process exits, we
-    stop waiting for the syscall response and throw SyscallHangup back to the
-    caller.
-
-    This is not just a matter of failure cases, it's also important for normal
-    functionality. Detecting a hangup is our only way to discern whether a call
-    to exit() was successful, and rsyscall.near.exit treats receiving an
-    RsycallHangup as successful.
-
-    We also take a futex_process: AsyncChildProcess. This is also used for
-    normal functionality: futex_process should exit when the process has
-    successfully called exec. This is again our only way of detecting a
-    successful call to exec, and rsyscall.near.execve treats receiving an
-    RsycallHangup as successful. (Concretely, futex_process will also exit when
-    the process exits, not just when it execs, but that's harmless)
-
-    A better way of detecting exec success would be great...
-
-    """
+class SyscallChildProcesses(ConnectionDefunctMonitor):
     def __init__(self,
-                 rsyscall_connection: SyscallConnection,
                  server_process: AsyncChildProcess,
                  futex_process: t.Optional[AsyncChildProcess],
     ) -> None:
-        super().__init__(rsyscall_connection)
         self.server_process = server_process
         self.futex_process = futex_process
-        self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{int(self.server_process.process.near)}")
 
     @contextlib.asynccontextmanager
     async def _throw_on_child_exit(self) -> t.AsyncGenerator[None, None]:
@@ -140,9 +104,51 @@ class ChildSyscallInterface(BaseSyscallInterface):
             raise MMRelease()
 
     @contextlib.asynccontextmanager
-    async def _throw_on_conn_error(self) -> t.AsyncGenerator[None, None]:
+    async def throw_on_connection_defunct(self) -> t.AsyncGenerator[None, None]:
         async with self._throw_on_child_exit():
             yield
+
+class ChildSyscallInterface(BaseSyscallInterface):
+    """A connection to an rsyscall server that is one of our child processes
+
+    We take as arguments here not only a SyscallConnection, but also an
+    AsyncChildProcess monitoring the child process to which we will send
+    syscalls.
+
+    This is useful for situations where we can't rely on getting an EOF if the
+    other side of a connection dies. That will happen, for example, whenever the
+    child process is sharing a file descriptor table with us. In those
+    situations, we need some other means to detect that a syscall will never be
+    responded to, and signal it to the caller by throwing SyscallHangup.
+
+    In this class, we detect a hangup while waiting for a syscall response by
+    simultaneously monitoring the child process. If the child process exits, we
+    stop waiting for the syscall response and throw SyscallHangup back to the
+    caller.
+
+    This is not just a matter of failure cases, it's also important for normal
+    functionality. Detecting a hangup is our only way to discern whether a call
+    to exit() was successful, and rsyscall.near.exit treats receiving an
+    RsycallHangup as successful.
+
+    We also take a futex_process: AsyncChildProcess. This is also used for
+    normal functionality: futex_process should exit when the process has
+    successfully called exec. This is again our only way of detecting a
+    successful call to exec, and rsyscall.near.execve treats receiving an
+    RsycallHangup as successful. (Concretely, futex_process will also exit when
+    the process exits, not just when it execs, but that's harmless)
+
+    A better way of detecting exec success would be great...
+
+    """
+    def __init__(self,
+                 rsyscall_connection: SyscallConnection,
+                 server_process: AsyncChildProcess,
+                 futex_process: t.Optional[AsyncChildProcess],
+    ) -> None:
+        super().__init__(rsyscall_connection)
+        self.children = SyscallChildProcesses(server_process, futex_process)
+        self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{int(self.server_process.process.near)}")
 
 async def launch_futex_monitor(ram: RAM,
                                loader: NativeLoader, monitor: ChildProcessMonitor,

@@ -24441,4 +24441,67 @@ We discuss the comparison be
     3. If a task is suspended with Suspendable,
        we'll resume it immediately upon receiving the result;
        otherwise, we'll use a trio.Event to cause it to run.
+** aaaa
+   ok let's do something for goodness sake.
 
+   let's start handling the responses already!
+
+   how will we respond to submit_syscall?
+   with futures.
+   but how will we ensure that the child throw gets there?
+
+   I... suppose we could have another nested future. can we just do that?
+
+   we will just do this future thing. nested future thing.
+   we won't redesign rsyscall connection
+
+   hmmmmmmm ok so let's just....
+
+   so how do we neatly do this?
+   throw on child exit is a little tricky.
+   we'll do that around the future wait I guess?
+
+   the next future wait...
+
+   ok so on each cancel, we'll cancel the throw on child exit, right?
+
+   that's fine, if we're getting suspended, we can do that just fine.
+   we'll resume it later.
+
+   i mean it sucks that we have to wait for the response...
+   which we do right?
+
+   and maybe we can clean that up later...
+
+   but for now let's just cancel it, no thinking!
+
+   ok maybe some thinking.
+
+   ok so we wait for the response here, hm.
+   well, obviously suspendability would be helpful.
+   eh i think that's enough thinking. we'll just cancel for now.
+
+   aha we'll make the base sysif thing use a loop first!
+   then do the rsyscall connection!
+
+   easy!
+** changing to futures in connection
+   _wait_for_child_exit is tricky
+
+   uggggh it's finely tuned to prioritize
+   also to cancel on exit
+   maybe I should just have a uniform contextmanager?
+   to, wait for, things that will break?
+   mmmmm.. I'm using this right now when sharing the fd table.
+   let's just make a uniform contextmanager
+
+
+
+   ah okay so I can just get rid of the double coroutine,
+   *if* I teach SyscallConnection to know about the possible conn failures.
+
+   which I think I should;
+   it can't just hang forever waiting for more results.
+
+   so we can make the child waiter a separate thing,
+   which we pass in to the syscall connection, sure.
