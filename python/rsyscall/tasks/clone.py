@@ -14,7 +14,7 @@ from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.struct import Int32
 from rsyscall.tasks.base_sysif import BaseSyscallInterface
-from rsyscall.tasks.connection import SyscallConnection
+from rsyscall.tasks.connection import SyscallConnection, ConnectionDefunctMonitor
 from rsyscall.near.sysif import SyscallHangup
 import contextlib
 import logging
@@ -22,6 +22,7 @@ import rsyscall.far as far
 import rsyscall.handle as handle
 import trio
 import typing as t
+import rsyscall.near.types as near
 
 from rsyscall.sched import CLONE
 from rsyscall.signal import SIG
@@ -78,23 +79,33 @@ class SyscallChildProcesses(ConnectionDefunctMonitor):
         child_exited = False
         futex_exited = False
         got_result = False
-        async with trio.open_nursery() as nursery:
-            async def server_exit() -> None:
-                await self.server_process.waitpid(W.EXITED)
-                nonlocal child_exited
-                child_exited = True
-                nursery.cancel_scope.cancel()
-            async def futex_exit() -> None:
-                if self.futex_process is not None:
-                    await self.futex_process.waitpid(W.EXITED)
-                    nonlocal futex_exited
-                    futex_exited = True
+
+        # work around https://github.com/python-trio/trio/issues/1457
+        # which will cause us to serve as a checkpoint (which can raise Cancelled)
+        # after the body of the contextmanager
+        def handle_cancelled(exn: BaseException) -> t.Optional[BaseException]:
+            if isinstance(exn, trio.Cancelled) and (child_exited or futex_exited or got_result):
+                return None
+            else:
+                return exn
+        with trio.MultiError.catch(handle_cancelled):
+            async with trio.open_nursery() as nursery:
+                async def server_exit() -> None:
+                    await self.server_process.waitpid(W.EXITED)
+                    nonlocal child_exited
+                    child_exited = True
                     nursery.cancel_scope.cancel()
-            nursery.start_soon(server_exit)
-            nursery.start_soon(futex_exit)
-            yield
-            got_result = True
-            nursery.cancel_scope.cancel()
+                async def futex_exit() -> None:
+                    if self.futex_process is not None:
+                        await self.futex_process.waitpid(W.EXITED)
+                        nonlocal futex_exited
+                        futex_exited = True
+                        nursery.cancel_scope.cancel()
+                nursery.start_soon(server_exit)
+                nursery.start_soon(futex_exit)
+                yield
+                got_result = True
+                nursery.cancel_scope.cancel()
         if got_result:
             return
         elif child_exited:
@@ -143,12 +154,10 @@ class ChildSyscallInterface(BaseSyscallInterface):
     """
     def __init__(self,
                  rsyscall_connection: SyscallConnection,
-                 server_process: AsyncChildProcess,
-                 futex_process: t.Optional[AsyncChildProcess],
+                 identifier_process: near.Process,
     ) -> None:
         super().__init__(rsyscall_connection)
-        self.children = SyscallChildProcesses(server_process, futex_process)
-        self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{int(self.server_process.process.near)}")
+        self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{int(identifier_process)}")
 
 async def launch_futex_monitor(ram: RAM,
                                loader: NativeLoader, monitor: ChildProcessMonitor,
@@ -233,8 +242,10 @@ async def clone_child_task(
         parent.ram, parent.loader, parent.monitor, futex_pointer)
     # Create the new syscall interface, which needs to use not just the connection,
     # but also the child process and the futex process.
-    syscall = ChildSyscallInterface(SyscallConnection(access_sock, access_sock),
-                                    child_process, futex_process)
+    syscall = ChildSyscallInterface(
+        SyscallConnection(access_sock, access_sock,
+                          SyscallChildProcesses(child_process, futex_process)),
+        child_process.process.near)
     # Set up the new task with appropriately inherited namespaces, tables, etc.
     # TODO correctly track all the namespaces we're in
     if flags & CLONE.NEWPID:

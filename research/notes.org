@@ -24505,3 +24505,78 @@ We discuss the comparison be
 
    so we can make the child waiter a separate thing,
    which we pass in to the syscall connection, sure.
+** TODO good stack trace
+   let's have the suspendable directly on the stack,
+   instead of running it in a background coroutine...
+
+   and wait on the future in a background coroutine instead.
+** blocking when exiting throw on connection defunct
+   hmmmmmmmmmmmmmmmmmm
+
+   well actually this isn't a huge deal because,
+   can't I just catch the canceled, after the context manager?
+
+   what's the core thing here? we start these threads,
+   then we want guarantee finite-time cancelling of them? hm.
+   well i guess trio decides to give up on that which does seem plausible.
+
+   maybe should ask them about uh.
+
+   I have a contextmanager which does something similar to a timeout:
+   if a certain event happens, it cancels the block inside it.
+   Right now I have a block inside this contextmanager which performs some operation,
+   and which expects to then exit the contextm..
+   The problem is, this contextmanager blocks on exit,
+   so 
+
+   hmm wait a second maybe I can just do the send in the block.
+   aha. that seems good.
+
+   perfeeects
+
+   lol ok the break craziness.
+
+   but, here's the issue I guess.
+   i have this handler which catches cancels and handles them.
+
+   it cleans up...
+   which is valid for a handler to do!
+
+   and ok this other thing...
+   it throws when leaving the contextmanager.
+
+   which is maybe *not* valid to do.
+
+   cuz I think that it's broken above?
+   the cancelled is thrown out, but the operation has actually been done.
+
+   right right...
+
+   ugh okay okay, I should not throw on exit.
+
+   that's definitely right.
+   should I just catch it maybe?
+
+   or should I be doing it differently? hm.
+
+   well suppose there was only one...
+
+   i still need a nursery for parallelism.
+
+   wait hm
+
+   this child process thing, it was always wrong!
+
+   right we want to intercept cancels...
+
+   god almighty
+
+   should we just intercept, maybe?
+
+   wait maybe we should return in here?
+   but ugh the async with would raise a cancel.
+   right? yuck.
+
+   that's the real issue.
+
+   nurseries will raise cancel out of them, quashing a return

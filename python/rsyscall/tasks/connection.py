@@ -16,6 +16,8 @@ from rsyscall.concurrency import OneAtATime, SuspendableCoroutine, Future, Promi
 from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer, EOFException
 from rsyscall.near.sysif import SyscallHangup
+import abc
+import contextlib
 import math
 import typing as t
 import trio
@@ -143,10 +145,13 @@ def find_uncancelled_part(
     return (ptr, reqs), []
 
 class ConnectionDefunctMonitor:
+    @abc.abstractmethod
+    def throw_on_connection_defunct(self) -> t.AsyncContextManager: ...
+
+class ConnectionDefunctOnlyOnEOF(ConnectionDefunctMonitor):
     @contextlib.asynccontextmanager
     async def throw_on_connection_defunct(self) -> t.AsyncGenerator[None, None]:
-        async with self._throw_on_child_exit():
-            yield
+        yield
 
 class SyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
@@ -163,7 +168,7 @@ class SyscallConnection:
         self.suspendable_write = SuspendableCoroutine(self._run_write)
         self.response_channel, self.pending_responses = trio.open_memory_channel(math.inf)
         self.suspendable_read = SuspendableCoroutine(self._run_read)
-        self.defunct_monitor = defunct_monitor or ConnectionDefunctMonitor()
+        self.defunct_monitor = defunct_monitor or ConnectionDefunctOnlyOnEOF()
 
     async def close(self) -> None:
         "Close this SyscallConnection; will throw if there are pending requests"
@@ -225,20 +230,24 @@ class SyscallConnection:
                     for req in reqs_to_write:
                         future, promise = make_future()
                         req.response_promise.send(future)
-                        self.response_channel.send_nowait(promise)
+                        self.response_channel.send_nowait((req, promise))
 
     async def _run_read(self, susp: SuspendableCoroutine) -> None:
         buffer = AsyncReadBuffer(self.fromfd)
         while True:
-            promise = await susp.wait(lambda: self.pending_responses.receive())
+            req, promise = await susp.wait(lambda: self.pending_responses.receive())
             try:
                 while True:
                     async with susp.suspend_if_cancelled():
                         async with self.defunct_monitor.throw_on_connection_defunct():
                             resp = await buffer.read_struct(SyscallResponse)
+                            break
             except EOFException:
                 promise.throw(SyscallHangup())
             except Exception as e:
-                promise.throw(SyscallHangup())
+                try:
+                    raise SyscallHangup() from e
+                except Exception as new_e:
+                    promise.throw(new_e)
             else:
                 promise.send(resp.value)

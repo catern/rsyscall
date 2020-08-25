@@ -32,8 +32,6 @@ class BaseSyscallInterface(SyscallInterface):
     """
     def __init__(self, rsyscall_connection: SyscallConnection) -> None:
         self.rsyscall_connection = rsyscall_connection
-        self.suspendable = SuspendableCoroutine(self._run)
-        self.response_channel, self.pending_responses = trio.open_memory_channel(math.inf)
 
     def store_remote_side_handles(self, infd: FileDescriptor, outfd: FileDescriptor) -> None:
         """Store the FD handles that the remote side is using to communicate with us
@@ -64,25 +62,6 @@ class BaseSyscallInterface(SyscallInterface):
         self.infd._invalidate()
         self.outfd._invalidate()
 
-    @contextlib.asynccontextmanager
-    async def _throw_on_conn_error(self) -> t.AsyncGenerator[None, None]:
-        yield
-
-    async def _run(self, susp: SuspendableCoroutine) -> None:
-        while True:
-            promise, fut = await susp.wait(lambda: self.pending_responses.receive())
-            try:
-                while True:
-                    async with susp.suspend_if_cancelled():
-                        async with self._throw_on_conn_error():
-                            async with self.rsyscall_connection.suspendable_read.running():
-                                ret = await fut.get()
-                                break
-            except Exception as e:
-                promise.throw(e)
-            else:
-                promise.send(ret)
-
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0
     ) -> BaseSyscallResponse:
         "Write syscall request on connection and return a response that will contain its result"
@@ -92,6 +71,6 @@ class BaseSyscallInterface(SyscallInterface):
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
             arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
         response_future = await self.rsyscall_connection.write_request(syscall)
-        self.response_channel.send_nowait((promise, conn_response_future))
-        response = BaseSyscallResponse(syscall, self.suspendable, response_future)
+        response = BaseSyscallResponse(
+            syscall, self.rsyscall_connection.suspendable_read, response_future)
         return response

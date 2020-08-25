@@ -17,7 +17,6 @@ from rsyscall.loader import NativeLoader
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.monitor import AsyncChildProcess
 from rsyscall.tasks.clone import launch_futex_monitor, ChildSyscallInterface
-from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.memory.ram import RAM
 from rsyscall.sys.mman import MemoryMapping
 import rsyscall.far as far

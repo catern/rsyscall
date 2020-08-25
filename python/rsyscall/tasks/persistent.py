@@ -72,7 +72,7 @@ import rsyscall.near.types as near
 import rsyscall.far as far
 import rsyscall.handle as handle
 from rsyscall.thread import Thread
-from rsyscall.tasks.connection import SyscallConnection
+from rsyscall.tasks.connection import SyscallConnection, ConnectionDefunctOnlyOnEOF
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.tasks.clone import ChildSyscallInterface, clone_child_task
 from rsyscall.loader import NativeLoader, Trampoline
@@ -213,6 +213,7 @@ class PersistentThread(Thread):
         await self.unshare_files(going_to_exec=False)
         if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
             raise Exception("self.task.sysif of unexpected type", self.task.sysif)
+        self.task.sysif.rsyscall_connection.defunct_monitor = ConnectionDefunctOnlyOnEOF()
         new_sysif = NonChildSyscallInterface(self.task.sysif.rsyscall_connection, self.task.process.near)
         new_sysif.store_remote_side_handles(self.task.sysif.infd, self.task.sysif.outfd)
         self.task.sysif = new_sysif
@@ -233,7 +234,8 @@ class PersistentThread(Thread):
         await syscall_sock.close()
         await data_sock.close()
         # Fix up Task's sysif with new SyscallConnection
-        self.task.sysif.rsyscall_connection = SyscallConnection(access_syscall_sock, access_syscall_sock)
+        self.task.sysif.rsyscall_connection = SyscallConnection(
+            access_syscall_sock, access_syscall_sock, ConnectionDefunctOnlyOnEOF())
         self.task.sysif.store_remote_side_handles(infd, outfd)
         # Fix up RAM with new transport
         # TODO technically this could still be in the same address space - that's the case in our tests.

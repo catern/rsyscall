@@ -19,7 +19,7 @@ from rsyscall.loader import NativeLoader
 from rsyscall.memory.ram import RAM
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
-from rsyscall.tasks.connection import SyscallConnection
+from rsyscall.tasks.connection import SyscallConnection, ConnectionDefunctOnlyOnEOF
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 import logging
 import rsyscall.far as far
@@ -114,7 +114,7 @@ async def stdin_bootstrap(
     pidns = parent.task.pidns
     process = near.Process(pid)
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
-    syscall = NonChildSyscallInterface(SyscallConnection(access_syscall_sock, access_syscall_sock), process)
+    syscall = NonChildSyscallInterface(SyscallConnection(access_syscall_sock, access_syscall_sock, ConnectionDefunctOnlyOnEOF()), process)
     base_task = Task(syscall, process, fd_table, address_space, pidns)
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
