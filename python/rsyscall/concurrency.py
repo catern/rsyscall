@@ -210,15 +210,17 @@ class SuspendableCoroutine:
     @contextlib.asynccontextmanager
     async def running(self) -> t.AsyncIterator[None]:
         done = False
-        try:
+        def handle_cancelled(exn: BaseException) -> t.Optional[BaseException]:
+            if isinstance(exn, trio.Cancelled) and done:
+                return None
+            else:
+                return exn
+        with trio.MultiError.catch(handle_cancelled):
             async with trio.open_nursery() as nursery:
                 nursery.start_soon(self.drive)
                 yield
                 done = True
                 nursery.cancel_scope.cancel()
-        except trio.Cancelled:
-            if not done:
-                raise
 
     @contextlib.asynccontextmanager
     async def suspend_if_cancelled(self) -> t.AsyncIterator[None]:

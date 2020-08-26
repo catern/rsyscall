@@ -169,9 +169,7 @@ async def _connect_and_send(self: PersistentThread, thread: Thread, fds: t.List[
         return addr, count, hdr, response_buf
     addr, count, hdr, response = await thread.ram.perform_batch(sendmsg_op)
     data = None
-    async with contextlib.AsyncExitStack() as stack:
-        if isinstance(self.task.sysif, ChildSyscallInterface):
-            await stack.enter_async_context(self.task.sysif._throw_on_child_exit())
+    async with self.task.sysif.rsyscall_connection.defunct_monitor.throw_on_connection_defunct():
         await sock.connect(addr)
         _, _ = await sock.write(count)
         _, [] = await sock.handle.sendmsg(hdr, SendmsgFlags.NONE)
@@ -235,7 +233,7 @@ class PersistentThread(Thread):
         await data_sock.close()
         # Fix up Task's sysif with new SyscallConnection
         self.task.sysif.rsyscall_connection = SyscallConnection(
-            access_syscall_sock, access_syscall_sock, ConnectionDefunctOnlyOnEOF())
+            access_syscall_sock, access_syscall_sock, self.task.sysif.rsyscall_connection.defunct_monitor)
         self.task.sysif.store_remote_side_handles(infd, outfd)
         # Fix up RAM with new transport
         # TODO technically this could still be in the same address space - that's the case in our tests.
