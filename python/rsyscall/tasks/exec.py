@@ -16,7 +16,7 @@ from rsyscall.thread import ChildThread, Thread
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.monitor import AsyncChildProcess
-from rsyscall.tasks.clone import launch_futex_monitor, ChildSyscallInterface
+from rsyscall.tasks.clone import launch_futex_monitor, ChildSyscallInterface, SyscallChildProcesses
 from rsyscall.memory.ram import RAM
 from rsyscall.sys.mman import MemoryMapping
 import rsyscall.far as far
@@ -135,7 +135,12 @@ async def rsyscall_exec(
     child_futex_memfd = await child.task.memfd_create(await child.ram.ptr("child_robust_futex_list"))
     parent_futex_memfd = child_futex_memfd.for_task(parent.task)
     if isinstance(child.task.sysif, ChildSyscallInterface):
-        syscall = child.task.sysif
+        sysif = child.task.sysif
+        if isinstance(sysif.rsyscall_connection.defunct_monitor, SyscallChildProcesses):
+            syscall_monitor = sysif.rsyscall_connection.defunct_monitor
+        else:
+            raise Exception("monitor needs to be SyscallChildProcesses, not",
+                            sysif.rsyscall_connection.defunct_monitor)
     else:
         raise Exception("can only exec in ChildSyscallInterface sysifs, not", child.task.sysif)
     # unshare files so we can unset cloexec on fds to inherit
@@ -147,16 +152,9 @@ async def rsyscall_exec(
         return str(int(fd))
     #### call exec and set up the new task
     await child.exec(executable.command.args(
-        encode(passed_data_sock), encode(syscall.infd), encode(syscall.outfd),
+        encode(passed_data_sock), encode(sysif.infd), encode(sysif.outfd),
         *[encode(fd) for fd in child.task.fd_handles],
     ), [child.monitor.sigfd.signal_block])
-    if len(syscall.rsyscall_connection.pending_responses) == 1:
-        # remove execve from pending_responses, we're never going to get a response to it
-        syscall.rsyscall_connection.pending_responses = []
-    else:
-        raise Exception("syscall connection in bad state; " +
-                        "expected one pending response for execve, instead got",
-                        syscall.rsyscall_connection.pending_responses)
     # a new address space needs a new allocator and transport; we mutate the RAM so things
     # that have stored the RAM continue to work.
     child.ram.allocator = memory.AllocatorClient.make_allocator(child.task)
@@ -171,11 +169,11 @@ async def rsyscall_exec(
     # The futex process we used before is dead now that we've exec'd. We need to make some
     # syscalls in the child to set up the new futex process. ChildSyscallInterface would
     # throw immediately on seeing the current dead futex_process, so we need to null it out.
-    syscall.futex_process = None
+    syscall_monitor.futex_process = None
     # We have to use a robust futex now for our futex_process, see docstring
     parent_futex_ptr, child_futex_ptr = await setup_shared_memory_robust_futex(
         parent, parent_futex_memfd, child, child_futex_memfd)
-    syscall.futex_process = await launch_futex_monitor(
+    syscall_monitor.futex_process = await launch_futex_monitor(
         parent.ram, parent.loader, parent.monitor, parent_futex_ptr)
     # now we are alive and fully working again, we can be used for GC
     child.task._add_to_active_fd_table_tasks()

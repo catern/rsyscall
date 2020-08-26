@@ -209,10 +209,16 @@ class SuspendableCoroutine:
 
     @contextlib.asynccontextmanager
     async def running(self) -> t.AsyncIterator[None]:
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(self.drive)
-            yield
-            nursery.cancel_scope.cancel()
+        done = False
+        try:
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(self.drive)
+                yield
+                done = True
+                nursery.cancel_scope.cancel()
+        except trio.Cancelled:
+            if not done:
+                raise
 
     @contextlib.asynccontextmanager
     async def suspend_if_cancelled(self) -> t.AsyncIterator[None]:
