@@ -24647,3 +24647,27 @@ We discuss the comparison be
 
    ah. hm.
    we do need a shield on this part tho.
+** writing
+   aha, just make two suspendable coroutines!
+
+   hmm although with batching, we still want to have suspendable stuff, heh.
+
+   argh not even that, we actualy want to pipeline in order, lol.
+
+   annoying, annoying.
+** write_all
+   hmm it would be nice if we could have suspendable abstractions like this.
+
+   I guess, uh, we kind of want to shield cancellation with,
+   something that suspends instead?
+
+   but well that's a lot like what happens anyway!
+   really it's just that we want to detach.
+
+   so really it's an immediate cancellation, by detaching.
+
+   that's another kind of model.
+   and then we can always resume it again later.
+
+   it's just that we need in-trio support for arbitrary suspension points;
+   well, that or we always use trio.op for async stuff.

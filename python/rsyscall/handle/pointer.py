@@ -297,6 +297,7 @@ class Pointer(t.Generic[T]):
 
     def _wrote(self, value: T) -> WrittenPointer[T]:
         "Assert we wrote this value to this pointer, and return the appropriate new WrittenPointer"
+        self._validate()
         self.valid = False
         return WrittenPointer(self.mapping, self.transport, value, self.serializer, self.allocation, self.typ)
 

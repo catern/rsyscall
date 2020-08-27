@@ -31,8 +31,7 @@ call `write` on B's file descriptor, and `read` on A's file descriptor.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from rsyscall.concurrency import OneAtATime
-from rsyscall.concurrency import SuspendableCoroutine, Future, Promise, make_future
+from rsyscall.concurrency import SuspendableCoroutine, Future, Promise, make_future, run_all
 from rsyscall.memory.ram import RAM
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.memory.transport import MemoryTransport
@@ -282,24 +281,40 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
         self.local = local
         self.remote = remote
         self.read_lock = trio.Lock()
+        self.write_local_channel, self.pending_write_local = trio.open_memory_channel(math.inf)
+        self.suspendable_write_local = SuspendableCoroutine(self._run_write_local)
+        self.read_remote_channel, self.pending_read_remote = trio.open_memory_channel(math.inf)
+        self.suspendable_read_remote = SuspendableCoroutine(self._run_read_remote)
 
     def inherit(self, task: handle.Task) -> PrimitiveSocketMemoryTransport:
         return PrimitiveSocketMemoryTransport(self.local, task.make_fd_handle(self.remote))
 
+    async def _run_write_local(self, susp: SuspendableCoroutine) -> None:
+        while True:
+            # again, we could batch these, with good syscall pipelining...
+            dest, to_write, promise = await susp.wait(self.pending_write_local.receive)
+            while to_write.size() > 0:
+                written, to_write = await susp.wait(lambda: self.local.write(to_write))
+            self.read_remote_channel.send_nowait((dest, promise))
+
+    async def _run_read_remote(self, susp: SuspendableCoroutine) -> None:
+        while True:
+            # TODO we could process these in batches, if we could pipeline syscalls, preserving order.
+            dest, promise = await susp.wait(self.pending_read_remote.receive)
+            rest = to_span(dest)
+            while rest.size() > 0:
+                read, rest = await susp.wait(lambda: self.remote.read(rest))
+            promise.send(None)
+
     async def write(self, dest: Pointer, data: bytes) -> None:
         if dest.size() != len(data):
             raise Exception("mismatched pointer size", dest.size(), "and data size", len(data))
-        dest = to_span(dest)
         src = await self.local.ram.ptr(data)
-        async def write() -> None:
-            await self.local.write_all(src)
-        async def read() -> None:
-            rest = dest
-            while rest.size() > 0:
-                read, rest = await self.remote.read(rest)
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(read)
-            nursery.start_soon(write)
+        future, promise = make_future()
+        self.write_local_channel.send_nowait((dest, src, promise))
+        async with self.suspendable_write_local.running():
+            async with self.suspendable_read_remote.running():
+                await future.get()
 
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         raise Exception("batch write not supported")
@@ -377,69 +392,16 @@ class SocketMemoryTransport(MemoryTransport):
         self.remote_allocator = remote_allocator
         self.primitive = PrimitiveSocketMemoryTransport(local, remote)
         self.primitive_remote_ram = RAM(self.remote.task, self.primitive, self.remote_allocator)
-        self.pending_writes: t.List[WriteOp] = []
-        self.running_write = OneAtATime()
-        self.read_channel, self.pending_reads = trio.open_memory_channel(math.inf)
-        # self.suspendable_read = SuspendableCoroutine(self._run_read)
 
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
         return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote),
                                      self.remote_allocator.inherit(task))
 
-    async def _unlocked_batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
-        ops = sorted(ops, key=lambda op: int(op[0].near))
-        ops = merge_adjacent_writes(ops)
-        if len(ops) <= 1:
-            [(dest, data)] = ops
-            await self.primitive.write(dest, data)
-        else:
-            iovp = await self.primitive_remote_ram.ptr(IovecList([ptr for ptr, _ in ops]))
-            datap = await self.local.ram.ptr(b"".join([data for _, data in ops]))
-            async with trio.open_nursery() as nursery:
-                @nursery.start_soon
-                async def write() -> None:
-                    await self.local.write_all(datap)
-                rest = iovp
-                while rest.size() > 0:
-                    _, split, rest = await self.remote.readv(rest)
-                    if split:
-                        _, split_rest = split
-                        while split_rest.size() > 0:
-                            _, split_rest = await self.remote.read(split_rest)
-
-    def _start_single_write(self, dest: Pointer, data: bytes) -> WriteOp:
-        if dest.size() != len(data):
-            raise Exception("mismatched pointer size", dest.size(), "and data size", len(data))
-        write = WriteOp(dest, data)
-        self.pending_writes.append(write)
-        return write
-
-    async def _do_writes(self) -> None:
-        async with self.running_write.needs_run() as needs_run:
-            if needs_run:
-                writes = self.pending_writes
-                self.pending_writes = []
-                writes = [op for op in writes if not op.cancelled]
-                if len(writes) == 0:
-                    return
-                # TODO we should not use a cancel scope shield, we should use the SyscallResponse API
-                with trio.CancelScope(shield=True):
-                    await self._unlocked_batch_write([(write.dest, write.data) for write in writes])
-                for write in writes:
-                    write.done = True
+    async def write(self, dest: Pointer, data: bytes) -> None:
+        await self.primitive.write(dest, data)
 
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
-        write_ops = [self._start_single_write(dest, data) for (dest, data) in ops]
-        while not(all(op.done for op in write_ops)):
-            try:
-                await self._do_writes()
-            except trio.Cancelled:
-                for op in write_ops:
-                    op.cancelled = True
-                raise
+        await run_all([(lambda dest=dest, data=data: self.write(dest, data)) for dest, data in ops])
 
     async def read(self, src: Pointer) -> bytes:
         return await self.primitive.read(src)
-
-    async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
-        return await run_all(lambda: self.read(op) for op in ops)
