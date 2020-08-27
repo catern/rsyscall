@@ -24580,3 +24580,70 @@ We discuss the comparison be
    that's the real issue.
 
    nurseries will raise cancel out of them, quashing a return
+
+   this is
+   https://github.com/python-trio/trio/issues/1457
+
+   ok ok.
+
+   anyway we worked around it and we're fixing that also in trio
+** progress
+   okay so we've got rid of the oneatatimes in rsyscallconnection! cool!
+
+   now let's take socketmemorytransport and be done!
+
+   yeah this could really use it, for sure.
+
+   ugghhhhh but it calls into a nursery :(
+   hmm
+
+   so unlocked batch write performs the read and write sides in parallel.
+   ok, that's fine, but what if we get cancelled?
+
+   ah lol, we're shielding it even now. heh.
+
+   so no problem! since it's shielded, we don't have to suspend.
+
+   so let's just do it...
+
+   we can send reads to the coro, and it will perform them.
+
+   actually why do we even need the iovec stuff, ugh.
+
+   can't we just do it concurrently?
+   and pipelined?
+
+   just spam it all down the pipe?
+   that's what an iovec essentially is, anyway!
+** batch_read in socket_transport
+   We'll start here.
+
+   hmm batch_read has the same possibility of batching as syscalls.
+
+   don't we actually not even need batch_read? could we just use trio to do it?
+
+   well I guess we'd want to wait until all the requests are in for max efficiency.
+   but nah, it would be so much simpler to use that I think it'd be worth it.
+
+   orderrriiingg
+
+   # hmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+   # cancellation kinda means... that...
+   # the current op has been cancelled?
+   # not really, it just means the person waiting on us has been cancelled.
+   # mmmmmmmmmmmmmmmm
+   # I wonder if we should provide actual cancellation?
+   # well, when I'm batching together things,
+   # it's not so clear.
+
+   ah when we're not batching though,
+   and not providing ordering guarantees,
+   we can just put ourselves in a lock,
+   and allow cancellation easily in that way.
+
+   in other scenarios, though...
+   we really need to, like, attach a cancel scope to a future,
+   so we can say when we're working on it.
+
+   ah. hm.
+   we do need a shield on this part tho.

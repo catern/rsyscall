@@ -32,6 +32,7 @@ call `write` on B's file descriptor, and `read` on A's file descriptor.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from rsyscall.concurrency import OneAtATime
+from rsyscall.concurrency import SuspendableCoroutine, Future, Promise, make_future
 from rsyscall.memory.ram import RAM
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.memory.transport import MemoryTransport
@@ -39,6 +40,7 @@ from rsyscall.memory.allocation_interface import AllocationInterface
 import rsyscall.handle as handle
 import typing as t
 import trio
+import math
 
 from rsyscall.handle import Pointer, FileDescriptor
 from rsyscall.sys.uio import IovecList
@@ -273,6 +275,14 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
     local: AsyncFileDescriptor
     remote: FileDescriptor
 
+    def __init__(self,
+                 local: AsyncFileDescriptor,
+                 remote: FileDescriptor,
+    ) -> None:
+        self.local = local
+        self.remote = remote
+        self.read_lock = trio.Lock()
+
     def inherit(self, task: handle.Task) -> PrimitiveSocketMemoryTransport:
         return PrimitiveSocketMemoryTransport(self.local, task.make_fd_handle(self.remote))
 
@@ -295,29 +305,42 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
         raise Exception("batch write not supported")
 
     async def read(self, src: Pointer) -> bytes:
-        src = to_span(src)
-        dest = await self.local.ram.malloc(bytes, src.size())
-        async def write() -> None:
-            rest = src
-            while rest.size() > 0:
-                written, rest = await self.remote.write(rest)
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(write)
-            read: t.Optional[Pointer[bytes]] = None
-            rest = dest
-            while rest.size() > 0:
-                more_read, rest = await self.local.read(rest)
-                if read is None:
-                    read = more_read
-                else:
-                    read = read.merge(more_read)
-        if read is None:
-            return b''
-        else:
-            return await read.read()
+        async with self.read_lock:
+            src = to_span(src)
+            dest = await self.local.ram.malloc(bytes, src.size())
+            async def write() -> None:
+                rest = src
+                while rest.size() > 0:
+                    written, rest = await self.remote.write(rest)
+            with trio.CancelScope(shield=True):
+                async with trio.open_nursery() as nursery:
+                    nursery.start_soon(write)
+                    read: t.Optional[Pointer[bytes]] = None
+                    rest = dest
+                    while rest.size() > 0:
+                        more_read, rest = await self.local.read(rest)
+                        if read is None:
+                            read = more_read
+                        else:
+                            read = read.merge(more_read)
+            if read is None:
+                return b''
+            else:
+                return await read.read()
 
     async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
         raise Exception("batch read not supported")
+
+async def get_batch(chan: trio.abc.ReceiveChannel) -> t.List:
+    requests = []
+    requests.append(await chan.receive())
+    # grab everything else in the channel
+    try:
+        while True:
+            requests.append(chan.receive_nowait())
+    except (trio.WouldBlock, trio.Cancelled):
+        return requests
+
 
 class SocketMemoryTransport(MemoryTransport):
     """Read and write bytes from a remote address space, using a connected socketpair
@@ -356,8 +379,8 @@ class SocketMemoryTransport(MemoryTransport):
         self.primitive_remote_ram = RAM(self.remote.task, self.primitive, self.remote_allocator)
         self.pending_writes: t.List[WriteOp] = []
         self.running_write = OneAtATime()
-        self.pending_reads: t.List[ReadOp] = []
-        self.running_read = OneAtATime()
+        self.read_channel, self.pending_reads = trio.open_memory_channel(math.inf)
+        # self.suspendable_read = SuspendableCoroutine(self._run_read)
 
     def inherit(self, task: handle.Task) -> SocketMemoryTransport:
         return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote),
@@ -415,42 +438,8 @@ class SocketMemoryTransport(MemoryTransport):
                     op.cancelled = True
                 raise
 
-    async def _unlocked_batch_read(self, ops: t.List[ReadOp]) -> None:
-        for op in ops:
-            op.done = await self.primitive.read(op.src)
-
-    def _start_single_read(self, dest: Pointer) -> ReadOp:
-        op = ReadOp(dest)
-        self.pending_reads.append(op)
-        return op
-
-    async def _do_reads(self) -> None:
-        async with self.running_read.needs_run() as needs_run:
-            if needs_run:
-                ops = self.pending_reads
-                self.pending_reads = []
-                ops = [op for op in ops if not op.cancelled]
-                merged_ops = merge_adjacent_reads(ops)
-                # TODO we should not use a cancel scope shield, we should use the SyscallResponse API
-                with trio.CancelScope(shield=True):
-                    await self._unlocked_batch_read([op for op, _ in merged_ops])
-                for op, orig_ops in merged_ops:
-                    data = op.data
-                    for orig_op in orig_ops:
-                        orig_size = orig_op.src.size()
-                        if len(data) < orig_size:
-                            raise Exception("insufficient data for original operation", len(data), orig_size)
-                        orig_op.done, data = data[:orig_size], data[orig_size:]
+    async def read(self, src: Pointer) -> bytes:
+        return await self.primitive.read(src)
 
     async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
-        read_ops = [self._start_single_read(src) for src in ops]
-        # TODO this is inefficient
-        while not(all(op.done is not None for op in read_ops)):
-            try:
-                await self._do_reads()
-            except trio.Cancelled:
-                for op in read_ops:
-                    op.cancelled = True
-                raise
-        return [op.data for op in read_ops]
-
+        return await run_all(lambda: self.read(op) for op in ops)

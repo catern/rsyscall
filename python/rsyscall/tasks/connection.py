@@ -12,7 +12,7 @@ out all at once.
 from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
 from rsyscall.handle import Pointer, Task, WrittenPointer
-from rsyscall.concurrency import OneAtATime, SuspendableCoroutine, Future, Promise, make_future
+from rsyscall.concurrency import SuspendableCoroutine, Future, Promise, make_future
 from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer, EOFException
 from rsyscall.near.sysif import SyscallHangup
