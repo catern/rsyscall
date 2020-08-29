@@ -161,51 +161,37 @@ def make_future() -> t.Tuple[Future, Promise]:
     fut = Future[T](None, trio.Event())
     return fut, Promise(fut)
 
-@dataclass
-class Shift:
-    func: t.Callable[[t.Coroutine], t.Any]
-
 @types.coroutine
 def _yield(value: t.Any) -> t.Any:
     return (yield value)
 
-async def reset(body: t.Coroutine[t.Any, t.Any, T], next_value: t.Any=None) -> t.Any:
-    next_outcome: outcome.Outcome = outcome.Value(next_value)
-    while True:
-        try:
-            yielded_value = next_outcome.send(body)
-        except StopIteration as e:
-            return e.value
-        if isinstance(yielded_value, Shift):
-            # sure wish I had an effect system to tell me what this value is
-            return yielded_value.func(body) # type: ignore
-        else:
-            next_outcome = await outcome.acapture(_yield, yielded_value)
-
-# again, sure wish I had an effect system to constrain this type
-async def shift(func: t.Callable[[t.Coroutine], t.Any]) -> t.Any:
-    return await _yield(Shift(func))
+@dataclass
+class SuspendRequest:
+    prompt: SuspendableCoroutine
+    cancels: t.List[trio.Cancelled]
 
 class SuspendableCoroutine:
     def __init__(self, run_func: t.Callable[[SuspendableCoroutine], t.Coroutine]) -> None:
-        self._coro: t.Optional[t.Coroutine] = run_func(self)
+        self._coro: t.Coroutine = run_func(self)
         self._run_func = run_func
         self._lock = trio.Lock()
 
     def __del__(self) -> None:
         # suppress the warning about unawaited coroutine that we'd get
         # if we never got the chance to drive this coro
-        if self._coro:
-            self._coro.close()
+        self._coro.close()
 
     async def drive(self) -> None:
         async with self._lock:
-            if self._coro is None:
-                raise Exception("no coro to run")
-            coro = self._coro
-            # this will be set back to the coroutine by set_coro
-            self._coro = None
-            await reset(coro)
+            send_value: outcome.Outcome = outcome.Value(None)
+            while True:
+                try: yield_value = send_value.send(self._coro)
+                except StopIteration as e: return e.value
+                # handle SuspendRequests for us, and yield everything else up
+                if isinstance(yield_value, SuspendRequest) and yield_value.prompt is self:
+                    raise trio.MultiError(yield_value.cancels)
+                else:
+                    send_value = (await outcome.acapture(_yield, yield_value))
 
     @contextlib.asynccontextmanager
     async def running(self) -> t.AsyncIterator[None]:
@@ -234,10 +220,7 @@ class SuspendableCoroutine:
         with trio.MultiError.catch(handle_cancelled):
             yield
         if cancels:
-            def set_coro(coro) -> None:
-                self._coro = coro
-                raise trio.MultiError(cancels)
-            await shift(set_coro)
+            await _yield(SuspendRequest(self, cancels))
 
     async def wait(self, func) -> t.Any:
         while True:
