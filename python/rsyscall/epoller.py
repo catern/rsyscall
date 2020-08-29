@@ -164,7 +164,7 @@ class EpollWaiter:
             lambda: self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof()))
         while True:
             if self.wait_readable:
-                await susp.wait(lambda: self.wait_readable())
+                await susp.wait(self.wait_readable)
             syscall_response = await susp.wait(lambda: self.epfd.task.sysif.submit_syscall(
                 SYS.epoll_wait, self.epfd.near, input_buf.near, maxevents, self.timeout))
             count = await susp.wait(lambda: syscall_response.receive())
