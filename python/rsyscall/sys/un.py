@@ -71,7 +71,7 @@ class SockaddrUn(Address):
         return ffi.sizeof('struct sockaddr_un')
 
     def __str__(self) -> str:
-        return f"SockaddrUn({self.path})"
+        return f"SockaddrUn({self.path!r})"
 
     async def close(self) -> None:
         pass
