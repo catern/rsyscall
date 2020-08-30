@@ -16,7 +16,8 @@ from rsyscall.thread import ChildThread, Thread
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.monitor import AsyncChildProcess
-from rsyscall.tasks.clone import launch_futex_monitor, ChildSyscallInterface, SyscallChildProcesses
+from rsyscall.tasks.base_sysif import ConnectionSyscallInterface
+from rsyscall.tasks.clone import launch_futex_monitor, SyscallChildProcesses
 from rsyscall.memory.ram import RAM
 from rsyscall.sys.mman import MemoryMapping
 import rsyscall.far as far
@@ -118,7 +119,7 @@ async def rsyscall_exec(
     We need to know about our parent thread because we need to create a new futex child
     process to wait for the child calling exec. We can't have the child itself create this
     futex process because the whole point of the futex process is to monitor for the child
-    calling exec or exit; see ChildSyscallInterface. That futex process can be a child of
+    calling exec or exit; see SyscallChildProcesses. That futex process can be a child of
     anyone, so technically `parent` doesn't have to be our parent, it just needs to
     currently share its fd table with us.
 
@@ -134,7 +135,7 @@ async def rsyscall_exec(
     # create this guy and pass him down to the new thread
     child_futex_memfd = await child.task.memfd_create(await child.ram.ptr("child_robust_futex_list"))
     parent_futex_memfd = child_futex_memfd.for_task(parent.task)
-    if isinstance(child.task.sysif, ChildSyscallInterface):
+    if isinstance(child.task.sysif, ConnectionSyscallInterface):
         sysif = child.task.sysif
         if isinstance(sysif.rsyscall_connection.defunct_monitor, SyscallChildProcesses):
             syscall_monitor = sysif.rsyscall_connection.defunct_monitor
@@ -142,7 +143,7 @@ async def rsyscall_exec(
             raise Exception("monitor needs to be SyscallChildProcesses, not",
                             sysif.rsyscall_connection.defunct_monitor)
     else:
-        raise Exception("can only exec in ChildSyscallInterface sysifs, not", child.task.sysif)
+        raise Exception("can only exec in ConnectionSyscallInterface sysifs, not", child.task.sysif)
     # unshare files so we can unset cloexec on fds to inherit
     await child.unshare_files(going_to_exec=True)
     # unset cloexec on all the fds we want to copy to the new space
@@ -167,7 +168,7 @@ async def rsyscall_exec(
 
     #### make new futex process
     # The futex process we used before is dead now that we've exec'd. We need to make some
-    # syscalls in the child to set up the new futex process. ChildSyscallInterface would
+    # syscalls in the child to set up the new futex process. SyscallChildProcesses would
     # throw immediately on seeing the current dead futex_process, so we need to null it out.
     syscall_monitor.futex_process = None
     # We have to use a robust futex now for our futex_process, see docstring

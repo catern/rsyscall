@@ -3,35 +3,22 @@ import contextlib
 import math
 import trio
 from rsyscall.concurrency import SuspendableCoroutine, Future, make_future
-from rsyscall.near.sysif import SyscallInterface, SyscallResponse
+from rsyscall.near.sysif import SyscallInterface, syscall_suspendable
 from rsyscall.tasks.connection import Syscall, SyscallConnection
 from rsyscall.tasks.util import log_syscall, raise_if_error
 from rsyscall.handle import FileDescriptor
+from rsyscall.sys.syscall import SYS
 from dataclasses import dataclass
 import logging
 import typing as t
 
-@dataclass
-class BaseSyscallResponse(SyscallResponse):
-    "A pending response to a syscall, which polls for the actual response by repeatedly calling a function"
-    syscall: Syscall
-    suspendable: SuspendableCoroutine
-    fut: Future[int]
-
-    async def receive(self, logger=None) -> int:
-        async with self.suspendable.running():
-            val = await self.fut.get()
-        if logger:
-            logger.debug("%s -> %s", self.syscall, val)
-        raise_if_error(val)
-        return val
-
-class BaseSyscallInterface(SyscallInterface):
+class ConnectionSyscallInterface(SyscallInterface):
     """Shared functionality for definining a syscall interface using SyscallConnection
 
     """
-    def __init__(self, rsyscall_connection: SyscallConnection) -> None:
+    def __init__(self, rsyscall_connection: SyscallConnection, logger: logging.Logger) -> None:
         self.rsyscall_connection = rsyscall_connection
+        self.logger = logger
 
     def store_remote_side_handles(self, infd: FileDescriptor, outfd: FileDescriptor) -> None:
         """Store the FD handles that the remote side is using to communicate with us
@@ -62,15 +49,32 @@ class BaseSyscallInterface(SyscallInterface):
         self.infd._invalidate()
         self.outfd._invalidate()
 
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0
-    ) -> BaseSyscallResponse:
-        "Write syscall request on connection and return a response that will contain its result"
+    async def _get_syscall_result(self, future: Future[int]) -> int:
+        async with self.rsyscall_connection.suspendable_read.running():
+            return await future.get()
+
+    async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         syscall = Syscall(
             number,
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
             arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
         response_future = await self.rsyscall_connection.write_request(syscall)
-        response = BaseSyscallResponse(
-            syscall, self.rsyscall_connection.suspendable_read, response_future)
-        return response
+        try:
+            suspendable = await syscall_suspendable.get()
+            if suspendable is not None:
+                result = await syscall_suspendable.bind(None, suspendable.wait(
+                    lambda: self._get_syscall_result(response_future)))
+            else:
+                with trio.CancelScope(shield=True):
+                    result = await self._get_syscall_result(response_future)
+            raise_if_error(result)
+        except OSError as exn:
+            self.logger.debug("%s -> %s", number, exn)
+            raise OSError(exn.errno, exn.strerror) from None
+        except Exception as exn:
+            self.logger.debug("%s -/ %s", number, exn)
+            raise
+        else:
+            self.logger.debug("%s -> %s", number, result)
+            return result

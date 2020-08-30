@@ -72,9 +72,9 @@ import rsyscall.near.types as near
 import rsyscall.far as far
 import rsyscall.handle as handle
 from rsyscall.thread import Thread
+from rsyscall.tasks.base_sysif import ConnectionSyscallInterface
 from rsyscall.tasks.connection import SyscallConnection, ConnectionDefunctOnlyOnEOF
-from rsyscall.tasks.non_child import NonChildSyscallInterface
-from rsyscall.tasks.clone import ChildSyscallInterface, clone_child_task
+from rsyscall.tasks.clone import clone_child_task
 from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.sched import Stack
 from rsyscall.handle import WrittenPointer, ThreadProcess, Pointer, Task, FileDescriptor
@@ -104,6 +104,8 @@ __all__ = [
     "clone_persistent",
     "PersistentThread",
 ]
+
+logger = logging.getLogger(__name__)
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def clone_persistent(
@@ -209,10 +211,11 @@ class PersistentThread(Thread):
         # TODO hmm should we switch the transport?
         # i guess we aren't actually doing anything but rearranging the file descriptors
         await self.unshare_files(going_to_exec=False)
-        if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
+        if not isinstance(self.task.sysif, ConnectionSyscallInterface):
             raise Exception("self.task.sysif of unexpected type", self.task.sysif)
         self.task.sysif.rsyscall_connection.defunct_monitor = ConnectionDefunctOnlyOnEOF()
-        new_sysif = NonChildSyscallInterface(self.task.sysif.rsyscall_connection, self.task.process.near)
+        new_sysif = ConnectionSyscallInterface(
+            self.task.sysif.rsyscall_connection, logger.getChild(str(self.task.process.near)))
         new_sysif.store_remote_side_handles(self.task.sysif.infd, self.task.sysif.outfd)
         self.task.sysif = new_sysif
         await self.task.setsid()
@@ -223,7 +226,7 @@ class PersistentThread(Thread):
 
         """
         await self.task.run_fd_table_gc(use_self=False)
-        if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
+        if not isinstance(self.task.sysif, ConnectionSyscallInterface):
             raise Exception("self.task.sysif of unexpected type", self.task.sysif)
         await self.task.sysif.close_interface()
         # TODO should check that no transport requests are in flight

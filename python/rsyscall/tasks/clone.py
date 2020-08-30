@@ -13,7 +13,7 @@ from rsyscall.memory.allocator import Arena
 from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.struct import Int32
-from rsyscall.tasks.base_sysif import BaseSyscallInterface
+from rsyscall.tasks.base_sysif import ConnectionSyscallInterface
 from rsyscall.tasks.connection import SyscallConnection, ConnectionDefunctMonitor
 from rsyscall.near.sysif import SyscallHangup
 import contextlib
@@ -32,11 +32,12 @@ from rsyscall.sys.wait import W
 __all__ = [
     'ChildExit',
     'MMRelease',
-    'ChildSyscallInterface',
     'launch_futex_monitor',
     'clone_child_task',
     'CloneThread',
 ]
+
+logger = logging.getLogger(__name__)
 
 class ChildExit(SyscallHangup):
     "The task we were sending syscalls to has exited"
@@ -52,6 +53,37 @@ class MMRelease(SyscallHangup):
     pass
 
 class SyscallChildProcesses(ConnectionDefunctMonitor):
+    """Monitors child processes to determine if an RsyscallConnection is defunct
+
+    We take as an argument here a AsyncChildProcess monitoring the
+    child process to which we will send syscalls.
+
+    This is useful for situations where we can't rely on getting an EOF if the
+    other side of a connection dies. That will happen, for example, whenever the
+    child process is sharing a file descriptor table with us. In those
+    situations, we need some other means to detect that a syscall will never be
+    responded to, and signal it to the caller by throwing SyscallHangup.
+
+    In this class, we detect a hangup while waiting for a syscall response by
+    simultaneously monitoring the child process. If the child process exits, we
+    stop waiting for the syscall response and throw SyscallHangup back to the
+    caller.
+
+    This is not just a matter of failure cases, it's also important for normal
+    functionality. Detecting a hangup is our only way to discern whether a call
+    to exit() was successful, and rsyscall.near.exit treats receiving an
+    RsycallHangup as successful.
+
+    We also take a futex_process: AsyncChildProcess. This is also used for
+    normal functionality: futex_process should exit when the process has
+    successfully called exec. This is again our only way of detecting a
+    successful call to exec, and rsyscall.near.execve treats receiving an
+    RsycallHangup as successful. (Concretely, futex_process will also exit when
+    the process exits, not just when it execs, but that's harmless)
+
+    A better way of detecting exec success would be great...
+
+    """
     def __init__(self,
                  server_process: AsyncChildProcess,
                  futex_process: t.Optional[AsyncChildProcess],
@@ -119,46 +151,6 @@ class SyscallChildProcesses(ConnectionDefunctMonitor):
         async with self._throw_on_child_exit():
             yield
 
-class ChildSyscallInterface(BaseSyscallInterface):
-    """A connection to an rsyscall server that is one of our child processes
-
-    We take as arguments here not only a SyscallConnection, but also an
-    AsyncChildProcess monitoring the child process to which we will send
-    syscalls.
-
-    This is useful for situations where we can't rely on getting an EOF if the
-    other side of a connection dies. That will happen, for example, whenever the
-    child process is sharing a file descriptor table with us. In those
-    situations, we need some other means to detect that a syscall will never be
-    responded to, and signal it to the caller by throwing SyscallHangup.
-
-    In this class, we detect a hangup while waiting for a syscall response by
-    simultaneously monitoring the child process. If the child process exits, we
-    stop waiting for the syscall response and throw SyscallHangup back to the
-    caller.
-
-    This is not just a matter of failure cases, it's also important for normal
-    functionality. Detecting a hangup is our only way to discern whether a call
-    to exit() was successful, and rsyscall.near.exit treats receiving an
-    RsycallHangup as successful.
-
-    We also take a futex_process: AsyncChildProcess. This is also used for
-    normal functionality: futex_process should exit when the process has
-    successfully called exec. This is again our only way of detecting a
-    successful call to exec, and rsyscall.near.execve treats receiving an
-    RsycallHangup as successful. (Concretely, futex_process will also exit when
-    the process exits, not just when it execs, but that's harmless)
-
-    A better way of detecting exec success would be great...
-
-    """
-    def __init__(self,
-                 rsyscall_connection: SyscallConnection,
-                 identifier_process: near.Process,
-    ) -> None:
-        super().__init__(rsyscall_connection)
-        self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{int(identifier_process)}")
-
 async def launch_futex_monitor(ram: RAM,
                                loader: NativeLoader, monitor: ChildProcessMonitor,
                                futex_pointer: WrittenPointer[FutexNode]) -> AsyncChildProcess:
@@ -209,7 +201,7 @@ async def clone_child_task(
 
     We also create a futex process, which we use to monitor the ctid futex.
     This process allows us to detect when the child successfully finishes an
-    exec; see the docstring of ChildSyscallInterface.  Because we set
+    exec; see the docstring of SyscallChildProcesses.  Because we set
     CLONE.CHILD_CLEARTID, the ctid futex will receive a FUTEX_WAKE when the
     child process exits or execs, and the futex process will accordingly exit.
 
@@ -242,10 +234,10 @@ async def clone_child_task(
         parent.ram, parent.loader, parent.monitor, futex_pointer)
     # Create the new syscall interface, which needs to use not just the connection,
     # but also the child process and the futex process.
-    syscall = ChildSyscallInterface(
+    syscall = ConnectionSyscallInterface(
         SyscallConnection(access_sock, access_sock,
                           SyscallChildProcesses(child_process, futex_process)),
-        child_process.process.near)
+        logger.getChild(str(child_process.process.near)))
     # Set up the new task with appropriately inherited namespaces, tables, etc.
     # TODO correctly track all the namespaces we're in
     if flags & CLONE.NEWPID:

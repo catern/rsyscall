@@ -38,8 +38,8 @@ import rsyscall.near.types as near
 import rsyscall.far as far
 import rsyscall.handle as handle
 from rsyscall.thread import Thread
+from rsyscall.tasks.base_sysif import ConnectionSyscallInterface
 from rsyscall.tasks.connection import SyscallConnection, ConnectionDefunctOnlyOnEOF
-from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.loader import NativeLoader
 import trio
 from dataclasses import dataclass
@@ -68,6 +68,8 @@ from rsyscall.fcntl import O
 __all__ = [
     "StubServer",
 ]
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class StubServer:
@@ -155,7 +157,9 @@ async def _setup_stub(
     # TODO maybe the describe should contain the net namespace number? and we can store our own as well?
     # then we can automatically do it right
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
-    syscall = NonChildSyscallInterface(SyscallConnection(access_syscall_sock, access_syscall_sock, ConnectionDefunctOnlyOnEOF()), process)
+    syscall = ConnectionSyscallInterface(
+        SyscallConnection(access_syscall_sock, access_syscall_sock, ConnectionDefunctOnlyOnEOF()),
+        logger.getChild(str(process)))
     base_task = Task(syscall, process, fd_table, address_space, pidns)
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)

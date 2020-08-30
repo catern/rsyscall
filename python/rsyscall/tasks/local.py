@@ -10,7 +10,7 @@ from rsyscall.tasks.util import log_syscall, raise_if_error
 from rsyscall._raw import ffi, lib # type: ignore
 import trio
 import rsyscall.far as far
-from rsyscall.near.sysif import SyscallInterface, SyscallResponse
+from rsyscall.near.sysif import SyscallInterface
 import rsyscall.near.types as near
 import rsyscall.handle as handle
 import rsyscall.loader as loader
@@ -42,14 +42,6 @@ __all__ = [
 async def _direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
     return lib.rsyscall_raw_syscall(arg1, arg2, arg3, arg4, arg5, arg6, number)
-
-class LocalSyscallResponse(SyscallResponse):
-    "Dummy SyscallResponse for local syscalls."
-    def __init__(self, result_func: t.Callable[[], int]) -> None:
-        self.result_func = result_func
-
-    async def receive(self) -> int:
-        return self.result_func()
 
 class LocalSyscall(SyscallInterface):
     "Makes syscalls in the local, Python interpreter thread."
@@ -86,28 +78,6 @@ class LocalSyscall(SyscallInterface):
         self.logger.debug("%s -> %s", number, result)
         return result
 
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> LocalSyscallResponse:
-        """Make a syscall in the local thread; return SyscallResponse already containing the result.
-
-        We can't actually implement the submit_syscall API for local syscalls, so we just
-        immediately make the syscall and pack the response into a dummy SyscallResponse.
-
-        Linux returns errors as just another kind of syscall return value. A certain range
-        of possible syscall return values (-4095 to 0, not inclusive) indicates an error;
-        we call raise_if_error to check and throw if we're in that range.
-
-        """
-        await trio.sleep(0)
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-        result = await _direct_syscall(
-            number,
-            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        def f(result=result) -> int:
-            raise_if_error(result)
-            return result
-        return LocalSyscallResponse(f)
-
 class LocalMemoryTransport(MemoryTransport):
     "This is a memory transport that only works on local pointers."
     def __init__(self, local_task: Task) -> None:
@@ -123,15 +93,12 @@ class LocalMemoryTransport(MemoryTransport):
                 raise Exception("trying to write to pointer", dest, "not in local address space")
             ffi.memmove(ffi.cast('void*', int(dest.near)), data, len(data))
 
-    async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
+    async def read(self, src: Pointer) -> bytes:
         await trio.sleep(0)
-        ret: t.List[bytes] = []
-        for src in ops:
-            if src.mapping.task.address_space != self.local_task.address_space:
-                raise Exception("trying to read from pointer", src, "not in local address space")
-            buf = ffi.buffer(ffi.cast('void*', int(src.near)), src.size())
-            ret.append(bytes(buf))
-        return ret
+        if src.mapping.task.address_space != self.local_task.address_space:
+            raise Exception("trying to read from pointer", src, "not in local address space")
+        buf = ffi.buffer(ffi.cast('void*', int(src.near)), src.size())
+        return bytes(buf)
 
 async def _make_local_thread() -> Thread:
     """Create the local thread, allocating various resources locally.

@@ -89,7 +89,7 @@ from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 import trio
 from dataclasses import dataclass
-from rsyscall.near.sysif import SyscallResponse, syscall_suspendable
+from rsyscall.near.sysif import syscall_suspendable
 
 from rsyscall.struct import Int32, T_fixed_size
 
