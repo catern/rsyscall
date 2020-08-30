@@ -156,6 +156,12 @@ class Process:
     def __int__(self) -> int:
         return self.id
 
+    def __str__(self) -> str:
+        return f'Process({self.id})'
+
+    def __repr__(self) -> str:
+        return str(self)
+
 @dataclass
 class ProcessGroup:
     """The integer identifier for a process group taken by many syscalls.
