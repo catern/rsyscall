@@ -202,7 +202,14 @@ class SuspendableCoroutine:
     def __del__(self) -> None:
         # suppress the warning about unawaited coroutine that we'd get
         # if we never got the chance to drive this coro
-        self._coro.close()
+        try:
+            self._coro.close()
+        except RuntimeError as e:
+            if "generator didn't stop after throw" in str(e):
+                # hack-around pending python 3.7.9 upgrade
+                pass
+            else:
+                raise
 
     async def drive(self) -> None:
         async with self._lock:
