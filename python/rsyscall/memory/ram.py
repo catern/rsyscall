@@ -198,7 +198,7 @@ class LaterAllocator(AllocatorInterface):
 
 class NoopTransport(MemoryTransport):
     "A memory transport which doesn't do anything."
-    async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
+    async def read(self, src: Pointer) -> bytes:
         raise Exception("shouldn't try to read")
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         pass
