@@ -166,6 +166,29 @@ def _yield(value: t.Any) -> t.Any:
     return (yield value)
 
 @dataclass
+class DynvarRequest:
+    prompt: Dynvar
+
+class Dynvar(t.Generic[T]):
+    async def get(self) -> t.Optional[t.Any]:
+        try:
+            return await _yield(DynvarRequest(self))
+        except (RuntimeError, TypeError) as e:
+            # These are what asyncio and trio, respectively, inject on violating the yield protocol
+            return None
+
+    async def bind(self, value: T, coro: t.Coroutine) -> t.Any:
+        send_value: outcome.Outcome = outcome.Value(None)
+        while True:
+            try: yield_value = send_value.send(coro)
+            except StopIteration as e: return e.value
+            # handle DynvarRequests for this dynvar, and yield everything else up
+            if isinstance(yield_value, DynvarRequest) and yield_value.prompt is self:
+                send_value = outcome.Value(value)
+            else:
+                send_value = (await outcome.acapture(_yield, yield_value))
+
+@dataclass
 class SuspendRequest:
     prompt: SuspendableCoroutine
     cancels: t.List[trio.Cancelled]
