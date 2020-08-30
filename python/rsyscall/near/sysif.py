@@ -96,8 +96,12 @@ class SyscallInterface:
         """
         response = await self.submit_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
         try:
-            with trio.CancelScope(shield=True):
-                result = await response.receive()
+            suspendable = await syscall_suspendable.get()
+            if suspendable is not None:
+                result = await syscall_suspendable.bind(None, suspendable.wait(response.receive))
+            else:
+                with trio.CancelScope(shield=True):
+                    result = await response.receive()
         except OSError as exn:
             self.logger.debug("%s -> %s", number, exn)
             raise OSError(exn.errno, exn.strerror) from None
@@ -168,3 +172,9 @@ class SyscallHangup(Exception):
     This may be thrown by SyscallInterface.
     """
     pass
+
+import contextvars
+from rsyscall.concurrency import SuspendableCoroutine, Dynvar
+import contextlib
+
+syscall_suspendable: Dynvar[t.Optional[SuspendableCoroutine]] = Dynvar()

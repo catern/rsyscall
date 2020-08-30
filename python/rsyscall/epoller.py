@@ -89,7 +89,7 @@ from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 import trio
 from dataclasses import dataclass
-from rsyscall.near.sysif import SyscallResponse
+from rsyscall.near.sysif import SyscallResponse, syscall_suspendable
 
 from rsyscall.struct import Int32, T_fixed_size
 
@@ -165,11 +165,10 @@ class EpollWaiter:
         while True:
             if self.wait_readable:
                 await susp.wait(self.wait_readable)
-            syscall_response = await susp.wait(lambda: self.epfd.task.sysif.submit_syscall(
-                SYS.epoll_wait, self.epfd.near, input_buf.near, maxevents, self.timeout))
-            count = await susp.wait(lambda: syscall_response.receive())
-            valid_events_buf, rest = input_buf.split(count * EpollEvent.sizeof())
-            received_events = await susp.wait(lambda: valid_events_buf.read())
+            # still need to run inside susp.wait because the initial submit could be cancelled
+            valid_events_buf, rest = await susp.wait(lambda: syscall_suspendable.bind(
+                susp, self.epfd.epoll_wait(input_buf, self.timeout)))
+            received_events = await susp.wait(valid_events_buf.read)
             input_buf = valid_events_buf + rest
             for event in received_events:
                 if event.data not in self.pending_remove:
