@@ -59,6 +59,7 @@ class SYS(enum.IntEnum):
     prctl = lib.SYS_prctl
     pread64 = lib.SYS_pread64
     preadv2 = lib.SYS_preadv2
+    prlimit64 = lib.SYS_prlimit64
     pwrite64 = lib.SYS_pwrite64
     pwritev2 = lib.SYS_pwritev2
     read = lib.SYS_read
