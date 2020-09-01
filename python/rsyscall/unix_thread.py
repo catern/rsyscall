@@ -94,6 +94,9 @@ class ChildUnixThread(UnixThread):
         super()._init_from(thr)
         self.process = process
 
+    def _release_process(self) -> AsyncChildProcess:
+        return self.process
+
     async def _execve(self, path: t.Union[str, os.PathLike], argv: t.List[str], envp: t.List[str],
                       command: Command=None,
     ) -> AsyncChildProcess:
@@ -108,7 +111,7 @@ class ChildUnixThread(UnixThread):
                     await sem.ptr(envp_ptrs))
         filename, argv_ptr, envp_ptr = await self.ram.perform_batch(op)
         await self.task.execve(filename, argv_ptr, envp_ptr, command=command)
-        return self.process
+        return self._release_process()
 
     async def execv(self, path: t.Union[str, os.PathLike],
                     argv: t.Sequence[t.Union[str, os.PathLike]],
@@ -122,7 +125,7 @@ class ChildUnixThread(UnixThread):
         filename_ptr, argv_ptr = await self.ram.perform_batch(op)
         envp_ptr = await self.environ.as_arglist(self.ram)
         await self.task.execve(filename_ptr, argv_ptr, envp_ptr, command=command)
-        return self.process
+        return self._release_process()
 
     async def execve(self, path: t.Union[str, os.PathLike],
                      argv: t.Sequence[t.Union[str, os.PathLike]],

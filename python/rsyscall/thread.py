@@ -72,6 +72,25 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
 
 class Thread(UnixThread):
     "A central class holding everything necessary to work with some thread, along with various helpers"
+    def __init__(self,
+                 task: Task,
+                 ram: RAM,
+                 connection: Connection,
+                 loader: NativeLoader,
+                 epoller: Epoller,
+                 child_monitor: ChildProcessMonitor,
+                 environ: Environment,
+                 stdin: FileDescriptor,
+                 stdout: FileDescriptor,
+                 stderr: FileDescriptor,
+    ) -> None:
+        super().__init__(task, ram, connection, loader, epoller, child_monitor, environ, stdin, stdout, stderr)
+        self.children: t.List[ChildThread] = []
+
+    def _init_from(self, thr: Thread) -> None: # type: ignore
+        super()._init_from(thr)
+        self.children: t.List[ChildThread] = []
+
     async def mkdtemp(self, prefix: str="mkdtemp") -> TemporaryDirectory:
         "Make a temporary directory by calling rsyscall.mktemp.mkdtemp"
         return await mkdtemp(self, prefix)
@@ -162,7 +181,9 @@ class Thread(UnixThread):
             uid = await self.task.getuid()
             gid = await self.task.getgid()
             await write_user_mappings(thread, uid, gid)
-        return ChildThread(thread, thread.process)
+        child = ChildThread(thread, thread.process, self)
+        self.children.append(child)
+        return child
 
     async def run(self, command: Command, check=True,
                   *, task_status=trio.TASK_STATUS_IGNORED) -> ChildState:
@@ -264,6 +285,25 @@ class Thread(UnixThread):
 
 class ChildThread(Thread, ChildUnixThread):
     "A thread that we know is also a direct child process of another thread"
+    def __init__(self, thr: Thread, process: AsyncChildProcess, parent) -> None:
+        super()._init_from(thr)
+        self.process = process
+        self.released = False
+        self.parent = parent
+
+    def _release_process(self) -> AsyncChildProcess:
+        self.parent.children.remove(self)
+        self.released = True
+        return self.process
+
+    async def exit(self, status: int) -> None:
+        await super().exit(status)
+        self._release_process()
+
+    async def close(self) -> None:
+        await super().close()
+        self._release_process()
+
     async def __aenter__(self) -> None:
         pass
 
