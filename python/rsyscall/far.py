@@ -106,7 +106,7 @@ class AddressSpaceMismatchError(NamespaceMismatchError):
     pass
 
 #### Segment register
-@dataclass
+@dataclass(eq=False)
 class Task:
     """A wrapper around SyscallInterface which tracks the namespaces of the underlying process
 

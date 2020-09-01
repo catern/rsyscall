@@ -21,7 +21,7 @@ import rsyscall.near
 import rsyscall.near as near
 import typing as t
 
-@dataclass
+@dataclass(frozen=True)
 class MemoryMapping:
     task: MemoryMappingTask
     near: rsyscall.near.MemoryMapping

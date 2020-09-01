@@ -57,7 +57,7 @@ class WatchDescriptor:
     def __int__(self) -> int:
         return self.number
 
-@dataclass
+@dataclass(frozen=True)
 class Address:
     """The integer identifier for a virtual memory address as taken by many syscalls.
 
@@ -83,7 +83,7 @@ class Address:
     def __int__(self) -> int:
         return self.address
 
-@dataclass
+@dataclass(frozen=True)
 class MemoryMapping:
     """The integer identifiers for a virtual memory mapping as taken by many syscalls.
 
@@ -143,7 +143,7 @@ class MemoryMapping:
     def __repr__(self) -> str:
         return str(self)
 
-@dataclass
+@dataclass(frozen=True)
 class Process:
     """The integer identifier for a process taken by many syscalls.
 
@@ -162,7 +162,7 @@ class Process:
     def __repr__(self) -> str:
         return str(self)
 
-@dataclass
+@dataclass(frozen=True)
 class ProcessGroup:
     """The integer identifier for a process group taken by many syscalls.
 
