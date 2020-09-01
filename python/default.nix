@@ -72,6 +72,7 @@ pytest ];
       pyroute2
       outcome
       beautifulsoup4
+      sortedcontainers
   ];
   miredo = pkgs.miredo;
   nix = nix;
