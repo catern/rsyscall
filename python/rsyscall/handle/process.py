@@ -51,6 +51,10 @@ class Process:
     async def getpriority(self) -> int:
         return (await _getpriority(self.task.sysif, PRIO.PROCESS, self.near.id))
 
+    def __repr__(self) -> str:
+        name = type(self).__name__
+        return f"{name}({self.near}, parent={self.task})"
+
 class ChildProcess(Process):
     """A process that is our child, which we can monitor with waitid and safely signal.
 
@@ -199,6 +203,13 @@ class ThreadProcess(ChildProcess):
     def did_exec(self, command: t.Optional[Command]) -> ChildProcess:
         self.free_everything()
         return super().did_exec(command)
+
+    def __repr__(self) -> str:
+        name = type(self).__name__
+        if self.command or self.death_state:
+            # pretend to be a ChildProcess if we've exec'd or died
+            name = 'ChildProcess'
+        return f"{name}({self.near}, parent={self.task})"
 
 class ProcessTask(rsyscall.far.Task):
     def __init__(self,

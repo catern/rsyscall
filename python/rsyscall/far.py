@@ -152,7 +152,10 @@ class Task:
             return ptr.near
 
     def __str__(self) -> str:
-        return f"Task({self.near_process.id})"
+        return repr(self)
+
+    def __repr__(self) -> str:
+        return f"Task({self.near_process})"
 
     def __post_init__(self) -> None:
         pass

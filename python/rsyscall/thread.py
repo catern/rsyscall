@@ -251,6 +251,10 @@ class Thread(UnixThread):
     async def __aexit__(self, *args, **kwargs):
         await self.close()
 
+    def __repr__(self) -> str:
+        name = type(self).__name__
+        return f'{name}({self.task})'
+
 class ChildThread(Thread, ChildUnixThread):
     "A thread that we know is also a direct child process of another thread"
     async def __aenter__(self) -> None:

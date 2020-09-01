@@ -134,6 +134,10 @@ class AsyncChildProcess:
         self.sigchld_sigfd = sigchld_sigfd
         self.next_sigchld: t.Optional[MultiplexedEvent] = None
 
+    def __repr__(self) -> str:
+        name = type(self).__name__
+        return f'{name}({self.process})'
+
     async def _waitid_nohang(self) -> t.Optional[ChildState]:
         if self.process.unread_siginfo:
             # if we performed a waitid before, and it contains an event, we don't need to
