@@ -44,6 +44,10 @@ from rsyscall.handle.pointer import Pointer
 
 class PipeTask(FileDescriptorTask):
     async def pipe(self, buf: Pointer[Pipe], flags: O=O.NONE) -> Pointer[Pipe]:
+        """create pipe
+
+        manpage: pipe2(2)
+        """
         # TODO we should force the serializer for the pipe to be using this task...
         # otherwise it could get deserialized by a task with which we share memory,
         # but not share file descriptor tables.

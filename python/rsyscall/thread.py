@@ -148,7 +148,10 @@ class Thread(UnixThread):
         return self.task.inherit_fd(fd)
 
     async def clone(self, flags: CLONE=CLONE.NONE) -> ChildThread:
-        "Create a new child thread"
+        """Create a new child thread
+
+        manpage: clone(2)
+        """
         thread = await super().clone(flags=flags)
         if flags & CLONE.NEWUSER:
             # hack, we should really track the [ug]id ahead of this so we don't have to get it
@@ -234,6 +237,7 @@ class Thread(UnixThread):
         namespaces and monitored children, so I'm leaving it on Thread to prepare for that
         eventuality.
 
+        manpage: exit(2)
         """
         await self.task.exit(status)
 

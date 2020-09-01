@@ -171,6 +171,7 @@ class ChildUnixThread(UnixThread):
 
         See self.execve's docstring for an explanation of inherited_signal_blocks.
 
+        manpage: execve(2)
         """
         return (await self.execve(command.executable_path, command.arguments, command.env_updates,
                                   inherited_signal_blocks=inherited_signal_blocks, command=command))

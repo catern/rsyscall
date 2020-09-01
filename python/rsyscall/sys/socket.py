@@ -543,6 +543,10 @@ class SocketFileDescriptor(BaseFileDescriptor):
 
 class SocketTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
     async def socket(self, domain: AF, type: SOCK, protocol: int=0) -> T_fd:
+        """create an endpoint for communication
+
+        manpage: socket(2)
+        """
         sockfd = await _socket(self.sysif, domain, type|SOCK.CLOEXEC, protocol)
         return self.make_fd_handle(sockfd)
 

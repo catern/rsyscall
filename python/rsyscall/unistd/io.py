@@ -25,12 +25,20 @@ from rsyscall.path import Path, EmptyPath
 
 class IOFileDescriptor(BaseFileDescriptor):
     async def read(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
+        """read from a file descriptor
+
+        manpage: read(2)
+        """
         self._validate()
         buf.check_address_space(self.task)
         ret = await _read(self.task.sysif, self.near, buf.near, buf.size())
         return buf.split(ret)
 
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
+        """write to a file descriptor
+
+        manpage: write(2)
+        """
         self._validate()
         buf.check_address_space(self.task)
         ret = await _write(self.task.sysif, self.near, buf.near, buf.size())

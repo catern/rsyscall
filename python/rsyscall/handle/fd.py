@@ -126,7 +126,10 @@ class BaseFileDescriptor:
             return False
 
     async def close(self) -> None:
-        "Close this file descriptor if it's the only handle to it; throwing if there's other handles"
+        """Close this file descriptor if it's the only handle to it; throwing if there's other handles
+
+        manpage: close(2)
+        """
         if not self.is_only_handle():
             raise Exception("can't close this fd, there are handles besides this one to it")
         if not self.valid:
@@ -250,6 +253,10 @@ class BaseFileDescriptor:
         return Path(f"/proc/self/fd/{num}")
 
     async def dup2(self, newfd: T_fd) -> T_fd:
+        """duplicate a file descriptor
+
+        manpage: dup(2)
+        """
         return await self.dup3(newfd, 0)
 
     # oldfd has to be a valid file descriptor. newfd is not, technically, required to be
