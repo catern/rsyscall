@@ -248,7 +248,7 @@ class ChildProcessMonitor:
         sigfd = await AsyncSignalfd.make(ram, task, epoller, Sigset({SIG.CHLD}), signal_block=signal_block)
         return ChildProcessMonitor(sigfd, ram, task, use_clone_parent=False)
 
-    def inherit_to_child(self, ram: RAM, child_task: Task) -> ChildProcessMonitor:
+    def inherit_to_child(self, child_task: Task) -> ChildProcessMonitor:
         """Create a new instance that will clone children from the passed-in task
 
         This requires, and checks, that the passed-in task is a child of the process which
@@ -265,7 +265,7 @@ class ChildProcessMonitor:
         # child processes of self.sigfd.afd.handle.task.
         # 3. Therefore self.sigfd will be notified if and when those future child processes have some state change.
         # 4. Therefore we can use self.sigfd to create AsyncChildProcesses for those future child processes.
-        return ChildProcessMonitor(self.sigfd, ram, child_task, use_clone_parent=True)
+        return ChildProcessMonitor(self.sigfd, self.ram, child_task, use_clone_parent=True)
 
     def add_child_process(self, process: ChildProcess) -> AsyncChildProcess:
         """Create an AsyncChildProcess which monitors the passed-in ChildProcess.

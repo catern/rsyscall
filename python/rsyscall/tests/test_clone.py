@@ -61,6 +61,13 @@ class TestClone(TrioTestCase):
         child = await self.thr.exec(self.thr.environ.sh.args('-c', 'true'))
         await child.check()
 
+    async def test_nest_exec(self) -> None:
+        child = await self.thr.clone()
+        grandchild = await child.clone()
+        cmd = self.thr.environ.sh.args('-c', 'true')
+        await (await child.exec(cmd)).check()
+        await (await grandchild.exec(cmd)).check()
+
     async def test_mkdtemp(self) -> None:
         async with (await self.thr.mkdtemp()):
             pass
