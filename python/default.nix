@@ -71,6 +71,7 @@ pytest ];
       dnspython
       pyroute2
       outcome
+      beautifulsoup4
   ];
   miredo = pkgs.miredo;
   nix = nix;
