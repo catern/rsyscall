@@ -20,10 +20,11 @@ class SEEK(enum.IntEnum):
 
 #### Classes ####
 from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
-from rsyscall.handle.pointer import Pointer, WrittenPointer
+from rsyscall.handle.pointer import Pointer, WrittenPointer, ReadablePointer
 
+T = t.TypeVar('T')
 class IOFileDescriptor(BaseFileDescriptor):
-    async def read(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
+    async def read(self, buf: Pointer[T]) -> t.Tuple[ReadablePointer[T], Pointer[T]]:
         """read from a file descriptor
 
         manpage: read(2)
@@ -31,9 +32,9 @@ class IOFileDescriptor(BaseFileDescriptor):
         self._validate()
         buf.check_address_space(self.task)
         ret = await _read(self.task.sysif, self.near, buf.near, buf.size())
-        return buf.split(ret)
+        return buf.readable_split(ret)
 
-    async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
+    async def write(self, buf: Pointer[T]) -> t.Tuple[Pointer[T], Pointer[T]]:
         """write to a file descriptor
 
         manpage: write(2)
@@ -44,13 +45,13 @@ class IOFileDescriptor(BaseFileDescriptor):
         return buf.split(ret)
 
 class SeekableFileDescriptor(IOFileDescriptor):
-    async def pread(self, buf: Pointer, offset: int) -> t.Tuple[Pointer, Pointer]:
+    async def pread(self, buf: Pointer[T], offset: int) -> t.Tuple[ReadablePointer[T], Pointer[T]]:
         self._validate()
         with buf.borrow(self.task):
             ret = await _pread(self.task.sysif, self.near, buf.near, buf.size(), offset)
-            return buf.split(ret)
+            return buf.readable_split(ret)
 
-    async def pwrite(self, buf: Pointer, offset: int) -> t.Tuple[Pointer, Pointer]:
+    async def pwrite(self, buf: Pointer[T], offset: int) -> t.Tuple[Pointer[T], Pointer[T]]:
         self._validate()
         with buf.borrow(self.task):
             ret = await _pwrite(self.task.sysif, self.near, buf.near, buf.size(), offset)

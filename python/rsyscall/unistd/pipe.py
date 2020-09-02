@@ -51,10 +51,10 @@ class PipeSerializer(Serializer[T_pipe]):
 
 #### Classes ####
 from rsyscall.fcntl import O
-from rsyscall.handle.pointer import Pointer
+from rsyscall.handle.pointer import Pointer, LinearPointer
 
 class PipeTask(FileDescriptorTask):
-    async def pipe(self, buf: Pointer[Pipe], flags: O=O.NONE) -> Pointer[Pipe]:
+    async def pipe(self, buf: Pointer[Pipe], flags: O=O.NONE) -> LinearPointer[Pipe]:
         """create pipe
 
         manpage: pipe2(2)
@@ -62,9 +62,12 @@ class PipeTask(FileDescriptorTask):
         # TODO we should force the serializer for the pipe to be using this task...
         # otherwise it could get deserialized by a task with which we share memory,
         # but not share file descriptor tables.
+        # Maybe we could create the Serializer right here, and discard
+        # the passed-in one? That wouldn't allow a different task in
+        # the same fd table to receive the handles though.
         with buf.borrow(self):
             await _pipe(self.sysif, buf.near, flags|O.CLOEXEC)
-            return buf
+            return buf._linearize()
 
 #### Raw syscalls ####
 from rsyscall.near.sysif import SyscallInterface

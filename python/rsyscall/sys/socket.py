@@ -9,7 +9,7 @@ import contextlib
 import abc
 import struct
 import rsyscall.near.types as near
-from rsyscall.handle.pointer import Pointer, WrittenPointer
+from rsyscall.handle.pointer import Pointer, WrittenPointer, ReadablePointer, LinearPointer
 if t.TYPE_CHECKING:
     from rsyscall.handle import FileDescriptor, Task
 else:
@@ -203,7 +203,7 @@ class SockbufSerializer(t.Generic[T], Serializer[Sockbuf[T]]):
         socklen = struct[0]
         if socklen > self.buf.size():
             raise Exception("not enough buffer space to read socket, need", socklen)
-        valid, rest = self.buf.split(socklen)
+        valid, rest = self.buf.readable_split(socklen)
         return Sockbuf(valid, rest)
 
 
@@ -408,8 +408,8 @@ class RecvMsghdr(Serializable):
 
 @dataclass
 class RecvMsghdrOut:
-    name: t.Optional[Pointer[Sockaddr]]
-    control: t.Optional[Pointer[CmsgList]]
+    name: t.Optional[ReadablePointer[Sockaddr]]
+    control: t.Optional[LinearPointer[CmsgList]]
     flags: MsghdrFlags
     # the _rest fields are the invalid, unused parts of the buffers;
     # almost everyone can ignore these.
@@ -427,17 +427,17 @@ class RecvMsghdrOutSerializer(Serializer[RecvMsghdrOut]):
     def from_bytes(self, data: bytes) -> RecvMsghdrOut:
         struct = ffi.cast('struct msghdr*', ffi.from_buffer(data))
         if self.name is None:
-            name: t.Optional[Pointer[Sockaddr]] = None
+            name: t.Optional[ReadablePointer[Sockaddr]] = None
             name_rest: t.Optional[Pointer[Sockaddr]] = None
         else:
-            name, name_rest = self.name.split(struct.msg_namelen)
+            name, name_rest = self.name.readable_split(struct.msg_namelen)
         if self.control is None:
             control: t.Optional[Pointer[CmsgList]] = None
             control_rest: t.Optional[Pointer[CmsgList]] = None
         else:
-            control, control_rest = self.control.split(struct.msg_controllen)
+            control, control_rest = self.control.readable_split(struct.msg_controllen)
         flags = MsghdrFlags(struct.msg_flags)
-        return RecvMsghdrOut(name, control, flags, name_rest, control_rest)
+        return RecvMsghdrOut(name, control._linearize() if control else None, flags, name_rest, control_rest)
 
 #### Classes ####
 from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
@@ -554,11 +554,11 @@ class SocketFileDescriptor(BaseFileDescriptor):
         valid, invalid = msg.value.iov.value.split(ret)
         return valid, invalid, msg.value.to_out(msg)
 
-    async def recv(self, buf: Pointer, flags: int) -> t.Tuple[Pointer, Pointer]:
+    async def recv(self, buf: Pointer[T], flags: int) -> t.Tuple[ReadablePointer[T], Pointer]:
         self._validate()
         with buf.borrow(self.task) as buf_n:
             ret = await _recv(self.task.sysif, self.near, buf_n, buf.size(), flags)
-            return buf.split(ret)
+            return buf.readable_split(ret)
 
 class SocketTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
     async def socket(self, domain: AF, type: SOCK, protocol: int=0) -> T_fd:
@@ -570,10 +570,10 @@ class SocketTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
         return self.make_fd_handle(sockfd)
 
     async def socketpair(self, domain: AF, type: SOCK, protocol: int,
-                         sv: Pointer[Socketpair]) -> Pointer[Socketpair]:
+                         sv: Pointer[Socketpair]) -> LinearPointer[Socketpair]:
         with sv.borrow(self) as sv_n:
             await _socketpair(self.sysif, domain, type|SOCK.CLOEXEC, protocol, sv_n)
-            return sv
+            return sv._linearize()
 
 #### Raw syscalls ####
 from rsyscall.near.sysif import SyscallInterface
