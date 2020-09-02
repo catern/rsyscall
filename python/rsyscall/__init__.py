@@ -5,6 +5,7 @@ from rsyscall.path import Path
 from rsyscall.handle import (
     FileDescriptor, Task,
     WrittenPointer, Pointer,
+    ReadablePointer, LinearPointer,
 )
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.monitor import AsyncChildProcess

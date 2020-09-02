@@ -28,7 +28,7 @@ import logging
 import contextlib
 from rsyscall.command import Command
 from rsyscall.handle.fd import FileDescriptorTask, BaseFileDescriptor, FDTable
-from rsyscall.handle.pointer import Pointer, WrittenPointer
+from rsyscall.handle.pointer import Pointer, WrittenPointer, ReadablePointer, LinearPointer
 from rsyscall.handle.process import Process, ChildProcess, ThreadProcess, ProcessTask
 logger = logging.getLogger(__name__)
 

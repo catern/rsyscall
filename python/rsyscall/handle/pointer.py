@@ -277,10 +277,135 @@ class Pointer(t.Generic[T]):
         self.valid = False
         return Pointer(self.mapping, self.transport, serializer, self.allocation, typ)
 
+    def _readable(self) -> ReadablePointer[T]:
+        self._validate()
+        self.valid = False
+        return ReadablePointer(self.mapping, self.transport, self.serializer, self.allocation, self.typ)
+
+    def readable_split(self, size: int) -> t.Tuple[ReadablePointer[T], Pointer]:
+        left, right = self.split(size)
+        return left._readable(), right
+
+    def _linearize(self) -> LinearPointer[T]:
+        self._validate()
+        self.valid = False
+        return LinearPointer(self.mapping, self.transport, self.serializer, self.allocation, self.typ)
+
+    def unsafe(self) -> ReadablePointer[T]:
+        "Get a ReadablePointer from this pointer, even though it might not be initialized"
+        return self._readable()
+
     def _wrote(self, value: T) -> WrittenPointer[T]:
         "Assert we wrote this value to this pointer, and return the appropriate new WrittenPointer"
         self.valid = False
         return WrittenPointer(self.mapping, self.transport, value, self.serializer, self.allocation, self.typ)
+
+class ReadablePointer(Pointer[T]):
+    """A Pointer that is safely readable
+
+    This is returned by functions and syscalls which write some (possibly
+    unknown) pure data to an address in memory, which then can be read and
+    deserialized to get a sensical pure data value rather than nonsense.
+
+    Immediately after allocation, a Pointer is returned, rather than a
+    ReadablePointer, to indicate that the pointer is uninitialized, and
+    therefore not safely readable.
+
+    This is also returned by Pointer.unsafe(), to support system calls where
+    it's not statically known that a passed Pointer is written to and
+    initialized; ioctls, for example.  Tt would be better to have a complete
+    description of the Linux interface, so we could get rid of this unsafety.
+
+    This is currently only a marker type, but eventually we'll move the read()
+    method here to ReadablePointer from Pointer, so that reading Pointers is
+    actually not allowed. For now, this is just a hint.
+
+    """
+    __slots__ = ()
+
+    def _with_mapping(self, mapping: MemoryMapping) -> ReadablePointer:
+        # see notes in Pointer._with_mapping
+        if type(self) is not ReadablePointer:
+            raise Exception("subclasses of ReadablePointer must override _with_mapping")
+        if mapping.file is not self.mapping.file:
+            raise Exception("can only move pointer between two mappings of the same file")
+        self._validate()
+        self.valid = False
+        return type(self)(mapping, self.transport, self.serializer, self.allocation, self.typ)
+
+class LinearPointer(ReadablePointer[T]):
+    """A Pointer that must be read, once
+
+    This is returned by functions and syscalls which write a unknown
+    value to an address in memory, which then must be read and
+    deserialized *once* to manage the resources described by that
+    value, such as file descriptors.
+
+    The value is:
+    - "affine"; it must be read at least once, so that the resources inside
+      can be returned as managed objects.
+    - "relevant"; it must be read at most once, so that dangling handles to the
+      resources can't be created again after they're closed.
+
+    Since it's both affine and relevant, this is a true linear type.
+
+    Unfortunately it's going to be quite difficult to guarantee relevance. There
+    are three issues here:
+    1. The pointer can simply be dropped and garbage collected.
+    2. System calls can write to the pointer and discard its previous results
+    3. We can write to the pointer (through .write) and discard its previous results
+
+    We can mitigate 1 a little by warning in __del__.
+
+    We could statically prevent 3 by removing the `read` and `write` methods
+    from this class, and only allowing `linear_read`, or dynamically by throwing
+    in `write` if `been_read` is false.
+
+    Any approach to 2 is going to require some tweaks to the pointer API, and
+    probably some mass changes to syscall implementations. Although maybe we
+    could do it off of .near accesses.
+
+    """
+    __slots__ = ('been_read')
+
+    def __init__(self,
+                 mapping: MemoryMapping,
+                 transport: MemoryGateway,
+                 serializer: Serializer[T],
+                 allocation: AllocationInterface,
+                 typ: t.Type[T],
+    ) -> None:
+        super().__init__(mapping, transport, serializer, allocation, typ)
+        self.been_read = False
+
+    async def read(self) -> T:
+        if self.been_read:
+            raise Exception("This LinearPointer has already been read, it can't be read again for safety reasons.")
+        ret = await super().read()
+        self.been_read = True
+        return ret
+
+    async def linear_read(self) -> t.Tuple[T, Pointer[T]]:
+        "Read the value, and return the now-inert buffer left over as a Pointer."
+        ret = await self.read()
+        self.valid = False
+        new_ptr = Pointer(self.mapping, self.transport, self.serializer, self.allocation, self.typ)
+        return ret, new_ptr
+
+    def __del__(self) -> None:
+        super().__del__()
+        if not self.been_read:
+            logger.error("Didn't read this LinearPointer before dropping it: %s", self)
+
+    def _with_mapping(self, mapping: MemoryMapping) -> LinearPointer:
+        # see notes in Pointer._with_mapping
+        if type(self) is not LinearPointer:
+            raise Exception("subclasses of LinearPointer must override _with_mapping")
+        if mapping.file is not self.mapping.file:
+            raise Exception("can only move pointer between two mappings of the same file")
+        self._validate()
+        self.valid = False
+        return type(self)(mapping, self.transport, self.serializer, self.allocation, self.typ)
 
 class WrittenPointer(Pointer[T_co]):
     """A Pointer with some known value written to it
