@@ -58,6 +58,8 @@ class RAM:
             ptr: Pointer = await self.malloc_serializer(cls.get_serializer(self.task), cls.sizeof())
             return ptr
         else:
+            if issubclass(cls, FixedSize):
+                raise Exception("Can't pass a FixedSize cls to malloc and also specify the size argument", cls, size)
             if issubclass(cls, FixedSerializer):
                 ptr = await self.malloc_serializer(cls.get_serializer(self.task), size)
                 return ptr
