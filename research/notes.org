@@ -20830,6 +20830,20 @@ while suspendable.notpast:
    where you'd just check that the count of blocks is at least what you allocated.
 
    yeah. yeah I think this is good and right.
+** TODO consider reducing abstraction in epoller stuff
+   Can we remove the AFD intermediary?
+   Just have the epoller.register?
+
+   Ideally, the interface would just be, add it to epoll.
+
+   how can we de-abstract this?
+
+   hm, well. it would be nice if we could use epoll directly,
+   and likewise use handles directly.
+   hm.
+
+   basically, if we just had the thing wot lets us do epolls,
+   and the raw fd. hm hm hm.
 ** TODO rename WrittenPointer to InPointer
    "in" stands for input or initialized, take your pick.
 
@@ -22832,6 +22846,327 @@ I want to do things inside emacs
 
 I guess if I make a game eventually or something,
 I *will* be making my own programming language!
+* effects
+ok so...
+
+effect leakage. why is it a problem?
+because, can't we just keep a reference to that object around?
+
+(i guess one issue is the multi-prompt stuff)
+
+and, yeah, it's something with a dynamic lifetime wrapping us,
+but why does it have to be that way?
+can't we, like...
+return out from it...
+while still keeping it around?
+
+like, what would that look like?
+i guess it would, uh... look like...
+
+well how would you encode exceptions, let's say?
+
+you have this throw cap and you can throw to it.
+
+and you *keep the handler around*.
+
+so where does the handle return to?
+well, it invokes its return continuation, obviously...
+
+how would that work... hmm...
+
+well you could use some linear types, or dynamic linearity, to prevent the retcon being invoked twice.
+
+i guess we could do it all with objects too
+
+the retcon is a method on another object...?
+
+what would wrapping look like...?
+
+so...
+
+well let's suppose we get a continuation when we're called - or at least, we can capture one.
+
+or I mean...
+
+let's assume, like...
+
+some nice handler internally sure.
+
+so we have an effect handler object/function thing.
+
+which... could return...
+
+but we can also make it unable to return...
+
+so when we create one of these we pass it our return continuation - or we don't.
+
+looked at the classic paper on it https://infoscience.epfl.ch/record/219173?ln=en
+ok right so... he doesn't want capturing because he doesn't want, like.. an individual function to have a captured effect which it then executes when we apply it.
+(so effects can be tracked - i.e. the whole point of an effect system)
+
+but, what's the issue with that?
+
+it's in fact kind of totally internal, isn't it?
+
+why can't we close over an effectful operation and perform it?
+
+well, when we execute the closure multiple times, we'll be performing effects.
+
+but, counterpoint, benign effects are good?
+
+yeah I mean... hm.
+
+so if we take our effects as arguments - yes sure it's good.
+
+we can do some further control with linear types, but,
+we'll still have the ability to close over an effect and do it internally.
+
+and maybe that's ok.
+
+hmm like can you close over an effect handler in haskell-style designs?
+well those designs are all hacks anyway.
+
+well, why can't you?
+cuz typeclasses can't be applied away.
+
+or something?
+
+i mean, how can it be okay to close over an effect?!?
+
+it won't be pure!
+
+i guess our two colors can be, constructive and classical. haha.
+
+and I guess, recursion?
+
+(yah I guess the monad is helpful for marking things as classical in a constructive setting)
+
+yeah fixed-point
+
+hmm so constructive is pure and classical is imperative/async/monadic, hah.
+
+but wouldn't it be nice to have something a little more annotated?
+
+hmm wait a second we can always just pass around a monad value anyway, can't we?
+
+can we execute that multiple times to get an effect? well I guess we know it's effectful in any case...
+
+so that's why we'd tag things as classical.
+
+but wait the monads have different values don't they?
+how do we execute it without its typeclass?
+
+it doesn't close over things I guess.
+
+can we close over a typeclass in haskell?
+
+what would that mean...
+
+i guess it would mean maybe... uh...
+
+well if I have I guess...
+
+Show a => a -> str
+
+can i get... maybe...
+um...
+
+str? i guess obviously so.
+
+oh wait, I can have instances of the concrete IO typeclass,
+and then just pass those around, and execute them multiple times!
+and, doesn't that have a side-effect without knowing the concrete effect?
+
+hmm I guess it won't allocate references or anything like that?
+
+hmm, with Haskell effect systems,
+they're all ultimately implemented in terms of IO, right?
+so if I had a program in some effect system returning an Int or whatever,
+I can ultimately get back a bare "IO Int", right?
+is it possible for that to close over a reference to some state such that if I execute that twice,
+I get side-effects (even just with um um..
+
+i guess executing an IO thing can have side effects easily externally...
+
+anyway, so yeah! we can close over the effects easily. and then we won't see them!
+
+aha, and yes, there's newIORef and things like that.
+
+and I guess yeah probably that some API is exposed inside an effect system!
+
+so OK, Haskell doesn't prevent me from closing over effects either! it just lets me tag them as classical with IO.
+
+so, I guess the reason I can't do that in a program is that my interpreter is abstract.
+
+so I can't close over the typeclass thingy.
+
+can I achieve the same thing with capability-passing stuff? hm.
+
+so yeah, my interpreter is abstract...
+or rather... my semantics are abstract?
+
+what does that correspond to with caps?
+
+my semantics are abstract... I don't know what other things they support...
+I have a TFS value... hm m mmmm.
+
+ok so caps make me abstract over my interpreter *value*
+
+but i also need to be abstract over my interpreter *type*?
+
+soooo
+
+i mean if i bundle it together... then i've passed in my interpreter cap...
+
+but if the type is... still abstract...
+
+i mean yeah sure with haskell I guess the type and implementation are selected simultaneously
+
+the type is just a tag for lookup or something...
+
+but i mean...
+
+with tfs...
+
+ok sure so let's say I tag it as a classical value...
+
+but i need to be abstract...
+
+well ok so it looks for something which.. . ....
+
+has an interpreter?
+
+so ok, by passing in the caps and allowing direct calls, we...
+
+well ok the idea is
+#+BEGIN_SRC 
+f(a, b)
+#+END_SRC
+
+vs
+#+BEGIN_SRC
+f()
+#+END_SRC
+
+which is at IO.
+
+hm.
+
+and then we run both with:
+#+BEGIN_SRC
+do f(a, b)
+#+END_SRC
+
+vs
+#+BEGIN_SRC
+do f()
+#+END_SRC
+
+so I guess both of them get interpreted extenally hmmmm
+
+but the issue is that we can have the f() thing,
+and have its return type be abstract,
+so we can't run it. except by incorporating it into our return value.
+i.e.... we force it to run in the same interpreter as us?
+
+so yeah if it's just abstract in that it hasn't had a type assigned,
+we can just apply the type constructor and then use it.
+
+it's the unification... I guess? that helps us here.
+
+well...
+
+right so it's because our return value, our context, is also abstract.
+
+so if we're an abstract program,
+we can't perform a concrete classical program.
+
+cuz that would be concrete and not fit our, y'know, return value or whatever.
+
+monads'n'stuff.
+
+so how does that get enforced I guess?
+
+well with typeclasses,
+we have these dictionaries which are passed down,
+which go to dynamically maintained state, whatever.
+
+and the typeclass dictionary is an argument.
+
+ok ok wait so yeah
+
+how does it get enforced that we have to be abstract in our return value?
+
+well, it doesn't! we can always just be in IO, I guess.
+
+except I suppose the libraries will be abstract? no but we can use abstract libraries fine.
+
+well, but... they can't perform IO functions, they can't be effect-polymorphic in those.
+
+** after pacing
+ok so I guess we can just manually encode what typeclasses do
+
+universally quantify over the domain, and pass in the capabilities as tuples at the same domain.
+
+then map doesn't need to be changed at all to be effectful, innit?
+
+now what about returning a function?
+
+well it would also need to be a universal.
+and if it was a universal, then it could leak caps,
+but not use them,
+as standard.
+
+it would have to take in any caps.
+
+cuz it would be at a different type from them.
+
+ok... sure... that's stealing the approach from typeclasses...
+
+or rather, I guess, stealing it from TFS maybe?
+
+and, so, yeah, if you universally quantify over your domain,
+then you can't immediately perform effects.
+
+although... i guess one idea is that you would immediately perform effects.
+
+so...
+although what does "immediately" mean anyway?
+
+i mean, when you are calling some method on some cap,
+you immediately perform the effect! that's that.
+
+so the question is... how do we prevent closing over caps?
+
+i mean the desired behavior is,
+you pass in these things,
+and we call methods on them,
+and that does some stuff.
+
+which you can always do! in haskell you can get some IO value that covers everything
+
+
+hmm, observation: one property that people want for effect systems is not being able to close over an effect handler,
+and leak code using that handler out of the context of that handler.
+but this really conflates two things:
+the runtime difficulty of maintaining references to handlers that were established above you on the stack,
+and the programming difficulty of being able to create, e.g., a () -> int which is side-effectful
+
+but the second concern there isn't prevented by common effect systems anyway,
+so maybe we should just bite the bullet
+
+ok so what would this mean with concrete types? like...
+a concrete handler for some concrete effect...
+
+going out of scope or what.
+
+well hm if we do everything in TFS, doesn't it just work?
+
+** garbage collection
+yeah I feel really interested in the idea of just GCing handlers,
+instead of using bracket-style and scoping them
+
+if I think it's unusable for fds, maybe it's unusable for handlers too
 
 * paper response
 My main concern is that the paper seems to mix the syscall interface
