@@ -7,7 +7,7 @@ import struct
 import typing as t
 import rsyscall.near.types as near
 import os
-from rsyscall.handle.pointer import Pointer, WrittenPointer
+from rsyscall.handle.pointer import Pointer, WrittenPointer, ReadablePointer
 if t.TYPE_CHECKING:
     from rsyscall.handle import Task, FileDescriptor
 
@@ -56,12 +56,12 @@ from rsyscall.fcntl import AT, O
 T_fd = t.TypeVar('T_fd', bound='FSFileDescriptor')
 class FSFileDescriptor(BaseFileDescriptor):
     async def readlinkat(self, path: WrittenPointer[t.Union[str, os.PathLike]],
-                         buf: Pointer) -> t.Tuple[Pointer, Pointer]:
+                         buf: Pointer) -> t.Tuple[ReadablePointer, Pointer]:
         self._validate()
         with path.borrow(self.task):
             with buf.borrow(self.task):
                 ret = await _readlinkat(self.task.sysif, self.near, path.near, buf.near, buf.size())
-                return buf.split(ret)
+                return buf.readable_split(ret)
 
     async def faccessat(self, ptr: WrittenPointer[t.Union[str, os.PathLike]], mode: OK, flags: AT=AT.NONE) -> None:
         self._validate()
@@ -103,11 +103,12 @@ class FSFileDescriptor(BaseFileDescriptor):
         return await self.dup3(newfd, 0)
 
 class FSTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
-    async def readlink(self, path: WrittenPointer[t.Union[str, os.PathLike]], buf: Pointer) -> t.Tuple[Pointer, Pointer]:
+    async def readlink(self, path: WrittenPointer[t.Union[str, os.PathLike]],
+                       buf: Pointer) -> t.Tuple[ReadablePointer, Pointer]:
         with path.borrow(self) as path_n:
             with buf.borrow(self) as buf_n:
                 ret = await _readlinkat(self.sysif, None, path_n, buf_n, buf.size())
-                return buf.split(ret)
+                return buf.readable_split(ret)
 
     async def access(self, path: WrittenPointer[t.Union[str, os.PathLike]], mode: int, flags: int=0) -> None:
         with path.borrow(self) as path_n:

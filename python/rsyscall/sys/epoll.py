@@ -63,18 +63,18 @@ class EpollEventList(t.List[EpollEvent], Serializable):
 
 #### Classes ####
 from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
-from rsyscall.handle.pointer import Pointer, WrittenPointer
+from rsyscall.handle.pointer import Pointer, WrittenPointer, ReadablePointer
 
 T_fd = t.TypeVar('T_fd', bound='EpollFileDescriptor')
 class EpollFileDescriptor(BaseFileDescriptor):
     async def epoll_wait(self, events: Pointer[EpollEventList],
-                         timeout: int) -> t.Tuple[Pointer[EpollEventList], Pointer]:
+                         timeout: int) -> t.Tuple[ReadablePointer[EpollEventList], Pointer]:
         self._validate()
         with events.borrow(self.task):
             maxevents = events.size()//EpollEvent.sizeof()
             num = await _epoll_wait(self.task.sysif, self.near, events.near, maxevents, timeout)
             valid_size = num * EpollEvent.sizeof()
-            return events.split(valid_size)
+            return events.readable_split(valid_size)
 
     async def epoll_ctl(self, op: EPOLL_CTL, fd: BaseFileDescriptor,
                         event: t.Optional[WrittenPointer[EpollEvent]]=None) -> None:
