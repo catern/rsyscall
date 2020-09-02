@@ -19806,6 +19806,37 @@ async with sysif.syscall_lock():
     a simple primitive.
 ** add delimcc runner and use
    it's time!!!
+** TODO tolerate non-empty sigprocmask on startup in local thread
+   So there are a couple options:
+
+   1. track the actual sigmask
+   2. track our sigmask *on top* of the already blocked signals (then we can block inherit signals)
+   3. zero out the sigmask at startup
+
+   So actually 2 is pretty interesting.
+   Well.
+
+   I mean ideally we'd pass down the signals that are blocked.
+
+   It's a hassle that you'd need to check if a signal is blocked from inheritance before blocking it though.
+
+   Like, if the program's logic hasn't blocked a signal and gotten a SignalBlock,
+   they don't know it's blocked.
+
+   so... I definitely don't like 1.
+   I shouldn't track the actual sigmask.
+
+   but what if I allow blocking signals?
+   what if I just assert that all the signals we've blocked,
+   are still blocked?
+
+   that's interesting because that also allows someone else in the program to block signals
+
+   and also, that's what we'd want to do if you could "allocate multiple blocks" for something.
+
+   where you'd just check that the count of blocks is at least what you allocated.
+
+   yeah. yeah I think this is good and right.
 * fuse stuff
   ok so one thing we noticed in fuse is,
   if we don't close the devfuse, then other threads making syscalls will get stuck in D-wait,
