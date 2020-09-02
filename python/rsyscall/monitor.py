@@ -161,10 +161,6 @@ class AsyncChildProcess:
 
     async def waitpid(self, options: W) -> ChildState:
         "Wait for a child state change in this child, like waitid(P.PID)"
-        if options & W.EXITED and self.process.death_state:
-            # TODO this is not really the actual behavior of waitpid...
-            # if the child is already dead we'd get an ECHLD not the death state change again.
-            return self.process.death_state
         while True:
             # If a previous call has given us a next_sigchld to wait on, then wait we shall.
             if self.next_sigchld:
@@ -198,7 +194,10 @@ class AsyncChildProcess:
     async def check(self) -> ChildState:
         "Wait for this child to die, and once it does, throw if it didn't exit cleanly"
         try:
-            death = await self.waitpid(W.EXITED)
+            if self.process.death_state:
+                death = self.process.death_state
+            else:
+                death = await self.waitpid(W.EXITED)
         except trio.Cancelled:
             await self.kill(SIG.TERM)
             raise
