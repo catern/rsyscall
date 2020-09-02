@@ -301,9 +301,9 @@ class SignalTask(Task):
             raise Exception("can't check our tracking of sigmask "
                             "when we haven't called sigprocmask with an oldset ptr")
         sigmask = await self.sigmask_oldset_ptr.read()
-        if sigmask != self.old_sigmask:
-            raise Exception("SignalMask tracking got out of sync, thought mask was",
-                            self.old_sigmask, "but was actually", sigmask)
+        if (sigmask & self.old_sigmask) != self.old_sigmask:
+            raise Exception("SignalMask tracking got out of sync, we blocked these signals:", self.old_sigmask,
+                            "but the actually blocked signals don't include all of those:", sigmask)
 
 @dataclass(eq=False)
 class SignalBlock:
