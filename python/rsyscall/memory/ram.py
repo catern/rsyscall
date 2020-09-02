@@ -55,16 +55,16 @@ class RAM:
         if size is None:
             if not issubclass(cls, FixedSize):
                 raise Exception("non-FixedSize cls passed to malloc without specifying size to allocate", cls)
-            ptr: Pointer = await self.malloc_serializer(cls.get_serializer(self.task), cls.sizeof())
+            ptr: Pointer = await self.malloc_serializer(cls.get_serializer(self.task), cls.sizeof(), cls)
             return ptr
         else:
             if issubclass(cls, FixedSize):
                 raise Exception("Can't pass a FixedSize cls to malloc and also specify the size argument", cls, size)
             if issubclass(cls, FixedSerializer):
-                ptr = await self.malloc_serializer(cls.get_serializer(self.task), size)
+                ptr = await self.malloc_serializer(cls.get_serializer(self.task), size, cls)
                 return ptr
             elif issubclass(cls, bytes):
-                return await self.malloc_serializer(BytesSerializer(), size)
+                return await self.malloc_serializer(BytesSerializer(), size, bytes)
             else:
                 raise Exception("don't know how to find serializer for", cls)
 
@@ -79,7 +79,8 @@ class RAM:
         if isinstance(data, HasSerializer):
             serializer = data.get_self_serializer(self.task)
             data_bytes = serializer.to_bytes(data)
-            ptr: Pointer = await self.malloc_serializer(serializer, len(data_bytes))
+            ptr: Pointer = await self.malloc_serializer(
+                serializer, len(data_bytes), type(data))
             return await self._write_to_pointer(ptr, data, data_bytes)
         elif isinstance(data, bytes):
             ptr = await self.malloc(bytes, len(data))
@@ -99,7 +100,9 @@ class RAM:
             allocator = self.allocator
         return await perform_batch(self.task, self.transport, allocator, op)
 
-    async def malloc_serializer(self, serializer: Serializer[T], size: int) -> Pointer[T]:
+    async def malloc_serializer(
+            self, serializer: Serializer[T], size: int, typ: t.Type[T],
+    ) -> Pointer[T]:
         """Allocate a typed space in memory using an explicitly-specified Serializer.
 
         This is useful only in relatively niche situations.
@@ -107,7 +110,7 @@ class RAM:
         """
         mapping, allocation = await self.allocator.malloc(size, alignment=1)
         try:
-            return Pointer(mapping, self.transport, serializer, allocation)
+            return Pointer(mapping, self.transport, serializer, allocation, typ)
         except:
             allocation.free()
             raise

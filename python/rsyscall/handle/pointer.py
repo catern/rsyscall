@@ -51,11 +51,12 @@ class Pointer(t.Generic[T]):
     See also the inheriting class WrittenPointer
 
     """
-    __slots__ = ('mapping', 'transport', 'serializer', 'allocation', 'valid')
+    __slots__ = ('mapping', 'transport', 'serializer', 'allocation', 'valid', 'typ')
     mapping: MemoryMapping
     transport: MemoryGateway
     serializer: Serializer[T]
     allocation: AllocationInterface
+    typ: t.Type[T]
     valid: bool
 
     def __init__(self,
@@ -63,11 +64,13 @@ class Pointer(t.Generic[T]):
                  transport: MemoryGateway,
                  serializer: Serializer[T],
                  allocation: AllocationInterface,
+                 typ: t.Type[T],
     ) -> None:
         self.mapping = mapping
         self.transport = transport
         self.serializer = serializer
         self.allocation = allocation
+        self.typ = typ
         self.valid = True
 
     async def write(self, value: T) -> WrittenPointer[T]:
@@ -239,10 +242,12 @@ class Pointer(t.Generic[T]):
         return rest, written
 
     def __repr__(self) -> str:
+        name = type(self).__name__
+        typname = self.typ.__name__
         try:
-            return f"Pointer({self.near}, {self.serializer})"
+            return f"{name}[{typname}]({self.near}, {self.size()})"
         except UseAfterFreeError:
-            return f"Pointer(valid={self.valid}, {self.mapping}, {self.allocation}, {self.serializer})"
+            return f"{name}[{typname}](valid={self.valid}, {self.mapping}, {self.allocation}, {self.serializer})"
 
     #### Various ways to create new Pointers by changing one thing about the old pointer. 
     def _with_mapping(self: T_pointer, mapping: MemoryMapping) -> T_pointer:
@@ -259,23 +264,23 @@ class Pointer(t.Generic[T]):
         # right here, we just linearly move the pointer to a new mapping
         self._validate()
         self.valid = False
-        return type(self)(mapping, self.transport, self.serializer, self.allocation)
+        return type(self)(mapping, self.transport, self.serializer, self.allocation, self.typ)
 
     def _with_alloc(self, allocation: AllocationInterface) -> Pointer:
-        return Pointer(self.mapping, self.transport, self.serializer, allocation)
+        return Pointer(self.mapping, self.transport, self.serializer, allocation, self.typ)
 
-    def _reinterpret(self, serializer: Serializer[U]) -> Pointer[U]:
+    def _reinterpret(self, serializer: Serializer[U], typ: t.Type[U]) -> Pointer[U]:
         # TODO how can we check to make sure we don't reinterpret in wacky ways?
         # maybe we should only be able to reinterpret in ways that are allowed by the serializer?
         # so maybe it's a method on the Serializer? cast_to(Type)?
         self._validate()
         self.valid = False
-        return Pointer(self.mapping, self.transport, serializer, self.allocation)
+        return Pointer(self.mapping, self.transport, serializer, self.allocation, typ)
 
     def _wrote(self, value: T) -> WrittenPointer[T]:
         "Assert we wrote this value to this pointer, and return the appropriate new WrittenPointer"
         self.valid = False
-        return WrittenPointer(self.mapping, self.transport, value, self.serializer, self.allocation)
+        return WrittenPointer(self.mapping, self.transport, value, self.serializer, self.allocation, self.typ)
 
 class WrittenPointer(Pointer[T_co]):
     """A Pointer with some known value written to it
@@ -308,15 +313,17 @@ class WrittenPointer(Pointer[T_co]):
                  value: T_co,
                  serializer: Serializer[T_co],
                  allocation: AllocationInterface,
+                 typ: t.Type[T_co],
     ) -> None:
-        super().__init__(mapping, transport, serializer, allocation)
+        super().__init__(mapping, transport, serializer, allocation, typ)
         self.value = value
 
     def __repr__(self) -> str:
+        name = type(self).__name__
         try:
-            return f"WrittenPointer({self.near}, {self.value})"
+            return f"{name}({self.near}, {self.value})"
         except UseAfterFreeError:
-            return f"WrittenPointer(valid={self.valid}, {self.mapping}, {self.allocation}, {self.value})"
+            return f"{name}(valid={self.valid}, {self.mapping}, {self.allocation}, {self.value})"
 
     def _with_mapping(self, mapping: MemoryMapping) -> WrittenPointer:
         if type(self) is not WrittenPointer:
@@ -326,4 +333,4 @@ class WrittenPointer(Pointer[T_co]):
         # see notes in Pointer._with_mapping
         self._validate()
         self.valid = False
-        return type(self)(mapping, self.transport, self.value, self.serializer, self.allocation)
+        return type(self)(mapping, self.transport, self.value, self.serializer, self.allocation, self.typ)

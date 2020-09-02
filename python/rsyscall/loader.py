@@ -130,7 +130,7 @@ class NativeLoader:
             # TODO we're just making up a memory mapping that this pointer is inside;
             # we should figure out the actual mapping, and the size for that matter.
             mapping = MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), far.File())
-            return Pointer(mapping, NullGateway(), NativeFunctionSerializer(), StaticAllocation())
+            return Pointer(mapping, NullGateway(), NativeFunctionSerializer(), StaticAllocation(), NativeFunction)
         return NativeLoader(
             server_func=to_handle(symbols.rsyscall_server),
             persistent_server_func=to_handle(symbols.rsyscall_persistent_server),

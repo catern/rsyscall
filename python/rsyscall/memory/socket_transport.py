@@ -126,7 +126,8 @@ def to_span(ptr: Pointer) -> Pointer:
         ptr.mapping,
         ptr.transport,
         ptr.serializer,
-        SpanAllocation(ptr.allocation, 0, ptr.allocation.size()))
+        SpanAllocation(ptr.allocation, 0, ptr.allocation.size()),
+        ptr.typ)
 
 @dataclass
 class MergedAllocation(AllocationInterface):
@@ -191,7 +192,8 @@ def merge_adjacent_pointers(ptrs: t.List[Pointer]) -> Pointer:
         ptrs[0].mapping,
         ptrs[0].transport,
         ptrs[0].serializer,
-        MergedAllocation([ptr.allocation for ptr in ptrs]))
+        MergedAllocation([ptr.allocation for ptr in ptrs]),
+        ptrs[0].typ)
 
 def merge_adjacent_writes(write_ops: t.List[t.Tuple[Pointer, bytes]]) -> t.List[t.Tuple[Pointer, bytes]]:
     "Combine writes to adjacent memory, to reduce the number of operations needed"

@@ -385,7 +385,7 @@ class RecvMsghdr(Serializable):
     def to_out(self, ptr: Pointer[RecvMsghdr]) -> Pointer[RecvMsghdrOut]:
         # what a mouthful
         serializer = RecvMsghdrOutSerializer(self.name, self.control)
-        return ptr._reinterpret(serializer)
+        return ptr._reinterpret(serializer, RecvMsghdrOut)
 
 @dataclass
 class RecvMsghdrOut:
