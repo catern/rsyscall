@@ -24,6 +24,7 @@ from rsyscall.memory.transport import MemoryTransport
 from rsyscall.handle import Pointer, Task, MemoryMapping
 from rsyscall.signal import SIG, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
+from rsyscall.sys.syscall import SYS
 from rsyscall.network.connection import FDPassConnection
 from rsyscall.environ import Environment
 from rsyscall.loader import NativeLoader
