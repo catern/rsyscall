@@ -23167,6 +23167,806 @@ yeah I feel really interested in the idea of just GCing handlers,
 instead of using bracket-style and scoping them
 
 if I think it's unusable for fds, maybe it's unusable for handlers too
+* web thing
+it would be nice if there was some existing JS thing so I didn't have to write any Javascript
+instead I'd just get HTTP requests in the form that that JS thing usually outputs,
+and send back HTML with the appropriate hooks.
+
+hmm indicating what is valid,
+that requires lots of knowledge about the calls...
+
+rendering them down...
+
+well if we indicate one thing then another thing...
+
+i mean it would be nice to just receive, like... things to do.
+
+i don't want to have to wrap all the methods and code and stuff, what a hassle...
+
+although I guess I will need to... I can't auto-generate it...
+
+ugh it would be nice if it would just make the call for me!
+
+hm.
+
+yeah ok, no javascript is an interesting idea.
+
+i think that would be cool.
+
+well how do we name the fds?
+
+so I could have the fds, but I kind of want to avoid assigning names to them
+
+hmm mm m mmmmm
+
+ok so I guess I can just have a UI that is custom, blah.
+
+I can somewhat dynamically generate methods I guess.
+
+ok I guess we draw a graph of connected boxes or something?
+** html <details> element
+nicely allows collapsing and hiding data in pure HTML! neat!
+** fd tables
+
+Hmm!
+
+The fds are actually associated with each process. hm.
+not with the fd tables.
+
+the inherit could maybe be in the table,
+but the use - that's for the process. hm.
+
+heck, so is inherit. kinda.
+
+so okay...
+
+maybe the fd table shows all the far fds?
+
+and then you can drag fds to your process?
+
+yeah makes sense!
+we have a set of fd handles in each process,
+and the fd table also has fds.
+
+and we can also use between processes, that's fine too.
+
+maybe the fd handles should all be in the table? hm.
+** frameworks
+https://github.com/unpoly/unpoly
+http://intercoolerjs.org/
+** keyboard
+actually it would be nice if it worked with the keyboard - i don't like the mouse
+
+yeah very good point to myself.
+
+mebe i'll just do it with emacs
+
+meh!!! i'll just do it
+
+OK ok ok.
+
+i guess i'll use the thread stuff
+
+aaaa ok ok.
+
+the UI is gonna be a problem in any language
+
+keyboard tho
+
+hmm.
+
+maybe.. maybe..
+
+i guess we can just do something totally text-based
+
+we print all the things that get blocked when we make a syscall,
+then print the result once it's done
+
+i guess we print the fds in scope when querying a method for what it supports.
+
+hmm protocol...
+
+yeah okay.
+
+we can query for the methods available,
+and then query what possible arguments for the methods there are
+
+and those will identify fds
+
+and we can represent flags and enums too
+
+and when we call a syscall we get a print showing all the things that started blocking
+
+and then later asynchronously get a print with those things unblocking, with the result
+
+or i guess it could even be based on function calls, RPC, likely HTTP,
+rather than unstructured text
+
+ok seems fine.
+
+I guess I'll link to the manpage as well.
+
+
+ok ok ok so I'll have this interface, very introspecty,
+and I'll build a simple HTML thing on top of it.
+
+so like.
+
+we'll return this data, and then I'll render it into HTML... how?
+
+I guess I'll have an HTML->data mapping thing?
+
+well, since I want to gray out a lot of stuff, I...
+
+okie dokie. html. select. submit. stuff!!
+
+i'll print to text first since that's easier to iterate on.
+heh i could even work with it from emacs
+
+
+hmm exiting processes higher in the hierarchy is ugly.
+** hm
+i guess we'll mark inputs as disabled during a syscall,
+but how will the response come back?
+
+i guess some kinda server sent event
+
+cool we can use a input with a datalist instead of a select! much cooler.
+** basics done
+so we did the basic end to end thing.
+
+now what?
+
+fds? that would be nice.
+*** issues
+**** returning results
+     like fds or strings or whatever
+
+     OK, I made some good progress on my library's interactive-web-UI-tutorial, but now another question. I have a simple pure-HTML UI for my library (generated through introspection), which represents an object hierarchy through nested <details>, with a bunch of forms for different methods - I assume this is pretty standard stuff.
+
+     Many of my library's methods just have side-effects, creating new objects in the hierarchy, so when I call the method (through the form), the result is visible by the change to the object hierarchy - new <details> elements show up or disappear.
+
+     but many methods don't have side-effects, they actually return (pure data) values; and even side-effectful methods might throw exceptions. Probably most of the time I just want to dismiss those return values after seeing them once, but maybe sometimes I want to keep them around. Any suggestions on HTML features that might be good for representing those return values?
+     
+     I'm wondering
+**** getting responses back from syscall asynchronously
+     instead of blocking the UI like we do right now
+
+     i guess we can block in post still, mebbe.
+
+     this is kind of related to returning results huh.
+**** DONE surfacing more methods
+     this is easy, let's do this.
+
+     methods which return things which are in the lists. . .
+
+     i guess we could have a list of buffers in the same way as fds.
+
+     we could have a malloc thing
+
+     and have the buffers organized by type.
+
+     and show their values too. hm.
+
+     that's all returning through side-effects though
+
+     what about, like, actual return values? like read returning a subset of a buffer,
+     or things returning integers or whatever
+
+     hey for that matter we need to wait on our child processes and get their exit code!
+**** DONE wait on child processes
+     can leave behind stub and then clear it off
+
+     so we have like, a list of child processes,
+     and child threads,
+     mixed up.
+
+     and...
+
+     so we can waitid on one.
+     does it leave something behind after we waitid?
+     well the question is, i guess... how else do we return results?
+** results ideas
+*** temporary dialog
+    with an X to clear it
+*** frames
+*** bar at top or bottom
+    that shows last syscall result
+
+    this would be pretty easy tbh
+
+    it's a hassle but sure
+
+    we store the last result somewhere and just keep going
+
+    (or maybe store all results?)
+
+    ok yeah seems straightforward
+** results
+*** prettify object names
+*** highlight section when jumping back to it
+    plus also we really want this id to be a bit more strongly referenced, hm.
+
+    we need a cap to the section to link to it
+
+    if so then how do we get the section?
+
+    well, we have to look it up.
+
+    to look it up we need the object,
+    and we use the object to find its section.
+*** pin to top with frame
+** DONE reconection
+   looks like chrome wants to terminate and reconnect, sigh.
+   how foolish!
+   how utterly foolish!
+
+   but fine.
+
+   just wrapped the accept stuff in a loop
+** DONE exec
+   we need to support exec
+
+   how will we do this?
+
+   so I don't really want to use paths, hm.
+
+   h m m m well.
+
+   I will probably need to support execing a path eventually? so let's just do that.
+
+   oh yeah well I will at least need to specify paths for openat,
+   so it's fine.
+
+   also the point isn't to promote caps, it's to teach.
+   and in practice they'll be using paths.
+*** decoding args
+    okaaaaaaay so this is a pretty complicated method isn't it.
+
+    maybe we should just support execv.
+
+    and also, if an argument is 1. optional and 2. we don't support specifying it,
+    then we can just skip it.
+
+    ok so now I just need to, um, know how to synthesize argv
+
+    argv is an opaque list of args
+
+    hm how do i allow spaces
+
+    i could just new-line separate and allow escaping?
+
+    entering a list of strings h m m m m
+
+    hmm i can do one post for each command argument
+
+    yeah commands would be good maybe hm.
+
+    how would we model commands?
+    they rely on being purely functional.
+
+    how do we handle that in a UI?
+
+    i could have bindings... and shadow variables instead of mutating things?
+
+    basically mutate variables instead?
+
+    ok so it could be based on copying?
+
+    right, like I was thinking, you'd copy a command around...
+
+    except, that's pretty awkward
+
+    copy and paste would be really handy here. hm.
+
+    not just for commands, for methods too!
+
+    well it's not as if we're really trying to be all that usable.
+
+    command would be handy though, hm.
+    that would internalize the thing you'd otherwise copy and paste.
+
+    like, complicated arguments shouldn't be around anyway!
+
+    paths we can copy and paste - we don't need to internalize them
+
+    but commands... yeah I guess they can be their own list,
+    which, i guess, we can mutate?
+    that does clean up nicely.
+
+    this is quite convenient because this both models the real API users would use,
+    and is nicely usable from html.
+*** commands support
+    with a separate process-independent list and copying them and deleting them.
+
+    and it shows that paths (and commands) aren't cap-safe, they're pure nominal data
+
+    how about...
+
+    > Commands <new>
+
+    and have it open by default?
+
+    well if it's open by default there's no point
+
+    i'll just make it a direct list
+
+    and, let's see...
+    I guess I'll have a CommandList thing which I accumulate into?
+
+    well, I need to be able to select from it... let's just internalize it into htmlui.
+
+    (command is kind of a bad name, should i call it ExecArgs?)
+**** DONE autofocus after adding arg
+**** DONE add default command
+*** DONE change display of threads after exec
+    ok so it's removed from children after exec, sure,
+    and then there's another thing.
+
+    after exit, we still have a child, after all.
+
+    ok so we need to list the non-thread children.
+
+    let's see, where do we have children?
+
+    ok so we need to make a list of child processes
+
+    this is slightly complicated by the fact that we're using CLONE.PARENT,
+    so the process-that-can-wait-on-the-child
+    is not the same as the process-which-created-the-child
+    (the latter is what we currently hierarchically order them under).
+
+    so yeah I forgot that CLONE.PARENT is set, hm.
+    so that makes things a little weirder
+
+    aha, I'll simply introspect return values
+    and accumulate threads that way.
+    no need to have additional state on Threads
+** DONE return to main page after post
+   the action of all autogenerated forms should be / I guess?
+   or /eval?
+
+   just /
+** DONE handle exceptions
+   so when the command isn't found we're good
+** DONE add manpage links
+   hmm it would be good to attach these as metadata to the functions. hmm.
+
+   yeah ok we'll parse it out of the docstring
+
+   nice!
+** DONE support fds
+   ok let's do this.
+
+   how will we do it?
+   we need to support pointers.
+
+   we've made some progress on handling stuff.
+
+   maybe we should just have buffers and such yeah hm.
+
+   ok so let's just do it the native way, sure.
+
+   we malloc,
+
+   have a list of buffers,
+
+   where do we have the list of buffers?
+
+   we can segregate it by address space.
+
+   nah let's just accumulate them all, easy
+
+   fds we'll have segregated by thread of course,
+   but, we can just list those by introspection
+
+   let's go ahead and list those
+
+   I guess we should put stdio in the task_fds list? so they can be closed?
+*** DONE dup2
+    ok so we can dup things around
+*** DONE support pipes and socketpairs together
+   it would be nice to keep fd pipe ends together hmm
+
+   and indicate when they're closed?
+
+   we can include pipes in task_fds instead of the individual fds
+
+   this will have to be a little later since we need to handle buffers first
+** DONE malloc
+   have a nice list of buffers and I guess allow mallocing arbitrary types? hm.
+
+   i can use the placeholder attribute of the inputs?
+   to say like, malloc(Pipe) or whatevs?
+   that sounds good actually
+
+   I could accumulate the types to malloc automatically?
+
+   ooh that sounds cool. as we render parameters, accumulate a list of types.
+
+   so ok i'll use malloc and write to it, sure.
+
+   or, maybe ptr will work too? hm.
+
+   for either of them i need to be able to build the value
+
+   i guess let's just do malloc and figure out how i'll build the value,
+   then see if i can do that with ptr.
+
+   i mean if it's a generic then I could select a variety of types and pass them in
+   but how do I pass a composite argument?
+   well, break it down into multiple fields for the parameter, sure.
+
+   but what if I have multiple choices? hm well I could have a details for each one.
+
+   i could do the same select thing, and just have that select a form,
+   generated on the server-side.
+
+   ok whatever let's just do malloc - the api is very simple.
+
+   ok I think I can actually do it through introspection.
+   hmm.
+   I mean what I want here is a select, let's see, uh...
+   let's just look at the union
+
+   ok so uhhh ok uhhh
+
+   let's just pseudo-hardcode it
+
+   ok hmmm i guess we'll hardcode that pipes contain fds,
+   rather than inspect the value to pull them out.
+
+   hmmmmmmmmmmmm
+*** DONE reading pointer
+    so 
+
+    hm it's too easy to read uninitialized data
+
+    maybe I should have some kind of charged pointer
+
+    i can do it dynamically....
+
+    or i can actually just consume it when passing to the method
+
+    but I guess it's still too easy to just malloc and read, hm.
+
+    I guess one issue is that we need to be able to side-effect onto a pointer.
+
+    there are syscalls where we can't encode the writing into the type
+
+    ok, so, well, maybe we can have a readablepointer or something,
+    which inherits from pointer and adds the extra stuff?
+    and uses the side-effects?
+
+    h m m
+
+    and i guess we can just not allow the raw pointer?
+    since unsafe access is not necessary  h u m.
+
+    ok the simple thing is obvious:
+    disable read on just-malloc'd pointers,
+    and add it to another pointer object.
+
+    so there's three states:
+    1. uninitialized pointer to memory of the appropriate size
+    2. pointer that has a value written to it by someone else, which we don't know
+    3. pointer with a known value
+
+    let's start by, i guess, just adding a new type,
+    ChargedPointer or something,
+    and then only allow read in the ui on that.
+
+    yeah that makes sense. read is allowed on others,
+    but we won't show that in the UI.
+
+    and then later on we can maybe tighten things up,
+    and disallow reads on pointers without a cast or something,
+    to a fourth type, UnsafePointer
+
+    so okay.
+    Pointer,
+    KnownPointer,
+    WrittenPointer,
+    UnsafePointer
+
+    like, yeah, we need to separate...
+
+    well hey actually those are both InitializedPointers,
+    they're both safe to read. well, not necessarily,
+    we might unsafely mutate them. hm.
+    ok but we don't want ultimate safety, we just want a better hint.
+
+    ok i'll just insert readablepointer in the inheritance hierarchy
+*** DONE nicer str() for pointers
+*** DONE clear method for pointers
+    to remove it after they're invalid
+*** DONE consuming pointers
+    so syscalls consume pointers,
+    and then return new ones.
+    that should help with making sure we read the right pointer.
+
+    we should prune away invalid pointers;
+    or I guess allow clearing them like the others.
+    print them as invalid then have a clear button.
+*** consider adding type to Pointer at runtime
+   this is tricky. having the type around at runtime would be helpful.
+   that's the kind of introspection thing that is probably handy for others too, hm.
+
+   if I had that, I could rework the whole system to often avoid Serializers
+*** DONE read/write
+    ok it's finally time
+
+    so let's allow malloc for bytes,
+    and then provide a read/write
+
+    ok so this will return a tuple, which...
+    we then need to merge back together I guess?
+
+    we could add it to the pointer list in the same way as pipe
+
+    I guess one of them is readable
+
+    yeah and the other isn't
+    but we can merge them to get a single non-readable pointer
+
+    okaaaaay.
+*** DONE splitting and merging
+    so if we split we get a tuple,
+    what if we split one of those pointers again?
+
+    ideally we'd, I guess, get some kind of tree - that's the underlying reality.
+
+    can we just render that tree?
+
+    just render the allocations in a tree in memory? and show them as mergeable? hm.
+
+    h m m.
+
+    it's quite a complex interface.
+
+    ok the fundamental interface here is wacky.
+    maybe we should rethink this.
+
+    h m m.
+
+    what would a low-abstraction allocator even mean? argh.
+    well, we can just, maybe... show the allocators?
+
+    ugh, there's too many arenas
+
+    we really just want to show arenas that we've allocated out of, right?
+    and those pointers, I guess?
+
+    h m mmmmmm
+
+    ok or, how about we just,
+    group by mapping then sort by offset? ezpz?
+    yeah actually that sounds good.
+
+    we can't merge across mappings, after all.
+    only within.
+
+    aaand hm. i guessss we'll uhhh
+
+    well results are always available in the backlog so that's fine
+    ok yeah so this seems fine.
+    and we'll just put the pointers in separately, instead of tupling them?
+    it isn't a tree, actually, so why show it as one?
+*** DONE render pointers as list per mmap
+    per type, I guess.
+
+    typ as first organization
+*** DONE implement merge!
+    hooray!
+
+    I guess I can know when this is valid by...
+
+    ummm
+
+    so i'll have it be a merge-down operation, right, right
+
+    so if the next ptr in the list is
+    adjacent, then,
+    it's mergable.
+
+    hm how do we do this merge hm hm.
+
+    well I guess we justttttt
+
+    sigh I guess we maintain the mapping for real right? duh
+
+    and maintain the list in sorted order
+
+    cool, we did it!
+**** pointers and fds are different
+     there's no notion of adjacence for fds, and there is for pointers, and that's fine
+*** DONE implement split?
+    i guess i should.
+    especially because that's needed to control the amount i read, yeah, ok.
+** TODO uh stop being so slow lol
+   embarrassing
+** DONE stop using id(task)
+   task is hashable now
+** DONE getting dead fd handles from reading Pipe pointer twice
+   hmm so we can read from a pointer,
+   to get a pipe,
+   multiple times.
+
+   and that pipe can refer to closed fds.
+   since we closed them before.
+   i *guess* maybe we could make the read-value be linear?
+   there's little reason not to, right?
+   since the value can't change, and we can copy it around. hm.
+
+   yeah I think linearity in pointer reading might be good,
+   if we can break it through .unsafe() again
+
+   cuz, hm. like...
+   maybe we should auto-upgrade to a writtenpointer? then we... don't read?
+   or...
+   read is one-shot? it downgrades again? hm...
+
+   dynamically linear?
+   i mean, how do we return the new pointer? as part of read's retval? ugly...
+
+   if we don't read then we leak resources
+   so really it needs to be linear - both affine and relevant.
+
+   what if we have a specific kind of pointer that is, um, affine,
+   and also, relevant.
+
+   linearpointer, hm hm
+
+   linearreadablepointer.
+
+   and for things like pipes which are one-shot, after it's read it,
+   disables itself.
+
+   wait, how about I just have a linear_read/consume_read method?
+   which gets returned?
+   and which gives me back the raw pointer?
+
+   ok ya actaully i like that.
+
+   could call it "load"?
+
+   linear_read sounds good to me
+
+   yeah this seems great
+** TODO inheriting fds I guess?
+   ya let's do that
+
+   so I guess we just need to specially handle the parameter..
+
+   oh wait this is a synchronous method, hmmmm
+** DONE consider ease of use things
+   simple prose tutorial?
+
+   show types in input selects? that would be good
+
+   show the return types of things? that would be pretty helpful
+** DONE show the return type
+   right next to it?
+** DONE show input type in selects
+   they say not to use placeholder for this, but, shrug, I will anyway
+   cool cool
+** DONE improve layout of pipe in fd list
+   it's awkward right now
+** DONE disallow passing too small a size to malloc
+   if we're given a fixedsize we should require at least that much
+
+   or, heck, don't allow a size at all for fixedsize things.
+
+   the overload allows it, buuuut, I'll deny it at runtime
+** DONE switch to selects
+   these datalists are bad, unfortunately
+** version number on page/forms
+   so we can invalidate it when indexes have changed?
+** DONE ensuring that we operate on children
+   hmmmmmmmmmmmmmm
+
+   uh what did I mean by this? not sure what I wanted to do here.
+   I think making things flat fixed this.
+
+   oh oh! well. I think I was worried that the first process in the list is the parent.
+
+   so I wanted to allow for cloning more children from the main thread,
+   instead of from that parent thread. hm.
+
+   i don't think i need this, it's totally free-form now, I can clone from any
+** DONE nested thread weirdness
+   let's just make this work I guess? no reason it shouldn't
+
+   so right now if we exec in the parent and then try to operate on the child,
+   things don't work.
+
+   (well, I guess one reason it shouldn't is because of... um...
+   handling stuff in the parent)
+   (except, it should actually be flat.
+   execing in the main thread, sure, will screw things up,
+   but not in a child thread!)
+
+   so let's figure it out
+
+   ah we were using ram from the child task with the sigfd from the parent.
+   that was both buggy and unnecessary
+** DONE getting results asynchronously, and greying out threads while blocked
+   this is useful/necessary for vfork
+
+   ok so I guess we have to finally do this.
+
+   so let's see.
+   we'll do the eval in a nursery, let's say.
+   and... how do we send the event?
+   let's see.
+
+   is there some javascript-less way
+
+   aha! i can open another tab with the same page.
+
+   let's go ahead and do that - that will be the basic requirement
+
+   browsers won't pipeline - and anyway there's HOL blocking.
+
+   so we need multiple connections.
+
+   aha! multiple tabs was easy!
+
+   we have a somewhat poor way of figuring out whether a syscall is in progress;
+   it would be cool to know what syscall is in progress!
+   but that requires additional info
+** TODO maybe add a real queue to the syscall connection?
+   behind the interface of course - let's not expose it in the interface.
+** TODO add links to online docs for each class
+   to explain these - like "LinearPointer"
+** TODO maybe have the type above instead of in placeholders?
+   then I can ctrl-f in the page for matching methods
+
+   also I won't have to do this ugly placeholder stuff.
+** DONE put optional params in details
+   there's too many ugly checkboxes!!!
+** TODO simple prose intro
+   or something? just a starting point is what we need!
+
+   yeah we can talk about rsyscall concepts a little too
+** TODO put arguments in results?
+   so we know what we called? hm.
+
+   oh, that's an even better idea because then I can show some examples,
+   just through the results!
+
+   very good.
+** DONE put class in pointer
+   among other benefits, it's useful for showing what type the pointer will return!
+
+   although it's fine now I guess.
+*** consider adding type to Pointer at runtime
+   this is tricky. having the type around at runtime would be helpful.
+   that's the kind of introspection thing that is probably handy for others too, hm.
+
+   if I had that, I could rework the whole system to often avoid Serializers
+
+   yeah ok I added the type. I think I can get rid of serializers by just,
+   passing the task to deserialize into... maybe?
+
+   ah. no. for example, sockbuf needs to know the pointer it's splitting.
+
+   ok so i can't get rid of serializers, that's fine, they're good.
+*** can have better printing of the pointer itself, instead of printing serializer
+    the serializer is not really useful to print in the pointer
+    it would be better to print the pointer's actual type
+
+    heck we could even do like, Pointer[{self.class.__name__}]!
+    that would look real good
+* data structure jit
+  yes a data structure jit sure would be handy
+
+  because, like, embedding a drawing capability
+  into a lot of different objects which draw themselves,
+  is a waste of memory!
+
+  but if we embed the cap,
+  then we're good!
 
 * paper response
 My main concern is that the paper seems to mix the syscall interface
