@@ -1,30 +1,43 @@
 * Summary
-rsyscall is a thread library for Linux.
+rsyscall provides an interface to an ever-growing subset of Linux system calls. This interface is:
+- *process-independent*: all system calls are called as methods on process objects,
+  which can refer to the "local" process or to other processes under our control.
+- *type-safe*: many Linux API constraints, which are usually left to user code to enforce,
+  are made explicit in the type system.
+- *low-level*: any action which is possible with the underlying Linux APIs,
+  is possible with rsyscall; nothing is forbidden or discouraged.
 
-For a short introduction to the concepts and motivation behind rsyscall,
+For more detail on the concepts and motivation behind rsyscall,
 read the [[file:docs/conceptual.org][conceptual introduction]].
+
 If you want to learn more, or want to immediately see examples,
 continue on to read the tutorials.
-* Tutorial
-We'll explain rsyscall in two separate tutorials:
-The single-threaded tutorial and the multi-threaded tutorial.
-
+* Python tutorial
 Note that the rsyscall Python API uses some recent Python 3 features:
 async/await and type annotations.
-If you haven't seen those before, read the [[file:docs/background.org][background tutorial]].
+If you haven't seen those before, skim the [[file:docs/background.org][background tutorial]] first.
 
+We'll explain rsyscall in two separate tutorials:
+The single-threaded tutorial and the multi-threaded tutorial.
+** What are threads?
+In rsyscall, we refer to a process under our control as a "thread",
+whether that's the local Python process or some other process.
+Like most other things called "threads",
+rsyscall threads are:
+- under the complete control of a single program,
+- exit when that program does,
+- and can run arbitrary system calls in parallel across multiple CPUs,
+Unlike other "threads":
+- User code, such as arbitrary Python or C, cannot run on rsyscall threads - only system calls.
+** Single-threaded
 The [[file:docs/single_threaded.org][single-threaded tutorial]] explains how to do things
 with only a single thread, without creating more.
-The single-threaded interface is fundamentally similar to normal Python,
-though with a novel, significantly expanded, and more low-level interface to Linux.
-
+This provides a more type-safe, more low-level, and broader interface to the Linux kernel
+than other Python libraries or the Python stdlib.
+** Multi-threaded
 The [[file:docs/multi_threaded.org][multi-threaded tutorial]] explains the interface to creating and using multiple threads,
 including explaining exactly what "thread" means in rsyscall,
 as well as some operations which only make sense with multiple threads.
-
-Note that this division is purely for convenience;
-the "multi-threaded" portions of rsyscall
-are not really distinct from the "single-threaded" portions.
 * Installation
 We have not yet made an official release of rsyscall,
 so we haven't put any effort into streamlining the installation or packaging it for various distros.
