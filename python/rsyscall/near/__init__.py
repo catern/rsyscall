@@ -22,11 +22,6 @@ namespaces active in the task behind the SyscallInterface.
 (The task is like the segment register, in this analogy.)
 
 """
-
-from __future__ import annotations
-import trio
-import typing as t
-
 # re-exported namepsace-local identifiers
 from rsyscall.near.types import (
     FileDescriptor,
@@ -39,15 +34,4 @@ from rsyscall.near.types import (
 # re-exported SyscallInterface
 from rsyscall.near.sysif import SyscallInterface, SyscallResponse, SyscallHangup
 
-from rsyscall.sys.syscall import SYS
-
-
-#### Syscalls (instructions)
-# These are like instructions, run with this segment register override prefix and arguments.
-async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
-    try:
-        await sysif.syscall(SYS.close, fd)
-    except OSError as e:
-        e.filename = fd
-        raise
 

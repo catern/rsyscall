@@ -1,3 +1,11 @@
+"""Fundamental FD ownership and lifecycle
+
+We should probably move this to unistd.fd; after all, we define the
+_close system call in this module, as part of the fundamental
+lifecycle of an FD.
+
+"""
+
 from __future__ import annotations
 from dataclasses import dataclass
 from weakref import WeakSet
@@ -6,7 +14,8 @@ import abc
 import gc
 import rsyscall.far
 import rsyscall.near
-from rsyscall.near.sysif import SyscallHangup
+from rsyscall.near.sysif import SyscallHangup, SyscallInterface
+from rsyscall.sys.syscall import SYS
 import trio
 import typing as t
 import logging
@@ -251,6 +260,13 @@ class BaseFileDescriptor:
         num = self.near.number
         return Path(f"/proc/self/fd/{num}")
 
+async def _close(sysif: SyscallInterface, fd: rsyscall.near.FileDescriptor) -> None:
+    try:
+        await sysif.syscall(SYS.close, fd)
+    except OSError as e:
+        e.filename = fd
+        raise
+
 class FDTable(rsyscall.far.FDTable):
     def __init__(self, creator_pid: int, parent: FDTable=None) -> None:
         super().__init__(creator_pid)
@@ -283,7 +299,7 @@ class FDTable(rsyscall.far.FDTable):
             # TODO we don't have to block here, we can just send off the close without waiting for it,
             # because you aren't supposed to retry close on error.
             # well, except when we actually want to give the user the chance to see the error from close.
-            await rsyscall.near.close(task.sysif, fd)
+            await _close(task.sysif, fd)
         except SyscallHangup:
             # closing the fd through this task went wrong
             # TODO we should mark this task as dead and fall back to later tasks in the list if

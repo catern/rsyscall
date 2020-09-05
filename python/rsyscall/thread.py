@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall.command import Command
 from rsyscall.handle import FileDescriptor, Path, WrittenPointer, Pointer, Task
+from rsyscall.handle.fd import _close
 from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.mktemp import mkdtemp, TemporaryDirectory
 from rsyscall.unix_thread import UnixThread, ChildUnixThread
@@ -53,7 +54,7 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
     async def maybe_close(fd: near.FileDescriptor) -> None:
         flags = await _fcntl(thr.task.sysif, fd, F.GETFD)
         if (flags & FD_CLOEXEC) and (fd not in excluded_fds):
-            await rsyscall.near.close(thr.task.sysif, fd)
+            await _close(thr.task.sysif, fd)
     async with trio.open_nursery() as nursery:
         while True:
             valid, rest = await dirfd.getdents(buf)
