@@ -15,6 +15,17 @@ class Pipe(FixedSize):
     read: FileDescriptor
     write: FileDescriptor
 
+    def __getitem__(self, idx: int) -> FileDescriptor:
+        if idx == 0:
+            return self.read
+        elif idx == 1:
+            return self.write
+        else:
+            raise IndexError("only index 0 or 1 are valid for Pipe:", idx)
+
+    def __iter__(self) -> t.Iterable[FileDescriptor]:
+        return iter([self.read, self.write])
+
     @classmethod
     def sizeof(cls) -> int:
         return ffi.sizeof('struct fdpair')
