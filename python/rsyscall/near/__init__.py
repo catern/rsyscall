@@ -44,23 +44,12 @@ from rsyscall.sys.syscall import SYS
 
 #### Syscalls (instructions)
 # These are like instructions, run with this segment register override prefix and arguments.
-import trio
-
 async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
     try:
         await sysif.syscall(SYS.close, fd)
     except OSError as e:
         e.filename = fd
         raise
-
-async def exit(sysif: SyscallInterface, status: int) -> None:
-    def handle(exn):
-        if isinstance(exn, SyscallHangup):
-            return None
-        else:
-            return exn
-    with trio.MultiError.catch(handle):
-        await sysif.syscall(SYS.exit, status)
 
 async def set_robust_list(sysif: SyscallInterface, head: Address, len: int) -> None:
     await sysif.syscall(SYS.set_robust_list, head, len)

@@ -37,7 +37,7 @@ from rsyscall.signal import Siginfo
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
 from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
-from rsyscall.unistd.exec import _execve, _execveat
+from rsyscall.unistd.exec import _execve, _execveat, _exit
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.wait import W
 
@@ -279,7 +279,7 @@ class Task(
 
     async def exit(self, status: int) -> None:
         self.manipulating_fd_table = True
-        await rsyscall.near.exit(self.sysif, status)
+        await _exit(self.sysif, status)
         self.manipulating_fd_table = False
         self._make_fresh_fd_table()
         await self.close_task()
