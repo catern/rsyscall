@@ -13,7 +13,6 @@ import logging
 import contextlib
 logger = logging.getLogger(__name__)
 
-from rsyscall.fcntl import F
 from rsyscall.sched import CLONE, _unshare
 from rsyscall.path import Path
 

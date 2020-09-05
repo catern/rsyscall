@@ -1,6 +1,7 @@
 "Modeled after fnctl.h."
 from rsyscall._raw import lib, ffi # type: ignore
 import enum
+import typing as t
 
 class AT(enum.IntFlag):
     "The flags argument to many *at syscall; specifies changes to path resolution."
@@ -45,3 +46,22 @@ class F(enum.IntEnum):
     SETFL = lib.F_SETFL
 
 FD_CLOEXEC = lib.FD_CLOEXEC
+
+#### Classes ####
+from rsyscall.handle.fd import BaseFileDescriptor
+
+class FcntlFileDescriptor(BaseFileDescriptor):
+    async def fcntl(self, cmd: F, arg: t.Optional[int]=None) -> int:
+        self._validate()
+        return (await _fcntl(self.task.sysif, self.near, cmd, arg))
+
+#### Raw syscalls ####
+import rsyscall.near.types as near
+from rsyscall.near.sysif import SyscallInterface
+from rsyscall.sys.syscall import SYS
+
+async def _fcntl(sysif: SyscallInterface, fd: near.FileDescriptor,
+                 cmd: F, arg: t.Optional[t.Union[int, near.Address]]=None) -> int:
+    if arg is None:
+        arg = 0
+    return (await sysif.syscall(SYS.fcntl, fd, cmd, arg))

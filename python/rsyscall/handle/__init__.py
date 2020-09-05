@@ -40,6 +40,7 @@ from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.wait import W
 
+from rsyscall.fcntl        import               FcntlFileDescriptor
 from rsyscall.sys.eventfd  import EventfdTask,  EventFileDescriptor
 from rsyscall.sys.timerfd  import TimerfdTask,  TimerFileDescriptor
 from rsyscall.sys.epoll    import EpollTask,    EpollFileDescriptor
@@ -83,6 +84,7 @@ class FileDescriptor(
         SocketFileDescriptor,
         MappableFileDescriptor,
         StatFileDescriptor,
+        FcntlFileDescriptor,
         BaseFileDescriptor,
 ):
     """A file descriptor accessed through some Task, with most FD-based syscalls as methods
@@ -159,9 +161,6 @@ class FileDescriptor(
         await self.disable_cloexec()
         return int(self)
 
-    async def fcntl(self, cmd: F, arg: t.Optional[int]=None) -> int:
-        self._validate()
-        return (await rsyscall.near.fcntl(self.task.sysif, self.near, cmd, arg))
 
     async def __aenter__(self) -> FileDescriptor:
         return self

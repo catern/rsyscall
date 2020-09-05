@@ -41,7 +41,6 @@ from rsyscall.near.sysif import SyscallInterface, SyscallResponse, SyscallHangup
 
 from rsyscall.sys.syscall import SYS
 
-from rsyscall.fcntl import F
 
 #### Syscalls (instructions)
 # These are like instructions, run with this segment register override prefix and arguments.
@@ -88,11 +87,6 @@ async def exit(sysif: SyscallInterface, status: int) -> None:
             return exn
     with trio.MultiError.catch(handle):
         await sysif.syscall(SYS.exit, status)
-
-async def fcntl(sysif: SyscallInterface, fd: FileDescriptor, cmd: F, arg: t.Optional[t.Union[int, Address]]=None) -> int:
-    if arg is None:
-        arg = 0
-    return (await sysif.syscall(SYS.fcntl, fd, cmd, arg))
 
 async def set_robust_list(sysif: SyscallInterface, head: Address, len: int) -> None:
     await sysif.syscall(SYS.set_robust_list, head, len)
