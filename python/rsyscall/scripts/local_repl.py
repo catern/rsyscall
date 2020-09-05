@@ -1,5 +1,6 @@
 from rsyscall.wish import wish, Wish
 import trio
+import typing as t
 
 async def main() -> None:
     try:
@@ -14,4 +15,5 @@ async def main() -> None:
     await wish(Wish(None, f"Here you go spirit! {number} delicious {flavor} pies! Return when you're done eating them!"))
     print("Bye spirit! See you later!")
 
-trio.run(main)
+if __name__ == "__main__":
+    trio.run(main)
