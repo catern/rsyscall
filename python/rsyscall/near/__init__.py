@@ -53,29 +53,6 @@ async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
         e.filename = fd
         raise
 
-async def execve(sysif: SyscallInterface,
-                 path: Address, argv: Address, envp: Address) -> None:
-    def handle(exn):
-        if isinstance(exn, SyscallHangup):
-            return None
-        else:
-            return exn
-    with trio.MultiError.catch(handle):
-        await sysif.syscall(SYS.execve, path, argv, envp)
-
-async def execveat(sysif: SyscallInterface,
-                   dirfd: t.Optional[FileDescriptor], path: Address,
-                   argv: Address, envp: Address, flags: int) -> None:
-    if dirfd is None:
-        dirfd = AT.FDCWD # type: ignore
-    def handle(exn):
-        if isinstance(exn, SyscallHangup):
-            return None
-        else:
-            return exn
-    with trio.MultiError.catch(handle):
-        await sysif.syscall(SYS.execveat, dirfd, path, argv, envp, flags)
-
 async def exit(sysif: SyscallInterface, status: int) -> None:
     def handle(exn):
         if isinstance(exn, SyscallHangup):

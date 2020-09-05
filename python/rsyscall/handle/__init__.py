@@ -37,6 +37,7 @@ from rsyscall.signal import Siginfo
 from rsyscall.fcntl import AT, F, O
 from rsyscall.path import Path, EmptyPath
 from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
+from rsyscall.unistd.exec import _execve, _execveat
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.wait import W
 
@@ -245,7 +246,7 @@ class Task(
                 stack.enter_context(arg.borrow(self))
             self.manipulating_fd_table = True
             try:
-                await rsyscall.near.execveat(self.sysif, fd_n, pathname.near, argv.near, envp.near, flags)
+                await _execveat(self.sysif, fd_n, pathname.near, argv.near, envp.near, flags)
             except OSError as exn:
                 exn.filename = (fd, pathname.value)
                 raise
@@ -266,7 +267,7 @@ class Task(
             arg.check_address_space(self)
         self.manipulating_fd_table = True
         try:
-            await rsyscall.near.execve(self.sysif, filename.near, argv.near, envp.near)
+            await _execve(self.sysif, filename.near, argv.near, envp.near)
         except OSError as exn:
             exn.filename = filename.value
             raise
