@@ -51,3 +51,20 @@ class RobustListHead(Struct):
     @classmethod
     def sizeof(cls) -> int:
         return ffi.sizeof('struct robust_list_head')
+
+#### Classes ####
+import rsyscall.far
+from rsyscall.handle.pointer import WrittenPointer
+
+class FutexTask(rsyscall.far.Task):
+    async def set_robust_list(self, head: WrittenPointer[RobustListHead]) -> None:
+        with head.borrow(self):
+            await _set_robust_list(self.sysif, head.near, head.size())
+
+#### Raw syscalls ####
+import rsyscall.near.types as near
+from rsyscall.near.sysif import SyscallInterface
+from rsyscall.sys.syscall import SYS
+
+async def _set_robust_list(sysif: SyscallInterface, head: near.Address, len: int) -> None:
+    await sysif.syscall(SYS.set_robust_list, head, len)

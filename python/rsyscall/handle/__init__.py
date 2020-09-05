@@ -54,6 +54,7 @@ from rsyscall.signal       import SignalTask
 from rsyscall.sys.socket   import SocketTask,   SocketFileDescriptor
 from rsyscall.sys.ioctl    import               IoctlFileDescriptor
 from rsyscall.linux.dirent import               GetdentsFileDescriptor
+from rsyscall.linux.futex  import FutexTask
 from rsyscall.sys.uio      import               UioFileDescriptor
 from rsyscall.unistd       import FSTask,       FSFileDescriptor
 from rsyscall.unistd.pipe  import PipeTask
@@ -193,6 +194,7 @@ class Task(
         ProcessTask,
         SchedTask,
         ResourceTask,
+        FutexTask,
         SignalTask, rsyscall.far.Task,
 ):
     def __init__(self,
@@ -288,7 +290,3 @@ class Task(
         # close the syscall interface and kill the process; we don't have to do this since it'll be
         # GC'd, but maybe we want to be tidy in advance.
         await self.sysif.close_interface()
-
-    async def set_robust_list(self, head: WrittenPointer[RobustListHead]) -> None:
-        with head.borrow(self):
-            await rsyscall.near.set_robust_list(self.sysif, head.near, head.size())

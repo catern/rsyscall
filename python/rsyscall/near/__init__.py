@@ -51,9 +51,6 @@ async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
         e.filename = fd
         raise
 
-async def set_robust_list(sysif: SyscallInterface, head: Address, len: int) -> None:
-    await sysif.syscall(SYS.set_robust_list, head, len)
-
 async def set_tid_address(sysif: SyscallInterface, ptr: Address) -> None:
     await sysif.syscall(SYS.set_tid_address, ptr)
 
