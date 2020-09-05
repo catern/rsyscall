@@ -8,7 +8,6 @@ from rsyscall.fcntl import O
 from rsyscall.sys.wait import W, Siginfo
 
 from rsyscall.sched import CLONE
-from rsyscall.path import Path
 from rsyscall.handle import Process
 from rsyscall.nix import local_store
 from rsyscall.tests.utils import assert_thread_works
@@ -23,7 +22,7 @@ class TestProc(TrioTestCase):
 
     async def test_pgid(self) -> None:
         try:
-            last_pid = await self.init.task.open(await self.init.ram.ptr(Path("/proc/sys/kernel/ns_last_pid")), O.WRONLY)
+            last_pid = await self.init.task.open(await self.init.ptr("/proc/sys/kernel/ns_last_pid"), O.WRONLY)
         except FileNotFoundError:
             raise unittest.SkipTest("Requires /proc/sys/kernel/ns_last_pid, which requires CONFIG_CHECKPOINT_RESTORE")
 

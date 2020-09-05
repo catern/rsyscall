@@ -6,6 +6,7 @@ from rsyscall.struct import Serializable
 import typing as t
 from dataclasses import dataclass
 import enum
+import os
 
 __all__ = [
     "InotifyFlag",
@@ -100,12 +101,11 @@ class InotifyEventList(t.List[InotifyEvent], Serializable):
 #### Classes ####
 from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
 from rsyscall.handle.pointer import Pointer, WrittenPointer
-from rsyscall.path import Path
 
 T_fd = t.TypeVar('T_fd', bound='InotifyFileDescriptor')
 class InotifyFileDescriptor(BaseFileDescriptor):
     async def inotify_add_watch(self,
-                                pathname: WrittenPointer[Path], mask: IN) -> WatchDescriptor:
+                                pathname: WrittenPointer[t.Union[str, os.PathLike]], mask: IN) -> WatchDescriptor:
         self._validate()
         with pathname.borrow(self.task):
             return (await _inotify_add_watch(self.task.sysif, self.near, pathname.near, mask))

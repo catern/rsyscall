@@ -2,10 +2,11 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall.command import Command
-from rsyscall.handle import FileDescriptor, Path, WrittenPointer, Pointer, Task
+from rsyscall.handle import FileDescriptor, WrittenPointer, Pointer, Task
 from rsyscall.handle.fd import _close
 from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.mktemp import mkdtemp, TemporaryDirectory
+from rsyscall.path import Path
 from rsyscall.unix_thread import UnixThread, ChildUnixThread
 import os
 import rsyscall.near.types as near
@@ -19,7 +20,7 @@ from rsyscall.sched import CLONE
 from rsyscall.sys.mount import MS
 from rsyscall.sys.wait import ChildState, W
 from rsyscall.sys.socket import Socketpair, AF, SOCK
-from rsyscall.unistd import Arg, Pipe
+from rsyscall.unistd import Pipe
 
 async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
                               in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
@@ -50,7 +51,7 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
     # it's important to do this so we can't try to inherit the fds that we close here
     thr.task.fd_table.remove_inherited()
     buf = await thr.ram.malloc(DirentList, 4096)
-    dirfd = await thr.task.open(await thr.ram.ptr(Path("/proc/self/fd")), O.DIRECTORY)
+    dirfd = await thr.task.open(await thr.ram.ptr("/proc/self/fd"), O.DIRECTORY)
     async def maybe_close(fd: near.FileDescriptor) -> None:
         flags = await _fcntl(thr.task.sysif, fd, F.GETFD)
         if (flags & FD_CLOEXEC) and (fd not in excluded_fds):
@@ -118,17 +119,18 @@ class Thread(UnixThread):
             # TODO this would be more efficient if we batched our memory-reads at the end
             data += await read.read()
 
-    async def mount(self, source: t.Union[Path, str], target: t.Union[Path, str],
+    async def mount(self, source: t.Union[str, os.PathLike], target: t.Union[str, os.PathLike],
                     filesystemtype: str, mountflags: MS,
                     data: str) -> None:
         "Call mount with these args"
         async def op(sem: RAM) -> t.Tuple[
-                WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg], WrittenPointer[Arg]]:
+                WrittenPointer[t.Union[str, os.PathLike]], WrittenPointer[t.Union[str, os.PathLike]],
+                WrittenPointer[str], WrittenPointer[str]]:
             return (
-                await sem.ptr(Arg(source)),
-                await sem.ptr(Arg(target)),
-                await sem.ptr(Arg(filesystemtype)),
-                await sem.ptr(Arg(data)),
+                await sem.ptr(source),
+                await sem.ptr(target),
+                await sem.ptr(filesystemtype),
+                await sem.ptr(data),
             )
         source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.ram.perform_batch(op)
         await self.task.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
@@ -142,7 +144,7 @@ class Thread(UnixThread):
     async def socketpair(self, domain: AF, type: SOCK, protocol: int=0) -> Socketpair:
         return await (await self.task.socketpair(domain, type, protocol, await self.malloc(Socketpair))).read()
 
-    async def chroot(self, path: Path) -> None:
+    async def chroot(self, path: t.Union[str, os.PathLike]) -> None:
         await self.task.chroot(await self.ptr(path))
 
     def inherit_fd(self, fd: FileDescriptor) -> FileDescriptor:

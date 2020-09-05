@@ -6,7 +6,6 @@ import shlex
 from rsyscall.sched import CLONE
 from rsyscall.fcntl import O
 from rsyscall.unistd import SEEK
-from rsyscall.path import EmptyPath, Path
 from rsyscall.sys.mount import MS
 from rsyscall.sys.stat import Stat
 
@@ -22,7 +21,7 @@ from rsyscall.time import Timespec
 from rsyscall.sys.stat import TypeMode, S_IF, Mode
 from rsyscall import Command, WrittenPointer, FileDescriptor
 from rsyscall.memory.ram import RAM
-from rsyscall.unistd import AT, Path, ArgList, Arg
+from rsyscall.unistd import AT, ArgList
 from rsyscall.tasks.stub import StubServer
 from rsyscall.scripts.symsh import FuseFS
 import errno
@@ -154,4 +153,4 @@ class TestFUSE(TrioTestCase):
                 mode=TypeMode(S_IF.LNK, Mode(0o777)), nlink=1,
                 uid=self.fuse.uid, gid=self.fuse.gid, rdev=0, blksize=4096
             ))))
-        await self.fuse.write((await self.assertRead(FuseReadlinkOp)).respond(Path("/bin/sh")))
+        await self.fuse.write((await self.assertRead(FuseReadlinkOp)).respond("/bin/sh"))

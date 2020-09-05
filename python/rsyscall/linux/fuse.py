@@ -484,7 +484,7 @@ class FuseReadlinkOp(FuseIn, Struct):
     def sizeof(cls) -> int:
         return FuseInHeader.sizeof()
 
-    def respond(self, msg: Path, error: int=0) -> FuseReadlinkResponse:
+    def respond(self, msg: t.Union[str, os.PathLike], error: int=0) -> FuseReadlinkResponse:
         return FuseReadlinkResponse(FuseOutHeader(error=error, unique=self.hdr.unique), msg=msg)
 
 class FUSE_GETATTR(enum.IntFlag):
@@ -1137,12 +1137,12 @@ class FuseReaddirplusResponse(FuseOut):
 
 @dataclass
 class FuseReadlinkResponse(FuseOut):
-    msg: Path
+    msg: t.Union[str, os.PathLike]
 
     T = t.TypeVar('T', bound='FuseReadlinkResponse')
     @classmethod
     def from_header(cls: t.Type[T], hdr: FuseOutHeader, data: bytes) -> T:
-        return cls(hdr=hdr, msg=Path(os.fsdecode(data)))
+        return cls(hdr=hdr, msg=os.fsdecode(data))
 
     def msg_to_bytes(self) -> bytes:
         return os.fsencode(self.msg)

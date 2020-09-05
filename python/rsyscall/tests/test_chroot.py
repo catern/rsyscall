@@ -1,6 +1,5 @@
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
-from rsyscall import Path
 
 from rsyscall.sys.mount import MS
 from rsyscall.sched import CLONE
@@ -19,6 +18,6 @@ class TestChroot(TrioTestCase):
     @unittest.skip("can't do this on my chromeos system :(")
     async def test_basic(self) -> None:
         await self.thr.mkdir(self.path/"proc")
-        await self.thr.mount(Path("/proc"), self.path/"proc", "", MS.BIND, "")
+        await self.thr.mount("/proc", self.path/"proc", "", MS.BIND, "")
         await self.thr.task.chroot(await self.thr.ptr(self.path))
-        await self.thr.task.open(await self.thr.ptr(Path("/proc/self")), O.RDONLY)
+        await self.thr.task.open(await self.thr.ptr("/proc/self"), O.RDONLY)

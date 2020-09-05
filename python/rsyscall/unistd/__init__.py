@@ -7,10 +7,9 @@ import struct
 import typing as t
 import rsyscall.near.types as near
 import os
+from rsyscall.handle.pointer import Pointer, WrittenPointer
 if t.TYPE_CHECKING:
-    from rsyscall.handle import Pointer, Task, FileDescriptor
-else:
-    Pointer = t.Optional
+    from rsyscall.handle import Task, FileDescriptor
 
 __all__ = [
     "SEEK",
@@ -31,23 +30,8 @@ class OK(enum.IntFlag):
     X = lib.X_OK
     F = lib.F_OK
 
-class Arg(str, Serializable):
-    "A null-terminated string, as passed to execve."
-    def to_bytes(self) -> bytes:
-        return os.fsencode(self) + b'\0'
-
-    T = t.TypeVar('T', bound='Arg')
-    @classmethod
-    def from_bytes(cls: t.Type[T], data: bytes) -> T:
-        try:
-            nullidx = data.index(b'\0')
-        except ValueError:
-            return cls(os.fsdecode(data))
-        else:
-            return cls(os.fsdecode(data[0:nullidx]))
-
 T_arglist = t.TypeVar('T_arglist', bound='ArgList')
-class ArgList(t.List[Pointer[Arg]], FixedSerializer):
+class ArgList(t.List[WrittenPointer[t.Union[str, os.PathLike]]], FixedSerializer):
     "A null-terminated list of null-terminated strings, as passed to execve."
     @classmethod
     def get_serializer(cls, task: Task) -> Serializer[T_arglist]:
@@ -67,13 +51,11 @@ class ArgListSerializer(Serializer[T_arglist]):
 
 #### Classes ####
 from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
-from rsyscall.handle.pointer import Pointer, WrittenPointer
-from rsyscall.path import Path, EmptyPath
 
 from rsyscall.fcntl import AT, O
 T_fd = t.TypeVar('T_fd', bound='FSFileDescriptor')
 class FSFileDescriptor(BaseFileDescriptor):
-    async def readlinkat(self, path: t.Union[WrittenPointer[Path], WrittenPointer[EmptyPath]],
+    async def readlinkat(self, path: WrittenPointer[t.Union[str, os.PathLike]],
                          buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         self._validate()
         with path.borrow(self.task):
@@ -81,12 +63,12 @@ class FSFileDescriptor(BaseFileDescriptor):
                 ret = await _readlinkat(self.task.sysif, self.near, path.near, buf.near, buf.size())
                 return buf.split(ret)
 
-    async def faccessat(self, ptr: WrittenPointer[Path], mode: OK, flags: AT=AT.NONE) -> None:
+    async def faccessat(self, ptr: WrittenPointer[t.Union[str, os.PathLike]], mode: OK, flags: AT=AT.NONE) -> None:
         self._validate()
         with ptr.borrow(self.task):
             await _faccessat(self.task.sysif, self.near, ptr.near, mode, flags)
 
-    async def openat(self: T_fd, path: WrittenPointer[Path], flags: O, mode=0o644) -> T_fd:
+    async def openat(self: T_fd, path: WrittenPointer[t.Union[str, os.PathLike]], flags: O, mode=0o644) -> T_fd:
         self._validate()
         with path.borrow(self.task) as path_n:
             fd = await _openat(self.task.sysif, self.near, path_n, flags|O.CLOEXEC, mode)
@@ -121,13 +103,13 @@ class FSFileDescriptor(BaseFileDescriptor):
         return await self.dup3(newfd, 0)
 
 class FSTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
-    async def readlink(self, path: WrittenPointer[Path], buf: Pointer) -> t.Tuple[Pointer, Pointer]:
+    async def readlink(self, path: WrittenPointer[t.Union[str, os.PathLike]], buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         with path.borrow(self) as path_n:
             with buf.borrow(self) as buf_n:
                 ret = await _readlinkat(self.sysif, None, path_n, buf_n, buf.size())
                 return buf.split(ret)
 
-    async def access(self, path: WrittenPointer[Path], mode: int, flags: int=0) -> None:
+    async def access(self, path: WrittenPointer[t.Union[str, os.PathLike]], mode: int, flags: int=0) -> None:
         with path.borrow(self) as path_n:
             try:
                 await _faccessat(self.sysif, None, path_n, mode, flags)
@@ -135,7 +117,7 @@ class FSTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
                 exn.filename = path.value
                 raise
 
-    async def open(self, path: WrittenPointer[Path], flags: O, mode=0o644) -> T_fd:
+    async def open(self, path: WrittenPointer[t.Union[str, os.PathLike]], flags: O, mode=0o644) -> T_fd:
         with path.borrow(self) as path_n:
             try:
                 fd = await _openat(self.sysif, None, path_n, flags|O.CLOEXEC, mode)
@@ -144,29 +126,32 @@ class FSTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
                 raise
             return self.make_fd_handle(fd)
 
-    async def mkdir(self, path: WrittenPointer[Path], mode=0o755) -> None:
+    async def mkdir(self, path: WrittenPointer[t.Union[str, os.PathLike]], mode=0o755) -> None:
         with path.borrow(self) as path_n:
             await _mkdirat(self.sysif, None, path_n, mode)
 
-    async def unlink(self, path: WrittenPointer[Path]) -> None:
+    async def unlink(self, path: WrittenPointer[t.Union[str, os.PathLike]]) -> None:
         with path.borrow(self) as path_n:
             await _unlinkat(self.sysif, None, path_n, 0)
 
-    async def rmdir(self, path: WrittenPointer[Path]) -> None:
+    async def rmdir(self, path: WrittenPointer[t.Union[str, os.PathLike]]) -> None:
         with path.borrow(self) as path_n:
             await _unlinkat(self.sysif, None, path_n, AT.REMOVEDIR)
 
-    async def link(self, oldpath: WrittenPointer[Path], newpath: WrittenPointer[Path]) -> None:
+    async def link(self, oldpath: WrittenPointer[t.Union[str, os.PathLike]],
+                   newpath: WrittenPointer[t.Union[str, os.PathLike]]) -> None:
         with oldpath.borrow(self) as oldpath_n:
             with newpath.borrow(self) as newpath_n:
                 await _linkat(self.sysif, None, oldpath_n, None, newpath_n, 0)
 
-    async def rename(self, oldpath: WrittenPointer[Path], newpath: WrittenPointer[Path]) -> None:
+    async def rename(self, oldpath: WrittenPointer[t.Union[str, os.PathLike]],
+                     newpath: WrittenPointer[t.Union[str, os.PathLike]]) -> None:
         with oldpath.borrow(self) as oldpath_n:
             with newpath.borrow(self) as newpath_n:
                 await _renameat2(self.sysif, None, oldpath_n, None, newpath_n, 0)
 
-    async def symlink(self, target: WrittenPointer, linkpath: WrittenPointer[Path]) -> None:
+    async def symlink(self, target: WrittenPointer[t.Union[str, os.PathLike]],
+                      linkpath: WrittenPointer[t.Union[str, os.PathLike]]) -> None:
         with target.borrow(self) as target_n:
             with linkpath.borrow(self) as linkpath_n:
                 await _symlinkat(self.sysif, target_n, None, linkpath_n)

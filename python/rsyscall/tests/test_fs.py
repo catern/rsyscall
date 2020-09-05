@@ -2,7 +2,8 @@ from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.nix import local_store
 import rsyscall.tasks.local as local
 
-from rsyscall import Pointer, EmptyPath, Path
+from rsyscall import Pointer
+from rsyscall.path import Path
 from rsyscall.tests.utils import do_async_things
 from rsyscall.fcntl import O
 from rsyscall.unistd import SEEK
@@ -47,7 +48,7 @@ class TestFS(TrioTestCase):
         dent_buf = valid + rest
 
         text = b"Hello world!"
-        name = await self.thr.ram.ptr(Path("hello"))
+        name = await self.thr.ram.ptr("hello")
 
         write_fd = await dirfd.openat(name, O.WRONLY|O.CREAT)
         buf = await self.thr.ram.ptr(text)
@@ -59,7 +60,7 @@ class TestFS(TrioTestCase):
 
         await dirfd.lseek(0, SEEK.SET)
         valid, rest = await dirfd.getdents(dent_buf)
-        self.assertCountEqual([dirent.name for dirent in await valid.read()], ['.', '..', str(name.value)])
+        self.assertCountEqual([dirent.name for dirent in await valid.read()], ['.', '..', name.value])
 
     async def test_getdents_noent(self) -> None:
         "getdents on a removed directory returns ENOENT/FileNotFoundError"
@@ -72,16 +73,16 @@ class TestFS(TrioTestCase):
             await dirfd.getdents(buf)
 
     async def test_readlinkat_non_symlink(self) -> None:
-        f = await self.thr.task.open(await self.thr.ram.ptr(Path(".")), O.PATH)
-        empty_ptr = await self.thr.ram.ptr(EmptyPath())
-        ptr = await self.thr.ram.malloc(Path, 4096)
+        f = await self.thr.task.open(await self.thr.ptr("."), O.PATH)
+        empty_ptr = await self.thr.ram.ptr("")
+        ptr = await self.thr.ram.malloc(str, 4096)
         with self.assertRaises(FileNotFoundError):
             await f.readlinkat(empty_ptr, ptr)
 
     async def test_readlink_proc(self) -> None:
-        f = await self.thr.task.open(await self.thr.ram.ptr(Path(".")), O.PATH)
-        path_ptr = await self.thr.ram.ptr(f.as_proc_self_path())
-        ptr = await self.thr.ram.malloc(Path, 4096)
+        f = await self.thr.task.open(await self.thr.ptr("."), O.PATH)
+        path_ptr = await self.thr.ram.ptr(f"/proc/self/fd/{int(f)}")
+        ptr = await self.thr.ram.malloc(str, 4096)
         await f.readlinkat(path_ptr, ptr)
 
     async def test_which(self) -> None:

@@ -13,7 +13,6 @@ from rsyscall.sys.memfd import MFD
 from rsyscall.sched import CLONE
 
 from rsyscall.handle import FileDescriptor
-from rsyscall.path import Path
 from rsyscall.thread import Thread, Command
 from rsyscall.command import Command
 from rsyscall.monitor import AsyncChildProcess
@@ -94,8 +93,8 @@ class TestSSH(TrioTestCase):
     async def test_copy(self) -> None:
         cat = await self.store.bin(coreutils_nixdep, "cat")
 
-        local_file = await self.local.task.memfd_create(await self.local.ram.ptr(Path("source")))
-        remote_file = await self.remote.task.memfd_create(await self.remote.ram.ptr(Path("dest")))
+        local_file = await self.local.task.memfd_create(await self.local.ptr("source"))
+        remote_file = await self.remote.task.memfd_create(await self.remote.ptr("dest"))
 
         data = b'hello world'
         await local_file.write(await self.local.ram.ptr(data))

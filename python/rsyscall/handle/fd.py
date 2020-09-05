@@ -23,7 +23,6 @@ import contextlib
 logger = logging.getLogger(__name__)
 
 from rsyscall.sched import CLONE, _unshare
-from rsyscall.path import Path
 
 T_fd = t.TypeVar('T_fd', bound='BaseFileDescriptor')
 @dataclass(eq=False)
@@ -255,10 +254,6 @@ class BaseFileDescriptor:
 
     def __repr__(self) -> str:
         return f"FD({self.task}, {self.near.number}, valid={self.valid})"
-
-    def as_proc_self_path(self) -> Path:
-        num = self.near.number
-        return Path(f"/proc/self/fd/{num}")
 
 async def _close(sysif: SyscallInterface, fd: rsyscall.near.FileDescriptor) -> None:
     try:

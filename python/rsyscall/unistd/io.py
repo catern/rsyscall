@@ -21,7 +21,6 @@ class SEEK(enum.IntEnum):
 #### Classes ####
 from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
 from rsyscall.handle.pointer import Pointer, WrittenPointer
-from rsyscall.path import Path, EmptyPath
 
 class IOFileDescriptor(BaseFileDescriptor):
     async def read(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
