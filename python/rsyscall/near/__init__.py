@@ -91,6 +91,3 @@ async def set_robust_list(sysif: SyscallInterface, head: Address, len: int) -> N
 async def set_tid_address(sysif: SyscallInterface, ptr: Address) -> None:
     await sysif.syscall(SYS.set_tid_address, ptr)
 
-async def setns(sysif: SyscallInterface, fd: FileDescriptor, nstype: int) -> None:
-    await sysif.syscall(SYS.setns, fd, nstype)
-

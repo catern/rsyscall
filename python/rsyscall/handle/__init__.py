@@ -223,10 +223,6 @@ class Task(
         if flags:
             await _unshare(self.sysif, flags)
 
-    async def setns(self, fd: FileDescriptor, nstype: CLONE) -> None:
-        with fd.borrow(self) as fd_n:
-            await rsyscall.near.setns(self.sysif, fd_n, nstype)
-
     async def setns_user(self, fd: FileDescriptor) -> None:
         # can't setns to a user namespace while sharing CLONE_FS
         await self.unshare(CLONE.FS)

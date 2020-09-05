@@ -8,7 +8,7 @@ import typing as t
 import struct
 import contextlib
 if t.TYPE_CHECKING:
-    from rsyscall.handle import Task, Pointer, WrittenPointer
+    from rsyscall.handle import Task, Pointer, WrittenPointer, FileDescriptor
     from rsyscall.loader import NativeFunction
 
 __all__ = [
@@ -126,6 +126,10 @@ class SchedTask(rsyscall.far.Task):
             await _sched_getaffinity(self.sysif, 0, mask.size(), mask_n)
         return mask
 
+    async def setns(self, fd: FileDescriptor, nstype: CLONE) -> None:
+        fd._validate()
+        await _setns(self.sysif, fd.near, nstype)
+
 #### Raw syscalls ####
 from rsyscall.near.sysif import SyscallInterface
 from rsyscall.sys.syscall import SYS
@@ -153,6 +157,9 @@ async def _sched_setaffinity(sysif: SyscallInterface, pid: int, cpusetsize: int,
 
 async def _sched_getaffinity(sysif: SyscallInterface, pid: int, cpusetsize: int, mask: near.Address) -> None:
     await sysif.syscall(SYS.sched_getaffinity, pid, cpusetsize, mask)
+
+async def _setns(sysif: SyscallInterface, fd: near.FileDescriptor, nstype: CLONE) -> None:
+    await sysif.syscall(SYS.setns, fd, nstype)
 
 
 #### Tests ####
