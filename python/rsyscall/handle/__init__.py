@@ -196,6 +196,7 @@ class Task(
         FutexTask,
         SignalTask, rsyscall.far.Task,
 ):
+    "A Linux process context under our control, ready for syscalls"
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
                  process: t.Union[rsyscall.near.Process, Process],
