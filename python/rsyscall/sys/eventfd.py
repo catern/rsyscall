@@ -1,3 +1,4 @@
+"`#include <sys/eventfd.h>`"
 from __future__ import annotations
 from rsyscall._raw import lib # type: ignore
 from rsyscall.near.sysif import SyscallInterface

@@ -1,4 +1,4 @@
-"#include <sched.h>"
+"`#include <sched.h>`"
 from __future__ import annotations
 from rsyscall._raw import lib, ffi # type: ignore
 from rsyscall.struct import Serializable, Serializer, Struct, bits

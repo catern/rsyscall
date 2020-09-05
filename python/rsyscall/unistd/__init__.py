@@ -1,4 +1,4 @@
-"Modeled after unistd.h."
+"`#include <unistd.h>`"
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
 import enum
@@ -16,7 +16,7 @@ __all__ = [
     "SEEK",
     "OK",
     "Arg",
-    "ArgList"
+    "ArgList",
     "Pipe",
 ]
 

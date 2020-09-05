@@ -1,3 +1,8 @@
+"""`#include <sys/capability.h>`
+
+See capget(2).
+
+"""
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.struct import Struct, bits
 from dataclasses import dataclass

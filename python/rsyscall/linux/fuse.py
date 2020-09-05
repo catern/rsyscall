@@ -1,4 +1,4 @@
-"""Representation of "linux/fuse.h"
+"""`#include <linux/fuse.h>`
 
 FUSE doesn't use unique prefixes for each set of flags. All the FUSE flags start with just "FUSE_"
 instead of starting with, e.g., "FUSE_INIT_" for the flags used in the initialization message,

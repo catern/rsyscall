@@ -1,3 +1,8 @@
+"""`#include <linux/dirent.h>`
+
+Not actually mentioned in the manpage for getdents.
+
+"""
 from __future__ import annotations
 from rsyscall._raw import lib, ffi # type: ignore
 import typing as t

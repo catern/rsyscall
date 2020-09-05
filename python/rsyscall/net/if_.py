@@ -1,4 +1,4 @@
-"""#include <net/if.h>
+"""`#include <net/if.h>`
 
 The associated manpage is netdevice(7)
 

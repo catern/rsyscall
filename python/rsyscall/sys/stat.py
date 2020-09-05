@@ -1,3 +1,4 @@
+"`#include <sys/socket.h>`"
 from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall._raw import lib, ffi # type: ignore

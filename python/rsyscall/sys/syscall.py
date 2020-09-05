@@ -1,4 +1,4 @@
-"#include <sys/syscall.h>"
+"`#include <sys/syscall.h>`"
 from rsyscall._raw import ffi, lib # type: ignore
 import enum
 

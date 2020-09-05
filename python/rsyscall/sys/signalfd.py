@@ -1,3 +1,4 @@
+"`#include <sys/signalfd.h>`"
 import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.struct import Struct

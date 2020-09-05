@@ -1,4 +1,4 @@
-"Modeled after fnctl.h."
+"`#include <fnctl.h>`"
 from rsyscall._raw import lib, ffi # type: ignore
 import enum
 import typing as t

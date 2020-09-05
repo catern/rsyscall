@@ -1,3 +1,4 @@
+"`#include <sys/uio.h>`"
 from __future__ import annotations
 from rsyscall._raw import lib, ffi # type: ignore
 import enum

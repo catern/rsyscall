@@ -1,3 +1,4 @@
+"`#include <sys/resource.h>`"
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.struct import Struct
 from dataclasses import dataclass

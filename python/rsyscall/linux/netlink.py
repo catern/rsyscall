@@ -1,3 +1,4 @@
+"`#include <linux/netlink.h>`"
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.sys.socket import Sockaddr, AF, _register_sockaddr
 import typing as t

@@ -1,4 +1,4 @@
-"Modeled after unistd.h."
+"The subset of functionality in unistd.h which relates to IO"
 from __future__ import annotations
 from rsyscall._raw import lib # type: ignore
 import enum

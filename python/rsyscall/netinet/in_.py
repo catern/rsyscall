@@ -1,4 +1,4 @@
-"#include <netinet/in.h>"
+"`#include <netinet/in.h>`"
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.sys.socket import Sockaddr, AF, _register_sockaddr
 import ipaddress
