@@ -92,7 +92,7 @@ from rsyscall.near.sysif import SyscallResponse
 
 from rsyscall.struct import Int32
 from rsyscall.sys.syscall import SYS
-from rsyscall.sys.socket import SOCK, SOL, SO, Sockaddr, GenericSockaddr, T_sockaddr, Sockbuf
+from rsyscall.sys.socket import SOCK, SOL, SO, Sockaddr, SockaddrStorage, T_sockaddr, Sockbuf
 from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EPOLL_CTL, EpollFlag
 from rsyscall.fcntl import O, F
 
@@ -455,7 +455,7 @@ class AsyncFileDescriptor:
 
     async def accept_addr(self, flags: SOCK=SOCK.NONE) -> t.Tuple[FileDescriptor, Sockaddr]:
         "Call accept with a buffer for the address, and return the resulting fd and address."
-        written_sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(GenericSockaddr)))
+        written_sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(SockaddrStorage)))
         fd, sockbuf = await self.accept(flags, written_sockbuf)
         addr = (await (await sockbuf.read()).buf.read()).parse()
         return fd, addr

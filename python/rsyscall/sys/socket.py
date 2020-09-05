@@ -18,6 +18,7 @@ from rsyscall.sys.uio import IovecList
 __all__ = [
     "AF",
     "Sockaddr",
+    "SockaddrStorage",
     "SOCK",
     "SOL",
     "SO",
@@ -147,21 +148,24 @@ class SCM(enum.IntEnum):
     RIGHTS = lib.SCM_RIGHTS
 
 @dataclass
-class GenericSockaddr(Sockaddr):
+class SockaddrStorage(Sockaddr):
+    "struct sockaddr_storage. Useful when dealing with sockets with unknown address families"
     family: AF
     data: bytes
 
-    @classmethod
-    def check_family(cls, family: AF) -> None:
-        if cls.family != family:
-            raise Exception("sa_family should be", cls.family, "is instead", family)
-
     def to_bytes(self) -> bytes:
+        # We can't just create a struct sockaddr_storage and turn the whole thing to bytes,
+        # because that will pad the actually valid data with a bunch of trailing null bytes.
+        # And we can't do that because the length of the valid data is semantically
+        # meaningful for some socket addresses, such as sockaddr_un.
         return bytes(ffi.buffer(ffi.new('sa_family_t*', self.family))) + self.data
 
-    T = t.TypeVar('T', bound='GenericSockaddr')
+    T = t.TypeVar('T', bound='SockaddrStorage')
     @classmethod
-    def from_bytes(cls: t.Type[T], data: bytes) -> T: # type: ignore
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        # As with to_bytes, we can't just cast the bytes to a struct sockaddr_storage and read its data field,
+        # because that would pad the data with a bunch of null bytes,
+        # and would not preserve the length of the valid data
         family = ffi.cast('sa_family_t*', ffi.from_buffer(data))
         rest = data[ffi.sizeof('sa_family_t'):]
         return cls(
@@ -171,10 +175,10 @@ class GenericSockaddr(Sockaddr):
 
     @classmethod
     def sizeof(cls) -> int:
-        # this is the maximum size of a sockaddr
         return ffi.sizeof('struct sockaddr_storage')
 
-    def parse(self) -> Address:
+    def parse(self) -> Sockaddr:
+        "Using the family field, return the correct Sockaddr type that this actually contains."
         cls = family_to_class[self.family]
         return cls.from_bytes(self.to_bytes())
 
@@ -354,7 +358,7 @@ class CmsgListSerializer(Serializer[T_cmsglist]):
 
 @dataclass
 class SendMsghdr(Serializable):
-    name: t.Optional[WrittenPointer[Address]]
+    name: t.Optional[WrittenPointer[Sockaddr]]
     iov: WrittenPointer[IovecList]
     control: t.Optional[WrittenPointer[CmsgList]]
 
@@ -376,7 +380,7 @@ class SendMsghdr(Serializable):
 
 @dataclass
 class RecvMsghdr(Serializable):
-    name: t.Optional[Pointer[Address]]
+    name: t.Optional[Pointer[Sockaddr]]
     iov: WrittenPointer[IovecList]
     control: t.Optional[Pointer[CmsgList]]
 
@@ -403,17 +407,17 @@ class RecvMsghdr(Serializable):
 
 @dataclass
 class RecvMsghdrOut:
-    name: t.Optional[Pointer[Address]]
+    name: t.Optional[Pointer[Sockaddr]]
     control: t.Optional[Pointer[CmsgList]]
     flags: MsghdrFlags
     # the _rest fields are the invalid, unused parts of the buffers;
     # almost everyone can ignore these.
-    name_rest: t.Optional[Pointer[Address]]
+    name_rest: t.Optional[Pointer[Sockaddr]]
     control_rest: t.Optional[Pointer[CmsgList]]
 
 @dataclass
 class RecvMsghdrOutSerializer(Serializer[RecvMsghdrOut]):
-    name: t.Optional[Pointer[Address]]
+    name: t.Optional[Pointer[Sockaddr]]
     control: t.Optional[Pointer[CmsgList]]
 
     def to_bytes(self, x: RecvMsghdrOut) -> bytes:
@@ -422,8 +426,8 @@ class RecvMsghdrOutSerializer(Serializer[RecvMsghdrOut]):
     def from_bytes(self, data: bytes) -> RecvMsghdrOut:
         struct = ffi.cast('struct msghdr*', ffi.from_buffer(data))
         if self.name is None:
-            name: t.Optional[Pointer[Address]] = None
-            name_rest: t.Optional[Pointer[Address]] = None
+            name: t.Optional[Pointer[Sockaddr]] = None
+            name_rest: t.Optional[Pointer[Sockaddr]] = None
         else:
             name, name_rest = self.name.split(struct.msg_namelen)
         if self.control is None:
@@ -439,7 +443,7 @@ from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
 
 T_fd = t.TypeVar('T_fd', bound='SocketFileDescriptor')
 class SocketFileDescriptor(BaseFileDescriptor):
-    async def bind(self, addr: WrittenPointer[Address]) -> None:
+    async def bind(self, addr: WrittenPointer[Sockaddr]) -> None:
         self._validate()
         with addr.borrow(self.task):
             try:
@@ -451,7 +455,7 @@ class SocketFileDescriptor(BaseFileDescriptor):
                 exn.filename = addr.value
                 raise
 
-    async def connect(self, addr: WrittenPointer[Address]) -> None:
+    async def connect(self, addr: WrittenPointer[Sockaddr]) -> None:
         self._validate()
         with addr.borrow(self.task):
             try:
@@ -479,14 +483,14 @@ class SocketFileDescriptor(BaseFileDescriptor):
         with optval.borrow(self.task) as optval_n:
             await _setsockopt(self.task.sysif, self.near, level, optname, optval_n, optval.size())
 
-    async def getsockname(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
+    async def getsockname(self, addr: WrittenPointer[Sockbuf[T_sockaddr]]) -> Pointer[Sockbuf[T_sockaddr]]:
         self._validate()
         with addr.borrow(self.task) as addr_n:
             with addr.value.buf.borrow(self.task) as addrbuf_n:
                 await _getsockname(self.task.sysif, self.near, addrbuf_n, addr_n)
         return addr
 
-    async def getpeername(self, addr: WrittenPointer[Sockbuf[T_addr]]) -> Pointer[Sockbuf[T_addr]]:
+    async def getpeername(self, addr: WrittenPointer[Sockbuf[T_sockaddr]]) -> Pointer[Sockbuf[T_sockaddr]]:
         self._validate()
         with addr.borrow(self.task) as addr_n:
             with addr.value.buf.borrow(self.task) as addrbuf_n:
@@ -496,12 +500,12 @@ class SocketFileDescriptor(BaseFileDescriptor):
     @t.overload
     async def accept(self: T_fd, flags: SOCK=SOCK.NONE) -> T_fd: ...
     @t.overload
-    async def accept(self: T_fd, flags: SOCK, addr: WrittenPointer[Sockbuf[T_addr]]
-    ) -> t.Tuple[T_fd, WrittenPointer[Sockbuf[T_addr]]]: ...
+    async def accept(self: T_fd, flags: SOCK, addr: WrittenPointer[Sockbuf[T_sockaddr]]
+    ) -> t.Tuple[T_fd, WrittenPointer[Sockbuf[T_sockaddr]]]: ...
 
     async def accept(self: T_fd, flags: SOCK=SOCK.NONE,
-                     addr: t.Optional[WrittenPointer[Sockbuf[T_addr]]]=None
-    ) -> t.Union[T_fd, t.Tuple[T_fd, WrittenPointer[Sockbuf[T_addr]]]]:
+                     addr: t.Optional[WrittenPointer[Sockbuf[T_sockaddr]]]=None
+    ) -> t.Union[T_fd, t.Tuple[T_fd, WrittenPointer[Sockbuf[T_sockaddr]]]]:
         self._validate()
         flags |= SOCK.CLOEXEC
         if addr is None:

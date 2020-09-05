@@ -106,8 +106,8 @@ class TestIn(TestCase):
         output = SockaddrIn.from_bytes(initial.to_bytes())
         self.assertEqual(initial.port, output.port)
         self.assertEqual(initial.addr, output.addr)
-        from rsyscall.sys.socket import GenericSockaddr
-        out = GenericSockaddr.from_bytes(initial.to_bytes()).parse()
+        from rsyscall.sys.socket import SockaddrStorage
+        out = SockaddrStorage.from_bytes(initial.to_bytes()).parse()
         self.assertEqual(initial.port, output.port)
         self.assertEqual(initial.addr, output.addr)
 
@@ -116,8 +116,8 @@ class TestIn(TestCase):
         output = SockaddrIn6.from_bytes(initial.to_bytes())
         self.assertEqual(initial.port, output.port)
         self.assertEqual(initial.addr, output.addr)
-        from rsyscall.sys.socket import GenericSockaddr
-        out = GenericSockaddr.from_bytes(initial.to_bytes()).parse()
+        from rsyscall.sys.socket import SockaddrStorage
+        out = SockaddrStorage.from_bytes(initial.to_bytes()).parse()
         self.assertEqual(initial.port, output.port)
         self.assertEqual(initial.addr, output.addr)
         

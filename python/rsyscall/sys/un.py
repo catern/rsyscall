@@ -94,7 +94,7 @@ class TestUn(TestCase):
         initial = SockaddrUn(b"asefliasjeflsaifje0.1")
         output = SockaddrUn.from_bytes(initial.to_bytes())
         self.assertEqual(initial, output)
-        from rsyscall.sys.socket import GenericSockaddr
-        out = GenericSockaddr.from_bytes(initial.to_bytes()).parse()
+        from rsyscall.sys.socket import SockaddrStorage
+        out = SockaddrStorage.from_bytes(initial.to_bytes()).parse()
         self.assertEqual(initial, output)
         
