@@ -32,7 +32,6 @@ from rsyscall.linux.futex import FutexNode, RobustListHead, FUTEX_WAITERS, FUTEX
 from rsyscall.sys.mman import PROT, MAP
 from rsyscall.sys.memfd import MFD
 from rsyscall.sched import CLONE
-from rsyscall.path import Path
 
 __all__ = [
     "RsyscallServerExecutable",
@@ -134,8 +133,7 @@ async def rsyscall_exec(
     """
     [(access_data_sock, passed_data_sock)] = await child.open_async_channels(1)
     # create this guy and pass him down to the new thread
-    child_futex_memfd = await child.task.memfd_create(
-        await child.ram.ptr(Path("child_robust_futex_list")))
+    child_futex_memfd = await child.task.memfd_create(await child.ram.ptr("child_robust_futex_list"))
     parent_futex_memfd = child_futex_memfd.for_task(parent.task)
     if isinstance(child.task.sysif, ChildSyscallInterface):
         syscall = child.task.sysif

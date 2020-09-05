@@ -1,6 +1,5 @@
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
-from rsyscall.path import Path
 from rsyscall.fcntl import O
 from rsyscall.sys.socket import AF, SOCK
 from rsyscall.net.if_ import *
@@ -17,7 +16,7 @@ class TestNet(TrioTestCase):
         await self.thr.close()
 
     async def test_setns_ownership(self) -> None:
-        netnsfd = await self.thr.task.open(await self.thr.ram.ptr(Path("/proc/self/ns/net")), O.RDONLY)
+        netnsfd = await self.thr.task.open(await self.thr.ram.ptr("/proc/self/ns/net"), O.RDONLY)
         thread = await self.thr.clone(CLONE.FILES)
         await thread.unshare_user()
         with self.assertRaises(PermissionError):
@@ -25,7 +24,7 @@ class TestNet(TrioTestCase):
             await thread.task.setns(netnsfd, CLONE.NEWNET)
 
     async def test_make_tun(self) -> None:
-        tun_fd = await self.thr.task.open(await self.thr.ram.ptr(Path("/dev/net/tun")), O.RDWR)
+        tun_fd = await self.thr.task.open(await self.thr.ram.ptr("/dev/net/tun"), O.RDWR)
         ptr = await self.thr.ram.ptr(Ifreq('tun0', flags=IFF_TUN))
         await tun_fd.ioctl(TUNSETIFF, ptr)
         sock = await self.thr.task.socket(AF.INET, SOCK.STREAM)
@@ -37,7 +36,7 @@ class TestNet(TrioTestCase):
         netsock = await self.thr.task.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
         await netsock.bind(await self.thr.ram.ptr(SockaddrNl(0, RTMGRP.LINK)))
 
-        tun_fd = await self.thr.task.open(await self.thr.ram.ptr(Path("/dev/net/tun")), O.RDWR)
+        tun_fd = await self.thr.task.open(await self.thr.ram.ptr("/dev/net/tun"), O.RDWR)
         ptr = await self.thr.ram.ptr(Ifreq('tun0', flags=IFF_TUN))
         await tun_fd.ioctl(TUNSETIFF, ptr)
         sock = await self.thr.task.socket(AF.INET, SOCK.STREAM)

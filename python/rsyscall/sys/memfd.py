@@ -1,5 +1,6 @@
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
+import os
 import typing as t
 import enum
 
@@ -10,10 +11,9 @@ class MFD(enum.IntFlag):
 #### Classes ####
 from rsyscall.handle.fd import T_fd, FileDescriptorTask
 from rsyscall.handle.pointer import WrittenPointer
-from rsyscall.path import Path
 
 class MemfdTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
-    async def memfd_create(self, name: WrittenPointer[Path], flags: MFD=MFD.NONE) -> T_fd:
+    async def memfd_create(self, name: WrittenPointer[t.Union[str, os.PathLike]], flags: MFD=MFD.NONE) -> T_fd:
         with name.borrow(self) as name_n:
             fd = await _memfd_create(self.sysif, name_n, flags|MFD.CLOEXEC)
             return self.make_fd_handle(fd)

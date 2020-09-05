@@ -1,5 +1,6 @@
 "`#include <sys/mount.h>`"
 from rsyscall._raw import lib # type: ignore
+import os
 import typing as t
 import enum
 
@@ -33,13 +34,14 @@ class UMOUNT(enum.IntFlag):
 #### Classes ####
 import rsyscall.far
 from rsyscall.handle.pointer import WrittenPointer
-from rsyscall.unistd import Arg
 
 class MountTask(rsyscall.far.Task):
     async def mount(self,
-                    source: WrittenPointer[Arg], target: WrittenPointer[Arg],
-                    filesystemtype: WrittenPointer[Arg], mountflags: MS,
-                    data: WrittenPointer[Arg]) -> None:
+                    source: WrittenPointer[t.Union[str, os.PathLike]],
+                    target: WrittenPointer[t.Union[str, os.PathLike]],
+                    filesystemtype: WrittenPointer[t.Union[str, os.PathLike]],
+                    mountflags: MS,
+                    data: WrittenPointer[t.Union[str, os.PathLike]]) -> None:
         with source.borrow(self):
             with target.borrow(self):
                 with filesystemtype.borrow(self):
@@ -49,7 +51,7 @@ class MountTask(rsyscall.far.Task):
                             source.near, target.near, filesystemtype.near,
                             mountflags, data.near))
 
-    async def umount(self, target: WrittenPointer[Arg], flags: UMOUNT=UMOUNT.NONE) -> None:
+    async def umount(self, target: WrittenPointer[t.Union[str, os.PathLike]], flags: UMOUNT=UMOUNT.NONE) -> None:
         with target.borrow(self):
             await _umount2(self.sysif, target.near, flags)
 

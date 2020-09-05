@@ -12,12 +12,12 @@ def random_string(k: int=8) -> str:
     "Return a random string - useful for making files that don't conflict with others."
     return ''.join(random.choices(string.ascii_letters + string.digits, k=k))
 
-async def update_symlink(thr: RAMThread, path: WrittenPointer[Path], target: t.Union[str, Path]) -> WrittenPointer[Path]:
+async def update_symlink(thr: RAMThread, path: WrittenPointer[Path],
+                         target: t.Union[str, os.PathLike]) -> WrittenPointer[Path]:
     "Atomically update this path to contain a symlink pointing at this target."
-    target_bytes = os.fsencode(target)
     tmpname = path.value.name + ".updating." + random_string(k=8)
     tmppath = await thr.ram.ptr(path.value.parent/tmpname)
-    await thr.task.symlink(await thr.ram.ptr(target_bytes), tmppath)
+    await thr.task.symlink(await thr.ram.ptr(target), tmppath)
     await thr.task.rename(tmppath, path)
     return path
 

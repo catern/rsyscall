@@ -72,7 +72,6 @@ import rsyscall.near.types as near
 import rsyscall.far as far
 import rsyscall.handle as handle
 from rsyscall.thread import Thread
-from rsyscall.path import Path
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.tasks.clone import ChildSyscallInterface, clone_child_task
@@ -108,7 +107,7 @@ __all__ = [
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def clone_persistent(
-        parent: Thread, path: Path,
+        parent: Thread, path: t.Union[str, os.PathLike],
 ) -> PersistentThread:
     """Create a new not-yet-persistent thread and return the thread and its tracking object
 
@@ -200,7 +199,7 @@ class PersistentThread(Thread):
     """
     def __init__(self,
                  thread: Thread,
-                 persistent_path: Path,
+                 persistent_path: t.Union[str, os.PathLike],
                  persistent_sock: FileDescriptor,
     ) -> None:
         super()._init_from(thread)

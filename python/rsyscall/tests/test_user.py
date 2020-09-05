@@ -1,6 +1,5 @@
 from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
-from rsyscall.path import Path
 from rsyscall.fcntl import O
 from rsyscall.sys.prctl import *
 from rsyscall.sys.capability import *

@@ -11,9 +11,10 @@ executables.
 from __future__ import annotations
 from rsyscall.command import Command
 from rsyscall.concurrency import run_all
-from rsyscall.handle import Path, Task, FileDescriptor, WrittenPointer
+from rsyscall.handle import Task, FileDescriptor, WrittenPointer
 from rsyscall.memory.ram import RAM
-from rsyscall.unistd import Arg, ArgList
+from rsyscall.path import Path
+from rsyscall.unistd import ArgList
 import os
 import typing as t
 import functools
@@ -57,7 +58,7 @@ class ExecutablePathCache:
                 self.fds[path] = fd
         return self.fds[path]
 
-    async def _check(self, path: Path, name: WrittenPointer[Path]) -> bool:
+    async def _check(self, path: Path, name: WrittenPointer[str]) -> bool:
         "Return true if there's an executable with this name under this path"
         fd = await self._get_fd_for_path(path)
         if fd is None:
@@ -77,7 +78,7 @@ class ExecutablePathCache:
         try:
             path = self.path_cache[name]
         except KeyError:
-            nameptr = await self.ram.ptr(Path(name))
+            nameptr = await self.ram.ptr(name)
             # do the lookup for 64 paths at a time, that seems like a good batching number
             for paths in chunks(self.paths, 64):
                 thunks = [functools.partial(self._check, path, nameptr) for path in paths]
@@ -147,7 +148,7 @@ class Environment:
 
     async def as_arglist(self, ram: RAM) -> WrittenPointer[ArgList]:
         if self.arglist_ptr is None:
-            envp = [Arg('='.join([key, value])) for key, value in self.data.items()]
+            envp = ['='.join([key, value]) for key, value in self.data.items()]
             async def op(sem: RAM) -> WrittenPointer[ArgList]:
                 envp_ptrs = ArgList([await sem.ptr(arg) for arg in envp])
                 return await sem.ptr(envp_ptrs)

@@ -1,10 +1,12 @@
+import typing as t
+
 #### Classes ####
 from rsyscall.handle.pointer import WrittenPointer
 from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
-from rsyscall.path import Path
+import os
 
 class CWDTask(FileDescriptorTask):
-    async def chdir(self, path: WrittenPointer[Path]) -> None:
+    async def chdir(self, path: WrittenPointer[t.Union[str, os.PathLike]]) -> None:
         with path.borrow(self) as path_n:
             await _chdir(self.sysif, path_n)
 
@@ -12,7 +14,7 @@ class CWDTask(FileDescriptorTask):
         with fd.borrow(self) as fd_n:
             await _fchdir(self.sysif, fd_n)
 
-    async def chroot(self, path: WrittenPointer[Path]) -> None:
+    async def chroot(self, path: WrittenPointer[t.Union[str, os.PathLike]]) -> None:
         with path.borrow(self) as path_n:
             await _chroot(self.sysif, path_n)
 

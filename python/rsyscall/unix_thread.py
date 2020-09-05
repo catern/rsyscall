@@ -20,10 +20,9 @@ import typing as t
 import os
 
 from rsyscall.fcntl import AT
-from rsyscall.path import Path
 from rsyscall.sched import CLONE
 from rsyscall.signal import Sigset, SIG, SignalBlock, HowSIG
-from rsyscall.unistd import Arg, ArgList
+from rsyscall.unistd import ArgList
 
 logger = logging.getLogger(__name__)
 
@@ -95,15 +94,15 @@ class ChildUnixThread(UnixThread):
         super()._init_from(thr)
         self.process = process
 
-    async def _execve(self, path: Path, argv: t.List[str], envp: t.List[str],
+    async def _execve(self, path: t.Union[str, os.PathLike], argv: t.List[str], envp: t.List[str],
                       command: Command=None,
     ) -> AsyncChildProcess:
         "Call execve, abstracting over memory; self.{exec,execve} are probably preferable"
-        async def op(sem: RAM) -> t.Tuple[WrittenPointer[Path],
-                                               WrittenPointer[ArgList],
-                                               WrittenPointer[ArgList]]:
-            argv_ptrs = ArgList([await sem.ptr(Arg(arg)) for arg in argv])
-            envp_ptrs = ArgList([await sem.ptr(Arg(arg)) for arg in envp])
+        async def op(sem: RAM) -> t.Tuple[WrittenPointer[t.Union[str, os.PathLike]],
+                                          WrittenPointer[ArgList],
+                                          WrittenPointer[ArgList]]:
+            argv_ptrs = ArgList([await sem.ptr(arg) for arg in argv])
+            envp_ptrs = ArgList([await sem.ptr(arg) for arg in envp])
             return (await sem.ptr(path),
                     await sem.ptr(argv_ptrs),
                     await sem.ptr(envp_ptrs))
@@ -111,21 +110,21 @@ class ChildUnixThread(UnixThread):
         await self.task.execve(filename, argv_ptr, envp_ptr, command=command)
         return self.process
 
-    async def execv(self, path: Path,
+    async def execv(self, path: t.Union[str, os.PathLike],
                     argv: t.Sequence[t.Union[str, os.PathLike]],
                     command: Command=None,
     ) -> AsyncChildProcess:
         """Replace the running executable in this thread with another; see execve.
         """
-        async def op(sem: RAM) -> t.Tuple[WrittenPointer[Path], WrittenPointer[ArgList]]:
-            argv_ptrs = ArgList([await sem.ptr(Arg(arg)) for arg in argv])
+        async def op(sem: RAM) -> t.Tuple[WrittenPointer[t.Union[str, os.PathLike]], WrittenPointer[ArgList]]:
+            argv_ptrs = ArgList([await sem.ptr(arg) for arg in argv])
             return (await sem.ptr(path), await sem.ptr(argv_ptrs))
         filename_ptr, argv_ptr = await self.ram.perform_batch(op)
         envp_ptr = await self.environ.as_arglist(self.ram)
         await self.task.execve(filename_ptr, argv_ptr, envp_ptr, command=command)
         return self.process
 
-    async def execve(self, path: Path,
+    async def execve(self, path: t.Union[str, os.PathLike],
                      argv: t.Sequence[t.Union[str, os.PathLike]],
                      env_updates: t.Mapping[str, t.Union[str, os.PathLike]]={},
                      inherited_signal_blocks: t.List[SignalBlock]=[],

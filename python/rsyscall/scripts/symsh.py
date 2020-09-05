@@ -8,7 +8,7 @@ import shlex
 from rsyscall.sched import CLONE
 from rsyscall.fcntl import O
 from rsyscall.unistd import SEEK
-from rsyscall.path import EmptyPath, Path
+from rsyscall.path import Path
 from rsyscall.sys.mount import MS, UMOUNT
 from rsyscall.sys.stat import Stat
 
@@ -23,9 +23,9 @@ from rsyscall.linux.fuse import (
 from rsyscall.linux.dirent import DirentList, DT
 from rsyscall.time import Timespec
 from rsyscall.sys.stat import TypeMode, S_IF, Mode
-from rsyscall import Command, WrittenPointer, FileDescriptor, Thread, Arg
+from rsyscall import Command, WrittenPointer, FileDescriptor, Thread
 from rsyscall.memory.ram import RAM
-from rsyscall.unistd import AT, Path, ArgList, Arg
+from rsyscall.unistd import AT, ArgList
 from rsyscall.tasks.stub import StubServer
 import errno
 import os
@@ -126,7 +126,7 @@ class FuseFS:
     async def cleanup(self) -> None:
         # umount to kill the fuse loop; it's a bit lazy to save the parent thread to do this, but we
         # can't do it in self.thr because that thread spends all its time blocked in read.
-        await self.parent_thread.task.umount(await self.parent_thread.ptr(Arg(self.path)))
+        await self.parent_thread.task.umount(await self.parent_thread.ptr(self.path))
         # and close the thread
         await self.thr.close()
         # kill the thread, to be sure it's dead and /dev/fuse is closed

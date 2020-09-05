@@ -35,8 +35,8 @@ logger = logging.getLogger(__name__)
 from rsyscall.sched import CLONE, Stack, _unshare
 from rsyscall.signal import Siginfo
 from rsyscall.fcntl import AT, F, O
-from rsyscall.path import Path, EmptyPath
-from rsyscall.unistd import SEEK, Arg, ArgList, Pipe, OK
+from rsyscall.path import Path
+from rsyscall.unistd import SEEK, ArgList, Pipe, OK
 from rsyscall.unistd.exec import _execve, _execveat, _exit
 from rsyscall.linux.futex import RobustListHead, FutexNode
 from rsyscall.sys.wait import W
@@ -210,12 +210,6 @@ class Task(
         # for extensibility
         return FileDescriptor(self, fd)
 
-    def make_path_from_bytes(self, path: t.Union[str, bytes]) -> Path:
-        return Path(os.fsdecode(path))
-
-    def make_path_handle(self, path: Path) -> Path:
-        return path
-
     def _make_fresh_address_space(self) -> None:
         self.address_space = rsyscall.far.AddressSpace(self.process.near.id)
 
@@ -232,7 +226,7 @@ class Task(
         await self.setns(fd, CLONE.NEWUSER)
 
     async def execveat(self, fd: t.Optional[FileDescriptor],
-                       pathname: t.Union[WrittenPointer[Path], WrittenPointer[EmptyPath]],
+                       pathname: WrittenPointer[t.Union[str, os.PathLike]],
                        argv: WrittenPointer[ArgList],
                        envp: WrittenPointer[ArgList],
                        flags: AT=AT.NONE,
@@ -259,7 +253,7 @@ class Task(
             if isinstance(self.process, ChildProcess):
                 self.process.did_exec(command)
 
-    async def execve(self, filename: WrittenPointer[Path],
+    async def execve(self, filename: WrittenPointer[t.Union[str, os.PathLike]],
                      argv: WrittenPointer[ArgList],
                      envp: WrittenPointer[ArgList],
                      command: Command=None,
