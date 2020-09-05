@@ -7,11 +7,8 @@ from dataclasses import dataclass, field
 import enum
 import contextlib
 import rsyscall.near.types as near
-if t.TYPE_CHECKING:
-    from rsyscall.far import Task
-    from rsyscall.handle import Pointer, WrittenPointer
-else:
-    Task = object
+from rsyscall.far import Task
+from rsyscall.handle import Pointer, WrittenPointer
 
 import signal
 

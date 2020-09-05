@@ -5,8 +5,7 @@ from rsyscall._raw import ffi, lib # type: ignore
 import enum
 from dataclasses import dataclass
 from rsyscall.struct import Struct
-if t.TYPE_CHECKING:
-    from rsyscall.handle import Pointer, WrittenPointer
+from rsyscall.handle import Pointer, WrittenPointer
 
 FUTEX_WAITERS: int = lib.FUTEX_WAITERS
 FUTEX_TID_MASK: int = lib.FUTEX_TID_MASK

@@ -3,11 +3,8 @@ from __future__ import annotations
 from rsyscall._raw import lib, ffi # type: ignore
 import enum
 import typing as t
+from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.struct import Serializable
-if t.TYPE_CHECKING:
-    from rsyscall.handle import Pointer, WrittenPointer
-else:
-    Pointer = object
 
 class RWF(enum.IntFlag):
     NONE = 0
@@ -72,7 +69,6 @@ def split_iovec(iov: WrittenPointer[IovecList], ret: int
 
 #### Classes ####
 from rsyscall.handle.fd import BaseFileDescriptor
-from rsyscall.handle.pointer import Pointer
 import contextlib
 
 class UioFileDescriptor(BaseFileDescriptor):
