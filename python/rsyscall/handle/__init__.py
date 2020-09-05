@@ -69,7 +69,6 @@ from rsyscall.sched        import SchedTask
 
 # re-exported
 from rsyscall.sched import Borrowable
-from rsyscall.sys.mman import MemoryMapping
 
 
 

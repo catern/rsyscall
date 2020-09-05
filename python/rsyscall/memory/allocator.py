@@ -16,7 +16,7 @@ from rsyscall.near.sysif import SyscallInterface
 import rsyscall.far as far
 import rsyscall.handle as handle
 from rsyscall.memory.allocation_interface import AllocationInterface, UseAfterFreeError
-from rsyscall.handle import MemoryMapping, Task
+from rsyscall.handle import Task
 import trio
 import abc
 import enum
@@ -24,7 +24,7 @@ import contextlib
 import typing as t
 import logging
 from dataclasses import dataclass
-from rsyscall.sys.mman import PROT, MAP
+from rsyscall.sys.mman import PROT, MAP, MemoryMapping
 logger = logging.getLogger(__name__)
 
 # We set eq=False because two distinct zero-length allocations can be identical in all

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM
 from rsyscall.memory.transport import MemoryTransport
-from rsyscall.handle import Pointer, Task, MemoryMapping
+from rsyscall.handle import Pointer, Task
 from rsyscall.signal import SIG, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
 from rsyscall.sys.syscall import SYS
