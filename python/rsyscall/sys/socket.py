@@ -17,7 +17,7 @@ from rsyscall.sys.uio import IovecList
 
 __all__ = [
     "AF",
-    "Address",
+    "Sockaddr",
     "SOCK",
     "SOL",
     "SO",
@@ -44,23 +44,37 @@ class SHUT(enum.IntEnum):
     WR = lib.SHUT_WR
     RDWR = lib.SHUT_RDWR
 
-class Address(Struct):
-    """This is just an interface to indicate different kinds of sockaddrs.
-
-    We don't call this "Sockaddr" because that's a real struct,
-    distinct from this class.
+class Sockaddr(Struct):
+    """struct sockaddr. This is not really useful to allocate on its own; you want the derived classes.
 
     """
-    family: AF
+    def __init__(self, family: AF, data: bytes) -> None:
+        self.family = family
+        self.data = data
+
     @classmethod
     def check_family(cls, family: AF) -> None:
         if cls.family != family:
             raise Exception("sa_family should be", cls.family, "is instead", family)
 
-T_addr = t.TypeVar('T_addr', bound='Address')
+    def to_bytes(self) -> bytes:
+        struct = ffi.new('struct sockaddr*', (self.family, self.data))
+        return bytes(ffi.buffer(struct))
 
-family_to_class: t.Dict[AF, t.Type[Address]] = {}
-def _register_sockaddr(sockaddr: t.Type[Address]) -> None:
+    T = t.TypeVar('T', bound='Sockaddr')
+    @classmethod
+    def from_bytes(cls: t.Type[T], data: bytes) -> T:
+        struct = ffi.cast('struct sockaddr*', ffi.from_buffer(data))
+        return cls(struct.ss_family, struct.ss_data)
+
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('struct sockaddr')
+
+T_sockaddr = t.TypeVar('T_sockaddr', bound='Sockaddr')
+
+family_to_class: t.Dict[AF, t.Type[Sockaddr]] = {}
+def _register_sockaddr(sockaddr: t.Type[Sockaddr]) -> None:
     if sockaddr.family in family_to_class:
         raise Exception("tried to register sockaddr", sockaddr, "for family", sockaddr.family,
                         "but there's already a class registered for that family:",
@@ -133,7 +147,7 @@ class SCM(enum.IntEnum):
     RIGHTS = lib.SCM_RIGHTS
 
 @dataclass
-class GenericSockaddr(Address):
+class GenericSockaddr(Sockaddr):
     family: AF
     data: bytes
 

@@ -9,7 +9,7 @@ from rsyscall.handle import FileDescriptor, WrittenPointer, Task
 from rsyscall.memory.ram import RAM
 from rsyscall.concurrency import make_n_in_parallel
 
-from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, RecvmsgFlags, SendMsghdr, RecvMsghdr, CmsgList, CmsgSCMRights, Socketpair
+from rsyscall.sys.socket import AF, SOCK, Sockaddr, SendmsgFlags, RecvmsgFlags, SendMsghdr, RecvMsghdr, CmsgList, CmsgSCMRights, Socketpair
 from rsyscall.sys.uio import IovecList
 from rsyscall.fcntl import F, O
 
@@ -182,7 +182,7 @@ class ListeningConnection(Connection):
                  access_task: Task,
                  access_ram: RAM,
                  access_epoller: Epoller,
-                 access_address: WrittenPointer[Address],
+                 access_address: WrittenPointer[Sockaddr],
                  task: Task,
                  ram: RAM,
                  listening_fd: AsyncFileDescriptor,

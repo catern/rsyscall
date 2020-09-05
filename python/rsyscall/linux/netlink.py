@@ -1,5 +1,5 @@
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.sys.socket import Address, AF, _register_sockaddr
+from rsyscall.sys.socket import Sockaddr, AF, _register_sockaddr
 import typing as t
 import enum
 from dataclasses import dataclass
@@ -13,7 +13,7 @@ class NETLINK(enum.IntEnum):
     ROUTE = lib.NETLINK_ROUTE
 
 @dataclass
-class SockaddrNl(Address):
+class SockaddrNl(Sockaddr):
     # not an actual process pid, but rather "port id", which is unique per netlink socket
     pid: int
     groups: int

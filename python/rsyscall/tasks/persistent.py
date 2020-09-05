@@ -95,7 +95,7 @@ from rsyscall.sys.epoll import EPOLL
 from rsyscall.struct import Int32, StructList
 
 from rsyscall.sched import CLONE
-from rsyscall.sys.socket import AF, SOCK, Address, SendmsgFlags, SendMsghdr, CmsgSCMRights, CmsgList
+from rsyscall.sys.socket import AF, SOCK, SendmsgFlags, SendMsghdr, CmsgSCMRights, CmsgList
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.uio import IovecList
 from rsyscall.signal import SIG, Sigset, SignalBlock
@@ -160,8 +160,8 @@ async def _connect_and_send(self: PersistentThread, thread: Thread, fds: t.List[
     sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK, 0), nonblock=True)
     sockaddr_un = await SockaddrUn.from_path(thread, self.persistent_path)
     async def sendmsg_op(sem: RAM) -> t.Tuple[
-            WrittenPointer[Address], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
-        addr: WrittenPointer[Address] = await sem.ptr(sockaddr_un)
+            WrittenPointer[SockaddrUn], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
+        addr = await sem.ptr(sockaddr_un)
         count = await sem.ptr(Int32(len(fds)))
         iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
         cmsgs = await sem.ptr(CmsgList([CmsgSCMRights(fds)]))

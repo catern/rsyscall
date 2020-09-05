@@ -1,6 +1,6 @@
 "#include <netinet/in.h>"
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.sys.socket import Address, AF, _register_sockaddr
+from rsyscall.sys.socket import Sockaddr, AF, _register_sockaddr
 import ipaddress
 import socket
 import typing as t
@@ -12,7 +12,7 @@ __all__ = [
 ]
 
 @dataclass(frozen=True)
-class SockaddrIn(Address):
+class SockaddrIn(Sockaddr):
     """Representation of struct sockaddr_in
 
     The port is in totally-normal host byte order, even though with the real
@@ -59,7 +59,7 @@ class SockaddrIn(Address):
 _register_sockaddr(SockaddrIn)
 
 
-class SockaddrIn6(Address):
+class SockaddrIn6(Sockaddr):
     "Representation of struct sockaddr_in6"
     family = AF.INET6
     def __init__(self, port: int, addr: t.Union[str, int, ipaddress.IPv6Address],

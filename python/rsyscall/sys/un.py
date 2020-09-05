@@ -1,7 +1,7 @@
 from __future__ import annotations
 import typing as t
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.sys.socket import AF, Address, _register_sockaddr
+from rsyscall.sys.socket import AF, Sockaddr, _register_sockaddr
 from rsyscall.path import Path
 from dataclasses import dataclass
 import os
@@ -19,7 +19,7 @@ class PathTooLongError(ValueError):
     pass
 
 @dataclass
-class SockaddrUn(Address):
+class SockaddrUn(Sockaddr):
     path: bytes
 
     family = AF.UNIX

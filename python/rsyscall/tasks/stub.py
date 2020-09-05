@@ -58,7 +58,7 @@ from rsyscall.handle import WrittenPointer, FileDescriptor, Task
 
 from rsyscall.path import Path
 from rsyscall.sched import CLONE
-from rsyscall.sys.socket import SOCK, AF, Address, SendmsgFlags, SendMsghdr, CmsgList, CmsgSCMRights
+from rsyscall.sys.socket import SOCK, AF, SendmsgFlags, SendMsghdr, CmsgList, CmsgSCMRights
 from rsyscall.sys.memfd import MFD
 from rsyscall.sys.uio import IovecList
 from rsyscall.sys.un import SockaddrUn
@@ -80,7 +80,7 @@ class StubServer:
         "Start listening on the passed-in path for stub connections."
         sockfd = await thread.make_afd(
             await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
-        addr: WrittenPointer[Address] = await thread.ram.ptr(await SockaddrUn.from_path(thread, path))
+        addr = await thread.ram.ptr(await SockaddrUn.from_path(thread, path))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
         return StubServer(sockfd, thread)

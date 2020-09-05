@@ -930,7 +930,7 @@ struct in6_addr {
 
 struct sockaddr {
     sa_family_t    sa_family;
-    ...;
+    char sa_data[14];
 };
 
 struct sockaddr_storage {

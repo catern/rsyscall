@@ -31,7 +31,7 @@ import string
 import typing as t
 
 from rsyscall.fcntl import O, F
-from rsyscall.sys.socket import SOCK, AF, Address
+from rsyscall.sys.socket import SOCK, AF
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.wait import W
 from rsyscall.unistd import Pipe
@@ -237,7 +237,7 @@ async def ssh_bootstrap(
 ) -> t.Tuple[AsyncChildProcess, Thread]:
     "Over ssh, run the bootstrap executable, "
     # identify local path
-    local_data_addr: WrittenPointer[Address] = await parent.ram.ptr(
+    local_data_addr = await parent.ram.ptr(
         await SockaddrUn.from_path(parent, local_socket_path))
     # start port forwarding; we'll just leak this process, no big deal
     # TODO we shouldn't leak processes; we should be GCing processes at some point
