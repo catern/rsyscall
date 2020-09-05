@@ -44,6 +44,7 @@ pytest ];
   nativeBuildInputs = [
       pkgs.pkg-config pkgs.openssh nix
       rsyscall
+      pkgs.python37Packages.pdoc3
   ];
   # not sure how to set up the deps. we use binaries and libraries from C
   # rsyscall at build time to run tests; and we also use them at runtime for our
