@@ -1,8 +1,14 @@
+"The runtime functionality to actually use Nix dependencies"
 import importlib.resources
 from dataclasses import dataclass
 from pathlib import Path
 import typing as t
 import json
+
+__all__ = [
+    'Nixdep',
+    'import_nixdep',
+]
 
 @dataclass
 class Nixdep:

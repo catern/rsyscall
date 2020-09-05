@@ -1,4 +1,4 @@
-"""A setuptools entrypoint to register Nix dependencies for import_nixdep
+"""A setuptools entrypoint to store dependencies on Nix packages at build-time
 
 setuptools automatically registers this entry-point when you have the
 nixdeps module on your PYTHONPATH. Then you can provide the following
@@ -43,6 +43,10 @@ import typing as t
 from pathlib import Path
 from distutils import log
 import subprocess
+
+__all__ = [
+    'nix_deps',
+]
 
 def write_json(output_path: Path, path: str, closure: t.List[str]) -> None:
     with open(output_path, 'w') as f:
@@ -156,7 +160,7 @@ def add_deps_module(dist, module_name: str, deps: t.List[str]) -> None:
     dist.cmdclass['build_ext'] = build_ext_make_mod
 
 def nix_deps(dist, attr: str, value) -> None:
-    "The main setuptools entry point"
+    "The main setuptools entry point. Automatically registered with setuptools via distutils.setup_keywords"
     assert attr == 'nix_deps'
     for module_name, deps in value.items():
         add_deps_module(dist, module_name, deps)
