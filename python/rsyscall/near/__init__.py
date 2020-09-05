@@ -53,9 +53,6 @@ async def close(sysif: SyscallInterface, fd: FileDescriptor) -> None:
         e.filename = fd
         raise
 
-async def dup3(sysif: SyscallInterface, oldfd: FileDescriptor, newfd: FileDescriptor, flags: int) -> None:
-    await sysif.syscall(SYS.dup3, oldfd, newfd, flags)
-
 async def execve(sysif: SyscallInterface,
                  path: Address, argv: Address, envp: Address) -> None:
     def handle(exn):

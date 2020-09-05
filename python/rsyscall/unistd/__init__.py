@@ -100,6 +100,26 @@ class FSFileDescriptor(BaseFileDescriptor):
         self._validate()
         await _ftruncate(self.task.sysif, self.near, length)
 
+    # oldfd has to be a valid file descriptor. newfd is not, technically, required to be
+    # open, but that's the best practice for avoiding races, so we require it anyway here.
+    async def dup3(self, newfd: T_fd, flags: int) -> T_fd:
+        self._validate()
+        if not newfd.is_only_handle():
+            raise Exception("can't dup over newfd", newfd, "there are more handles to it than just ours")
+        if self.near == newfd.near:
+            # dup3 fails if newfd == oldfd. I guess I'll just work around that.
+            return newfd
+        await _dup3(self.task.sysif, self.near, newfd.near, flags)
+        # newfd is left as a valid pointer to the new file descriptor
+        return newfd
+
+    async def dup2(self, newfd: T_fd) -> T_fd:
+        """duplicate a file descriptor
+
+        manpage: dup(2)
+        """
+        return await self.dup3(newfd, 0)
+
 class FSTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
     async def readlink(self, path: WrittenPointer[Path], buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         with path.borrow(self) as path_n:
@@ -217,3 +237,7 @@ async def _symlinkat(sysif: SyscallInterface,
     if newdirfd is None:
         newdirfd = AT.FDCWD # type: ignore
     await sysif.syscall(SYS.symlinkat, target, newdirfd, linkpath)
+
+async def _dup3(sysif: SyscallInterface,
+                oldfd: near.FileDescriptor, newfd: near.FileDescriptor, flags: int) -> near.FileDescriptor:
+    return near.FileDescriptor(await sysif.syscall(SYS.dup3, oldfd, newfd, flags))

@@ -251,34 +251,6 @@ class BaseFileDescriptor:
         num = self.near.number
         return Path(f"/proc/self/fd/{num}")
 
-    async def dup2(self, newfd: T_fd) -> T_fd:
-        """duplicate a file descriptor
-
-        manpage: dup(2)
-        """
-        return await self.dup3(newfd, 0)
-
-    # oldfd has to be a valid file descriptor. newfd is not, technically, required to be
-    # open, but that's the best practice for avoiding races, so we require it anyway here.
-    async def dup3(self, newfd: T_fd, flags: int) -> T_fd:
-        self._validate()
-        if not newfd.is_only_handle():
-            raise Exception("can't dup over newfd", newfd, "there are more handles to it than just ours")
-        with newfd.borrow(self.task):
-            if self.near == newfd.near:
-                # dup3 fails if newfd == oldfd. I guess I'll just work around that.
-                return newfd
-            await rsyscall.near.dup3(self.task.sysif, self.near, newfd.near, flags)
-            # newfd is left as a valid pointer to the new file descriptor
-            return newfd
-
-    async def copy_from(self, source: BaseFileDescriptor, flags=0) -> None:
-        await source.dup3(self, flags)
-
-    async def replace_with(self, source: BaseFileDescriptor, flags=0) -> None:
-        await source.dup3(self, flags)
-        await source.invalidate()
-
 class FDTable(rsyscall.far.FDTable):
     def __init__(self, creator_pid: int, parent: FDTable=None) -> None:
         super().__init__(creator_pid)

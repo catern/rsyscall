@@ -161,6 +161,12 @@ class FileDescriptor(
         await self.disable_cloexec()
         return int(self)
 
+    async def copy_from(self, source: FileDescriptor, flags=0) -> None:
+        await source.dup3(self, flags)
+
+    async def replace_with(self, source: FileDescriptor, flags=0) -> None:
+        await source.dup3(self, flags)
+        await source.invalidate()
 
     async def __aenter__(self) -> FileDescriptor:
         return self
