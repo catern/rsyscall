@@ -1,6 +1,7 @@
 "Interfaces and basic functionality for our serialization framework."
 from __future__ import annotations
 import abc
+import os
 import typing as t
 import struct
 from dataclasses import dataclass
@@ -163,3 +164,38 @@ class StructListSerializer(t.Generic[T_fixed_size], Serializer[StructList[T_fixe
             entries.append(ent)
             data = data[self.cls.sizeof():]
         return StructList(self.cls, entries)
+
+def strpath_to_null_terminated_bytes(val: t.Union[str, os.PathLike]) -> bytes:
+    return os.fsencode(val) + b'\0'
+
+def string_from_null_terminated_bytes(data: bytes) -> str:
+    try:
+        nullidx = data.index(b'\0')
+    except ValueError:
+        return os.fsdecode(data)
+    else:
+        return os.fsdecode(data[0:nullidx])
+
+T_pathlike = t.TypeVar('T_pathlike', bound=os.PathLike)
+@dataclass
+class PathLikeSerializer(Serializer[T_pathlike]):
+    cls: t.Type[T_pathlike]
+
+    @staticmethod
+    def to_bytes(val: T_pathlike) -> bytes:
+        return strpath_to_null_terminated_bytes(val)
+
+    def from_bytes(self, data: bytes) -> T_pathlike:
+        # We assume that any PathLike can be constructed by just passing a single string to its constructor.
+        # That's not actually true - os.DirEntry, for example, can't be constructed directly in this way.
+        # But, this is Python, so if it quacks, it ships.
+        return self.cls(string_from_null_terminated_bytes(data)) # type: ignore
+
+class StrSerializer(Serializer[str]):
+    @staticmethod
+    def to_bytes(val: str) -> bytes:
+        return strpath_to_null_terminated_bytes(val)
+
+    @staticmethod
+    def from_bytes(data: bytes) -> str:
+        return string_from_null_terminated_bytes(data)
