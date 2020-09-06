@@ -19806,7 +19806,7 @@ async with sysif.syscall_lock():
     a simple primitive.
 ** add delimcc runner and use
    it's time!!!
-** TODO tolerate non-empty sigprocmask on startup in local thread
+** DONE tolerate non-empty sigprocmask on startup in local thread
    So there are a couple options:
 
    1. track the actual sigmask
@@ -19837,6 +19837,410 @@ async with sysif.syscall_lock():
    where you'd just check that the count of blocks is at least what you allocated.
 
    yeah. yeah I think this is good and right.
+** TODO rename WrittenPointer to InPointer
+   "in" stands for input or initialized, take your pick.
+
+   but it's just the same thing
+** DONE rename Address to Sockaddr
+   So confusing! Very bad!
+
+   should we merge genericsockaddr into it as well?
+
+   okay wait, so,
+
+   maybe SockaddrStorage can just be an alternative name for sockaddr?
+
+   no no.
+   we clearly should have SockaddrStorage,
+   and then have parse or something
+
+   yeah ok. Sockaddr is actually Sockaddr, SockaddrStorage is actually SockaddrStorage.
+
+   all is well.
+
+   we have this pointers to base types...
+   which are actually derived types that are larger.
+
+   but that's fine.
+
+** DONE add more usage of ReadablePointer and LinearPointer
+   maybe I should actually do the restriction?
+
+   sure, I guess I should
+
+   yeah let's actually do this.
+
+   although, we'll do it without introducing linear_read;
+
+   we'll have LinearPointer inherit from ReadablePointer,
+
+   but be one-shot.
+
+   so it automatically degrades after reading, and is reusable.
+
+   well... we don't yet have a way to indicate "hey we're going to write to this".
+
+   i guess borrowing, *kind of*.
+
+   or looking at .near.
+
+   anyway, LinearPointer is useful on its own as a way to enforce at most once.
+
+   enforce at-least-once reading, that's trickier.
+   that requires both hooking into __del__ or something,
+   and having the kind of degrade-to-writeable functionality I was talking about.
+
+   ok so yeah we should go ahead and enforce use of unsafe when reading... maybe?
+
+   yeah, I think we can, it's plausible.
+
+   ok so also I guess we want to disallow writing to a linear pointer right?
+
+   and maybe this also helps us with contravariance?
+   well yes but later.
+
+*** TODO sockbuf
+   ok so we can't fully convert over because of Sockbuf,
+   which we're depending on the arbitrary-instruction improvement to fix.
+*** TODO iovec
+    hmmm.
+
+    I think we just need two types here: IovecList and ReadableIovecList, or something.
+
+    ya.. ya...
+
+    and right now there's this weird use of WP
+** TODO get rid of sockbuf
+   i hate it :(
+
+   maybe I coudld...
+
+   have one word of memory with a known address?
+
+   to which I write with each syscall?
+
+   so with each syscall I write that word,
+   and then with each response I return that word?
+
+   i guess there's two awful aspects:
+   the double read of two pieces of memory,
+   and the need to have a sockeln input.
+
+   although the input isn't too bad. but it is definitely confusing.
+
+   can I separate the two inputs I wonder?
+
+   i mean, what would be nice is, I guess...
+   writing arbitrary instructions.
+
+   then we could do getsockname with, just,
+   embedding the args.
+   and a stack-relative pointer.
+
+   arbitrary instruction execution would be better
+
+   although what about W^X, that would stop it.
+*** maybe just a hack instead of arbitrary instructions?
+    we could just do the one-word-with-known-address thing,
+    since we know we can handle it robustly later with arbitrary instructions.
+** TODO running arbitrary instructions
+   So an alternative for this is if we actually compile things and ship them.
+
+   but, also, that kind of defeats the point.
+   yeah that's counter to the whole rsyscall attitude,
+   of just treating the process as a runtime-usable object.
+
+   it sounds like mapping the same memory twice is a generic solution to W^X:
+   https://akkadia.org/drepper/selinux-mem.html
+
+   and then I can fix Sockbuf hmmm
+
+   yeah and running arbitrary code is much nicer too.
+   like, that's what the process API *is*,
+   just, run some instructions.
+*** TODO instruction transfer protocol
+    I'm sending x86_64 instructions over a pipe and reading them and immediately executing them in another process.
+    I'm wondering, are there any good pre-existing protocols for this?
+
+    I was going to just use a naive "length of buffer + buffer",
+    and read the instructions off entirely then start executing it.
+    But maybe I could do better with some knowledge of x86? Suggestions?
+
+    and then at the end we can jmp back to the read-and-exec code,
+    or possible ret back to it.
+*** TODO the concurrency model for this is tricky.
+    if we can do arbitrary operations on the pipe... how do we batch it?
+
+    seems like we need to set our concurrency stuff in order first!
+** DONE consider separating rsyscall extensions from header modules?
+   I certainly should do this... right? maybe?
+
+   Maybe not?
+
+   rsyscall.hdr.sys.un is too long,
+
+   as is rsyscall.ext.monitor or something.
+
+   Maybe I could do it as, like...
+
+   rhdr.sys.un
+
+   although note that that would have a circular dep with rsyscall itself...
+
+   lol okay so I guess I really should have my internal classes start with _ stuff.
+
+   Then only export things through the main, rsyscall, module.
+
+   maaaaaaaaaaybe.
+
+   yeah this is very curious.
+
+   If I have some basic functionality that I want to make available,
+   and more further beyond that,
+   how should I organize that?
+
+   i guess the canonical way would be with a bunch of different modules, sigh.
+
+   well, maybe I can make some of these purely internal?
+
+   like path and command?
+
+   and thread?
+
+   there's little benefit to the distinction between unixthread and thread, right?
+
+   oh. mkdtemp.
+
+   urgh, mkdtemp needs clone. ok... fine... it can be separate.
+
+   but UnixThread should maybe be internal and private too.
+
+   or, maybe we should use TYPE_CHECKING to have mkdtemp take a Thread?
+
+   this is all fairly uncertain so we'll do other things first
+*** organization
+    so ok...
+
+    let's just list modules:
+**** core types
+rsyscall.near
+rsyscall.far
+rsyscall.struct
+**** headers
+rsyscall.linux
+rsyscall.sys
+rsyscall.time
+rsyscall.signal
+rsyscall.fcntl
+rsyscall.sched
+rsyscall.unistd
+rsyscall.net
+rsyscall.netinet
+rsyscall.limits
+**** more core object model stuff
+rsyscall.handle
+rsyscall.path
+**** dependencies of rsyscall.tasks.clone
+rsyscall.memory
+rsyscall.epoller
+rsyscall.network
+rsyscall.loader
+rsyscall.monitor
+**** rsyscall.tasks.clone
+rsyscall.tasks.base_sysif
+rsyscall.tasks.connection
+rsyscall.tasks.clone
+**** thread stuff
+rsyscall.environ
+rsyscall.unix_thread
+rsyscall.thread
+rsyscall.mktemp
+rsyscall.command
+
+Note: There's a Thread inheritance hierarchy of:
+rsyscall.memory.ram: RAMThread
+rsyscall.epoller: EpollThread
+rsyscall.network.connection: ConnectionThread
+rsyscall.tasks.clone: CloneThread
+rsyscall.unix_thread: CloneThread
+rsyscall.thread: Thread
+***** thinking
+where should I even import ExecutableNotFound from? hm.
+
+in theory I guess that would be some kind of additional rsyscall.os layer.
+which holds all the more abstracted stdlib Thread-stuff.
+
+I mean yeah, it does make sense for that to be a module I guess.
+
+Merging in mktemp is also a good idea...
+
+Or just making it private?
+
+Actually refactoring too much will destroy my git history;
+I think I'll avoid that.
+**** other tasks
+the rest of rsyscall.tasks
+**** useful additional abstractions
+rsyscall.inotify_watch
+rsyscall.wish
+**** concurrency
+rsyscall.trio_test_case
+rsyscall.concurrency
+
+the concurrency stuff we can likely put in a separate top-level module,
+once the SuspendableCoroutine etc stuff is done.
+**** nix
+rsyscall.nix
+**** executables
+rsyscall.scripts
+**** tests
+rsyscall.tests
+*** conclusion
+    too damaging to git history
+
+    we'll do it later, much later.
+** TODO make a website
+   which we should run and deploy with rsyscall of course!
+
+   although... easier to just stick it on earth.
+** TODO adding even more docstrings
+   So pdoc is nice, very nice.
+
+   But it reveals that I need a lot more docstrings!
+
+   so I should use it...
+
+   but first I should do the cleanups of names of things mentioned above...t
+** DONE rework single_threaded.org to focus on headers
+   So I did this, sure.
+
+   What I really need is to be able to easily look up syscalls with the matching headers.
+
+   So that I don't have to go in depth about the various quirks, like Pipe,
+   or Sockbuf.
+
+   Really I should talk about Pipe though.
+   It embodies a fairly fundamental rule.
+
+   Yeah OK I will.
+
+   Hm, maybe I shouldn't need linear_read.
+   It would be better for the buffer to be immediately reusable,
+   after a read.
+   Of course it can't be reused while it hasn't been read, though!
+** DONE improve our approach to paths
+paths paths...
+paths...
+
+can we rework paths to not need a standalone type? just take strings instead?
+
+i mean we would need ptr to operate on str specifically to make something null terminated.
+
+ptr could be overridden to make something nullterminated
+
+and we could unify Arg and Path
+
+and have everything taking Paths currently, take Args instead... hmmm.
+
+so that does sound good - I like the fact that this is a similarly integrated API to C with C literals.
+
+but, it would be nice if classes taking paths rather than generic null terminated strings,
+indicated that...
+
+can I just assume all of those are paths?
+
+mount and execve, those are not really big deals.
+
+yeah... yeah...
+
+this would be good.
+
+so actually I could even just take strings! Pointer[str]!
+
+That would be quite cool!
+
+str is null termianted, bytes is not!
+
+although... Path will inherit from str, I guess?
+
+I could take a Pointer[PathLike]?
+
+I guess... Foo[str] and Foo[int] are both valid to pass to something taking a Foo[t.Union[str, int]], right?
+
+Yeah I think I should do this for sure.
+
+and I guess we use Union[str, PathLike] or something?
+
+oh and this is okay even for arbitrary bytes because of the surrogate encoding thing. heh.
+
+hmm.
+
+in theory actually we don't even need to have our own Path class;
+we can just use PathLike and have ptr know how to find the serializer for that.
+
+That does sound highly desirable.
+
+Oh, and we don't need EmptyPath anymore! That's also great!
+
+yeah and they'll just import Path from pathlib.
+which is fine.
+
+and I also think this will let me get rid of HostPath, finally!
+
+ok so if I have a Pointer[str] it's fine.
+
+if I have a Pointer[PathLike] tho,
+how do I deserialize it?
+
+pathlike doesn't give me a way to return paths! v. unfortunate.
+
+so I mean, with malloc...
+
+we can pass a str and we pick the right serializer.
+
+we can pass an arbitrary PathLike class, and we pick a serializer that assumes the constructor just takes a string.
+
+although that's not really true...
+
+hm. hMMMmm
+
+also readlink doesn't put a null byte...
+
+ok so we'll also get rid of arglist, right?
+in favor of just, List[str],
+and autodetectin of serializer in ptr?
+
+now, there is one troubling bit.
+which is, it's not quite so easy to malloc them anymore.
+
+wait no ArgList still needs to be around.
+
+it's a list of *pointers*, not strings.
+
+it's just arg that we can kill off.
+
+uhhhhhhh covariance we have do something here right...
+
+Pointer[str] is not a subtype of Pointer[Union[str, Path]], because...
+
+well if we read the latter, we get a str, so that's fine.
+but if we write the former,
+when it's the former,
+and we use it in a context of Union[str, Path],
+then.
+
+oh right, what we really need is invariance, mm.
+
+being variant at all is wrongo
+
+yeah they're invariant by default. hm.
+
+ok but it's fine innit, nice, nice.
+
+hmmmm.
+** TODO figure out some better way to handle covariance of pointers
+   they should really be invariant,
+   but maybe we can limit things with linearity so it's safe.
 * fuse stuff
   ok so one thing we noticed in fuse is,
   if we don't close the devfuse, then other threads making syscalls will get stuck in D-wait,
