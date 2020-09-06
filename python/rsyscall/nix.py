@@ -38,7 +38,10 @@ __all__ = [
     "enter_nix_container",
     "local_store",
     "nix",
-    "Store"
+    "Store",
+    "bash_nixdep",
+    "coreutils_nixdep",
+    "hello_nixdep",
 ]
 
 async def _exec_tar_copy_tree(src: ChildThread, src_paths: t.List[Path], src_fd: FileDescriptor,
@@ -260,3 +263,7 @@ def import_nix_dep(name: str) -> StorePath:
     __getattr__("local_store")._add_root(store_path, store_path.path)
     _imported_store_paths[name] = store_path
     return store_path
+
+bash_nixdep: StorePath = import_nix_dep("bash")
+coreutils_nixdep: StorePath = import_nix_dep("coreutils")
+hello_nixdep: StorePath = import_nix_dep("hello")
