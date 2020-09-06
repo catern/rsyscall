@@ -6,16 +6,18 @@ Here we'll discuss the part of the rsyscall interface which deals only with a si
 Since we're only dealing with a single thread,
 we don't use the process-independent nature of rsyscall here;
 we will discuss that in the [[file:multi_threaded.org][multi-threaded tutorial]].
-
-For any rsyscall thread,
-we have access to a type-safe, low-level, broad interface to a variety of Linux functionality,
-such as inotify, rtnetlink, the raw socket API, and other interfaces which are not typically exposed in Python.
 * manpages are useful
-The Linux kernel manpages are the primary documentation for C developers programming against the Linux kernel.
+For any thread,
+rsyscall provides a type-safe, low-level, broad interface to a variety of Linux functionality.
+This includes basic system calls,
+like the socket API or read and write.
+It also includes less common interfaces, such as inotify, rtnetlink, timerfd, eventfd, and others.
 
-The manpages are likewise the primary documentation for programming with rsyscall.
+The Linux kernel manpages are the primary documentation for development against Linux.
+This is true for rsyscall and Python just as it is true for C.
 
-Therefore, all system calls in rsyscall are exposed in such a way
+The manpages are therefore the primary documentation for programming with rsyscall.
+All system calls in rsyscall are exposed in such a way
 that a mechanical reading of the manpage for the system call
 will provide sufficient information to use the system call in rsyscall.
 
