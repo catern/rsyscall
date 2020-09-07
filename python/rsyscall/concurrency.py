@@ -293,6 +293,10 @@ class SuspendableCoroutine:
         if cancels:
             await _yield(SuspendRequest(self, cancels))
 
+    async def with_running(self, func: t.Callable[[], t.Awaitable[t.Any]]) -> t.Any:
+        async with self.running():
+            return await func()
+
     async def wait(self, func: t.Callable[[], t.Any]) -> t.Any:
         while True:
             async with self.suspend_if_cancelled():
