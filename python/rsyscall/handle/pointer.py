@@ -445,10 +445,11 @@ class WrittenPointer(Pointer[T_co]):
 
     def __repr__(self) -> str:
         name = type(self).__name__
+        typname = self.typ.__name__
         try:
-            return f"{name}({self.near}, {self.value})"
+            return f"{name}[{typname}]({self.near}, {self.value})"
         except UseAfterFreeError:
-            return f"{name}(valid={self.valid}, {self.mapping}, {self.allocation}, {self.value})"
+            return f"{name}[{typname}](valid={self.valid}, {self.mapping}, {self.allocation}, {self.value})"
 
     def _with_mapping(self, mapping: MemoryMapping) -> WrittenPointer:
         if type(self) is not WrittenPointer:
