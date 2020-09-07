@@ -253,6 +253,7 @@ class SuspendableCoroutine:
 
     async def drive(self) -> None:
         async with self._lock:
+            await trio.sleep(0)
             send_value: outcome.Outcome = outcome.Value(None)
             while True:
                 try: yield_value = send_value.send(self._coro)
