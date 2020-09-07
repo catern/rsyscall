@@ -25359,3 +25359,197 @@ we did dynscope and then suspendable too worked fine!!
    trio_op semantics.
 
    but before that, let's do the futures thing.
+** TODO we should remove all direct trio stuff from code which is called by suspendables
+   namely, the possibility of shielded cancelscopes.
+
+   we'll use trio_op instead.
+
+   and then, we can just have automatic suspendability,
+   instead of writing it explicitly.
+** TODO support futures so we can do pipelined ordered syscalls
+   so so so.
+
+   i guess we can have the idea we had before about a suspendable which returns a value.
+
+   and I guess we could have it auto-suspend just after submitting the syscall?
+   then we call back into it?
+
+   oh yeah, isn't that my entire idea, heh?
+
+   no no that's the idea with the suspendable syscalls...
+   or at least, the idea is that we can suspend instead of shielding cancels.
+
+   but now we can, I guess... auto-suspend immediately?
+   or maybe we can just do something like, uh...
+
+   well there's nursery.start, which keeps running after submitting something.
+
+   i don't know that it makes much sense to. uh.
+   have the. suspendable stuff invovled.
+
+   can't we just do it concurrently with nurseries?
+
+   well, no, because we can't suspend while a nursery is ongoing.
+
+   so then it's just that we do need to be able to suspend, I guess?
+
+   i mean we could have some kind of weird concoction where...
+
+   we like, cancel out of the nursery, with everything running in it curling back up into a suspended ball on cancellation,
+   then when we get run again, we start all those things back up in the nursery.
+*** what about even concurrent syscalls without ordering?
+    how do we do those within a suspendable, for that matter?
+
+    hmm that's kind of a distraction though.
+    I feel myself being tempted to think about a generic way to do fully general concurrency in a suspendable,
+    but we don't care about that:
+    we just care about ordered pipelined syscalls.
+*** back to ordered pipelined syscalls
+    I guess we could in theory have one suspendable be creating new futures,
+    then sending them off to another suspendable to wait on them one by one in order.
+
+    it's a little uncomfortably like nursery.start,
+    but some kind of indication when the future has started - like a suspension or something - would be good.
+    i guess actually yeah this is what we were thinking about,
+    a dynscope-passed callback.
+    and that can just trigger a cancel,
+    so the suspendable gets suspended,
+    and bam, we're good.
+
+    and I guess we keep retrying and running it until we reach that point?
+    otherwise, won't an external cancel also cause us to suspend? yeah.
+
+    and what's the general approach?
+
+    i mean, these futures...
+    they don't have any guarantees about running things in order,
+    even if they're in the background.
+
+    so you do need some kind of,
+    "hey it's started" thing.
+
+    which I guess could be async to suspend - or even yield - back to the caller.
+
+    and then I guess after that we run as a suspendable, maybe?
+    or we just pass the coroutine into a suspendable, kinda thing?
+
+    I guess this is a clean way to handle the split between submit and result, too.
+    I mean... what we can do is...
+
+    In syscall...
+
+    Before getting result, after getting the request,
+    fetch the callback,
+    and call it.
+
+    And that's it. pretty easy!
+
+    can it be integrated with the cancellability somehow?
+    can we always do this or something?
+
+    maybe let's not overthink it - this is pretty modular as-is.
+
+    and do we even need a suspendable at that point?
+
+    well, only because we are calling from a suspendable, right?
+    we don't need it to be suspendable normally, because we'll be just splitting it in two,
+    straightforwardly with a stack capture through yield.
+
+    but if we do want to be suspendable, then what do we need to do?
+
+    well.
+    if we're reading the result out...
+
+    hah I knew this syscall_suspendable.get before the write_request would interact badly.
+
+    if we're reading the result out,
+    we need to have an internal suspendability,
+    to avoid cancelscopes.
+
+    we also need it when writing the request, I suppose.
+
+    urgh, actually this kind of breaks our plan to submit the request on one suspendable,
+    and retrieve it on another.
+
+    we'll have to fix that I suppose.
+
+    but yeah so it will look like...
+#+BEGIN_SRC python
+fut = await syscall_snd_suspendable.bind(susp, as_future(fd.read(buf)))
+ret = await syscall_rcv_suspendable.bind(susp, fut.wait())
+#+END_SRC
+
+    um wait though, isn't it just a totally normal suspendable for the initial write?
+    cuz if it's cancelled it just means it failed.
+    so more like:
+#+BEGIN_SRC python
+fut = await susp.wait(lambda: as_future(fd.read(buf)))
+ret = await syscall_rcv_suspendable.bind(susp, fut.wait())
+#+END_SRC
+
+    so okay, that's fine.
+    it's just that we have to make sure syscall_suspendable only covers the result,
+    and doesn't get read before our as_future callback.
+
+and so what will as_future look like?
+#+BEGIN_SRC python
+async def as_future(coro):
+    async def yield_to_future():
+        await _yield(SyscallStarted())
+    coro = syscall_snd_callback.bind(yield_to_future, coro)
+    # standard while loop to drive that coro, and...
+    if isinstance(yield_value, SyscallStarted):
+        return Future(coro)
+#+END_SRC
+
+    I guess?
+    so we just wait for it to hit,
+    then save the coro for some later point?
+    and we can re-run it under a suspendable again later?
+    sure that seems fine.
+
+    it's pretty simple actually.
+
+    hm, I suppose I could bind a method to call instead...
+    but nah.. nah...
+
+    ok so I'll call this StartedFuture?
+    or something.
+
+    this is all a bit tightly bound but it's fine right?
+    well, ugh, ok, I'll abstract it.
+
+    if we could just make syscall_snd_callback not be bound...
+
+    ok so how about the future takes a function,
+    and passes in the future-object - like suspendablecoro tbh.
+
+    yeah so then it looks like this:
+#+BEGIN_SRC python
+fut = await StartedFuture.run(lambda fut: syscall_snd_callback.bind(fut.started, fd.read()))
+#+END_SRC
+
+    that's when we're not in a suspendable.
+    in a suspendable, it would be:
+#+BEGIN_SRC python
+fut = await susp.wait(StartedFuture.run(lambda fut: syscall_snd_callback.bind(fut.started, fd.read())))
+#+END_SRC
+    complex, yes, but gosh, so elegant!!!!!
+
+    jk no it's horrible. but, fine for now.
+
+    i mean, it's not that horrible.
+    it's just a little open-coded...
+
+    ok so let's do it!
+** efficiency
+   it would be nice to have a C implementation of the send/yield loop,
+   which detects my prompts appropriately...
+   that would provide some efficiency gains.
+
+   in fact, if it was abstracted,
+   we could actually have proper mulit-prompt support,
+   where we use a hash table to target the correct handler, somewhere on the stack
+
+   i mean, this is the real reason to have a "yield from" that supports interception:
+   it's more efficient
