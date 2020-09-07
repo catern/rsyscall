@@ -161,6 +161,46 @@ def make_future() -> t.Tuple[Future, Promise]:
     fut = Future[T](None, trio.Event())
     return fut, Promise(fut)
 
+@dataclass
+class FIFOFuture(t.Generic[T]):
+    "A value that we might have to wait for."
+    _outcome: t.Optional[outcome.Outcome]
+    _event: trio.Event
+    _retrieved: trio.Event
+    _cancel_scope: t.Optional[trio.CancelScope]
+
+    @staticmethod
+    def make() -> t.Tuple[FIFOFuture, FIFOPromise]:
+        fut = FIFOFuture[T](None, trio.Event(), trio.Event(), None)
+        return fut, FIFOPromise(fut)
+
+    async def get(self) -> T:
+        await self._event.wait()
+        assert self._outcome is not None
+        return self._outcome.unwrap()
+
+    def set_retrieved(self):
+        if self._cancel_scope:
+            self._cancel_scope.cancel()
+        self._retrieved.set()
+
+@dataclass
+class FIFOPromise(t.Generic[T]):
+    "Our promise to provide a value for some Future."
+    _future: FIFOFuture[T]
+
+    def set(self, oc: outcome.Outcome) -> None:
+        if self._future._outcome is not None:
+            raise Exception("Future is already set to", self._future._outcome)
+        self._future._outcome = oc
+        self._future._event.set()
+
+    async def wait_for_retrieval(self) -> None:
+        await self._future._retrieved.wait()
+
+    def set_cancel_scope(self, cancel_scope: trio.CancelScope) -> None:
+        self._future._cancel_scope = cancel_scope
+
 @types.coroutine
 def _yield(value: t.Any) -> t.Any:
     return (yield value)
