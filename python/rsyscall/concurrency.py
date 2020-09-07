@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import typing as t
 import types
 import outcome
+import logging
+logger = logging.getLogger(__name__)
 
 @dataclass
 class OneAtATime:
@@ -257,7 +259,14 @@ class SuspendableCoroutine:
             send_value: outcome.Outcome = outcome.Value(None)
             while True:
                 try: yield_value = send_value.send(self._coro)
-                except StopIteration as e: return e.value
+                except StopIteration as e:
+                    logger.info("Done with send in %s, returned %s", self, e.value)
+                    return e.value
+                except BaseException as e:
+                    logger.info("Got exn %s", e)
+                    raise
+                else:
+                    logger.info("Done with send in %s, got %s", self, yield_value)
                 # handle SuspendRequests for us, and yield everything else up
                 if isinstance(yield_value, SuspendRequest) and yield_value.prompt is self:
                     raise trio.MultiError(yield_value.cancels)
@@ -268,6 +277,7 @@ class SuspendableCoroutine:
     async def running(self) -> t.AsyncIterator[None]:
         done = False
         def handle_cancelled(exn: BaseException) -> t.Optional[BaseException]:
+            logger.info("Handling %s", exn)
             if isinstance(exn, trio.Cancelled) and done:
                 return None
             else:
@@ -276,8 +286,10 @@ class SuspendableCoroutine:
             async with trio.open_nursery() as nursery:
                 nursery.start_soon(self.drive)
                 yield
+                logger.info("Done with yield in running for %s", self)
                 done = True
                 nursery.cancel_scope.cancel()
+            logger.info("Done with nursery")
 
     @contextlib.asynccontextmanager
     async def suspend_if_cancelled(self) -> t.AsyncIterator[None]:

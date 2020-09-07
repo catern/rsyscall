@@ -327,6 +327,7 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
                 rest = src
                 while rest.size() > 0:
                     written, rest = await self.remote.write(rest)
+            await trio.sleep(0)
             with trio.CancelScope(shield=True):
                 async with trio.open_nursery() as nursery:
                     nursery.start_soon(write)

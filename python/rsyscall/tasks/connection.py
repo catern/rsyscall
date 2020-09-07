@@ -12,7 +12,7 @@ out all at once.
 from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
 from rsyscall.handle import Pointer, Task, WrittenPointer
-from rsyscall.concurrency import SuspendableCoroutine, Future, Promise, make_future
+from rsyscall.concurrency import SuspendableCoroutine, Future, Promise, make_future, FIFOFuture, FIFOPromise
 from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer, EOFException
 from rsyscall.near.sysif import SyscallHangup
@@ -21,6 +21,7 @@ import contextlib
 import math
 import typing as t
 import trio
+import outcome
 
 __all__ = [
     "SyscallConnection",
@@ -28,6 +29,8 @@ __all__ = [
     "Syscall",
 ]
 
+import logging
+logger = logging.getLogger(__name__)
 class ConnectionError(SyscallHangup):
     "Something has gone wrong with the rsyscall connection"
     pass
@@ -82,8 +85,9 @@ class SyscallResponse(Struct):
 @dataclass
 class ConnectionRequest:
     syscall: Syscall
-    response_future: Future[Future[int]]
-    response_promise: Promise[Future[int]]
+    response_future: Future[FIFOFuture[int]]
+    response_promise: Promise[FIFOFuture[int]]
+    result_suspendable: t.Optional[SuspendableCoroutine]
 
 class ReadBuffer:
     "A simple buffer for deserializing structs"
@@ -180,12 +184,12 @@ class SyscallConnection:
         await self.tofd.close()
         await self.fromfd.close()
 
-    async def write_request(self, syscall: Syscall) -> Future:
+    async def write_request(self, syscall: Syscall, result_suspendable: t.Optional[SuspendableCoroutine]) -> FIFOFuture[int]:
         """Write a syscall request, returning a Future for the result.
 
         """
         future, promise = make_future()
-        request = ConnectionRequest(syscall, future, promise)
+        request = ConnectionRequest(syscall, future, promise, result_suspendable)
         # TODO as a hack, so we don't have to figure it out now, we don't allow
         # a syscall request to be cancelled before it's actually made. we could
         # make this work later, and that would reduce some blocking from waitid
@@ -228,7 +232,7 @@ class SyscallConnection:
                         req.response_promise.throw(e)
                 else:
                     for req in reqs_to_write:
-                        future, promise = make_future()
+                        future, promise = FIFOFuture.make()
                         req.response_promise.send(future)
                         self.response_channel.send_nowait((req, promise))
 
@@ -236,18 +240,40 @@ class SyscallConnection:
         buffer = AsyncReadBuffer(self.fromfd)
         while True:
             req, promise = await susp.wait(lambda: self.pending_responses.receive())
-            try:
-                while True:
-                    async with susp.suspend_if_cancelled():
-                        async with self.defunct_monitor.throw_on_connection_defunct():
-                            resp = await buffer.read_struct(SyscallResponse)
-                            break
-            except EOFException:
-                promise.throw(SyscallHangup())
-            except Exception as e:
+            async def read_result() -> int:
                 try:
+                    while True:
+                        async with susp.suspend_if_cancelled():
+                            async with self.defunct_monitor.throw_on_connection_defunct():
+                                return (await buffer.read_struct(SyscallResponse)).value
+                except Exception as e:
                     raise SyscallHangup() from e
-                except Exception as new_e:
-                    promise.throw(new_e)
+            result = await outcome.acapture(read_result)
+            # Guarantee that syscall results arrive in an observable FIFO order.
+            # This only guarantees that the synchronous code after a
+            # syscall will get to run in FIFO order, but that's enough.
+            promise.set(result)
+            logger.info("Blocking for syscall %s in %s", req.syscall, self)
+            if req.result_suspendable:
+                async def func():
+                    logger.info("Entering suspendable func for syscall %s in %s", req.syscall, self)
+                    try:
+                        with trio.CancelScope() as cancel_scope:
+                            async with req.result_suspendable.running():
+                                promise.set_cancel_scope(cancel_scope)
+                                logger.info("In block suspendable func for syscall %s in %s, %s",
+                                            req.syscall, self, promise._future)
+                                try:
+                                    await promise.wait_for_retrieval()
+                                except:
+                                    logger.info("Canceled suspendable func for syscall %s in %s", req.syscall, self)
+                                    raise
+                                finally:
+                                    logger.info("Finished retrieval for syscall %s in %s", req.syscall, self)
+                                logger.info("Exiting CM fine for syscall %s in %s", req.syscall, self)
+                    finally:
+                        logger.info("Done block suspendable func for syscall %s in %s", req.syscall, self)
+                await susp.wait(func)
             else:
-                promise.send(resp.value)
+                await susp.wait(promise.wait_for_retrieval)
+            logger.info("Done blocking for syscall %s in %s", req.syscall, self)

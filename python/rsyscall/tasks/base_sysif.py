@@ -2,7 +2,7 @@ import abc
 import contextlib
 import math
 import trio
-from rsyscall.concurrency import SuspendableCoroutine, Future, make_future
+from rsyscall.concurrency import SuspendableCoroutine, FIFOFuture
 from rsyscall.near.sysif import SyscallInterface, syscall_suspendable
 from rsyscall.tasks.connection import Syscall, SyscallConnection
 from rsyscall.tasks.util import log_syscall, raise_if_error
@@ -49,7 +49,7 @@ class ConnectionSyscallInterface(SyscallInterface):
         self.infd._invalidate()
         self.outfd._invalidate()
 
-    async def _get_syscall_result(self, future: Future[int]) -> int:
+    async def _get_syscall_result(self, future: FIFOFuture[int]) -> int:
         async with self.rsyscall_connection.suspendable_read.running():
             return await future.get()
 
@@ -59,11 +59,11 @@ class ConnectionSyscallInterface(SyscallInterface):
             number,
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
             arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        response_future = await self.rsyscall_connection.write_request(syscall)
+        result_suspendable = await syscall_suspendable.get()
+        response_future = await self.rsyscall_connection.write_request(syscall, result_suspendable)
         try:
-            suspendable = await syscall_suspendable.get()
-            if suspendable is not None:
-                result = await syscall_suspendable.bind(None, suspendable.wait(
+            if result_suspendable is not None:
+                result = await syscall_suspendable.bind(None, result_suspendable.wait(
                     lambda: self._get_syscall_result(response_future)))
             else:
                 with trio.CancelScope(shield=True):
@@ -76,5 +76,9 @@ class ConnectionSyscallInterface(SyscallInterface):
             self.logger.debug("%s -/ %s", number, exn)
             raise
         else:
+            response_future.set_retrieved()
             self.logger.debug("%s -> %s", number, result)
+            self.logger.debug("Setting retrieved on %s", response_future)
             return result
+        finally:
+            response_future.set_retrieved()

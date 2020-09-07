@@ -20798,6 +20798,7 @@ while suspendable.notpast:
    to interrupt syscalls
 
    alternatively, that's a huge mistake.
+** TODO speed up make_n_channels with FIFO syscall results
 ** DONE tolerate non-empty sigprocmask on startup in local thread
    So there are a couple options:
 
@@ -24655,6 +24656,10 @@ We discuss the comparison be
    argh not even that, we actualy want to pipeline in order, lol.
 
    annoying, annoying.
+
+   ok so this is quite slow.
+
+   now let's finally convert to a good future-based submit_syscall?
 ** write_all
    hmm it would be nice if we could have suspendable abstractions like this.
 
@@ -24671,3 +24676,686 @@ We discuss the comparison be
 
    it's just that we need in-trio support for arbitrary suspension points;
    well, that or we always use trio.op for async stuff.
+** adding future based submit_syscall
+   so first off, we need to be able to...
+
+   well ok let's just wrap it in a suspendable,
+   and do it.
+
+   the cancellable stuff is what we'll do first since that's our current only usage.
+
+   ok so let's start with just a dynvar that we just directly bind on.
+
+   ok it's a little tricky with nested suspendables
+
+   we can just have the syscall interface set the dynvar to None before running the write/read suspendable
+
+   what we really want is multi-prompt delimcc I guess,
+   so we can suspend at the right place.
+
+   but also, if I'm running a suspendable...
+   then I have a nursery open! with a task!
+   so I can't suspend!
+
+   so really I want to somehow,
+   stop running the suspendable task,
+   and suspend at the point where I'm waiting on the promise... i guess...
+
+   anyway let's do the simple syscall thing
+
+   hm. wait a second.
+
+   oh yeah okay it's in syscall response that I'll do the future stuff.
+
+   so... can I just wrap this in a while True?
+
+   or not quite that...
+** hm
+   if we make SuspCoro itself return a value...
+   it's basically a future, isn't it?
+
+   one can keep waiting on it...
+   after a cancel...
+
+   i guess it could be interesting. the suspendable future would just drive the real coro.
+   an interesting way to have the drive incorporated into a future in an abstract way!
+** dynscope stuff
+
+UGHGGHGHGHGHHGHGH
+
+the python dynscope implementation sucks, alright, ok, fine, let's think about it
+
+ok so, sigh, it's...
+
+going to have a different set of dynvars.
+especially because there's no dynamic wind!
+
+oh my god...
+
+ok so we need something which...
+
+well we need our own dynvar thing I guess.
+
+one which supports proper shift/reset. hmm.
+
+how does dynscope interact with generators?
+oh god, contextvars are just completely broken.
+
+wait so are generators with with-statements right?
+those are also "broken"-ish.
+
+hmmmm
+
+ok so it was never properly implemented,
+we'd need this to fix it:
+https://www.python.org/dev/peps/pep-0568/
+
+what should we do ourselves?
+well, we can implement dynvars with shift/reset.
+
+what would it mean in yield world though? hm.
+yield is basically single-prompt linear delimcont
+
+so how would we do dynvars with that?
+let's read that dynvar delimcont paper again
+** multi-prompt yield
+actually this seems like a better and more natural way,
+rather than implementing shift/reset.
+
+and it can just be normal python:
+you intercept the classes you know about,
+and pass the others up.
+
+i guess for suspend, we'd yield up,
+a class containing a list of cancels. I guess.
+
+it kinda sucks because... shift is a lot more natural.
+
+the object is down at our level. but I guess the logic is split anyway,
+so it's fine to serialize our args for an effect/method call into some data and yield them up.
+** nice for syntax
+   hmmm.
+
+ok we want a function that encapsulates these things a little...
+run?
+a for loop...?
+it would be nice if it was something like...
+#+BEGIN_SRC python
+async def run():
+    for val in coro:
+        if isinstance(val, MyThing):
+            do_something()
+        else:
+            yield val
+#+END_SRC
+but then here's the issue, how do we send the next value in?
+for would be nice, but.
+hmm how does this compare to scala for?
+um I guess there's bind?
+so... in a for comprehension, we bind with the next thing, I guess.
+but... we're talking about handlers here I guess, not about actual users.
+but they should be dual.
+
+i mean so okay, we have some piece of codata which sends us values.
+
+but we're also codata, right?
+we take values, and.
+then we resume the codata I guess.
+
+hmm i've confused myself. too many concepts.
+
+a handler, is like an object. sure.
+
+we keep calling it, and it keeps giving us values back. again, fine, sure.
+
+oh hey this for loop is a lot like a yield from.
+
+well yeah and yield from automatically returns the value.
+
+but we want to be able to run some code on our continuations.
+
+so, heck, how about a callback? no, that stinks, it's not sequential.
+
+what would the callback even do? well, when something matches, it would return true,
+and handle the thing internally...
+
+but it might also want to change what we yield...
+
+or even yield itself!
+
+so the handler would actually be async.
+
+and if it handled the thing it would return true
+
+hmmmmmm MMMMmmmMMmmmMMm.
+
+what about async generators?
+
+or heck, what about just some kind of iterator that we have to call .send on at each step?
+
+but then what do we do with the return value?
+
+I guess, return coro.return_value or something
+
+ugh hm.
+
+well okay how about I just return out the values?
+
+well, that would require a specific prompt kinda thing.
+
+rather than being able to inspect everything.
+
+so really we want to look at values, decide whether we want to handle them or not,
+then get them, I guess.
+
+so how about that? a yield_from_filtered or something,
+which has a filter which returns things back to us if they're real values.
+and then we handle them.
+
+well, if we do that, couldn't we just do a for loop?
+
+i guess we can loop over it,
+call send at the bottom of each iteration,
+and then do return coro.outcome.get() at the end
+
+so it will be for val in magic(coro):
+
+and we'll send directly I guess?
+or it can just be while True
+
+it would really be nice if was possible to override the value passed to the send call made in for-loops,
+and also to, i guess,
+intercept the...
+
+exception at the end
+
+using an async generator does seem pretty interesting.
+
+although maybe wacky actually
+
+i mean, ok, so,
+the issue here is that prompts are necessary.
+
+otherwise it's too funky.
+
+so, I guess, let's support a specific prompt format?
+
+or, no, better yet,
+let's just have a filter. yeah that seems fine.
+
+so, something like,
+
+val = run(coro, filter)
+
+or..
+
+I guess we can have like, send(coro, filter, val)
+and we start it with None?
+
+and it returns either the result, or (output, coro)?
+
+except coro is mutable so we don't actually need to return it.
+
+h m m
+
+I guess when we reset something it has the option of returning the result or not.
+
+ok yeah so we should return the coro.
+
+i guess we can just case and...
+
+well. um.
+
+case drives it i guess
+
+so okay, shift/reset is a much nicer UI,
+but a yield protocol is closer to reality.
+and also doesn't necessarily need an interpreter?
+
+well it does...
+
+well it doesn't need it at the top-level or anything,
+just someone ignoring values.
+
+ok so maybe we can have a Iterator object which is returned by run,
+and which we um.
+
+ok how about we just have the real type? we just use Generators?
+
+and then we can just have Generator thingy be returned by run I guess.
+or we just wrap it.
+
+no no, we run it, and it gives us back a Union[ret, Tuple[out, Generator[out, in, ret]]]
+
+then Generator has a .send(val: in) which gives us back another Union[ret, Tuple[out, Generator[out, in, ret]]] I suppose.
+
+ok... fine...
+
+bah I think the raw StopIteration is fine though.
+
+so what's the point of the wrapping?
+
+ugghhh
+
+
+ugghhh
+
+ugh.
+
+
+
+ok anyway.
+so we can just shift up to a prompt which resumes us with the dynamically bound value.
+BUT, that's insufficient in python.
+
+cuz we can't probe for the presence of that prompt!
+
+hmm.
+
+yeah cuz lol we're trying to use dynvars to indicate the presence of the prompts in the first place. hm.
+
+ok so we'll just catch the TypeError that trio injects, and the RuntimeError that asyncio injects.
+** showing oremanj's is broken
+   so he uses contextvars for suspendable_parent
+
+   which.
+   let's see.
+
+   ok so, suppose we have the... wait, let's see.
+
+   ok so we call run.
+   and suppose we run it from some other suspendable.
+
+   which then switches.
+
+   ok so since we're running on the trio task stack...
+
+   no wait okay so the idea is,
+
+   we're in some suspendable A.run,
+   and we do suspendable B.run.
+
+   then we suspend out of A
+
+   then suspendable_parent.reset(token) will fail.
+
+   ok, so suppose we instead have some kind of. hm.
+
+
+   ok let's focus on the detach.
+
+   with the detach, contextvars bound in the child will fail. ok.
+
+   So with your implementation, with your proposal of copying the context and storing it,
+   if a new SuspTask B got started inside SuspTask A.run,
+   then it would have suspendable_parent=A,
+   even if it isn't currently being run by A,
+   which would then be bound to B inside B.run.
+
+   And so it wouldn't be able to distinguish situations where it can safely suspend with A.suspend
+   (that is, when it's running under A),
+   from when it can't safely suspend with A.suspend (when it's not running under A)
+
+   So maybe you could turn suspendable_parent into a tuple which has the full stack,
+   
+
+   And this would break
+
+   a bug like that would break any attempt to support nesting.
+   that would break any attempt 
+
+   Python's contextvars are not actually dynamically scoped variables when manipulating generator/coroutine objects
+   no matter what you do
+
+   well... actually...
+
+   can we actually implement the correct behavior of 2?
+
+   no i don't think so, not without making our own thing which isn't supported by trio/asyncio, sigh.
+** DONE reimplementing dynscope with yield
+   so I guess we'll, um...
+
+   what do we do with shift/reset?
+
+   oh we need multi-prompt, right.
+
+   so with multi-prompt we'd just pass id to shift,
+   and then resume with the variable.
+
+   okaaaaay
+
+   but we'll use yield instead just cuz it's more native python
+
+   ok so what does the binding look like?
+
+   i guess we have some coro object which we run with something set
+
+   ugh ok so what if we do something to just fix contextvars? how about that?
+
+   we'd run in a context at each step,
+   and...
+
+   well we need to support extension.
+
+   can we diff it?
+
+   so, what we do is...
+
+#+BEGIN_SRC 
+  parent_ctx = curctx.copy()
+  full = parent_ctx + savedctx
+  full.run(thing)
+  savedctx = full - parent_ctx
+#+END_SRC
+
+I *guess*?????????
+
+so addition is easy.
+what about subtraction?
+
+well we'd need to know what actually changed I guess
+
+yeaaaaaaaah it doesn't seem that python contexts preserve that information, even in the implementation.
+so indeed we can't do it with contextvars, SIGH
+
+so we'll do it with yield
+
+and we'll run a coroutine in a context with the binding
+
+i guess we can handle both requests heh
+
+ah hm hmmmmmmmmmmmmm
+
+oh I want to make...
+
+oh wait!! lol!!
+
+i don't actually want to bind in SuspendableCoroutine,
+ok fine
+
+just in the sysif future thing
+
+fine okay so we'll switch the implementation over to yield
+
+ok great!!
+we did dynscope and then suspendable too worked fine!!
+** TODO adding suspendable syscall
+   ok so the syscall is now suspendable, hooray.
+
+   we can get rid of submit_syscall entirely now!
+
+   great great great.
+
+   now let's do the next parts
+
+   copying the outline:
+   We will achieve these goals:
+   1. Ability pipelining multiple calls in order
+   2. Allow being cancelled mid-syscall (so we'll still be given the result)
+   3. Syscalls return back in FIFO order
+
+   In the following ways:
+   1. Some kind of future thing built on the below things
+   2. We will make SyscallInterface.syscall automatically use a Suspendable cap,
+      if dynscope-available.
+   3. If a task is suspended with Suspendable,
+      we'll resume it immediately upon receiving the result;
+      otherwise, we'll use a trio.Event to cause it to run.
+
+   so we did 2. great!
+   now let's do the otheres...
+   1 is immediately needed to speed up memory access again.
+   but it's not immediately obvious how to do it, hm.
+
+   so maybe we can do 3 then?
+   well. 1 is easier than 3, heh.
+   although, 1 will make 3 harder. so let's just do 3 then eh.
+
+   ok so let's give the FIFO stuff a try.
+   eh nah, let's do futures, cuz it's easy.
+   eh no let's do the hard one.
+
+   ah let's make syscall an abstract method,
+   and move our current impl into a derived class which uses the rsyscall connnection;
+   then we can remove submit_syscall from sysif
+
+   so we know the order in which we submitted things on the connection;
+   so we want to return responses in that order too.
+
+   we can't just use a trio strictfifolock because uh that's not even what we're trying to do.
+
+   so ok, how about we just...
+   well to wait for the event to happen,
+   is not something we can just do naively,
+   we have to donate our timeslice to run the suspendable, one tick.
+
+   and also I guess it needs to use trio_op or something.
+   hmmmmmmmmmmm
+
+   ok sooooo
+   i would prefer to just directly invoke the suspendable really,
+   rather than donate my timeslice and blindly run the promise and wait for it to be retrieved
+
+   but, i guess donation + waiting for promise retrieval is more robust for "normal" contexts which aren't suspendable.
+
+   let's just do that and see how it goes...
+
+   so how do we donate, then?
+
+   well... so... hmm...
+
+   this is kind of inverse of the usual promise direction heh
+
+   we need to make sure that the value has been retrieved (rather than produced),
+   and that possibly means donating our timeslice so the other side can run to retrieve it (rather than produce it)
+
+   so maybe we could pass down the suspendable to indicate who's doing the receive?
+   then... store it and run the suspendable when we set the promise?
+   sure, that seems kind of plausible. we'd need just one step but it's fine...
+
+   oh also, I guess... how do we handle the fifo for normal tasks?
+   ugh, right... umm...
+
+   well we don't actually need the sync run thing.
+   we just need, hey i ran and,
+   synchronously set this event,
+   then kept running after that.
+
+   so yeah receive can just set an event to signal we've returned, right.
+   and then suspendable would... i guess be stopped at that point?
+
+   or maybe we could have that synchronously cancel the susp?
+
+   ok so yeah we'll call a callback which cancels the cancel-scope the susp is inside, I guess.
+
+   this will be inside submit_syscall, I suppose.
+
+   well actually we can move receive down into there and get rid of SyscallResponse,
+   which we might as well do now.
+
+   nice did that.
+
+   so okaaaay.
+
+   at the end of syscall, before raising on error..
+
+   or maybe in a finally block?
+
+   we'll call a callback, which will mutably either,
+   cancel our cancel scope,
+   or just set an event flag.
+
+   and also, we need to... store the suspendable with the request, right?
+   so we can start running it.
+
+   so we grab the suspendable,
+   stick it in the request,
+
+   then once we have the result,
+   we call another method on the request,
+   which should cancel us.
+
+   ok ok
+
+   so yeah we'll just go ahead and do that.
+
+   wait though...
+
+   we really need to do this in... the actual _run_read, right?
+
+   so we say...
+
+   await req.wait_until_resumed()
+
+   or something
+
+   which waits for an event...
+
+   and...
+
+   wait, though, what if it's already running?
+
+   we need to know if it's running or not, and if it's not running,
+   then we want to run it in our cancel scope but also immediately cancel it.
+
+   so let's just start at the beginning:
+   we take a lock to run it.
+   which, also we do in a nursery.
+
+   so okay...
+
+   we're waiting for the event,
+   and simultaneously we're running the drive.
+
+   as soon as we get the event, we cancel the drive.
+
+   hey, yeah, so we don't even need the cancel scope thing internally, it's fine.
+   great, that's simpler.
+
+   
+   ok so we'll have separate optional[suspendable]s for the request and the response,
+   and we'll drive them each while waiting for each promise...
+   or maybe drive them both?
+
+   i guess run_write should maybe drive the suspendable for the write_request or something?
+   so it also has an event, kinda thing?
+
+   well, we don't need to actually have both at the moment,
+   if we pass in the suspendable with write_request.
+
+   ok so let's suppose we do that.
+
+   we don't really need the suspendable for writing requests thing, at least not right now 
+   oh hey!
+
+   perfect perfect!
+
+   let's just have the future synchronize!
+
+   rendezvous!
+
+   like plan 9!
+
+   yeaaaah
+
+   we don't really need to swap values though;
+   should we?
+
+   oh a memory channel is essentially this though
+
+   okaaay
+   no, a memory channel will return immediately rather than give the other side a chance to run,
+   sigh.
+
+   so we want, I guess, something which is not symmetric;
+   because we always want the sending side to block until the receiving side gets it.
+
+   or rather... we're fine with the receiving side returning immediately, but...
+
+   we want it to get a chance to run.
+
+   ok we'll just do the event
+
+   ok this seems fifo-ish, cool...
+
+   now we just need to test it lol
+
+   hmm maybe it's some kind of deadlock and/or circular dependency?
+   where...
+   reading depends on syscall,
+   which depends on epoller right now,
+   which depends on reading.
+
+   oh, god.
+
+   that's exactly it. i have a cancel scope around a read syscall.
+
+   fascinating! why does this block forever?
+
+   so I guess the issue is that inside the cancelscope we block forever waiting for the read response.
+
+
+   okay so this isn't good though.
+   this means we can block forever, if we just get put in a cancelscope after a syscall,
+   and make another syscall in there. very awkward.
+
+   we really just want to run one step.
+
+   yeah we do need the immediate cancel I guess. otherwise...
+
+   well wait we can synchronously enter a cancelscope.
+   and then block... not good.
+
+   yeah and that doesn't get cancelled
+
+   so can I somehow achieve just-one-step?
+   not sure...
+** hm
+   ok let's go back to the beginning
+   what do we want to do?
+
+   ok we'll just remove the cancelscope from this suspendable context.
+
+   based on the idea that,
+   we wouldn't be able to use cancelscopes with automatic suspendability anyway.
+   (suspendability based on using trio.op and autosuspending at those points).
+
+   so we should work on that principle even now.
+
+   heck it's pretty easy too because all we need is to just,
+   move the first async operation outside the cancelscope
+
+   or... no...
+
+   we're doing it in parallel. hm. hMMMm.
+
+   so...
+
+   i meaannnn
+
+   malloc doesn't checkpoint.
+   wait actually we can just add a checkpoint before the cancelscope.
+   then problem is solved.
+
+   assuming that we're actually canceled beforehand, that is.
+** weird excessive retries in wait
+   ok anyway, it looks like we're taking a lot of spurious cancels.
+   maybe we should try to do the await first, before starting to drive?
+   we could checkpoint I guess?
+   
+   hmm even with an actual sleep in drive it doesn't help!
+
+   ah we need a checkpoint after the lock is taken.
+
+   but that only cuts the number of bad entries in half?
+
+   yeah and how many times do i have to try before I do it?
+   each one might waste work!
+
+   although not in the case of this channel receive I guess.
+
+   I suppose it's fine.
+   we should actually just go ahead and support the, uh,
+   trio_op semantics.
+
+   but before that, let's do the futures thing.
