@@ -207,6 +207,11 @@ class FIFOPromise(t.Generic[T]):
 def _yield(value: t.Any) -> t.Any:
     return (yield value)
 
+@types.coroutine
+def _yield_from(coro: t.Any) -> t.Any:
+    "Run until started is called"
+    return (yield from coro)
+
 @dataclass
 class DynvarRequest:
     prompt: Dynvar
@@ -229,6 +234,52 @@ class Dynvar(t.Generic[T]):
                 send_value = outcome.Value(value)
             else:
                 send_value = (await outcome.acapture(_yield, yield_value))
+@dataclass
+class StartedFutureRequest:
+    prompt: StartedFuture
+
+class StartedFuture:
+    def __init__(self, run_func: t.Callable[[StartedFuture], t.Coroutine]) -> None:
+        self._coro: t.Coroutine = run_func(self)
+        self._run_func = run_func
+
+    async def started(self) -> None:
+        await _yield(StartedFutureRequest(self))
+
+    @staticmethod
+    async def start(run_func: t.Callable[[StartedFuture], t.Coroutine]) -> StartedFuture:
+        self = StartedFuture(run_func)
+        await self.run_initial()
+        return self
+
+    async def run_initial(self) -> None:
+        "Run until started is called"
+        send_value: outcome.Outcome = outcome.Value(None)
+        while True:
+            try: yield_value = send_value.send(self._coro)
+            except StopIteration as e:
+                raise Exception("StartedFuture function returned without calling started, value:", e.value)
+            if isinstance(yield_value, StartedFutureRequest) and yield_value.prompt is self:
+                return
+            else:
+                send_value = (await outcome.acapture(_yield, yield_value))
+
+    async def run(self) -> t.Any:
+        "Run until started is called"
+        # We don't need to intercept any more requests, nice.
+        return await _yield_from(self._coro)
+
+    def __del__(self) -> None:
+        # suppress the warning about unawaited coroutine that we'd get
+        # if we never got the chance to drive this coro
+        try:
+            self._coro.close()
+        except RuntimeError as e:
+            if "generator didn't stop after throw" in str(e):
+                # hack-around pending python 3.7.9 upgrade
+                pass
+            else:
+                raise
 
 @dataclass
 class SuspendRequest:

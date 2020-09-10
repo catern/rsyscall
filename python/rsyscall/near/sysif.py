@@ -128,3 +128,4 @@ from rsyscall.concurrency import SuspendableCoroutine, Dynvar
 import contextlib
 
 syscall_suspendable: Dynvar[t.Optional[SuspendableCoroutine]] = Dynvar()
+syscall_snd_callback: Dynvar[t.Optional[t.Callable[[], t.Coroutine]]] = Dynvar()
