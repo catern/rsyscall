@@ -579,6 +579,12 @@ class SocketFileDescriptor(BaseFileDescriptor):
             ret = await _recv(self.task.sysif, self.near, buf_n, buf.size(), flags)
             return buf.readable_split(ret)
 
+    async def send(self, buf: Pointer[T], flags: MSG) -> t.Tuple[Pointer[T], Pointer]:
+        self._validate()
+        with buf.borrow(self.task) as buf_n:
+            ret = await _send(self.task.sysif, self.near, buf_n, buf.size(), flags)
+            return buf.split(ret)
+
 class SocketTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
     async def socket(self, domain: AF, type: SOCK, protocol: int=0) -> T_fd:
         """create an endpoint for communication
@@ -649,6 +655,10 @@ async def _setsockopt(sysif: SyscallInterface, sockfd: near.FileDescriptor,
 async def _recv(sysif: SyscallInterface, fd: near.FileDescriptor,
                 buf: near.Address, count: int, flags: int) -> int:
     return (await sysif.syscall(SYS.recvfrom, fd, buf, count, flags))
+
+async def _send(sysif: SyscallInterface, fd: near.FileDescriptor,
+                buf: near.Address, count: int, flags: int) -> int:
+    return (await sysif.syscall(SYS.sendto, fd, buf, count, flags))
 
 async def _recvmsg(sysif: SyscallInterface, fd: near.FileDescriptor,
                    msg: near.Address, flags: int) -> int:
