@@ -23,6 +23,7 @@ __all__ = [
     "SOCK",
     "SOL",
     "SO",
+    "MSG",
     "Socketpair",
     "Sockbuf",
     "CmsgSCMRights",
@@ -45,6 +46,24 @@ class SHUT(enum.IntEnum):
     RD = lib.SHUT_RD
     WR = lib.SHUT_WR
     RDWR = lib.SHUT_RDWR
+
+class MSG(enum.IntFlag):
+    NONE = 0
+    # send flags
+    CONFIRM = lib.MSG_CONFIRM
+    DONTROUTE = lib.MSG_DONTROUTE
+    EOR = lib.MSG_EOR
+    MORE = lib.MSG_MORE
+    NOSIGNAL = lib.MSG_NOSIGNAL
+    # recv flags
+    CMSG_CLOEXEC = lib.MSG_CMSG_CLOEXEC
+    ERRQUEUE = lib.MSG_ERRQUEUE
+    PEEK = lib.MSG_PEEK
+    TRUNC = lib.MSG_TRUNC
+    WAITALL = lib.MSG_WAITALL
+    # both
+    DONTWAIT = lib.MSG_DONTWAIT
+    OOB = lib.MSG_OOB
 
 class Sockaddr(Struct):
     """struct sockaddr. This is not really useful to allocate on its own; you want the derived classes.
@@ -554,7 +573,7 @@ class SocketFileDescriptor(BaseFileDescriptor):
         valid, invalid = msg.value.iov.value.split(ret)
         return valid, invalid, msg.value.to_out(msg)
 
-    async def recv(self, buf: Pointer[T], flags: int) -> t.Tuple[ReadablePointer[T], Pointer]:
+    async def recv(self, buf: Pointer[T], flags: MSG) -> t.Tuple[ReadablePointer[T], Pointer]:
         self._validate()
         with buf.borrow(self.task) as buf_n:
             ret = await _recv(self.task.sysif, self.near, buf_n, buf.size(), flags)
