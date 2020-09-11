@@ -25,3 +25,9 @@ class TestEpoller(TrioTestCase):
         async with trio.open_nursery() as nursery:
             nursery.start_soon(do_async_things, self, epoller, thread)
             nursery.start_soon(do_async_things, self, thread.epoller, thread)
+
+    async def test_afd_with_handle(self):
+        pipe = await self.thr.pipe()
+        afd = await self.thr.make_afd(pipe.write)
+        new_afd = afd.with_handle(pipe.write)
+        await new_afd.write_all_bytes(b'foo')
