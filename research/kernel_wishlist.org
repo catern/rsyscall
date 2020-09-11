@@ -192,6 +192,9 @@
    This doesn't work!
 ** prctl to set cloexec for every new fd
    I'm not sure that I'll get it right.
+** MSG_WAITALL for send
+   then we could implement syscall sending so simply!
+   also memory access!
 * possible kernel bugs
 ** MMAP_GROWSDOWN doesn't seem to work
    It doesn't grow.
