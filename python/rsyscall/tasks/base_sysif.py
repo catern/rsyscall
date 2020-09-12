@@ -3,7 +3,7 @@ import contextlib
 import math
 import trio
 from rsyscall.concurrency import SuspendableCoroutine, FIFOFuture
-from rsyscall.near.sysif import SyscallInterface, syscall_suspendable, syscall_snd_callback
+from rsyscall.near.sysif import SyscallInterface, syscall_suspendable
 from rsyscall.tasks.connection import Syscall, SyscallConnection
 from rsyscall.tasks.util import log_syscall, raise_if_error
 from rsyscall.handle import FileDescriptor
@@ -60,10 +60,7 @@ class ConnectionSyscallInterface(SyscallInterface):
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
             arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
         result_suspendable = await syscall_suspendable.get()
-        snd_callback = await syscall_snd_callback.get()
         response_future = await self.rsyscall_connection.write_request(syscall, result_suspendable)
-        if snd_callback:
-            await snd_callback()
         try:
             if result_suspendable is not None:
                 result = await syscall_suspendable.bind(None, result_suspendable.wait(

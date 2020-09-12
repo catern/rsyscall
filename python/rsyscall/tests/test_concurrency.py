@@ -1,6 +1,6 @@
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.near.sysif import syscall_snd_callback
-from rsyscall.concurrency import StartedFuture
+from rsyscall.near.sysif import syscall_future
+from rsyscall.concurrency import SuspendableCoroutine
 import trio
 import logging
 logger = logging.getLogger(__name__)
@@ -50,9 +50,9 @@ class TestConnectionConcurrency(TrioTestCase):
         await self.thr.close()
 
     async def test_future_getpid(self) -> None:
-        fut = await StartedFuture.start(lambda fut: syscall_snd_callback.bind(fut.started, self.thr.task.getpid()))
-        result = await fut.run()
-        print(result)
-        fut = await StartedFuture.start(lambda fut: syscall_snd_callback.bind(fut.started, self.thr.task.getpid()))
-        result = await fut.run()
-        print(result)
+        fut1 = await syscall_future(self.thr.task.getpid())
+        fut2 = await syscall_future(self.thr.task.getpid())
+        result2 = await fut2.get()
+        result1 = await fut1.get()
+        self.assertEqual(result1, self.thr.process.process.near)
+        self.assertEqual(result2, self.thr.process.process.near)

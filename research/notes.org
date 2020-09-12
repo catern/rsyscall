@@ -25542,6 +25542,278 @@ fut = await susp.wait(StartedFuture.run(lambda fut: syscall_snd_callback.bind(fu
     it's just a little open-coded...
 
     ok so let's do it!
+*** uses of it
+    well ok so now how do we use it?
+
+    ummmmmmmmmmmmmmmmmmmmmmmm I don't remember.
+    besides memory, wasn't there another one?
+    I guess I'll just do memory then...
+
+    maybe I can use it in the connection interface?
+    for when connections are nested?
+    that would also be useful I suppose.
+
+    ok so let's just do it for memory, anyway.
+
+    so let's see.
+    to do the continual writing, I guess I need to.. hmm...
+
+    send it to some other suspendable which will read the result,
+    and...
+
+    oh no ok I can have two suspendables,
+    one which starts writes,
+    and one which reads the result.
+
+    and then...
+    I basically just send futures around between both?
+    yikes, what an absolutely crazy design.
+
+    oh wait a second. waaaait a second.
+
+    we can't do this.
+
+    because, we can't do a second write while the first one isn't done.
+    consarn it.
+
+    no wait, we could actually.
+    we'd just need to be aware of that on the other side.
+    hm.
+
+    that's kind of a cute and cool design.
+    let's do that, it's insane.
+
+    we still need ordering and everything,
+    it's just our approach to dealing with the possibility of partial writes.
+
+    we can't do the read until the result of the write comes back, I guess.
+
+    ok so..
+
+    I guess I'll have four steps.
+
+    initiate write sends to receive write
+    receive write sends to initiate read and initiate write (for partial writes)
+
+    initiate read sends to receive read
+    receive read sends to result complete and initiate read (for partial reads)
+
+    actually can I combine this into a single function?
+    I do have the FIFO property, which is nice.
+
+    oh this won't work at all with separate things,
+    because,
+    we need to read it all at once.
+    so we really need recv MSG_WAITALL actually - but we can do that, no problem.
+
+    so...
+    assuming syscalls are synchronous both on the way in and on the way out...
+    and we've got the fifo property...
+    we can do this do_write thing.
+
+    where we concurrently recurse - very cool.
+
+    hmm ok I can have start_future be synchronous,
+    and have the started callback be async (as usual),
+    but have the runner throw if it blocks before the callback.
+
+    intriguing.
+
+    hmm but that doesn't work, becuase,
+    dynvar requests propagate out, tragically.
+
+    hmmm but how can we ensure that... um...
+
+    wait we don't actually need to ensure that things have started;
+    we can just wait for that to happen.
+    no big deal!
+
+    uhhhh hmmm though
+
+    don't we want to start both in parallel?
+
+    yeah we don't want to wait for the callback;
+    or rather, we want the callback to be put in the place where it's sequenced,
+    not where it's guaranteed.
+*** when to callback
+    ok so let's change the callback location.
+
+    hmm wait though... if don't have the cancel shield on...
+
+    that's fine actually, we don't need to get cancelled to suspend actually.
+
+    haaaaaaaaaaaaaaaaaaa
+
+    okay yeah we can't suspend inside the cancelscope.
+    argh! concurrency is so primitive!
+    but I can't say that, as there are those papers I haven't read...
+
+    anyway, so.
+
+    actually, why do I even need to avoid small syscalls, if I do them in parallel?
+    wow yeah.
+    buffering isn't necessary if I can just pipeline instead, I guess?
+    or rather...
+    why bother batching?
+    yes, it decreases the number of syscalls,
+    but it doesn't improve round trips,
+    *if* we can pipeline things.
+    and we have to be able to pipeline anyway!
+    kinda?
+
+    wow, this fifo stuff actually unlocks a whole new way to do concurrency
+
+    hm wait a second;
+    I can't pipeline the writes;
+    each syscall needs to go as one unit.
+    if it's partial, it doesn't work.
+
+    and, because of the ordering...
+    I guess I want to be able to batch?
+    because I have to wait for the return value, the round trip, right...
+
+    hm.
+    can we avoid this somehow?
+    i mean we could use sctp, but that's not really available...
+
+    oh... we could... do sock_seqpacket over unix sockets...
+    hm ssh doesn't support anything but stream. HM. rats.
+
+    lol I think I thought of all this already.
+
+    yeah so I can only pipeline if I actually don't care about the order
+
+    can we use pipe atomicity here?
+    let's see, what would I do?
+    I'd need to have the sending side always be a pipe which is copied to a socket.
+    lol...
+
+    wait, is send already atomic?
+    wow actually I think it is.
+    both on TCP sockets and on pipes.
+    that's absolutely crazy.
+
+    the comments on https://stackoverflow.com/a/19400029 suggest that send is atomic.
+    let's do some tests...
+
+    let's see, I guess we need multiple Threads which continually do large writes on one end of a socketpair.
+    easy peasy.
+
+    ugh ok.
+
+    so the sends don't seem to be partial UNLESS the syscall is interrupted by a syscall.
+
+    but, they sometimes overlap - that is to say, they aren't atomic
+
+    so there's no atomicity. tragic.
+    so I can't do concurrent sends.
+
+    ah, but no problem!
+    my syscalls are serialized through a single thread anyway!
+    so the lack of atomicity is fine.
+
+    and, sends are only partial when interrupted;
+    I could turn on SA_RESTART,
+    but I think if someone breaks me by signaling me,
+    that's their fault.
+
+    oh also SA_RESTART isn't needed if we don't have a handler... right?
+    or, why actually was I getting partial on sigint?
+
+    ah, I do have a signal handler for sigint established... somehow.
+    that's kind of bizarre.
+
+    and in fact I seem to ignore the signal?
+    weird.
+
+    ok well I can investigate that and remove the handler
+
+    ok so we are inheriting the handler I guess?
+    oh maybe this is because we're...
+    no we're still in the same address space, just a different fd space.
+    yeah we force CLONE.VM on.
+
+    hm. very weird.
+    ohhhh.
+    we don't reset the signal handler, yeah.. hmm...
+
+    ok well in any case, let's just go with the regular ole,
+    send. thing.
+
+    ugh ok with async stuff it actually can be partial.
+    unfortunate.
+*** returning to fifofutures
+    ok so if I do teh callback before the cancel scope, then.
+    it's fine.
+
+    but, i can't discard results of earlier futures because it's not in a suspendable.
+
+    suspendable really isn't the right thing...
+
+    but maybe I can base startedfuture on the suspendable?
+    after all... I can't make StartedFuture sync...
+
+    so let's just copy suspendable - no wait we can't
+    ok let's just base ourselves on suspendable then.
+
+    whatever who cares if it's overloaded
+
+    ok so suspendable doesn't save the result,
+    which means if it's already exited we can't drive it. fine, ok, I'll just store it.
+
+    ok, so we've got some basic futures now.
+
+    cool, it works! as easy as that! amazing that it was that easy.
+
+    but.
+    i still have performance losses! :( hmm.
+
+    ok, very interesting, it's the recv which seems to be very slow.
+
+    despite the fact that they should be batched!
+
+    uh, and we do read all the responses.
+
+    so it's slow in pure-python
+
+    ok.. so...
+
+    can we resume the suspendable directly after all?
+    instead of this other stuff?
+    I feel like that's the only way to get good perf here.
+
+    yeah we need to do the trio_op stuff.
+    the performance *should* be good - we don't have roundtrips anymore.
+    but we've introduced a bunch of python.
+
+    ok so. what exactly can we do?
+
+    I guess we should commit this first impl first
+
+    ok wait this is wrong though, we need to start the recv first, then the tail do_write
+
+    cuz, otherwise...
+    we won't be ordered right
+    right cuz... starting the syscall_future is async, I guess? or... is it?
+
+    it... shouldn't be? maybe...?
+    yeah of course it shouldn't be, it should be like registering a callback.
+    it should really be sync actually.
+** TODO mysterious async stuff
+   ummm why can't I write to this tcp connection or to socketpairs?
+   what's up with this afd! it's weird!
+** DONE reset signal handler when cloning new task
+   this is pretty important so that we don't get EINTRs heh
+
+   on the other hand. this is bad.
+   cuz. we don't want to allow EINTRs on syscall connection sends.
+   but. we do want to allow them to cancel syscalls in general.
+   hm.
+
+   well let's just roll with it.
+
+   yeah okay this doesn't matter anymore, we don't care about getting EINTRs heh.
+   so we'll just keep the signal handler. it's useful too so we can sigint our threads!
 ** efficiency
    it would be nice to have a C implementation of the send/yield loop,
    which detects my prompts appropriately...
@@ -25553,3 +25825,132 @@ fut = await susp.wait(StartedFuture.run(lambda fut: syscall_snd_callback.bind(fu
 
    i mean, this is the real reason to have a "yield from" that supports interception:
    it's more efficient
+** fifo guarantee for syscalls: what is it really?
+   hmm the FIFO gurantee for syscalls...
+   it's not really a abominable misuse of concurrency;
+   it's a use of delimited continuations and callbacks.
+   in that context it totally makes sense.
+
+   aha it's just a normal callback system thing
+** cancellation
+   sure is a drag to not be able to cancel threads, but oh well, I've thought about that too many times.
+** callback systems
+Callback systems have:
+- fifo ordering of return values
+- decentralized callback design, where it's not unusual to make your own objects,
+  which are registered on a callback and which call other callbacks
+- No worries about handlers "going out of scope"
+
+I'm trying to achieve these!
+
+The shame cooperative concurrency systems have about being cooperative and not preemptive - it's misplaced.
+They should lean into it!
+
+Cooperative is a callback system,
+And a good style of preemptive would preserve cooperative behavior in some cases;
+It would call callbacks linearly (FIFO) sometimes, like normal, but sometimes it would call them in parallel,
+using some primitive.
+
+Oh oh oh!
+Callback systems also don't worry about their handlers "going out of scope".
+It's all regulated with garbage collection and ownership.
+Which is what I want to do too!
+
+Maybe I should simplify the practice of writing a
+handler/something which calls back into other coroutines/something which calls into other stored continuations?
+
+But it's already simple:
+do various awaits,
+interspersed with sending results to coroutines and running them until they return - which is them blocking.
+(I guess we need to run them inside a reset? So that they can shift?)
+
+hmm returning from a reset is them blocking?
+well... what about when...
+do we ever have to let them yield up?
+
+I guess yielding up would be them blocking *us*.
+and we don't really want to allow that.
+
+but it would sure be nice to have dynamic bindings...
+but those would be evil anyway.
+we're already always running inside a reset, right?
+so we don't really need dynamic bindings.
+
+i mean, it's still nice to have dynvars for...
+avoiding extra variables purposes.
+
+maybe I can get rid of them entirely though...
+I mean, if I'm always in a shift/reset,
+maybe I can just always do the future-mode stuff,
+and cancellable stuff.
+
+no need for dynvars I guess.
+
+ok so this is a useful insight but, what was I originally thinking about?
+*** extending fifo behavior to AFD.write
+    which means extending it to the status object inside there.
+    which means, basically, have a callback system.
+*** futures
+    well I guess we'd just start a future by...
+    running something inside a reset which stores the value in a mutable variable when done?
+
+    but how do we join on it?
+    oh I guess we can just have a callback-based event inside it.
+
+    yeah and it's fine that it's a future, whatever.
+*** TODO exceptions
+    er, how do we propagate exceptions from these callbacks?
+    or return values for that matter?
+
+    yeah propagating return values and exceptions is a tricky business.
+
+    i could wrap everything in a future?
+    i could do something nursery style?
+
+
+    and cancellation too.
+    that's tricky.
+    i'd have to reimplement a lot of trio logic.
+
+    cancellation is deffo an interesting and confusing thing.
+    although, maybe I don't even need it?
+
+    For a nursery,
+    I guess the idea is that I'd inject an exception into a callback waiting for something else.
+    That automatically means cancellation.
+
+    ok so what would this look like with callbacks?
+    i guess...
+    all functions would be wrapped with something that receives their return value and...
+    sends it to some nursery, I guess?
+    and then that same thing could inject exceptions?
+
+    what does the lack of exception propagation correspond to in shift/reset?
+
+    well,
+    if I run something inside a reset...
+    and then it shifts into some callback function...
+    the reset evaluates to whatever the shift function returned.
+
+    And then, I suppose, I just move on?
+
+    well, if I do a regular function call, it's all still connect,
+    cuz i'm still on the same stack.
+
+    but if I separate our stacks...
+
+    i mean...
+
+    well, you could imagine a reset uhhh
+    thing where uhhh
+
+    well, the return/exception callback inside the coro,
+    is still pointing at my stack.
+    it's just, segamented.
+
+    mmmmm
+
+    ok, I'm making concrete progress.
+    let's just keep doing that.
+    let's not bother with fifo behavior everywhere,
+    or having a callback system.

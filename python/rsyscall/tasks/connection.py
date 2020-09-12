@@ -15,7 +15,7 @@ from rsyscall.handle import Pointer, Task, WrittenPointer
 from rsyscall.concurrency import SuspendableCoroutine, Future, Promise, make_future, FIFOFuture, FIFOPromise
 from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer, EOFException
-from rsyscall.near.sysif import SyscallHangup
+from rsyscall.near.sysif import SyscallHangup, syscall_snd_callback
 import abc
 import contextlib
 import math
@@ -190,12 +190,16 @@ class SyscallConnection:
         """
         future, promise = make_future()
         request = ConnectionRequest(syscall, future, promise, result_suspendable)
+        snd_callback = await syscall_snd_callback.get()
+        self.request_channel.send_nowait(request)
+        if snd_callback:
+            # print("calling snd_callback")
+            await snd_callback()
         # TODO as a hack, so we don't have to figure it out now, we don't allow
         # a syscall request to be cancelled before it's actually made. we could
         # make this work later, and that would reduce some blocking from waitid
         with trio.CancelScope(shield=True):
             async with self.suspendable_write.running():
-                await self.request_channel.send(request)
                 response = await request.response_future.get()
         return response
 

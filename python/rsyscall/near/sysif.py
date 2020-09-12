@@ -129,3 +129,7 @@ import contextlib
 
 syscall_suspendable: Dynvar[t.Optional[SuspendableCoroutine]] = Dynvar()
 syscall_snd_callback: Dynvar[t.Optional[t.Callable[[], t.Coroutine]]] = Dynvar()
+
+async def syscall_future(coro: t.Coroutine) -> t.Any:
+    return await SuspendableCoroutine.start(
+        lambda susp: syscall_snd_callback.bind(susp.suspend, syscall_suspendable.bind(susp, coro)))

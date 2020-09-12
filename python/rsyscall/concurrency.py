@@ -291,6 +291,7 @@ class SuspendableCoroutine:
         self._coro: t.Coroutine = run_func(self)
         self._run_func = run_func
         self._lock = trio.Lock()
+        self._outcome = None
 
     def __del__(self) -> None:
         # suppress the warning about unawaited coroutine that we'd get
@@ -304,8 +305,25 @@ class SuspendableCoroutine:
             else:
                 raise
 
-    async def drive(self) -> None:
+    @staticmethod
+    async def start(run_func: t.Callable[[SuspendableCoroutine], t.Coroutine]) -> SuspendableCoroutine:
+        async def wrapper(susp: SuspendableCoroutine) -> None:
+            out = await outcome.acapture(run_func, susp)
+            self._outcome = out
+        self = SuspendableCoroutine(wrapper)
+        await self.drive()
+        return self
+
+    async def get(self) -> t.Any:
+        while True:
+            if self._outcome:
+                return self._outcome.unwrap()
+            await self.drive()
+
+    async def drive(self) -> t.Any:
         async with self._lock:
+            if self._outcome:
+                return self._outcome.unwrap()
             await trio.sleep(0)
             send_value: outcome.Outcome = outcome.Value(None)
             while True:
@@ -316,11 +334,12 @@ class SuspendableCoroutine:
                 except BaseException as e:
                     logger.info("Got exn %s", e)
                     raise
-                else:
-                    logger.info("Done with send in %s, got %s", self, yield_value)
                 # handle SuspendRequests for us, and yield everything else up
                 if isinstance(yield_value, SuspendRequest) and yield_value.prompt is self:
-                    raise trio.MultiError(yield_value.cancels)
+                    if yield_value.cancels:
+                        raise trio.MultiError(yield_value.cancels)
+                    else:
+                        return
                 else:
                     send_value = (await outcome.acapture(_yield, yield_value))
 
@@ -341,6 +360,9 @@ class SuspendableCoroutine:
                 done = True
                 nursery.cancel_scope.cancel()
             logger.info("Done with nursery")
+
+    async def suspend(self) -> None:
+        await _yield(SuspendRequest(self, []))
 
     @contextlib.asynccontextmanager
     async def suspend_if_cancelled(self) -> t.AsyncIterator[None]:

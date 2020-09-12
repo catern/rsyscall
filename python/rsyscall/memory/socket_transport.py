@@ -40,6 +40,7 @@ import rsyscall.handle as handle
 import typing as t
 import trio
 import math
+import time
 
 from rsyscall.handle import Pointer, FileDescriptor
 from rsyscall.sys.uio import IovecList
@@ -48,6 +49,9 @@ from rsyscall.memory.allocator import AllocatorInterface
 __all__ = [
     "SocketMemoryTransport",
 ]
+
+import logging
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ReadOp:
@@ -258,6 +262,9 @@ def merge_adjacent_reads(read_ops: t.List[ReadOp]) -> t.List[t.Tuple[ReadOp, t.L
         outputs.append((ReadOp(merged_ptr), group))
     return outputs
 
+from rsyscall.near.sysif import syscall_future
+from rsyscall.sys.socket import MSG
+
 @dataclass
 class PrimitiveSocketMemoryTransport(MemoryTransport):
     """Like SocketMemoryTransport, but doesn't require a remote_allocator
@@ -281,40 +288,28 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
         self.local = local
         self.remote = remote
         self.read_lock = trio.Lock()
-        self.write_local_channel, self.pending_write_local = trio.open_memory_channel(math.inf)
-        self.suspendable_write_local = SuspendableCoroutine(self._run_write_local)
-        self.read_remote_channel, self.pending_read_remote = trio.open_memory_channel(math.inf)
-        self.suspendable_read_remote = SuspendableCoroutine(self._run_read_remote)
 
     def inherit(self, task: handle.Task) -> PrimitiveSocketMemoryTransport:
         return PrimitiveSocketMemoryTransport(self.local, task.make_fd_handle(self.remote))
 
-    async def _run_write_local(self, susp: SuspendableCoroutine) -> None:
-        while True:
-            # again, we could batch these, with good syscall pipelining...
-            dest, to_write, promise = await susp.wait(self.pending_write_local.receive)
-            while to_write.size() > 0:
-                written, to_write = await susp.wait(lambda: self.local.write(to_write))
-            self.read_remote_channel.send_nowait((dest, promise))
-
-    async def _run_read_remote(self, susp: SuspendableCoroutine) -> None:
-        while True:
-            # TODO we could process these in batches, if we could pipeline syscalls, preserving order.
-            dest, promise = await susp.wait(self.pending_read_remote.receive)
-            rest = to_span(dest)
-            while rest.size() > 0:
-                read, rest = await susp.wait(lambda: self.remote.read(rest))
-            promise.send(None)
+    async def do_write(self, dest: Pointer, src: Pointer[bytes], i=0) -> None:
+        if dest.size() == 0:
+            return
+        written, rest = await self.local.write(src)
+        dest, dest_rest = dest.split(written.size())
+        if dest_rest.size() != 0:
+            # this is basically sync, or at least should be...
+            fut = await syscall_future(self.do_write(dest_rest, rest, i=1))
+        await self.remote.recv(dest, MSG.WAITALL)
+        if dest_rest.size() != 0:
+            await fut.get()
 
     async def write(self, dest: Pointer, data: bytes) -> None:
         if dest.size() != len(data):
             raise Exception("mismatched pointer size", dest.size(), "and data size", len(data))
         src = await self.local.ram.ptr(data)
-        future, promise = make_future()
-        self.write_local_channel.send_nowait((dest, src, promise))
-        async with self.suspendable_write_local.running():
-            async with self.suspendable_read_remote.running():
-                await future.get()
+        dest_span = to_span(dest)
+        await self.do_write(dest_span, src)
 
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         raise Exception("batch write not supported")
@@ -403,6 +398,11 @@ class SocketMemoryTransport(MemoryTransport):
 
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         await run_all([(lambda dest=dest, data=data: self.write(dest, data)) for dest, data in ops])
+        # futs = []
+        # for dest, data in ops:
+        #     futs.append(await syscall_future(self.write(dest, data)))
+        # for fut in futs:
+        #     await fut.get()
 
     async def read(self, src: Pointer) -> bytes:
         return await self.primitive.read(src)
