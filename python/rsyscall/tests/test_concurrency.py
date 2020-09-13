@@ -56,3 +56,42 @@ class TestConnectionConcurrency(TrioTestCase):
         result1 = await fut1.get()
         self.assertEqual(result1, self.thr.process.process.near)
         self.assertEqual(result2, self.thr.process.process.near)
+
+from rsyscall.concurrency import CoroQueue, trio_op
+import outcome
+
+async def runner(queue: CoroQueue) -> None:
+    while True:
+        await trio_op(lambda: trio.sleep(0))
+        many = await queue.get_many()
+        await trio_op(lambda: trio.sleep(0))
+        print("got many", many)
+        for val, coro in many[::-1]:
+            queue.fill_request(coro, outcome.Value(val + 10))
+
+class TestCoroQueue(TrioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.queue = CoroQueue.start(runner)
+        self.second_queue = CoroQueue.start(self._second_runner)
+
+    async def _second_runner(self, queue: CoroQueue) -> None:
+        while True:
+            await trio_op(lambda: trio.sleep(0))
+            many = await queue.get_many()
+            await trio_op(lambda: trio.sleep(0))
+            for val, coro in many[::-1]:
+                result = await self.queue.send_request(val + 100)
+                queue.fill_request(coro, outcome.Value(result))
+
+    async def test_queue(self) -> None:
+        async def req(i: int):
+            print("req for", i)
+            ret = await self.queue.send_request(i)
+            print("return value for", i, "is", ret)
+            self.assertEqual(i+10, ret)
+        async with trio.open_nursery() as nursery:
+            for i in range(3):
+                nursery.start_soon(req, i)
+
+    async def test_inheritance(self) -> None:
+        print('result', await self.second_queue.send_request(1))

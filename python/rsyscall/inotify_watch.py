@@ -6,7 +6,7 @@ Nothing special here, this is just normal inotify usage.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.concurrency import SuspendableCoroutine
+from rsyscall.concurrency import CoroQueue, trio_op
 import contextlib
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.memory.ram import RAM
@@ -30,21 +30,44 @@ __all__ = [
 class Watch:
     "An indidivual inode being watched with an Inotify instance"
     inotify: Inotify
-    send_channel: trio.abc.SendChannel
-    channel: trio.abc.ReceiveChannel
     wd: WatchDescriptor
-    removed: bool = False
+    pending_events: t.List[InotifyEvent]
+
+    def __init__(self, inotify: Inotify, wd: WatchDescriptor) -> None:
+        self.inotify = inotify
+        self.wd = wd
+        self.pending_events = []
+        self.queue = CoroQueue.start(self._run)
+
+    async def _run(self, queue: CoroQueue) -> None:
+        waiters: t.List[t.Tuple[None, t.Coroutine]] = []
+        while True:
+            received = await self.inotify.queue.send_request(self.wd)
+            self.pending_events.extend(received)
+            waiters.extend(queue.fetch_any())
+            if waiters:
+                _, to_resume = waiters.pop(0)
+                to_send = self.pending_events
+                self.pending_events = []
+                queue.fill_request(to_resume, outcome.Value(to_send))
+            if any(event.mask & IN.IGNORED for event in received):
+                # this watch was removed, we won't get any more events.
+                break
+        for _, waiter in waiters:
+            queue.fill_request(waiter, outcome.Error(Exception("watch was removed")))
+        waiters = []
+        while True:
+            _, waiter = await queue.get_one()
+            queue.fill_request(waiter, outcome.Error(Exception("watch was removed")))
 
     async def wait(self) -> t.List[InotifyEvent]:
         "Wait for some events to happen at this inode"
-        if self.removed:
-            raise Exception("watch was already removed")
-        async with self.inotify.suspendable.running():
-            event = await self.channel.receive()
-        if event.mask & IN.IGNORED:
-            # the name is confusing - getting IN.IGNORED means this watch was removed
-            self.removed = True
-        return [event]
+        if self.pending_events:
+            ret = self.pending_events
+            self.pending_events = []
+            return ret
+        else:
+            return await self.queue.send_request(None)
 
     async def wait_until_event(self, mask: IN, name: t.Optional[str]=None) -> InotifyEvent:
         """Wait until an event in this mask, and possibly with this name, happens
@@ -70,6 +93,9 @@ _inotify_read_size = 4096
 _inotify_minimum_size_to_read_one_event = (ffi.sizeof('struct inotify_event') + NAME_MAX + 1)
 assert _inotify_read_size > _inotify_minimum_size_to_read_one_event
 
+import functools
+import outcome
+
 class Inotify:
     "An inotify file descriptor, which allows monitoring filesystem paths for events."
     def __init__(self, asyncfd: AsyncFileDescriptor, ram: RAM,
@@ -80,7 +106,7 @@ class Inotify:
         self.ram = ram
         self.buf = buf
         self.wd_to_watch: t.Dict[WatchDescriptor, Watch] = {}
-        self.suspendable = SuspendableCoroutine(self._run_read)
+        self.queue = CoroQueue.start(self._run)
 
     @staticmethod
     async def make(thread: Thread) -> Inotify:
@@ -105,30 +131,26 @@ class Inotify:
         try:
             watch = self.wd_to_watch[wd]
         except KeyError:
-            send, receive = trio.open_memory_channel(math.inf)
-            watch = Watch(self, send, receive, wd)
+            watch = Watch(self, wd)
             self.wd_to_watch[wd] = watch
         return watch
 
-    async def _run_read(self, suspendable: SuspendableCoroutine) -> None:
+    async def _run(self, queue: CoroQueue) -> None:
+        wd_to_cb: t.Dict[WatchDescriptor, t.Coroutine] = {}
         while True:
-            while True:
-                async with suspendable.suspend_if_cancelled():
-                    valid, rest = await self.asyncfd.read(self.buf)
-                    break
+            valid, rest = await trio_op(functools.partial(self.asyncfd.read, self.buf))
             if valid.size() == 0:
                 raise Exception('got EOF from inotify fd? what?')
-            while True:
-                async with suspendable.suspend_if_cancelled():
-                    events = await valid.read()
-                    break
+            events = await trio_op(valid.read)
+            results = {}
             for event in events:
-                self.wd_to_watch[event.wd].send_channel.send_nowait(event)
-                if event.mask & IN.IGNORED:
-                    # the name is confusing - getting IN.IGNORED means this watch was removed
-                    del self.wd_to_watch[event.wd]
+                results.setdefault(event.wd, []).append(event)
+            for wd, cb in queue.fetch_any():
+                wd_to_cb[wd] = cb
+            for wd, events in results.items():
+                queue.fill_request(wd_to_cb[wd], outcome.Value(events))
+                del wd_to_cb[wd]
             self.buf = valid + rest
-
 
     async def close(self) -> None:
         "Close this inotify file descriptor."
