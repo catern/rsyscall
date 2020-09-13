@@ -7,6 +7,7 @@ import typing as t
 import types
 import outcome
 import logging
+import functools
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -129,6 +130,11 @@ class Future(t.Generic[T]):
     "A value that we might have to wait for."
     _outcome: t.Optional[outcome.Outcome]
     _event: trio.Event
+
+    @staticmethod
+    def make() -> t.Tuple[Future, Promise]:
+        fut = Future[T](None, trio.Event())
+        return fut, Promise(fut)
 
     async def get(self) -> T:
         await self._event.wait()
@@ -386,3 +392,86 @@ class SuspendableCoroutine:
         while True:
             async with self.suspend_if_cancelled():
                 return await func()
+@dataclass
+class SuspendRequest:
+    prompt: SuspendableCoroutine
+    cancels: t.List[trio.Cancelled]
+
+@dataclass
+class Shift:
+    func: t.Callable[[t.Coroutine], t.Any]
+
+def reset(body: t.Coroutine[t.Any, t.Any, T], value: outcome.Outcome) -> t.Any:
+    try:
+        yielded_value = value.send(body)
+    except StopIteration as e:
+        return e.value
+    if isinstance(yielded_value, Shift):
+        # sure wish I had an effect system to tell me what this value is
+        return yielded_value.func(body) # type: ignore
+    else:
+        body.throw(TypeError("no yielding non-shifts!"))
+
+# again, sure wish I had an effect system to constrain this type
+async def shift(func: t.Callable[[t.Coroutine], t.Any]) -> t.Any:
+    return await _yield(Shift(func))
+
+class TrioRunner:
+    def __init__(self) -> None:
+        self._ops_in, self._ops_out = trio.open_memory_channel(math.inf)
+
+    def _add_op(self, op: t.Callable[[], t.Coroutine], coro: t.Coroutine) -> None:
+        self._ops_in.send_nowait((op, coro))
+
+    async def trio_op(self, op: t.Callable[[], t.Coroutine]) -> t.Any:
+        await shift(lambda coro: self._add_op(op, coro))
+
+    async def drive(self) -> t.Any:
+        while True:
+            op, coro = await self._ops_out.receive()
+            result = await outcome.acapture(op)
+            if isinstance(result, outcome.Error) and isinstance(result.error, trio.Cancelled):
+                # if we get cancelled, we don't inject that into the coro; we just retry later.
+                self._ops_in.send_nowait((op, coro))
+                raise result.error
+            reset(coro, outcome)
+
+async def start_future(nursery, coro: t.Coroutine) -> Future:
+    future, promise = Future.make()
+    async def wrapper():
+        promise.set(outcome.acapture(_yield_from, coro))
+    runner = TrioRunner()
+    # start the coro
+    reset(trio_runner.bind(runner, wrapper()), outcome.Value(None))
+    return future
+
+class CoroQueue:
+    def register_request(self, val: t.Any, coro: t.Coroutine) -> None:
+        if self._receiver_coro:
+            coro = self._receiver_coro
+            self._receiver_coro = None
+            self._receiver_coro.send((val, coro))
+        else:
+            self._waiting.append((val, coro))
+
+    async def send_request(self, val: t.Any) -> t.Any:
+        await shift(functools.partial(self._send_request, val))
+
+    async def _start_wait_for_one(self, coro: t.Coroutine) -> None:
+        assert self._receiver_coro is None
+        self._receiver_coro = coro
+
+    async def get_one(self) -> t.Tuple[[t.Any, t.Coroutine]]:
+        if self._waiting:
+            return self._waiting.popleft()
+        else:
+            return await shift(self._start_wait_for_one)
+
+    async def get_many(self) -> t.List[t.Tuple[[t.Any, t.Coroutine]]]:
+        if self._waiting:
+            ret = self._waiting
+            self._waiting = None
+            return ret
+        else:
+            return [await shift(self._start_wait_for_one)]
+
