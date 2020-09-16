@@ -64,7 +64,7 @@ class LocalSyscall(SyscallInterface):
         does, which is sadly quite expensive.
 
         """
-        await trio.sleep(0)
+        # await trio.sleep(0)
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         result = await _direct_syscall(
             number,

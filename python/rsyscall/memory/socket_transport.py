@@ -32,6 +32,7 @@ call `write` on B's file descriptor, and `read` on A's file descriptor.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from rsyscall.concurrency import SuspendableCoroutine, Future, Promise, make_future, run_all
+from rsyscall.concurrency import CoroQueue, trio_op
 from rsyscall.memory.ram import RAM
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.memory.transport import MemoryTransport
@@ -292,14 +293,14 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
     def inherit(self, task: handle.Task) -> PrimitiveSocketMemoryTransport:
         return PrimitiveSocketMemoryTransport(self.local, task.make_fd_handle(self.remote))
 
-    async def do_write(self, dest: Pointer, src: Pointer[bytes], i=0) -> None:
+    async def do_write(self, nursery, dest: Pointer, src: Pointer[bytes], i=0) -> None:
         if dest.size() == 0:
             return
         written, rest = await self.local.write(src)
         dest, dest_rest = dest.split(written.size())
         if dest_rest.size() != 0:
             # this is basically sync, or at least should be...
-            fut = await syscall_future(self.do_write(dest_rest, rest, i=1))
+            fut = await start_future(nursery, self.do_write(nursery, dest_rest, rest, i=1))
         await self.remote.recv(dest, MSG.WAITALL)
         if dest_rest.size() != 0:
             await fut.get()
@@ -309,7 +310,8 @@ class PrimitiveSocketMemoryTransport(MemoryTransport):
             raise Exception("mismatched pointer size", dest.size(), "and data size", len(data))
         src = await self.local.ram.ptr(data)
         dest_span = to_span(dest)
-        await self.do_write(dest_span, src)
+        async with trio.open_nursery() as nursery:
+            await self.do_write(nursery, dest_span, src)
 
     async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
         raise Exception("batch write not supported")

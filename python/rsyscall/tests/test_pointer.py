@@ -2,7 +2,7 @@ from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.tasks.local as local
 from rsyscall.handle.pointer import UseAfterFreeError
 
-class TestSocket(TrioTestCase):
+class TestPointer(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local.thread
 

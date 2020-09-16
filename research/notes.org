@@ -25799,9 +25799,534 @@ fut = await susp.wait(StartedFuture.run(lambda fut: syscall_snd_callback.bind(fu
     it... shouldn't be? maybe...?
     yeah of course it shouldn't be, it should be like registering a callback.
     it should really be sync actually.
-** TODO mysterious async stuff
+
+    anyway, so. I guess with some proper direct suspend resumption,
+    everything will be all right.
+
+    maybe we should just directly shift, actually?
+
+    i mean... how do we wait for the result then?
+    i guess we... don't drive things ourselves, except when necessary?
+    we just wait for the callback?
+
+    is there some way we can do this more prosaically?
+
+    we can have, maybe... two modes?
+    one where we steal the coroutine,
+    and one where we give it back?
+
+    i mean, it's already blocked on an event.
+    i already have the hacky approach.
+
+    ok so yeah! everything is working and good, it's just slow.
+
+    and, I'm pretty sure, if we just use a more direct approach,
+    it will work well.
+*** direct approach to returning syscall result
+    So, hm.
+    Currently, we need drive, because,
+    that's how we push it forward if it...
+    wants to yield things out!
+
+    right?
+    so drive runs any trio_ops and runs them;
+    Susp is not a place that we go to *suspend*,
+    it's a place we go to *run trio_ops*.
+
+    or... maybe we should have a new third kind.
+    sure let's consider that at least.
+
+    but yeah, let's do trio_ops,
+    up to an object which we can drive.
+    which is... individual?
+
+    no ok so.
+
+    there's really two things here:
+    there's the running of trio_ops,
+    which we can't do in an object, we have to do it at some toplevel which will get around to running us;
+    and the retrieval of the result - so that our function is wrapped in something to store the result.
+    (which would be a continuation otherwise I guess?)
+
+    yeah can't I just maybe...
+    shift into the thing I'm waiting on?
+    no, because I don't want the result immediately;
+    I need to save it.
+
+    maybe I save the result *inside* the coro?
+    so the last step is, like...
+    shifting into some "store return value" thingy,
+    which calls me with None,
+    then I return/unpack the value.
+
+    maybe not super necessary, let's just go with outcome.
+
+    ok, so I also have to be multi-prompt here.
+    but, I suppose, I don't have to actually have a driver anywhere;
+    because, the driver is at resume time, I guess.
+    yeah so I reset when I have an op to run.
+
+    or, do I even just do the operation and reset inside the callback?
+    maybe that's not such a great idea.
+    after all most objects will need to see the op.
+    so, yeah, ok, we'll surface the op.
+
+    hmm, it would be nice to join the traceback together here.
+    but wait, we already are, of course, the outcome grabs the exception and then we inject it.
+
+    ok so, it's weird and annoying that we have to launch this triorunner,
+    but it's fine.
+
+    oh, we could do it with a nursery.
+
+    wait hm  h m m
+    yeah this works.
+*** thoughts
+    Specialized queue sending coros, which has get one and get batch
+    methods, which move your coro to run under the first coro sent.
+
+    And when I send on this queue, if the thing is blocked, I start
+    running it
+
+    And resuming with a result is synchronous. And it's weird because it
+    is inverted: your coro runs under the thing you called into. But
+    that's fine
+
+    but, how do I start running again when canceled?
+
+    oh oh, maybe I just have a fallback function that I send into the triorunner.
+    and, i accumulate triorunners from all the contexts calling into me.
+    so I know all of them.
+    and, I just use another when one disappears.
+    and i guess, move my coro under someone else?
+
+    although, the coros that call in to me,
+    is it safe to capture the triorunner they currently have?
+    i only want whoever's blocking on them at some specific time.
+
+    in fact, I want whoever is blocking on an event at some level somewhere.
+
+    ugh, do I even need trio_op?
+    can't I just used pure callback operations?
+    well, wait_readable is one obvious place I can't.
+    but, what if I did that in a callback-invoking way using trio's system-nursery or something?
+
+    that obviously is unfortunate, but maybe that's an interesting intermediate point.
+
+    no wait this is simple, ok.
+
+    so when I send a request on one of these special coro-queues,
+    from a task which isn't running under reset,
+    I need to make a little glue coro which is running under reset and which passes the result via a trio.Event/Future.
+    and at the time I also can create a nursery (or get a passed in nursery for a future),
+    on which I make a trio runner.
+    and all those trio runners get aggregated by the coro-queue.
+
+    and if I send a request on one of these coro-queues from a task that *is* running under reset,
+    then i always have (somehow) some trio runners,
+    and I can temporarily aggregate those in to the coro-queue that I'm running.
+
+    and it's all a bit tricky to pick which trio runner I use,
+    but I think I can just have a callback for cancellation if one of the trio runners is cancelled
+
+    for now, can we use the, uh,
+    system nursery to do those? yeah let's just do that as a quick hack to make progress.
+*** incremental progress
+    is difficult.
+    I guess epoll is the most basic thing;
+    we need to do the change for epoll, but only for epolls against local syscalls.
+    since the other ones can't be resumed.
+
+
+    especially infuriating is throw_on_connection_defunct.
+    tricky, very tricky.
+
+    ok so let's do epoll
+
+    it makes synchronous mallocs...
+    and epoll waits...
+    and reads...
+
+    it should be fine yeah.
+
+    um lol it doesn't really have, uh,
+    operations it performs.
+    UNFORTUNATE.
+
+    it kind of does actually! wait_for!
+    so let's do wait_for in the style we want?
+
+    so. we'd want...
+    well, we can just always send the result to.. the corresponding coro.
+    and then that can call anything waiting? yeah that makess sense.
+
+    uhhh with our style of using the system nursery to do the background thing,
+    this won't work right.
+    because we'll be able to always run and just keep running.
+
+    right, trio runners need to be able to disappear.
+
+    so we can't store pending ops in the TrioRunner,
+    because there might not even be one.
+    we need to be able to provide one later,
+    and pick up the pending op and perform it
+
+    I guess that needs to be part of CoroQueue?
+    that's fairly objectionable.
+
+    this sounds similar to the concerns I had before, about running something that's blocked elsewhere,
+    but the solution seems much more obvious now.
+
+    like, there's only one way it can be "blocked elsewhere" and also would need my intervention to run:
+    running TrioRunner ops.
+
+    and, yeah, we need to fix this, but it shouldn't be that bad.
+
+    ok so.
+    if this is a coro which is wrapped with something to support trio runs,
+    then I can just lend my thread when I want to send a message to it.
+
+    so, uh, it's kind of associated with CoroQueue, again, right.
+
+    let's just associate the trio op with coroqueue, and we'll be fine.
+    then we can do trio ops no problem.
+    and we'll use dynamic binding to pass it down to syscall?
+    so that epoll_wait can be suspended internally automatically,
+    instead of getting auto-retried like other trio ops.
+
+    right cuz otherwise epoll_wait is going to block uncancellable. fine fine.
+
+    I guess that will be in... the response_future?
+    we'll register our coro as a callback? hacky obviously but fine.
+    yeah, right, we'll do a shift into the future, I guess.
+    when a specific dynvar (yet another flag) is bound.
+
+    so.. trio_op will...
+
+    well we still need to dynamically bind it right?
+    so that... register_request inherits the trio runners?
+    uh? that's weird?
+
+    I mean if I register_request,
+    how do I inherit the trio ops for that thing?
+    i mean, also... like...
+    even if I send_request,
+    that might be called from a coro.
+    which happens to be running uhhh
+
+    well ok so coroqueue could be dynamically bound inside the coro,
+    sure,
+    but that doesn't give us a way to handle other ways.
+
+    plus, it should really be something that can be explicitly passed reasonably.
+    like a nursery or aggregating nursery.
+
+    so this thing contains a list of nurseries, or tasks,
+    which are ready to perform trio ops for this coro,
+    and therefore for coros that this coro is waiting on.
+
+    is it even a problem though?
+
+    right I guess it is:
+    we want to provide our trio_runner to the coro that our coro has shifted into.
+
+    if we're just a coro getting callbacks eventually - we don't mind waiting.
+
+    but our caller - who is ultimately a trio Task - does care.
+
+    and they want to lend their trio_runner.
+    hmm.
+
+    maybe we could just yield it up after all?
+    use yield for dynvars and for trio requests?
+    ok so what would that look like?
+
+    well.
+    any task that is waiting on an event...
+    wouldn't really get a chance to process yields up.
+    where would those even go?
+
+    if Task A is calling coro B which has shifted into coro C...
+    well, no-one is processing reset values from coro B.
+
+    furthermore,
+    this is defeating the whole point! or is it?
+    the whole point being that we can start an operation,
+    so that it runs through callbacks,
+    without having to block.
+
+    ok ok, so:
+
+    I pass the TrioRunner to register_request.
+    In send_request, I look it up by dynvar (through yield).
+
+    Each coro has a fixed TrioRunner,
+    which gets looked up and passed down when it calls send/register_request,
+    and then is used for trio_ops as long as the coro is still waiting on the request.
+
+    That TrioRunner is either:
+    a combination of the TrioRunners of coros making requests,
+    of which there might be none so the triorunner is empty.
+    Or, one running Task,
+    which might exit, also leaving the TrioRunner empty.
+
+    (er, how do we want to handle cancellation again? well, pay it no mind, we won't consider this case too much right now.
+    we'll just allow cancellation whenever, even though the operation might have already been performed...)
+
+    ok! cool! I think this will work well!
+
+    so we'll embed a combined trio runner into the coroqueue I guess?
+    and pass it in to register_request...
+*** epoll again
+    so two troubles:
+    making wait_for properly fifo and callback-y
+
+    and avoiding the nursery currently present in _get_syscall_result, hm.
+*** DONE basic test
+    i should write a test for the async stuff first (maybe shuffle a batch of coros calling in?)
+
+    nice it works
+*** TODO making epoll callback-y
+    so.
+    we'll have maybe a... hm.
+
+    we want requests to come in.
+
+    i guess ummm
+
+    we can check the flags synchronously in wait_for,
+    then if they aren't set,
+    send a request to be woken up when the flags are ready.
+
+    the coro.. ummmm
+
+    i mean it's really not a request-response style is it.
+    it's much more, a coro that we continually send into.
+
+    but that coro can have requests for it. hm.
+
+    yeah doing this with coroqueue is fine actually,
+    just have to make sure that we're always blocked into the epoller's coroqueue...
+
+    although...
+    that's kinda wacky because the epoller run won't be able to rely on there being a callback around to call.
+
+    what's the model here really?
+    well, we've registered a callback, and once that's discharged, we don't have another callback,
+    is the normal approach.
+    but here we get a stream of events and so we need to register a...
+    coro or something. i mean...
+    sure...
+
+    so when we call get_many we'll get all the things waiting I guess.
+
+    hm it's kind of inefficient to keep calling back in. but shrug.
+    oh I guess we only call back in with things that get events. fine.
+
+    and... we run even if there aren't any waiters?
+    cuz we'll just block?
+
+    ok yeah this looks good, but, let's do inotify and monitor first.
+*** DONE inotify first
+    this is low risk.
+
+    yeah it's not clear how we handle the other end of a CoroQueue collapsing, hm.
+
+    i guess we can just GC it away? yeah we just never exit,
+    we just keep calling into the queue and eventually get gc'd away.
+
+    ok cool so this worked...
+*** TODO syscalls
+    ok so to do epoll sanely we should just do syscalls first.
+
+    we can make epoll calls with trio_op.
+*** TODO cancellation
+    we need to deal with cancellation
+
+    ok how about this, cancellation is impossible
+    but suspension is possible.
+
+    and with that actually I think this cancel shield around submit_request is correct!
+    cuz, it only shields if we have to start a nursery here.
+
+    but if we have an external trio-runner - i.e. if we're in a reset - then the cancel scope doesn't do anything
+    cuz it's not going to cover any trio ops.
+
+    so I guess we can just delete suspendable?
+    and convert connection and epoller at the same time?
+    and also...
+
+    make syscall basically do nothing?
+
+    oh we also need to update futures. hm.
+    that should be fine tho...
+
+    we should make run_in_wrapper use start_future I guess?
+
+    no no. start_future will take a nursery and launch runner.run
+
+    yes seems fine?
+    that will guarantee we start it, sure.
+*** TODO converted everything, time to deal with issues
+    so there's a hang because:
+    when coroqueue B calls into coroque C,
+    and then someone else calls into A,
+    despite a trio runner being added to B,
+    there's no wakeup in C.
+
+    hm, very interesting.
+
+    so when I add to B,
+    I guess... maybe I...
+    need to also run things in C? hmmmm.
+
+    i mean, I could have B be aware of the Cs registered on it I suppose.
+    which would be simpler than having C propagate up all its ops onto B;
+    it would be safer.
+
+    so... i guess when I call add_backend,
+    I register myself on the runner as using it.
+    and then it calls into me to indicate when it's been cancelled or energized or whatever?
+    seems weird, but could work, sure.
+
+    right so.. I guess we would... um...
+
+    wait wait. there's an extra weirdness.
+    if we call into a combined runner that is currently missing backends...
+    we'll just permanently block in there.
+    we won't move on.
+    not good!
+    (although that does solve the wakeup problem...)
+
+    i guess, do I want to raise an exception instead?
+    or maybe have a different kind of trio_op which throws if there's no backends?
+    hmm hmm.
+
+    i mean, blocking seems reasonable,
+    if we want to provide a guarantee that we don't return without doing it...
+    except, no, we don't want to provide that guarantee - after all, we can get canclled back!
+    single trio runners can permanently fail,
+    so we can't really provide the guarantee of not returning without doing it.
+
+    combined runner could do that though,
+    at no point are we sure that we'll fail.
+
+    hmmm.
+    i meaaaaaaaaan. hmmmmmmm........
+    i guess we could have some kind of cancellation...?
+
+    no let's just have a different method that throws WouldBlock
+    trio_op_nowait
+
+    no that's stupid.
+    We'll throw TemporaryFailure or something,
+    and call it immediate_trio_op or something.
+
+    and then we'll just continue if we fail.
+    and once we have that we can finish the retry_delegatee stuff.
+*** more issue
+    Dynvar.bind is sending None,
+    and so is reset.
+
+    how do I do this without sending None twice??
+    how do I just forward??
+    oh I was just confused, this is fine,
+    just something else wasn't returning.
+*** more more issue
+    ok I got epoller working with local, nice!
+    now on to the syscall connection!
+    so that non-local threads work.
+
+    aha wow!
+    the syscall connection works!
+
+    it's just the combination of epoller and connection that is broken, hm, interesting...
+
+    or more specifically, using a epoller rooted in a connection thread
+
+    hmm and also ummmm, maybe,
+    usage of two epollers in a connection thread at the same time?
+
+    got an interesting keyerror here.
+    so I did a valid_events_buf read I guess
+
+    then fetched any possible callbacks from the queue, interesting interesting,
+    and...
+
+    oh I see, we add to the epoller before starting the coroqueue. got it.
+*** more more more issue
+    i seem to be blocked in epoll_wait?
+
+    i guess this is because we aren't doing later syscalls while blocked in the first one?
+    the later writes aren't getting written, I suppose
+
+    ah hm ok.
+    the trio_op is being performed by the same thread that's reading the result... i guess?
+
+    that read_result needs to be interruptible I guess.
+
+    right cuz right now the later trio_ops are blocked by this read_result in the first one.
+
+    ok so we need to figure out how to handle the read_result thing.
+    and also, why it worked before?
+    i guess uhhh
+    we would cancel it if we didn't care about it...?
+
+    no wait, the issue is...
+    we have this single runner being shared between run_responses and read_responses.
+    that seems like it shouldn't be the case?
+    when we do forward_request that should remove the runner.
+**** DONE solution: parallelize trio ops
+    aha, okay, I think I want parallelism in doing trio_ops at the root anyway,
+    so I'll just use a nursery in SingleTrioRunner,
+    and do the ops in parallel! ez pz.
+*** more more more more issue
+    Oho, very interesting, if we actually are doing async ops at the same time on the same epoller then...
+
+    I guess we break!
+
+    no... it's just if we do them serially we break, lol.
+
+    aha, the. no wait.
+    the numbers don't get reused, so we aren't intercepting messages in an earlier coro.
+
+    ok lol we were just throwing the first time around the epoll loop.
+    let's start actually throwing lol.
+
+    ok so now our issue is that we're not handling AFDs removed from the epoll loop right.
+    well so what exactly should we do here?
+
+    hmm.
+
+    so we can delete it at any moment,
+    and it might be blocked in EpollWaiter.
+
+    so we'd need to resume it,
+    because it won't otherwise get an event. fine...
+
+    right cuz it would be kept alive forever...
+    ok so let's suppose we resume it with an exception.
+    then I guess we catch that and exit?
+
+    ok seems good,
+    but we're getting keyerrors now on number_to_cb
+
+    that shouldn't be possible?
+
+    and also... it kills the epoller run thread
+    we should have coroqueues exit when their _run funcs exit
+
+    nice ok cool that's good
+
+    ok so this keyerror is indeed nondet.
+*** DONE exceptions in coroqueue functions don't propagate
+    hmm that's not good
+    ah I forgot a raise lol
+** DONE mysterious async stuff
    ummm why can't I write to this tcp connection or to socketpairs?
    what's up with this afd! it's weird!
+
+   lol i just broke it, is all
 ** DONE reset signal handler when cloning new task
    this is pretty important so that we don't get EINTRs heh
 
@@ -25825,6 +26350,9 @@ fut = await susp.wait(StartedFuture.run(lambda fut: syscall_snd_callback.bind(fu
 
    i mean, this is the real reason to have a "yield from" that supports interception:
    it's more efficient
+*** actually, we could write this in C ourselves!
+    no reason it has to be inside the interpreter.
+    all these things could be moved to C.
 ** fifo guarantee for syscalls: what is it really?
    hmm the FIFO gurantee for syscalls...
    it's not really a abominable misuse of concurrency;

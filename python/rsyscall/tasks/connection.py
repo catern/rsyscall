@@ -13,6 +13,7 @@ from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
 from rsyscall.handle import Pointer, Task, WrittenPointer
 from rsyscall.concurrency import SuspendableCoroutine, Future, Promise, make_future, FIFOFuture, FIFOPromise
+from rsyscall.concurrency import CoroQueue, trio_op, trio_runner
 from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer, EOFException
 from rsyscall.near.sysif import SyscallHangup, syscall_snd_callback
@@ -38,13 +39,13 @@ class ConnectionError(SyscallHangup):
 @dataclass
 class Syscall(Struct):
     "The struct representing a syscall request"
-    number: int
-    arg1: int
-    arg2: int
-    arg3: int
-    arg4: int
-    arg5: int
-    arg6: int
+    number: t.SupportsInt
+    arg1: t.SupportsInt
+    arg2: t.SupportsInt
+    arg3: t.SupportsInt
+    arg4: t.SupportsInt
+    arg5: t.SupportsInt
+    arg6: t.SupportsInt
 
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct rsyscall_syscall const*', {
@@ -56,9 +57,9 @@ class Syscall(Struct):
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct rsyscall_syscall*', ffi.from_buffer(data))
-        return cls(struct.sys,
-                   struct.args[0], struct.args[1], struct.args[2],
-                   struct.args[3], struct.args[4], struct.args[5])
+        return cls(int(struct.sys),
+                   int(struct.args[0]), int(struct.args[1]), int(struct.args[2]),
+                   int(struct.args[3]), int(struct.args[4]), int(struct.args[5]))
 
     @classmethod
     def sizeof(cls) -> int:
@@ -157,6 +158,8 @@ class ConnectionDefunctOnlyOnEOF(ConnectionDefunctMonitor):
     async def throw_on_connection_defunct(self) -> t.AsyncGenerator[None, None]:
         yield
 
+import functools
+
 class SyscallConnection:
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
@@ -168,116 +171,77 @@ class SyscallConnection:
         self.fromfd = fromfd
         self.buffer = ReadBuffer(self.fromfd.handle.task)
         self.valid: t.Optional[Pointer[bytes]] = None
-        self.request_channel, self.pending_requests = trio.open_memory_channel(math.inf)
-        self.suspendable_write = SuspendableCoroutine(self._run_write)
-        self.response_channel, self.pending_responses = trio.open_memory_channel(math.inf)
-        self.suspendable_read = SuspendableCoroutine(self._run_read)
+        self.request_queue = CoroQueue.start(self._run_requests)
+        self.response_queue = CoroQueue.start(self._run_responses)
         self.defunct_monitor = defunct_monitor or ConnectionDefunctOnlyOnEOF()
 
     async def close(self) -> None:
         "Close this SyscallConnection; will throw if there are pending requests"
-        if self.pending_requests.statistics().current_buffer_used:
+        if self.request_queue._waiting:
             # TODO we might want to do this, maybe we could cancel these instead?
             # note that we don't check responses - exit, for example, doesn't get a response...
             # TODO maybe we should cancel the response when we detect death of task in the enclosing classes?
-            raise Exception("can't close while there are pending requests", self.pending_requests)
+            raise Exception("can't close while there are pending requests", self.request_queue._waiting)
         await self.tofd.close()
         await self.fromfd.close()
 
-    async def write_request(self, syscall: Syscall, result_suspendable: t.Optional[SuspendableCoroutine]) -> FIFOFuture[int]:
+    async def do_syscall(self, syscall: Syscall) -> int:
         """Write a syscall request, returning a Future for the result.
 
         """
-        future, promise = make_future()
-        request = ConnectionRequest(syscall, future, promise, result_suspendable)
-        snd_callback = await syscall_snd_callback.get()
-        self.request_channel.send_nowait(request)
-        if snd_callback:
-            # print("calling snd_callback")
-            await snd_callback()
         # TODO as a hack, so we don't have to figure it out now, we don't allow
         # a syscall request to be cancelled before it's actually made. we could
         # make this work later, and that would reduce some blocking from waitid
-        with trio.CancelScope(shield=True):
-            async with self.suspendable_write.running():
-                response = await request.response_future.get()
-        return response
+        in_trio = not await trio_runner.get()
+        logger.debug("do_syscall: %s", syscall)
+        if in_trio:
+            with trio.CancelScope(shield=True):
+                # hmm this cancel scope shields the entire thing. unfortunate...
+                return await self.request_queue.send_request(syscall)
+        else:
+            return await self.request_queue.send_request(syscall)
 
-    async def _run_write(self, susp: SuspendableCoroutine) -> None:
-        remaining_reqs: t.List[ConnectionRequest] = []
+    async def _run_requests(self, queue: CoroQueue) -> None:
         while True:
             # wait until we have a batch to do, received from self.pending_requests
-            await susp.wait(lambda: add_batch_to_list(remaining_reqs, self.pending_requests))
+            requests = await queue.get_many()
+            logger.debug("_run_requests: get_many: %s", requests)
             # write remaining_reqs to memory
-            ptr = await susp.wait(lambda: self.tofd.ram.ptr(
-                StructList(Syscall, [req.syscall for req in remaining_reqs])))
-            # find the first part of ptr containing uncancelled requests,
-            # and return the tuple containing that pointer and those uncancelled requests.
-            # Also returns all other uncancelled requests not covered by that pointer.
-            to_write, remaining_reqs = find_uncancelled_part(ptr, remaining_reqs)
+            ptr: Pointer[StructList] = await trio_op(
+                self.tofd.ram.ptr, StructList(Syscall, [syscall for syscall, coro in requests]))
+            ptr_to_write, reqs_to_write = ptr, requests
             # TODO write requests to tofd in parallel with receiving more
             # requests from the channel and writing them to memory
-            if to_write:
-                (ptr_to_write, reqs_to_write) = to_write
+            try:
                 try:
-                    try:
-                        while ptr_to_write.size() > 0:
-                            _, ptr_to_write = await susp.wait(
-                                lambda: self.tofd.write(ptr_to_write))
-                            # TODO mark the requests as complete incrementally,
-                            # so if we do have a partial write,
-                            # we don't block earlier requests on later ones.
-                    except OSError as e:
-                        # we raise a different exception so that users can distinguish
-                        # syscall errors from transport errors
-                        raise ConnectionError() from e
-                except ConnectionError as e:
-                    for req in reqs_to_write:
-                        req.response_promise.throw(e)
-                else:
-                    for req in reqs_to_write:
-                        future, promise = FIFOFuture.make()
-                        req.response_promise.send(future)
-                        self.response_channel.send_nowait((req, promise))
+                    while ptr_to_write.size() > 0:
+                        _, ptr_to_write = await trio_op(self.tofd.write, ptr_to_write)
+                        # TODO mark the requests as complete incrementally,
+                        # so if we do have a partial write,
+                        # we don't block earlier requests on later ones.
+                except OSError as e:
+                    # we raise a different exception so that users can distinguish
+                    # syscall errors from transport errors
+                    raise ConnectionError() from e
+            except ConnectionError as e:
+                # TODO not necessarily all of the syscalls have failed...
+                # some maybe have been actually written, if we had a partial write
+                for syscall, coro in reqs_to_write:
+                    queue.fill_request(coro, outcome.Error(e))
+            else:
+                for syscall, coro in reqs_to_write:
+                    logger.debug("forward_request: %s", syscall)
+                    queue.forward_request(self.response_queue, syscall, coro)
 
-    async def _run_read(self, susp: SuspendableCoroutine) -> None:
+    async def _run_responses(self, queue: CoroQueue) -> None:
         buffer = AsyncReadBuffer(self.fromfd)
         while True:
-            req, promise = await susp.wait(lambda: self.pending_responses.receive())
+            syscall, coro = await queue.get_one()
             async def read_result() -> int:
                 try:
-                    while True:
-                        async with susp.suspend_if_cancelled():
-                            async with self.defunct_monitor.throw_on_connection_defunct():
-                                return (await buffer.read_struct(SyscallResponse)).value
+                    async with self.defunct_monitor.throw_on_connection_defunct():
+                        return (await buffer.read_struct(SyscallResponse)).value
                 except Exception as e:
                     raise SyscallHangup() from e
-            result = await outcome.acapture(read_result)
-            # Guarantee that syscall results arrive in an observable FIFO order.
-            # This only guarantees that the synchronous code after a
-            # syscall will get to run in FIFO order, but that's enough.
-            promise.set(result)
-            logger.info("Blocking for syscall %s in %s", req.syscall, self)
-            if req.result_suspendable:
-                async def func():
-                    logger.info("Entering suspendable func for syscall %s in %s", req.syscall, self)
-                    try:
-                        with trio.CancelScope() as cancel_scope:
-                            async with req.result_suspendable.running():
-                                promise.set_cancel_scope(cancel_scope)
-                                logger.info("In block suspendable func for syscall %s in %s, %s",
-                                            req.syscall, self, promise._future)
-                                try:
-                                    await promise.wait_for_retrieval()
-                                except:
-                                    logger.info("Canceled suspendable func for syscall %s in %s", req.syscall, self)
-                                    raise
-                                finally:
-                                    logger.info("Finished retrieval for syscall %s in %s", req.syscall, self)
-                                logger.info("Exiting CM fine for syscall %s in %s", req.syscall, self)
-                    finally:
-                        logger.info("Done block suspendable func for syscall %s in %s", req.syscall, self)
-                await susp.wait(func)
-            else:
-                await susp.wait(promise.wait_for_retrieval)
-            logger.info("Done blocking for syscall %s in %s", req.syscall, self)
+            result = await outcome.acapture(trio_op, read_result)
+            queue.fill_request(coro, result)

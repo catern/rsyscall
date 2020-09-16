@@ -49,25 +49,12 @@ class ConnectionSyscallInterface(SyscallInterface):
         self.infd._invalidate()
         self.outfd._invalidate()
 
-    async def _get_syscall_result(self, future: FIFOFuture[int]) -> int:
-        async with self.rsyscall_connection.suspendable_read.running():
-            return await future.get()
-
     async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
         syscall = Syscall(
-            number,
-            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        result_suspendable = await syscall_suspendable.get()
-        response_future = await self.rsyscall_connection.write_request(syscall, result_suspendable)
+            number, arg1=arg1, arg2=arg2, arg3=arg3, arg4=arg4, arg5=arg5, arg6=arg6)
         try:
-            if result_suspendable is not None:
-                result = await syscall_suspendable.bind(None, result_suspendable.wait(
-                    lambda: self._get_syscall_result(response_future)))
-            else:
-                with trio.CancelScope(shield=True):
-                    result = await self._get_syscall_result(response_future)
+            result = await self.rsyscall_connection.do_syscall(syscall)
             raise_if_error(result)
         except OSError as exn:
             self.logger.debug("%s -> %s", number, exn)
@@ -76,9 +63,5 @@ class ConnectionSyscallInterface(SyscallInterface):
             self.logger.debug("%s -/ %s", number, exn)
             raise
         else:
-            response_future.set_retrieved()
             self.logger.debug("%s -> %s", number, result)
-            self.logger.debug("Setting retrieved on %s", response_future)
             return result
-        finally:
-            response_future.set_retrieved()

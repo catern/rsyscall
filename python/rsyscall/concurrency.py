@@ -222,6 +222,10 @@ def _yield_from(coro: t.Any) -> t.Any:
 class DynvarRequest:
     prompt: Dynvar
 
+def mprint(*args):
+    # print(*args)
+    pass
+
 class Dynvar(t.Generic[T]):
     async def get(self) -> t.Optional[t.Any]:
         try:
@@ -233,7 +237,6 @@ class Dynvar(t.Generic[T]):
     async def bind(self, value: T, coro: t.Coroutine) -> t.Any:
         send_value: outcome.Outcome = outcome.Value(None)
         while True:
-            print("bind sending", send_value, "into", coro)
             try: yield_value = send_value.send(coro)
             except StopIteration as e: return e.value
             # handle DynvarRequests for this dynvar, and yield everything else up
@@ -241,7 +244,6 @@ class Dynvar(t.Generic[T]):
                 send_value = outcome.Value(value)
             else:
                 send_value = (await outcome.acapture(_yield, yield_value))
-                print("bind send value", send_value)
 
 @dataclass
 class StartedFutureRequest:
@@ -338,10 +340,10 @@ class SuspendableCoroutine:
             while True:
                 try: yield_value = send_value.send(self._coro)
                 except StopIteration as e:
-                    logger.info("Done with send in %s, returned %s", self, e.value)
+                    # logger.info("Done with send in %s, returned %s", self, e.value)
                     return e.value
                 except BaseException as e:
-                    logger.info("Got exn %s", e)
+                    # logger.info("Got exn %s", e)
                     raise
                 # handle SuspendRequests for us, and yield everything else up
                 if isinstance(yield_value, SuspendRequest) and yield_value.prompt is self:
@@ -356,7 +358,7 @@ class SuspendableCoroutine:
     async def running(self) -> t.AsyncIterator[None]:
         done = False
         def handle_cancelled(exn: BaseException) -> t.Optional[BaseException]:
-            logger.info("Handling %s", exn)
+            # logger.info("Handling %s", exn)
             if isinstance(exn, trio.Cancelled) and done:
                 return None
             else:
@@ -365,10 +367,10 @@ class SuspendableCoroutine:
             async with trio.open_nursery() as nursery:
                 nursery.start_soon(self.drive)
                 yield
-                logger.info("Done with yield in running for %s", self)
+                # logger.info("Done with yield in running for %s", self)
                 done = True
                 nursery.cancel_scope.cancel()
-            logger.info("Done with nursery")
+            # logger.info("Done with nursery")
 
     async def suspend(self) -> None:
         await _yield(SuspendRequest(self, []))
@@ -397,171 +399,316 @@ class SuspendableCoroutine:
                 return await func()
 import math
 
-@dataclass
-class Shift:
-    func: t.Callable[[t.Coroutine], t.Any]
+YieldType = t.TypeVar('YieldType')
+SendType = t.TypeVar('SendType')
+ReturnType = t.TypeVar('ReturnType')
+AnswerType = t.TypeVar('AnswerType')
 
-def reset(body: t.Coroutine[t.Any, t.Any, T], value: outcome.Outcome) -> t.Any:
+class Shift(t.Generic[SendType, ReturnType, AnswerType]):
+    def __init__(self,
+                 func: t.Callable[[t.Coroutine[Shift[SendType, ReturnType, AnswerType], SendType, ReturnType]], AnswerType],
+    ) -> None:
+        self.func = func
+
+ShiftingCoroutine = t.Coroutine[Shift[SendType, ReturnType, AnswerType], SendType, ReturnType]
+
+class Outcome(t.Generic[T], outcome.Outcome):
+    pass
+
+def reset(
+        body: t.Coroutine[Shift[SendType, ReturnType, AnswerType], SendType, ReturnType],
+        value: Outcome[SendType],
+) -> ReturnType:
     try:
         yielded_value = value.send(body)
     except StopIteration as e:
         return e.value
     if isinstance(yielded_value, Shift):
         # sure wish I had an effect system to tell me what this value is
-        return yielded_value.func(body) # type: ignore
+        return yielded_value.func(body)
     else:
         body.throw(TypeError, TypeError("no yielding non-shifts!"))
+        raise TypeError("coro", body, "yielded something other than a Shift")
 
 # again, sure wish I had an effect system to constrain this type
-async def shift(func: t.Callable[[t.Coroutine], t.Any]) -> t.Any:
+async def shift(
+        func: t.Callable[[
+            t.Coroutine[Shift[SendType, ReturnType, AnswerType], SendType, ReturnType]
+        ], AnswerType],
+) -> SendType:
     return await _yield(Shift(func))
+
+Continuation = t.Coroutine[Shift[T, None, None], T, None]
 
 import abc
 
+class TemporaryFailure(Exception):
+    pass
+
 class TrioRunner:
     @abc.abstractmethod
-    async def trio_op(self, op: t.Callable[[], t.Coroutine]) -> t.Any:
+    async def immediate_trio_op(self, op: t.Callable[..., t.Awaitable[T]], *args: t.Any) -> T:
+        pass
+
+    @abc.abstractmethod
+    async def trio_op(self, op: t.Callable[..., t.Awaitable[T]], *args: t.Any) -> T:
+        pass
+
+    def add_delegator(self, runner: TrioRunner) -> None:
+        "Runner `self` will now receive delegated trio_ops from `runner`."
+        pass
+
+    def remove_delegator(self, runner: TrioRunner) -> None:
+        "Runner `self` will no longer received delegated trio_ops from `runner`."
+        pass
+
+    def retry_delegatee(self, runner: TrioRunner) -> None:
+        "Runner `runner`, which we delegate to, is newly able to perform ops, so we should try using it again."
         pass
 
 class SingleTrioRunner(TrioRunner):
     def __init__(self) -> None:
         self._ops_in, self._ops_out = trio.open_memory_channel(math.inf)
-        self._cancelled: t.Optional[trio.Cancelled] = None
+        self._cancelled: t.Optional[BaseException] = None
 
-    def _add_op(self, op: t.Callable[[], t.Coroutine], coro: t.Coroutine) -> None:
-        print("sending to ops_in on single", self)
+    def _add_op(self, op: t.Callable[[], t.Awaitable], coro: t.Coroutine) -> None:
+        mprint("sending to ops_in on single", op)
         self._ops_in.send_nowait((op, coro))
 
-    async def trio_op(self, op: t.Callable[[], t.Coroutine]) -> t.Any:
+    async def immediate_trio_op(self, op: t.Callable[..., t.Awaitable[T]], *args: t.Any) -> T:
         if self._cancelled:
             raise self._cancelled
-        print("doing trio_op on single", self)
-        return await shift(functools.partial(self._add_op, op))
+        mprint("doing trio_op on single", self)
+        return await shift(functools.partial(self._add_op, lambda: op(*args)))
 
-    async def run(self) -> t.Any:
+    async def trio_op(self, op: t.Callable[..., t.Awaitable[T]], *args: t.Any) -> T:
+        return await self.immediate_trio_op(op, *args)
+
+    async def run(self) -> None:
         async with self._ops_out:
             try:
-                while True:
-                    print("receiving ops_out", self)
-                    op, coro = await self._ops_out.receive()
-                    print("got from ops_out", op, coro)
-                    result = await outcome.acapture(op)
-                    print("result from op", op, "is", result)
-                    reset(coro, result)
-                    if isinstance(result, outcome.Error) and isinstance(result.error, trio.Cancelled):
-                        raise result.error
-            except trio.Cancelled as e:
-                self._cancelled = e
+                async with trio.open_nursery() as nursery:
+                    while True:
+                        async def do_op(op: t.Callable[[], t.Awaitable], coro: t.Coroutine) -> None:
+                            result = await outcome.acapture(op)
+                            mprint("result from op", op, "is", result)
+                            reset(coro, result)
+                        mprint("calling ops_out.receive()", self)
+                        op, coro = await self._ops_out.receive()
+                        mprint("got from ops_out", self, op, coro)
+                        nursery.start_soon(do_op, op, coro)
+            except BaseException as exn:
+                mprint("single runner was cancelled", self)
+                self._cancelled = exn
                 # send this cancelled to everything waiting on us to perform their trio ops
                 while True:
                     try:
                         op, coro = self._ops_out.receive_nowait()
                     except trio.WouldBlock:
                         break
-                    reset(coro, outcome.Error(e))
+                    reset(coro, outcome.Error(exn))
                 raise
 
 class CombinedTrioRunner(TrioRunner):
     def __init__(self) -> None:
         self._backends: t.List[TrioRunner] = []
-        self._waiting_for_backends: t.List[t.Coroutine] = []
+        self._waiting_for_backends: t.List[Continuation[None]] = []
+        self._delegators: t.List[TrioRunner] = []
+        self._active_backends: t.List[TrioRunner] = []
 
-    def _wait_for_more_backends(self, coro: t.Coroutine) -> None:
-        print("appending", coro)
+    def _wait_for_more_backends(self, coro: Continuation[None]) -> None:
+        mprint("appending", coro)
         self._waiting_for_backends.append(coro)
-
-    def add_backend(self, backend: TrioRunner) -> None:
-        print("adding backend", backend, self._waiting_for_backends, self._backends)
-        assert not (self._waiting_for_backends and self._backends)
-        self._backends.append(backend)
+    
+    def _wake_up_waiters(self) -> None:
         waiting = self._waiting_for_backends
         self._waiting_for_backends = []
         for coro in waiting:
             # resume all these coros, their wait is over - a new backend is here!
-            print("doing wakeup on", coro)
+            mprint("doing wakeup on", coro)
             reset(coro, outcome.Value(None))
 
+    def add_delegator(self, backend: TrioRunner) -> None:
+        self._delegators.append(backend)
+
+    def remove_delegator(self, backend: TrioRunner) -> None:
+        self._delegators.remove(backend)
+
+    def retry_delegatee(self, backend: TrioRunner) -> None:
+        self._active_backends.append(backend)
+        # just blindly wake up and retry everything
+        self._wake_up_waiters()
+
+    def add_backend(self, backend: TrioRunner) -> None:
+        mprint("adding backend", backend, self._waiting_for_backends, self._active_backends)
+        assert not (self._waiting_for_backends and self._active_backends)
+        backend.add_delegator(self)
+        self._backends.append(backend)
+        self._active_backends.append(backend)
+        self.retry_delegatee(backend)
+        for delegator in self._delegators:
+            delegator.retry_delegatee(self)
+
     def remove_backend(self, backend: TrioRunner) -> None:
+        backend.remove_delegator(self)
         try:
             self._backends.remove(backend)
         except ValueError:
-            # if someone else has already removed it it, that's fine
+            pass
+        try:
+            self._active_backends.remove(backend)
+        except ValueError:
             pass
 
-    async def trio_op(self, op: t.Callable[[], t.Coroutine]) -> t.Any:
-        print("doing a trio_op")
-        while True:
-            while self._backends:
-                for backend in list(self._backends):
-                    try:
-                        return await backend.trio_op(op)
-                    except trio.Cancelled:
+    def deactivate_backend(self, backend: TrioRunner) -> None:
+        self._active_backends.remove(backend)
+
+    async def immediate_trio_op(self, op: t.Callable[..., t.Awaitable[T]], *args: t.Any) -> T:
+        mprint("doing an immediate_trio_op")
+        # hmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+        # certain backends, we shouldn't retry.
+        # very interesting.
+        # so I mean... we want to temporarily disable certain backends I guess.
+        # so... this should be a list of active delegatees...?
+        # no, we're still delegated.
+        # I guess we'll add delegatees.
+        # aha and we'll readd the list in retry_delegatee
+        while self._active_backends:
+            mprint("backends", self._active_backends)
+            for backend in list(self._active_backends):
+                def handle(exn: BaseException) -> t.Optional[BaseException]:
+                    if isinstance(exn, trio.Cancelled):
+                        mprint("backend was cancelled:", backend)
                         # it's not gonna get uncancelled, remove it
                         self.remove_backend(backend)
-            print("can't do a trio_op, blocking")
+                    elif isinstance(exn, TemporaryFailure):
+                        mprint("backend was temporarily broken", backend)
+                        self.deactivate_backend(backend)
+                    else:
+                        return exn
+                    return None
+                with trio.MultiError.catch(handle):
+                    mprint("trying backend", backend, "with", op)
+                    ret = await backend.immediate_trio_op(op, *args)
+                    mprint("got ret", ret, "from", op)
+                    return ret
+        mprint("can't do a trio_op, throwing")
+        raise TemporaryFailure()
+
+    async def trio_op(self, op: t.Callable[..., t.Awaitable[T]], *args: t.Any) -> T:
+        mprint("doing a trio_op", op)
+        while True:
+            try:
+                return await self.immediate_trio_op(op, *args)
+            except TemporaryFailure:
+                mprint("got tempfailure")
+                pass
+            logger.info("Cbined.trio_op: blocking for %s", op.__qualname__)
             # there are no working backends.
             # shift and store our coro so that we get run when a new backend is added
             await shift(self._wait_for_more_backends)
-            print("woke up, more backends, time to try again")
+            logger.info("Cbined.trio_op: woke up for %s", op.__qualname__)
+            mprint("woke up, more backends, time to try again")
 
 trio_runner: Dynvar[t.Optional[TrioRunner]] = Dynvar()
 
-async def trio_op(op: t.Callable[[], t.Coroutine]) -> t.Any:
+async def trio_op(op: t.Callable[..., t.Awaitable[T]], *args: t.Any) -> T:
     runner = await trio_runner.get()
     if runner:
-        return await runner.trio_op(op)
+        logger.info("trio_op: %s", op.__qualname__)
+        ret = await runner.trio_op(op, *args)
+        logger.info("trio_op: returning from %s", op.__qualname__)
+        return ret
     else:
         # just try to do it directly
-        return await op()
+        logger.info("trio_op: directly doing %s", op.__qualname__)
+        return await op(*args)
 
 async def start_future(nursery, coro: t.Coroutine) -> Future:
     future, promise = Future.make()
     async def wrapper():
         promise.set(outcome.acapture(_yield_from, coro))
     runner = SingleTrioRunner()
+    nursery.start_soon(runner.run)
     # start the coro
     reset(trio_runner.bind(runner, wrapper()), outcome.Value(None))
-    raise Exception("need to actually drive the runner")
     return future
 
-async def run_in_wrapper(coro: t.Coroutine) -> t.Any:
+async def run_in_wrapper(coro: ShiftingCoroutine[None, ReturnType, None]) -> ReturnType:
     future, promise = Future.make()
     async def wrapper():
         promise.set(await outcome.acapture(_yield_from, coro))
     runner = SingleTrioRunner()
-    # start the coro
     async with trio.open_nursery() as nursery:
         nursery.start_soon(runner.run)
+        # start the coro
         reset(trio_runner.bind(runner, wrapper()), outcome.Value(None))
-        result = await future.get()
+        try:
+            result = await future.get()
+        except BaseException as e:
+            mprint("run_in_wrapper got", e)
+            raise
         nursery.cancel_scope.cancel()
     return result
 
-class CoroQueue:
+InType = t.TypeVar('InType')
+OutType = t.TypeVar('OutType')
+class CoroQueue(t.Generic[InType, OutType]):
     def __init__(self) -> None:
-        self._waiting: t.List[t.Tuple[t.Any, t.Coroutine]] = []
-        self._receiver_coro: t.Optional[t.Coroutine] = None
+        self._waiting: t.List[t.Tuple[InType, Continuation[OutType]]] = []
+        self._receiver_coro: t.Optional[Continuation[t.Tuple[InType, Continuation[OutType]]]] = None
         self._trio_runner = CombinedTrioRunner()
-        self._backends: t.Dict[t.Coroutine, TrioRunner] = {}
+        self._backends: t.Dict[Continuation[OutType], TrioRunner] = {}
+        self._dead = False
 
     @staticmethod
-    def start(run_func: t.Callable[[CoroQueue], t.Coroutine]) -> CoroQueue:
-        self = CoroQueue()
-        reset(trio_runner.bind(self._trio_runner, run_func(self)), outcome.Value(None))
+    def start(run_func: t.Callable[[CoroQueue[InType, OutType]], ShiftCoroutine[None, None, None]]) -> CoroQueue[InType, OutType]:
+        self = CoroQueue[InType, OutType]()
+        reset(trio_runner.bind(self._trio_runner, self._begin_running(run_func)), outcome.Value(None))
         return self
 
-    def register_request(self, val: t.Any, trio_runner: TrioRunner, coro: t.Coroutine) -> None:
+    async def _begin_running(
+            self, run_func: t.Callable[[CoroQueue[InType, OutType]], ShiftCoroutine[None, None, None]],
+    ) -> None:
+        try:
+            await run_func(self)
+        except BaseException as e:
+            self._dead = True
+            for val, waiting in self._waiting:
+                reset(waiting, outcome.Error(e))
+            raise
+        else:
+            self._dead = True
+            for val, waiting in self._waiting:
+                reset(waiting, outcome.Error(Exception("the coroqueue we were waiting on is ded :(")))
+
+    def register_request(self, val: InType, trio_runner: TrioRunner,
+                         coro: Continuation[OutType],
+    ) -> None:
+        if self._dead:
+            reset(coro, outcome.Error(Exception("the coroqueue we were waiting on is ded :(")))
+            return
         self._backends[coro] = trio_runner
         self._trio_runner.add_backend(trio_runner)
         if self._receiver_coro:
             receiver_coro = self._receiver_coro
             self._receiver_coro = None
-            print("waking up receiver coro")
+            mprint("waking up receiver coro")
             reset(receiver_coro, outcome.Value((val, coro)))
         else:
             self._waiting.append((val, coro))
 
-    async def send_request(self, val: t.Any) -> t.Any:
+    def forward_request(self, queue: CoroQueue[T, OutType], val: T,
+                        coro: Continuation[OutType],
+    ) -> None:
+        backend = self._backends[coro]
+        self._trio_runner.remove_backend(backend)
+        del self._backends[coro]
+        queue.register_request(val, backend, coro)
+
+    async def send_request(self, val: InType) -> OutType:
+        if self._dead:
+            raise Exception("the coroqueue we were waiting on is ded :(")
         runner = await trio_runner.get()
         if runner:
             return await shift(functools.partial(self.register_request, val, runner))
@@ -571,17 +718,17 @@ class CoroQueue:
             await trio.sleep(0)
             return await run_in_wrapper(self.send_request(val))
 
-    def _start_wait_for_one(self, coro: t.Coroutine) -> None:
+    def _start_wait_for_one(self, coro: Continuation[t.Tuple[InType, Continuation[OutType]]]) -> None:
         assert self._receiver_coro is None
         self._receiver_coro = coro
 
-    async def get_one(self) -> t.Tuple[t.Any, t.Coroutine]:
+    async def get_one(self) -> t.Tuple[InType, Continuation[OutType]]:
         if self._waiting:
             return self._waiting.pop(0)
         else:
             return await shift(self._start_wait_for_one)
 
-    async def get_many(self) -> t.List[t.Tuple[t.Any, t.Coroutine]]:
+    async def get_many(self) -> t.List[t.Tuple[InType, Continuation[OutType]]]:
         if self._waiting:
             ret = self._waiting
             self._waiting = []
@@ -589,12 +736,13 @@ class CoroQueue:
         else:
             return [await shift(self._start_wait_for_one)]
 
-    def fetch_any(self) -> t.List[t.Tuple[t.Any, t.Coroutine]]:
+    def fetch_any(self) -> t.List[t.Tuple[InType, Continuation[OutType]]]:
         ret = self._waiting
         self._waiting = []
         return ret
 
-    def fill_request(self, coro: t.Coroutine, result: outcome.Outcome) -> None:
+    def fill_request(self, coro: Continuation[OutType],
+                     result: Outcome[OutType]) -> None:
         backend = self._backends[coro]
         self._trio_runner.remove_backend(backend)
         del self._backends[coro]

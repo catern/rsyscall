@@ -8,6 +8,10 @@ import unittest
 
 from rsyscall.tests.utils import do_async_things
 
+import logging
+logging.basicConfig(level=logging.INFO)
+
+
 class TestEpoller(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local.thread
@@ -16,16 +20,26 @@ class TestEpoller(TrioTestCase):
         await do_async_things(self, self.thr.epoller, self.thr)
 
     async def test_multi(self) -> None:
+        await do_async_things(self, self.thr.epoller, self.thr)
         async with trio.open_nursery() as nursery:
             for i in range(5):
                 nursery.start_soon(do_async_things, self, self.thr.epoller, self.thr)
 
-    async def test_thread_two(self) -> None:
+    async def test_thread_epoller(self) -> None:
+        thread = await self.thr.clone()
+        await do_async_things(self, thread.epoller, thread)
+
+    async def test_thread_root_epoller(self) -> None:
         thread = await self.thr.clone()
         epoller = await Epoller.make_root(thread.ram, thread.task)
+        await do_async_things(self, epoller, thread)
+
+    async def test_thread_two(self) -> None:
+        thread = await self.thr.clone()
+        epoller = thread.epoller
         async with trio.open_nursery() as nursery:
-            nursery.start_soon(do_async_things, self, epoller, thread)
-            nursery.start_soon(do_async_things, self, thread.epoller, thread)
+            await nursery.start(do_async_things, self, epoller, thread)
+            await nursery.start(do_async_things, self, thread.epoller, thread)
 
     @unittest.skip("oops we broke this")
     async def test_afd_with_handle(self):
