@@ -250,53 +250,6 @@ class Dynvar(t.Generic[T]):
                 send_value = (await outcome.acapture(_yield, yield_value))
 
 @dataclass
-class StartedFutureRequest:
-    prompt: StartedFuture
-
-class StartedFuture:
-    def __init__(self, run_func: t.Callable[[StartedFuture], t.Coroutine]) -> None:
-        self._coro: t.Coroutine = run_func(self)
-        self._run_func = run_func
-
-    async def started(self) -> None:
-        await _yield(StartedFutureRequest(self))
-
-    @staticmethod
-    async def start(run_func: t.Callable[[StartedFuture], t.Coroutine]) -> StartedFuture:
-        self = StartedFuture(run_func)
-        await self.run_initial()
-        return self
-
-    async def run_initial(self) -> None:
-        "Run until started is called"
-        send_value: outcome.Outcome = outcome.Value(None)
-        while True:
-            try: yield_value = send_value.send(self._coro)
-            except StopIteration as e:
-                raise Exception("StartedFuture function returned without calling started, value:", e.value)
-            if isinstance(yield_value, StartedFutureRequest) and yield_value.prompt is self:
-                return
-            else:
-                send_value = (await outcome.acapture(_yield, yield_value))
-
-    async def run(self) -> t.Any:
-        "Run until started is called"
-        # We don't need to intercept any more requests, nice.
-        return await _yield_from(self._coro)
-
-    def __del__(self) -> None:
-        # suppress the warning about unawaited coroutine that we'd get
-        # if we never got the chance to drive this coro
-        try:
-            self._coro.close()
-        except RuntimeError as e:
-            if "generator didn't stop after throw" in str(e):
-                # hack-around pending python 3.7.9 upgrade
-                pass
-            else:
-                raise
-
-@dataclass
 class SuspendRequest:
     prompt: SuspendableCoroutine
     cancels: t.List[trio.Cancelled]
@@ -532,7 +485,7 @@ class CombinedTrioRunner(TrioRunner):
         self._waiting_for_backends = []
         for coro in waiting:
             # resume all these coros, their wait is over - a new backend is here!
-            mprint("doing wakeup on", coro)
+            logger.debug("waking up %s", coro)
             reset(coro, outcome.Value(None))
 
     def add_delegator(self, backend: TrioRunner) -> None:
@@ -545,16 +498,16 @@ class CombinedTrioRunner(TrioRunner):
         self._active_backends.append(backend)
         # just blindly wake up and retry everything
         self._wake_up_waiters()
+        for delegator in self._delegators:
+            delegator.retry_delegatee(self)
 
     def add_backend(self, backend: TrioRunner) -> None:
-        mprint("adding backend", backend, self._waiting_for_backends, self._active_backends)
+        logger.debug("adding backend %s", backend)
         assert not (self._waiting_for_backends and self._active_backends)
         backend.add_delegator(self)
         self._backends.append(backend)
         self._active_backends.append(backend)
         self.retry_delegatee(backend)
-        for delegator in self._delegators:
-            delegator.retry_delegatee(self)
 
     def remove_backend(self, backend: TrioRunner) -> None:
         backend.remove_delegator(self)
@@ -610,7 +563,7 @@ class CombinedTrioRunner(TrioRunner):
             except TemporaryFailure:
                 mprint("got tempfailure")
                 pass
-            logger.info("Cbined.trio_op: blocking for %s", op.__qualname__)
+            logger.info("Cbined.trio_op: waiting for a backend for %s", op.__qualname__)
             # there are no working backends.
             # shift and store our coro so that we get run when a new backend is added
             await shift(self._wait_for_more_backends)
@@ -660,6 +613,7 @@ async def run_in_wrapper(coro: ShiftingCoroutine[None, ReturnType, None]) -> Ret
 
 InType = t.TypeVar('InType')
 OutType = t.TypeVar('OutType')
+import traceback
 class CoroQueue(t.Generic[InType, OutType]):
     def __init__(self) -> None:
         self._waiting: t.List[t.Tuple[InType, Continuation[OutType]]] = []
@@ -679,19 +633,32 @@ class CoroQueue(t.Generic[InType, OutType]):
     ) -> None:
         try:
             await run_func(self)
+        except GeneratorExit:
+            # this indicates we've been GC'd, we can't safely touch anything here;
+            # fortunately, the _waiting coros will likely be GC'd also soon.
+            pass
         except BaseException as e:
             self._dead = True
-            for val, waiting in self._waiting:
-                reset(waiting, outcome.Error(e))
+            waiting = self._waiting
+            self._waiting = []
+            for val, waiting in waiting:
+                try:
+                    reset(waiting, outcome.Error(e))
+                except:
+                    logger.exception("Coro %s", waiting, "raised while shutting it down")
             raise
         else:
             self._dead = True
             for val, waiting in self._waiting:
-                reset(waiting, outcome.Error(Exception("the coroqueue we were waiting on is ded :(")))
+                try:
+                    reset(waiting, outcome.Error(Exception("the coroqueue we were waiting on is ded :(")))
+                except:
+                    logger.exception("Coro %s", waiting, "raised while shutting it down")
 
     def register_request(self, val: InType, trio_runner: TrioRunner,
                          coro: Continuation[OutType],
     ) -> None:
+        logger.info("CoroQueue.register_request: %s %s", val, coro)
         if self._dead:
             reset(coro, outcome.Error(Exception("the coroqueue we were waiting on is ded :(")))
             return
@@ -749,6 +716,7 @@ class CoroQueue(t.Generic[InType, OutType]):
 
     def fill_request(self, coro: Continuation[OutType],
                      result: Outcome[OutType]) -> None:
+        logger.info("CoroQueue.fill_request: %s %s", result, coro)
         backend = self._backends[coro]
         self._trio_runner.remove_backend(backend)
         del self._backends[coro]

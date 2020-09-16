@@ -23,6 +23,12 @@ class TestClone(TrioTestCase):
         async with thread:
             await thread.exit(0)
 
+    async def test_nest_multiple(self) -> None:
+        for i in range(5):
+            child = await self.thr.clone()
+            async with child:
+                await do_async_things(self, child.epoller, child)
+
     async def test_two_children_exec(self) -> None:
         """Start two child and exec in each of them.
 

@@ -205,10 +205,11 @@ class SyscallConnection:
         while True:
             # wait until we have a batch to do, received from self.pending_requests
             requests = await queue.get_many()
-            logger.debug("_run_requests: get_many: %s", requests)
+            logger.info("_run_requests: get_many: %s", requests)
             # write remaining_reqs to memory
             ptr: Pointer[StructList] = await trio_op(
                 self.tofd.ram.ptr, StructList(Syscall, [syscall for syscall, coro in requests]))
+            logger.info("_run_requests: performed ptr for: %s", requests)
             ptr_to_write, reqs_to_write = ptr, requests
             # TODO write requests to tofd in parallel with receiving more
             # requests from the channel and writing them to memory
@@ -230,7 +231,7 @@ class SyscallConnection:
                     queue.fill_request(coro, outcome.Error(e))
             else:
                 for syscall, coro in reqs_to_write:
-                    logger.debug("forward_request: %s", syscall)
+                    logger.info("forward_request: %s", syscall)
                     queue.forward_request(self.response_queue, syscall, coro)
 
     async def _run_responses(self, queue: CoroQueue) -> None:
@@ -244,4 +245,5 @@ class SyscallConnection:
                 except Exception as e:
                     raise SyscallHangup() from e
             result = await outcome.acapture(trio_op, read_result)
+            logger.info("fill_request: %s -> %s", syscall, result)
             queue.fill_request(coro, result)

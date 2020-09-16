@@ -245,9 +245,6 @@ class PersistentThread(Thread):
         self.ram.transport = transport
         self.transport = transport
         # Fix up epoller with new activity fd
-        def devnull(event: EPOLL) -> None:
-            pass
-        await self.epoller.register(
-            infd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP, devnull)
+        await self.epoller.register(infd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP)
         # close remote fds we don't have handles to; this includes the old interface fds.
         await self.task.run_fd_table_gc()

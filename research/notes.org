@@ -26332,9 +26332,91 @@ fut = await susp.wait(StartedFuture.run(lambda fut: syscall_snd_callback.bind(fu
     how weird and annoying, hm.
 
     oh but I guess this is a different issue maybe?
+
+    great, fixed it! it was a trio checkpoint in submit_request, which we expected to register us immediately.
 *** DONE exceptions in coroqueue functions don't propagate
     hmm that's not good
     ah I forgot a raise lol
+*** more more more more more issue
+    nice, most of the tests pass!
+
+    hmm we're getting some failures when we GC.
+
+    coroutine __del__ throws GeneratorExit into the coro - which is interesting,
+    that's kind of a cancellation semantics,
+    purely based on garbage collection
+
+    maybe we don't need to throw an exception into them, then?
+    nah... a good exception seems like a good idea...
+    although, the begin_running coro I guess is...
+    possibly destructed at a totally different time from _waiting?
+    wait no no no, I really don't get this,
+    how can I have coros that are "already awaited" (aka done) in the _waiting list?
+
+    ok. it's getting GenExit.
+    why is it getting genexit before me?
+
+    oh, wait, what if there's a circular reference?
+    then I guess we might not be able to exit those? hmmm
+
+    maybe I can fix this with a __del__?
+
+    hm I *think* this is a tricky coroutine problem...
+
+    ok so is there a circular reference?
+
+    the coro is blocked somewhere in a trio runner
+
+    that trio runner is referred to by some live stack/trio stuff.
+
+    or at least by
+
+    so there's a reference to the 
+
+    or, nah, coroutines throw genexit themselves on del, which is very cool...
+
+    let's just rely on that.
+
+    no we can't really rely on that, we want to kill the waiters if the run func exits, simple as that!
+
+    maybe when I get GeneratorExit I shouldn't do it...?
+
+    yeah ok that's a good fix
+*** TODO should i remove the trio runner from delegators on cancel?
+    probs right?
+
+    that would save having to call it and check?
+
+    yaaaa.
+    i should save the delegator and remove them.
+
+*** more more more more more more issue
+    ok so there's a hang with stdinboot and do_async_things.
+
+    it looks like we're never calling epoll_wait again though we should be.
+
+    hm! intriguing.
+    we do start the epollwait, I guess...?
+
+    and even register the request.
+    but we aren't actually sending it?
+
+    hmm odd.
+
+    hmm we seem to be waiting for a trio runner backend
+
+    that is odd indeed, uh...
+
+    well I guess it makes sense that we block, since we don't have anyone making requests on us anymore.
+    but, one would expect us to... inherit the triorunner from the later call.
+
+    ah, we weren't properly waking up down the whole tree of delegates. hm.
+    we should rework everything rather than fix this last remaining bug in test_stub, maybe.
+
+    booper says redesign, ok I will do it.
+
+    actually... I just have one more bug...
+    
 ** DONE mysterious async stuff
    ummm why can't I write to this tcp connection or to socketpairs?
    what's up with this afd! it's weird!
