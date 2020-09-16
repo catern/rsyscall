@@ -26319,6 +26319,19 @@ fut = await susp.wait(StartedFuture.run(lambda fut: syscall_snd_callback.bind(fu
     nice ok cool that's good
 
     ok so this keyerror is indeed nondet.
+
+    ohhh
+    i see, the issue happens if there's an event when we're removed. makes sense.
+
+    ok, I fixed it, but...
+
+    are... you kidding me?
+    we're now blocking forever but only if we do do_async_things in a nursery background task?
+    sigh.
+
+    how weird and annoying, hm.
+
+    oh but I guess this is a different issue maybe?
 *** DONE exceptions in coroqueue functions don't propagate
     hmm that's not good
     ah I forgot a raise lol

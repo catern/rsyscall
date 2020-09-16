@@ -179,16 +179,14 @@ class EpollWaiter:
                 logger.info("EpollWaiter._run got event %s", event)
                 queue.fill_request(number_to_cb[event.data], outcome.Value(event.events))
                 del number_to_cb[event.data]
-            logger.info("EpollWaiter._run doing fill requests %s", self.epfd.near)
-            try:
-                for number in self.pending_remove:
-                    queue.fill_request(number_to_cb[number], outcome.Error(RemovedFromEpollError()))
-                    del number_to_cb[number]
-            except:
-                logger.exception("EpollWaiter._run %s got exn", self.epfd.near)
-                raise
+            logger.info("EpollWaiter._run clearing out pending_remove %s %s", self.epfd.near, self.pending_remove)
+            for num, cb in queue.fetch_any():
+                number_to_cb[num] = cb
+            for number in list(self.pending_remove):
+                queue.fill_request(number_to_cb[number], outcome.Error(RemovedFromEpollError()))
+                del number_to_cb[number]
+                self.pending_remove.remove(number)
             logger.info("EpollWaiter._run reaching end of loop %s", self.epfd.near)
-            self.pending_remove = set()
 
 class Epoller:
     "Terribly named class that allows registering fds on epoll, and waiting on them."
@@ -297,16 +295,18 @@ class EpolledFileDescriptor:
             except RemovedFromEpollError:
                 return
             self.status.posedge(ev)
-            logger.info("EFD._run: posedge %s %s %x", self.fd.near, self.status, id(self))
-            new_waiters = queue.fetch_any()
-            for val, coro in new_waiters:
+            logger.info("EFD._run(%s): posedge %s %x", self.fd.near, self.status, id(self))
+            for val, coro in queue.fetch_any():
+                logger.info("EFD._run(%s): got new waiter for %s", self.fd.near, val)
                 for flag in EPOLL:
                     if val & flag:
                         waiters[flag].append((val, coro))
+            logger.info("EFD._run: going to inspect the waiters %s", waiters)
             for flag in EPOLL:
                 if ev & flag:
                     to_resume = waiters[flag]
                     for val, coro in list(to_resume):
+                        logger.info("EFD._run: waking up waiter for %s", val)
                         for flag in EPOLL:
                             if val & flag:
                                 waiters[flag].remove((val, coro))
@@ -315,10 +315,8 @@ class EpolledFileDescriptor:
     async def wait_for(self, flags: EPOLL) -> None:
         "Call epoll_wait until at least one of the passed flags is set in our status."
         logger.info("EFD.wait_for: %s %s %s %x", self.fd.near, self.status, flags, id(self))
-        if self.status.mask & flags:
-            return
-        else:
-            return await self.queue.send_request(flags)
+        if not (self.status.mask & flags):
+            await self.queue.send_request(flags)
 
 @dataclass
 class FDStatus:
@@ -435,6 +433,7 @@ class AsyncFileDescriptor:
         "Call write without blocking the thread."
         await self._wait_for(EPOLL.OUT|EPOLL.ERR)
         while True:
+            logger.info("doing actual write on %s", self.handle.near)
             try:
                 return await self.handle.write(buf)
             except OSError as e:

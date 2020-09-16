@@ -138,7 +138,7 @@ class Inotify:
     async def _run(self, queue: CoroQueue) -> None:
         wd_to_cb: t.Dict[WatchDescriptor, t.Coroutine] = {}
         while True:
-            valid, rest = await trio_op(functools.partial(self.asyncfd.read, self.buf))
+            valid, rest = await trio_op(self.asyncfd.read, self.buf)
             if valid.size() == 0:
                 raise Exception('got EOF from inotify fd? what?')
             events = await trio_op(valid.read)

@@ -8,8 +8,8 @@ import unittest
 
 from rsyscall.tests.utils import do_async_things
 
-import logging
-logging.basicConfig(level=logging.INFO)
+# import logging
+# logging.basicConfig(level=logging.INFO)
 
 
 class TestEpoller(TrioTestCase):
@@ -20,10 +20,11 @@ class TestEpoller(TrioTestCase):
         await do_async_things(self, self.thr.epoller, self.thr)
 
     async def test_multi(self) -> None:
-        await do_async_things(self, self.thr.epoller, self.thr)
+        await do_async_things(self, self.thr.epoller, self.thr, -1)
         async with trio.open_nursery() as nursery:
-            for i in range(5):
-                nursery.start_soon(do_async_things, self, self.thr.epoller, self.thr)
+            for i in range(2):
+                await nursery.start(do_async_things, self, self.thr.epoller, self.thr, i)
+                # await do_async_things(self, self.thr.epoller, self.thr)
 
     async def test_thread_epoller(self) -> None:
         thread = await self.thr.clone()

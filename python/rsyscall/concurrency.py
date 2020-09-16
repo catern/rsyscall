@@ -237,7 +237,11 @@ class Dynvar(t.Generic[T]):
     async def bind(self, value: T, coro: t.Coroutine) -> t.Any:
         send_value: outcome.Outcome = outcome.Value(None)
         while True:
-            try: yield_value = send_value.send(coro)
+            try:
+                if isinstance(send_value, outcome.Value):
+                    yield_value = coro.send(send_value.value)
+                else:
+                    yield_value = coro.throw(type(send_value.error), send_value.error, send_value.error.__traceback__)
             except StopIteration as e: return e.value
             # handle DynvarRequests for this dynvar, and yield everything else up
             if isinstance(yield_value, DynvarRequest) and yield_value.prompt is self:
@@ -420,7 +424,10 @@ def reset(
         value: Outcome[SendType],
 ) -> ReturnType:
     try:
-        yielded_value = value.send(body)
+        if isinstance(value, outcome.Value):
+            yielded_value = body.send(value.value)
+        else:
+            yielded_value = body.throw(type(value.error), value.error, value.error.__traceback__)
     except StopIteration as e:
         return e.value
     if isinstance(yielded_value, Shift):
@@ -639,10 +646,10 @@ async def run_in_wrapper(coro: ShiftingCoroutine[None, ReturnType, None]) -> Ret
     async def wrapper():
         promise.set(await outcome.acapture(_yield_from, coro))
     runner = SingleTrioRunner()
+    # start the coro outside, because nursery entry is a checkpoint...
+    reset(trio_runner.bind(runner, wrapper()), outcome.Value(None))
     async with trio.open_nursery() as nursery:
         nursery.start_soon(runner.run)
-        # start the coro
-        reset(trio_runner.bind(runner, wrapper()), outcome.Value(None))
         try:
             result = await future.get()
         except BaseException as e:
@@ -714,8 +721,7 @@ class CoroQueue(t.Generic[InType, OutType]):
             return await shift(functools.partial(self.register_request, val, runner))
         else:
             # this must be a regular trio task
-            # verify it with a quick yield...
-            await trio.sleep(0)
+            logger.info("CoroQueue.send_request: running in wrapper for %s", val)
             return await run_in_wrapper(self.send_request(val))
 
     def _start_wait_for_one(self, coro: Continuation[t.Tuple[InType, Continuation[OutType]]]) -> None:
