@@ -289,7 +289,7 @@ class EpolledFileDescriptor:
     async def _run(self, queue: CoroQueue) -> None:
         waiters: t.Dict[EPOLL, t.List[t.Tuple[EPOLL, t.Coroutine]]] = {flag: [] for flag in EPOLL}
         while True:
-            logger.info("EFD._run: going to wait %d %s", self.number, self.fd.near)
+            logger.info("EFD._run(%s): going to wait %d %x", self.fd.near, self.number, id(self))
             try:
                 ev = await self.epoller.epoll_waiter.queue.send_request(self.number)
             except RemovedFromEpollError:
@@ -301,12 +301,12 @@ class EpolledFileDescriptor:
                 for flag in EPOLL:
                     if val & flag:
                         waiters[flag].append((val, coro))
-            logger.info("EFD._run: going to inspect the waiters %s", waiters)
+            logger.info("EFD._run(%s): going to inspect the waiters %s", self.fd.near, waiters)
             for flag in EPOLL:
                 if ev & flag:
                     to_resume = waiters[flag]
                     for val, coro in list(to_resume):
-                        logger.info("EFD._run: waking up waiter for %s", val)
+                        logger.info("EFD._run(%s): waking up waiter for %s", self.fd.near, val)
                         for flag in EPOLL:
                             if val & flag:
                                 waiters[flag].remove((val, coro))
@@ -316,6 +316,7 @@ class EpolledFileDescriptor:
         "Call epoll_wait until at least one of the passed flags is set in our status."
         logger.info("EFD.wait_for: %s %s %s %x", self.fd.near, self.status, flags, id(self))
         if not (self.status.mask & flags):
+            logger.info("EFD.wait_for: %s %s %s blocking", self.fd.near, self.status, flags)
             await self.queue.send_request(flags)
 
 @dataclass
