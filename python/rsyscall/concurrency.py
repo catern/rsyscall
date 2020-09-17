@@ -367,7 +367,7 @@ class Shift(t.Generic[SendType, ReturnType, AnswerType]):
     ) -> None:
         self.func = func
 
-ShiftingCoroutine = t.Coroutine[Shift[SendType, ReturnType, AnswerType], SendType, ReturnType]
+ShiftCoroutine = t.Coroutine[Shift[SendType, ReturnType, AnswerType], SendType, ReturnType]
 
 class Outcome(t.Generic[T], outcome.Outcome):
     pass
@@ -375,7 +375,7 @@ class Outcome(t.Generic[T], outcome.Outcome):
 def reset(
         body: t.Coroutine[Shift[SendType, ReturnType, AnswerType], SendType, ReturnType],
         value: Outcome[SendType],
-) -> ReturnType:
+) -> t.Union[ReturnType, AnswerType]:
     try:
         if isinstance(value, outcome.Value):
             yielded_value = body.send(value.value)
@@ -431,15 +431,15 @@ class SingleTrioRunner(TrioRunner):
         self._ops_in, self._ops_out = trio.open_memory_channel(math.inf)
         self._cancelled: t.Optional[BaseException] = None
 
-    def _add_op(self, op: t.Callable[[], t.Awaitable], coro: t.Coroutine) -> None:
+    def _add_op(self, op: t.Callable[..., t.Awaitable[T]], args: t.List[t.Any], coro: Continuation[T]) -> None:
         mprint("sending to ops_in on single", op)
-        self._ops_in.send_nowait((op, coro))
+        self._ops_in.send_nowait((op, args, coro))
 
     async def immediate_trio_op(self, op: t.Callable[..., t.Awaitable[T]], *args: t.Any) -> T:
         if self._cancelled:
             raise self._cancelled
-        mprint("doing trio_op on single", self)
-        return await shift(functools.partial(self._add_op, lambda: op(*args)))
+        logger.info("STR.imm_trio_op: %s", op)
+        return await shift(functools.partial(self._add_op, op, args))
 
     async def trio_op(self, op: t.Callable[..., t.Awaitable[T]], *args: t.Any) -> T:
         return await self.immediate_trio_op(op, *args)
@@ -449,21 +449,22 @@ class SingleTrioRunner(TrioRunner):
             try:
                 async with trio.open_nursery() as nursery:
                     while True:
-                        async def do_op(op: t.Callable[[], t.Awaitable], coro: t.Coroutine) -> None:
-                            result = await outcome.acapture(op)
+                        async def do_op(op: t.Callable[..., t.Awaitable[T]], args: t.List[t.Any], coro: t.Coroutine) -> None:
+                            logger.info("STR.do_op: %s", op)
+                            result = await outcome.acapture(op, *args)
                             mprint("result from op", op, "is", result)
                             reset(coro, result)
                         mprint("calling ops_out.receive()", self)
-                        op, coro = await self._ops_out.receive()
+                        op, args, coro = await self._ops_out.receive()
                         mprint("got from ops_out", self, op, coro)
-                        nursery.start_soon(do_op, op, coro)
+                        nursery.start_soon(do_op, op, args, coro)
             except BaseException as exn:
                 mprint("single runner was cancelled", self)
                 self._cancelled = exn
                 # send this cancelled to everything waiting on us to perform their trio ops
                 while True:
                     try:
-                        op, coro = self._ops_out.receive_nowait()
+                        op, args, coro = self._ops_out.receive_nowait()
                     except trio.WouldBlock:
                         break
                     reset(coro, outcome.Error(exn))
@@ -594,7 +595,7 @@ async def start_future(nursery, coro: t.Coroutine) -> Future:
     reset(trio_runner.bind(runner, wrapper()), outcome.Value(None))
     return future
 
-async def run_in_wrapper(coro: ShiftingCoroutine[None, ReturnType, None]) -> ReturnType:
+async def run_in_wrapper(coro: ShiftCoroutine[None, ReturnType, None]) -> ReturnType:
     future, promise = Future.make()
     async def wrapper():
         promise.set(await outcome.acapture(_yield_from, coro))
@@ -639,9 +640,9 @@ class CoroQueue(t.Generic[InType, OutType]):
             pass
         except BaseException as e:
             self._dead = True
-            waiting = self._waiting
+            waiting_coros = self._waiting
             self._waiting = []
-            for val, waiting in waiting:
+            for val, waiting in waiting_coros:
                 try:
                     reset(waiting, outcome.Error(e))
                 except:

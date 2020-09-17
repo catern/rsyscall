@@ -26416,7 +26416,34 @@ fut = await susp.wait(StartedFuture.run(lambda fut: syscall_snd_callback.bind(fu
     booper says redesign, ok I will do it.
 
     actually... I just have one more bug...
-    
+
+    let's jsut do it alright alright.
+*** more more more more more more more issue
+    epoll_create! hm mmm mm.
+    so it even gets a result, but,
+
+    where is it even stalled really?
+    it says on epoll_create1, but how can that be true...
+
+    oh wait no it doesn't get a response
+    well the syscall gets sent,
+    and it's done.
+
+    ok so for some reason I'm calling read_struct but not getting the result
+
+    ok so I start waiting on 58... except no, I don't do that, because IN is already set,
+    so I just immediately read?
+
+    hUhUh!!!! there's two places I can hang?!??
+
+    how annoying...
+
+    wow it seems like I can fail in pretty much any syscall
+
+    ok well, now
+
+    oh i just broke everything is all
+    while adding more debug info
 ** DONE mysterious async stuff
    ummm why can't I write to this tcp connection or to socketpairs?
    what's up with this afd! it's weird!

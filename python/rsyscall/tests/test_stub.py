@@ -12,6 +12,11 @@ from rsyscall.command import Command
 
 import os
 
+import unittest
+
+import logging
+logging.basicConfig(level=logging.INFO)
+
 class TestStub(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread

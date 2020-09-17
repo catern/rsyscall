@@ -9,6 +9,9 @@ import rsyscall.tasks.local as local
 from rsyscall.tests.utils import do_async_things
 from rsyscall.command import Command
 
+import logging
+# logging.basicConfig(level=logging.INFO)
+
 class TestStdinboot(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread

@@ -163,7 +163,7 @@ class EpollWaiter:
         self.pending_remove.add(number)
 
     async def _run(self, queue: CoroQueue) -> None:
-        input_buf = await trio_op(self.ram.malloc, EpollEventList, 32 * EpollEvent.sizeof())
+        input_buf: Pointer = await trio_op(self.ram.malloc, EpollEventList, 32 * EpollEvent.sizeof())
         number_to_cb: t.Dict[int, t.Coroutine] = {}
         while True:
             if self.wait_readable:
@@ -415,6 +415,7 @@ class AsyncFileDescriptor:
         while True:
             await self._wait_for(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
             try:
+                logger.info("doing actual read on %s", self.handle.near)
                 return (await self.handle.read(ptr))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
