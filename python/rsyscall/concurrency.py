@@ -684,8 +684,10 @@ class CoroQueue(t.Generic[InType, OutType]):
     async def send_request(self, val: InType) -> OutType:
         if self._dead:
             raise Exception("the coroqueue we were waiting on is ded :(")
+        logger.info("CoroQueue.send_request: starting send_request for %s", val)
         runner = await trio_runner.get()
         if runner:
+            logger.info("CoroQueue.send_request: shifting into register_request for %s", val)
             return await shift(functools.partial(self.register_request, val, runner))
         else:
             # this must be a regular trio task

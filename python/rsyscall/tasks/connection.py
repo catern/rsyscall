@@ -240,10 +240,13 @@ class SyscallConnection:
             syscall, coro = await queue.get_one()
             async def read_result() -> int:
                 try:
+                    logger.info("starting defunct monitor for syscall: %s", syscall)
                     async with self.defunct_monitor.throw_on_connection_defunct():
+                        logger.info("past defunct monitor for syscall: %s", syscall)
                         return (await buffer.read_struct(SyscallResponse)).value
                 except Exception as e:
                     raise SyscallHangup() from e
+            logger.info("going to read_result for syscall: %s %s", syscall, self.fromfd.handle.near)
             result = await outcome.acapture(trio_op, read_result)
             logger.info("fill_request: %s -> %s", syscall, result)
             queue.fill_request(coro, result)
