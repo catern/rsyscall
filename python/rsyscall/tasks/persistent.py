@@ -79,7 +79,6 @@ from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.sched import Stack
 from rsyscall.handle import WrittenPointer, ThreadProcess, Pointer, Task, FileDescriptor
 from rsyscall.memory.socket_transport import SocketMemoryTransport
-import contextlib
 
 import trio
 import struct
@@ -170,15 +169,12 @@ async def _connect_and_send(self: PersistentThread, thread: Thread, fds: t.List[
         return addr, count, hdr, response_buf
     addr, count, hdr, response = await thread.ram.perform_batch(sendmsg_op)
     data = None
-    async with contextlib.AsyncExitStack() as stack:
-        if isinstance(self.task.sysif, ChildSyscallInterface):
-            await stack.enter_async_context(self.task.sysif._throw_on_child_exit())
-        await sock.connect(addr)
-        _, _ = await sock.write(count)
-        _, [] = await sock.handle.sendmsg(hdr, SendmsgFlags.NONE)
-        while response.size() > 0:
-            valid, response = await sock.read(response)
-            data += valid
+    await sock.connect(addr)
+    _, _ = await sock.write(count)
+    _, [] = await sock.handle.sendmsg(hdr, SendmsgFlags.NONE)
+    while response.size() > 0:
+        valid, response = await sock.read(response)
+        data += valid
     remote_fds = [self.task.make_fd_handle(near.FileDescriptor(int(i)))
                   for i in ((await data.read()).elems if data else [])]
     await sock.close()
@@ -206,9 +202,9 @@ class PersistentThread(Thread):
         super()._init_from(thread)
         self.persistent_path = persistent_path
         self.persistent_sock = persistent_sock
+        self.prepped_for_reconnect = False
 
-    async def make_persistent(self) -> None:
-        "Make this thread actually persistent"
+    async def prep_for_reconnect(self) -> None:
         # TODO hmm should we switch the transport?
         # i guess we aren't actually doing anything but rearranging the file descriptors
         await self.unshare_files(going_to_exec=False)
@@ -217,6 +213,11 @@ class PersistentThread(Thread):
         new_sysif = NonChildSyscallInterface(self.task.sysif.rsyscall_connection, self.task.process.near)
         new_sysif.store_remote_side_handles(self.task.sysif.infd, self.task.sysif.outfd)
         self.task.sysif = new_sysif
+        self.prepped_for_reconnect = True
+
+    async def make_persistent(self) -> None:
+        "Make this thread actually persistent"
+        await self.prep_for_reconnect()
         await self.task.setsid()
         await self.task.prctl(PR.SET_PDEATHSIG, 0)
 
@@ -224,6 +225,14 @@ class PersistentThread(Thread):
         """Using the passed-in thread to establish the connection, reconnect to this PersistentThread
 
         """
+        if not self.prepped_for_reconnect:
+            # It does work to reconnect without prep_for_reconnect, except for one nitpick:
+            # If the underlying process for the PersistentThread dies while we're in the
+            # middle of reconnecting to it, the file descriptors opened by the C code
+            # running in the process will leak if the process is in a shared fd table.
+            # That's annoying on its own, but also means we won't get an EOF from our
+            # communication with the process, and we'll just hang forever.
+            await self.prep_for_reconnect()
         await self.task.run_fd_table_gc(use_self=False)
         if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
             raise Exception("self.task.sysif of unexpected type", self.task.sysif)

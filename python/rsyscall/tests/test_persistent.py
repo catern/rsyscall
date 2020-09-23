@@ -30,9 +30,10 @@ class TestPersistent(TrioTestCase):
     async def test_exit_reconnect(self) -> None:
         thread = await self.thread.clone()
         per_thr = await clone_persistent(self.thread, self.sock_path)
+        await per_thr.prep_for_reconnect()
         await per_thr.exit(0)
         # when we try to reconnect, we'll fail
-        with self.assertRaises(SyscallHangup):
+        with self.assertRaises(ConnectionRefusedError):
             await per_thr.reconnect(self.thread)
 
     async def test_nest_exit(self) -> None:
