@@ -127,7 +127,7 @@ class EpollWaiter:
         self.wait_readable = wait_readable
         self.timeout = timeout
 
-        self.next_number = 0
+        self.used_numbers: t.Set[int] = set()
         self.number_to_cb: t.Dict[int, t.Callable[[EPOLL], None]] = {}
         self.pending_remove: t.Set[int] = set()
         self.running_wait = OneAtATime()
@@ -136,7 +136,7 @@ class EpollWaiter:
         self.syscall_response: t.Optional[SyscallResponse] = None
         self.valid_events_buf: t.Optional[Pointer[EpollEventList]] = None
 
-    def add_and_allocate_number(self, cb: t.Callable[[EPOLL], None]) -> int:
+    def add_and_allocate_number(self, cb: t.Callable[[EPOLL], None], request: int) -> int:
         """Add a callback which will be called on EpollEvents with data == returned number.
 
         We can then add the returned number to the epollfd with some file descriptor and
@@ -145,9 +145,12 @@ class EpollWaiter:
         This is not the user-interface for epoll. That's the register method on Epoller.
 
         """
-        number = self.next_number
-        # TODO technically we should allocate the lowest unused number
-        self.next_number += 1
+        number = request
+        # this is amusingly horrible, but it provides a useful feature:
+        # the number in epoll usually matches the fd number.
+        while number in self.used_numbers:
+            number += 1000
+        self.used_numbers.add(number)
         self.number_to_cb[number] = cb
         return number
 
@@ -253,7 +256,7 @@ class Epoller:
         epollfd.
 
         """
-        number = self.epoll_waiter.add_and_allocate_number(cb)
+        number = self.epoll_waiter.add_and_allocate_number(cb, int(fd.near))
         await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.ptr(EpollEvent(number, events)))
         return EpolledFileDescriptor(self, fd, number)
 
