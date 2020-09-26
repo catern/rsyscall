@@ -530,10 +530,15 @@ class AsyncReadBuffer:
     def __init__(self, fd: AsyncFileDescriptor) -> None:
         self.fd = fd
         self.buf = b""
+        self.unread_ptr: t.Optional[Pointer] = None
 
     async def _read(self) -> t.Optional[bytes]:
         "Read some bytes; return None on EOF."
-        data = await self.fd.read_some_bytes()
+        if self.unread_ptr is None:
+            ptr = await self.fd.ram.malloc(bytes, 4096)
+            self.unread_ptr, _ = await self.fd.read(ptr)
+        data = await self.unread_ptr.read()
+        self.unread_ptr = None
         if len(data) == 0:
             if len(self.buf) != 0:
                 raise EOFException("got EOF while we still hold unhandled buffered data")
