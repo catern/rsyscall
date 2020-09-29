@@ -13,7 +13,6 @@ class TestInotify(TrioTestCase):
         self.ify = await Inotify.make(self.thr)
 
     async def asyncTearDown(self) -> None:
-        await self.ify.close()
         await self.tmpdir.cleanup()
 
     async def test_create(self) -> None:

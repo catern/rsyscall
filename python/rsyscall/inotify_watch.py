@@ -124,8 +124,3 @@ class Inotify:
                     if event.mask & IN.IGNORED:
                         # the name is confusing - getting IN.IGNORED means this watch was removed
                         del self.wd_to_watch[event.wd]
-
-
-    async def close(self) -> None:
-        "Close this inotify file descriptor."
-        await self.asyncfd.close()
