@@ -26,6 +26,8 @@ class TestExec(TrioTestCase):
 
     async def test_basic(self) -> None:
         await assert_thread_works(self, self.child)
+        grandchild = await self.child.clone()
+        await assert_thread_works(self, grandchild)
 
     @unittest.skip("This is broken for some reason")
     async def test_nest(self) -> None:
