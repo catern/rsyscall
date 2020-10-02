@@ -166,8 +166,14 @@ class Arena(AllocatorInterface):
         await self.mapping.munmap()
 
     def __str__(self) -> str:
-        allocations = "[" + ",".join(f"({alloc.start}, {alloc.end})" for alloc in self.allocations) + "]"
-        return f"Arena({str(self.mapping)}, allocations={allocations})"
+        if len(self.allocations) < 10:
+            allocations = "[" + ",".join(f"({alloc.start}, {alloc.end})" for alloc in self.allocations) + "]"
+        else:
+            allocations = f"[...{len(self.allocations)}...]"
+        return f"Arena({str(self.mapping)}, {allocations})"
+
+    def __repr__(self) -> str:
+        return str(self)
 
 def align(num: int, alignment: int) -> int:
     """Return the lowest value greater than `num` that is cleanly divisible by `alignment`.
