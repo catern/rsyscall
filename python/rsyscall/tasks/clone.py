@@ -38,10 +38,6 @@ __all__ = [
     'CloneThread',
 ]
 
-class ChildExit(SyscallHangup):
-    "The task we were sending syscalls to has exited"
-    pass
-
 class MMRelease(SyscallHangup):
     """The task we were sending syscalls to has either exited or exec'd; either way it can no longer respond
 
@@ -56,8 +52,8 @@ class ChildSyscallInterface(BaseSyscallInterface):
     """A connection to an rsyscall server that is one of our child processes
 
     We take as arguments here not only a SyscallConnection, but also an
-    AsyncChildProcess monitoring the child process to which we will send
-    syscalls.
+    AsyncChildProcess, the futex_process, which exits when the process we are
+    sending syscalls to exits or execs.
 
     This is useful for situations where we can't rely on getting an EOF if the
     other side of a connection dies. That will happen, for example, whenever the
@@ -66,34 +62,27 @@ class ChildSyscallInterface(BaseSyscallInterface):
     responded to, and signal it to the caller by throwing SyscallHangup.
 
     In this class, we detect a hangup while waiting for a syscall response by
-    simultaneously monitoring the child process. If the child process exits, we
+    simultaneously monitoring the futex process. If the futex process exits, we
     stop waiting for the syscall response and throw SyscallHangup back to the
     caller.
 
     This is not just a matter of failure cases, it's also important for normal
     functionality. Detecting a hangup is our only way to discern whether a call
-    to exit() was successful, and rsyscall.near.exit treats receiving an
-    RsycallHangup as successful.
-
-    We also take a futex_process: AsyncChildProcess. This is also used for
-    normal functionality: futex_process should exit when the process has
-    successfully called exec. This is again our only way of detecting a
-    successful call to exec, and rsyscall.near.execve treats receiving an
-    RsycallHangup as successful. (Concretely, futex_process will also exit when
-    the process exits, not just when it execs, but that's harmless)
+    to execve() or exit() was successful, and rsyscall.near.{execve,exit} treat
+    receiving an RsycallHangup as success.
 
     A better way of detecting exec success would be great...
 
     """
     def __init__(self,
                  rsyscall_connection: SyscallConnection,
-                 server_process: AsyncChildProcess,
-                 futex_process: t.Optional[AsyncChildProcess],
+                 futex_process: AsyncChildProcess,
+                 # usually the same pid that's inside the namespaces
+                 identifier_process: near.Process,
     ) -> None:
         super().__init__(rsyscall_connection)
-        self.server_process = server_process
         self.futex_process = futex_process
-        self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{int(self.server_process.process.near)}")
+        self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{identifier_process}")
         self.running_read = OneAtATime()
 
     @contextlib.asynccontextmanager
@@ -113,31 +102,20 @@ class ChildSyscallInterface(BaseSyscallInterface):
         expose it with this relatively generic interface.
 
         """
-        child_exited = False
         futex_exited = False
         got_result = False
         async with trio.open_nursery() as nursery:
-            async def server_exit() -> None:
-                await self.server_process.waitpid(W.EXITED)
-                nonlocal child_exited
-                child_exited = True
-                nursery.cancel_scope.cancel()
             async def futex_exit() -> None:
-                if self.futex_process is not None:
-                    await self.futex_process.waitpid(W.EXITED)
-                    nonlocal futex_exited
-                    futex_exited = True
-                    nursery.cancel_scope.cancel()
-            nursery.start_soon(server_exit)
+                await self.futex_process.waitpid(W.EXITED)
+                nonlocal futex_exited
+                futex_exited = True
+                nursery.cancel_scope.cancel()
             nursery.start_soon(futex_exit)
             yield
             got_result = True
             nursery.cancel_scope.cancel()
         if got_result:
             return
-        elif child_exited:
-            # this takes precedence over MMRelease, since it gives us more information
-            raise ChildExit()
         elif futex_exited:
             raise MMRelease()
 
@@ -235,9 +213,9 @@ async def clone_child_task(
     futex_process = await launch_futex_monitor(
         parent.ram, parent.loader, parent.monitor, futex_pointer)
     # Create the new syscall interface, which needs to use not just the connection,
-    # but also the child process and the futex process.
+    # but also the futex process.
     syscall = ChildSyscallInterface(SyscallConnection(access_sock, access_sock),
-                                    child_process, futex_process)
+                                    futex_process, child_process.process.near)
     # Set up the new task with appropriately inherited namespaces, tables, etc.
     # TODO correctly track all the namespaces we're in
     if flags & CLONE.NEWPID:
