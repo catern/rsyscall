@@ -110,6 +110,9 @@ class Allocation(AllocationInterface):
         else:
             return f"Alloc(FREED, {str(self.arena)}, {self.start}, {self.end})"
 
+    def __repr__(self) -> str:
+        return str(self)
+
     def __del__(self) -> None:
         # TODO this is actually not going to work, because the Arena stores references to the allocation
         self.free()
