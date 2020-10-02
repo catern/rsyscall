@@ -16,7 +16,7 @@ class TestExec(TrioTestCase):
         self.store = local_store
         self.executables = await RsyscallServerExecutable.from_store(self.store)
         self.child = await self.local.clone(CLONE.FILES)
-        await rsyscall_exec(self.local, self.child, self.executables)
+        await rsyscall_exec(self.child, self.executables)
 
     async def asyncTearDown(self) -> None:
         await self.child.close()
