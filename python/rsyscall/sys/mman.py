@@ -39,6 +39,9 @@ class MemoryMapping:
     def __str__(self) -> str:
         return f"MemoryMapping({str(self.task)}, {str(self.near)})"
 
+    def __repr__(self) -> str:
+        return str(self)
+
 from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
 
 class MemoryMappingTask(FileDescriptorTask):
