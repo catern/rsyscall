@@ -148,7 +148,7 @@ async def _make_local_thread() -> Thread:
     epfd = await task.epoll_create()
     async def wait_readable():
         logger.debug("wait_readable(%s)", epfd.near.number)
-        await trio.hazmat.wait_readable(epfd.near.number)
+        await trio.lowlevel.wait_readable(epfd.near.number)
     epoller = Epoller.make_subsidiary(ram, epfd, wait_readable)
     thread = Thread(
         task, ram,
