@@ -14,7 +14,6 @@ from rsyscall.memory.allocator import Arena
 from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.struct import Int32
-from rsyscall.tasks.base_sysif import BaseSyscallInterface
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.near.sysif import SyscallHangup
 import contextlib
@@ -32,7 +31,6 @@ from rsyscall.sys.wait import W
 __all__ = [
     'ChildExit',
     'MMRelease',
-    'ChildSyscallInterface',
     'launch_futex_monitor',
     'clone_child_task',
     'CloneThread',
@@ -48,7 +46,7 @@ class MMRelease(SyscallHangup):
     pass
 
 
-class ChildSyscallInterface(BaseSyscallInterface):
+class ChildSyscallInterface(SyscallConnection):
     """A connection to an rsyscall server that is one of our child processes
 
     We take as arguments here not only a SyscallConnection, but also an
@@ -75,14 +73,16 @@ class ChildSyscallInterface(BaseSyscallInterface):
 
     """
     def __init__(self,
-                 rsyscall_connection: SyscallConnection,
+                 logger: logging.Logger,
+                 tofd: AsyncFileDescriptor,
+                 fromfd: AsyncFileDescriptor,
                  futex_process: AsyncChildProcess,
-                 # usually the same pid that's inside the namespaces
-                 identifier_process: near.Process,
     ) -> None:
-        super().__init__(rsyscall_connection)
+        super().__init__(
+            logger,
+            tofd, fromfd,
+        )
         self.futex_process = futex_process
-        self.logger = logging.getLogger(f"rsyscall.ChildSyscallInterface.{identifier_process}")
         self.running_read = OneAtATime()
 
     @contextlib.asynccontextmanager
@@ -121,7 +121,7 @@ class ChildSyscallInterface(BaseSyscallInterface):
 
     async def _read_syscall_responses_direct(self) -> None:
         async with self._throw_on_child_exit():
-            await self.rsyscall_connection.read_pending_responses()
+            await self.read_pending_responses()
         self.logger.debug("returning after reading some syscall responses")
 
     async def _read_pending_responses(self) -> None:
@@ -214,8 +214,11 @@ async def clone_child_task(
         parent.ram, parent.loader, parent.monitor, futex_pointer)
     # Create the new syscall interface, which needs to use not just the connection,
     # but also the futex process.
-    syscall = ChildSyscallInterface(SyscallConnection(access_sock, access_sock),
-                                    futex_process, child_process.process.near)
+    syscall = ChildSyscallInterface(
+        logging.getLogger(f"rsyscall.ChildSyscallInterface.{child_process.process.near}"),
+        access_sock, access_sock,
+        futex_process,
+    )
     # Set up the new task with appropriately inherited namespaces, tables, etc.
     # TODO correctly track all the namespaces we're in
     if flags & CLONE.NEWPID:

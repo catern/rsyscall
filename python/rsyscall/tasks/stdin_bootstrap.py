@@ -20,7 +20,6 @@ from rsyscall.memory.ram import RAM
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.tasks.connection import SyscallConnection
-from rsyscall.tasks.non_child import NonChildSyscallInterface
 import logging
 import rsyscall.far as far
 import rsyscall.handle as handle
@@ -41,6 +40,8 @@ __all__ = [
     "stdin_bootstrap_path_from_store",
     "stdin_bootstrap",
 ]
+
+logger = logging.getLogger(__name__)
 
 async def stdin_bootstrap_path_from_store(store: nix.Store) -> Path:
     """Get the path to the rsyscall-stdin-bootstrap executable.
@@ -114,7 +115,10 @@ async def stdin_bootstrap(
     pidns = parent.task.pidns
     process = near.Process(pid)
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
-    syscall = NonChildSyscallInterface(SyscallConnection(access_syscall_sock, access_syscall_sock), process)
+    syscall = SyscallConnection(
+        logger.getChild(str(process)),
+        access_syscall_sock, access_syscall_sock,
+    )
     base_task = Task(syscall, process, fd_table, address_space, pidns)
     handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
     syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)

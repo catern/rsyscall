@@ -73,8 +73,7 @@ import rsyscall.far as far
 import rsyscall.handle as handle
 from rsyscall.thread import Thread
 from rsyscall.tasks.connection import SyscallConnection
-from rsyscall.tasks.non_child import NonChildSyscallInterface
-from rsyscall.tasks.clone import ChildSyscallInterface, clone_child_task
+from rsyscall.tasks.clone import clone_child_task
 from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.sched import Stack
 from rsyscall.handle import WrittenPointer, ThreadProcess, Pointer, Task, FileDescriptor
@@ -229,7 +228,7 @@ class PersistentThread(Thread):
             # communication with the process, and we'll just hang forever.
             await self.prep_for_reconnect()
         await self.task.run_fd_table_gc(use_self=False)
-        if not isinstance(self.task.sysif, (ChildSyscallInterface, NonChildSyscallInterface)):
+        if not isinstance(self.task.sysif, SyscallConnection):
             raise Exception("self.task.sysif of unexpected type", self.task.sysif)
         await self.task.sysif.close_interface()
         # TODO should check that no transport requests are in flight
@@ -238,7 +237,10 @@ class PersistentThread(Thread):
         await syscall_sock.close()
         await data_sock.close()
         # Fix up Task's sysif with new SyscallConnection
-        self.task.sysif.rsyscall_connection = SyscallConnection(access_syscall_sock, access_syscall_sock)
+        self.task.sysif = SyscallConnection(
+            self.task.sysif.logger,
+            access_syscall_sock, access_syscall_sock,
+        )
         self.task.sysif.store_remote_side_handles(infd, outfd)
         # Fix up RAM with new transport
         # TODO technically this could still be in the same address space - that's the case in our tests.

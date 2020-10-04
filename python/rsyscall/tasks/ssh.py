@@ -15,7 +15,6 @@ from rsyscall.network.connection import ListeningConnection
 from rsyscall.path import Path
 from rsyscall.sched import CLONE
 from rsyscall.tasks.connection import SyscallConnection
-from rsyscall.tasks.non_child import NonChildSyscallInterface
 import abc
 import contextlib
 import importlib.resources
@@ -269,8 +268,10 @@ async def ssh_bootstrap(
     # to be common for all connections and we should express that
     new_pid_namespace = far.PidNamespace(new_pid)
     new_process = near.Process(new_pid)
-    new_syscall = NonChildSyscallInterface(SyscallConnection(async_local_syscall_sock, async_local_syscall_sock),
-                                    new_process)
+    new_syscall = SyscallConnection(
+        logger.getChild(str(new_process)),
+        async_local_syscall_sock, async_local_syscall_sock,
+    )
     new_base_task = Task(new_syscall, new_process, handle.FDTable(new_pid), new_address_space,
                          new_pid_namespace)
     handle_remote_syscall_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_sock))

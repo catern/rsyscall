@@ -16,11 +16,10 @@ from rsyscall.thread import ChildThread, Thread
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.monitor import AsyncChildProcess
-from rsyscall.tasks.clone import ChildSyscallInterface
-from rsyscall.tasks.non_child import NonChildSyscallInterface
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.memory.ram import RAM
 from rsyscall.sys.mman import MemoryMapping
+import logging
 import rsyscall.far as far
 import rsyscall.memory.allocator as memory
 import rsyscall.far as far
@@ -38,6 +37,8 @@ __all__ = [
     "spawn_exec",
     "rsyscall_exec",
 ]
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class RsyscallServerExecutable:
@@ -68,10 +69,10 @@ async def rsyscall_exec(
     """
     [(access_data_sock, passed_data_sock),
      (access_syscall_sock, passed_syscall_sock)] = await child.open_async_channels(2)
-    if isinstance(child.task.sysif, ChildSyscallInterface):
+    if isinstance(child.task.sysif, SyscallConnection):
         syscall = child.task.sysif
     else:
-        raise Exception("can only exec in ChildSyscallInterface sysifs, not", child.task.sysif)
+        raise Exception("can only exec in SyscallConnection sysifs, not", child.task.sysif)
     # unshare files so we can unset cloexec on fds to inherit
     await child.unshare_files(going_to_exec=True)
     # unset cloexec on all the fds we want to copy to the new space
@@ -95,9 +96,10 @@ async def rsyscall_exec(
     # from access_data sock to set up the symbol table for the new address space
     child.loader = NativeLoader.make_from_symbols(
         child.task, await AsyncReadBuffer(access_data_sock).read_cffi('struct rsyscall_symbol_table'))
-    child.task.sysif = NonChildSyscallInterface(
-        SyscallConnection(access_syscall_sock, access_syscall_sock),
-        child.process.process.near)
+    child.task.sysif = SyscallConnection(
+        logger.getChild(str(child.process.process.near)),
+        access_syscall_sock, access_syscall_sock,
+    )
     child.task.sysif.store_remote_side_handles(syscall.infd, syscall.infd)
     # now we are alive and fully working again, we can be used for GC
     child.task._add_to_active_fd_table_tasks()
