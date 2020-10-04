@@ -215,9 +215,9 @@ async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
     child_process = await child.exec(ssh_command.local_forward(
         "./" + local_path.name, remote_path,
     # TODO I optimistically assume that I'll have established a
-    # connection through the tunnel before 1 second has passed;
+    # connection through the tunnel before 1 minute has passed;
     # that connection will then keep the tunnel open.
-    ).args("-n", "echo forwarded; exec sleep 1"))
+    ).args("-n", "echo forwarded; exec sleep 60"))
     lines_buf = AsyncReadBuffer(async_stdout)
     forwarded = await lines_buf.read_line()
     if forwarded != b"forwarded":
