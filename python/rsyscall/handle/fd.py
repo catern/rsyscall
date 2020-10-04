@@ -138,7 +138,8 @@ class BaseFileDescriptor:
         manpage: close(2)
         """
         if not self.is_only_handle():
-            raise Exception("can't close this fd, there are handles besides this one to it")
+            raise Exception("can't close this fd", self, "there are handles besides this one to it",
+                            list(self._get_global_handles()))
         if not self.valid:
             raise Exception("can't close an invalid FD handle")
         closed = await self.invalidate()
