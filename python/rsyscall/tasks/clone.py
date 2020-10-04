@@ -36,6 +36,8 @@ __all__ = [
     'CloneThread',
 ]
 
+logger = logging.getLogger(__name__)
+
 class MMRelease(SyscallHangup):
     """The task we were sending syscalls to has either exited or exec'd; either way it can no longer respond
 
@@ -77,10 +79,13 @@ class ChildSyscallInterface(SyscallConnection):
                  tofd: AsyncFileDescriptor,
                  fromfd: AsyncFileDescriptor,
                  futex_process: AsyncChildProcess,
+                 server_infd: FileDescriptor,
+                 server_outfd: FileDescriptor,
     ) -> None:
         super().__init__(
             logger,
             tofd, fromfd,
+            server_infd, server_outfd,
         )
         self.futex_process = futex_process
         self.running_read = OneAtATime()
@@ -212,13 +217,6 @@ async def clone_child_task(
     child_process = await parent.monitor.clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
     futex_process = await launch_futex_monitor(
         parent.ram, parent.loader, parent.monitor, futex_pointer)
-    # Create the new syscall interface, which needs to use not just the connection,
-    # but also the futex process.
-    syscall = ChildSyscallInterface(
-        logging.getLogger(f"rsyscall.ChildSyscallInterface.{child_process.process.near}"),
-        access_sock, access_sock,
-        futex_process,
-    )
     # Set up the new task with appropriately inherited namespaces, tables, etc.
     # TODO correctly track all the namespaces we're in
     if flags & CLONE.NEWPID:
@@ -229,13 +227,20 @@ async def clone_child_task(
         fd_table = parent.task.fd_table
     else:
         fd_table = handle.FDTable(child_process.process.near.id, parent.task.fd_table)
-    task = Task(syscall, child_process.process,
+    task = Task(child_process.process,
                 fd_table, parent.task.address_space, pidns)
     task.sigmask = parent.task.sigmask
     # Move ownership of the remote sock into the task and store it so it isn't closed
     remote_sock_handle = remote_sock.inherit(task)
     await remote_sock.invalidate()
-    syscall.store_remote_side_handles(remote_sock_handle, remote_sock_handle)
+    # Create the new syscall interface, which needs to use not just the connection,
+    # but also the futex process.
+    task.sysif = ChildSyscallInterface(
+        logger.getChild(str(child_process.process.near)),
+        access_sock, access_sock,
+        futex_process,
+        remote_sock_handle, remote_sock_handle,
+    )
     return child_process, task
 
 from rsyscall.epoller import Epoller

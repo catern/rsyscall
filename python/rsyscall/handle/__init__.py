@@ -30,6 +30,7 @@ from rsyscall.command import Command
 from rsyscall.handle.fd import FileDescriptorTask, BaseFileDescriptor, FDTable
 from rsyscall.handle.pointer import Pointer, WrittenPointer, ReadablePointer, LinearPointer
 from rsyscall.handle.process import Process, ChildProcess, ThreadProcess, ProcessTask
+from rsyscall.near.sysif import UnusableSyscallInterface
 logger = logging.getLogger(__name__)
 
 from rsyscall.sched import CLONE, Stack, _unshare
@@ -198,13 +199,15 @@ class Task(
 ):
     "A Linux process context under our control, ready for syscalls"
     def __init__(self,
-                 sysif: rsyscall.near.SyscallInterface,
                  process: t.Union[rsyscall.near.Process, Process],
                  fd_table: FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  pidns: rsyscall.far.PidNamespace,
     ) -> None:
-        super().__init__(sysif, t.cast(rsyscall.near.Process, process), fd_table, address_space, pidns)
+        super().__init__(
+            UnusableSyscallInterface(),
+            t.cast(rsyscall.near.Process, process), fd_table, address_space, pidns,
+        )
 
     def _file_descriptor_constructor(self, fd: rsyscall.near.FileDescriptor) -> FileDescriptor:
         # for extensibility

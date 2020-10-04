@@ -141,26 +141,20 @@ class SyscallConnection(SyscallInterface):
                  logger: logging.Logger,
                  tofd: AsyncFileDescriptor,
                  fromfd: AsyncFileDescriptor,
+                 server_infd: FileDescriptor,
+                 server_outfd: FileDescriptor,
     ) -> None:
         self.logger = logger
         self.tofd = tofd
         self.fromfd = fromfd
+        self.server_infd = server_infd
+        self.server_outfd = server_outfd
         self.buffer = ReadBuffer(self.fromfd.handle.task)
         self.valid: t.Optional[Pointer[bytes]] = None
         self.sending_requests = OneAtATime()
         self.pending_requests: t.List[ConnectionRequest] = []
         self.reading_responses = OneAtATime()
         self.pending_responses: t.List[ConnectionResponse] = []
-
-    def store_remote_side_handles(self, infd: FileDescriptor, outfd: FileDescriptor) -> None:
-        """Store the FD handles that the remote side is using to communicate with us
-
-        We need to track and store these so that we don't close them with garbage
-        collection.
-
-        """
-        self.infd = infd
-        self.outfd = outfd
 
     def get_activity_fd(self) -> FileDescriptor:
         """Return an fd which is readable when there's other syscalls waiting to be done
@@ -169,7 +163,7 @@ class SyscallConnection(SyscallInterface):
         syscalls, and when this fd is readable, it means there's syscalls to be read.
 
         """
-        return self.infd
+        return self.server_infd
 
     async def close_interface(self) -> None:
         """Close this interface

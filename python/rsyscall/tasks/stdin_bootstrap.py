@@ -115,13 +115,13 @@ async def stdin_bootstrap(
     pidns = parent.task.pidns
     process = near.Process(pid)
     remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
-    syscall = SyscallConnection(
+    base_task = Task(process, fd_table, address_space, pidns)
+    handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
+    base_task.sysif = SyscallConnection(
         logger.getChild(str(process)),
         access_syscall_sock, access_syscall_sock,
+        handle_remote_syscall_fd, handle_remote_syscall_fd,
     )
-    base_task = Task(syscall, process, fd_table, address_space, pidns)
-    handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
-    syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     allocator = memory.AllocatorClient.make_allocator(base_task)
     # we assume our SignalMask is zero'd before being started, so we don't inherit it
     ram = RAM(base_task,

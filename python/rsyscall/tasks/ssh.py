@@ -268,14 +268,16 @@ async def ssh_bootstrap(
     # to be common for all connections and we should express that
     new_pid_namespace = far.PidNamespace(new_pid)
     new_process = near.Process(new_pid)
-    new_syscall = SyscallConnection(
+    new_base_task = Task(
+        new_process, handle.FDTable(new_pid), new_address_space,
+        new_pid_namespace,
+    )
+    handle_remote_syscall_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_sock))
+    new_base_task.sysif = SyscallConnection(
         logger.getChild(str(new_process)),
         async_local_syscall_sock, async_local_syscall_sock,
+        handle_remote_syscall_fd, handle_remote_syscall_fd,
     )
-    new_base_task = Task(new_syscall, new_process, handle.FDTable(new_pid), new_address_space,
-                         new_pid_namespace)
-    handle_remote_syscall_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_sock))
-    new_syscall.store_remote_side_handles(handle_remote_syscall_fd, handle_remote_syscall_fd)
     handle_remote_data_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_sock))
     handle_listening_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.listening_sock))
     new_allocator = memory.AllocatorClient.make_allocator(new_base_task)

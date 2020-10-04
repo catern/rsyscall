@@ -76,7 +76,7 @@ async def rsyscall_exec(
     # unshare files so we can unset cloexec on fds to inherit
     await child.unshare_files(going_to_exec=True)
     # unset cloexec on all the fds we want to copy to the new space
-    fds_to_not_inherit = set([syscall.infd, syscall.outfd])
+    fds_to_not_inherit = set([syscall.server_infd, syscall.server_outfd])
     fds_to_inherit = [fd for fd in child.task.fd_handles if fd not in fds_to_not_inherit]
     for fd in fds_to_inherit:
         await fd.fcntl(F.SETFD, 0)
@@ -99,8 +99,8 @@ async def rsyscall_exec(
     child.task.sysif = SyscallConnection(
         logger.getChild(str(child.process.process.near)),
         access_syscall_sock, access_syscall_sock,
+        passed_syscall_sock, passed_syscall_sock,
     )
-    child.task.sysif.store_remote_side_handles(syscall.infd, syscall.infd)
     # now we are alive and fully working again, we can be used for GC
     child.task._add_to_active_fd_table_tasks()
 

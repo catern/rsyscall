@@ -139,10 +139,11 @@ async def _make_local_thread() -> Thread:
     """
     process = near.Process(os.getpid())
     task = Task(
-        LocalSyscall(), process, handle.FDTable(process.id),
+        process, handle.FDTable(process.id),
         far.AddressSpace(process.id),
         far.PidNamespace(process.id),
     )
+    task.sysif = LocalSyscall()
     ram = RAM(task, LocalMemoryTransport(task), memory.AllocatorClient.make_allocator(task))
     epfd = await task.epoll_create()
     async def wait_readable():

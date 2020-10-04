@@ -240,8 +240,8 @@ class PersistentThread(Thread):
         self.task.sysif = SyscallConnection(
             self.task.sysif.logger,
             access_syscall_sock, access_syscall_sock,
+            infd, outfd,
         )
-        self.task.sysif.store_remote_side_handles(infd, outfd)
         # Fix up RAM with new transport
         # TODO technically this could still be in the same address space - that's the case in our tests.
         # we should figure out a way to use a LocalMemoryTransport here so it can copy efficiently

@@ -168,3 +168,13 @@ class SyscallHangup(Exception):
     This may be thrown by SyscallInterface.
     """
     pass
+
+class UnusableSyscallInterface(SyscallInterface):
+    async def submit_syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
+        raise Exception("can't send syscalls through this sysif")
+
+    async def close_interface(self) -> None:
+        pass
+
+    def get_activity_fd(self) -> t.Optional[handle.FileDescriptor]:
+        raise Exception("can't get an activity fd from this sysif")
