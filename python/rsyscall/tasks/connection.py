@@ -174,7 +174,8 @@ class SyscallConnection(SyscallInterface):
     async def close_interface(self) -> None:
         """Close this interface
 
-        We don't immediately close infd and outfd because...  TODO why did we do this.
+        We don't close server_infd and server_outfd, because we don't have any way to close
+        them; they were handles that used this syscall interface, so now they're broken.
 
         """
         if self.pending_requests:
@@ -184,8 +185,6 @@ class SyscallConnection(SyscallInterface):
             raise Exception("can't close while there are pending requests", self.pending_requests)
         await self.tofd.close()
         await self.fromfd.close()
-        self.infd._invalidate()
-        self.outfd._invalidate()
 
     async def _read_pending_responses(self) -> None:
         "Overridden by ChildSyscallInterface"
