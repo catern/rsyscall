@@ -23,6 +23,12 @@ class TestClone(TrioTestCase):
         async with thread:
             await thread.exit(0)
 
+    async def test_nest_multiple(self) -> None:
+        for i in range(5):
+            child = await self.thr.clone()
+            async with child:
+                await do_async_things(self, child.epoller, child)
+
     async def test_two_children_exec(self) -> None:
         """Start two child and exec in each of them.
 
@@ -60,6 +66,11 @@ class TestClone(TrioTestCase):
     async def test_exec(self) -> None:
         child = await self.thr.exec(self.thr.environ.sh.args('-c', 'true'))
         await child.check()
+
+    async def test_check_in_nursery(self) -> None:
+        "We broke this with some concurrency refactoring once"
+        child = await self.thr.exec(self.thr.environ.sh.args('-c', 'sleep inf'))
+        self.nursery.start_soon(child.check)
 
     async def test_nest_exec(self) -> None:
         child = await self.thr.clone()
