@@ -15,8 +15,7 @@ from rsyscall.handle import Pointer, Task, FileDescriptor
 from rsyscall.concurrency import OneAtATime
 from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
 from rsyscall.epoller import AsyncFileDescriptor
-from rsyscall.near.sysif import SyscallHangup, SyscallInterface, Syscall
-from rsyscall.tasks.util import raise_if_error
+from rsyscall.near.sysif import SyscallHangup, SyscallInterface, Syscall, raise_if_error
 import logging
 import rsyscall.near.sysif
 import typing as t

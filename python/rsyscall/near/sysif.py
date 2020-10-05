@@ -21,6 +21,7 @@ import trio
 import abc
 from rsyscall.sys.syscall import SYS
 import typing as t
+import os
 if t.TYPE_CHECKING:
     import rsyscall.handle as handle
 
@@ -188,6 +189,12 @@ class SyscallHangup(Exception):
     This may be thrown by SyscallInterface.
     """
     pass
+
+def raise_if_error(response: int) -> None:
+    "Raise an OSError if this integer is in the error range for syscall return values"
+    if -4095 < response < 0:
+        err = -response
+        raise OSError(err, os.strerror(err))
 
 class UnusableSyscallInterface(SyscallInterface):
     async def submit_syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:

@@ -6,11 +6,10 @@ start. From this thread, we create all the others.
 """
 from __future__ import annotations
 from rsyscall.thread import Thread
-from rsyscall.tasks.util import raise_if_error
 from rsyscall._raw import ffi, lib # type: ignore
 import trio
 import rsyscall.far as far
-from rsyscall.near.sysif import SyscallInterface, SyscallResponse, Syscall
+from rsyscall.near.sysif import SyscallInterface, SyscallResponse, Syscall, raise_if_error
 import rsyscall.near.types as near
 import rsyscall.handle as handle
 import rsyscall.loader as loader
