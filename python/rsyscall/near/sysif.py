@@ -183,10 +183,44 @@ class SyscallResponse:
         "Wait for the corresponding syscall to complete and return its result, throwing on error results."
         pass
 
-class SyscallHangup(Exception):
-    """The task we were sending syscalls to, has changed state in a way that prevents it from responding to future syscalls.
+class SyscallError(Exception):
+    """Something prevents us from returning a normal result for this syscall.
+
+    The syscall may or may not have been actually sent to the process,
+    and may or may not have actually been executed.
+
+    This is a permanent error; all future syscalls on this interface
+    will also fail with a SyscallError.
+
+    Raised by SyscallInterface.syscall.
+
+    """
+    pass
+
+class SyscallHangup(SyscallError):
+    """This syscall was sent, but we got the equivalent of a hangup when we read the result.
+
+    We don't know if the syscall was actually executed or not.  The
+    hangup may not be actually related to the syscall we sent; we'd
+    also get a hangup for syscalls if the process died.
+
+    Note that for some syscalls (exit and exec, namely), this result
+    indicates success. (Although not with absolute certainty, since
+    the hangup could also be unrelated in those cases.)
+
+    Raised by SyscallInterface.syscall.
 
     This may be thrown by SyscallInterface.
+    """
+    pass
+
+class SyscallSendError(SyscallError):
+    """We encountered an error when we tried to send this syscall.
+
+    We know for sure that this syscall was not sent and was not
+    executed.
+
+    Raised by SyscallInterface.syscall.
     """
     pass
 
@@ -198,7 +232,7 @@ def raise_if_error(response: int) -> None:
 
 class UnusableSyscallInterface(SyscallInterface):
     async def submit_syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
-        raise Exception("can't send syscalls through this sysif")
+        raise SyscallSendError("can't send syscalls through this sysif")
 
     async def close_interface(self) -> None:
         pass

@@ -15,7 +15,7 @@ from rsyscall.handle import Pointer, Task, FileDescriptor
 from rsyscall.concurrency import OneAtATime
 from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
 from rsyscall.epoller import AsyncFileDescriptor
-from rsyscall.near.sysif import SyscallHangup, SyscallInterface, Syscall, raise_if_error
+from rsyscall.near.sysif import SyscallSendError, SyscallHangup, SyscallInterface, Syscall, raise_if_error
 import logging
 import rsyscall.near.sysif
 import typing as t
@@ -26,10 +26,6 @@ __all__ = [
     "ConnectionResponse",
     "Syscall",
 ]
-
-class ConnectionError(SyscallHangup):
-    "Something has gone wrong with the rsyscall connection"
-    pass
 
 @dataclass
 class RsyscallSyscall(Struct, Syscall):
@@ -259,7 +255,7 @@ class SyscallConnection(SyscallInterface):
             # transport errors
             # TODO we should copy the exception to all the requesters,
             # not just the one calling us; otherwise they'll block forever.
-            raise ConnectionError() from e
+            raise SyscallSendError() from e
         # set the response field on the requests to indicate that they've been written
         responses = [ConnectionResponse() for _ in requests]
         for request, response in zip(requests, responses):
