@@ -84,6 +84,19 @@ class TestSocket(TrioTestCase):
         self.assertEqual(hdrval.name, None)
         self.assertEqual(hdrval.flags, MsghdrFlags.CMSG_CLOEXEC)
 
+
+    async def test_shutdown_read(self) -> None:
+        "When we shutdown(SHUT.RD) a socket and read from it, we get pending data then EOF"
+        fds = await (await self.thr.task.socketpair(
+            AF.UNIX, SOCK.STREAM, 0,
+            await self.thr.ram.malloc(Socketpair))).read()
+
+        data = b'hello'
+        await fds.second.write(await self.thr.ptr(data))
+        await fds.first.shutdown(SHUT.RD)
+        read, _ = await fds.first.read(await self.thr.malloc(bytes, 4096))
+        self.assertEqual(read.size(), len(data))
+
     async def test_long_sockaddr(self) -> None:
         "SockaddrUn.from_path works correctly on long Unix socket paths"
         longdir = await self.thr.ram.ptr(self.path/("long"*50))

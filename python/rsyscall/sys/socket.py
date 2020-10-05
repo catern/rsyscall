@@ -18,6 +18,7 @@ from rsyscall.sys.uio import IovecList
 
 __all__ = [
     "AF",
+    "SHUT",
     "Sockaddr",
     "SockaddrStorage",
     "SOCK",
