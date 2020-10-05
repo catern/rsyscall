@@ -83,14 +83,12 @@ async def stdin_bootstrap(
     # the basic connections
     [(access_syscall_sock, passed_syscall_sock),
      (access_data_sock, passed_data_sock)] = await parent.open_async_channels(2)
-    # memfd for setting up the futex
-    futex_memfd = await parent.task.memfd_create(await parent.ram.ptr("child_robust_futex_list"))
     # send the fds to the new process
     connection_fd, make_connection = await parent.connection.prep_fd_transfer()
     async def sendmsg_op(sem: RAM) -> WrittenPointer[SendMsghdr]:
         iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
         cmsgs = await sem.ptr(CmsgList([CmsgSCMRights([
-            passed_syscall_sock, passed_data_sock, futex_memfd, connection_fd])]))
+            passed_syscall_sock, passed_data_sock, connection_fd])]))
         return await sem.ptr(SendMsghdr(None, iovec, cmsgs))
     _, [] = await parent_sock.sendmsg(await parent.ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
     # close our reference to fds that only the new process needs
@@ -146,6 +144,4 @@ async def stdin_bootstrap(
         stdout=base_task.make_fd_handle(near.FileDescriptor(1)),
         stderr=base_task.make_fd_handle(near.FileDescriptor(2)),
     )
-    #### TODO set up futex I guess
-    remote_futex_memfd = near.FileDescriptor(describe_struct.futex_memfd)
     return child_process, new_parent

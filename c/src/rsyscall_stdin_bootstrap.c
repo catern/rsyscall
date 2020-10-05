@@ -50,13 +50,12 @@ int main(int argc, char** argv, char** envp)
 {
     if (argc != 1) errx(1, "usage: %s", argv[0]);
     const int connsock = 0;
-    const int nfds = 4;
+    const int nfds = 3;
     int fds[nfds];
     receive_fds(connsock, fds, nfds);
     const int syscall_fd = fds[0];
     const int data_fd = fds[1];
-    const int futex_memfd = fds[2];
-    const int connecting_fd = fds[3];
+    const int connecting_fd = fds[2];
     size_t envp_count = 0;
     for (; envp[envp_count] != NULL; envp_count++);
     struct rsyscall_stdin_bootstrap describe = {
@@ -64,7 +63,6 @@ int main(int argc, char** argv, char** envp)
         .pid = getpid(),
         .syscall_fd = syscall_fd,
         .data_fd = data_fd,
-        .futex_memfd = futex_memfd,
         .connecting_fd = connecting_fd,
         .envp_count = envp_count,
     };
