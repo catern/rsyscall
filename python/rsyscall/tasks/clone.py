@@ -15,7 +15,6 @@ from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.struct import Int32
 from rsyscall.tasks.connection import SyscallConnection
-from rsyscall.near.sysif import SyscallHangup
 import contextlib
 import logging
 import rsyscall.far as far
@@ -26,6 +25,7 @@ import typing as t
 from rsyscall.sched import CLONE
 from rsyscall.signal import SIG
 from rsyscall.sys.mman import PROT, MAP
+from rsyscall.sys.socket import SHUT
 from rsyscall.sys.wait import W
 
 __all__ = [
@@ -37,16 +37,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-class MMRelease(SyscallHangup):
-    """The task we were sending syscalls to has either exited or exec'd; either way it can no longer respond
-
-    More concretely, the task has left its old address space - it has called the
-    mm_release kernel function (hence the name of this class).
-
-    """
-    pass
-
 
 class ChildSyscallInterface(SyscallConnection):
     """A connection to an rsyscall server that is one of our child processes
@@ -63,8 +53,8 @@ class ChildSyscallInterface(SyscallConnection):
 
     In this class, we detect a hangup while waiting for a syscall response by
     simultaneously monitoring the futex process. If the futex process exits, we
-    stop waiting for the syscall response and throw SyscallHangup back to the
-    caller.
+    shutdown the remote side of the syscall connection, so that we'll receive an EOF
+    locally.
 
     This is not just a matter of failure cases, it's also important for normal
     functionality. Detecting a hangup is our only way to discern whether a call
@@ -107,22 +97,13 @@ class ChildSyscallInterface(SyscallConnection):
         expose it with this relatively generic interface.
 
         """
-        futex_exited = False
-        got_result = False
         async with trio.open_nursery() as nursery:
             async def futex_exit() -> None:
                 await self.futex_process.waitpid(W.EXITED)
-                nonlocal futex_exited
-                futex_exited = True
-                nursery.cancel_scope.cancel()
+                await self.fromfd.handle.shutdown(SHUT.RDWR)
             nursery.start_soon(futex_exit)
             yield
-            got_result = True
             nursery.cancel_scope.cancel()
-        if got_result:
-            return
-        elif futex_exited:
-            raise MMRelease()
 
     async def _read_syscall_responses_direct(self) -> None:
         async with self._throw_on_child_exit():
