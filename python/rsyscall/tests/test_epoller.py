@@ -15,16 +15,22 @@ class TestEpoller(TrioTestCase):
         await do_async_things(self, self.thr.epoller, self.thr)
 
     async def test_multi(self) -> None:
+        await do_async_things(self, self.thr.epoller, self.thr, 0)
         async with trio.open_nursery() as nursery:
-            for i in range(5):
-                nursery.start_soon(do_async_things, self, self.thr.epoller, self.thr)
+            for i in range(1, 6):
+                nursery.start_soon(do_async_things, self, self.thr.epoller, self.thr, i)
 
-    async def test_thread_two(self) -> None:
+    async def test_thread_multi(self) -> None:
+        thread = await self.thr.clone()
+        await do_async_things(self, thread.epoller, thread, 0)
+        async with trio.open_nursery() as nursery:
+            for i in range(1, 6):
+                nursery.start_soon(do_async_things, self, thread.epoller, thread, i)
+
+    async def test_thread_root_epoller(self) -> None:
         thread = await self.thr.clone()
         epoller = await Epoller.make_root(thread.ram, thread.task)
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(do_async_things, self, epoller, thread)
-            nursery.start_soon(do_async_things, self, thread.epoller, thread)
+        await do_async_things(self, epoller, thread)
 
     async def test_afd_with_handle(self):
         pipe = await self.thr.pipe()
