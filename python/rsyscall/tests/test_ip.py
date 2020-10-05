@@ -7,7 +7,7 @@ from rsyscall import Thread, Pointer, FileDescriptor
 import trio
 import unittest
 
-class TestSocket(TrioTestCase):
+class TestIP(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local.thread
 
