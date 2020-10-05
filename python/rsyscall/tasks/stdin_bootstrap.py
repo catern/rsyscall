@@ -124,8 +124,7 @@ async def stdin_bootstrap(
     # we assume our SignalMask is zero'd before being started, so we don't inherit it
     ram = RAM(base_task,
                SocketMemoryTransport(access_data_sock,
-                                     base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd)),
-                                     allocator),
+                                     base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_fd))),
                allocator)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     epoller = await Epoller.make_root(ram, base_task)

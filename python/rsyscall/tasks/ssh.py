@@ -281,8 +281,7 @@ async def ssh_bootstrap(
     handle_remote_data_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_sock))
     handle_listening_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.listening_sock))
     new_allocator = memory.AllocatorClient.make_allocator(new_base_task)
-    new_transport = SocketMemoryTransport(async_local_data_sock,
-                                          handle_remote_data_fd, new_allocator)
+    new_transport = SocketMemoryTransport(async_local_data_sock, handle_remote_data_fd)
     # we don't inherit SignalMask; we assume ssh zeroes the sigmask before starting us
     new_ram = RAM(new_base_task, new_transport, new_allocator)
     epoller = await Epoller.make_root(new_ram, new_base_task)

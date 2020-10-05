@@ -1,11 +1,13 @@
 "The high-level interfaces to memory"
 from __future__ import annotations
+from rsyscall.concurrency import run_all
 from rsyscall.handle import Task, Pointer, WrittenPointer
 from rsyscall.memory.transport import MemoryTransport, MemoryGateway
 from rsyscall.memory.allocation_interface import AllocationInterface
 from rsyscall.memory.allocator import AllocatorInterface
 from rsyscall.struct import FixedSize, T_fixed_size, HasSerializer, T_has_serializer, FixedSerializer, T_fixed_serializer, Serializer, PathLikeSerializer, T_pathlike, StrSerializer
 from rsyscall.sys.mman import MemoryMapping
+import functools
 import os
 import rsyscall.near.types as near
 import rsyscall.far as far
@@ -198,9 +200,9 @@ class LaterAllocator(AllocatorInterface):
 
 class NoopTransport(MemoryTransport):
     "A memory transport which doesn't do anything."
-    async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
+    async def read(self, src: Pointer) -> bytes:
         raise Exception("shouldn't try to read")
-    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
+    async def write(self, dest: Pointer, data: bytes) -> None:
         pass
     def inherit(self, task: Task) -> NoopTransport:
         raise Exception("shouldn't try to inherit")
@@ -284,7 +286,9 @@ async def perform_batch(
     allocations = await allocator.bulk_malloc(later_allocator.allocations)
     sem = BatchWriteSemantics(task, transport, PrefilledAllocator(allocations))
     ret = await batch(sem)
-    await transport.batch_write(sem.writes)
+
+    await run_all([functools.partial(transport.write, dest, data)
+                   for dest, data in sem.writes])
     return ret
 
 class RAMThread:

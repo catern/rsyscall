@@ -90,8 +90,7 @@ async def rsyscall_exec(
     # a new address space needs a new allocator and transport; we mutate the RAM so things
     # that have stored the RAM continue to work.
     child.ram.allocator = memory.AllocatorClient.make_allocator(child.task)
-    child.ram.transport = SocketMemoryTransport(
-        access_data_sock, passed_data_sock, child.ram.allocator)
+    child.ram.transport = SocketMemoryTransport(access_data_sock, passed_data_sock)
     # rsyscall-server will write the symbol table to passed_data_sock, and we'll read it
     # from access_data sock to set up the symbol table for the new address space
     child.loader = NativeLoader.make_from_symbols(

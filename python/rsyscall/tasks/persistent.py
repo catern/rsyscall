@@ -245,7 +245,7 @@ class PersistentThread(Thread):
         # Fix up RAM with new transport
         # TODO technically this could still be in the same address space - that's the case in our tests.
         # we should figure out a way to use a LocalMemoryTransport here so it can copy efficiently
-        transport = SocketMemoryTransport(access_data_sock, remote_data_sock, self.ram.allocator)
+        transport = SocketMemoryTransport(access_data_sock, remote_data_sock)
         self.ram.transport = transport
         self.transport = transport
         # Fix up epoller with new activity fd

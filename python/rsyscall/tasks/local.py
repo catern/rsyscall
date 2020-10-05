@@ -115,20 +115,16 @@ class LocalMemoryTransport(MemoryTransport):
     def inherit(self, task: Task) -> LocalMemoryTransport:
         return self
 
-    async def batch_write(self, ops: t.List[t.Tuple[Pointer, bytes]]) -> None:
-        for dest, data in ops:
-            if dest.mapping.task.address_space != self.local_task.address_space:
-                raise Exception("trying to write to pointer", dest, "not in local address space")
-            ffi.memmove(ffi.cast('void*', int(dest.near)), data, len(data))
+    async def write(self, dest: Pointer, data: bytes) -> None:
+        if dest.mapping.task.address_space != self.local_task.address_space:
+            raise Exception("trying to write to pointer", dest, "not in local address space")
+        ffi.memmove(ffi.cast('void*', int(dest.near)), data, len(data))
 
-    async def batch_read(self, ops: t.List[Pointer]) -> t.List[bytes]:
-        ret: t.List[bytes] = []
-        for src in ops:
-            if src.mapping.task.address_space != self.local_task.address_space:
-                raise Exception("trying to read from pointer", src, "not in local address space")
-            buf = ffi.buffer(ffi.cast('void*', int(src.near)), src.size())
-            ret.append(bytes(buf))
-        return ret
+    async def read(self, src: Pointer) -> bytes:
+        if src.mapping.task.address_space != self.local_task.address_space:
+            raise Exception("trying to read from pointer", src, "not in local address space")
+        buf = ffi.buffer(ffi.cast('void*', int(src.near)), src.size())
+        return bytes(buf)
 
 async def _make_local_thread() -> Thread:
     """Create the local thread, allocating various resources locally.
