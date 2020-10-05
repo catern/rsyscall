@@ -15,6 +15,7 @@ SyscallInterface.
 
 """
 from __future__ import annotations
+from dataclasses import dataclass
 import logging
 import trio
 import abc
@@ -154,6 +155,25 @@ class SyscallInterface:
 
         """
         pass
+
+@dataclass
+class Syscall:
+    number: SYS
+    arg1: t.SupportsInt
+    arg2: t.SupportsInt
+    arg3: t.SupportsInt
+    arg4: t.SupportsInt
+    arg5: t.SupportsInt
+    arg6: t.SupportsInt
+
+    def __str__(self) -> str:
+        args = [self.arg1, self.arg2, self.arg3, self.arg4, self.arg5, self.arg6]
+        while args and args[-1] == 0:
+            args.pop()
+        return f"{self.number}({','.join(map(str, args))})"
+
+    def __repr__(self) -> str:
+        return str(self)
 
 class SyscallResponse:
     "A representation of the pending response to some syscall submitted through `submit_syscall`."

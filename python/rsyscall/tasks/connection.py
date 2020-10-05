@@ -15,8 +15,8 @@ from rsyscall.handle import Pointer, Task, FileDescriptor
 from rsyscall.concurrency import OneAtATime
 from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
 from rsyscall.epoller import AsyncFileDescriptor
-from rsyscall.near.sysif import SyscallHangup, SyscallInterface
-from rsyscall.tasks.util import log_syscall, raise_if_error
+from rsyscall.near.sysif import SyscallHangup, SyscallInterface, Syscall
+from rsyscall.tasks.util import raise_if_error
 import logging
 import rsyscall.near.sysif
 import typing as t
@@ -33,16 +33,8 @@ class ConnectionError(SyscallHangup):
     pass
 
 @dataclass
-class Syscall(Struct):
+class RsyscallSyscall(Struct, Syscall):
     "The struct representing a syscall request"
-    number: int
-    arg1: int
-    arg2: int
-    arg3: int
-    arg4: int
-    arg5: int
-    arg6: int
-
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct rsyscall_syscall const*', {
             "sys": self.number,
@@ -86,7 +78,7 @@ class ConnectionResponse:
 
 @dataclass
 class ConnectionRequest:
-    syscall: Syscall
+    syscall: RsyscallSyscall
     response: t.Optional[ConnectionResponse] = None
 
 @dataclass
@@ -187,15 +179,13 @@ class SyscallConnection(SyscallInterface):
     async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0
     ) -> BaseSyscallResponse:
         "Write syscall request on connection and return a response that will contain its result"
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
-        conn_response = await self.write_request(Syscall(
-            number,
-            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6)))
+        syscall = RsyscallSyscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
+        self.logger.info("%s", syscall)
+        conn_response = await self.write_request(syscall)
         response = BaseSyscallResponse(self._read_pending_responses, conn_response)
         return response
 
-    async def write_request(self, syscall: Syscall) -> ConnectionResponse:
+    async def write_request(self, syscall: RsyscallSyscall) -> ConnectionResponse:
         """Write a syscall request, returning a ConnectionResponse
 
         The ConnectionResponse will eventually have .result set to contain the
@@ -257,7 +247,7 @@ class SyscallConnection(SyscallInterface):
     async def _write_pending_requests_direct(self) -> None:
         requests = self.pending_requests
         self.pending_requests = []
-        syscalls = StructList(Syscall, [request.syscall for request in requests])
+        syscalls = StructList(RsyscallSyscall, [request.syscall for request in requests])
         try:
             ptr = await self.tofd.ram.ptr(syscalls)
             # TODO should mark the requests complete incrementally as we write them out,

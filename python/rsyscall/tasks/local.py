@@ -6,11 +6,11 @@ start. From this thread, we create all the others.
 """
 from __future__ import annotations
 from rsyscall.thread import Thread
-from rsyscall.tasks.util import log_syscall, raise_if_error
+from rsyscall.tasks.util import raise_if_error
 from rsyscall._raw import ffi, lib # type: ignore
 import trio
 import rsyscall.far as far
-from rsyscall.near.sysif import SyscallInterface, SyscallResponse
+from rsyscall.near.sysif import SyscallInterface, SyscallResponse, Syscall
 import rsyscall.near.types as near
 import rsyscall.handle as handle
 import rsyscall.loader as loader
@@ -72,7 +72,8 @@ class LocalSyscall(SyscallInterface):
         does, which is sadly quite expensive.
 
         """
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+        syscall = Syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
+        self.logger.info("%s", syscall)
         result = await _direct_syscall(
             number,
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
@@ -96,7 +97,8 @@ class LocalSyscall(SyscallInterface):
         we call raise_if_error to check and throw if we're in that range.
 
         """
-        log_syscall(self.logger, number, arg1, arg2, arg3, arg4, arg5, arg6)
+        syscall = Syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
+        self.logger.info("%s", syscall)
         result = await _direct_syscall(
             number,
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
