@@ -224,12 +224,10 @@ class Epoller:
             raise Exception("can't make a root epoll center if we don't have an activity_fd to monitor")
         epfd = await task.epoll_create()
         center = Epoller(EpollWaiter(ram, epfd, None, -1), ram, epfd)
-        def devnull(event: EPOLL) -> None:
-            pass
         # TODO where should we store this, so that we don't deregister the activity_fd?
         epolled = await center.register(
             # not edge triggered; we don't want to block if there's anything that can be read.
-            activity_fd, EPOLL.IN|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP, devnull)
+            activity_fd, EPOLL.IN|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP)
         return center
 
     def __init__(self, epoll_waiter: EpollWaiter, ram: RAM, epfd: FileDescriptor) -> None:
@@ -247,8 +245,7 @@ class Epoller:
         """
         return Epoller(self.epoll_waiter, ram, self.epfd.inherit(ram.task))
 
-    async def register(self, fd: FileDescriptor, events: EPOLL,
-                       cb: t.Callable[[EPOLL], None]) -> EpolledFileDescriptor:
+    async def register(self, fd: FileDescriptor, events: EPOLL) -> EpolledFileDescriptor:
         """Register a file descriptor on this epollfd, for the given events, calling the passed callback.
 
         The return value can be used to wait for callback calls, modify the events
@@ -256,9 +253,10 @@ class Epoller:
         epollfd.
 
         """
-        number = self.epoll_waiter.add_and_allocate_number(cb, int(fd.near))
+        status = FDStatus(EPOLL.NONE)
+        number = self.epoll_waiter.add_and_allocate_number(status.posedge, int(fd.near))
         await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.ptr(EpollEvent(number, events)))
-        return EpolledFileDescriptor(self, fd, number)
+        return EpolledFileDescriptor(self, fd, number, status)
 
 class EpolledFileDescriptor:
     """Representation of a file descriptor registered on an epollfd.
@@ -270,16 +268,19 @@ class EpolledFileDescriptor:
     def __init__(self,
                  epoller: Epoller,
                  fd: FileDescriptor,
-                 number: int) -> None:
+                 number: int,
+                 status: FDStatus,
+    ) -> None:
         self.epoller = epoller
         self.fd = fd
         # TODO, we should copy this so it can't be closed out from under us
         # self.fd = fd.copy()
         self.number = number
+        self.status = status
         self.in_epollfd = True
 
     def __str__(self) -> str:
-        return f"EpolledFileDescriptor({self.fd.near}, {self.number})"
+        return f"EpolledFileDescriptor({self.fd.near}, {self.number}, {self.status})"
 
     async def do_wait(self) -> None:
         "Perform one epoll_wait, which may call some callbacks."
@@ -296,6 +297,11 @@ class EpolledFileDescriptor:
             await self.epoller.epfd.epoll_ctl(EPOLL_CTL.DEL, self.fd)
             self.epoller.epoll_waiter.remove_number_after_next_epoll_wait(self.number)
             self.in_epollfd = False
+
+    async def wait_for(self, flags: EPOLL) -> None:
+        "Call epoll_wait until at least one of the passed flags is set in our status."
+        while not self.status.mask & flags:
+            await self.do_wait()
 
 @dataclass
 class FDStatus:
@@ -361,48 +367,40 @@ class AsyncFileDescriptor:
         probably not what the user wants.
 
         """
-        status = FDStatus(EPOLL.NONE)
         epolled = await epoller.register(
             fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET,
-            status.posedge,
         )
-        return AsyncFileDescriptor(ram, fd, status, epolled)
+        return AsyncFileDescriptor(ram, fd, epolled)
 
     def __init__(self, ram: RAM, handle: FileDescriptor,
-                 status: FDStatus, epolled: EpolledFileDescriptor,
+                 epolled: EpolledFileDescriptor,
     ) -> None:
         "Don't construct directly; use the AsyncFileDescriptor.make constructor instead."
         self.ram = ram
         self.handle = handle
-        self.status = status
         self.epolled = epolled
 
     def __str__(self) -> str:
-        return f"AsyncFileDescriptor({self.epolled}, {self.status})"
+        return f"AsyncFileDescriptor({self.epolled})"
 
     @property
     def thr(self) -> EpollThread:
         "Synthesizes an EpollThread from the resources in this AsyncFD; useful for calling make_afd."
         return EpollThread(self.handle.task, self.ram, self.epolled.epoller)
 
-    async def _wait_for(self, flags: EPOLL) -> None:
-        "Call epoll_wait until at least one of the passed flags is set in our status."
-        while not self.status.mask & flags:
-            await self.epolled.do_wait()
-
     async def wait_for_rdhup(self) -> None:
         "Call epoll_wait until this file descriptor has a hangup."
-        await self._wait_for(EPOLL.RDHUP|EPOLL.HUP)
+        await self.epolled.wait_for(EPOLL.RDHUP|EPOLL.HUP)
 
     async def read(self, ptr: Pointer) -> t.Tuple[Pointer, Pointer]:
         "Call read without blocking the thread."
         while True:
-            await self._wait_for(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
+            await self.epolled.wait_for(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
             try:
                 return (await self.handle.read(ptr))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    self.status.negedge(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
+                    self.epolled.status.negedge(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
                 else:
                     raise
 
@@ -414,13 +412,13 @@ class AsyncFileDescriptor:
 
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
         "Call write without blocking the thread."
-        await self._wait_for(EPOLL.OUT|EPOLL.ERR)
         while True:
+            await self.epolled.wait_for(EPOLL.OUT|EPOLL.ERR)
             try:
                 return await self.handle.write(buf)
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    self.status.negedge(EPOLL.OUT|EPOLL.ERR)
+                    self.epolled.status.negedge(EPOLL.OUT|EPOLL.ERR)
                 else:
                     raise
 
@@ -444,7 +442,7 @@ class AsyncFileDescriptor:
     ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_sockaddr]]]]:
         "Call accept without blocking the thread."
         while True:
-            await self._wait_for(EPOLL.IN|EPOLL.HUP)
+            await self.epolled.wait_for(EPOLL.IN|EPOLL.HUP)
             try:
                 if addr is None:
                     return (await self.handle.accept(flags))
@@ -452,7 +450,7 @@ class AsyncFileDescriptor:
                     return (await self.handle.accept(flags, addr))
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    self.status.negedge(EPOLL.IN|EPOLL.HUP)
+                    self.epolled.status.negedge(EPOLL.IN|EPOLL.HUP)
                 else:
                     raise
 
@@ -472,13 +470,13 @@ class AsyncFileDescriptor:
         try:
             # TODO an unconnected socket, at least with AF.INET SOCK.STREAM,
             # will have EPOLL.OUT|EPOLL.HUP set when added to epoll, before calling connect.
-            # It seems that this will cause the _wait_for(EPOLL.OUT) call below to spuriously return early,
+            # It seems that this will cause the wait_for(EPOLL.OUT) call below to spuriously return early,
             # and cause the getsockopt to spuriously pass.
             # We should fix this.
             await self.handle.connect(addr)
         except OSError as e:
             if e.errno == errno.EINPROGRESS:
-                await self._wait_for(EPOLL.OUT)
+                await self.epolled.wait_for(EPOLL.OUT)
                 sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(Int32)))
                 retbuf = await self.handle.getsockopt(SOL.SOCKET, SO.ERROR, sockbuf)
                 err = await (await retbuf.read()).buf.read()
@@ -500,7 +498,7 @@ class AsyncFileDescriptor:
         using this AFD.
 
         """
-        return AsyncFileDescriptor(self.ram, fd, self.status, self.epolled)
+        return AsyncFileDescriptor(self.ram, fd, self.epolled)
 
     async def close(self) -> None:
         "Remove this FD from Epoll and invalidate the FD handle."
