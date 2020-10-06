@@ -148,8 +148,8 @@ class AsyncChildProcess:
             # between the previous waitid and now, and was consumed at that time.
             if result:
                 return result
-        await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.NOHANG,
-                                  await self.ram.malloc(Siginfo))
+        siginfo_buf = await self.ram.malloc(Siginfo)
+        await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.NOHANG, siginfo_buf)
         return await self.process.read_siginfo()
 
     async def waitpid(self, options: W) -> ChildState:
