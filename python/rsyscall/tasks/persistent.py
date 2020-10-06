@@ -78,6 +78,8 @@ from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.sched import Stack
 from rsyscall.handle import WrittenPointer, ThreadProcess, Pointer, Task, FileDescriptor
 from rsyscall.memory.socket_transport import SocketMemoryTransport
+from rsyscall.near.sysif import SyscallInterface, SyscallResponse
+from rsyscall.sys.syscall import SYS
 
 import trio
 import struct
@@ -103,6 +105,25 @@ __all__ = [
     "clone_persistent",
     "PersistentThread",
 ]
+
+logger = logging.getLogger(__name__)
+
+class PersistentSyscallConnection(SyscallInterface):
+    def __init__(self, conn: SyscallConnection) -> None:
+        self.conn = conn
+        self.logger = self.conn.logger
+
+    def set_new_conn(self, conn: SyscallConnection) -> None:
+        self.conn = conn
+
+    async def close_interface(self) -> None:
+        await self.conn.close_interface()
+
+    def get_activity_fd(self) -> FileDescriptor:
+        return self.conn.get_activity_fd()
+
+    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
+        return await self.conn.submit_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def clone_persistent(
@@ -207,6 +228,9 @@ class PersistentThread(Thread):
         # TODO hmm should we switch the transport?
         # i guess we aren't actually doing anything but rearranging the file descriptors
         await self.unshare_files(going_to_exec=False)
+        if not isinstance(self.task.sysif, SyscallConnection):
+            raise Exception("self.task.sysif of unexpected type", self.task.sysif)
+        self.task.sysif = PersistentSyscallConnection(self.task.sysif)
         self.prepped_for_reconnect = True
 
     async def make_persistent(self) -> None:
@@ -228,7 +252,7 @@ class PersistentThread(Thread):
             # communication with the process, and we'll just hang forever.
             await self.prep_for_reconnect()
         await self.task.run_fd_table_gc(use_self=False)
-        if not isinstance(self.task.sysif, SyscallConnection):
+        if not isinstance(self.task.sysif, PersistentSyscallConnection):
             raise Exception("self.task.sysif of unexpected type", self.task.sysif)
         await self.task.sysif.close_interface()
         # TODO should check that no transport requests are in flight
@@ -236,12 +260,13 @@ class PersistentThread(Thread):
         [infd, outfd, remote_data_sock] = await _connect_and_send(self, thread, [syscall_sock, syscall_sock, data_sock])
         await syscall_sock.close()
         await data_sock.close()
-        # Fix up Task's sysif with new SyscallConnection
-        self.task.sysif = SyscallConnection(
+        # Set up the new SyscallConnection
+        conn = SyscallConnection(
             self.task.sysif.logger,
             access_syscall_sock, access_syscall_sock,
             infd, outfd,
         )
+        self.task.sysif.set_new_conn(conn)
         # Fix up RAM with new transport
         # TODO technically this could still be in the same address space - that's the case in our tests.
         # we should figure out a way to use a LocalMemoryTransport here so it can copy efficiently
