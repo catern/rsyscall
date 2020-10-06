@@ -84,13 +84,11 @@ class TestClone(TrioTestCase):
             pass
 
     async def test_signal_queue(self) -> None:
-        # have to use an epoller for this specific task
         epoller = await Epoller.make_root(self.thr.ram, self.thr.task)
         sigfd = await AsyncSignalfd.make(self.thr.ram, self.thr.task, epoller, Sigset({SIG.INT}))
+        sigevent = sigfd.next_signal
         await self.thr.process.kill(SIG.INT)
-        buf = await self.thr.ram.malloc(SignalfdSiginfo)
-        sigdata, _ = await sigfd.afd.read(buf)
-        self.assertEqual((await sigdata.read()).signo, SIG.INT)
+        await sigevent.wait()
 
 class TestCloneUnshareFiles(TrioTestCase):
     async def asyncSetUp(self) -> None:
