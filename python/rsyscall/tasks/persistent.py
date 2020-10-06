@@ -178,7 +178,7 @@ async def _connect_and_send(self: PersistentThread, thread: Thread, fds: t.List[
                   for i in ((await data.read()).elems if data else [])]
     await sock.close()
     return remote_fds
-    
+
 class PersistentThread(Thread):
     """A thread which can live on even if everything else has exited
 
