@@ -200,44 +200,47 @@ class UnlimitedAllocator:
         self.lock = trio.Lock()
         self.arenas: t.List[Arena] = []
 
-    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, Allocation]]:
+    async def _bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, Allocation]]:
         "Try to allocate all these requests; if we run out of space, make one big mmap call for the rest."
         allocations: t.List[t.Tuple[MemoryMapping, Allocation]] = []
-        # TODO we should coalesce together multiple pending mallocs waiting on the lock
-        async with self.lock:
-            size_index = 0
-            for arena in self.arenas:
-                size, alignment = sizes[size_index]
+        size_index = 0
+        for arena in self.arenas:
+            size, alignment = sizes[size_index]
+            if alignment > 4096:
+                raise Exception("can't handle alignments of more than 4096 bytes", alignment)
+            try:
+                allocations.append((arena.mapping, arena.allocate(size, alignment)))
+            except OutOfSpaceError:
+                pass
+            else:
+                size_index += 1
+                if size_index == len(sizes):
+                    # we finished all the allocations, stop allocating
+                    break
+        if size_index != len(sizes):
+            # we hit the end of the arena and now need to allocate more for the remaining sizes:
+            rest_sizes = sizes[size_index:]
+            # let's do it in bulk:
+            # TODO this usage of align() overestimates how much memory we need;
+            # it's not a big deal though, because most things have alignment=1
+            remaining_size = sum([align(size, alignment) for size, alignment in rest_sizes])
+            mapping = await self.task.mmap(align(remaining_size, 4096), PROT.READ|PROT.WRITE, MAP.SHARED)
+            arena = Arena(mapping)
+            self.arenas.append(arena)
+            for size, alignment in rest_sizes:
                 if alignment > 4096:
                     raise Exception("can't handle alignments of more than 4096 bytes", alignment)
                 try:
                     allocations.append((arena.mapping, arena.allocate(size, alignment)))
                 except OutOfSpaceError:
-                    pass
-                else:
-                    size_index += 1
-                    if size_index == len(sizes):
-                        # we finished all the allocations, stop allocating
-                        break
-            if size_index != len(sizes):
-                # we hit the end of the arena and now need to allocate more for the remaining sizes:
-                rest_sizes = sizes[size_index:]
-                # let's do it in bulk:
-                # TODO this usage of align() overestimates how much memory we need;
-                # it's not a big deal though, because most things have alignment=1
-                remaining_size = sum([align(size, alignment) for size, alignment in rest_sizes])
-                mapping = await self.task.mmap(align(remaining_size, 4096), PROT.READ|PROT.WRITE, MAP.SHARED)
-                arena = Arena(mapping)
-                self.arenas.append(arena)
-                for size, alignment in rest_sizes:
-                    if alignment > 4096:
-                        raise Exception("can't handle alignments of more than 4096 bytes", alignment)
-                    try:
-                        allocations.append((arena.mapping, arena.allocate(size, alignment)))
-                    except OutOfSpaceError:
-                        raise Exception("some kind of internal error caused a freshly created memory arena",
-                                        " to return null for an allocation, size", size, "alignment", alignment)
+                    raise Exception("some kind of internal error caused a freshly created memory arena",
+                                    " to return null for an allocation, size", size, "alignment", alignment)
         return allocations
+
+    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, Allocation]]:
+        # TODO we should coalesce together multiple pending mallocs waiting on the lock
+        async with self.lock:
+            return await self._bulk_malloc(sizes)
 
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, Allocation]:
         [ret] = await self.bulk_malloc([(size, alignment)])
