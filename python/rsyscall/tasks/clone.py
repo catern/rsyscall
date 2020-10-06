@@ -172,9 +172,9 @@ async def clone_child_task(
     child process exits or execs, and the futex process will accordingly exit.
 
     """
-    # This flag is mandatory; if we don't use CLONE_VM then CHILD_CLEARTID doesn't work
-    # properly and we need to do more arcane things; see tasks.exec.
-    flags |= CLONE.VM
+    # These flags are mandatory; if we don't use CLONE_VM then CHILD_CLEARTID doesn't work
+    # properly and our only other recourse to detect exec is to abuse robust futexes.
+    flags |= CLONE.VM|CLONE.CHILD_CLEARTID
     # Open a channel which we'll use for the rsyscall connection
     [(access_sock, remote_sock)] = await parent.connection.open_async_channels(1)
     # Create a trampoline that will start the new process running an rsyscall server
@@ -195,7 +195,7 @@ async def clone_child_task(
     # it's important to start the processes in this order, so that the thread
     # process is the first process started; this is relevant in several
     # situations, including unshare(NEWPID) and manipulation of ns_last_pid
-    child_process = await parent.monitor.clone(flags|CLONE.CHILD_CLEARTID, stack, ctid=futex_pointer)
+    child_process = await parent.monitor.clone(flags, stack, ctid=futex_pointer)
     futex_process = await launch_futex_monitor(
         parent.ram, parent.loader, parent.monitor, futex_pointer)
     # Set up the new task with appropriately inherited namespaces, tables, etc.
