@@ -1,13 +1,13 @@
 """Functions and classes for a connection between two threads, with which we can open channels for data transfer
 """
 from __future__ import annotations
+from kiselio import make_n_in_parallel
 import abc
 import typing as t
 import trio
 from rsyscall.epoller import AsyncFileDescriptor, Epoller, EpollThread
 from rsyscall.handle import FileDescriptor, WrittenPointer, Task
 from rsyscall.memory.ram import RAM
-from rsyscall.concurrency import make_n_in_parallel
 
 from rsyscall.sys.socket import AF, SOCK, Sockaddr, SendmsgFlags, RecvmsgFlags, SendMsghdr, RecvMsghdr, CmsgList, CmsgSCMRights, Socketpair
 from rsyscall.sys.uio import IovecList
