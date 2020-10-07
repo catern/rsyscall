@@ -1,6 +1,6 @@
 "The high-level interfaces to memory"
 from __future__ import annotations
-from rsyscall.concurrency import run_all
+from dneio import run_all
 from rsyscall.handle import Task, Pointer, WrittenPointer
 from rsyscall.memory.transport import MemoryTransport, MemoryGateway
 from rsyscall.memory.allocation_interface import AllocationInterface

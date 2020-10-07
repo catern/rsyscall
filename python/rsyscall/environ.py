@@ -9,8 +9,8 @@ executables.
 
 """
 from __future__ import annotations
+from dneio import run_all
 from rsyscall.command import Command
-from rsyscall.concurrency import run_all
 from rsyscall.handle import Task, FileDescriptor, WrittenPointer
 from rsyscall.memory.ram import RAM
 from rsyscall.path import Path
