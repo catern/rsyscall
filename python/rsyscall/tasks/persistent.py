@@ -67,6 +67,7 @@ pidfds, which hasn't yet been added.
 
 """
 from __future__ import annotations
+from dneio import Continuation, shift
 import typing as t
 import rsyscall.near.types as near
 import rsyscall.far as far
@@ -78,7 +79,7 @@ from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.sched import Stack
 from rsyscall.handle import WrittenPointer, ThreadProcess, Pointer, Task, FileDescriptor
 from rsyscall.memory.socket_transport import SocketMemoryTransport
-from rsyscall.near.sysif import SyscallInterface, SyscallResponse
+from rsyscall.near.sysif import SyscallInterface, SyscallSendError
 from rsyscall.sys.syscall import SYS
 
 import trio
@@ -95,7 +96,7 @@ from rsyscall.sys.epoll import EPOLL
 from rsyscall.struct import Int32, StructList
 
 from rsyscall.sched import CLONE
-from rsyscall.sys.socket import AF, SOCK, SendmsgFlags, SendMsghdr, CmsgSCMRights, CmsgList
+from rsyscall.sys.socket import AF, SOCK, SendmsgFlags, SendMsghdr, CmsgSCMRights, CmsgList, SHUT
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.uio import IovecList
 from rsyscall.signal import SIG, Sigset, SignalBlock
@@ -110,20 +111,66 @@ logger = logging.getLogger(__name__)
 
 class PersistentSyscallConnection(SyscallInterface):
     def __init__(self, conn: SyscallConnection) -> None:
-        self.conn = conn
+        self.conn: t.Optional[SyscallConnection] = conn
         self.logger = self.conn.logger
+        self._new_conn_cbs: t.List[Continuation[SyscallConnection]] = []
+        self._break_exc: t.Optional[SyscallSendError] = None
+        self._break_cb: t.Optional[Continuation[SyscallSendError]] = None
+
+    def wait_for_break_cb(self, cb: Continuation[SyscallSendError]) -> None:
+        self._break_cb = cb
+
+    async def wait_for_break(self) -> SyscallSendError:
+        assert self._break_cb is None
+        if self._break_exc:
+            exc = self._break_exc
+            self._break_exc = None
+            return exc
+        else:
+            return await shift(self.wait_for_break_cb)
 
     def set_new_conn(self, conn: SyscallConnection) -> None:
+        # to preserve the global relative ordering of syscalls,
+        # we don't set self.conn again until syscalls stop appearing on self._new_conn_cbs
+        while self._new_conn_cbs:
+            cbs = self._new_conn_cbs
+            self._new_conn_cbs = []
+            for cb in cbs:
+                cb.send(conn)
         self.conn = conn
 
+    async def shutdown_current_connection(self) -> None:
+        # Shut down write end of the current connection; any currently running or pending
+        # syscalls (such as epoll_wait) will be able to finish and receive their response,
+        # after which the syscall server will close its end of the current connection and
+        # start listening for a new connection.
+        if self.conn:
+            await self.conn.tofd.handle.shutdown(SHUT.WR)
+
     async def close_interface(self) -> None:
-        await self.conn.close_interface()
+        if self.conn:
+            await self.conn.close_interface()
 
     def get_activity_fd(self) -> FileDescriptor:
-        return self.conn.get_activity_fd()
+        if self.conn:
+            return self.conn.get_activity_fd()
+        raise Exception("can't get activity fd while disconnected")
 
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
-        return await self.conn.submit_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
+    async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
+        while True:
+            if self.conn is None:
+                conn = await shift(self._new_conn_cbs.append)
+            else:
+                conn = self.conn
+            try:
+                return await conn.syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
+            except SyscallSendError as exc:
+                if self.conn is conn:
+                    self.conn = None
+                    if self._break_cb:
+                        self._break_cb.send(exc)
+                    else:
+                        self._break_exc = exc
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def clone_persistent(
@@ -254,8 +301,7 @@ class PersistentThread(Thread):
         await self.task.run_fd_table_gc(use_self=False)
         if not isinstance(self.task.sysif, PersistentSyscallConnection):
             raise Exception("self.task.sysif of unexpected type", self.task.sysif)
-        await self.task.sysif.close_interface()
-        # TODO should check that no transport requests are in flight
+        await self.task.sysif.shutdown_current_connection()
         [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await thread.open_async_channels(2)
         [infd, outfd, remote_data_sock] = await _connect_and_send(self, thread, [syscall_sock, syscall_sock, data_sock])
         await syscall_sock.close()
@@ -273,8 +319,5 @@ class PersistentThread(Thread):
         transport = SocketMemoryTransport(access_data_sock, remote_data_sock)
         self.ram.transport = transport
         self.transport = transport
-        # Fix up epoller with new activity fd
-        await self.epoller.register(
-            infd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP)
         # close remote fds we don't have handles to; this includes the old interface fds.
         await self.task.run_fd_table_gc()

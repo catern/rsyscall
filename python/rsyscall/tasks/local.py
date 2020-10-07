@@ -5,11 +5,12 @@ start. From this thread, we create all the others.
 
 """
 from __future__ import annotations
+from dneio.core import TrioSystemWaitReadable, set_trio_system_wait_readable
 from rsyscall.thread import Thread
 from rsyscall._raw import ffi, lib # type: ignore
 import trio
 import rsyscall.far as far
-from rsyscall.near.sysif import SyscallInterface, SyscallResponse, Syscall, raise_if_error
+from rsyscall.near.sysif import SyscallInterface, Syscall, raise_if_error
 import rsyscall.near.types as near
 import rsyscall.handle as handle
 import rsyscall.loader as loader
@@ -42,14 +43,6 @@ async def _direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0
     "Make a syscall directly in the current thread."
     return lib.rsyscall_raw_syscall(arg1, arg2, arg3, arg4, arg5, arg6, number)
 
-class LocalSyscallResponse(SyscallResponse):
-    "Dummy SyscallResponse for local syscalls."
-    def __init__(self, result_func: t.Callable[[], int]) -> None:
-        self.result_func = result_func
-
-    async def receive(self) -> int:
-        return self.result_func()
-
 class LocalSyscall(SyscallInterface):
     "Makes syscalls in the local, Python interpreter thread."
     def __init__(self) -> None:
@@ -62,17 +55,8 @@ class LocalSyscall(SyscallInterface):
         pass
 
     async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
-        """Send a syscall and wait for it to complete, throwing on error results.
-
-        See SyscallInterface.syscall.
-
-        SyscallInterface provides a default implementation for this method, but we override it for performance reasons;
-        since we immediately get the result, we don't need to create a trio.CancelScope as SyscallInterface.syscall
-        does, which is sadly quite expensive.
-
-        """
         syscall = Syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        self.logger.info("%s", syscall)
+        self.logger.debug("%s", syscall)
         result = await _direct_syscall(
             number,
             arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
@@ -84,28 +68,6 @@ class LocalSyscall(SyscallInterface):
             raise
         self.logger.debug("%s -> %s", number, result)
         return result
-
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> LocalSyscallResponse:
-        """Make a syscall in the local thread; return SyscallResponse already containing the result.
-
-        We can't actually implement the submit_syscall API for local syscalls, so we just
-        immediately make the syscall and pack the response into a dummy SyscallResponse.
-
-        Linux returns errors as just another kind of syscall return value. A certain range
-        of possible syscall return values (-4095 to 0, not inclusive) indicates an error;
-        we call raise_if_error to check and throw if we're in that range.
-
-        """
-        syscall = Syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        self.logger.info("%s", syscall)
-        result = await _direct_syscall(
-            number,
-            arg1=int(arg1), arg2=int(arg2), arg3=int(arg3),
-            arg4=int(arg4), arg5=int(arg5), arg6=int(arg6))
-        def f(result=result) -> int:
-            raise_if_error(result)
-            return result
-        return LocalSyscallResponse(f)
 
 class LocalMemoryTransport(MemoryTransport):
     "This is a memory transport that only works on local pointers."
@@ -146,7 +108,9 @@ async def _make_local_thread() -> Thread:
     async def wait_readable():
         logger.debug("wait_readable(%s)", epfd.near.number)
         await trio.lowlevel.wait_readable(epfd.near.number)
-    epoller = Epoller.make_subsidiary(ram, epfd, wait_readable)
+    trio_system_wait_readable = TrioSystemWaitReadable(epfd.near.number)
+    set_trio_system_wait_readable(trio_system_wait_readable)
+    epoller = Epoller.make_subsidiary(ram, epfd, trio_system_wait_readable.wait)
     thread = Thread(
         task, ram,
         await FDPassConnection.make(task, ram, epoller),

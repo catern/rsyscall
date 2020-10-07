@@ -34,12 +34,16 @@ from dataclasses import dataclass
 from rsyscall import AsyncFileDescriptor, Pointer, FileDescriptor, Task
 from rsyscall.memory.allocation_interface import AllocationInterface
 from rsyscall.memory.transport import MemoryTransport
+from rsyscall.sys.socket import MSG
+import logging
 import trio
 import typing as t
 
 __all__ = [
     "SocketMemoryTransport",
 ]
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class SpanAllocation(AllocationInterface):
@@ -112,54 +116,48 @@ class SocketMemoryTransport(MemoryTransport):
     plus the connected socketpair, into a transport for the "remote"
     address space.
 
+    We rely heavily on the fact that syscall results are returned
+    "synchronously" and in order. After a socket read or write completes on one
+    end of the socketpair, we rely on the corresponding write or read on the
+    other end of the socketpair to be submitted immediately, so that the data is
+    processed in order.
+
     """
     local: AsyncFileDescriptor
     remote: FileDescriptor
 
-    def __post_init__(self) -> None:
-        self._write_lock = trio.Lock()
-        self._read_lock = trio.Lock()
-
     def inherit(self, task: Task) -> SocketMemoryTransport:
         return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote))
 
+    async def do_write(self, dest: Pointer, src: Pointer[bytes], i=0) -> None:
+        if dest.size() == 0:
+            return
+        written, rest = await self.local.write(src)
+        dest, dest_rest = dest.split(written.size())
+        if dest_rest.size() != 0:
+            raise NotImplementedError("partial write, oops, not supported yet")
+        await self.remote.recv(dest, MSG.WAITALL)
+
     async def write(self, dest: Pointer, data: bytes) -> None:
-        async with self._write_lock:
-            with trio.CancelScope(shield=True):
-                if dest.size() != len(data):
-                    raise Exception("mismatched pointer size", dest.size(), "and data size", len(data))
-                dest = to_span(dest)
-                src = await self.local.ram.ptr(data)
-                async def write() -> None:
-                    await self.local.write_all(src)
-                async def read() -> None:
-                    rest = dest
-                    while rest.size() > 0:
-                        read, rest = await self.remote.read(rest)
-                async with trio.open_nursery() as nursery:
-                    nursery.start_soon(read)
-                    nursery.start_soon(write)
+        if dest.size() != len(data):
+            raise Exception("mismatched pointer size", dest.size(), "and data size", len(data))
+        src = await self.local.ram.ptr(data)
+        dest_span = to_span(dest)
+        await self.do_write(dest_span, src)
+
+    async def do_read(self, dest: Pointer[bytes], src: Pointer) -> bytes:
+        if dest.size() == 0:
+            return b''
+        written, rest = await self.remote.write(src)
+        dest, dest_rest = dest.split(written.size())
+        if dest_rest.size() != 0:
+            raise NotImplementedError("partial write, oops, not supported yet")
+        result, anything_left = await self.local.read(dest)
+        if anything_left.size() != 0:
+            raise NotImplementedError("partial read, oops, not supported yet")
+        return await result.read()
 
     async def read(self, src: Pointer) -> bytes:
-        async with self._read_lock:
-            with trio.CancelScope(shield=True):
-                src = to_span(src)
-                dest = await self.local.ram.malloc(bytes, src.size())
-                async def write() -> None:
-                    rest = src
-                    while rest.size() > 0:
-                        written, rest = await self.remote.write(rest)
-                async with trio.open_nursery() as nursery:
-                    nursery.start_soon(write)
-                    read: t.Optional[Pointer[bytes]] = None
-                    rest = dest
-                    while rest.size() > 0:
-                        more_read, rest = await self.local.read(rest)
-                        if read is None:
-                            read = more_read
-                        else:
-                            read = read.merge(more_read)
-                if read is None:
-                    return b''
-                else:
-                    return await read.read()
+        dest = await self.local.ram.malloc(bytes, src.size())
+        src_span = to_span(src)
+        return await self.do_read(dest, src_span)

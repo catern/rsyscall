@@ -4,9 +4,9 @@ That is to say, make a new thread the normal way.
 
 """
 from __future__ import annotations
+from dneio import reset
 from dataclasses import dataclass
 from rsyscall._raw import ffi # type: ignore
-from rsyscall.concurrency import OneAtATime
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.handle import Stack, WrittenPointer, Pointer, FutexNode, FileDescriptor, Task, FutexNode
 from rsyscall.loader import Trampoline, NativeLoader
@@ -15,6 +15,7 @@ from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.struct import Int32
 from rsyscall.tasks.connection import SyscallConnection
+from rsyscall.near.sysif import SyscallError
 import contextlib
 import logging
 import rsyscall.far as far
@@ -37,85 +38,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-class ChildSyscallInterface(SyscallConnection):
-    """A connection to an rsyscall server that is one of our child processes
-
-    We take as arguments here not only a SyscallConnection, but also an
-    AsyncChildProcess, the futex_process, which exits when the process we are
-    sending syscalls to exits or execs.
-
-    This is useful for situations where we can't rely on getting an EOF if the
-    other side of a connection dies. That will happen, for example, whenever the
-    child process is sharing a file descriptor table with us. In those
-    situations, we need some other means to detect that a syscall will never be
-    responded to, and signal it to the caller by throwing SyscallHangup.
-
-    In this class, we detect a hangup while waiting for a syscall response by
-    simultaneously monitoring the futex process. If the futex process exits, we
-    shutdown the remote side of the syscall connection, so that we'll receive an EOF
-    locally.
-
-    This is not just a matter of failure cases, it's also important for normal
-    functionality. Detecting a hangup is our only way to discern whether a call
-    to execve() or exit() was successful, and rsyscall.near.{execve,exit} treat
-    receiving an RsycallHangup as success.
-
-    A better way of detecting exec success would be great...
-
-    """
-    def __init__(self,
-                 logger: logging.Logger,
-                 tofd: AsyncFileDescriptor,
-                 fromfd: AsyncFileDescriptor,
-                 futex_process: AsyncChildProcess,
-                 server_infd: FileDescriptor,
-                 server_outfd: FileDescriptor,
-    ) -> None:
-        super().__init__(
-            logger,
-            tofd, fromfd,
-            server_infd, server_outfd,
-        )
-        self.futex_process = futex_process
-        self.running_read = OneAtATime()
-
-    @contextlib.asynccontextmanager
-    async def _throw_on_child_exit(self) -> t.AsyncGenerator[None, None]:
-        """Monitor the child process and throw if it exits or execs
-
-        Naturally, if the child does exit or exec while we're in the context
-        manager body, we'll cancel the context manager body so that we don't
-        spend forever waiting on a dead child.
-
-        This is useful for detecting a situation where we've sent a request and
-        will never receive a response, particularly for syscalls as documented
-        in the module docstring.
-
-        The application to syscalls is the primary purpose of this method; but
-        this method is also useful for some other thread implementations, so we
-        expose it with this relatively generic interface.
-
-        """
-        async with trio.open_nursery() as nursery:
-            async def futex_exit() -> None:
-                await self.futex_process.waitpid(W.EXITED)
-                await self.fromfd.handle.shutdown(SHUT.RDWR)
-            nursery.start_soon(futex_exit)
-            yield
-            nursery.cancel_scope.cancel()
-
-    async def _read_syscall_responses_direct(self) -> None:
-        async with self._throw_on_child_exit():
-            await self.read_pending_responses()
-        self.logger.debug("returning after reading some syscall responses")
-
-    async def _read_pending_responses(self) -> None:
-        async with self.running_read.needs_run() as needs_run:
-            if needs_run:
-                self.logger.debug("running read_syscall_responses_direct")
-                await self._read_syscall_responses_direct()
-                self.logger.debug("done with read_syscall_responses_direct")
 
 async def launch_futex_monitor(ram: RAM,
                                loader: NativeLoader, monitor: ChildProcessMonitor,
@@ -165,11 +87,18 @@ async def clone_child_task(
     We rely on trampoline_func to take a socket and give us a native function call with
     arguments that will speak the rsyscall protocol over that socket.
 
-    We also create a futex process, which we use to monitor the ctid futex.
-    This process allows us to detect when the child successfully finishes an
-    exec; see the docstring of ChildSyscallInterface.  Because we set
-    CLONE.CHILD_CLEARTID, the ctid futex will receive a FUTEX_WAKE when the
-    child process exits or execs, and the futex process will accordingly exit.
+    We want to see EOF on our local socket if that remote socket is no longer being read;
+    for example, if the process exits or execs.
+    This is not automatic for us: Since the process might share its file descriptor table
+    with other processes, remote_sock might not be closed when the process exits or execs.
+
+    To ensure that we get an EOF, we use the ctid futex, which, thanks to
+    CLONE.CHILD_CLEARTID, will be cleared and receive a futex wakeup when the child
+    process exits or execs.
+
+    When we see that futex wakeup (from Python, with the futex integrated into our event
+    loop through launch_futex_monitor), we call shutdown(SHUT.RDWR) on the local socket
+    from the parent. This results in future reads returning EOF.
 
     """
     # These flags are mandatory; if we don't use CLONE_VM then CHILD_CLEARTID doesn't work
@@ -196,8 +125,25 @@ async def clone_child_task(
     # process is the first process started; this is relevant in several
     # situations, including unshare(NEWPID) and manipulation of ns_last_pid
     child_process = await parent.monitor.clone(flags, stack, ctid=futex_pointer)
+    # We want to be able to rely on getting an EOF if the other side of the syscall
+    # connection is no longer being read (e.g., if the process exits or execs).  Since the
+    # process might share its file descriptor table with other processes, remote_sock
+    # might not be closed when the process exits or execs. To ensure that we get an EOF,
+    # we use the ctid futex, which will be cleared on process exit or exec; we shutdown
+    # access_sock when the ctid futex is cleared, to get an EOF.
+    # We do this with launch_futex_monitor and a background coroutine.
     futex_process = await launch_futex_monitor(
         parent.ram, parent.loader, parent.monitor, futex_pointer)
+    async def shutdown_access_sock_on_futex_process_exit():
+        try:
+            await futex_process.waitpid(W.EXITED)
+        except SyscallError:
+            # if the parent of the futex_process dies, this syscall
+            # connection is broken anyway, so shut it down.
+            pass
+        await access_sock.handle.shutdown(SHUT.RDWR)
+    # Running this in the background, without an associated object, is a bit dubious...
+    reset(shutdown_access_sock_on_futex_process_exit())
     # Set up the new task with appropriately inherited namespaces, tables, etc.
     # TODO correctly track all the namespaces we're in
     if flags & CLONE.NEWPID:
@@ -216,10 +162,9 @@ async def clone_child_task(
     await remote_sock.invalidate()
     # Create the new syscall interface, which needs to use not just the connection,
     # but also the futex process.
-    task.sysif = ChildSyscallInterface(
+    task.sysif = SyscallConnection(
         logger.getChild(str(child_process.process.near)),
         access_sock, access_sock,
-        futex_process,
         remote_sock_handle, remote_sock_handle,
     )
     return child_process, task

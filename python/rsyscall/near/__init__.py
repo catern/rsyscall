@@ -32,6 +32,6 @@ from rsyscall.near.types import (
     ProcessGroup,
 )
 # re-exported SyscallInterface
-from rsyscall.near.sysif import SyscallInterface, SyscallResponse, SyscallHangup
+from rsyscall.near.sysif import SyscallInterface, SyscallHangup
 
 
