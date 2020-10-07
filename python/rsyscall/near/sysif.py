@@ -16,10 +16,8 @@ SyscallInterface.
 """
 from __future__ import annotations
 from dataclasses import dataclass
-import logging
-import trio
-import abc
 from rsyscall.sys.syscall import SYS
+import abc
 import typing as t
 import os
 if t.TYPE_CHECKING:
@@ -42,6 +40,7 @@ class SyscallInterface:
     of the register.
 
     """
+    @abc.abstractmethod
     async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         """Send a syscall and wait for it to complete, throwing on error results.
 
@@ -96,49 +95,9 @@ class SyscallInterface:
         to stop a deadlock.
 
         """
-        response = await self.submit_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        try:
-            with trio.CancelScope(shield=True):
-                result = await response.receive()
-        except OSError as exn:
-            self.logger.debug("%s -> %s", number, exn)
-            raise OSError(exn.errno, exn.strerror) from None
-        except Exception as exn:
-            self.logger.debug("%s -/ %s", number, exn)
-            raise
-        else:
-            self.logger.debug("%s -> %s", number, result)
-            return result
-
-    @abc.abstractmethod
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
-        """Submit a syscall without immediately waiting for its response to come back.
-
-        By calling `receive` on SyscallResponse, the caller can wait for the response.
-
-        The primary purpose of this interface is to allow for cancellation. The `syscall`
-        method doesn't allow cancellation while waiting for a syscall response. This
-        method doesn't wait for the syscall response, and so can be used in scenarios
-        where we want to avoid blocking for unneeded syscall responses.
-
-        This interface is not for parallelization or concurrency. The `syscall` method can
-        already be called concurrently from multiple coroutines; using this method does
-        not give any improved performance characteristics compared to just spinning up
-        multiple coroutines to call `syscall` in parallel.
-
-        While this interface does allow the user to avoid blocking for the syscall
-        response, using that as an optimization is obviously a bad idea. For correctness,
-        you must eventually block for the syscall response to make sure the syscall
-        succeeded. Appropriate usage of coroutines allows continuing operation without
-        waiting for the syscall response even with `syscall`, while still enforcing that
-        eventually we will examine the response.
-
-        """
         pass
 
     # non-syscall operations which we haven't figured out how to get rid of yet
-    logger: logging.Logger
-
     @abc.abstractmethod
     async def close_interface(self) -> None:
         "Close this syscall interface, shutting down the connection to the remote process."
@@ -176,13 +135,6 @@ class Syscall:
     def __repr__(self) -> str:
         return str(self)
 
-class SyscallResponse:
-    "A representation of the pending response to some syscall submitted through `submit_syscall`."
-    @abc.abstractmethod
-    async def receive(self) -> int:
-        "Wait for the corresponding syscall to complete and return its result, throwing on error results."
-        pass
-
 class SyscallError(Exception):
     """Something prevents us from returning a normal result for this syscall.
 
@@ -210,7 +162,6 @@ class SyscallHangup(SyscallError):
 
     Raised by SyscallInterface.syscall.
 
-    This may be thrown by SyscallInterface.
     """
     pass
 
@@ -231,7 +182,7 @@ def raise_if_error(response: int) -> None:
         raise OSError(err, os.strerror(err))
 
 class UnusableSyscallInterface(SyscallInterface):
-    async def submit_syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> SyscallResponse:
+    async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         raise SyscallSendError("can't send syscalls through this sysif")
 
     async def close_interface(self) -> None:

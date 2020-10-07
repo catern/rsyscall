@@ -72,31 +72,6 @@ class OneAtATime:
                 self.running = None
                 running.set()
 
-class MultiplexedEvent:
-    """A one-shot event which, when waited on, selects one waiter to run a callable until it completes.
-
-    The point of this class is that we have multiple callers wanting to wait on the
-    completion of a single callable; there's no dedicated thread to run the callable,
-    instead it's run directly on the stack of one of the callers. The callable might be
-    cancelled, but it will keep being re-run until it successfully completes. Then this
-    event is complete; a new one may be created with a new or same callable.
-
-    """
-    def __init__(self, try_running: t.Callable[[], t.Awaitable[None]]) -> None:
-        self.flag = False
-        self.try_running = try_running
-        self.one_at_a_time = OneAtATime()
-
-    async def wait(self) -> None:
-        "Wait until this event is done, possibly performing work on the event if necessary."
-        while not self.flag:
-            async with self.one_at_a_time.needs_run() as needs_run:
-                if needs_run:
-                    # if we successfully complete this call, we set the flag;
-                    # exceptions get propagated up to some arbitrary unlucky caller.
-                    await self.try_running()
-                    self.flag = True
-
 T = t.TypeVar('T')
 async def make_n_in_parallel(make: t.Callable[[], t.Awaitable[T]], count: int) -> t.List[T]:
     "Call `make` n times in parallel, and return all the results."

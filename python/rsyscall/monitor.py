@@ -50,10 +50,11 @@ of child monitoring through centralization into thread A.
 """
 from __future__ import annotations
 from dataclasses import dataclass
-from rsyscall.concurrency import MultiplexedEvent
+from kiselio import RequestQueue, reset, Event
 from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Pointer, ChildProcess
 from rsyscall.memory.ram import RAM
+from rsyscall.near.sysif import SyscallError
 from rsyscall.sched import CLONE
 from rsyscall.signal import SIG, Sigset, Siginfo
 import trio
@@ -105,26 +106,32 @@ class AsyncSignalfd:
         else:
             sigset_ptr = signal_block.newset
         afd = await AsyncFileDescriptor.make(epoller, ram, await task.signalfd(sigset_ptr, SFD.NONBLOCK))
-        return cls(afd, signal_block)
+        return cls(afd, signal_block, await ram.malloc(SignalfdSiginfo))
 
     def __init__(self,
                  afd: AsyncFileDescriptor,
                  signal_block: SignalBlock,
+                 buf: Pointer[SignalfdSiginfo],
     ) -> None:
         "Use the constructor method AsyncSignalfd.make"
         self.afd = afd
         self.signal_block = signal_block
-        self.next_signal = MultiplexedEvent(self._wait_for_some_signal)
+        self.buf = buf
+        self.next_signal = Event()
+        reset(self._run())
 
-    async def _wait_for_some_signal(self):
-        """Wait for a signal, discarding the information received from it
-
-        We don't care about the information from the signal, we just want to sleep until
-        some signal happens.
-
-        """
-        await self.afd.read(await self.afd.ram.malloc(SignalfdSiginfo))
-        self.next_signal = MultiplexedEvent(self._wait_for_some_signal)
+    async def _run(self) -> None:
+        while True:
+            try:
+                valid, rest = await self.afd.read(self.buf)
+            except SyscallError as syscall_error:
+                final_exn = syscall_error
+                break
+            ev, self.next_signal = self.next_signal, Event()
+            # we discard the signal information...
+            ev.set()
+            self.buf = valid + rest
+        self.next_signal.close(final_exn)
 
 class AsyncChildProcess:
     "A child process which can be monitored without blocking the thread"
@@ -132,7 +139,7 @@ class AsyncChildProcess:
         self.process = process
         self.ram = ram
         self.sigchld_sigfd = sigchld_sigfd
-        self.next_sigchld: t.Optional[MultiplexedEvent] = None
+        self.next_sigchld: t.Optional[Event] = None
 
     def __repr__(self) -> str:
         name = type(self).__name__

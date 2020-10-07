@@ -10,9 +10,11 @@ using them.
 
 """
 from __future__ import annotations
+from kiselio import RequestQueue, reset
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.far import AddressSpace
 from rsyscall.near.sysif import SyscallInterface
+import outcome
 import rsyscall.far as far
 import rsyscall.handle as handle
 from rsyscall.memory.allocation_interface import AllocationInterface, UseAfterFreeError
@@ -199,6 +201,15 @@ class UnlimitedAllocator:
         self.task = task
         self.lock = trio.Lock()
         self.arenas: t.List[Arena] = []
+        self.queue = RequestQueue[t.List[t.Tuple[int, int]], t.Sequence[t.Tuple[MemoryMapping, Allocation]]]()
+        reset(self._run())
+
+    async def _run(self) -> None:
+        "Try to allocate all these requests; if we run out of space, make one big mmap call for the rest."
+        # TODO we should coalesce together multiple pending mallocs waiting on the lock
+        while True:
+            sizes, cb = await self.queue.get_one()
+            cb.resume(await outcome.acapture(self._bulk_malloc, sizes))
 
     async def _bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, Allocation]]:
         "Try to allocate all these requests; if we run out of space, make one big mmap call for the rest."
@@ -238,9 +249,7 @@ class UnlimitedAllocator:
         return allocations
 
     async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, Allocation]]:
-        # TODO we should coalesce together multiple pending mallocs waiting on the lock
-        async with self.lock:
-            return await self._bulk_malloc(sizes)
+        return await self.queue.request(sizes)
 
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, Allocation]:
         [ret] = await self.bulk_malloc([(size, alignment)])

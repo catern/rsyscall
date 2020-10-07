@@ -11,23 +11,22 @@ out all at once.
 """
 from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
-from rsyscall.handle import Pointer, Task, FileDescriptor
-from rsyscall.concurrency import OneAtATime
-from rsyscall.struct import T_fixed_size, Struct, Int32, StructList
-from rsyscall.epoller import AsyncFileDescriptor
-from rsyscall.near.sysif import SyscallSendError, SyscallHangup, SyscallInterface, Syscall, raise_if_error
+from kiselio import RequestQueue, reset, is_running_directly_under_trio
+from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
+from rsyscall.handle import Pointer, FileDescriptor
+from rsyscall.near.sysif import SyscallHangup, SyscallSendError, SyscallInterface, Syscall, raise_if_error
+from rsyscall.struct import Struct, StructList
+from rsyscall.sys.socket import SHUT
+from rsyscall.sys.syscall import SYS
 import logging
-import rsyscall.near.sysif
-import typing as t
 import trio
+import typing as t
 
 __all__ = [
     "SyscallConnection",
     "ConnectionResponse",
-    "Syscall",
 ]
 
-@dataclass
 class RsyscallSyscall(Struct, Syscall):
     "The struct representing a syscall request"
     def to_bytes(self) -> bytes:
@@ -66,62 +65,6 @@ class SyscallResponse(Struct):
     def sizeof(cls) -> int:
         return ffi.sizeof('long')
 
-@dataclass
-class ConnectionResponse:
-    "The mutable object that will eventually contain the decoded syscall return value"
-    result: t.Optional[int] = None
-
-@dataclass
-class ConnectionRequest:
-    syscall: RsyscallSyscall
-    response: t.Optional[ConnectionResponse] = None
-
-@dataclass
-class BaseSyscallResponse(rsyscall.near.sysif.SyscallResponse):
-    "A pending response to a syscall, which polls for the actual response by repeatedly calling a function"
-    process_responses: t.Any
-    response: ConnectionResponse
-
-    async def receive(self, logger=None) -> int:
-        while self.response.result is None:
-            if logger:
-                logger.debug("no response yet for %s, calling process responses", self.response)
-            await self.process_responses()
-            if logger:
-                logger.debug("exited process responses for %s", self.response)
-        raise_if_error(self.response.result)
-        return self.response.result
-
-class ReadBuffer:
-    "A simple buffer for deserializing structs"
-    def __init__(self, task: Task) -> None:
-        # To read and write structures, we have to know what task
-        # they're coming from.
-        self.task = task
-        self.buf = b""
-
-    def feed_bytes(self, data: bytes) -> None:
-        self.buf += data
-
-    def read_struct(self, cls: t.Type[T_fixed_size]) -> t.Optional[T_fixed_size]:
-        "Read one fixed-size struct from the buffer, or return None if that's not possible"
-        length = cls.sizeof()
-        if length <= len(self.buf):
-            section = self.buf[:length]
-            self.buf = self.buf[length:]
-            return cls.get_serializer(self.task).from_bytes(section)
-        else:
-            return None
-
-    def read_all_structs(self, cls: t.Type[T_fixed_size]) -> t.List[T_fixed_size]:
-        "Read as many fixed-size structs from the buffer as possible"
-        ret: t.List[T_fixed_size] = []
-        while True:
-            x = self.read_struct(cls)
-            if x is None:
-                return ret
-            ret.append(x)
-
 class SyscallConnection(SyscallInterface):
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
@@ -136,12 +79,11 @@ class SyscallConnection(SyscallInterface):
         self.fromfd = fromfd
         self.server_infd = server_infd
         self.server_outfd = server_outfd
-        self.buffer = ReadBuffer(self.fromfd.handle.task)
         self.valid: t.Optional[Pointer[bytes]] = None
-        self.sending_requests = OneAtATime()
-        self.pending_requests: t.List[ConnectionRequest] = []
-        self.reading_responses = OneAtATime()
-        self.pending_responses: t.List[ConnectionResponse] = []
+        self.request_queue = RequestQueue[RsyscallSyscall, int]()
+        reset(self._run_requests())
+        self.response_queue = RequestQueue[RsyscallSyscall, int]()
+        reset(self._run_responses())
 
     def get_activity_fd(self) -> FileDescriptor:
         """Return an fd which is readable when there's other syscalls waiting to be done
@@ -153,111 +95,85 @@ class SyscallConnection(SyscallInterface):
         return self.server_infd
 
     async def close_interface(self) -> None:
-        """Close this interface
+        """Close this SyscallConnection; pending requests will throw SyscallHangup
 
         We don't close server_infd and server_outfd, because we don't have any way to close
         them; they were handles that used this syscall interface, so now they're broken.
 
         """
-        if self.pending_requests:
-            # TODO we might want to do this, maybe we could cancel these instead?
-            # note that we don't check responses - exit, for example, doesn't get a response...
-            # TODO maybe we should cancel the response when we detect death of task in the enclosing classes?
-            raise Exception("can't close while there are pending requests", self.pending_requests)
-        await self.tofd.close()
-        await self.fromfd.close()
+        await self.tofd.handle.shutdown(SHUT.RDWR)
+        await self.fromfd.handle.shutdown(SHUT.RDWR)
 
-    async def _read_pending_responses(self) -> None:
-        "Overridden by ChildSyscallInterface"
-        await self.read_pending_responses()
-
-    async def submit_syscall(self, number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0
-    ) -> BaseSyscallResponse:
-        "Write syscall request on connection and return a response that will contain its result"
+    async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         syscall = RsyscallSyscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        self.logger.info("%s", syscall)
-        conn_response = await self.write_request(syscall)
-        response = BaseSyscallResponse(self._read_pending_responses, conn_response)
-        return response
+        self.logger.debug("%s", syscall)
+        try:
+            result = await self.do_syscall(syscall)
+            raise_if_error(result)
+        except OSError as exn:
+            self.logger.debug("%s -> %s", number, exn)
+            raise OSError(exn.errno, exn.strerror) from None
+        except Exception as exn:
+            self.logger.debug("%s -/ %s", number, exn)
+            raise
+        else:
+            self.logger.debug("%s -> %s", number, result)
+            return result
 
-    async def write_request(self, syscall: RsyscallSyscall) -> ConnectionResponse:
-        """Write a syscall request, returning a ConnectionResponse
-
-        The ConnectionResponse will eventually have .result set to contain the
-        syscall return value; you can call read_pending_responses to do work on
-        the connection until that happens.
+    async def do_syscall(self, syscall: RsyscallSyscall) -> int:
+        """Write a syscall request and perform it.
 
         """
-        request = ConnectionRequest(syscall)
-        self.pending_requests.append(request)
         # TODO as a hack, so we don't have to figure it out now, we don't allow
         # a syscall request to be cancelled before it's actually made. we could
         # make this work later, and that would reduce some blocking from waitid
-        with trio.CancelScope(shield=True):
-            while request.response is None:
-                await self._write_pending_requests()
-        return request.response
+        if is_running_directly_under_trio():
+            with trio.CancelScope(shield=True):
+                # hmm this cancel scope shields the entire thing. unfortunate...
+                return await self.request_queue.request(syscall)
+        else:
+            return await self.request_queue.request(syscall)
 
-    async def read_pending_responses(self) -> None:
-        "Process some syscall responses, setting their values on the appropriate ConnectionResponse"
-        async with self.reading_responses.needs_run() as needs_run:
-            if needs_run:
-                await self._read_pending_responses_direct()
-
-    async def _read_pending_responses_direct(self) -> None:
-        vals = self.buffer.read_all_structs(SyscallResponse)
-        if vals:
-            self._got_responses(vals)
-            return
-        buf = await self.fromfd.ram.malloc(bytes, 1024)
-        while not vals:
-            if self.valid is None:
-                valid, rest = await self.fromfd.read(buf)
-                if valid.size() == 0:
-                    raise SyscallHangup()
-                self.valid = valid
-                did_read = True
+    async def _run_requests(self) -> None:
+        while True:
+            # wait until we have a batch to do, received from self.pending_requests
+            requests = await self.request_queue.get_many()
+            self.logger.info("_run_requests: get_many: %s", requests)
+            # write remaining_reqs to memory
+            ptr: Pointer[StructList] = await self.tofd.ram.ptr(
+                StructList(RsyscallSyscall, [syscall for syscall, coro in requests]))
+            self.logger.info("_run_requests: performed ptr for: %s", requests)
+            ptr_to_write, reqs_to_write = ptr, requests
+            # TODO write requests to tofd in parallel with receiving more
+            # requests from the channel and writing them to memory
+            try:
+                while ptr_to_write.size() > 0:
+                    _, ptr_to_write = await self.tofd.write(ptr_to_write)
+                    # TODO mark the requests as complete incrementally,
+                    # so if we do have a partial write,
+                    # we don't block earlier requests on later ones.
+            except OSError as syscall_error:
+                exn = SyscallSendError()
+                exn.__cause__ = syscall_error
+                # TODO not necessarily all of the syscalls have failed...
+                # some maybe have been actually written, if we had a partial write
+                for syscall, cb in reqs_to_write:
+                    cb.throw(exn)
             else:
-                did_read = False
-            data = await self.valid.read()
-            self.valid = None
-            self.buffer.feed_bytes(data)
-            if did_read:
-                buf = valid.merge(rest)
-            vals = self.buffer.read_all_structs(SyscallResponse)
-        self._got_responses(vals)
+                for syscall, coro in reqs_to_write:
+                    self.logger.info("forward_request: %s", syscall)
+                    self.response_queue.request_cb(syscall, coro)
 
-    def _got_responses(self, vals: t.List[SyscallResponse]) -> None:
-        responses = self.pending_responses[:len(vals)]
-        self.pending_responses = self.pending_responses[len(vals):]
-        for response, val in zip(responses, vals):
-            response.result = val.value
-
-    async def _write_pending_requests(self) -> None:
-        "Batch together all pending requests and write them out"
-        async with self.sending_requests.needs_run() as needs_run:
-            if needs_run:
-                await self._write_pending_requests_direct()
-
-    async def _write_pending_requests_direct(self) -> None:
-        requests = self.pending_requests
-        self.pending_requests = []
-        syscalls = StructList(RsyscallSyscall, [request.syscall for request in requests])
-        try:
-            ptr = await self.tofd.ram.ptr(syscalls)
-            # TODO should mark the requests complete incrementally as we write them out,
-            # instead of only once all requests have been written out
-            to_write: Pointer = ptr
-            while to_write.size() > 0:
-                written, to_write = await self.tofd.write(to_write)
-        except OSError as e:
-            # we raise a different exception so that users can distinguish syscall errors from
-            # transport errors
-            # TODO we should copy the exception to all the requesters,
-            # not just the one calling us; otherwise they'll block forever.
-            raise SyscallSendError() from e
-        # set the response field on the requests to indicate that they've been written
-        responses = [ConnectionResponse() for _ in requests]
-        for request, response in zip(requests, responses):
-            request.response = response
-        self.pending_responses += responses
+    async def _run_responses(self) -> None:
+        buffer = AsyncReadBuffer(self.fromfd)
+        while True:
+            syscall, cb = await self.response_queue.get_one()
+            self.logger.info("going to read_result for syscall: %s %s", syscall, self.fromfd.handle.near)
+            try:
+                value = (await buffer.read_struct(SyscallResponse)).value
+            except Exception as exn:
+                hangup_exn = SyscallHangup()
+                hangup_exn.__cause__ = exn
+                cb.throw(hangup_exn)
+            else:
+                cb.send(value)

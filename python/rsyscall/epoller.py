@@ -78,19 +78,17 @@ because it's not really useful.
 
 """
 from __future__ import annotations
+from kiselio import RequestQueue, Continuation, reset
 from rsyscall._raw import ffi # type: ignore
 import errno
 import os
 import math
 import typing as t
-from rsyscall.concurrency import OneAtATime
+from rsyscall.near.sysif import SyscallError
 from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
-import trio
 from dataclasses import dataclass
-from rsyscall.near.sysif import SyscallResponse
-
-from rsyscall.struct import Int32
+from rsyscall.struct import Int32, T_fixed_size
 from rsyscall.sys.syscall import SYS
 from rsyscall.sys.socket import SOCK, SOL, SO, Sockaddr, SockaddrStorage, T_sockaddr, Sockbuf
 from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EPOLL_CTL, EpollFlag
@@ -106,6 +104,9 @@ __all__ = [
     "AsyncReadBuffer",
     "EpollThread",
 ]
+
+class RemovedFromEpollError(Exception):
+    pass
 
 class EpollWaiter:
     """The core class which reads events from the epollfd and dispatches them.
@@ -128,15 +129,11 @@ class EpollWaiter:
         self.timeout = timeout
 
         self.used_numbers: t.Set[int] = set()
-        self.number_to_cb: t.Dict[int, t.Callable[[EPOLL], None]] = {}
         self.pending_remove: t.Set[int] = set()
-        self.running_wait = OneAtATime()
-        # resumability
-        self.input_buf: t.Optional[Pointer[EpollEventList]] = None
-        self.syscall_response: t.Optional[SyscallResponse] = None
-        self.valid_events_buf: t.Optional[Pointer[EpollEventList]] = None
+        self.queue = RequestQueue[int, EPOLL]()
+        reset(self._run())
 
-    def add_and_allocate_number(self, cb: t.Callable[[EPOLL], None], request: int) -> int:
+    def allocate_number(self, request: int) -> int:
         """Add a callback which will be called on EpollEvents with data == returned number.
 
         We can then add the returned number to the epollfd with some file descriptor and
@@ -151,7 +148,6 @@ class EpollWaiter:
         while number in self.used_numbers:
             number += 1000
         self.used_numbers.add(number)
-        self.number_to_cb[number] = cb
         return number
 
     def remove_number_after_next_epoll_wait(self, number: int) -> None:
@@ -163,38 +159,50 @@ class EpollWaiter:
         """
         self.pending_remove.add(number)
 
-    async def do_wait(self) -> None:
-        """Perform an interruptible epoll_wait, calling callbacks with any events.
-
-        We take care to store the running state of this method on the object, so that if
-        we're cancelled, someone else can continue the call without dropping any events.
-        It would be nice if we didn't have to do that manually; see "shared coroutine"
-        notion in the docstring of OneAtATime for what we'd prefer.
-
-        """
-        async with self.running_wait.needs_run() as needs_run:
-            if needs_run:
-                maxevents = 32
-                if self.input_buf is None:
-                    self.input_buf = await self.ram.malloc(EpollEventList, maxevents * EpollEvent.sizeof())
-                if self.syscall_response is None:
-                    if self.wait_readable:
-                        await self.wait_readable()
-                    self.syscall_response = await self.epfd.task.sysif.submit_syscall(
-                        SYS.epoll_wait, self.epfd.near, self.input_buf.near, maxevents, self.timeout)
-                if self.valid_events_buf is None:
-                    count = await self.syscall_response.receive()
-                    self.valid_events_buf, _ = self.input_buf.split(count * EpollEvent.sizeof())
-                received_events = await self.valid_events_buf.read()
-                self.input_buf = None
-                self.valid_events_buf = None
-                self.syscall_response = None
-                for event in received_events:
-                    if event.data not in self.pending_remove:
-                        self.number_to_cb[event.data](event.events)
-                for number in self.pending_remove:
-                    del self.number_to_cb[number]
-                self.pending_remove = set()
+    async def _run(self) -> None:
+        input_buf: Pointer = await self.ram.malloc(EpollEventList, 32 * EpollEvent.sizeof())
+        number_to_cb: t.Dict[int, Continuation[EPOLL]] = {}
+        registered_activity_fd: t.Optional[FileDescriptor] = None
+        while True:
+            if self.wait_readable:
+                await self.wait_readable()
+            activity_fd = self.epfd.task.sysif.get_activity_fd()
+            if activity_fd and (registered_activity_fd is not activity_fd):
+                # the activity fd changed, we need to register the new one
+                if registered_activity_fd:
+                    # delete the old registered activity fd
+                    await self.epfd.epoll_ctl(EPOLL_CTL.DEL, registered_activity_fd)
+                activity_fd_number = self.allocate_number(int(activity_fd))
+                # start up a coroutine to consume events from the activity_fd
+                async def devnull(activity_fd_number=activity_fd_number):
+                    while True:
+                        await self.queue.request(activity_fd_number)
+                reset(devnull())
+                await self.epfd.epoll_ctl(EPOLL_CTL.ADD, activity_fd, await self.ram.ptr(
+                    EpollEvent(activity_fd_number,
+                               # not edge triggered; we don't want to block if there's
+                               # anything that can be read.
+                               EPOLL.IN|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP)))
+                registered_activity_fd = activity_fd
+            try:
+                valid_events_buf, rest = await self.epfd.epoll_wait(input_buf, self.timeout)
+                received_events = await valid_events_buf.read()
+            except Exception as wait_error:
+                final_exn = wait_error
+                break
+            input_buf = valid_events_buf + rest
+            for num, cb in self.queue.fetch_any():
+                number_to_cb[num] = cb
+            for event in received_events:
+                number_to_cb[event.data].send(event.events)
+                del number_to_cb[event.data]
+            for num, cb in self.queue.fetch_any():
+                number_to_cb[num] = cb
+            for number in list(self.pending_remove):
+                number_to_cb[number].throw(RemovedFromEpollError())
+                del number_to_cb[number]
+                self.pending_remove.remove(number)
+        self.queue.close(final_exn)
 
 class Epoller:
     "Terribly named class that allows registering fds on epoll, and waiting on them."
@@ -219,15 +227,8 @@ class Epoller:
         component in the thread wants to work on the thread.
 
         """
-        activity_fd = task.sysif.get_activity_fd()
-        if activity_fd is None:
-            raise Exception("can't make a root epoll center if we don't have an activity_fd to monitor")
         epfd = await task.epoll_create()
         center = Epoller(EpollWaiter(ram, epfd, None, -1), ram, epfd)
-        # TODO where should we store this, so that we don't deregister the activity_fd?
-        epolled = await center.register(
-            # not edge triggered; we don't want to block if there's anything that can be read.
-            activity_fd, EPOLL.IN|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP)
         return center
 
     def __init__(self, epoll_waiter: EpollWaiter, ram: RAM, epfd: FileDescriptor) -> None:
@@ -253,10 +254,10 @@ class Epoller:
         epollfd.
 
         """
-        status = FDStatus(EPOLL.NONE)
-        number = self.epoll_waiter.add_and_allocate_number(status.posedge, int(fd.near))
+        number = self.epoll_waiter.allocate_number(int(fd.near))
+        efd = EpolledFileDescriptor(self, fd, number)
         await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.ptr(EpollEvent(number, events)))
-        return EpolledFileDescriptor(self, fd, number, status)
+        return efd
 
 class EpolledFileDescriptor:
     """Representation of a file descriptor registered on an epollfd.
@@ -269,22 +270,19 @@ class EpolledFileDescriptor:
                  epoller: Epoller,
                  fd: FileDescriptor,
                  number: int,
-                 status: FDStatus,
     ) -> None:
         self.epoller = epoller
         self.fd = fd
         # TODO, we should copy this so it can't be closed out from under us
         # self.fd = fd.copy()
         self.number = number
-        self.status = status
+        self.status = FDStatus(EPOLL.NONE)
         self.in_epollfd = True
+        self.queue = RequestQueue[EPOLL, None]()
+        reset(self._run())
 
     def __str__(self) -> str:
         return f"EpolledFileDescriptor({self.fd.near}, {self.number}, {self.status})"
-
-    async def do_wait(self) -> None:
-        "Perform one epoll_wait, which may call some callbacks."
-        await self.epoller.epoll_waiter.do_wait()
 
     async def modify(self, events: EPOLL) -> None:
         "Change the EPOLL flags that this fd is registered with."
@@ -293,15 +291,40 @@ class EpolledFileDescriptor:
 
     async def delete(self) -> None:
         "Delete this fd from the epollfd."
-        if self.in_epollfd:
-            await self.epoller.epfd.epoll_ctl(EPOLL_CTL.DEL, self.fd)
-            self.epoller.epoll_waiter.remove_number_after_next_epoll_wait(self.number)
-            self.in_epollfd = False
+        if not self.in_epollfd:
+            raise Exception("already deleted from epollfd")
+        await self.epoller.epfd.epoll_ctl(EPOLL_CTL.DEL, self.fd)
+        self.epoller.epoll_waiter.remove_number_after_next_epoll_wait(self.number)
+        self.in_epollfd = False
+
+    async def _run(self) -> None:
+        waiters: t.Dict[EPOLL, t.List[t.Tuple[EPOLL, Continuation[None]]]] = {flag: [] for flag in EPOLL}
+        while True:
+            try:
+                ev = await self.epoller.epoll_waiter.queue.request(self.number)
+            except Exception as e:
+                final_exn = e
+                break
+            self.status.posedge(ev)
+            for val, coro in self.queue.fetch_any():
+                for flag in EPOLL:
+                    if val & flag:
+                        waiters[flag].append((val, coro))
+            for flag in EPOLL:
+                if ev & flag:
+                    to_resume = waiters[flag]
+                    for val, cb in list(to_resume):
+                        # remove the cb from other lists it's on; cool scope there, Python
+                        for flag2 in EPOLL:
+                            if val & flag2:
+                                waiters[flag2].remove((val, cb))
+                        cb.send(None)
+        self.queue.close(final_exn)
 
     async def wait_for(self, flags: EPOLL) -> None:
         "Call epoll_wait until at least one of the passed flags is set in our status."
-        while not self.status.mask & flags:
-            await self.do_wait()
+        if not (self.status.mask & flags):
+            return await self.queue.request(flags)
 
 @dataclass
 class FDStatus:
@@ -574,6 +597,14 @@ class AsyncReadBuffer:
         src = ffi.cast(nameptr, ffi.from_buffer(data))
         ffi.memmove(dest, src, size)
         return dest[0]
+
+    async def read_struct(self, cls: t.Type[T_fixed_size]) -> T_fixed_size:
+        "Read one fixed-size struct from the buffer, or return None if that's not possible"
+        size = cls.sizeof()
+        data = await self.read_length(size)
+        if data is None:
+            raise EOFException("got EOF while expecting to read a", cls)
+        return cls.get_serializer(self.fd.handle.task).from_bytes(data)
 
     async def read_length_prefixed_string(self) -> bytes:
         "Read a bytestring which is prefixed with a 64-bit native-byte-order size."
