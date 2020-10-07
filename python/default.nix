@@ -70,6 +70,7 @@ pytest ];
       h11
       dnspython
       pyroute2
+      outcome
   ];
   miredo = pkgs.miredo;
   nix = nix;
