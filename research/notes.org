@@ -24506,7 +24506,7 @@ We discuss the comparison be
 
    so we can make the child waiter a separate thing,
    which we pass in to the syscall connection, sure.
-** TODO good stack trace
+** good stack trace
    let's have the suspendable directly on the stack,
    instead of running it in a background coroutine...
 
@@ -25079,7 +25079,7 @@ fine okay so we'll switch the implementation over to yield
 
 ok great!!
 we did dynscope and then suspendable too worked fine!!
-** TODO adding suspendable syscall
+** DONE adding suspendable syscall
    ok so the syscall is now suspendable, hooray.
 
    we can get rid of submit_syscall entirely now!
@@ -25359,14 +25359,14 @@ we did dynscope and then suspendable too worked fine!!
    trio_op semantics.
 
    but before that, let's do the futures thing.
-** TODO we should remove all direct trio stuff from code which is called by suspendables
+** DONE we should remove all direct trio stuff from code which is called by suspendables
    namely, the possibility of shielded cancelscopes.
 
    we'll use trio_op instead.
 
    and then, we can just have automatic suspendability,
    instead of writing it explicitly.
-** TODO support futures so we can do pipelined ordered syscalls
+** DONE support futures so we can do pipelined ordered syscalls
    so so so.
 
    i guess we can have the idea we had before about a suspendable which returns a value.
@@ -26086,7 +26086,7 @@ fut = await susp.wait(StartedFuture.run(lambda fut: syscall_snd_callback.bind(fu
     i should write a test for the async stuff first (maybe shuffle a batch of coros calling in?)
 
     nice it works
-*** TODO making epoll callback-y
+*** DONE making epoll callback-y
     so.
     we'll have maybe a... hm.
 
@@ -26136,11 +26136,11 @@ fut = await susp.wait(StartedFuture.run(lambda fut: syscall_snd_callback.bind(fu
     we just keep calling into the queue and eventually get gc'd away.
 
     ok cool so this worked...
-*** TODO syscalls
+*** DONE syscalls
     ok so to do epoll sanely we should just do syscalls first.
 
     we can make epoll calls with trio_op.
-*** TODO cancellation
+*** DONE cancellation
     we need to deal with cancellation
 
     ok how about this, cancellation is impossible
@@ -26167,7 +26167,7 @@ fut = await susp.wait(StartedFuture.run(lambda fut: syscall_snd_callback.bind(fu
 
     yes seems fine?
     that will guarantee we start it, sure.
-*** TODO converted everything, time to deal with issues
+*** DONE converted everything, time to deal with issues
     so there's a hang because:
     when coroqueue B calls into coroque C,
     and then someone else calls into A,
@@ -26382,7 +26382,7 @@ fut = await susp.wait(StartedFuture.run(lambda fut: syscall_snd_callback.bind(fu
     maybe when I get GeneratorExit I shouldn't do it...?
 
     yeah ok that's a good fix
-*** TODO should i remove the trio runner from delegators on cancel?
+*** DONE should i remove the trio runner from delegators on cancel?
     probs right?
 
     that would save having to call it and check?
@@ -27633,7 +27633,7 @@ we can... synchronously grab our coro and wrap it up with a reset, I guess?
     or...
     ok I think the traceback is nice now, no need to worry more.
     just removed some cruft.
-*** TODO think about cancellation
+*** DONE think about cancellation
     so... it would be nice to get a stack trace of the thing we cancelled.
 
     but that would be tricky.
@@ -27670,7 +27670,7 @@ we can... synchronously grab our coro and wrap it up with a reset, I guess?
     ok let's just do the little cancellability, it's not a big deal.
 
     it automatically will work right once we're direct anyway
-*** TODO more*2 issue
+*** DONE more*2 issue
     ok so we seem to be handing in stdinboot test_stub again,
     again it only happens when we run the entire test suite,
     so I suspect some kind of GC issue is required to trigger it.
@@ -27726,7 +27726,7 @@ we can... synchronously grab our coro and wrap it up with a reset, I guess?
     bah! let's do the trio-compatible shift/reset thing.
     we're going to have to debug lots of issues anyway,
     let's just go ahead and do it for goodness sake.
-** TODO implement trio-compatible shift/reset
+** DONE implement trio-compatible shift/reset
    I think I feel confident now that this is what I want to do.
    And it won't support cancellation.
    (or maybe it will always support cancellation,
@@ -27893,7 +27893,7 @@ how can the other coroutine runner indicate that the trio Task needs to exit?
     but whatever! this is what I need to do!
 
     now we've got good exceptions again, very nice.
-*** TODO handling shift hmmm
+*** DONE handling shift hmmm
 
     so we can resume a TrioContinuation inside a reset,
     from a coroutine. obviously.
@@ -27901,7 +27901,7 @@ how can the other coroutine runner indicate that the trio Task needs to exit?
     should we handle shift in that case, then?
 
     yeah sure, why not
-*** TODO shutdown of reset coroutines
+*** DONE shutdown of reset coroutines
     hmm i don't think we need an explicit close method do we
 
     we can just catch the various shutdown exceptions as things get GC'd;
@@ -28201,7 +28201,7 @@ def __new__(cls, *args, **kwargs):
 
      ok fine I'll just use futures
 **** DONE misc small things
-*** TODO merge to master!
+*** DONE merge to master!
     woo!
 
     ok, merged a fair bit to master.
@@ -28211,8 +28211,9 @@ def __new__(cls, *args, **kwargs):
 
     ok I've merged even more to master, looking good.
     now I need to revamp socket_transport I think...
-*** TODO consider writing in C?
+*** DONE consider writing in C?
     I don't think this is super necessary right now...
+    considered and rejected
 *** DONE revamp syscallconnection
     okaaaaaaaay I think it's sufficiently cleaned up maybe...
 **** DONE rework storage of infd/outfd
@@ -28554,10 +28555,128 @@ def __new__(cls, *args, **kwargs):
 *** DONE allocator - just move the lock out
 *** DONE clone
     merge flags together
-*** TODO transport
+*** DONE transport
     just use the new implementation under a lock
 
     need to finish it though lol
+*** TODO writeup
+    hmm booper is right,
+    there is an event loop in some sense.
+
+    like... what if i'm running without trio... how do I handle things?
+
+    well i've got my root task, running under a reset, and...
+
+    if we shift away from that, then...
+
+    i guess we just return the answer type from reset, which is tricky.
+
+    but.. hmm.
+
+    how do we pump the loop?? we don't, right,
+    we just, y'know...
+
+    block...
+
+    ok so if we shift away, and we shift into the epoll_waiter,
+    so it begins to call epoll_wait,
+    um.
+
+    and keep in mind we're talking about the local loop;
+    not some separate process.
+
+    so i mean... how do we know when to...
+    instead of returning from the shift...
+    just block?
+
+    this is like the activity_fd.
+    we block and wake up if there's stuff on the activity fd.
+
+    i mean.
+    maybe we just always block?
+    oh, hm.
+    so we wait for someone to shift into us...
+
+    which might be from some other callback.
+
+    and, right, we're at the toplevel anyway,
+    so when they shift, I'm not ready to run.
+
+    so. right.
+    if someone shifts into me, um,
+    and there's nothing else waiting...
+    do I just block?
+
+    i mean this is where a "yield" capability would come in handy, right?
+
+    although not really.
+    if there were multiple people in yield,
+    we wouldn't want to block yet!
+
+    wait wait hm.
+    maybe.. it's okay that reset returns? interesting...
+
+    oh yeah, that's amazing actually.
+    because then we can have synchronous python code,
+    running at the same time as async.
+    kinda, anyway.
+
+    we would need to... drive it... maybe?
+    i mean if we have this same wait_readable...
+
+    ok so...
+
+    would i prefer it to block automatically?
+    it... doesn't know if someone else will register a callback, though?
+
+    well... it does know that if it can run,
+    it's not currently issuing callbacks.
+
+    maybe we should flag or something when everything is started?
+    weird, but weird can point at truth...
+
+    ok, so i mean,
+    we can obviously do something where we issue a bunch of resets,
+    then we block and run the epoll drive thing.
+
+    hm, yielding is kind of incompatible with epoll_wait being able to block;
+    because, when we yield, we're saying, hey this thing is ready to run,
+    but won't get an epoll event. kinda lame.
+
+    maybe we can do the yield with an actual syscall? or something?
+
+    something that would make sense for something downstream of epoller to do...
+
+    the yielder would run the things then block back in epoller...
+
+    what if we start off the epoller with invoking some coroutine?
+
+    so then things it runs will block fine
+
+    (maybe could this work like optimistic EPFDs?)
+
+    ugh but that's basically going to leave epoller at the toplevel again!
+
+    hmm.
+    if I want shift into epoller,
+    to resume the epoller,
+    then...
+    well that's just not possible because normally i'd be running under it!
+
+    but that's just a de-facto result, right?
+    well, we want it to be just a de-facto result...
+
+    where epoller just automatically happens to be at the top...
+
+    h m mmmm
+
+    and the effect system - how do we do the effects we want...
+
+    well it still works fine as an effect system I guess.
+
+    this whole, epoll thing...
+
+    ok fml goddammn it we'll just, go with it.
 ** TODO nicer promises interface
    Promise[A] can be modeled as ¬¬A, which nicely represents that it might block,
    and also the linearity.
