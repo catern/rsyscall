@@ -80,6 +80,7 @@ because it's not really useful.
 from __future__ import annotations
 from dneio import RequestQueue, Continuation, reset
 from rsyscall._raw import ffi # type: ignore
+import collections
 import errno
 import os
 import math
@@ -279,6 +280,8 @@ class EpolledFileDescriptor:
         self.status = FDStatus(EPOLL.NONE)
         self.in_epollfd = True
         self.queue = RequestQueue[EPOLL, None]()
+        self.total_events: t.Counter[EPOLL] = collections.Counter()
+        self.consumed_events: t.Dict[EPOLL, int] = {flag: 0 for flag in EPOLL}
         reset(self._run())
 
     def __str__(self) -> str:
@@ -305,6 +308,7 @@ class EpolledFileDescriptor:
             except Exception as e:
                 final_exn = e
                 break
+            self.total_events.update(ev)
             self.status.posedge(ev)
             for val, coro in self.queue.fetch_any():
                 for flag in val:
@@ -320,8 +324,52 @@ class EpolledFileDescriptor:
 
     async def wait_for(self, flags: EPOLL) -> None:
         "Call epoll_wait until at least one of the passed flags is set in our status."
-        if not (self.status.mask & flags):
+        if (not (self.status.mask & flags)
+            and not any(self.total_events[flag] - self.consumed_events[flag] > 0
+                        for flag in flags)):
             return await self.queue.request(flags)
+
+    def consume(self, events: t.Dict[EPOLL, int]) -> None:
+        """The information from these events is outdated; discard them
+
+        Each syscall gives us information about some kinds of events, and information from
+        events from epoll_wait calls before that syscall are obsoleted by this more
+        up-to-date information.
+
+        So, we call `get_current_events` before each syscall, for the set of flags that
+        that syscall will inform us about. Then, after the syscall, we call `consume`, to
+        indicate that the information from those events is now obsolete.
+
+        We can't consume the events until after the syscall is done, because we want to
+        allow others to optimistically perform syscalls based on these epoll events; not
+        consuming the events immediately also makes us tolerate being canceled without
+        performing the syscall.
+
+        Only the events received before the syscall are known to be obsolete; events
+        received during or after this syscall need to be preserved until more syscalls are
+        made, to prevent deadlocks.
+
+        The reason we need this somewhat complicated edifice is because our calls to
+        epoll_wait are not synchronized with our system calls on individual file
+        descriptors; calls to epoll_wait and fd system calls can happen in different
+        threads and can be arbitrarily reordered relative to each other.
+
+        Note, however, that system calls made from an individual `AsyncFileDescriptor`
+        instance *are* synchronized relative to each other; those system calls are made in
+        a single thread, so the system calls return in order thanks to `dneio`. This
+        allows us to safely immediately call `FDStatus.negedge`/`FDStatus.posedge` after a
+        system call.
+
+        TODO if we have multiple concurrently-used `AsyncFileDescriptor` instances,
+        though, they aren't synchronized, so we need to be a little more careful...
+
+        """
+        self.consumed_events.update(((flag, max(self.consumed_events[flag], count))
+                                     for flag, count in events.items()))
+
+    def get_current_events(self, flags: EPOLL) -> t.Dict[EPOLL, int]:
+        "Get the current set of events from epoll_wait for these flags, for use with consume."
+        return {flag: self.total_events[flag] for flag in flags}
 
 @dataclass
 class FDStatus:
@@ -416,13 +464,19 @@ class AsyncFileDescriptor:
         "Call read without blocking the thread."
         while True:
             await self.epolled.wait_for(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
+            current_events = self.epolled.get_current_events(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
             try:
                 return (await self.handle.read(ptr))
             except OSError as e:
+                self.epolled.consume(current_events)
                 if e.errno == errno.EAGAIN:
                     self.epolled.status.negedge(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
                 else:
+                    self.epolled.status.posedge(EPOLL.ERR)
                     raise
+            else:
+                self.epolled.consume(current_events)
+                self.epolled.status.posedge(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP)
 
     async def read_some_bytes(self, count: int=4096) -> bytes:
         "Read at most count bytes; possibly less, if we have a partial read."
@@ -434,13 +488,19 @@ class AsyncFileDescriptor:
         "Call write without blocking the thread."
         while True:
             await self.epolled.wait_for(EPOLL.OUT|EPOLL.ERR)
+            current_events = self.epolled.get_current_events(EPOLL.OUT|EPOLL.ERR)
             try:
                 return await self.handle.write(buf)
             except OSError as e:
+                self.epolled.consume(current_events)
                 if e.errno == errno.EAGAIN:
                     self.epolled.status.negedge(EPOLL.OUT|EPOLL.ERR)
                 else:
+                    self.epolled.status.posedge(EPOLL.ERR)
                     raise
+            else:
+                self.epolled.consume(current_events)
+                self.epolled.status.posedge(EPOLL.OUT)
 
     async def write_all(self, to_write: Pointer) -> None:
         "Write all of this pointer to the fd, retrying on partial writes until complete."
@@ -462,17 +522,23 @@ class AsyncFileDescriptor:
     ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_sockaddr]]]]:
         "Call accept without blocking the thread."
         while True:
-            await self.epolled.wait_for(EPOLL.IN|EPOLL.HUP)
+            await self.epolled.wait_for(EPOLL.IN|EPOLL.HUP|EPOLL.ERR)
+            current_events = self.epolled.get_current_events(EPOLL.IN|EPOLL.HUP|EPOLL.ERR)
             try:
                 if addr is None:
                     return (await self.handle.accept(flags))
                 else:
                     return (await self.handle.accept(flags, addr))
             except OSError as e:
+                self.epolled.consume(current_events)
                 if e.errno == errno.EAGAIN:
-                    self.epolled.status.negedge(EPOLL.IN|EPOLL.HUP)
+                    self.epolled.status.negedge(EPOLL.IN|EPOLL.HUP|EPOLL.ERR)
                 else:
+                    self.epolled.status.posedge(EPOLL.HUP|EPOLL.ERR)
                     raise
+            else:
+                self.epolled.consume(current_events)
+                self.epolled.status.posedge(EPOLL.IN)
 
     async def accept_addr(self, flags: SOCK=SOCK.NONE) -> t.Tuple[FileDescriptor, Sockaddr]:
         "Call accept with a buffer for the address, and return the resulting fd and address."
@@ -488,19 +554,24 @@ class AsyncFileDescriptor:
     async def connect(self, addr: WrittenPointer[Sockaddr]) -> None:
         "Call connect without blocking the thread."
         try:
-            # TODO an unconnected socket, at least with AF.INET SOCK.STREAM,
+            # Note that an unconnected socket, at least with AF.INET SOCK.STREAM,
             # will have EPOLL.OUT|EPOLL.HUP set when added to epoll, before calling connect.
-            # It seems that this will cause the wait_for(EPOLL.OUT) call below to spuriously return early,
-            # and cause the getsockopt to spuriously pass.
-            # We should fix this.
+            current_events = self.epolled.get_current_events(EPOLL.OUT)
             await self.handle.connect(addr)
         except OSError as e:
+            self.epolled.consume(current_events)
+            self.epolled.status.negedge(EPOLL.OUT)
             if e.errno == errno.EINPROGRESS:
                 await self.epolled.wait_for(EPOLL.OUT)
+                current_events = self.epolled.get_current_events(EPOLL.OUT)
                 sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(Int32)))
                 retbuf = await self.handle.getsockopt(SOL.SOCKET, SO.ERROR, sockbuf)
                 err = await (await retbuf.read()).buf.read()
-                if err != 0:
+                self.epolled.consume(current_events)
+                if err == 0:
+                    self.epolled.posedge(EPOLL.OUT)
+                else:
+                    self.epolled.posedge(EPOLL.ERR)
                     try:
                         raise OSError(err, os.strerror(err))
                     except OSError as exn:
@@ -510,6 +581,9 @@ class AsyncFileDescriptor:
                         raise
             else:
                 raise
+        else:
+            self.epolled.consume(current_events)
+            self.epolled.status.posedge(EPOLL.OUT)
 
     def with_handle(self, fd: FileDescriptor) -> AsyncFileDescriptor:
         """Return a new AFD using this new FD handle for making syscalls.
