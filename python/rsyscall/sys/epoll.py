@@ -26,6 +26,11 @@ class EPOLL(enum.IntFlag):
     # options
     ET = lib.EPOLLET
 
+    def __iter__(self) -> t.Iterator[EPOLL]:
+        for flag in EPOLL:
+            if self & flag:
+                yield flag
+
 @dataclass
 class EpollEvent(Struct):
     data: int

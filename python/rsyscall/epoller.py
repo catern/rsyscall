@@ -307,18 +307,15 @@ class EpolledFileDescriptor:
                 break
             self.status.posedge(ev)
             for val, coro in self.queue.fetch_any():
-                for flag in EPOLL:
-                    if val & flag:
-                        waiters[flag].append((val, coro))
-            for flag in EPOLL:
-                if ev & flag:
-                    to_resume = waiters[flag]
-                    for val, cb in list(to_resume):
-                        # remove the cb from other lists it's on; cool scope there, Python
-                        for flag2 in EPOLL:
-                            if val & flag2:
-                                waiters[flag2].remove((val, cb))
-                        cb.send(None)
+                for flag in val:
+                    waiters[flag].append((val, coro))
+            for flag in ev:
+                to_resume = waiters[flag]
+                for val, cb in list(to_resume):
+                    # remove the cb from other lists it's on; cool scope there, Python
+                    for waiting_flag in val:
+                        waiters[waiting_flag].remove((val, cb))
+                    cb.send(None)
         self.queue.close(final_exn)
 
     async def wait_for(self, flags: EPOLL) -> None:
