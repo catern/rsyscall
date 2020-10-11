@@ -193,6 +193,7 @@ class TrioContinuation(Continuation[SendType]):
     task: TrioTask
     cancelled: bool
     saved_send: t.Optional[Outcome[None]]
+    on_stack: bool
 
     # This essentially repeats a large part of the trio run loop. It would be
     # nicer if trio exposed a primtive for this directly.
@@ -201,9 +202,7 @@ class TrioContinuation(Continuation[SendType]):
             # discard the result - not great, obviously...
             logger.info("TrioContinuation(%s): resumed after cancellation", self.task)
             return
-        resuming_task = GLOBAL_RUN_CONTEXT.task
-        runner = GLOBAL_RUN_CONTEXT.runner
-        if resuming_task is self.task:
+        if self.on_stack:
             logger.info("TrioContinuation(%s): immediately resumed with %s", self.task, value)
             # This will happen if the function passed to shift immediately resumes the
             # continuation. With trio, we run the function passed to shift on the
@@ -214,6 +213,8 @@ class TrioContinuation(Continuation[SendType]):
             # structured.
             self.saved_send = value
             return
+        resuming_task = GLOBAL_RUN_CONTEXT.task
+        runner = GLOBAL_RUN_CONTEXT.runner
         logger.info("TrioContinuation(%s): resuming with %s", self.task, value)
         global _under_coro_runner
         try:
@@ -282,10 +283,14 @@ def shift(func: t.Callable[[Continuation[SendType]], AnswerType]) -> t.Generator
     """
     ensure_system_trio_task_running()
     if _under_coro_runner == Runner.TRIO:
-        trio_cont = TrioContinuation[SendType](trio.lowlevel.current_task(), False, None)
+        trio_cont = TrioContinuation[SendType](
+            trio.lowlevel.current_task(), False, None,
+            on_stack=True,
+        )
         # There's no surrounding reset to run `func`, so we just run
         # it here and throw away the answer value.
         func(trio_cont)
+        trio_cont.on_stack = False
         if trio_cont.saved_send:
             # the continuation was resumed immediately by func
             return trio_cont.saved_send.unwrap()
