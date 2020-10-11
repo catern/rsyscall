@@ -19012,7 +19012,7 @@ waiting for death, at least.
 
    yeah I don't think people would expect setns or exec to be fd methods,
    even despite the uniformity.
-** TODO AFD lets you write on fds which will never be writable, and blocks forever
+** DONE AFD lets you write on fds which will never be writable, and blocks forever
    maybe we *should* optimistically try to write?
 
    or, just, assume all bits are set when we create the mask the first time?
@@ -19117,7 +19117,804 @@ but then someone else wipes out the posedge with their negedge.
 
    then I don't have to think about the order actually;
    i just run in the order of the syscalls. hm.
-** TODO provide fifo semantics for syscalls
+*** DONE finally fixing this
+    so what if, like...
+
+    the epoll wait is in a separate thread, alright, ok, so it's not ordered.
+    trying to remember.
+
+    we read and get an EAGAIN - a negedge
+    we epoll_wait, and get a posedge.
+    the epoll_wait returns, and then the read.
+
+    ok soo.
+    epoll wait is a stream of posedgesss
+    but, when we do the syscalls in a separate thread,
+    the two are not synchronized.
+
+
+    so we could:
+    read, read, read, read and get EAGAIN,
+    while an epoll_wait, um.
+
+    happens after the eagain is received,
+    but makes it back to python before...
+    because the read is delayed in being received.
+
+    so how do I know when to read?
+    it could be two-layer;
+    reading gives you posedges and negedges,
+    and you block if you're at a negedge state,
+    and if epoll_wait returns,
+    that indicates a super-posedge or something,
+    which persists until you next stop waiting, or something...
+
+    so when do we negedge this epoll posedge?
+    well, it's validated when we read.
+    so, I guess we clear it after we read!
+
+    or maybe before?
+
+    no, let's allow cancellation I guess.
+    we should find some way to do it after...
+
+    or, maybe not.
+    let's just consume it...
+
+    ok so the key here is,
+    our current negedge should not wipe out an epoll posedge.
+
+    the multiple streams is weird.
+
+    like ok what's the real issue?
+
+    like, the idea is, ok, I have a thread dedicated to this fd,
+    and I have another thread dedicated to epoll,
+    and I get posedges from that other thread telling this dedicated thread,
+    hey if you're blocked you can start reading.
+
+    so... ok, I ultimately...
+    wait for edges from the epoll thread, i guess?
+
+    but it can send me edges while i'm returning from a system call and doing negedge.
+    but, i guess, i won't process those, right.
+
+    so i guess, what if we only process posedges from epoll after all system calls are done?
+
+    yeah... isn't that what we do in effect now anyway?
+
+    right so...
+
+    we have some built-up posedges,
+    and when we're waiting for a negedge,
+    we use the posedge.
+
+    well no, right now there's the separate coro receiving posedges
+    and immediately updating status.
+
+    but what we want to do is..
+    not sure.
+
+    so yeah, suppose if our thread was in the middle of various reads,
+    and we received a posedge from epoll.
+    we don't... consume it, I guess... until we have a negedge.
+
+    we could just not negedge if we see there's a posedge;
+    consume the epoll posedge instead of negedging.
+
+    i guess we could perform multiple reads and get EAGAIN
+    before we look at the epoll queue. hm.
+
+    i guess we could... clear the epoll queue?
+
+    i mean, maybe the best way is to follow the natural thread semantics.
+
+    where, we've got this thread,
+    it performs a lot of syscalls,
+    including maybe multiple reads getting multiple EAGAINs;
+    eventually some logic will go to read the epoll queue,
+    and see a posedge,
+    and retrieve it,
+    and publish it for all.
+
+    but if there's no posedge, then...
+    well, we want to wait for a specific flag right?
+
+    so some logic will go to wait for a specific flag,
+    and multiple waiters might get registered,
+    and then we'll see the edge and wake them all up.
+
+    i guess one idea is that we'd enqueue this...
+
+    or, um...
+
+    ok so yeah we just have two levels of status.
+
+    when some logic is done,
+    the waiters go to wait on the flag on the epoll thread,
+    waiting until at least one of a bitflag is set.
+
+    when they see that,
+    they consume it (right? maybe after the read?),
+    then go to perform whatever operation.
+
+    that will in turn provide posedges and negedges for the thread mask.
+
+    the thread mask, we'll have our own callbacks for when we posedge.
+
+    i guess we can, like... have an EventMask kinda thing.
+
+    so yeah. inside the thread, we have our mask.
+
+    then if that gets negedged out,
+    people will start waiting on the epoll mask.
+    we might continue sending reads and getting EAGAINs, things like that.
+
+    but if we're waiting on the epoll mask,
+    we get an edge,
+    then we go to do something on the thread itself,
+    which will be serialized against others.
+    
+    and then, do we consume the edge after we're done?
+    not sure that's a good idea,
+    because what if we get an EAGAIN,
+    and while we were running,
+    another posedge was generated?
+
+    (oh we should posedge on oserror, too..)
+
+    well ok I guess we consume it then.
+
+    or, wait, maybe... do we posedge on our own thing when we consume the posedge from epoll?
+
+    well, that doesn't help, right, because someone could negedge... that away?
+
+    (also remember wait_for_rdhup, how do we handle that)
+
+    so if we posedge right away, then...
+
+    if we crash in... the read call...
+    or it gets cancelled, more obviously...
+
+    and someone else was already running a read and got an EAGAIN...
+
+    like this:
+    1. A starts read
+    2. A underlying read is completed with a negedge
+    3. B waits for epoll posedge
+    4. epoll completes with posedge
+    5. B gets posedge
+    6. B sends thread posedge
+    7. B start read, gets cancelled immediately
+    8. A finishes read, sends thread negedge
+
+    blah okay I think instead of edges,
+    we're better off with some kind of, broadcast queue or something.
+    at least a queue.
+
+    because then we don't lose epoll posedges...
+
+    but, wouldn't this still be an issue though?
+    we need to consume from the queue after we perform the read.
+    because... otherwise the epoll posedge might not result in an actual read.
+
+    so we need to make sure that after a posedge from epoll,
+    the next time we go to perform a non-cancelled read,
+    we get an event.
+
+    so we can only consume the posedge once we're done with the read.
+    but we can't consume *all* posedges,
+    just the one we got,
+    because those posedges might be needed to wake us up again from a negedge.
+
+    ok, so we can do that in theory...
+
+    what exactly is the posedge we'll consume?
+    for just one bit, or for all bits?
+
+    so... multiple posedges might have overlapping or non-overlapping bits.
+
+    we could consume one bit at a time, I guess; but that would be inefficient:
+    we would perform unnecessary reads.
+
+    we know, after a read,
+    that any...
+    of a set of bits,
+    that was set,
+    can be consumed.
+
+    but not all bits in an event, necessarily.
+
+    so okay, I guess we could have a counter?
+
+    the order doesn't matter, right?
+
+    so we can have a counter,
+    and the bits that were set, which told us to run,
+    we decrement afterwards.
+
+    (what about multiple AFDs? reading from an fd in multiple threads?)
+
+    so, okay! that should be fine, right!!
+
+    we have some posedges for various bits,
+    and we consume them after the read.
+
+    we wait for a mask of bits to be non-zero,
+    when they become non-zero we return the non-zero ones,
+    and then after the read, we decrement those.
+
+    alternatively,
+    we can also be woken up by,
+    um,
+    posedges in our mask for those bits.
+
+    this is crazy!
+
+    ok, ok.
+
+    so we get a stream of epoll edges, not synchronized with our operations.
+
+    when we would otherwise block,
+    we consume one of these epoll edges and instead perform a read.
+    (we only consume the edge once the read is done, since it may be cancelled)
+
+    that read will tell us whether the fd is actually readable or not,
+    and we'll update our local mask appropriately.
+
+    we look at our local mask to determine whether or not we should block.
+
+    if there are no epoll edges,
+    then we block until there is one.
+
+    also, if multiple people are blocking for epoll edges...
+    they all get one? urgh but then how do we handle decrementing it?
+
+    ok so tracking of our thread-local mask works fine,
+    because of ordered syscall results.
+
+    the problem is just with the epoll edges.
+
+    ok so, we could have three reads outbound, and get negedge posedge negedge,
+    and have the read...
+
+    anyway ok.
+    so EpolledFD is the stream of events from epoll,
+    and AFD is the thread-bound fd.
+
+    and, heh, I basically want to wake up all threads,
+    when I get an event from EpolledFD.
+
+    so, let's see...
+    basically...
+
+    each thread should get a separate stream, and...
+
+    ummmmmmmmmmmmmmm
+    bah ok I guess let's try it.
+
+    admittedly, at first, in a way that only works for a single thread
+
+    ok wait we still need to handle the epoll decrements with multiple .read calls.
+
+    ugghghhh it's like the event stuff.
+
+    so ok, we get a thing out from the queue.
+    we can hit .consume on it,
+    and then it will be removed.
+
+    if no-one else hits .consume it isn't consumed.
+
+    how does this manifest with a normal, single-threaded kinda thing?
+
+    we grab the..
+
+    events are only delivered to one thread if multiple are blocked in epoll_wait.
+    that's, expected, but fine.
+
+    right I mean, the issue is,
+    suppose I read in thread A and call epoll_wait in thread B;
+    and the following sequence of events occurs:
+    1. read gets EAGAIN
+    2. epoll_wait gets posedge
+
+    all good right? i think...
+
+    wait, maybe I just need to, like...
+
+    well, ok, so,
+    i guess the issue is that i shouldn't, um,
+    call read again to get a posedge.
+
+    no wait, isn't this fine?
+
+    so okay, in a normal thread world,
+    i call read, I get EAGAIN,
+    epoll_wait gets posedge,
+    and only then do I start reading again.
+
+    but, if I has multiple reads at once,
+    I might do that read eagerly.
+    ok, that's fine, sure.
+
+    but here's where problems might occur:
+
+    if i get a posedge from epoll before the negedge..
+
+    um.
+    this doesn't seem like a problem actually.
+
+    if I...
+
+    no no okay okay here's the issue.
+
+    it's because of the possibility of the EAGAIN being delayed.
+
+    if I get a posedge from epoll before the EAGAIN,
+    aka,
+
+    1. read returns with EAGAIN
+    2. epoll_wait returns with event
+    3. program receives epoll_wait and posedges
+    4. program receives eagain and negedges
+
+    now, in a world with a single thread maintaining the,
+    mask.
+    things are fine, I guess?
+    even if the epoll wait is performed by a different thread?
+
+    ok so like the idea is,
+    i'm this thread, i'm calling read, I see an eagain.
+
+    maybe i should just.. defer posedges until after the negedge? or what...
+
+    so yeah normally, if I receive an EAGAIN,
+    then after that epoll gives me a posedge,
+    that just means the fd is ready again.
+
+    but if I can receive the posedge from epoll first...
+    then i'm in trouble.
+
+    so like...
+
+    maybe we queue up all the posedges until the currently active reads are all done?
+    that would be idiomatic I guess.
+
+    but on the other hand...
+
+    suppose I receive an EAGAIN.
+    it's OK for me to check to see what posedges I've received at that point, right?
+
+    so, maybe I just need to only apply posedges after operations complete.
+
+    i mean, that mimicks the behavior of a single thread, sure.
+
+    so okay, suppose the epoll wait is delayed until after a call to eagain...
+
+    no wait wait wait wait,
+    the reason we want to delay until after all syscalls is because,
+    applying posedges after a syscall result is received,
+    doesn't have the same semantics as a real single thread.
+
+    because more syscalls could be pipelined.
+
+    so we could get a negedge, and a posedge, and a negedge, in that order.
+    and after the first syscall, we already have the posedge for the last one.
+
+    how do we check that the syscall queue is empty?
+    well, we can send a syscall, lol.
+
+    lol so this phrasing is beginning to sound isomorphic to our earlier approach
+
+    ok so when we next want to send a syscall, maybe we don't wait for posedges or anything.
+    we just, go ahead and,
+    apply it?
+
+    to our local copy?
+    and use that to decide whether to issue the syscall?
+
+    so we'd just check to see if there are any posedges,
+    and if so... consume them... all?
+    could we just do that?
+
+    so it's only safe to consume them based on the result we get from the syscall right?
+
+    i mean, so,
+    after some syscalls,
+    we know that...
+
+    well, we know that at least...
+
+    ugh no the posedge could be from long before our syscall,
+    or from long after.
+
+    making a syscall doesn't synchronize relative to the epoll stream, at all.
+
+    well.. hmmm.....
+
+    so, we should get... multiple epoll edges?
+    no they'll get coalesced,
+    and we can also get rid of them by reading ourselves.
+
+    argh ok it may not be perfect,
+    but we can get a relatively cheap win by,
+    just...
+
+    deferring the epoll edge until after a negedge?
+    or... until needed, maybe?
+
+    but how do we get rid of them? argh, argh, argh.
+
+    so okay, in a single-threaded scenario, after we make a read syscall,
+    we can read whatever epoll events have come back, and.
+    we know that more might come back later,
+    but we know that in that instant,
+    whatever events are there,
+    are ones which are at most up to our syscall.
+
+    so.
+    if there's a posedge there.
+    we can apply it?
+    well, sure.
+
+    so we know that posedge might be for my most recent EAGAIN,
+    or it might be for... an EAGAIN from earlier?
+
+    i mean, if I stop reading immediately on EAGAIN and wait for an epoll posedge,
+    then everything is good.
+
+    it's only an issue if I keep reading.
+
+    so suppose I issue the classic 3 read, EAGAIN, data, EAGAIN, pattern.
+
+    and then after that, i wait for an epoll posedge.
+    that should be fine! i should get a posedge, of course.
+
+    the problem is if I stop after the data, I guess?
+    if I apply a posedge there... well, it's not a problem,
+    because i'll get another posedge in the future,
+    because I haven't yet hit EAGAIN.
+
+    but, if I have already issued the read and gotten EAGAIN,
+    and I apply the posedge after the data,
+    then the posedge will get negated by that later EAGAIN.
+
+    so, ok.
+    the issue is that a later syscall might have gotten EAGAIN,
+    and that might be the cause of the posedge I'm seeing now.
+    
+    what if I only do it at EAGAINs?
+    well, suppose I read the posedge at the first EAGAIN.
+    if the later two syscalls have already been issued,
+    then that posedge might be a coalesced posedge for both of my EAGAINs.
+
+    so, really, that posedge needs to be read as late as possible.
+
+    ok, so,
+    suppose I'm at the third read, the EAGAIN,
+    and I'm blocking and maybe consuming the posedge.
+
+    well, if even more reads have already been issued...
+    then that posedge might be needed later!
+
+    I might block at the point of that EAGAIN,
+    but that posedge, could be, a coalesced posedge from later EAGAINs still, right?
+
+    (let's think about 5 just in case, it might be able to be shrunk down to 3)
+    right so if all 5 reads were issued at the same time,
+    and then later I come along after the first three and want to do more reading...
+
+    i might see there's a posedge,
+    and go and read it.
+
+    oho wait wait wait, but I only consume the posedge after all the other syscalls.
+    that probably helps!
+
+    so ok, I see there's a posedge - which might be coalesced from all the other syscalls,
+    or might just be some intermediate posedge.
+
+    suppose I get an EAGAIN. well, that means that posedge was no good...
+    or no, that's not what it means.
+    it means that... any posedge I get...
+
+    no the posedge might still be from the future...
+
+    ok, ok, ok.
+    so there's some number of reads outstanding,
+    and I want to go read.
+    I see the current state is negative.
+    But I also see that there was an event from epoll that has yet to be applied,
+    which if applied, would mean I could read.
+
+    So let's say I just go ahead and read.
+    I know that that event is *at least* from before my syscall.
+
+    If I get a negedge in my read, I know the epoll posedge *doesn't* apply to me.
+    So I can discard it.
+    And if I get a read posedge, I don't really know anything about the epoll posedge,
+    except that... it's no longer relevant? If I get a negedge in the future,
+    I'm guaranteed to get another epoll posedge.
+
+    OK, ok ok.
+    And of course, if I get cancelled, I can't do anything.
+
+    So...
+
+    What if this is happening concurrently?
+
+    Actually, can't I just add the posedge back in?
+    Take it and add it back in?
+    Well, that would be slightly less optimistic since others wouldn't be able to use it.
+
+    Anyway, what if this is happening concurrently?
+
+    Well, the same reasoning applies.
+
+    So... okay... we're thinking of a queue where you peek at the first thing,
+    and get a handle for it,
+    and then do some processing,
+    and after that processing, get rid of the first thing.
+
+    I mean, we're just trying to robustly handle cancellation here lol.
+
+    What if we weren't cancellable? That sure would simplify things.
+
+    OK, so if we weren't cancellable, we'd just grab the epoll event,
+    discard it... and proceed?
+
+    well, we still want to be able to peek at the next epoll event,
+    to know if it applies to us.
+
+    and we'd need to be able to block until an epoll event matching our flags appears.
+
+    also, since ordering doesn't matter, we could just use the bitset thing...
+
+    oh wait wait wait wWAAAIT.
+
+    ok so at any point that I'm about to make a read, and blocking,
+    I can clear *all prior* epoll edges.
+
+    right right so after performing a read, I can just clear the epoll bits that I've checked,
+    and set them to whatever I got.
+
+    or rather, any epoll events that were present at the time before my read,
+    I can clear away.
+
+    ok that seems crucial and valuable for sure.
+
+    ok so without cancellation, this would manifest as, what?
+    we just store a bitset for epoll events,
+    and clear the flags that will be set by our read?
+
+    and, we can do the unconditionally before any read, right?
+    we always clear the bits that will be set by our read.
+
+    and when waiting, we can be woken up by either the epoll bits being set,
+    or our local bits being set.
+    
+    o' course at some point this devolves into being purely single threaded,
+    because I think at that point we could merge the epoll and local bits,
+    such that we'd only perform one read at a time,
+    because we'd clear the bits before then set them after.
+
+    but, okay, with separate epoll and local bits,
+    that's what we'd do.
+    we'd have an epoll bitset,
+    and clear the bits we'll possibly-set unconditionally before the read,
+    and then our local bitset will be updated after the read.
+
+    now, that isn't concurrent when reading due to an epoll event,
+    and if we made it concurrent I think that would always solve the cancellation problem too.
+
+    in other words, if we have multiple people waiting due to an epoll posedge,
+    only one of them will run at a time.
+
+    er, well, no, not quite.
+    if they were all waiting at the same time,
+    they'd all run. so that's fine.
+
+    where we do lack concurrency is in later arrivals;
+    they will block waiting for the initial read or set of reads
+    that were triggered by the epoll event.
+
+    but, we'd rather they optimistically try to read as well.
+    so how do we achieve that?
+
+    we want them to optimistically read until the first read from this epoll events state,
+    returns and consumes the events.
+
+    the consumption they perform doesn't matter, I suppose.
+
+    so... I guess we could have some kind of chained datastructure?
+    where, the later ones reference the earlier ones,
+    and a new link is made each time we.. take a reference for consumption, uh...
+
+    sure sounds complex.
+
+    ok, and what about wait_for_rdhup or others like that?
+    they want to...
+
+    wait for rdhup and cancel the thing? hm.
+    it would be better for them to just read and redirect the bytes.
+
+    can it even be valid to wait for rdhup?
+
+    let's think about it.
+
+    um, sure! we can just be woken up for that bit,
+    and not consume the bit.
+    it would be an epolled-level thing, not on afd.
+    ok so that seems maybe plausibly fine I guess.
+
+    oh and we can always clear out epoll edges from before our read,
+    that will be unconditional.
+
+    right so before each read we look at what epoll events there are,
+    take a reference to them,
+    and then afterwards clear them out...
+
+    ok so how do we design this datastructure???
+
+    ok so we can coalesce the events together into a single mask actually,
+    and we just create a new node at "mark here for deletion" time...
+
+    how do I efficiently remove a set of bit posedges??
+
+    i guess we could, uh...
+
+    update all the way up and down the linked list for each new event? no...
+
+    i guess an array where I zero specific entries,
+    and always have a last entry,
+    is kinda fine,
+    as long as I can calculate the current setting...
+
+    it's hard with a bitmask because things aren't counts - wait, wait a second!
+    can we store them as counts?
+
+    ok, so... we have a count for each bit...
+    we have a "current" intmask, where we just raise the bit if there's an edge
+    (although incrementing is kind of interesting since that preserves information)
+
+    this is exactly what I was thinking about before heh
+
+    so when we take a snapshot, we... make a new current intmask,
+    and return out the intmask.
+
+    and then to remove the intmask,
+    we just subtract it from the summed mask, and mutable zero the intmask
+    (so this operation can be done repeatedly with the same intmask)
+
+    oh, but when we remove an intmask I guess we also want to remove earlier ones...?
+    hm.
+
+    eh I guess I can... trust that...?
+    or maybe not.
+    if someone takes a mark to perform a read,
+    and then gets cancelled,
+    that intmask will disappear, I guess.
+
+    ohohohoho!!!
+
+    the bits don't need to be stored as ints,
+    they can be stored as bits! and we just cache it with an intmask
+
+    ok so the sum mask is an intmask,
+    and we remove bitmasks with a simple subtraction.
+
+    we still have a current bitmask,
+    where we take the different of current bitmask and incoming edges,
+    add that to the sum intmask,
+    and bitwise-or it into the current bitmask
+
+    ok, ok, but also, still,
+    we want to be able to remove *all* past events,
+    not just a specific node...
+
+    although we know in practice that... things will be removed in order
+    no wrong, they won't be removed in order, again,
+    if something is cancelled it will just be dropped.
+
+    i guess we kind of need to... accumulate the previous markings,
+    and delete them all at once?
+
+    what's the consequence of just zeroing out the old mask to be removed,
+    and putting it in the new one?
+    well, a lot more optimistic reads, I guess!
+    erroneously optimistic in fact, since there's no reason for optimism.
+
+    ok so hm hm hm hm argh.
+
+    so we don't actually want to delete just one bitmask.
+    we want to delete everything earlier.
+
+    okay, so what if we defer the calculation of "delete everything earlier",
+    to the actual deletion time?
+
+    when we make a marker,
+    we have a pointer to the marker,
+    the next current marker,
+    and epolled thing to actually do the delete.
+
+    each marker has a reference to anything previous,
+    and also anything next - right.
+    so it's a bidirectional linked list.
+
+    and then at deletion time,
+    we zero out the bitmask in the marker and remove it from the intmask.
+    we null out the prev pointer from the next marker,
+    and if we have a previous pointer, we repeat this operation for that (recursively).
+
+    so the next pointers will be left un-nulled,
+    so if the prev pointer later has .delete called,
+    it will work fine (but do nothing)
+
+    ok, fine...
+
+    let's even do this with, uh,
+    a context manager for everything.
+
+    oh argh wait ok
+
+    we'll... only zero out specific bits, right?
+
+    we could... also take the time to merge...
+
+    right we have to merge if we're going null out the prev pointer.
+    so.
+
+    specifically, we'll merge into... ourself?
+    or into next? I guess next?
+
+    ok yes and then, that's fine.
+
+    hmmmmmmmmmmmm ok so this is tricky, cuz, we need to be able to wake up on
+    both, I guess.
+    both the epoller fdstatus and the thread-local fdstatus 
+
+    wait, maybe we could... also posedge in the AFD?
+    would that have any harm?
+    that would 1. useful and 2. might also simplify things?
+    f'r instance do we need the status in here at all?
+    oh, right no we don't,
+    we can just use the current.mask...
+    right okay so we'll keep the posedges here,
+    and negedge the current.mask only on event consumption.
+    this means we'll get wakeups fine.
+    oh, and actually we don't need to change the fdstatus stuff!
+
+    ok so yeah we still have the single fdstatus and wakeup mechanism,
+    we just don't block until the waking epolled events are removed.
+    ezpz.
+*** DONE test
+    let's just repro this in a test by making a sysif
+
+    hmmmmmmmmmmmmmmmmmm ok fine, we'll put a wrapper around the sysif.
+
+    nice the test fails properly
+*** test_repl
+    ugh wish is broken because, presumably, of the wait_for_rdhup not working.
+
+    why, I wonder?
+
+    oh interesting it isn't even getting to wait_for_rdhup, huh
+
+    ah.. hah... hah....
+
+    it's busy-looping in accept because I forgot to consume events,
+    so it would just loop in EAGAIN.
+    heh....
+*** inefficiency
+    right okay so we just keep accumulating linked list nodes, if,
+    we, say, only ever read from a writable fd.
+    because EPOLL.OUT is set.
+*** algorithm
+    aha, perfect, perfect.
+
+    we can just have two integers for each type.
+
+    boom, done!
+** DONE provide fifo semantics for syscalls
 *** thoughts
    why doesn't it work this way by default?
 
