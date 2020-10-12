@@ -277,7 +277,14 @@ class EpolledFileDescriptor:
         # TODO, we should copy this so it can't be closed out from under us
         # self.fd = fd.copy()
         self.number = number
-        self.status = FDStatus(EPOLL.NONE)
+        # We optimistically assume that the FD is ready for reading/writing immediately,
+        # by setting our initial status to EPOLL.OUT|EPOLL.IN.
+        # This has two benefits:
+        # 1. Performance improves on our test suite and in many real-world cases, and
+        # 2. More critically, if a user erroneously tries to read or write an FD which
+        #    will never receive an EPOLL.OUT or EPOLL.IN because it doesn't support
+        #    reading/writing, we'll fail immediately instead of blocking forever.
+        self.status = FDStatus(EPOLL.OUT|EPOLL.IN)
         self.in_epollfd = True
         self.queue = RequestQueue[EPOLL, None]()
         self.total_events: t.Counter[EPOLL] = collections.Counter()

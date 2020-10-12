@@ -88,3 +88,17 @@ class TestEpoller(TrioTestCase):
             print('resuming suspended coro')
             cb.send(None)
         valid, remaining = await async_pipe_rfd.read(buf)
+
+    async def test_wrong_op_on_pipe(self):
+        "Reading or writing to the wrong side of a pipe fails immediately with an error"
+        pipe = await self.thr.pipe()
+        async_pipe_wfd = await self.thr.make_afd(pipe.write)
+        async_pipe_rfd = await self.thr.make_afd(pipe.read)
+        # we actually are defined to get EBADF in this case, which is
+        # a bit of a worrying error, but whatever
+        with self.assertRaises(OSError) as cm:
+            await async_pipe_wfd.read_some_bytes()
+        self.assertEqual(cm.exception.errno, 9)
+        with self.assertRaises(OSError) as cm:
+            await async_pipe_rfd.write_all_bytes(b'hi')
+        self.assertEqual(cm.exception.errno, 9)
