@@ -576,9 +576,9 @@ class AsyncFileDescriptor:
                 err = await (await retbuf.read()).buf.read()
                 self.epolled.consume(current_events)
                 if err == 0:
-                    self.epolled.posedge(EPOLL.OUT)
+                    self.epolled.status.posedge(EPOLL.OUT)
                 else:
-                    self.epolled.posedge(EPOLL.ERR)
+                    self.epolled.status.posedge(EPOLL.ERR)
                     try:
                         raise OSError(err, os.strerror(err))
                     except OSError as exn:

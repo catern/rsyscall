@@ -112,6 +112,7 @@ logger = logging.getLogger(__name__)
 class PersistentSyscallConnection(SyscallInterface):
     def __init__(self, conn: SyscallConnection) -> None:
         self.conn: t.Optional[SyscallConnection] = conn
+        self._activity_fd_conn: t.Optional[SyscallConnection] = conn
         self.logger = self.conn.logger
         self._new_conn_cbs: t.List[Continuation[SyscallConnection]] = []
         self._break_exc: t.Optional[SyscallSendError] = None
@@ -132,6 +133,8 @@ class PersistentSyscallConnection(SyscallInterface):
     def set_new_conn(self, conn: SyscallConnection) -> None:
         # to preserve the global relative ordering of syscalls,
         # we don't set self.conn again until syscalls stop appearing on self._new_conn_cbs
+        # but we have to set activity_fd_conn because some callback might use get_activity_fd
+        self._activity_fd_conn = conn
         while self._new_conn_cbs:
             cbs = self._new_conn_cbs
             self._new_conn_cbs = []
@@ -152,8 +155,8 @@ class PersistentSyscallConnection(SyscallInterface):
             await self.conn.close_interface()
 
     def get_activity_fd(self) -> FileDescriptor:
-        if self.conn:
-            return self.conn.get_activity_fd()
+        if self._activity_fd_conn:
+            return self._activity_fd_conn.get_activity_fd()
         raise Exception("can't get activity fd while disconnected")
 
     async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
@@ -167,6 +170,7 @@ class PersistentSyscallConnection(SyscallInterface):
             except SyscallSendError as exc:
                 if self.conn is conn:
                     self.conn = None
+                    self._activity_fd_conn = None
                     if self._break_cb:
                         self._break_cb.send(exc)
                     else:
