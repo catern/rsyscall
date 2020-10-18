@@ -22306,6 +22306,148 @@ hmmmm.
     well, heh, that is literally true
 
     I guess I needed this tutorial myself.
+** TODO write "just literally say what it is"
+   a single document.
+   which talks about the implementation, too!
+
+   if only to remove concerns about what it supports and how it works.
+   abstraction, it's too hard.
+
+   hmm maybe we can just get the docs up.
+
+   and this "literally just say what it is",
+   can be the rsyscall module docstring.
+
+   we want the current single-threaded tutorial,
+   which is really a description of the design,
+   to be a docstring somewhere...
+
+   maybe we can have a module that re-exports everything not natively defined by Linux?
+   and that can have this as its module docstring?
+
+   anyway we should incorporate the multi threaded tutorial in this "just say what it is".
+
+   i can reference tasks I guess?
+
+   yeah the current separate advanced thread tutorial,
+   can just be the docstring on rsyscall.tasks
+
+   maybe local thread too?
+
+   hmm we want to talk about childthread tho
+
+   ok let's just get all the information together,
+   and *then* we can split it out like the modules.
+   or rearrange the modules to match!
+
+   unshare, is completely unimportant now, nice.
+
+   ok and we can also forget about pid namespaces maybe?
+   or we can outsource it to rsyscall.sched
+
+   oh and stuff about other Thread things like tmpdir, we can put in the Thread docstring
+
+   aha. aha. ok.
+   we should describe everything exported in rsyscall.
+
+   argh need to get pdoc3 merged already
+
+   ok I feel like I've finished the fast doc.
+   now I just need to incorporate it as the main docstring
+
+   and generate docs too.
+*** integrate other docs
+conceptual introduction
+API style (put in handle maybe? naw...)
+
+I want to write some documentation which describes some API design rules the rest of my library follows,
+and I want to make that available as a docstring in some module somewhere.
+are there any examples of other libraries doing this? any thoughts?
+
+ok soooo maybe I'll just have rsyscall.doc
+
+mm or not.
+
+it's this conceptual introduction (which is basically a blogpost)
+
+and this API doc (which is more documentation, really)
+
+so I guess the API doc, we can put somewhere in Python...
+
+naaaaaaaaaaaw let's just put it outside, for goodness sake, and have a circulare ref??
+
+no wait, where would we link to it?
+
+well. I guess let's still put it outside, it's fine.
+
+wait but we want it to be available offline, as an absolute requirement. hm.
+
+i guesssss we can put in the python module, hm.
+
+even if we put it in the python module
+*** DONE maybe consolidate the thread classes?
+    since there are so many of them and the inheritance structure didn't end up being useful...
+
+    hey yeah why is mkdtemp even a method on Thread, it should be a free function actually
+
+    otherwise it causes this weird contortion and painful hierarchy...
+
+    yeah ok so let's do that and merge things together, and then it'll be fine
+
+    yeaaaaaaaaah
+
+    ooh I could put mktemp in a stdlib module
+
+    which... should probably be a directory?
+
+    hMmmMMmmmm. I can put.... more things... in stdlib...
+
+    no no, stdlib only includes things that... depend on thread?
+
+    hmmm
+
+    ok i guess ... well I'm thinking about this because I'm deciding where to import it from in the tests.
+
+    i guess malloc is in stdlib too
+
+    yeah i mean, which, by definition,
+    requires "a Thread", or at least, non-Task resources.
+
+    so stdlib is stuff beyond just Task.
+
+    but...
+
+    we can't put memory allocation in there.
+    because, we need to use memory allocation from, uh...
+    task.clone
+    which, doesn't rely on thread...
+
+    getenv is in there tho hm interesting.
+
+    yikes RAM sure is used in a lot of places
+
+    I guess malloc and ptr should really be free functions too huh.
+
+    ok so, stdlib module, is definitely the right place, I think that makes sense.
+
+    and, we'll import from there, too.
+
+    if it deps on thread, though, we...
+    can't put malloc there...
+    because thread deps on malloc, ok, right, right.
+
+    ok anyway let's move it in
+
+    okaaaaaaaaay sooooooooo
+
+    we want clone to be a method, but,
+    it, also has some depsss
+
+    connection, task, loader, ram, monitor
+
+    hmmm having all these passed as arguments, would be a drag...
+    but, who cares tho?
+    it's not a big deal...
 * getting better at asking questions
   when sending a question as an email:
   - include a summary of relevant discoveries and thoughts so far

@@ -100,6 +100,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "Epoller",
+    "EpolledFileDescriptor",
     "AsyncFileDescriptor",
     "EOFException",
     "AsyncReadBuffer",
@@ -452,6 +453,7 @@ class AsyncFileDescriptor:
         "Don't construct directly; use the AsyncFileDescriptor.make constructor instead."
         self.ram = ram
         self.handle = handle
+        "The underlying FileDescriptor for this AFD, used for all system calls"
         self.epolled = epolled
 
     def __str__(self) -> str:

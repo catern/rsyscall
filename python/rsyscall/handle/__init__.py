@@ -71,6 +71,12 @@ from rsyscall.sched        import SchedTask
 # re-exported
 from rsyscall.sched import Borrowable
 
+__all__ = [
+    "FileDescriptor", "FDTable",
+    "Pointer", "WrittenPointer", "ReadablePointer", "LinearPointer",
+    "Process", "ChildProcess", "ThreadProcess",
+    "Task",
+]
 
 
 ################################################################################
@@ -89,57 +95,33 @@ class FileDescriptor(
         FcntlFileDescriptor,
         BaseFileDescriptor,
 ):
-    """A file descriptor accessed through some Task, with most FD-based syscalls as methods
+    """A file descriptor accessed through some `Task`, with FD-based syscalls as methods
 
-    A FileDescriptor represents the ability to use some open file through some task.  When
-    an open file is created by some task, the syscall will return a FileDescriptor which
-    allows accessing that open file through that task. Pipes, sockets, and many other
-    entities on Linux are represented as files.
+    A `FileDescriptor` represents the ability to use some open file through some `Task`.
+    When an open file is created by a syscall in some `Task`,
+    the syscall will return a `FileDescriptor` which allows accessing that open file through that `Task`.
 
-    A FileDescriptor has many methods to make syscalls; most syscalls which take a file
-    descriptor as their first argument are present as a method on FileDescriptor. These
-    syscalls will be made through the Task in the FileDescriptor's `task` field.
+    A `FileDescriptor` has many methods to make syscalls;
+    most syscalls which take a file descriptor as their first argument are present as a method on `FileDescriptor`.
+    These syscalls will be made through the `Task` in the FileDescriptor's `task` field.
 
-    After we have opened the file and performed some operations on it, we can call the
-    close method to immediately close the FileDescriptor and free its resources. The
-    FileDescriptor will also be automatically closed in the background after the
-    FileDescriptor has been garbage collected. Garbage collection should be relied on and
-    preferred over context managers or explicit closing, which are both too inflexible for
-    large scale resource management.
+    Since there are so many syscalls,
+    this class is built by inheriting from many other purpose specific `FooFileDescriptor` classes,
+    which in turn all inherit from `BaseFileDescriptor`.
 
-    If we want to access the file from another task, we may call the for_task method on
-    the FileDescriptor, passing the other task from which we want to access the file.
-    This will return another FileDescriptor referencing that file.  This will only work if
-    the two tasks are in the same file descriptor table; that is typically the case for
-    most scenarios and most kinds of threads. If the tasks are not in the same file
-    descriptor table, more complicated methods must be used to pass the FileDescriptor to
-    the other task; for example, CmsgSCMRights.
+    After we have opened the file and performed some operations on it,
+    we can call `close` to immediately close the FileDescriptor and free its resources.
+    The FileDescriptor will also be automatically closed in the background
+    after the FileDescriptor has been garbage collected.
+    Garbage collection should be relied on and preferred over context managers or explicit closing,
+    which are both too inflexible for large scale resource management.
+    Garbage collection is currently run when we change file descriptor tables,
+    as well as on-demand if the user calls `FileDescriptorTask.run_fd_table_gc`.
 
-    Once we've called for_task at least once, we'll have multiple FileDescriptors all
-    referencing the same file. Assuming the tasks have not exited, exec'd, or otherwise
-    unshared their file descriptor table, these FileDescriptors will be sharing the same
-    underlying near.FileDescriptor in the same file descriptor table. If that's the case,
-    then we can no longer call the close method on any one FileDescriptor, because that
-    would close the underlying near.FileDescriptor, and break the other FileDescriptors
-    using it.
-
-    Instead, we must use the invalidate method to invalidate just our FileDescriptor
-    without affecting any others. Only when invalidate is called on the last
-    FileDescriptor will the file be closed. We can also still rely on the garbage
-    collector to close the underlying near.FileDescriptor once all the FileDescriptors
-    using it have been garbage collected.
-
-    If a task calls unshare(CLONE.FILES) to change its file descriptor table, all the
-    FileDescriptors which access files through that task remain valid. Linux will copy all
-    the file descriptors from the old file descriptor table to the new file descriptor
-    table, keeping the same numbers. The FileDescriptors for that task will still be
-    referencing the same file, but through different file descriptors in a new file
-    descriptor table. Since the file descriptor numbers do not change, near.FileDescriptor
-    will not change either, and no actual change is required in the FileDescriptors. See
-    Task.unshare_files for more details.
-
-    Garbage collection is currently run when we change file descriptor tables, as well as
-    on-demand when run_fd_table_gc is run.
+    We can use `inherit` to copy a FileDescriptor into a task which inherited file descriptors from a parent,
+    and `for_task` to copy a FileDescriptor into tasks sharing the same file descriptor table.
+    We can also use more complicated methods, such as `rsyscall.sys.socket.CmsgSCMRights`,
+    to copy file descriptors without inheritance or a shared file descriptor table.
 
     """
     __slots__ = ()
@@ -153,6 +135,7 @@ class FileDescriptor(
         return Path(f"/proc/{pid}/fd/{num}")
 
     async def disable_cloexec(self) -> None:
+        "Unset the `O.CLOEXEC` flag so this file descriptor can be inherited"
         # TODO this doesn't make any sense. we shouldn't allow cloexec if there are multiple people in our fd table;
         # whether or not there are multiple handles to the fd is irrelevant.
         if not self.is_only_handle():
@@ -160,6 +143,7 @@ class FileDescriptor(
         await self.fcntl(F.SETFD, 0)
 
     async def as_argument(self) -> int:
+        "`disable_cloexec`, then return this `FileDescriptor` as an integer; useful when passing the FD as an argument"
         await self.disable_cloexec()
         return int(self)
 
@@ -197,7 +181,15 @@ class Task(
         FutexTask,
         SignalTask, rsyscall.far.Task,
 ):
-    "A Linux process context under our control, ready for syscalls"
+    """A Linux process context under our control, ready for syscalls
+
+    Since there are many different syscalls we could make,
+    this class is built by inheriting from many other purpose specific "Task" classes,
+    which in turn all inherit from the base `rsyscall.far.Task`.
+
+    This is named after the kernel struct, "struct task", associated with each process.
+
+    """
     def __init__(self,
                  process: t.Union[rsyscall.near.Process, Process],
                  fd_table: FDTable,

@@ -13,6 +13,7 @@ if t.TYPE_CHECKING:
 
 __all__ = [
     'CpuSet',
+    'Borrowable', 'Stack',
 ]
 
 class CLONE(enum.IntFlag):

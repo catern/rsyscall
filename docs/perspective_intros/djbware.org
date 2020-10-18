@@ -1,0 +1,63 @@
+* The perspective of the reader
+- Shell pipelines are cool
+- UCSPI (tcpclient, tcpserver, etc.) is cool
+- s6, execline, etc. are cool
+- [[http://www.catb.org/~esr/writings/taoup/html/ch06s06.html][Bernstein chaining]] is cool
+- inetd is cool
+- "Daemons" should just run in the foreground, not fork away into the background.
+- Software should operate on the file descriptors and environment it inherits,
+  instead of duplicating the logic to set everything up.
+- Don't open a network socket and bind it to a host and port specified in some configuration;
+  inherit the socket from your parent instead,
+  let them set it up,
+  and let them choose whether you listen on the network or on a Unix socket or something else.
+- Software should do one thing and do it well.
+- Unix gives us a toolbox full of tools that we can compose to build functionality;
+  we should build software using the tools that Unix already gives us.
+- To achieve some purpose,
+  we should prefer to add new orthogonal tools to this toolbox,
+  and then compose them together with existing tools using scripts.
+* rsyscall allows composing Unix tools using *all* the features of Unix
+  We want to compose together tools from the Unix toolbox to build our systems.
+  Each tool runs in a separate process,
+  and communicates over pipes or other communication mechanisms set up by the shell.
+
+  But the traditional Unix shell is limited in what it can express.
+  There are many features in Unix which we can't use from the shell.
+  So we add more tools, such as tcpclient or s6 or execline,
+  which let us use those features.
+
+  Things like creating a socketpair with =socketpair=,
+  so that two processes can communicate bidirectionally;
+  or creating a listening socket with =socket=, =bind=, and =listen=,
+  which a process can inherit and accept connections on;
+  or opening a file with =open(..., O_EXCL|O_CREAT)= to create it atomically.
+
+  These Unix syscalls are easy to use from C.
+  But it's not easy, in general, to compose processes in C.
+  Creating processes with =fork= makes our code complex and hard to read,
+  but we have no other choice if we want the full power of Unix;
+  we need to be able to call arbitrary system calls in our children to set them up.
+
+  rsyscall is a new shell which provides access to all the Unix system calls, like C,
+  but which lets you start processes with normal, straight-line, fork-free code,
+  like the traditional shell.
+
+  With rsyscall,
+  we can create our child processes and call system calls from inside them to set them up.
+  Our process creation logic is simple,
+  while still allowing us to use any Unix feature.
+
+  We can compose tools from the Unix toolbox
+  using all the system calls Unix provides,
+  instead of the limited subset provided by the shell and various wrappers.
+
+  In this way, we can easily build arbitrarily complex systems out of Unix tools.
+
+  The increased ability to manipulate the environment ahead of time
+  will encourage Unix hackers to rely on "already correct" environment,
+  so their software tools will be smaller, more composable, and more reusable.
+  The result will be a move away from
+  large, monolithic software packages that manage "everything",
+  towards smaller general-purpose tools,
+  composed together by purpose-specific scripts.

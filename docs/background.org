@@ -1,3 +1,5 @@
+#+TITLE: Python background
+
 * async
 In the tutorials, you can safely ignore the presence of the "async" and "await" keywords.
 We don't use any actual async features in the tutorials,
@@ -16,8 +18,9 @@ Any async function =f= (a function defined with =async def f(args)=)
 has to be called with =await f(args)=.
 =await= can only be used in an async function,
 so async functions can only be called by async functions.
-The main async function is run by a special non-async function provided by the async library,
-such as trio or asyncio.
+
+The main async function is run by a special non-async function provided by an async library (such as trio or asyncio).
+At the top level of an rsyscall program is therefore a call to =trio.run= or =asyncio.run=.
 
 Async functions are, from the user perspective, equivalent to normal functions.
 Only when using async library features does a difference appear,

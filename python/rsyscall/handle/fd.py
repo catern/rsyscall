@@ -27,57 +27,11 @@ from rsyscall.sched import CLONE, _unshare
 T_fd = t.TypeVar('T_fd', bound='BaseFileDescriptor')
 @dataclass(eq=False)
 class BaseFileDescriptor:
-    """A file descriptor accessed through some Task, with most FD-based syscalls as methods
+    """A file descriptor accessed through some `Task`
 
-    A FileDescriptor represents the ability to use some open file through some task.  When
-    an open file is created by some task, the syscall will return a FileDescriptor which
-    allows accessing that open file through that task. Pipes, sockets, and many other
-    entities on Linux are represented as files.
-
-    A FileDescriptor has many methods to make syscalls; most syscalls which take a file
-    descriptor as their first argument are present as a method on FileDescriptor. These
-    syscalls will be made through the Task in the FileDescriptor's `task` field.
-
-    After we have opened the file and performed some operations on it, we can call the
-    close method to immediately close the FileDescriptor and free its resources. The
-    FileDescriptor will also be automatically closed in the background after the
-    FileDescriptor has been garbage collected. Garbage collection should be relied on and
-    preferred over context managers or explicit closing, which are both too inflexible for
-    large scale resource management.
-
-    If we want to access the file from another task, we may call the for_task method on
-    the FileDescriptor, passing the other task from which we want to access the file.
-    This will return another FileDescriptor referencing that file.  This will only work if
-    the two tasks are in the same file descriptor table; that is typically the case for
-    most scenarios and most kinds of threads. If the tasks are not in the same file
-    descriptor table, more complicated methods must be used to pass the FileDescriptor to
-    the other task; for example, CmsgSCMRights.
-
-    Once we've called for_task at least once, we'll have multiple FileDescriptors all
-    referencing the same file. Assuming the tasks have not exited, exec'd, or otherwise
-    unshared their file descriptor table, these FileDescriptors will be sharing the same
-    underlying near.FileDescriptor in the same file descriptor table. If that's the case,
-    then we can no longer call the close method on any one FileDescriptor, because that
-    would close the underlying near.FileDescriptor, and break the other FileDescriptors
-    using it.
-
-    Instead, we must use the invalidate method to invalidate just our FileDescriptor
-    without affecting any others. Only when invalidate is called on the last
-    FileDescriptor will the file be closed. We can also still rely on the garbage
-    collector to close the underlying near.FileDescriptor once all the FileDescriptors
-    using it have been garbage collected.
-
-    If a task calls unshare(CLONE.FILES) to change its file descriptor table, all the
-    FileDescriptors which access files through that task remain valid. Linux will copy all
-    the file descriptors from the old file descriptor table to the new file descriptor
-    table, keeping the same numbers. The FileDescriptors for that task will still be
-    referencing the same file, but through different file descriptors in a new file
-    descriptor table. Since the file descriptor numbers do not change, near.FileDescriptor
-    will not change either, and no actual change is required in the FileDescriptors. See
-    Task.unshare_files for more details.
-
-    Garbage collection is currently run when we change file descriptor tables, as well as
-    on-demand when run_fd_table_gc is run.
+    This is an rsyscall-internal base class,
+    which other `FileDescriptor` objects inherit from for core lifecycle methods.
+    See `FileDescriptor` for more information.
 
     """
     __slots__ = ('task', 'near', 'valid')
@@ -147,12 +101,36 @@ class BaseFileDescriptor:
             raise Exception("for some reason, the fd wasn't closed; "
                             "maybe some race condition where there are still handles left around?")
 
-    def for_task(self, task: FileDescriptorTask[T_fd]) -> T_fd:
-        "Make another FileDescriptor referencing the same file but using `task` for syscalls"
-        return task.make_fd_handle(self)
-
     def inherit(self, task: FileDescriptorTask[T_fd]) -> T_fd:
+        """Make another FileDescriptor referencing the same file but using `task`, which inherited this FD, for syscalls
+
+        Whenever we call `clone` (without passing `CLONE.FILES`),
+        the file descriptors in the parent process are copied to the child process;
+        this is tracked in rsyscall, and we can call `inherit` on any parent `FileDescriptor`
+        to get a handle for the copy in the child.
+
+        """
         return task.inherit_fd(self)
+
+    def for_task(self, task: FileDescriptorTask[T_fd]) -> T_fd:
+        """Make a new handle for the same FD, but using `task`, in the same FD table, for syscalls
+
+        Two tasks in the same file descriptor table can be created by calling `clone` with `CLONE.FILES`.
+
+        Once we call this method, we'll have multiple handles for a single file descriptor,
+        in a single file descriptor table.
+        We won't be able to use `close` to close the FD, since that would break other handles;
+        we'll need to use `invalidate` instead.
+        (Or, we can just rely on garbage collection.)
+
+        If we want to access the file from another task, we may call the for_task method on
+        the FileDescriptor, passing the other task from which we want to access the file.
+        This will return another FileDescriptor referencing that file.  This will only work if
+        the two tasks are in the same file descriptor table; that is typically the case for
+        most scenarios and most kinds of threads. .
+
+        """
+        return task.make_fd_handle(self)
 
     @contextlib.contextmanager
     def borrow(self, task: FileDescriptorTask) -> t.Iterator[rsyscall.near.FileDescriptor]:
@@ -370,6 +348,16 @@ class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
         return self._make_fd_handle_from_near(near)
 
     def inherit_fd(self, fd: BaseFileDescriptor) -> T_fd:
+        """Make another FileDescriptor referencing `fd`, which we inherited, using this task for syscalls
+
+        Whenever we call `clone` (without passing `CLONE.FILES`),
+        the file descriptors in the parent process are copied to the child process;
+        this is tracked in rsyscall, and we can call `inherit_fd` on any `FileDescriptor` in the parent process
+        to get a handle for the copy of the file descriptor in the child.
+
+        This same call also works if the two tasks are in the same file descriptor table, for convenience.
+
+        """
         fd._validate()
         if fd.task.fd_table == self.fd_table:
             # let's allow "inheriting" fds that are already in.. the right fd table?
@@ -408,11 +396,20 @@ class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
 
         When such an unshare is done, the new file descriptor table may contain file
         descriptors which were copied from the old file descriptor table but are not now
-        referenced by any FileDescriptor. Likewise, the old file descriptor table may
-        contain file descriptors which are no longer referenced by any FileDescriptor,
-        since the FileDescriptors that referenced them were all for the task that unshared
+        referenced by any `FileDescriptor`. Likewise, the old file descriptor table may
+        contain file descriptors which are no longer referenced by any `FileDescriptor`,
+        since the `FileDescriptor`s that referenced them were all for the task that unshared
         its table.  To remove such garbage, run_fd_table_gc is called for both the new and
         old fd tables after the unshare is complete.
+
+        All the `FileDescriptor`s which access files through the task will remain valid.
+        Linux will copy all the file descriptors from the old file descriptor table to the new file descriptor table,
+        keeping them at the same numbers.
+        The `FileDescriptor`s for the task will still be referencing the same file,
+        through different file descriptors, which happen to have the same file descriptor *numbers*,
+        in a new file descriptor table.
+        Since the file descriptor numbers do not change, `near.FileDescriptor` will not change either,
+        and no actual change is required in the `FileDescriptor`s.
 
         """
         if self.manipulating_fd_table:

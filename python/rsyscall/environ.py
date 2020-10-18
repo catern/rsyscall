@@ -21,6 +21,10 @@ import functools
 
 from rsyscall.fcntl import O
 from rsyscall.unistd import OK
+__all__ = [
+    'ExecutableNotFound',
+    'Environment',
+]
 
 T = t.TypeVar('T')
 def chunks(lst: t.List[T], size: int) -> t.Iterator[t.List[T]]:
@@ -33,7 +37,7 @@ def chunks(lst: t.List[T], size: int) -> t.Iterator[t.List[T]]:
         yield lst[i:i+size]
 
 class ExecutableNotFound(Exception):
-    "No executable with this name can be found."
+    "No executable with this name can be found; thrown from `Environment.which`"
     def __init__(self, name: str) -> None:
         super().__init__(name)
         self.name = name
@@ -95,6 +99,13 @@ class ExecutablePathCache:
             self.path_cache[name] = path
         return Command(path/name, [name], {})
 
+__pdoc__ = {
+    'Environment.__getitem__': True,
+    'Environment.__contains__': True,
+    'Environment.__len__': True,
+    'Environment.__delitem__': True,
+    'Environment.__setitem__': True,
+}
 class Environment:
     "A representation of Unix environment variables."
     @staticmethod
@@ -106,7 +117,9 @@ class Environment:
     ) -> None:
         self.data = environment
         self.sh = Command(Path("/bin/sh"), ['sh'], {})
+        "The POSIX-required `/bin/sh`, as a `rsyscall.Command`"
         self.tmpdir = Path(self.get("TMPDIR", "/tmp"))
+        "`TMPDIR`, or `/tmp` if it's not set, as a `rsyscall.path.Path`"
         self.path = path
         self.arglist_ptr = arglist_ptr
 
@@ -126,7 +139,7 @@ class Environment:
         self.data[key] = val
 
     def get(self, key: str, default: str) -> str:
-        "Like dict.get; get an environment variable, with a default."
+        "Like `dict.get`; get an environment variable, with a default."
         result = self.data.get(key)
         if result is None:
             return default
@@ -134,7 +147,7 @@ class Environment:
             return result
 
     async def which(self, name: str) -> Command:
-        "Locate an executable with this name on PATH; throw ExecutableNotFound on failure."
+        "Locate an executable with this name on `PATH`; throw `ExecutableNotFound` on failure."
         return await self.path.which(name)
 
     def inherit(self, task: Task, ram: RAM) -> Environment:

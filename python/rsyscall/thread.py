@@ -11,7 +11,7 @@ from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.network.connection import Connection
 from rsyscall.path import Path
-from rsyscall.struct import T_fixed_size, T_has_serializer, T_fixed_serializer, T_pathlike
+from rsyscall.struct import FixedSize, T_fixed_size, HasSerializer, T_has_serializer, FixedSerializer, T_fixed_serializer, T_pathlike
 from rsyscall.tasks.clone import clone_child_task
 import logging
 import os
@@ -94,15 +94,21 @@ class Thread:
                  stderr: FileDescriptor,
     ) -> None:
         self.task = task
+        "The `Task` associated with this process"
         self.ram = ram
         self.epoller = epoller
         self.connection = connection
+        "This thread's `rsyscall.network.connection.Connection`"
         self.loader = loader
         self.monitor = child_monitor
         self.environ = environ
+        "This thread's `rsyscall.environ.Environment`"
         self.stdin = stdin
+        "The standard input `FileDescriptor` (FD 0)"
         self.stdout = stdout
+        "The standard output `FileDescriptor` (FD 1)"
         self.stderr = stderr
+        "The standard error `FileDescriptor` (FD 2)"
 
     def _init_from(self, thr: Thread) -> None:
         self.task = thr.task
@@ -117,9 +123,13 @@ class Thread:
         self.stderr = thr.stderr
 
     @t.overload
-    async def malloc(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]: ...
+    async def malloc(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]:
+        "malloc a fixed size type"
+        pass
     @t.overload
-    async def malloc(self, cls: t.Type[T_fixed_serializer], size: int) -> Pointer[T_fixed_serializer]: ...
+    async def malloc(self, cls: t.Type[T_fixed_serializer], size: int) -> Pointer[T_fixed_serializer]:
+        "malloc specifying a specific size"
+        pass
     @t.overload
     async def malloc(self, cls: t.Type[T_pathlike], size: int) -> Pointer[T_pathlike]: ...
     @t.overload
@@ -127,20 +137,18 @@ class Thread:
     @t.overload
     async def malloc(self, cls: t.Type[bytes], size: int) -> Pointer[bytes]: ...
 
-    async def malloc(self, cls: t.Union[  # type: ignore
-            t.Type[T_fixed_size],
-            t.Type[T_fixed_serializer],
-            t.Type[T_pathlike],
-            t.Type[str],
-            t.Type[bytes],
-    ], size: t.Optional[int]=None,
-    ) -> t.Union[
-        Pointer[T_fixed_size],
-        Pointer[T_fixed_serializer],
-        Pointer[T_pathlike],
-        Pointer[str],
-        Pointer[bytes],
-    ]:
+    async def malloc(self, cls: t.Type[t.Union[FixedSize, FixedSerializer, os.PathLike, str, bytes]],
+                     size: int=None) -> Pointer:
+        """Allocate a buffer for this type, with the specified size if required
+
+        If `malloc` is given a `rsyscall.struct.FixedSize` type, the size must not be passed;
+        if `malloc` is given any other type, the size must be passed.
+
+        Any type which inherits from `rsyscall.struct.FixedSerializer` is supported.
+        As a special case for convenience, `bytes`, `str`, and `os.PathLike` are also supported;
+        `bytes` will be written out as they are, and `str` and `os.PathLike` will be null-terminated.
+
+        """
         return await self.ram.malloc(cls, size) # type: ignore
 
     @t.overload
@@ -150,13 +158,14 @@ class Thread:
     @t.overload
     async def ptr(self, data: str) -> WrittenPointer[str]: ...
     @t.overload
-    async def ptr(self, data: t.Union[bytes]) -> WrittenPointer[bytes]: ...
-    async def ptr(self, data: t.Union[T_has_serializer, T_pathlike, str, bytes],
-    ) -> t.Union[
-        WrittenPointer[T_has_serializer],
-        WrittenPointer[T_pathlike],
-        WrittenPointer[str], WrittenPointer[bytes],
-    ]:
+    async def ptr(self, data: bytes) -> WrittenPointer[bytes]: ...
+    async def ptr(self, data: t.Union[HasSerializer, os.PathLike, str, bytes]) -> WrittenPointer:
+        """Allocate a buffer for this data, and write the data to that buffer
+
+        Any value which inherits from `HasSerializer` is supported.
+        As a special case for convenience, `bytes`, `str`, and `os.PathLike` are also supported;
+        `bytes` will be written out as they are, and `str` and `os.PathLike` will be null-terminated.
+        """
         return await self.ram.ptr(data)
 
     async def make_afd(self, fd: FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
@@ -166,11 +175,11 @@ class Thread:
         return await AsyncFileDescriptor.make(self.epoller, self.ram, fd)
 
     async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
-        "Calls self.connection.open_async_channels; see Connection.open_async_channels"
+        "Calls self.connection.open_async_channels; see `Connection.open_async_channels`"
         return (await self.connection.open_async_channels(count))
 
     async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
-        "Calls self.connection.open_channels; see Connection.open_channels"
+        "Calls self.connection.open_channels; see `Connection.open_channels`"
         return (await self.connection.open_channels(count))
 
     @t.overload

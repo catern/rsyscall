@@ -24,6 +24,8 @@ import typing as t
 
 __all__ = [
     "SyscallConnection",
+    "RsyscallSyscall",
+    "SyscallResponse",
 ]
 
 class RsyscallSyscall(Struct, Syscall):

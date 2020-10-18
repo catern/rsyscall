@@ -194,7 +194,7 @@ def align(num: int, alignment: int) -> int:
         return num
 
 class UnlimitedAllocator:
-    """An allocator which just calls mmap to request more memory when it runs out.
+    """An allocator which just calls `mmap` to request more memory when it runs out.
 
     """
     def __init__(self, task: Task) -> None:

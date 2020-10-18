@@ -108,14 +108,16 @@ class AddressSpaceMismatchError(NamespaceMismatchError):
 #### Segment register
 @dataclass(eq=False)
 class Task:
-    """A wrapper around SyscallInterface which tracks the namespaces of the underlying process
+    """A wrapper around `SyscallInterface` which tracks the namespaces of the underlying process
+
+    Note that this is a base class for the more fully featured `rsyscall.Task`.
 
     We store namespace objects to represent the namespaces that we believe that underlying
     processes is in. Since we have complete control over the process, we can make sure
     this belief is accurate, by updating our stored namespaces when the process changes
     namespace. That isn't done here; it's done in handle.Task.
 
-    Currently, we store only one PidNamespace. But each process actually has two pid
+    Currently, we store only one `PidNamespace`. But each process actually has two pid
     namespaces: 
 
     - the process's own pid namespace, which determines the pids returned from getpid,

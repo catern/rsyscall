@@ -30,17 +30,17 @@ created, but it would require creating resource handles in a way that is not gua
 be safe. Determining a clean, generic way to persist information about the state of
 resources in a way that can be safely recovered after a crash is an open question.
 
-
---------------------------------------------------------------------------------
-CLONE_THREAD
+## `CLONE_THREAD`
 
 The model we currently use for persistent threads is:
+
 1. Create this can-be-persistent thread
 2. Do a bunch of things in that thread, allocating whatever resources
 3. Call make_persistent to make the thread actually persistent
 4. Crash or disconnect, and call reconnect to reconnect.
 
 It would be better for the model to be:
+
 1. Do a bunch of things in whatever thread you like, allocating whatever resources
 2. Create an immediately persistent thread which inherits those resources
 3. Crash or disconnect, and call reconnect to reconnect.
@@ -49,16 +49,16 @@ However, the major obstacle is child processes. Child processes can't be inherit
 new child process, much less passed around between unrelated processes like file
 descriptors can.
 
-CLONE_THREAD allows creating a new child process which can wait on the child processes of the
-parent; however, CLONE_THREAD also does a bunch of other stuff which is undesirable. Among
-other things, CLONE_THREAD processes:
-- don't send SIGCHLD when exiting, so they can't be waited on without dedicating a thread
+`CLONE_THREAD` allows creating a new child process which can wait on the child processes of the
+parent; however, `CLONE_THREAD` also does a bunch of other stuff which is undesirable. Among
+other things, `CLONE_THREAD` processes:
+- don't send `SIGCHLD` when exiting, so they can't be waited on without dedicating a thread
   to monitor them
 - don't leave a zombie when they die
 - block several unshare and setns operations
 - complicate signals and many other system calls
 
-While CLONE_THREAD could allow the better model for persistent threads, it comes with a
+While `CLONE_THREAD` could allow the better model for persistent threads, it comes with a
 host of other disadvantages and complexities, so we're just biting the bullet and
 accepting the worse model.
 

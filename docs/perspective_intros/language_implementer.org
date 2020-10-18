@@ -1,0 +1,6 @@
+* Perspective
+- I'm a language implementer
+* rsyscall is a better Linux interaction model for your new language
+Linking against libc is so old hat, and so very un-type-safe.
+Don't you want to garbage collect (or reference count, or track with linearity, or whatever) file descriptors,
+just like you do memory?

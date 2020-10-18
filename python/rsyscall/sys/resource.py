@@ -9,6 +9,7 @@ __all__ = [
     "PRIO",
     "RLIMIT",
     "Rlimit",
+    "ResourceTask",
 ]
 
 class PRIO(enum.IntFlag):
@@ -61,6 +62,10 @@ from rsyscall.handle.pointer import Pointer, WrittenPointer
 
 class ResourceTask(rsyscall.far.Task):
     async def setpriority(self, which: PRIO, prio: int) -> None:
+        """set program scheduling priority
+
+        man: setpriority(2)
+        """
         return (await _setpriority(self.sysif, which, 0, prio))
 
     async def getpriority(self, which: PRIO) -> int:

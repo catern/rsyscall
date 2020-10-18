@@ -21,6 +21,7 @@ __all__ = [
     "Sigset",
     "Sigaction",
     "SignalBlock",
+    "SignalTask",
 ]
 
 class SIG(enum.IntEnum):

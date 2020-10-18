@@ -31,9 +31,12 @@ __all__ = [
     "CmsgList",
     "SendMsghdr",
     "RecvMsghdr",
+    "RecvMsghdrOut",
     "SendmsgFlags",
     "RecvmsgFlags",
     "MsghdrFlags",
+    "SocketTask",
+    "SocketFileDescriptor",
 ]
 
 T = t.TypeVar('T')
@@ -465,6 +468,10 @@ from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
 T_fd = t.TypeVar('T_fd', bound='SocketFileDescriptor')
 class SocketFileDescriptor(BaseFileDescriptor):
     async def bind(self, addr: WrittenPointer[Sockaddr]) -> None:
+        """bind a name to a socket
+
+        man: bind(2)
+        """
         self._validate()
         with addr.borrow(self.task):
             try:
@@ -545,6 +552,10 @@ class SocketFileDescriptor(BaseFileDescriptor):
 
     async def sendmsg(self, msg: WrittenPointer[SendMsghdr], flags: SendmsgFlags=SendmsgFlags.NONE
     ) -> t.Tuple[IovecList, IovecList]:
+        """send a message on a socket
+
+        man: sendmsg(2)
+        """
         with contextlib.ExitStack() as stack:
             stack.enter_context(msg.borrow(self.task))
             if msg.value.name:
@@ -560,6 +571,10 @@ class SocketFileDescriptor(BaseFileDescriptor):
 
     async def recvmsg(self, msg: WrittenPointer[RecvMsghdr], flags: RecvmsgFlags=RecvmsgFlags.NONE,
     ) -> t.Tuple[IovecList, IovecList, Pointer[RecvMsghdrOut]]:
+        """receive a message from a socket
+
+        man: recvmsg(2)
+        """
         flags |= RecvmsgFlags.CMSG_CLOEXEC
         with contextlib.ExitStack() as stack:
             stack.enter_context(msg.borrow(self.task))
@@ -575,12 +590,20 @@ class SocketFileDescriptor(BaseFileDescriptor):
         return valid, invalid, msg.value.to_out(msg)
 
     async def recv(self, buf: Pointer[T], flags: MSG) -> t.Tuple[ReadablePointer[T], Pointer]:
+        """receive a message from a socket
+
+        man: recv(2)
+        """
         self._validate()
         with buf.borrow(self.task) as buf_n:
             ret = await _recv(self.task.sysif, self.near, buf_n, buf.size(), flags)
             return buf.readable_split(ret)
 
     async def send(self, buf: Pointer[T], flags: MSG) -> t.Tuple[Pointer[T], Pointer]:
+        """send a message on a socket
+
+        man: send(2)
+        """
         self._validate()
         with buf.borrow(self.task) as buf_n:
             ret = await _send(self.task.sysif, self.near, buf_n, buf.size(), flags)

@@ -76,8 +76,7 @@ and languages that currently have poor APIs for interacting with Linux,
 like Java.
 
 To learn more about the specifics of the API,
-and see what it looks like in action,
-return to the [[file:../README.org][introduction]] and read on.
+take a look at the documentation.
 
 * Footnotes
 

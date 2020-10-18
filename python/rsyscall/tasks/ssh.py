@@ -1,4 +1,7 @@
 """A thread on a remote host, bootstrapped over ssh
+
+Note that all thread types can be launched through any other thread type,
+including through an ssh thread.
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -41,6 +44,7 @@ __all__ = [
     "SSHDCommand",
     "SSHExecutables",
     "SSHDExecutables",
+    "SSHHost",
     "make_local_ssh_from_executables",
     "make_ssh_host",
     "make_local_ssh",

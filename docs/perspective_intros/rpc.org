@@ -1,0 +1,59 @@
+* The perspective of the reader
+- My favorite language has lots of cool ways to abstract and simplify functionality.
+- Functions are cool, types are cool, objects are cool, modules are cool, etc.
+- There are resources on remote hosts that I want to access,
+  like CPU time, or storage space.
+- HTTP, RPC, etc, are not cool,
+  because I can't use my normal way to abstract things.
+  I (usually) can't pass functions or objects,
+  I can't use my language's rich type system which is much more powerful than my RPC system,
+  I don't have the modularity and abstraction features I like.
+- JSON, YAML, Protocol Buffers, etc, are not cool,
+  for the same reasons.
+- [[https://github.com/pkamenarsky/replica][Replica]] and [[https://github.com/dbohdan/liveviews][Phoenix LiveView]] and the like are cool,
+  because they let you write a single program which runs in one place, on your server,
+  which nevertheless can use and manipulate remote resources:
+  the DOM in a user's browser tab.
+- Mobile code is cool,
+  other forms of automatically compiling a program
+  into a distributed system which transparently uses RPC to communicate are cool,
+  but they require a lot of runtime and language-level support,
+  which is uncommon.
+  Even basic support for remote manipulation is better.
+- Practically, I want to access resources and run processes across multiple Linux hosts,
+  and I'd like to use all the abstraction techniques of my favorite language to do that,
+  rather than write out a static, serialized, lowest-common-denominator description,
+  or using some constrained DSL separate from my usual language.
+* rsyscall allows a single Python program to work with Linux resources across multiple nodes
+  We have to run processes on multiple nodes,
+  which communicate over the narrow channel of RPC.
+  All the beautiful abstraction of our favorite language is lost
+  when splitting things out over RPC.
+
+  And what's worse,
+  we still have to find out some way to run these processes on these hosts,
+  and get them set up with the resources they need.
+
+  We could write out some static configuration and hand it to some service,
+  but that's the same defeat again;
+  we can't use the language features to abstract and simplify things,
+  because we ultimately have to describe everything
+  in a static, lowest-common-denominator format.
+  We could use some constrained DSL;
+  but that's not our actual language, with all the abstraction features we want.
+
+  If your preferred language is Python, or if Python is close enough,
+  you're in luck.
+  rsyscall allows a single Python program to work with Linux resources across multiple nodes.
+
+  We can write completely conventional Python,
+  running in a single Python interpreter in a single place,
+  and use Python-level features
+  like functions, objects, generators, coroutines,
+  and (with Python 3 type annotations) static types.
+
+  And we can use Linux resources, including child processes, across multiple nodes
+  in the same way we would use them locally.
+  For example, we can write a function which starts up a process,
+  and call it for each entry in a list of hosts,
+  and then run a coroutine to monitor that process and restart it if it dies.

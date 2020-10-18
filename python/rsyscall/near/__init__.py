@@ -33,5 +33,12 @@ from rsyscall.near.types import (
 )
 # re-exported SyscallInterface
 from rsyscall.near.sysif import SyscallInterface, SyscallHangup
-
-
+__all__ = [
+    'FileDescriptor',
+    'WatchDescriptor',
+    'Address',
+    'MemoryMapping',
+    'Process',
+    'ProcessGroup',
+    'SyscallInterface', 'SyscallHangup',
+]

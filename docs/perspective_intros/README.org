@@ -1,0 +1,5 @@
+Here are introductions to rsyscall from various perspectives.
+
+First, we describe the perspective.
+
+Then, we describe rsyscall from that perspective.
