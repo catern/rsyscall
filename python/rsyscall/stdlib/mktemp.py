@@ -1,7 +1,7 @@
 "Functions for making temporary directories."
 import random
 import string
-from rsyscall.unix_thread import UnixThread
+from rsyscall.thread import Thread
 from rsyscall.memory.ram import RAMThread
 from rsyscall.path import Path
 from rsyscall.handle import WrittenPointer
@@ -21,7 +21,7 @@ async def update_symlink(thr: RAMThread, path: WrittenPointer[Path],
     await thr.task.rename(tmppath, path)
     return path
 
-async def mkdtemp(thr: UnixThread, prefix: str="mkdtemp") -> 'TemporaryDirectory':
+async def mkdtemp(thr: Thread, prefix: str="mkdtemp") -> 'TemporaryDirectory':
     "Make a temporary directory in thr.environ.tmpdir."
     parent = thr.environ.tmpdir
     name = prefix+"."+random_string(k=8)
@@ -30,7 +30,7 @@ async def mkdtemp(thr: UnixThread, prefix: str="mkdtemp") -> 'TemporaryDirectory
 
 class TemporaryDirectory:
     "A temporary directory we've created and are responsible for cleaning up."
-    def __init__(self, thr: UnixThread, parent: Path, name: str) -> None:
+    def __init__(self, thr: Thread, parent: Path, name: str) -> None:
         "Don't directly instantiate, use rsyscall.mktemp.mkdtemp to create this class."
         self.thr = thr
         self.parent = parent

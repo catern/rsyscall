@@ -2,24 +2,33 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall.command import Command
+from rsyscall.environ import Environment
+from rsyscall.epoller import Epoller
 from rsyscall.handle import FileDescriptor, WrittenPointer, Pointer, Task
 from rsyscall.handle.fd import _close
+from rsyscall.loader import NativeLoader
 from rsyscall.memory.ram import RAM, RAMThread
+from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
+from rsyscall.network.connection import Connection
 from rsyscall.path import Path
-from rsyscall.unix_thread import UnixThread, ChildUnixThread
+from rsyscall.tasks.clone import CloneThread
+import logging
 import os
-import rsyscall.near.types as near
 import rsyscall.near
+import rsyscall.near.types as near
 import trio
 import typing as t
 
 from rsyscall.fcntl import O, F, FD_CLOEXEC, _fcntl
 from rsyscall.linux.dirent import DirentList
 from rsyscall.sched import CLONE
+from rsyscall.signal import Sigset, SIG, SignalBlock, HowSIG
 from rsyscall.sys.mount import MS
 from rsyscall.sys.wait import ChildState, W
 from rsyscall.sys.socket import Socketpair, AF, SOCK
-from rsyscall.unistd import Pipe
+from rsyscall.unistd import Pipe, ArgList
+
+logger = logging.getLogger(__name__)
 
 async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
                               in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
@@ -69,8 +78,33 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
                 nursery.start_soon(maybe_close, near.FileDescriptor(num))
             buf = valid.merge(rest)
 
-class Thread(UnixThread):
+class Thread(CloneThread):
     "A central class holding everything necessary to work with some thread, along with various helpers"
+    def __init__(self,
+                 task: Task,
+                 ram: RAM,
+                 connection: Connection,
+                 loader: NativeLoader,
+                 epoller: Epoller,
+                 child_monitor: ChildProcessMonitor,
+                 environ: Environment,
+                 stdin: FileDescriptor,
+                 stdout: FileDescriptor,
+                 stderr: FileDescriptor,
+    ) -> None:
+        super().__init__(task, ram, epoller, connection, loader, child_monitor)
+        self.environ = environ
+        self.stdin = stdin
+        self.stdout = stdout
+        self.stderr = stderr
+
+    def _init_from(self, thr: Thread) -> None: # type: ignore
+        super()._init_from(thr)
+        self.environ = thr.environ
+        self.stdin = thr.stdin
+        self.stdout = thr.stdout
+        self.stderr = thr.stderr
+
     @t.overload
     async def spit(self, path: FileDescriptor, text: t.Union[str, bytes]) -> None:
         pass
@@ -150,14 +184,47 @@ class Thread(UnixThread):
 
         manpage: clone(2)
         """
-        thread = await super().clone(flags=flags)
+        child_process, task = await self._clone_task(flags=flags)
+        ram = RAM(task,
+                  # We don't inherit the transport because it leads to a deadlock:
+                  # If when a child task calls transport.read, it performs a syscall in the child task,
+                  # then the parent task will need to call waitid to monitor the child task during the syscall,
+                  # which will in turn need to also call transport.read.
+                  # But the child is already using the transport and holding the lock,
+                  # so the parent will block forever on taking the lock,
+                  # and child's read syscall will never complete.
+                  self.ram.transport,
+                  self.ram.allocator.inherit(task),
+        )
+        if flags & CLONE.NEWPID:
+            # if the new process is pid 1, then CLONE_PARENT isn't allowed so we can't use inherit_to_child.
+            # if we are a reaper, than we don't want our child CLONE_PARENTing to us, so we can't use inherit_to_child.
+            # in both cases we just fall back to making a new ChildProcessMonitor for the child.
+            epoller = await Epoller.make_root(ram, task)
+            # this signal is already blocked, we inherited the block, um... I guess...
+            # TODO handle this more formally
+            signal_block = SignalBlock(task, await ram.ptr(Sigset({SIG.CHLD})))
+            monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
+        else:
+            epoller = self.epoller.inherit(ram)
+            monitor = self.monitor.inherit_to_child(task)
+        thread = ChildThread(Thread(
+            task, ram,
+            self.connection.inherit(task, ram),
+            self.loader,
+            epoller, monitor,
+            self.environ.inherit(task, ram),
+            stdin=self.stdin.inherit(task),
+            stdout=self.stdout.inherit(task),
+            stderr=self.stderr.inherit(task),
+        ), child_process)
         if flags & CLONE.NEWUSER:
             # hack, we should really track the [ug]id ahead of this so we don't have to get it
             # we have to get the [ug]id from the parent because it will fail in the child
             uid = await self.task.getuid()
             gid = await self.task.getgid()
             await write_user_mappings(thread, uid, gid)
-        return ChildThread(thread, thread.process)
+        return thread
 
     async def run(self, command: Command, check=True,
                   *, task_status=trio.TASK_STATUS_IGNORED) -> ChildState:
@@ -257,8 +324,93 @@ class Thread(UnixThread):
         name = type(self).__name__
         return f'{name}({self.task})'
 
-class ChildThread(Thread, ChildUnixThread):
+class ChildThread(Thread):
     "A thread that we know is also a direct child process of another thread"
+    def __init__(self, thr: Thread, process: AsyncChildProcess) -> None:
+        super()._init_from(thr)
+        self.process = process
+
+    async def _execve(self, path: t.Union[str, os.PathLike], argv: t.List[str], envp: t.List[str],
+                      command: Command=None,
+    ) -> AsyncChildProcess:
+        "Call execve, abstracting over memory; self.{exec,execve} are probably preferable"
+        async def op(sem: RAM) -> t.Tuple[WrittenPointer[t.Union[str, os.PathLike]],
+                                          WrittenPointer[ArgList],
+                                          WrittenPointer[ArgList]]:
+            argv_ptrs = ArgList([await sem.ptr(arg) for arg in argv])
+            envp_ptrs = ArgList([await sem.ptr(arg) for arg in envp])
+            return (await sem.ptr(path),
+                    await sem.ptr(argv_ptrs),
+                    await sem.ptr(envp_ptrs))
+        filename, argv_ptr, envp_ptr = await self.ram.perform_batch(op)
+        await self.task.execve(filename, argv_ptr, envp_ptr, command=command)
+        return self.process
+
+    async def execv(self, path: t.Union[str, os.PathLike],
+                    argv: t.Sequence[t.Union[str, os.PathLike]],
+                    command: Command=None,
+    ) -> AsyncChildProcess:
+        """Replace the running executable in this thread with another; see execve.
+        """
+        async def op(sem: RAM) -> t.Tuple[WrittenPointer[t.Union[str, os.PathLike]], WrittenPointer[ArgList]]:
+            argv_ptrs = ArgList([await sem.ptr(arg) for arg in argv])
+            return (await sem.ptr(path), await sem.ptr(argv_ptrs))
+        filename_ptr, argv_ptr = await self.ram.perform_batch(op)
+        envp_ptr = await self.environ.as_arglist(self.ram)
+        await self.task.execve(filename_ptr, argv_ptr, envp_ptr, command=command)
+        return self.process
+
+    async def execve(self, path: t.Union[str, os.PathLike],
+                     argv: t.Sequence[t.Union[str, os.PathLike]],
+                     env_updates: t.Mapping[str, t.Union[str, os.PathLike]]={},
+                     inherited_signal_blocks: t.List[SignalBlock]=[],
+                     command: Command=None,
+    ) -> AsyncChildProcess:
+        """Replace the running executable in this thread with another.
+
+        self.exec is probably preferable; it takes a nice Command object which
+        is easier to work with.
+
+        We take inherited_signal_blocks as an argument so that we can default it
+        to "inheriting" an empty signal mask. Most programs expect the signal
+        mask to be cleared on startup. Since we're using signalfd as our signal
+        handling method, we need to block signals with the signal mask; and if
+        those blocked signals were inherited across exec, other programs would
+        break (SIGCHLD is the most obvious example).
+
+        We could depend on the user clearing the signal mask before calling
+        exec, similar to how we require the user to remove CLOEXEC from
+        inherited fds; but that is a fairly novel requirement to most, so for
+        simplicity we just default to clearing the signal mask before exec, and
+        allow the user to explicitly pass down additional signal blocks.
+
+        """
+        sigmask: t.Set[SIG] = set()
+        for block in inherited_signal_blocks:
+            sigmask = sigmask.union(block.mask)
+        await self.task.sigprocmask((HowSIG.SETMASK, await self.ram.ptr(Sigset(sigmask))))
+        if not env_updates:
+            # use execv if we aren't updating the env, as an optimization.
+            return await self.execv(path, argv, command=command)
+        envp: t.Dict[str, str] = {**self.environ.data}
+        for key, value in env_updates.items():
+            envp[key] = os.fsdecode(value)
+        raw_envp: t.List[str] = ['='.join([key, value]) for key, value in envp.items()]
+        logger.debug("execveat(%s, %s, %s)", path, argv, env_updates)
+        return await self._execve(path, [os.fsdecode(arg) for arg in argv], raw_envp, command=command)
+
+    async def exec(self, command: Command,
+                   inherited_signal_blocks: t.List[SignalBlock]=[],
+    ) -> AsyncChildProcess:
+        """Replace the running executable in this thread with what's specified in `command`
+
+        See self.execve's docstring for an explanation of inherited_signal_blocks.
+
+        manpage: execve(2)
+        """
+        return (await self.execve(command.executable_path, command.arguments, command.env_updates,
+                                  inherited_signal_blocks=inherited_signal_blocks, command=command))
+
     async def __aenter__(self) -> None:
         pass
 
