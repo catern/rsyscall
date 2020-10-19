@@ -30,8 +30,6 @@ from rsyscall.sys.socket import SHUT
 from rsyscall.sys.wait import W
 
 __all__ = [
-    'ChildExit',
-    'MMRelease',
     'launch_futex_monitor',
     'clone_child_task',
     'CloneThread',

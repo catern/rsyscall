@@ -14,7 +14,6 @@ if t.TYPE_CHECKING:
 __all__ = [
     "SEEK",
     "OK",
-    "Arg",
     "ArgList",
     "Pipe",
 ]
