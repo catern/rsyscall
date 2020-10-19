@@ -210,7 +210,7 @@ async def serve_repls(listenfd: AsyncFileDescriptor,
                 await connfd.close()
         num = 0
         while True:
-            connfd = await listenfd.thr.make_afd(await listenfd.accept())
+            connfd = await listenfd.make_new_afd(await listenfd.accept(SOCK.NONBLOCK))
             global_vars = {**initial_vars,
                            '__repls__': repl_vars,
                            '__repl_stdin__': connfd,

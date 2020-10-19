@@ -55,7 +55,7 @@ class TestSocket(TrioTestCase):
         await clientfd.connect(addr)
 
         connfd_h, client_addr = await sockfd.accept_addr(SOCK.NONBLOCK)
-        connfd = await sockfd.thr.make_afd(connfd_h)
+        connfd = await self.thr.make_afd(connfd_h)
         logger.info("%s, %s", addr, client_addr)
         data = b"hello"
         await connfd.write_all_bytes(data)

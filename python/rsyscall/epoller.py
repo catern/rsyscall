@@ -458,10 +458,14 @@ class AsyncFileDescriptor:
     def __str__(self) -> str:
         return f"AsyncFileDescriptor({self.epolled})"
 
-    @property
-    def thr(self) -> EpollThread:
-        "Synthesizes an EpollThread from the resources in this AsyncFD; useful for calling make_afd."
-        return EpollThread(self.handle.task, self.ram, self.epolled.epoller)
+    async def make_new_afd(self, fd: FileDescriptor) -> AsyncFileDescriptor:
+        """Use the Epoller and RAM in this AsyncFD to make another AsyncFileDescriptor for a new FD
+
+        This doesn't steal any resources from the original AFD; it's just a convenience method,
+        most useful when calling accept() and wanting to create new AFDs out of the resulting FDs.
+
+        """
+        return await AsyncFileDescriptor.make(self.epolled.epoller, self.ram, fd)
 
     async def wait_for_rdhup(self) -> None:
         "Call epoll_wait until this file descriptor has a hangup."
