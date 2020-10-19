@@ -13,6 +13,7 @@ from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.memory.allocator import Arena
 from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
+from rsyscall.network.connection import Connection
 from rsyscall.struct import Int32
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.near.sysif import SyscallError
@@ -32,7 +33,6 @@ from rsyscall.sys.wait import W
 __all__ = [
     'launch_futex_monitor',
     'clone_child_task',
-    'CloneThread',
 ]
 
 logger = logging.getLogger(__name__)
@@ -169,29 +169,3 @@ async def clone_child_task(
         remote_sock_handle, remote_sock_handle,
     )
     return child_process, child_task
-
-from rsyscall.epoller import Epoller
-from rsyscall.network.connection import Connection, ConnectionThread
-class CloneThread(ConnectionThread):
-    def __init__(self,
-                 task: Task,
-                 ram: RAM,
-                 epoller: Epoller,
-                 connection: Connection,
-                 loader: NativeLoader,
-                 monitor: ChildProcessMonitor,
-    ) -> None:
-        super().__init__(task, ram, epoller, connection)
-        self.loader = loader
-        self.monitor = monitor
-
-    def _init_from(self, thr: CloneThread) -> None: # type: ignore
-        super()._init_from(thr)
-        self.loader = thr.loader
-        self.monitor = thr.monitor
-
-    async def _clone_task(self, flags: CLONE) -> t.Tuple[AsyncChildProcess, Task]:
-        return await clone_child_task(
-            self.task, self.ram, self.connection, self.loader, self.monitor,
-            flags, lambda sock: Trampoline(self.loader.server_func, [sock, sock]))
-

@@ -86,7 +86,7 @@ import os
 import math
 import typing as t
 from rsyscall.near.sysif import SyscallError
-from rsyscall.memory.ram import RAM, RAMThread
+from rsyscall.memory.ram import RAM
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 from dataclasses import dataclass
 from rsyscall.struct import Int32, T_fixed_size
@@ -103,7 +103,6 @@ __all__ = [
     "AsyncFileDescriptor",
     "EOFException",
     "AsyncReadBuffer",
-    "EpollThread",
 ]
 
 class RemovedFromEpollError(Exception):
@@ -761,18 +760,3 @@ class AsyncReadBuffer:
         if comma != b",":
             raise Exception("bad netstring delimiter", comma)
         return data
-
-class EpollThread(RAMThread):
-    def __init__(self,
-                 task: Task,
-                 ram: RAM,
-                 epoller: Epoller,
-    ) -> None:
-        super().__init__(task, ram)
-        self.epoller = epoller
-
-    async def make_afd(self, fd: FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
-        "Make an AsyncFileDescriptor; set `nonblock` to True if the fd is already nonblocking."
-        if not nonblock:
-            await fd.fcntl(F.SETFL, O.NONBLOCK)
-        return await AsyncFileDescriptor.make(self.epoller, self.ram, fd)

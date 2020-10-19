@@ -3,15 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall.command import Command
 from rsyscall.environ import Environment
-from rsyscall.epoller import Epoller
+from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.handle import FileDescriptor, WrittenPointer, Pointer, Task
 from rsyscall.handle.fd import _close
-from rsyscall.loader import NativeLoader
-from rsyscall.memory.ram import RAM, RAMThread
+from rsyscall.loader import Trampoline, NativeLoader
+from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
 from rsyscall.network.connection import Connection
 from rsyscall.path import Path
-from rsyscall.tasks.clone import CloneThread
+from rsyscall.struct import T_fixed_size, T_has_serializer, T_fixed_serializer, T_pathlike
+from rsyscall.tasks.clone import clone_child_task
 import logging
 import os
 import rsyscall.near
@@ -30,7 +31,7 @@ from rsyscall.unistd import Pipe, ArgList
 
 logger = logging.getLogger(__name__)
 
-async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
+async def write_user_mappings(thr: Thread, uid: int, gid: int,
                               in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
     """Set up a new user namespace with single-user {uid,gid}_map
 
@@ -54,7 +55,7 @@ async def write_user_mappings(thr: RAMThread, uid: int, gid: int,
     await gid_map.write(await thr.ram.ptr(f"{in_namespace_gid} {gid} 1\n".encode()))
     await gid_map.close()
 
-async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescriptor]) -> None:
+async def do_cloexec_except(thr: Thread, excluded_fds: t.Set[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
     # it's important to do this so we can't try to inherit the fds that we close here
     thr.task.fd_table.remove_inherited()
@@ -78,7 +79,7 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
                 nursery.start_soon(maybe_close, near.FileDescriptor(num))
             buf = valid.merge(rest)
 
-class Thread(CloneThread):
+class Thread:
     "A central class holding everything necessary to work with some thread, along with various helpers"
     def __init__(self,
                  task: Task,
@@ -92,18 +93,85 @@ class Thread(CloneThread):
                  stdout: FileDescriptor,
                  stderr: FileDescriptor,
     ) -> None:
-        super().__init__(task, ram, epoller, connection, loader, child_monitor)
+        self.task = task
+        self.ram = ram
+        self.epoller = epoller
+        self.connection = connection
+        self.loader = loader
+        self.monitor = child_monitor
         self.environ = environ
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
 
-    def _init_from(self, thr: Thread) -> None: # type: ignore
-        super()._init_from(thr)
+    def _init_from(self, thr: Thread) -> None:
+        self.task = thr.task
+        self.ram = thr.ram
+        self.epoller = thr.epoller
+        self.connection = thr.connection
+        self.loader = thr.loader
+        self.monitor = thr.monitor
         self.environ = thr.environ
         self.stdin = thr.stdin
         self.stdout = thr.stdout
         self.stderr = thr.stderr
+
+    @t.overload
+    async def malloc(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]: ...
+    @t.overload
+    async def malloc(self, cls: t.Type[T_fixed_serializer], size: int) -> Pointer[T_fixed_serializer]: ...
+    @t.overload
+    async def malloc(self, cls: t.Type[T_pathlike], size: int) -> Pointer[T_pathlike]: ...
+    @t.overload
+    async def malloc(self, cls: t.Type[str], size: int) -> Pointer[str]: ...
+    @t.overload
+    async def malloc(self, cls: t.Type[bytes], size: int) -> Pointer[bytes]: ...
+
+    async def malloc(self, cls: t.Union[  # type: ignore
+            t.Type[T_fixed_size],
+            t.Type[T_fixed_serializer],
+            t.Type[T_pathlike],
+            t.Type[str],
+            t.Type[bytes],
+    ], size: t.Optional[int]=None,
+    ) -> t.Union[
+        Pointer[T_fixed_size],
+        Pointer[T_fixed_serializer],
+        Pointer[T_pathlike],
+        Pointer[str],
+        Pointer[bytes],
+    ]:
+        return await self.ram.malloc(cls, size) # type: ignore
+
+    @t.overload
+    async def ptr(self, data: T_has_serializer) -> WrittenPointer[T_has_serializer]: ...
+    @t.overload
+    async def ptr(self, data: T_pathlike) -> WrittenPointer[T_pathlike]: ...
+    @t.overload
+    async def ptr(self, data: str) -> WrittenPointer[str]: ...
+    @t.overload
+    async def ptr(self, data: t.Union[bytes]) -> WrittenPointer[bytes]: ...
+    async def ptr(self, data: t.Union[T_has_serializer, T_pathlike, str, bytes],
+    ) -> t.Union[
+        WrittenPointer[T_has_serializer],
+        WrittenPointer[T_pathlike],
+        WrittenPointer[str], WrittenPointer[bytes],
+    ]:
+        return await self.ram.ptr(data)
+
+    async def make_afd(self, fd: FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
+        "Make an AsyncFileDescriptor; set `nonblock` to True if the fd is already nonblocking."
+        if not nonblock:
+            await fd.fcntl(F.SETFL, O.NONBLOCK)
+        return await AsyncFileDescriptor.make(self.epoller, self.ram, fd)
+
+    async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
+        "Calls self.connection.open_async_channels; see Connection.open_async_channels"
+        return (await self.connection.open_async_channels(count))
+
+    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
+        "Calls self.connection.open_channels; see Connection.open_channels"
+        return (await self.connection.open_channels(count))
 
     @t.overload
     async def spit(self, path: FileDescriptor, text: t.Union[str, bytes]) -> None:
@@ -184,7 +252,9 @@ class Thread(CloneThread):
 
         manpage: clone(2)
         """
-        child_process, task = await self._clone_task(flags=flags)
+        child_process, task = await clone_child_task(
+            self.task, self.ram, self.connection, self.loader, self.monitor,
+            flags, lambda sock: Trampoline(self.loader.server_func, [sock, sock]))
         ram = RAM(task,
                   # We don't inherit the transport because it leads to a deadlock:
                   # If when a child task calls transport.read, it performs a syscall in the child task,

@@ -24,7 +24,6 @@ import struct
 from dataclasses import dataclass
 import nixdeps
 import logging
-from rsyscall.memory.ram import RAM, RAMThread
 from rsyscall.handle import WrittenPointer, Pointer, FileDescriptor
 from rsyscall.path import Path
 
@@ -155,7 +154,7 @@ async def nix_deploy(src: Store, dest: Store, path: StorePath) -> None:
         await dest.thread.clone(),
         Command(dest.nix.path/'bin/nix-store', ['nix-store'], {}), dest_fd)
 
-async def canonicalize(thr: RAMThread, path: Path) -> Path:
+async def canonicalize(thr: Thread, path: Path) -> Path:
     "Resolve all symlinks in this path, and return the resolved path"
     f = await thr.task.open(await thr.ram.ptr(path), O.PATH)
     size = 4096
@@ -169,7 +168,7 @@ async def canonicalize(thr: RAMThread, path: Path) -> Path:
 class NixPath(Path):
     "A path in the Nix store, which can therefore be deployed to a remote host with Nix."
     @classmethod
-    async def make(cls, thr: RAMThread, path: Path) -> NixPath:
+    async def make(cls, thr: Thread, path: Path) -> NixPath:
         return cls(await canonicalize(thr, path))
 
     def __init__(self, *args) -> None:

@@ -9,7 +9,7 @@ import os
 from rsyscall.fcntl import O
 if t.TYPE_CHECKING:
     from rsyscall.handle import FileDescriptor
-    from rsyscall.memory.ram import RAMThread
+    from rsyscall.thread import Thread
 
 __all__ = [
     "PathTooLongError",
@@ -29,7 +29,7 @@ class SockaddrUn(Sockaddr):
             raise PathTooLongError("path", self.path, "is longer than the maximum unix address size")
 
     @staticmethod
-    async def from_path(thr: RAMThread, path: t.Union[str, os.PathLike]) -> SockaddrUn:
+    async def from_path(thr: Thread, path: t.Union[str, os.PathLike]) -> SockaddrUn:
         """Turn this path into a SockaddrUn, hacking around the 108 byte limit on socket addresses.
 
         If the passed path is too long to fit in an address, this function will open the parent

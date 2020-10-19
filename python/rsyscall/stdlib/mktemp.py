@@ -2,7 +2,6 @@
 import random
 import string
 from rsyscall.thread import Thread
-from rsyscall.memory.ram import RAMThread
 from rsyscall.path import Path
 from rsyscall.handle import WrittenPointer
 import os
@@ -12,7 +11,7 @@ def random_string(k: int=8) -> str:
     "Return a random string - useful for making files that don't conflict with others."
     return ''.join(random.choices(string.ascii_letters + string.digits, k=k))
 
-async def update_symlink(thr: RAMThread, path: WrittenPointer[Path],
+async def update_symlink(thr: Thread, path: WrittenPointer[Path],
                          target: t.Union[str, os.PathLike]) -> WrittenPointer[Path]:
     "Atomically update this path to contain a symlink pointing at this target."
     tmpname = path.value.name + ".updating." + random_string(k=8)

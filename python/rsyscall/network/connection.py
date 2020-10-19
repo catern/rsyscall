@@ -5,7 +5,7 @@ from dneio import make_n_in_parallel
 import abc
 import typing as t
 import trio
-from rsyscall.epoller import AsyncFileDescriptor, Epoller, EpollThread
+from rsyscall.epoller import AsyncFileDescriptor, Epoller
 from rsyscall.handle import FileDescriptor, WrittenPointer, Task
 from rsyscall.memory.ram import RAM
 
@@ -231,26 +231,3 @@ class ListeningConnection(Connection):
 
     def inherit(self, task: Task, ram: RAM) -> ListeningConnection:
         return self.for_task_with_fd(task, ram, self.listening_fd.handle.inherit(task))
-
-class ConnectionThread(EpollThread):
-    def __init__(self,
-                 task: Task,
-                 ram: RAM,
-                 epoller: Epoller,
-                 connection: Connection,
-    ) -> None:
-        super().__init__(task, ram, epoller)
-        self.connection = connection
-
-    def _init_from(self, thr: ConnectionThread) -> None: # type: ignore
-        super().__init__(thr.task, thr.ram, thr.epoller)
-        self.connection = thr.connection
-
-    async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
-        "Calls self.connection.open_async_channels; see Connection.open_async_channels"
-        return (await self.connection.open_async_channels(count))
-
-    async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
-        "Calls self.connection.open_channels; see Connection.open_channels"
-        return (await self.connection.open_channels(count))
-

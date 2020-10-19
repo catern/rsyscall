@@ -17,7 +17,6 @@ import typing as t
 __all__ = [
     "RAM",
     "perform_batch",
-    "RAMThread",
 ]
 
 class BytesSerializer(Serializer[bytes]):
@@ -290,51 +289,3 @@ async def perform_batch(
     await run_all([functools.partial(transport.write, dest, data)
                    for dest, data in sem.writes])
     return ret
-
-class RAMThread:
-    def __init__(self, task: Task, ram: RAM) -> None:
-        self.task = task
-        self.ram = ram
-
-    @t.overload
-    async def malloc(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]: ...
-    @t.overload
-    async def malloc(self, cls: t.Type[T_fixed_serializer], size: int) -> Pointer[T_fixed_serializer]: ...
-    @t.overload
-    async def malloc(self, cls: t.Type[T_pathlike], size: int) -> Pointer[T_pathlike]: ...
-    @t.overload
-    async def malloc(self, cls: t.Type[str], size: int) -> Pointer[str]: ...
-    @t.overload
-    async def malloc(self, cls: t.Type[bytes], size: int) -> Pointer[bytes]: ...
-
-    async def malloc(self, cls: t.Union[  # type: ignore
-            t.Type[T_fixed_size],
-            t.Type[T_fixed_serializer],
-            t.Type[T_pathlike],
-            t.Type[str],
-            t.Type[bytes],
-    ], size: t.Optional[int]=None,
-    ) -> t.Union[
-        Pointer[T_fixed_size],
-        Pointer[T_fixed_serializer],
-        Pointer[T_pathlike],
-        Pointer[str],
-        Pointer[bytes],
-    ]:
-        return await self.ram.malloc(cls, size) # type: ignore
-
-    @t.overload
-    async def ptr(self, data: T_has_serializer) -> WrittenPointer[T_has_serializer]: ...
-    @t.overload
-    async def ptr(self, data: T_pathlike) -> WrittenPointer[T_pathlike]: ...
-    @t.overload
-    async def ptr(self, data: str) -> WrittenPointer[str]: ...
-    @t.overload
-    async def ptr(self, data: t.Union[bytes]) -> WrittenPointer[bytes]: ...
-    async def ptr(self, data: t.Union[T_has_serializer, T_pathlike, str, bytes],
-    ) -> t.Union[
-        WrittenPointer[T_has_serializer],
-        WrittenPointer[T_pathlike],
-        WrittenPointer[str], WrittenPointer[bytes],
-    ]:
-        return await self.ram.ptr(data)
