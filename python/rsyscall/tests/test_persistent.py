@@ -8,13 +8,14 @@ from rsyscall.near.sysif import SyscallHangup
 from rsyscall.tests.utils import assert_thread_works
 from rsyscall.sched import CLONE
 from rsyscall.signal import SIG
+from rsyscall.stdlib import mkdtemp
 import unittest
 
 class TestPersistent(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thread = local.thread
         self.store = local_store
-        self.tmpdir = await self.thread.mkdtemp("test_stub")
+        self.tmpdir = await mkdtemp(self.thread, "test_stub")
         self.sock_path = self.tmpdir.path/"persist.sock"
 
     async def asyncTearDown(self) -> None:

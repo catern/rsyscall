@@ -3,10 +3,11 @@ import rsyscall.tasks.local as local
 
 from rsyscall.nix import *
 from rsyscall.sched import CLONE
+from rsyscall.stdlib import mkdtemp
 
 class TestNix(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.tmpdir = await local.thread.mkdtemp()
+        self.tmpdir = await mkdtemp(local.thread)
         self.thr = await local.thread.clone()
         self.store = await enter_nix_container(local_store, self.thr, self.tmpdir.path)
 

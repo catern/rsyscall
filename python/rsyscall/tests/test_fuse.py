@@ -6,6 +6,7 @@ import shlex
 from rsyscall.sched import CLONE
 from rsyscall.fcntl import O
 from rsyscall.unistd import SEEK
+from rsyscall.stdlib import mkdtemp
 from rsyscall.sys.mount import MS
 from rsyscall.sys.stat import Stat
 
@@ -34,7 +35,7 @@ import unittest
 @unittest.skip("not compatible with all kernels")
 class TestFUSE(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.tmpdir = await local.thread.mkdtemp()
+        self.tmpdir = await mkdtemp(local.thread)
         self.thr = await local.thread.clone(CLONE.NEWUSER|CLONE.NEWNS)
         self.child = await self.thr.clone()
         self.path = self.tmpdir.path/"path"

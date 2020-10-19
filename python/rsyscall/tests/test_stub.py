@@ -9,6 +9,7 @@ import rsyscall.tasks.local as local
 
 from rsyscall.tests.utils import do_async_things
 from rsyscall.command import Command
+from rsyscall.stdlib import mkdtemp
 
 import os
 
@@ -16,7 +17,7 @@ class TestStub(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local.thread
         self.store = nix.local_store
-        self.tmpdir = await self.local.mkdtemp("test_stub")
+        self.tmpdir = await mkdtemp(self.local, "test_stub")
         self.path = self.tmpdir.path
         # make sure that this name doesn't collide with shell builtins
         # so it can be run from the shell in test_read_stdin

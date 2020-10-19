@@ -6,6 +6,7 @@ from rsyscall.sys.un import *
 from rsyscall.sys.uio import IovecList
 from rsyscall.fcntl import O
 from rsyscall.linux.dirent import DirentList
+from rsyscall.stdlib import mkdtemp
 
 import logging
 logger = logging.getLogger(__name__)
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 class TestSocket(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local.thread
-        self.tmpdir = await self.thr.mkdtemp()
+        self.tmpdir = await mkdtemp(self.thr)
         self.path = self.tmpdir.path
 
     async def asyncTearDown(self) -> None:

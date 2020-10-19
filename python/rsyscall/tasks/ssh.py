@@ -30,6 +30,7 @@ import string
 import typing as t
 
 from rsyscall.fcntl import O, F
+from rsyscall.stdlib import mkdtemp
 from rsyscall.sys.socket import SOCK, AF
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.sys.wait import W
@@ -333,7 +334,7 @@ async def make_local_ssh_from_executables(thread: Thread,
     keygen_command = ssh_keygen.args('-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key')
     keygen_thread = await thread.clone()
     # ugh, we have to make a directory because ssh-keygen really wants to output to a directory
-    async with (await thread.mkdtemp()) as tmpdir:
+    async with (await mkdtemp(thread)) as tmpdir:
         await keygen_thread.task.chdir(await keygen_thread.ram.ptr(tmpdir))
         await (await keygen_thread.exec(keygen_command)).waitpid(W.EXITED)
         privkey_file = await thread.task.open(await thread.ram.ptr(tmpdir/'key'), O.RDONLY)

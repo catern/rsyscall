@@ -5,7 +5,6 @@ from rsyscall.command import Command
 from rsyscall.handle import FileDescriptor, WrittenPointer, Pointer, Task
 from rsyscall.handle.fd import _close
 from rsyscall.memory.ram import RAM, RAMThread
-from rsyscall.mktemp import mkdtemp, TemporaryDirectory
 from rsyscall.path import Path
 from rsyscall.unix_thread import UnixThread, ChildUnixThread
 import os
@@ -72,10 +71,6 @@ async def do_cloexec_except(thr: RAMThread, excluded_fds: t.Set[near.FileDescrip
 
 class Thread(UnixThread):
     "A central class holding everything necessary to work with some thread, along with various helpers"
-    async def mkdtemp(self, prefix: str="mkdtemp") -> TemporaryDirectory:
-        "Make a temporary directory by calling rsyscall.mktemp.mkdtemp"
-        return await mkdtemp(self, prefix)
-
     @t.overload
     async def spit(self, path: FileDescriptor, text: t.Union[str, bytes]) -> None:
         pass

@@ -6,6 +6,7 @@ from rsyscall.monitor import AsyncSignalfd
 
 from rsyscall.sched import CLONE
 from rsyscall.signal import SIG, Sigset
+from rsyscall.stdlib import mkdtemp
 from rsyscall.sys.signalfd import SignalfdSiginfo
 
 class TestClone(TrioTestCase):
@@ -80,7 +81,7 @@ class TestClone(TrioTestCase):
         await (await grandchild.exec(cmd)).check()
 
     async def test_mkdtemp(self) -> None:
-        async with (await self.thr.mkdtemp()):
+        async with (await mkdtemp(self.thr)):
             pass
 
     async def test_signal_queue(self) -> None:

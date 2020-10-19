@@ -9,6 +9,7 @@ from rsyscall.sched import CLONE
 from rsyscall.fcntl import O
 from rsyscall.unistd import SEEK
 from rsyscall.path import Path
+from rsyscall.stdlib import mkdtemp
 from rsyscall.sys.mount import MS, UMOUNT
 from rsyscall.sys.stat import Stat
 
@@ -139,7 +140,7 @@ class FuseFS:
         pass
 
 async def symsh_main(thread: Thread, command: Command) -> None:
-    async with (await thread.mkdtemp()) as tmpdir:
+    async with (await mkdtemp(thread)) as tmpdir:
         thr = await thread.clone(flags=CLONE.NEWUSER|CLONE.NEWNS)
         path = tmpdir/"path"
         await thr.mkdir(path)

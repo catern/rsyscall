@@ -8,6 +8,7 @@ from rsyscall.tests.utils import do_async_things
 from rsyscall.fcntl import O
 from rsyscall.unistd import SEEK
 from rsyscall.sched import CLONE
+from rsyscall.stdlib import mkdtemp
 from rsyscall.linux.dirent import *
 from rsyscall.environ import ExecutablePathCache, ExecutableNotFound
 
@@ -15,7 +16,7 @@ class TestFS(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local.thread
         self.store = local_store
-        self.tmpdir = await self.thr.mkdtemp()
+        self.tmpdir = await mkdtemp(self.thr)
         self.path = self.tmpdir.path
 
     async def asyncTearDown(self) -> None:

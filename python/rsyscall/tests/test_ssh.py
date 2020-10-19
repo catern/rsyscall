@@ -15,6 +15,7 @@ from rsyscall.handle import FileDescriptor
 from rsyscall.thread import Thread, Command
 from rsyscall.command import Command
 from rsyscall.monitor import AsyncChildProcess
+from rsyscall.stdlib import mkdtemp
 
 # import logging
 # logging.basicConfig(level=logging.DEBUG)
@@ -126,7 +127,7 @@ class TestSSH(TrioTestCase):
     async def test_nix_deploy(self) -> None:
         # make it locally so that it can be cleaned up even when the
         # remote enters the container
-        tmpdir = await self.local.mkdtemp()
+        tmpdir = await mkdtemp(self.local)
         async with tmpdir:
             store = await enter_nix_container(local_store, self.remote, tmpdir.path)
             hello = await store.bin(hello_nixdep, "hello")

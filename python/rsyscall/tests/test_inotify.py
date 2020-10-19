@@ -4,11 +4,12 @@ import rsyscall.tasks.local as local
 from rsyscall.sys.inotify import *
 from rsyscall.inotify_watch import Inotify
 from rsyscall.fcntl import O
+from rsyscall.stdlib import mkdtemp
 
 class TestInotify(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local.thread
-        self.tmpdir = await self.thr.mkdtemp()
+        self.tmpdir = await mkdtemp(self.thr)
         self.path = self.tmpdir.path
         self.ify = await Inotify.make(self.thr)
 
