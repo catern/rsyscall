@@ -89,7 +89,7 @@ class EpollFileDescriptor(BaseFileDescriptor):
                 event.check_address_space(self.task)
             return (await _epoll_ctl(self.task.sysif, self.near, op, fd.near, event.near if event else None))
 
-class EpollTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+class EpollTask(FileDescriptorTask[T_fd]):
     async def epoll_create(self, flags: EpollFlag=EpollFlag.NONE) -> T_fd:
         return self.make_fd_handle(await _epoll_create(self.sysif, flags|EpollFlag.CLOEXEC))
 

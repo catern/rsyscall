@@ -322,7 +322,7 @@ class FDTable(rsyscall.far.FDTable):
         if task is not None:
             await self.gc_using_task(task)
 
-class FileDescriptorTask(t.Generic[T_fd], rsyscall.far.Task):
+class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
                  near_process: rsyscall.near.Process,

@@ -28,6 +28,6 @@ T_fd = t.TypeVar('T_fd', bound='EventFileDescriptor')
 class EventFileDescriptor(BaseFileDescriptor):
     pass
 
-class EventfdTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+class EventfdTask(FileDescriptorTask[T_fd]):
     async def eventfd(self, initval: int, flags: EFD=EFD.NONE) -> T_fd:
         return self.make_fd_handle(await _eventfd(self.sysif, initval, flags|EFD.CLOEXEC))

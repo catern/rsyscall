@@ -101,7 +101,7 @@ class FSFileDescriptor(BaseFileDescriptor):
         """
         return await self.dup3(newfd, 0)
 
-class FSTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+class FSTask(FileDescriptorTask[T_fd]):
     async def readlink(self, path: WrittenPointer[t.Union[str, os.PathLike]],
                        buf: Pointer) -> t.Tuple[ReadablePointer, Pointer]:
         with path.borrow(self) as path_n:

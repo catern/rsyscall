@@ -85,6 +85,6 @@ class TimerFileDescriptor(BaseFileDescriptor):
             await _timerfd_gettime(self.task.sysif, self.near, curr_value.near)
             return curr_value
 
-class TimerfdTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+class TimerfdTask(FileDescriptorTask[T_fd]):
     async def timerfd_create(self, clockid: CLOCK, flags: TFD=TFD.NONE) -> T_fd:
         return self.make_fd_handle(await _timerfd_create(self.sysif, clockid, flags|TFD.CLOEXEC))

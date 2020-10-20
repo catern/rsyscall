@@ -46,7 +46,7 @@ class SignalFileDescriptor(BaseFileDescriptor):
         with mask.borrow(self.task) as mask_n:
             await _signalfd(self.task.sysif, self.near, mask_n, mask.size(), flags)
 
-class SignalfdTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+class SignalfdTask(FileDescriptorTask[T_fd]):
     async def signalfd(self, mask: Pointer[Sigset], flags: SFD=SFD.NONE) -> T_fd:
         with mask.borrow(self) as mask_n:
             fd = await _signalfd(self.sysif, None, mask_n, mask.size(), flags|SFD.CLOEXEC)

@@ -586,7 +586,7 @@ class SocketFileDescriptor(BaseFileDescriptor):
             ret = await _send(self.task.sysif, self.near, buf_n, buf.size(), flags)
             return buf.split(ret)
 
-class SocketTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+class SocketTask(FileDescriptorTask[T_fd]):
     async def socket(self, domain: AF, type: SOCK, protocol: int=0) -> T_fd:
         """create an endpoint for communication
 

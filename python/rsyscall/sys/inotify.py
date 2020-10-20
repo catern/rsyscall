@@ -114,7 +114,7 @@ class InotifyFileDescriptor(BaseFileDescriptor):
         self._validate()
         await _inotify_rm_watch(self.task.sysif, self.near, wd)
 
-class InotifyTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+class InotifyTask(FileDescriptorTask[T_fd]):
     async def inotify_init(self, flags: InotifyFlag=InotifyFlag.NONE) -> T_fd:
         return self.make_fd_handle(await _inotify_init(self.sysif, flags|InotifyFlag.CLOEXEC))
 

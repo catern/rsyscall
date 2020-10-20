@@ -12,7 +12,7 @@ class MFD(enum.IntFlag):
 from rsyscall.handle.fd import T_fd, FileDescriptorTask
 from rsyscall.handle.pointer import WrittenPointer
 
-class MemfdTask(t.Generic[T_fd], FileDescriptorTask[T_fd]):
+class MemfdTask(FileDescriptorTask[T_fd]):
     async def memfd_create(self, name: WrittenPointer[t.Union[str, os.PathLike]], flags: MFD=MFD.NONE) -> T_fd:
         with name.borrow(self) as name_n:
             fd = await _memfd_create(self.sysif, name_n, flags|MFD.CLOEXEC)
