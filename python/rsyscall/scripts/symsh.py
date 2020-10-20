@@ -1,7 +1,6 @@
 "A program developed for SIGBOVIK2020; see research/sigbovik2020 for more information."
 from __future__ import annotations
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.tasks.local as local
 from rsyscall.nix import local_store
 import shlex
 
@@ -236,6 +235,7 @@ async def amain(argv: t.List[str]) -> None:
     exec_parser.add_argument(dest='executable')
     
     args = parser.parse_args(argv[1:])
+    from rsyscall import local_thread
     if args.subcommand == 'example':
         script = """ls; which ls
 stat /
@@ -243,9 +243,9 @@ foo|bar
 """
         print("======================= running script =======================")
         print(script, end='')
-        await symsh_main(local.thread, local.thread.environ.sh.args("-c", script))
+        await symsh_main(local_thread, local_thread.environ.sh.args("-c", script))
     elif args.subcommand == 'exec':
-        await symsh_main(local.thread, Command(Path(args.executable), [args.executable], {}))
+        await symsh_main(local_thread, Command(Path(args.executable), [args.executable], {}))
 
 def main():
     import sys

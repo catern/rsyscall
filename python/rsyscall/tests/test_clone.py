@@ -1,5 +1,5 @@
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 from rsyscall.tests.utils import do_async_things
 from rsyscall.epoller import Epoller
 from rsyscall.monitor import AsyncSignalfd
@@ -11,7 +11,7 @@ from rsyscall.sys.signalfd import SignalfdSiginfo
 
 class TestClone(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = await local.thread.clone(CLONE.FILES)
+        self.thr = await local_thread.clone(CLONE.FILES)
 
     async def asyncTearDown(self) -> None:
         await self.thr.close()
@@ -39,7 +39,7 @@ class TestClone(TrioTestCase):
         block forever.
 
         """
-        thr2 = await local.thread.clone()
+        thr2 = await local_thread.clone()
         cmd = self.thr.environ.sh.args('-c', 'true')
         child1 = await self.thr.exec(cmd)
         child2 = await thr2.exec(cmd)
@@ -93,7 +93,7 @@ class TestClone(TrioTestCase):
 
 class TestCloneUnshareFiles(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local.thread
+        self.local = local_thread
         self.thr = await self.local.clone()
 
     async def asyncTearDown(self) -> None:

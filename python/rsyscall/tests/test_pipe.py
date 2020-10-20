@@ -1,5 +1,5 @@
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 
 from rsyscall.sys.uio import IovecList
 from rsyscall.unistd import Pipe
@@ -7,7 +7,7 @@ from rsyscall.fcntl import O
 
 class TestPipe(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = local.thread
+        self.thr = local_thread
         self.pipe = await (await self.thr.task.pipe(await self.thr.malloc(Pipe))).read()
 
     async def asyncTearDown(self) -> None:

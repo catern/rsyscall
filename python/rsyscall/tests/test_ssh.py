@@ -4,7 +4,7 @@ from rsyscall.trio_test_case import TrioTestCase
 import rsyscall.thread
 from rsyscall.nix import local_store, enter_nix_container, bash_nixdep, coreutils_nixdep, hello_nixdep
 from rsyscall.tasks.ssh import *
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 
 from rsyscall.unistd import SEEK
 from rsyscall.signal import Sigset, HowSIG
@@ -30,7 +30,7 @@ async def start_cat(thread: Thread, cat: Command,
 
 class TestSSH(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local.thread
+        self.local = local_thread
         self.store = local_store
         self.host = await make_local_ssh(self.local, self.store)
         self.local_child, self.remote = await self.host.ssh(self.local)
@@ -56,7 +56,7 @@ class TestSSH(TrioTestCase):
             *rest,
         ] = await self.remote.open_channels(10)
         data = b'foobar'
-        _, rest = await local_sock.write(await local.thread.ptr(data))
+        _, rest = await local_sock.write(await local_thread.ptr(data))
         self.assertEqual(rest.size(), 0, msg="Got partial write")
         read_data, _ = await remote_sock.read(await self.remote.malloc(bytes, len(data)))
         self.assertEqual(data, await read_data.read())

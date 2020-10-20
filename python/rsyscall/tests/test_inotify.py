@@ -1,5 +1,5 @@
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 
 from rsyscall.sys.inotify import *
 from rsyscall.inotify_watch import Inotify
@@ -8,7 +8,7 @@ from rsyscall.stdlib import mkdtemp
 
 class TestInotify(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = local.thread
+        self.thr = local_thread
         self.tmpdir = await mkdtemp(self.thr)
         self.path = self.tmpdir.path
         self.ify = await Inotify.make(self.thr)

@@ -1,5 +1,5 @@
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 from rsyscall.nix import local_store
 import shlex
 
@@ -35,8 +35,8 @@ import unittest
 @unittest.skip("not compatible with all kernels")
 class TestFUSE(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.tmpdir = await mkdtemp(local.thread)
-        self.thr = await local.thread.clone(CLONE.NEWUSER|CLONE.NEWNS)
+        self.tmpdir = await mkdtemp(local_thread)
+        self.thr = await local_thread.clone(CLONE.NEWUSER|CLONE.NEWNS)
         self.child = await self.thr.clone()
         self.path = self.tmpdir.path/"path"
         await self.thr.mkdir(self.path)

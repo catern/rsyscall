@@ -5,7 +5,7 @@ from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.nix import local_store
 from rsyscall.tasks.exec import *
 
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 
 from rsyscall.thread import do_cloexec_except
 
@@ -16,7 +16,7 @@ from rsyscall.sched import CLONE
 
 class TestMisc(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local.thread
+        self.local = local_thread
         self.store = local_store
         self.executables = await RsyscallServerExecutable.from_store(self.store)
         self.thr = await self.local.clone(CLONE.FILES)

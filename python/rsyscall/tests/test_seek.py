@@ -1,10 +1,10 @@
 from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.sys.stat import Stat
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 
 class TestSeek(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = local.thread
+        self.thr = local_thread
         self.file = await self.thr.task.memfd_create(await self.thr.ptr("file"))
 
     async def asyncTearDown(self) -> None:

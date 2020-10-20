@@ -10,5 +10,5 @@ from rsyscall.handle import (
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.monitor import AsyncChildProcess
 from rsyscall.struct import Int32, Int64
-from rsyscall.tasks.local import thread as local_thread
+from rsyscall.tasks.local import local_thread
 from rsyscall.sys.mman import MemoryMapping

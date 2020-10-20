@@ -1,10 +1,10 @@
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 from rsyscall.sys.resource import *
 
 class TestResource(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = await local.thread.clone()
+        self.thr = await local_thread.clone()
 
     async def asyncTearDown(self) -> None:
         await self.thr.close()

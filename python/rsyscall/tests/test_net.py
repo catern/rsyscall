@@ -1,5 +1,5 @@
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 from rsyscall.fcntl import O
 from rsyscall.sys.socket import AF, SOCK
 from rsyscall.net.if_ import *
@@ -10,7 +10,7 @@ from rsyscall.sched import CLONE
 
 class TestNet(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = await local.thread.clone(CLONE.NEWUSER|CLONE.NEWNET)
+        self.thr = await local_thread.clone(CLONE.NEWUSER|CLONE.NEWNET)
 
     async def asyncTearDown(self) -> None:
         await self.thr.close()

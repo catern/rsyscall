@@ -35,10 +35,6 @@ from rsyscall.epoller import Epoller
 
 logger = logging.getLogger(__name__)
 
-__all__ = [
-    "thread",
-]
-
 async def _direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
     "Make a syscall directly in the current thread."
     return lib.rsyscall_raw_syscall(arg1, arg2, arg3, arg4, arg5, arg6, number)
@@ -136,5 +132,5 @@ async def _initialize() -> Thread:
     await thr.task.sigaction(SIG.WINCH, await thr.ram.ptr(Sigaction(Sighandler.DFL)), None)
     return thr
 
-thread: Thread = trio.run(_initialize)
+local_thread: Thread = trio.run(_initialize)
 "The local thread, fully initialized at import time"

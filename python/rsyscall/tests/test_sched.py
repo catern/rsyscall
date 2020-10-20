@@ -1,10 +1,10 @@
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 from rsyscall.sched import CpuSet
 
 class TestEventfd(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = local.thread
+        self.thr = local_thread
 
     async def test(self) -> None:
         avail = await (await self.thr.task.sched_getaffinity(await self.thr.malloc(CpuSet))).read()

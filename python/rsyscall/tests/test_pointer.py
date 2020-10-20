@@ -1,10 +1,10 @@
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 from rsyscall.handle.pointer import UseAfterFreeError
 
 class TestPointer(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = local.thread
+        self.thr = local_thread
 
     async def test_use_after_free_ptr(self) -> None:
         buf = await self.thr.malloc(bytes, 16)

@@ -4,7 +4,7 @@ from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.nix import local_store
 from rsyscall.tasks.exec import *
 
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 
 from rsyscall.tests.utils import assert_thread_works
 from rsyscall.sched import CLONE
@@ -12,7 +12,7 @@ import unittest
 
 class TestExec(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local.thread
+        self.local = local_thread
         self.store = local_store
         self.executables = await RsyscallServerExecutable.from_store(self.store)
         self.child = await self.local.clone(CLONE.FILES)

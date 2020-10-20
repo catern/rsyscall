@@ -1,5 +1,5 @@
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 
 from rsyscall.nix import *
 from rsyscall.sched import CLONE
@@ -7,8 +7,8 @@ from rsyscall.stdlib import mkdtemp
 
 class TestNix(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.tmpdir = await mkdtemp(local.thread)
-        self.thr = await local.thread.clone()
+        self.tmpdir = await mkdtemp(local_thread)
+        self.thr = await local_thread.clone()
         self.store = await enter_nix_container(local_store, self.thr, self.tmpdir.path)
 
     async def asyncTearDown(self) -> None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.nix import local_store
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 from rsyscall.tasks.persistent import *
 from rsyscall.tasks.ssh import make_local_ssh
 from rsyscall.near.sysif import SyscallHangup
@@ -13,7 +13,7 @@ import unittest
 
 class TestPersistent(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thread = local.thread
+        self.thread = local_thread
         self.store = local_store
         self.tmpdir = await mkdtemp(self.thread, "test_stub")
         self.sock_path = self.tmpdir.path/"persist.sock"

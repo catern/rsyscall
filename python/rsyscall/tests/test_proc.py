@@ -1,6 +1,6 @@
 import unittest
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 from rsyscall.tasks.exec import spawn_exec
 from rsyscall.sys.socket import AF, SOCK, Socketpair
 from rsyscall.unistd import Pipe, SEEK
@@ -15,7 +15,7 @@ from rsyscall.signal import SIG
 
 class TestProc(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local.thread
+        self.local = local_thread
         self.store = local_store
         self.init = await self.local.clone(CLONE.NEWUSER|CLONE.NEWPID)
         # set up proc

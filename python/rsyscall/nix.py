@@ -18,7 +18,6 @@ import os
 import rsyscall.handle as handle
 from rsyscall.thread import Thread, ChildThread
 from rsyscall.command import Command
-import rsyscall.tasks.local as local
 import trio
 import struct
 from dataclasses import dataclass
@@ -243,12 +242,14 @@ def _get_nix() -> StorePath:
         _imported_store_paths['nix'] = nix
         return nix
 
+from rsyscall import local_thread
+
 def __getattr__(name: str) -> t.Any:
     if name == "nix":
         return _get_nix()
     elif name == "local_store":
         global local_store
-        local_store = Store(local.thread, _get_nix())
+        local_store = Store(local_thread, _get_nix())
         return local_store
     raise AttributeError(f"module {__name__} has no attribute {name}")
 

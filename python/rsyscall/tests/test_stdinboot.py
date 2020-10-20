@@ -4,14 +4,14 @@ from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.nix import local_store
 from rsyscall.tasks.stdin_bootstrap import *
 
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 
 from rsyscall.tests.utils import do_async_things
 from rsyscall.command import Command
 
 class TestStdinboot(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local.thread
+        self.local = local_thread
         path = await stdin_bootstrap_path_from_store(local_store)
         self.command = Command(path, ['rsyscall-stdin-bootstrap'], {})
         self.local_child, self.remote = await stdin_bootstrap(self.local, self.command)

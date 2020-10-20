@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from rsyscall.trio_test_case import TrioTestCase
-import rsyscall.tasks.local as local
+from rsyscall import local_thread
 from rsyscall.epoller import *
 import trio
 import outcome
@@ -29,7 +29,7 @@ class DelayResultSysif(SyscallInterface):
 
 class TestEpoller(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = local.thread
+        self.thr = local_thread
 
     async def test_local(self) -> None:
         await do_async_things(self, self.thr.epoller, self.thr)
