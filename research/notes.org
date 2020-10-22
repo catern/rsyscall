@@ -22031,6 +22031,49 @@ hmmmm.
 ** TODO figure out some better way to handle covariance of pointers
    they should really be invariant,
    but maybe we can limit things with linearity so it's safe.
+** DONE add support for inheriting fds from parent of local thread
+   hmm we should be sure to only allow it for the local thread, i guess...
+
+   we also need to set cloexec on it, hm.
+
+   i suppose we could even want to accept an fd created by a different library in our fd table, hm.
+
+   ok maybe I can just...
+
+   have a from_int or something, on the, FD class?
+
+   but, i don't really want to encourage using that.
+   but, it's probably fine.
+
+   oh an fd created by a different library will already have cloexec set, hm.
+
+   and, also, is more likely to be already managed, hmmmmm....
+
+   i guess, uh, we could have the local thread's args somewhere?
+   and, next to that, the method to make an fd?
+
+   ah okay, let's put it next to inherit_fd,
+   and call it,
+   unsafe_inherit_fd,
+   and have it set cloexec and take an int.
+
+   perfect! easy.
+
+   because, inherit_fd will probably be the place one would look.
+
+   actually... cloexec should be the user's responsibility maybe? hm.
+
+   maybe make_fd_handle is better actually.
+
+   especially because we use it internally everywhere.
+
+   maybe I hsould remove the, pass a handle, support, from make_fd_handle.
+
+   yes good good
+
+   ok yeah so make_fd_handle is the way to do it, and we've cleaned that up and documented it now.
+** TODO changessss
+   removed AFD.thr, use AFD.make_afd instead
 * fuse stuff
   ok so one thing we noticed in fuse is,
   if we don't close the devfuse, then other threads making syscalls will get stuck in D-wait,
