@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rsyscall.trio_test_case import TrioTestCase
+from rsyscall.tests.trio_test_case import TrioTestCase
 import rsyscall.thread
 from rsyscall.nix import local_store, enter_nix_container, bash_nixdep, coreutils_nixdep, hello_nixdep
 from rsyscall.tasks.ssh import *

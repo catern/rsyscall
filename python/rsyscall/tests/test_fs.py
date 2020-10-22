@@ -1,4 +1,4 @@
-from rsyscall.trio_test_case import TrioTestCase
+from rsyscall.tests.trio_test_case import TrioTestCase
 from rsyscall.nix import local_store
 from rsyscall import local_thread
 

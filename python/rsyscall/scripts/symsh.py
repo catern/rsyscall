@@ -1,6 +1,5 @@
 "A program developed for SIGBOVIK2020; see research/sigbovik2020 for more information."
 from __future__ import annotations
-from rsyscall.trio_test_case import TrioTestCase
 from rsyscall.nix import local_store
 import shlex
 

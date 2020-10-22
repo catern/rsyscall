@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rsyscall.trio_test_case import TrioTestCase
+from rsyscall.tests.trio_test_case import TrioTestCase
 from rsyscall import local_thread
 from rsyscall.epoller import *
 import trio
