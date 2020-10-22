@@ -112,13 +112,12 @@ async def stdin_bootstrap(
     # oh hey we can conveniently dump the inode numbers with getdents!
     pidns = parent.task.pidns
     process = near.Process(pid)
-    remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
     base_task = Task(process, fd_table, address_space, pidns)
-    handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
+    remote_syscall_fd = base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_fd))
     base_task.sysif = SyscallConnection(
         logger.getChild(str(process)),
         access_syscall_sock, access_syscall_sock,
-        handle_remote_syscall_fd, handle_remote_syscall_fd,
+        remote_syscall_fd, remote_syscall_fd,
     )
     allocator = memory.AllocatorClient.make_allocator(base_task)
     # we assume our SignalMask is zero'd before being started, so we don't inherit it

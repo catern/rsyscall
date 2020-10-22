@@ -155,13 +155,12 @@ async def _setup_stub(
     # we should make it possible to control the namespace sharing more, hmm.
     # TODO maybe the describe should contain the net namespace number? and we can store our own as well?
     # then we can automatically do it right
-    remote_syscall_fd = near.FileDescriptor(describe_struct.syscall_fd)
     base_task = Task(process, fd_table, address_space, pidns)
-    handle_remote_syscall_fd = base_task.make_fd_handle(remote_syscall_fd)
+    remote_syscall_fd = base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_fd))
     base_task.sysif = SyscallConnection(
         logger.getChild(str(process)),
         access_syscall_sock, access_syscall_sock,
-        handle_remote_syscall_fd, handle_remote_syscall_fd,
+        remote_syscall_fd, remote_syscall_fd,
     )
     allocator = memory.AllocatorClient.make_allocator(base_task)
     base_task.sigmask = Sigset({SIG(bit) for bit in rsyscall.struct.bits(describe_struct.sigmask)})
