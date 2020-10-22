@@ -538,13 +538,13 @@ class SocketFileDescriptor(BaseFileDescriptor):
         flags |= SOCK.CLOEXEC
         if addr is None:
             fd = await _accept(self.task.sysif, self.near, None, None, flags)
-            return self._make_fd_handle(fd)
+            return self.task.make_fd_handle(fd)
         else:
             with addr.borrow(self.task):
                 with addr.value.buf.borrow(self.task):
                     fd = await _accept(self.task.sysif, self.near,
                                        addr.value.buf.near, addr.near, flags)
-                    return self._make_fd_handle(fd), addr
+                    return self.task.make_fd_handle(fd), addr
 
     async def shutdown(self, how: SHUT) -> None:
         self._validate()

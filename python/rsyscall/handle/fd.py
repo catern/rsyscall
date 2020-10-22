@@ -47,9 +47,6 @@ class BaseFileDescriptor:
         self.near = near
         self.valid = True
 
-    def _make_fd_handle(self: T_fd, near: rsyscall.near.FileDescriptor) -> T_fd:
-        return self.task.make_fd_handle(near)
-
     def _validate(self) -> None:
         if not self.valid:
             raise Exception("handle is no longer valid")
