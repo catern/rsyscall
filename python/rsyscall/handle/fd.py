@@ -166,24 +166,6 @@ class BaseFileDescriptor:
                     if len(borrowed._remove_from_tracking()) == 0:
                         raise Exception("borrowed fd must have been freed from under us, %s", borrowed)
 
-    def maybe_copy(self: T_fd, task: FileDescriptorTask[T_fd]) -> T_fd:
-        """Copy this file descriptor into this task, if it isn't already in there.
-
-        The immediate use case for this is when we're passed some FD handle and some task to use for
-        some purpose, and we're taking ownership of the task. If the FD handle is already in the
-        task, we don't need to copy it, since we necessarily are taking ownership of it; but if the
-        FD handle is in some other task, then we do need to copy it.
-
-        More concretely, that situation happens if we're passed a FD handle and a thread and we're
-        going to exec in the thread. If we copy the FD handle unnecessarily, disable_cloexec won't
-        work because there will be multiple FD handles.
-
-        """
-        if self.task == task:
-            return self
-        else:
-            return self.for_task(task)
-
     def move(self, task: FileDescriptorTask[T_fd]) -> T_fd:
         """Return the output of self.for_task(task), and also invalidate `self`.
 
