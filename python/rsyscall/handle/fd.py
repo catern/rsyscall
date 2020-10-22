@@ -127,7 +127,10 @@ class BaseFileDescriptor:
         most scenarios and most kinds of threads. .
 
         """
-        return task.make_fd_handle(self)
+        self._validate()
+        if self.task.fd_table != task.fd_table:
+            raise rsyscall.far.FDTableMismatchError(self.task.fd_table, task.fd_table)
+        return task._make_fd_handle_from_near(self.near)
 
     @contextlib.contextmanager
     def borrow(self, task: FileDescriptorTask) -> t.Iterator[rsyscall.near.FileDescriptor]:
@@ -312,19 +315,20 @@ class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
         self.fd_table.near_to_handles.setdefault(fd, []).append(handle)
         return handle
 
-    def make_fd_handle(self, fd: t.Union[rsyscall.near.FileDescriptor,
-                                         BaseFileDescriptor]) -> T_fd:
-        if isinstance(fd, rsyscall.near.FileDescriptor):
-            near = fd
-        elif isinstance(fd, BaseFileDescriptor):
-            fd._validate()
-            if fd.task.fd_table == self.fd_table:
-                near = fd.near
-            else:
-                raise rsyscall.far.FDTableMismatchError(fd.task.fd_table, self.fd_table)
-        else:
-            raise Exception("bad fd type", fd, type(fd))
-        return self._make_fd_handle_from_near(near)
+    def make_fd_handle(self, fd: rsyscall.near.FileDescriptor) -> T_fd:
+        """Make a `FileDescriptor` referencing `fd`, which is currently unknown to rsyscall
+
+        This is an unsafe operation: Since `rsyscall.near.FileDescriptor` is just a fancy `int`, we
+        could use this to create handles for FDs which don't exist, or which are already being
+        managed by others outside rsyscall. So use this with care.
+
+        If this FD was inherited from a non-rsyscall parent process, you probably want to call
+        `rsyscall.FileDescriptor.enable_cloexec` afterwards.
+
+        """
+        if fd in self.fd_table.near_to_handles:
+            raise Exception("This fd is already known to us", fd)
+        return self._make_fd_handle_from_near(fd)
 
     def inherit_fd(self, fd: BaseFileDescriptor) -> T_fd:
         """Make another FileDescriptor referencing `fd`, which we inherited, using this task for syscalls

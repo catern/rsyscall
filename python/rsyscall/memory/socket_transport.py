@@ -127,7 +127,7 @@ class SocketMemoryTransport(MemoryTransport):
     remote: FileDescriptor
 
     def inherit(self, task: Task) -> SocketMemoryTransport:
-        return SocketMemoryTransport(self.local, task.make_fd_handle(self.remote))
+        return SocketMemoryTransport(self.local, self.remote.for_task(task))
 
     async def do_write(self, dest: Pointer, src: Pointer[bytes], i=0) -> None:
         if dest.size() == 0:
