@@ -45,7 +45,14 @@ class F(enum.IntEnum):
     GETFD = lib.F_GETFD
     SETFL = lib.F_SETFL
 
-FD_CLOEXEC = lib.FD_CLOEXEC
+class FD(enum.IntFlag):
+    """The argument to fcntl F.SETFD and return value of fcntl F.GETFD
+
+    This is totally different from `rsyscall.FileDescriptor`, despite
+    "FD" being a frequently-used abbreviation for that class name.
+
+    """
+    CLOEXEC = lib.FD_CLOEXEC
 
 #### Classes ####
 from rsyscall.handle.fd import BaseFileDescriptor

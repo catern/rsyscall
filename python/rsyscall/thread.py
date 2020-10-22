@@ -20,7 +20,7 @@ import rsyscall.near.types as near
 import trio
 import typing as t
 
-from rsyscall.fcntl import O, F, FD_CLOEXEC, _fcntl
+from rsyscall.fcntl import O, F, FD, _fcntl
 from rsyscall.linux.dirent import DirentList
 from rsyscall.sched import CLONE
 from rsyscall.signal import Sigset, SIG, SignalBlock, HowSIG
@@ -63,7 +63,7 @@ async def do_cloexec_except(thr: Thread, excluded_fds: t.Set[near.FileDescriptor
     dirfd = await thr.task.open(await thr.ram.ptr("/proc/self/fd"), O.DIRECTORY)
     async def maybe_close(fd: near.FileDescriptor) -> None:
         flags = await _fcntl(thr.task.sysif, fd, F.GETFD)
-        if (flags & FD_CLOEXEC) and (fd not in excluded_fds):
+        if (flags & FD.CLOEXEC) and (fd not in excluded_fds):
             await _close(thr.task.sysif, fd)
     async with trio.open_nursery() as nursery:
         while True:

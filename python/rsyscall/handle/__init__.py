@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 from rsyscall.sched import CLONE, Stack, _unshare
 from rsyscall.signal import Siginfo
-from rsyscall.fcntl import AT, F, O
+from rsyscall.fcntl import AT, F, FD
 from rsyscall.path import Path
 from rsyscall.unistd import SEEK, ArgList, Pipe, OK
 from rsyscall.unistd.exec import _execve, _execveat, _exit
@@ -135,12 +135,16 @@ class FileDescriptor(
         return Path(f"/proc/{pid}/fd/{num}")
 
     async def disable_cloexec(self) -> None:
-        "Unset the `O.CLOEXEC` flag so this file descriptor can be inherited"
+        "Unset the `FD.CLOEXEC` flag so this file descriptor can be inherited"
         # TODO this doesn't make any sense. we shouldn't allow cloexec if there are multiple people in our fd table;
         # whether or not there are multiple handles to the fd is irrelevant.
         if not self.is_only_handle():
             raise Exception("shouldn't disable cloexec when there are multiple handles to this fd")
         await self.fcntl(F.SETFD, 0)
+
+    async def enable_cloexec(self) -> None:
+        "Set the `FD.CLOEXEC` flag so this file descriptor can't be inherited"
+        await self.fcntl(F.SETFD, FD.CLOEXEC)
 
     async def as_argument(self) -> int:
         "`disable_cloexec`, then return this `FileDescriptor` as an integer; useful when passing the FD as an argument"
