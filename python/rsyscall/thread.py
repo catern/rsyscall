@@ -61,6 +61,7 @@ async def do_cloexec_except(thr: Thread, excluded_fds: t.Set[near.FileDescriptor
     thr.task.fd_table.remove_inherited()
     buf = await thr.ram.malloc(DirentList, 4096)
     dirfd = await thr.task.open(await thr.ram.ptr("/proc/self/fd"), O.DIRECTORY)
+    excluded_fds.add(dirfd.near)
     async def maybe_close(fd: near.FileDescriptor) -> None:
         flags = await _fcntl(thr.task.sysif, fd, F.GETFD)
         if (flags & FD.CLOEXEC) and (fd not in excluded_fds):
@@ -78,6 +79,7 @@ async def do_cloexec_except(thr: Thread, excluded_fds: t.Set[near.FileDescriptor
                     continue
                 nursery.start_soon(maybe_close, near.FileDescriptor(num))
             buf = valid.merge(rest)
+    await dirfd.close()
 
 class Thread:
     "A central class holding everything necessary to work with some thread, along with various helpers"
