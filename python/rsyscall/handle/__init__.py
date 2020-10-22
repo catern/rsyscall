@@ -72,7 +72,7 @@ from rsyscall.sched        import SchedTask
 from rsyscall.sched import Borrowable
 
 __all__ = [
-    "FileDescriptor", "FDTable",
+    "FileDescriptor", "FDTable", "BaseFileDescriptor",
     "Pointer", "WrittenPointer", "ReadablePointer", "LinearPointer",
     "Process", "ChildProcess", "ThreadProcess",
     "Task",
@@ -130,6 +130,12 @@ class FileDescriptor(
         self.task: Task = task
 
     def as_proc_path(self) -> Path:
+        """Return the /proc/{pid}/fd/{num} path pointing to this FD.
+
+        This should be used with care, but it's sometimes useful for programs
+        which accept paths instead of file descriptors.
+
+        """
         pid = self.task.process.near.id
         num = self.near.number
         return Path(f"/proc/{pid}/fd/{num}")

@@ -16,6 +16,7 @@ __all__ = [
     "OK",
     "ArgList",
     "Pipe",
+    "FSFileDescriptor",
 ]
 
 # re-exported

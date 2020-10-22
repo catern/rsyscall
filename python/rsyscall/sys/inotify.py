@@ -13,6 +13,7 @@ __all__ = [
     "IN",
     "InotifyEvent",
     "InotifyEventList",
+    "InotifyFileDescriptor",
 ]
 
 class InotifyFlag(enum.IntFlag):

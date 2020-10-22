@@ -343,6 +343,7 @@ class LinearPointer(ReadablePointer[T]):
     value, such as file descriptors.
 
     The value is:
+
     - "affine"; it must be read at least once, so that the resources inside
       can be returned as managed objects.
     - "relevant"; it must be read at most once, so that dangling handles to the
@@ -352,14 +353,15 @@ class LinearPointer(ReadablePointer[T]):
 
     Unfortunately it's going to be quite difficult to guarantee relevance. There
     are three issues here:
+
     1. The pointer can simply be dropped and garbage collected.
     2. System calls can write to the pointer and discard its previous results
-    3. We can write to the pointer (through .write) and discard its previous results
+    3. We can write to the pointer (through `Pointer.write`) and discard its previous results
 
-    We can mitigate 1 a little by warning in __del__.
+    We can mitigate 1 a little by warning in `__del__`.
 
-    We could statically prevent 3 by removing the `read` and `write` methods
-    from this class, and only allowing `linear_read`, or dynamically by throwing
+    We could statically prevent 3 by removing the `Pointer.read` and `Pointer.write` methods
+    from this class, and only allowing `LinearPointer.linear_read`, or dynamically by throwing
     in `write` if `been_read` is false.
 
     Any approach to 2 is going to require some tweaks to the pointer API, and

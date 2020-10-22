@@ -14,6 +14,7 @@ __all__ = [
     "DT",
     "Dirent",
     "DirentList",
+    "GetdentsFileDescriptor",
 ]
 
 class DT(enum.IntEnum):
