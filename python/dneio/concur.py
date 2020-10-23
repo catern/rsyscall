@@ -27,21 +27,21 @@ class RequestQueue(t.Generic[InType, OutType]):
 
     def request_cb(self, val: InType, cb: Continuation[OutType]) -> None:
         if self._final_exn:
-            logger.info("RequestQueue.request_cb(%s, %s): throwing final exn %s", val, cb, self._final_exn)
+            logger.debug("RequestQueue.request_cb(%s, %s): throwing final exn %s", val, cb, self._final_exn)
             cb.throw(self._final_exn)
         elif self._receiver_cb:
-            logger.info("RequestQueue.request_cb(%s, %s): waking up receiver_cb %s", val, cb, self._receiver_cb)
+            logger.debug("RequestQueue.request_cb(%s, %s): waking up receiver_cb %s", val, cb, self._receiver_cb)
             receiver_cb = self._receiver_cb
             self._receiver_cb = None
             receiver_cb.send((val, cb))
         else:
-            logger.info("RequestQueue.request_cb(%s, %s): appending to waiting list of size %d", val, cb, len(self._request_cbs))
+            logger.debug("RequestQueue.request_cb(%s, %s): appending to waiting list of size %d", val, cb, len(self._request_cbs))
             self._request_cbs.append((val, cb))
 
     async def request(self, val: InType) -> OutType:
         if self._final_exn:
             raise self._final_exn
-        logger.info("RequestQueue.request(%s): shifting into request_cb", val)
+        logger.debug("RequestQueue.request(%s): shifting into request_cb", val)
         return await shift(functools.partial(self.request_cb, val))
 
     def get_one_cb(self, cb: Continuation[t.Tuple[InType, Continuation[OutType]]]) -> None:

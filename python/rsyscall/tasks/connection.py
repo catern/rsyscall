@@ -139,11 +139,11 @@ class SyscallConnection(SyscallInterface):
         while True:
             # wait until we have a batch to do, received from self.pending_requests
             requests = await self.request_queue.get_many()
-            self.logger.info("_run_requests: get_many: %s", requests)
+            self.logger.debug("_run_requests: get_many: %s", requests)
             # write remaining_reqs to memory
             ptr: Pointer[StructList] = await self.tofd.ram.ptr(
                 StructList(RsyscallSyscall, [syscall for syscall, coro in requests]))
-            self.logger.info("_run_requests: performed ptr for: %s", requests)
+            self.logger.debug("_run_requests: performed ptr for: %s", requests)
             ptr_to_write, reqs_to_write = ptr, requests
             # TODO write requests to tofd in parallel with receiving more
             # requests from the channel and writing them to memory
@@ -162,14 +162,14 @@ class SyscallConnection(SyscallInterface):
                     cb.throw(exn)
             else:
                 for syscall, coro in reqs_to_write:
-                    self.logger.info("forward_request: %s", syscall)
+                    self.logger.debug("forward_request: %s", syscall)
                     self.response_queue.request_cb(syscall, coro)
 
     async def _run_responses(self) -> None:
         buffer = AsyncReadBuffer(self.fromfd)
         while True:
             syscall, cb = await self.response_queue.get_one()
-            self.logger.info("going to read_result for syscall: %s %s", syscall, self.fromfd.handle.near)
+            self.logger.debug("going to read_result for syscall: %s %s", syscall, self.fromfd.handle.near)
             try:
                 value = (await buffer.read_struct(SyscallResponse)).value
             except Exception as exn:

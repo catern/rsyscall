@@ -200,10 +200,10 @@ class TrioContinuation(Continuation[SendType]):
     def resume(self, value: Outcome[SendType]) -> None:
         if self.cancelled:
             # discard the result - not great, obviously...
-            logger.info("TrioContinuation(%s): resumed after cancellation", self.task)
+            logger.debug("TrioContinuation(%s): resumed after cancellation", self.task)
             return
         if self.on_stack:
-            logger.info("TrioContinuation(%s): immediately resumed with %s", self.task, value)
+            logger.debug("TrioContinuation(%s): immediately resumed with %s", self.task, value)
             # This will happen if the function passed to shift immediately resumes the
             # continuation. With trio, we run the function passed to shift on the
             # coroutine that's being suspended. So we can't resume the coroutine here,
@@ -215,7 +215,7 @@ class TrioContinuation(Continuation[SendType]):
             return
         resuming_task = GLOBAL_RUN_CONTEXT.task
         runner = GLOBAL_RUN_CONTEXT.runner
-        logger.info("TrioContinuation(%s): resuming with %s", self.task, value)
+        logger.debug("TrioContinuation(%s): resuming with %s", self.task, value)
         global _under_coro_runner
         try:
             previous_runner = _under_coro_runner
@@ -231,15 +231,15 @@ class TrioContinuation(Continuation[SendType]):
             try:
                 msg = self.task.context.run(self.task.coro.send, value)
             except StopIteration as exn:
-                logger.info("TrioContinuation(%s): return %s", self.task, exn.value)
+                logger.debug("TrioContinuation(%s): return %s", self.task, exn.value)
                 GLOBAL_RUN_CONTEXT.runner.task_exited(self.task, outcome.Value(exn.value))
                 return
             except BaseException as exn:
-                logger.info("TrioContinuation(%s): raised %s", self.task, exn)
+                logger.debug("TrioContinuation(%s): raised %s", self.task, exn)
                 exn = exn.with_traceback(exn.__traceback__ and exn.__traceback__.tb_next)
                 GLOBAL_RUN_CONTEXT.runner.task_exited(self.task, outcome.Error(exn))
                 return
-            logger.info("TrioContinuation(%s): yield %s", self.task, msg)
+            logger.debug("TrioContinuation(%s): yield %s", self.task, msg)
         finally:
             _under_coro_runner = previous_runner
             GLOBAL_RUN_CONTEXT.task = resuming_task
@@ -262,7 +262,7 @@ class TrioContinuation(Continuation[SendType]):
         return self.resume(outcome.Error(exn))
 
     def _abort_func(self, raise_cancel) -> trio.lowlevel.Abort:
-        logger.info("TrioContinuation(%s): cancelled", self.task)
+        logger.debug("TrioContinuation(%s): cancelled", self.task)
         self.cancelled = True
         return trio.lowlevel.Abort.SUCCEEDED
 
@@ -357,7 +357,7 @@ class TrioSystemWaitReadable:
                     logger.exception("TSWR.run: callback raised exception")
                     raise
         finally:
-            logger.info("TSWR.run: system task exiting")
+            logger.debug("TSWR.run: system task exiting")
             self._run_running = False
 
 _trio_system_wait_readable: t.Optional[TrioSystemWaitReadable] = None
