@@ -425,8 +425,8 @@ class FDStatus:
 class AsyncFileDescriptor:
     """A file descriptor on which IO can be performed without blocking the thread.
 
-    Also comes with helpful methods to abstract over memory allocation; please try to
-    avoid using them.
+    Also comes with helpful methods `AsyncFileDescriptor.write_all_bytes` and
+    `AsyncFileDescriptor.read_some_bytes` to abstract over memory allocation.
 
     We always wait for a posedge to come back from epoll before trying to read. This is
     not necessarily too pessimistic, because as soon as we have a single posedge, we will
@@ -460,7 +460,10 @@ class AsyncFileDescriptor:
         return f"AsyncFileDescriptor({self.epolled})"
 
     async def make_new_afd(self, fd: FileDescriptor) -> AsyncFileDescriptor:
-        """Use the Epoller and RAM in this AsyncFD to make another AsyncFileDescriptor for a new FD
+        """Use the Epoller and RAM in this AsyncFD to make a new `AsyncFileDescriptor` for `fd`
+
+        Make sure that `fd` is already in non-blocking mode;
+        such as by accepting it with the `SOCK.NONBLOCK` flag.
 
         This doesn't steal any resources from the original AFD; it's just a convenience method,
         most useful when calling accept() and wanting to create new AFDs out of the resulting FDs.
@@ -473,7 +476,7 @@ class AsyncFileDescriptor:
         await self.epolled.wait_for(EPOLL.RDHUP|EPOLL.HUP)
 
     async def read(self, ptr: Pointer) -> t.Tuple[Pointer, Pointer]:
-        "Call read without blocking the thread."
+        "Call `FileDescriptor.read` without blocking the thread."
         while True:
             await self.epolled.wait_for(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
             current_events = self.epolled.get_current_events(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
@@ -491,13 +494,24 @@ class AsyncFileDescriptor:
                 self.epolled.status.posedge(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP)
 
     async def read_some_bytes(self, count: int=4096) -> bytes:
-        "Read at most count bytes; possibly less, if we have a partial read."
+        """Read at most count bytes; possibly less, if we have a partial read.
+
+        This allocates on each call. For some applications, you may want to avoid the cost of
+        allocation, by instead allocating a buffer with `Thread.malloc` up front and reusing it
+        across multiple calls to `AsyncFileDescriptor.read`.
+
+        """
         ptr = await self.ram.malloc(bytes, count)
         valid, _ = await self.read(ptr)
         return await valid.read()
 
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        "Call write without blocking the thread."
+        """Call `FileDescriptor.write` without blocking the thread.
+
+        Note that this doesn't retry partial writes, which are always a possibility, so you should
+        make sure to do that yourself, or use `AsyncFileDescriptor.write_all`.
+
+        """
         while True:
             await self.epolled.wait_for(EPOLL.OUT|EPOLL.ERR)
             current_events = self.epolled.get_current_events(EPOLL.OUT|EPOLL.ERR)
@@ -515,12 +529,25 @@ class AsyncFileDescriptor:
                 self.epolled.status.posedge(EPOLL.OUT)
 
     async def write_all(self, to_write: Pointer) -> None:
-        "Write all of this pointer to the fd, retrying on partial writes until complete."
+        """Write all of this pointer to the fd, retrying on partial writes until complete.
+
+        You might want to not use this, if you want to react to a partial write in some special way.
+        For example, `rsyscall.memory.socket_transport.SocketMemoryTransport` starts a `recv`
+        immediately after a partial write, before retrying the write, for increased parallelism.
+
+        """
         while to_write.size() > 0:
             written, to_write = await self.write(to_write)
 
     async def write_all_bytes(self, buf: bytes) -> None:
-        "Write all these bytes to the fd, retrying on partial writes until complete."
+        """Write all these bytes to the fd, retrying on partial writes until complete.
+
+        This allocates and performs a store to memory on each call. This is inefficient if you
+        already have an initialized pointer for the value, or if you already have an allocated
+        buffer that you can use to store the value, which you can also reuse for other values.
+        In those cases, you might want to use `AsyncFileDescriptor.write_all`.
+
+        """
         ptr = await self.ram.ptr(buf)
         await self.write_all(ptr)
 
