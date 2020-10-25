@@ -30,6 +30,13 @@ class OK(enum.IntFlag):
     X = lib.X_OK
     F = lib.F_OK
 
+class RENAME(enum.IntFlag):
+    "The flags argument to renameat2"
+    NONE = 0
+    EXCHANGE = lib.RENAME_EXCHANGE
+    NOREPLACE = lib.RENAME_NOREPLACE
+    WHITEOUT = lib.RENAME_WHITEOUT
+
 T_arglist = t.TypeVar('T_arglist', bound='ArgList')
 class ArgList(t.List[WrittenPointer[t.Union[str, os.PathLike]]], FixedSerializer):
     "A null-terminated list of null-terminated strings, as passed to execve."
@@ -49,6 +56,13 @@ class ArgListSerializer(Serializer[T_arglist]):
     def from_bytes(self, data: bytes) -> T_arglist:
         raise Exception("can't get pointer handles from raw bytes")
 
+def _get_near(fd: Optional[BaseFileDescriptor]) -> t.Optional[near.FileDescriptor]:
+    if fd is None:
+        return None
+    else:
+        fd._validate()
+        return fd.near
+
 #### Classes ####
 from rsyscall.handle.fd import BaseFileDescriptor, FileDescriptorTask
 
@@ -57,6 +71,10 @@ T_fd = t.TypeVar('T_fd', bound='FSFileDescriptor')
 class FSFileDescriptor(BaseFileDescriptor):
     async def readlinkat(self, path: WrittenPointer[t.Union[str, os.PathLike]],
                          buf: Pointer) -> t.Tuple[ReadablePointer, Pointer]:
+        """read value of a symbolic link
+
+        manpage: readlinkat(2)
+        """
         self._validate()
         with path.borrow(self.task):
             with buf.borrow(self.task):
@@ -64,21 +82,129 @@ class FSFileDescriptor(BaseFileDescriptor):
                 return buf.readable_split(ret)
 
     async def faccessat(self, ptr: WrittenPointer[t.Union[str, os.PathLike]], mode: OK, flags: AT=AT.NONE) -> None:
+        """check user's permissions for a file
+
+        manpage: faccessat(2)
+        """
         self._validate()
         with ptr.borrow(self.task):
             await _faccessat(self.task.sysif, self.near, ptr.near, mode, flags)
 
     async def openat(self: T_fd, path: WrittenPointer[t.Union[str, os.PathLike]], flags: O, mode=0o644) -> T_fd:
+        """open and possibly create a file
+
+        manpage: openat(2)
+        """
         self._validate()
         with path.borrow(self.task) as path_n:
-            fd = await _openat(self.task.sysif, self.near, path_n, flags|O.CLOEXEC, mode)
+            try:
+                fd = await _openat(self.task.sysif, self.near, path_n, flags|O.CLOEXEC, mode)
+            except OSError as exn:
+                exn.filename = path.value
+                raise
             return self.task.make_fd_handle(fd)
 
+    async def mkdirat(self, path: WrittenPointer[t.Union[str, os.PathLike]], mode=0o755) -> None:
+        """create a directory
+
+        manpage: mkdirat(2)
+        """
+        self._validate()
+        with path.borrow(self.task) as path_n:
+            try:
+                await _mkdirat(self.task.sysif, self.near, path_n, mode)
+            except OSError as exn:
+                exn.filename = path.value
+                raise
+
+    async def unlinkat(self, path: WrittenPointer[t.Union[str, os.PathLike]], flags: AT=AT.NONE) -> None:
+        """delete a name and possibly the file it refers to
+
+        manpage: unlinkat(2)
+        """
+        with path.borrow(self.task) as path_n:
+            try:
+                await _unlinkat(self.task.sysif, self.near, path_n, flags)
+            except OSError as exn:
+                exn.filename = path.value
+                raise
+
+    async def rmdirat(self, path: WrittenPointer[t.Union[str, os.PathLike]]) -> None:
+        """delete a directory
+
+        manpage: unlinkat(2)
+        """
+        await self.unlinkat(path, AT.REMOVEDIR)
+
+    async def linkat(self, oldpath: WrittenPointer[t.Union[str, os.PathLike]],
+                     newdirfd: t.Optional[FSFileDescriptor],
+                     newpath: WrittenPointer[t.Union[str, os.PathLike]],
+                     flags: AT=AT.NONE) -> None:
+        """make a new name for a file
+
+        manpage: linkat(2)
+        """
+        self._validate()
+        with oldpath.borrow(self.task) as oldpath_n:
+            with newpath.borrow(self.task) as newpath_n:
+                try:
+                    await _linkat(self.task.sysif, self.near, oldpath_n, _get_near(newdirfd), newpath_n, flags)
+                except OSError as exn:
+                    exn.filename = oldpath.value
+                    exn.filename2 = (newdirfd, newpath.value) if newdirfd else newpath.value
+                    raise
+
+    async def renameat(self, oldpath: WrittenPointer[t.Union[str, os.PathLike]],
+                       newdirfd: t.Optional[FSFileDescriptor],
+                       newpath: WrittenPointer[t.Union[str, os.PathLike]],
+                       flags: RENAME=RENAME.NONE) -> None:
+        """change the name or location of a file
+
+        manpage: renameat2(2)
+        """
+        self._validate()
+        with oldpath.borrow(self.task) as oldpath_n:
+            with newpath.borrow(self.task) as newpath_n:
+                try:
+                    await _renameat2(self.task.sysif, self.near, oldpath_n, _get_near(newdirfd), newpath_n, flags)
+                except OSError as exn:
+                    exn.filename = oldpath.value
+                    exn.filename2 = (newdirfd, newpath.value) if newdirfd else newpath.value
+                    raise
+
+    async def symlinkat(self, target: WrittenPointer[t.Union[str, os.PathLike]],
+                        linkpath: WrittenPointer[t.Union[str, os.PathLike]]) -> None:
+        """make a new name for a file
+
+        Note that `self` controls where the link is created, not the target of the link; `self` is
+        the `newdirfd` argument to symlinkat.
+
+        manpage: symlinkat(2)
+
+        """
+        self._validate()
+        with target.borrow(self.task) as target_n:
+            with linkpath.borrow(self.task) as linkpath_n:
+                try:
+                    await _symlinkat(self.task.sysif, target_n, self.near, linkpath_n)
+                except OSError as exn:
+                    exn.filename = target.value
+                    exn.filename2 = (self, linkpath.value)
+                    raise
+
     async def fchmod(self, mode: int) -> None:
+        """change permissions of a file
+
+        manpage: fchmod(2)
+        """
         self._validate()
         await _fchmod(self.task.sysif, self.near, mode)
 
     async def ftruncate(self, length: int) -> None:
+        """truncate a file to a specified length
+
+        manpage: ftruncate(2)
+        """
         self._validate()
         await _ftruncate(self.task.sysif, self.near, length)
 
@@ -144,6 +270,27 @@ class FSTask(FileDescriptorTask[T_fd]):
         with oldpath.borrow(self) as oldpath_n:
             with newpath.borrow(self) as newpath_n:
                 await _linkat(self.sysif, None, oldpath_n, None, newpath_n, 0)
+
+    async def linkat(self,
+                     olddirfd: t.Optional[FSFileDescriptor],
+                     oldpath: WrittenPointer[t.Union[str, os.PathLike]],
+                     newdirfd: t.Optional[FSFileDescriptor],
+                     newpath: WrittenPointer[t.Union[str, os.PathLike]],
+                     flags: AT=AT.NONE) -> None:
+        """make a new name for a file
+
+        See also `FSFileDescriptor.linkat`.
+
+        manpage: linkat(2)
+        """
+        with oldpath.borrow(self) as oldpath_n:
+            with newpath.borrow(self) as newpath_n:
+                try:
+                    await _linkat(self.sysif, _get_near(olddirfd), oldpath_n, _get_near(newdirfd), newpath_n, flags)
+                except OSError as exn:
+                    exn.filename = (olddirfd, oldpath.value) if olddirfd else oldpath.value
+                    exn.filename2 = (newdirfd, newpath.value) if newdirfd else newpath.value
+                    raise
 
     async def rename(self, oldpath: WrittenPointer[t.Union[str, os.PathLike]],
                      newpath: WrittenPointer[t.Union[str, os.PathLike]]) -> None:

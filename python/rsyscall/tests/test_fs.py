@@ -5,7 +5,7 @@ from rsyscall import local_thread
 from rsyscall import Pointer
 from rsyscall.path import Path
 from rsyscall.tests.utils import do_async_things
-from rsyscall.fcntl import O
+from rsyscall.fcntl import O, AT
 from rsyscall.unistd import SEEK
 from rsyscall.sched import CLONE
 from rsyscall.stdlib import mkdtemp
@@ -79,6 +79,18 @@ class TestFS(TrioTestCase):
         ptr = await self.thr.ram.malloc(str, 4096)
         with self.assertRaises(FileNotFoundError):
             await f.readlinkat(empty_ptr, ptr)
+
+    async def test_fdat(self) -> None:
+        "The *at system calls on FileDescriptor work"
+        root = await self.thr.task.open(await self.thr.ptr(self.path), O.DIRECTORY)
+        name = await self.thr.ptr("foo")
+        await root.mkdirat(name)
+        await root.rmdirat(name)
+        file = await root.openat(await self.thr.ptr("."), O.TMPFILE|O.WRONLY)
+        await self.thr.task.linkat(None, await self.thr.ptr(file.as_proc_path()), root, name, AT.SYMLINK_FOLLOW)
+        await root.renameat(name, root, name)
+        await root.unlinkat(name)
+        await root.symlinkat(name, name)
 
     async def test_readlink_proc(self) -> None:
         f = await self.thr.task.open(await self.thr.ptr("."), O.PATH)
