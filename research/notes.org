@@ -18639,7 +18639,7 @@ nativecall?
    That's the "header" that readdir is in.
 
    The manpages don't mention linux/dirent.h
-** TODO rename socket.Address to Sockaddr
+** DONE rename socket.Address to Sockaddr
    It's confusing with memory addresses otherwise.
 ** TODO make ssh tests work in Nix store by overriding NSS
    sigh ssh fails with
@@ -18777,7 +18777,7 @@ we could even modify NSS and include the patch in nixpkgs
    Hmm, what's the clean way to shut down a thread?
    Exit it?
 ** DONE stop using noplt?
-** TODO fix unshare_files_and_replace
+** DONE fix unshare_files_and_replace
    So we need a good standalone abstraction
 
    Specifically something which allows us to, um,
@@ -18883,7 +18883,7 @@ we could even modify NSS and include the patch in nixpkgs
     i'm sure we'll come back and want to revamp this but, for now,
     this seems... shippable.
 ** DONE include the Command in the ChildProcess
-** TODO make an inherit methd on task
+** DONE make an inherit methd on task
    so we'll take a snapshot of our parent's fd handles,
    and we can activate those in ours be calling inherit.
 
@@ -18943,7 +18943,7 @@ we could even modify NSS and include the patch in nixpkgs
    huh?
 
    oh i just messed up and cleared the signal mask is all, lol oops
-** TODO fix -static breaking nix build
+** DONE fix -static breaking nix build
    ok so it seems that /build/ is in the rpath
 
    but only when built by nix, when I build it myself it doesn't seem to be there
@@ -22074,6 +22074,109 @@ hmmmm.
    ok yeah so make_fd_handle is the way to do it, and we've cleaned that up and documented it now.
 ** TODO changessss
    removed AFD.thr, use AFD.make_afd instead
+** DONE add Thread.empty_string - or, dot_string
+   As a very important in-memory constant that is used for a lot of path system calls...
+
+   I think we can do this without cost actually.
+
+   Hm, in theory we could even put this on Task or something... nah, let's just do empty_string on Thread.
+
+   then we can use some stuff from this...
+
+   hmm okay well I can't immediately find a use case, but! i'm sure i will at some point.
+
+   okaaaaay I need to test this I guess
+
+   okaay so we need to handle:
+   symlink
+   rename
+   rmdir
+   link
+   unlink
+   mkdir
+
+   so.
+
+   root.mkdirat("dir")
+   root.rmdirat("dir")
+   root.openat("bar", O.CREAT)
+   root.linkat("bar", root, "baz")
+   root.renameat("baz", root, "bar")
+   root.symlinkat("bar", "baz.sym")
+   root.unlinkat("baz.sym")
+
+   yeah ezpz, each syscall once, beautiful!
+
+   argh so empty_string is not so useful after all because the no-privilege linkat doesn't work
+
+   dot_string is helpful to use O_TMPFILE though, so I did that instead.
+** DONE add memfd sealing
+** DONE add more socket options
+specifically TCP_NODELAY
+** DONE add more get/setrlimit support
+   specifically cover everything the ulimit builtin does.
+   (namely coredump size)
+
+   hey wait I already did this, nice, cool
+** DONE fix FD GC
+   I need a few more places to have weak references!
+
+   the list of fd handles, obviously
+
+   but... also the list of... epolled file descriptors? hm?
+
+   no, the list of active fd tasks, right, right.
+   otherwise, one task in that table will keep all the others alive
+
+   in any case, we need a test for this.
+
+   how to test it? well... I guess we can just....
+
+   make a lot of fds and... then check that... after GCing them they are gone?
+   yeah sure
+
+   works perfectly!
+** TODO re-add fork method, maybe?
+   now that thread.clone() actually is the same as fork (except for CLONE_VM, but that's minor),
+   it's not quite so weird to call it thread.fork()...
+   eh, let's stick with clone, fork is more confusing, probably
+** DONE fix rsyscall_exec
+   hmm ok so we're leaving a stray handle to server_{infd,outfd} (the server-side of the rsyscall connection),
+   around after the exec
+
+   and furthermore, we're actually leaving the fds around in the parent process - no good...
+
+   right okay so after the exec, we need to close the fd in the parent. which we aren't doing.
+   so we need the parent to be passed in
+
+   we can't viably go back to reusing the same connection, though,
+   because we need the hangup to indicate terminal syscall success
+
+   ok so let's just say we...
+
+   hmm how's the server_infd handle even work? is it in my parent actually?
+   no it's my own handle. ok.
+   so we need parent so we can close it...
+   or no, won't it be gc'd eventually anyway?
+   right yeah it will be gc'd just fine.
+   so we just need to... invalidate the handle in the child.
+
+   urgh okay.
+   now we're reusing the cached envp pointer after the exec.
+   we're actually making the syscall and getting an EFAULT
+   how do we protect against that?
+   normal address space changes assume memory mappings stay valid,
+   because...
+
+   well, because that would just be unshare(CLONE.VM) which would be like unshare(CLONE.FILES),
+   just make a new copy of the table/address space.
+
+   but exec paves it. so we'd need to invalidate all the handles,
+   which is painful.
+
+   maybe we can just drop support for rsyscall_exec, ugh.
+
+   yeah for goodness sake, just delete it!
 * fuse stuff
   ok so one thing we noticed in fuse is,
   if we don't close the devfuse, then other threads making syscalls will get stuck in D-wait,
@@ -29892,3 +29995,11 @@ oh I guess they didn't even write the segmented stack stuff, heh
 so that's why they didn't do anything fancy with it.
 
 it sounds like they just wrote the non-contiguous array implementation as a tree.
+* io_uring
+  I could reasonably suggest to those who want to use io_uring, but can't because of the kernel version,
+  to use rsyscall instead;
+  or a similar technique to rsyscall, anyway.
+  exceptionless system calls are the interesting thing in io_uring, and rsyscall does that too.
+
+  it just so happens that that's merged together with asynchrnonous file IO stuff in io_uring, for some reason.
+  
