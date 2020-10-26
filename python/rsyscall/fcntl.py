@@ -4,11 +4,15 @@ import enum
 import typing as t
 
 class AT(enum.IntFlag):
-    "The flags argument to many *at syscall; specifies changes to path resolution."
+    """The flags argument to many *at syscall; mostly specifies changes to path resolution.
+
+    Except for `AT.REMOVEDIR`, these are all path resolution changes.
+
+    """
     NONE = 0
     FDCWD = lib.AT_FDCWD
-    # except this one, this one actually changes functionality
     REMOVEDIR = lib.AT_REMOVEDIR
+    "When passed to `FileDescriptor.unlinkat`, remove directories instead of linking files."
     EMPTY_PATH = lib.AT_EMPTY_PATH
     SYMLINK_NOFOLLOW = lib.AT_SYMLINK_NOFOLLOW
     SYMLINK_FOLLOW = lib.AT_SYMLINK_FOLLOW
