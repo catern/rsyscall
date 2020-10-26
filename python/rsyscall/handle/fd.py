@@ -210,12 +210,6 @@ class BaseFileDescriptor:
     def __int__(self) -> int:
         return self.near.number
 
-    def __str__(self) -> str:
-        return f"FD({self.task}, {self.near.number})"
-
-    def __repr__(self) -> str:
-        return f"FD({self.task}, {self.near.number}, valid={self.valid})"
-
 async def _close(sysif: SyscallInterface, fd: rsyscall.near.FileDescriptor) -> None:
     try:
         await sysif.syscall(SYS.close, fd)

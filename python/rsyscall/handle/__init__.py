@@ -163,6 +163,15 @@ class FileDescriptor(
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.close()
 
+    def __str__(self) -> str:
+        return repr(self)
+
+    def __repr__(self) -> str:
+        if self.valid:
+            return f"FD({self.task}, {self.near.number})"
+        else:
+            return f"FD({self.task}, {self.near.number}, valid=False)"
+
 
 ################################################################################
 # Task
