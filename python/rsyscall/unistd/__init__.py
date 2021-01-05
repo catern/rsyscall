@@ -56,7 +56,7 @@ class ArgListSerializer(Serializer[T_arglist]):
     def from_bytes(self, data: bytes) -> T_arglist:
         raise Exception("can't get pointer handles from raw bytes")
 
-def _get_near(fd: Optional[BaseFileDescriptor]) -> t.Optional[near.FileDescriptor]:
+def _get_near(fd: t.Optional[BaseFileDescriptor]) -> t.Optional[near.FileDescriptor]:
     if fd is None:
         return None
     else:
