@@ -76,16 +76,13 @@ class TestEpoller(TrioTestCase):
             # wait for EAGAIN
             (syscall, result), cb = await queue.get_one()
             self.assertIsInstance(result.error, BlockingIOError)
-            print(syscall, result)
             thread.task.sysif = thread.task.sysif.sysif
             queue.close(Exception("remaining syscalls?"))
             # write data after the EAGAIN
-            print('writing data after EAGAIN')
             await pipe.write.write(buf_to_write)
             # give epoll event a chance to be read - it will be available immediately
             await trio.sleep(0)
             # resume the suspended EAGAIN coroutine, which should keep running and get data
-            print('resuming suspended coro')
             cb.send(None)
         valid, remaining = await async_pipe_rfd.read(buf)
 
