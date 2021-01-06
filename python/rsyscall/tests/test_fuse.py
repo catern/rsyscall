@@ -32,7 +32,6 @@ import typing as t
 from dataclasses import dataclass
 import unittest
 
-@unittest.skip("not compatible with all kernels")
 class TestFUSE(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.tmpdir = await mkdtemp(local_thread)
@@ -92,13 +91,6 @@ class TestFUSE(TrioTestCase):
         fh = 42
         await self.fuse.write((await self.assertRead(FuseOpenOp)).respond(FuseOpenOut(fh=fh, open_flags=FOPEN.NONE)))
         await self.fuse.write((await self.assertRead(FuseReadOp)).respond(data_read_from_fuse))
-        await self.fuse.write((await self.assertRead(FuseGetattrOp)).respond(FuseAttrOut(
-            attr_valid=Timespec(10000, 0),
-            attr=FuseAttr(
-                ino=1, size=len(data_read_from_fuse), blocks=1,
-                atime=Timespec(0, 0), mtime=Timespec(0, 0), ctime=Timespec(0, 0),
-                mode=TypeMode(S_IF.REG, Mode(0o777)), nlink=1, uid=self.fuse.uid, gid=self.fuse.gid, rdev=0, blksize=4096
-            ))))
         # close file
         await self.fuse.write((await self.assertRead(FuseFlushOp)).respond())
         await self.fuse.write((await self.assertRead(FuseReleaseOp)).respond())
