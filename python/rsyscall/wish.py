@@ -141,7 +141,7 @@ class ConsoleServerGenie(WishGranter):
                     try:
                         child = await thread.exec(cmd)
                     except:
-                        await thread.close()
+                        await thread.exit(0)
                         raise
                     async with child:
                         await child.waitpid(W.EXITED)

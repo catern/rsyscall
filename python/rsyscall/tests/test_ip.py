@@ -104,6 +104,6 @@ class TestIP(TrioTestCase):
                         # oops, looks like the data from multiple threads was interleaved
                         had_interleaving = True
         for thread in threads:
-            await thread.close()
-        await read_thread.close()
+            await thread.exit(0)
+        await read_thread.exit(0)
         self.assertTrue(had_interleaving)

@@ -13,22 +13,18 @@ class TestClone(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = await local_thread.clone(CLONE.FILES)
 
-    async def asyncTearDown(self) -> None:
-        await self.thr.close()
-
     async def test_exit(self) -> None:
         await self.thr.exit(0)
 
     async def test_nest_exit(self) -> None:
         thread = await self.thr.clone(CLONE.FILES)
-        async with thread:
-            await thread.exit(0)
+        await thread.exit(0)
 
     async def test_nest_multiple(self) -> None:
         for i in range(5):
             child = await self.thr.clone()
-            async with child:
-                await do_async_things(self, child.epoller, child)
+            await do_async_things(self, child.epoller, child)
+            await child.exit(0)
 
     async def test_two_children_exec(self) -> None:
         """Start two child and exec in each of them.
@@ -52,17 +48,17 @@ class TestClone(TrioTestCase):
 
     async def test_nest_async(self) -> None:
         thread = await self.thr.clone(CLONE.FILES)
-        async with thread:
-            epoller = await Epoller.make_root(thread.ram, thread.task)
-            await do_async_things(self, epoller, thread)
+        epoller = await Epoller.make_root(thread.ram, thread.task)
+        await do_async_things(self, epoller, thread)
+        await thread.exit(0)
 
     async def test_unshare_async(self) -> None:
         await self.thr.unshare(CLONE.FILES)
         thread = await self.thr.clone(CLONE.FILES)
-        async with thread:
-            epoller = await Epoller.make_root(thread.ram, thread.task)
-            await thread.unshare(CLONE.FILES)
-            await do_async_things(self, epoller, thread)
+        epoller = await Epoller.make_root(thread.ram, thread.task)
+        await thread.unshare(CLONE.FILES)
+        await do_async_things(self, epoller, thread)
+        await thread.exit(0)
 
     async def test_exec(self) -> None:
         child = await self.thr.exec(self.thr.environ.sh.args('-c', 'true'))
@@ -97,10 +93,10 @@ class TestCloneUnshareFiles(TrioTestCase):
         self.thr = await self.local.clone()
 
     async def asyncTearDown(self) -> None:
-        await self.thr.close()
+        await self.thr.exit(0)
 
     async def test_nest_async(self) -> None:
         thread = await self.thr.clone()
-        async with thread:
-            epoller = await Epoller.make_root(thread.ram, thread.task)
-            await do_async_things(self, epoller, thread)
+        epoller = await Epoller.make_root(thread.ram, thread.task)
+        await do_async_things(self, epoller, thread)
+        await thread.exit(0)

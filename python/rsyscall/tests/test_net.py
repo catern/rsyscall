@@ -13,7 +13,7 @@ class TestNet(TrioTestCase):
         self.thr = await local_thread.clone(CLONE.NEWUSER|CLONE.NEWNET)
 
     async def asyncTearDown(self) -> None:
-        await self.thr.close()
+        await self.thr.exit(0)
 
     async def test_setns_ownership(self) -> None:
         netnsfd = await self.thr.task.open(await self.thr.ram.ptr("/proc/self/ns/net"), O.RDONLY)

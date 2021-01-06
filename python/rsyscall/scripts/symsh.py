@@ -10,6 +10,7 @@ from rsyscall.path import Path
 from rsyscall.stdlib import mkdtemp
 from rsyscall.sys.mount import MS, UMOUNT
 from rsyscall.sys.stat import Stat
+from rsyscall.near.sysif import SyscallError
 
 from rsyscall.linux.fuse import (
     FuseOut,
@@ -127,10 +128,11 @@ class FuseFS:
         # umount to kill the fuse loop; it's a bit lazy to save the parent thread to do this, but we
         # can't do it in self.thr because that thread spends all its time blocked in read.
         await self.parent_thread.task.umount(await self.parent_thread.ptr(self.path))
-        # and close the thread
-        await self.thr.close()
-        # kill the thread, to be sure it's dead and /dev/fuse is closed
-        await self.thr.process.kill()
+        # and exit the thread - but it might already be dead, so we might fail to exit it, just ignore that.
+        try:
+            await self.thr.exit(0)
+        except SyscallError:
+            pass
 
     async def __aexit__(self, *args, **kwargs) -> None:
         await self.cleanup()

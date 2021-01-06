@@ -183,30 +183,29 @@ async def make_bootstrap_dir(
         await parent.ram.malloc(Pipe))).read()
     async_stdout = await parent.make_afd(stdout_pipe.read)
     child = await parent.clone()
-    async with child:
-        await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
-        await child.task.inherit_fd(bootstrap_executable).dup2(child.stdin)
-        child_process = await child.exec(ssh_command.args(ssh_bootstrap_script_contents))
-        await stdout_pipe.write.close()
-        # from... local?
-        # I guess this throws into sharper relief the distinction between core and module.
-        # The ssh bootstrapping stuff should come from a different class,
-        # which hardcodes the path,
-        # and which works only for local tasks.
-        # So in the meantime we'll continue to get it from task.filesystem.
+    await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
+    await child.task.inherit_fd(bootstrap_executable).dup2(child.stdin)
+    child_process = await child.exec(ssh_command.args(ssh_bootstrap_script_contents))
+    await stdout_pipe.write.close()
+    # from... local?
+    # I guess this throws into sharper relief the distinction between core and module.
+    # The ssh bootstrapping stuff should come from a different class,
+    # which hardcodes the path,
+    # and which works only for local tasks.
+    # So in the meantime we'll continue to get it from task.filesystem.
 
-        # sigh, openssh doesn't close its local stdout when it sees HUP/EOF on
-        # the remote stdout. so we can't use EOF to signal end of our lines, and
-        # instead have to have a sentinel to tell us when to stop reading.
-        lines_buf = AsyncReadBuffer(async_stdout)
-        tmp_path_bytes = await lines_buf.read_line()
-        done = await lines_buf.read_line()
-        if done != b"done":
-            raise Exception("socket binder violated protocol, got instead of done:", done)
-        await async_stdout.close()
-        logger.debug("socket bootstrap done, got tmp path %s", tmp_path_bytes)
-        yield tmp_path_bytes
-        await child_process.check()
+    # sigh, openssh doesn't close its local stdout when it sees HUP/EOF on
+    # the remote stdout. so we can't use EOF to signal end of our lines, and
+    # instead have to have a sentinel to tell us when to stop reading.
+    lines_buf = AsyncReadBuffer(async_stdout)
+    tmp_path_bytes = await lines_buf.read_line()
+    done = await lines_buf.read_line()
+    if done != b"done":
+        raise Exception("socket binder violated protocol, got instead of done:", done)
+    await async_stdout.close()
+    logger.debug("socket bootstrap done, got tmp path %s", tmp_path_bytes)
+    yield tmp_path_bytes
+    await child_process.check()
 
 async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
                       local_path: Path, remote_path: str) -> AsyncChildProcess:

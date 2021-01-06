@@ -40,19 +40,17 @@ class TestPersistent(TrioTestCase):
     async def test_nest_exit(self) -> None:
         per_thr = await clone_persistent(self.thread, self.sock_path)
         thread = await per_thr.clone(CLONE.FILES)
-        async with thread:
-            await per_thr.reconnect(self.thread)
-            await assert_thread_works(self, thread)
-            await thread.exit(0)
+        await per_thr.reconnect(self.thread)
+        await assert_thread_works(self, thread)
+        await thread.exit(0)
 
     @unittest.skip("hangs on reconnect for some reason")
     async def test_nest_unshare_files_exit(self) -> None:
         per_thr = await clone_persistent(self.thread, self.sock_path)
         thread = await per_thr.clone()
-        async with thread:
-            await per_thr.reconnect(self.thread)
-            await assert_thread_works(self, thread)
-            await thread.exit(0)
+        await per_thr.reconnect(self.thread)
+        await assert_thread_works(self, thread)
+        await thread.exit(0)
 
     async def test_ssh_same(self) -> None:
         host = await make_local_ssh(self.thread, self.store)

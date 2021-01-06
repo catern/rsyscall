@@ -56,8 +56,8 @@ class TestSSH(TrioTestCase):
             *rest,
         ] = await self.remote.open_channels(10)
         data = b'foobar'
-        _, rest = await local_sock.write(await local_thread.ptr(data))
-        self.assertEqual(rest.size(), 0, msg="Got partial write")
+        _, remaining = await local_sock.write(await local_thread.ptr(data))
+        self.assertEqual(remaining.size(), 0, msg="Got partial write")
         read_data, _ = await remote_sock.read(await self.remote.malloc(bytes, len(data)))
         self.assertEqual(data, await read_data.read())
 
@@ -82,9 +82,9 @@ class TestSSH(TrioTestCase):
 
     async def test_clone(self) -> None:
         thread1 = await self.remote.clone()
-        async with thread1:
-            thread2 = await thread1.clone()
-            await thread2.close()
+        thread2 = await thread1.clone()
+        await thread2.exit(0)
+        await thread1.exit(0)
 
     async def test_nest(self) -> None:
         local_child, remote = await self.host.ssh(self.remote)

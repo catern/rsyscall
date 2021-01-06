@@ -7,7 +7,7 @@ class TestResource(TrioTestCase):
         self.thr = await local_thread.clone()
 
     async def asyncTearDown(self) -> None:
-        await self.thr.close()
+        await self.thr.exit(0)
 
     async def test_rlimit(self) -> None:
         old_rlimit = await (await self.thr.task.getrlimit(RLIMIT.FSIZE, await self.thr.malloc(Rlimit))).read()

@@ -20,7 +20,7 @@ class TestMisc(TrioTestCase):
         self.thr = await self.local.clone()
 
     async def asyncTearDown(self) -> None:
-        await self.thr.close()
+        await self.thr.exit(0)
 
     async def test_do_cloexec_except(self) -> None:
         pipe = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()

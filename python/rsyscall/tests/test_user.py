@@ -11,7 +11,7 @@ class TestUser(TrioTestCase):
         self.thr = await self.local.clone(CLONE.NEWUSER)
 
     async def asyncTearDown(self) -> None:
-        await self.thr.close()
+        await self.thr.exit(0)
 
     async def test_ambient_caps(self) -> None:
         hdr_ptr = await self.thr.ram.ptr(CapHeader())

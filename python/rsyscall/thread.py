@@ -374,7 +374,7 @@ class Thread:
         await write_user_mappings(self, uid, gid,
                                   in_namespace_uid=in_namespace_uid, in_namespace_gid=in_namespace_gid)
 
-    async def exit(self, status: int) -> None:
+    async def exit(self, status: int=0) -> None:
         """Exit this thread
 
         Currently we just forward through to exit the task.
@@ -386,20 +386,6 @@ class Thread:
         manpage: exit(2)
         """
         await self.task.exit(status)
-
-    async def close(self) -> None:
-        """Close this thread
-
-        Currently we just forward through to close the task.
-
-        """
-        await self.task.close_task()
-
-    async def __aenter__(self) -> None:
-        pass
-
-    async def __aexit__(self, *args, **kwargs):
-        await self.close()
 
     def __repr__(self) -> str:
         name = type(self).__name__
@@ -491,9 +477,3 @@ class ChildThread(Thread):
         """
         return (await self.execve(command.executable_path, command.arguments, command.env_updates,
                                   inherited_signal_blocks=inherited_signal_blocks, command=command))
-
-    async def __aenter__(self) -> None:
-        pass
-
-    async def __aexit__(self, *args, **kwargs) -> None:
-        await self.close()

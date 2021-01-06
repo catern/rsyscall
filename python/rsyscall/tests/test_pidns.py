@@ -25,7 +25,7 @@ class TestPidns(TrioTestCase):
         await child_side.dup2(child.stdin)
         await child_side.dup2(child.stdout)
         child_process = await child.exec(cat)
-        await self.init.close()
+        await self.init.exit(0)
         # cat dies, get EOF on socket
         read, _ = await pair.second.read(await self.local.ram.malloc(bytes, 16))
         self.assertEqual(read.size(), 0)
@@ -38,6 +38,6 @@ class TestPidns(TrioTestCase):
         await child_fd.disable_cloexec()
         child_process = await child.exec(child.environ.sh.args('-c', '{ sleep inf & } &'))
         await child_process.check()
-        await self.init.close()
+        await self.init.exit(0)
         read, _ = await pipe.read.read(await self.local.ram.malloc(bytes, 1))
         self.assertEqual(read.size(), 0)

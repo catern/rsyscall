@@ -289,9 +289,6 @@ class Task(
         await _exit(self.sysif, status)
         self.manipulating_fd_table = False
         self._make_fresh_fd_table()
-        await self.close_task()
-
-    async def close_task(self):
-        # close the syscall interface and kill the process; we don't have to do this since it'll be
+        # close the syscall interface; we don't have to do this since it'll be
         # GC'd, but maybe we want to be tidy in advance.
         await self.sysif.close_interface()
