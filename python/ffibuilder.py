@@ -729,6 +729,8 @@ enum fuse_opcode {
 	CUSE_INIT          = 4096,
 };
 
+#define FUSE_MIN_READ_BUFFER ...
+
 struct fuse_attr {
 	uint64_t	ino;
 	uint64_t	size;

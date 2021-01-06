@@ -110,6 +110,8 @@ class FOPEN(enum.IntEnum):
     KEEP_CACHE = lib.FOPEN_KEEP_CACHE
     NONSEEKABLE = lib.FOPEN_NONSEEKABLE
 
+FUSE_MIN_READ_BUFFER = lib.FUSE_MIN_READ_BUFFER
+
 @dataclass
 class FuseAttr(Struct):
     ino: int

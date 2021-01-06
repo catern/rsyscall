@@ -18,6 +18,7 @@ from rsyscall.linux.fuse import (
     FuseAttrOut,
     FuseDirentplus, FuseDirent,
     FUSE_INIT,
+    FUSE_MIN_READ_BUFFER,
 )
 from rsyscall.linux.dirent import DirentList, DT
 from rsyscall.time import Timespec
@@ -90,7 +91,7 @@ class FuseFS:
         self.devfuse = self.thr.task.inherit_fd(devfuse)
         await devfuse.close()
         # Respond to FUSE init message to sanity-check things are set up right.
-        self.buf = await self.thr.malloc(FuseInList, 4096)
+        self.buf = await self.thr.malloc(FuseInList, FUSE_MIN_READ_BUFFER)
         [init] = await self.read()
         if not isinstance(init, FuseInitOp):
             raise Exception("oops, got non-init as first message", init)
