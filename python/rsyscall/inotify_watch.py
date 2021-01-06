@@ -5,7 +5,8 @@ Nothing special here, this is just normal inotify usage.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from dneio import RequestQueue, reset
+from dneio import RequestQueue, reset, Continuation
+from rsyscall import Pointer
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.memory.ram import RAM
 from rsyscall.near.types import WatchDescriptor
@@ -38,7 +39,7 @@ class Watch:
         reset(self._run())
 
     async def _run(self) -> None:
-        waiters: t.List[t.Tuple[None, t.Coroutine]] = []
+        waiters: t.List[t.Tuple[None, Continuation[t.List[InotifyEvent]]]] = []
         while True:
             received = await self.inotify.queue.request(self.wd)
             self.pending_events.extend(received)
@@ -100,7 +101,7 @@ class Inotify:
         self.ram = ram
         self.buf = buf
         self.wd_to_watch: t.Dict[WatchDescriptor, Watch] = {}
-        self.queue = RequestQueue()
+        self.queue = RequestQueue[WatchDescriptor, t.List[InotifyEvent]]()
         reset(self._run())
 
     @staticmethod
@@ -131,13 +132,13 @@ class Inotify:
         return watch
 
     async def _run(self) -> None:
-        wd_to_cb: t.Dict[WatchDescriptor, t.Coroutine] = {}
+        wd_to_cb: t.Dict[WatchDescriptor, Continuation] = {}
         while True:
             valid, rest = await self.asyncfd.read(self.buf)
             if valid.size() == 0:
                 raise Exception('got EOF from inotify fd? what?')
             events = await valid.read()
-            results = {}
+            results: t.Dict[WatchDescriptor, t.List[InotifyEvent]] = {}
             for event in events:
                 results.setdefault(event.wd, []).append(event)
             for wd, cb in self.queue.fetch_any():
