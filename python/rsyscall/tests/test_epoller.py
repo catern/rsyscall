@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import local_thread
+from rsyscall import local_thread, FileDescriptor, Pointer
 from rsyscall.epoller import *
 import trio
 import outcome
 
 from rsyscall.tests.utils import do_async_things
 from rsyscall.near.sysif import SyscallInterface, Syscall
-from dneio import RequestQueue, reset
+from rsyscall.sys.syscall import SYS
+from dneio import RequestQueue, reset, Continuation
+import typing as t
 
 class DelayResultSysif(SyscallInterface):
-    def __init__(self, sysif: SyscallInterface, delay_queue: RequestQueue) -> None:
+    def __init__(self, sysif: SyscallInterface,
+                 delay_queue: RequestQueue[t.Tuple[Syscall, outcome.Outcome[int]], None]) -> None:
         self.sysif = sysif
         self.delay_queue = delay_queue
 
@@ -24,7 +27,7 @@ class DelayResultSysif(SyscallInterface):
     async def close_interface(self) -> None:
         return await self.sysif.close_interface()
 
-    def get_activity_fd(self) -> t.Optional[handle.FileDescriptor]:
+    def get_activity_fd(self) -> t.Optional[FileDescriptor]:
         return self.sysif.get_activity_fd()
 
 class TestEpoller(TrioTestCase):
@@ -64,19 +67,20 @@ class TestEpoller(TrioTestCase):
         async_pipe_rfd = await thread.make_afd(thread.inherit_fd(pipe.read))
         # write in parent, read in child
         input_data = b'hello'
-        buf_to_write = await self.thr.ptr(input_data)
+        buf_to_write: Pointer[bytes] = await self.thr.ptr(input_data)
         buf_to_write, _ = await pipe.write.write(buf_to_write)
         self.assertEqual(await async_pipe_rfd.read_some_bytes(), input_data)
         buf = await thread.malloc(bytes, 4096)
         # set up the EAGAIN to be delayed
-        queue = RequestQueue()
-        thread.task.sysif = DelayResultSysif(thread.task.sysif, queue)
+        queue: RequestQueue[t.Tuple[Syscall, outcome.Outcome[int]], None] = RequestQueue()
+        old_sysif = thread.task.sysif
+        thread.task.sysif = DelayResultSysif(old_sysif, queue)
         @self.nursery.start_soon
         async def race_eagain():
             # wait for EAGAIN
             (syscall, result), cb = await queue.get_one()
             self.assertIsInstance(result.error, BlockingIOError)
-            thread.task.sysif = thread.task.sysif.sysif
+            thread.task.sysif = old_sysif
             queue.close(Exception("remaining syscalls?"))
             # write data after the EAGAIN
             await pipe.write.write(buf_to_write)
