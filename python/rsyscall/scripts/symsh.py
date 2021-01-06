@@ -82,7 +82,7 @@ class FuseFS:
         self.uid = await thread.task.getuid()
         self.gid = await thread.task.getgid()
         self.parent_thread = thread
-        await thread.mount("", self.path, "fuse", MS.NONE,
+        await thread.mount("ignored", self.path, "fuse", MS.NONE,
                            f"fd={int(devfuse)},rootmode=40777,user_id={self.uid},group_id={self.gid}")
         # We'll keep devfuse open *only* in the dedicated server thread's private fd table, so that
         # other threads accessing the filesystem don't deadlock when we abort the FUSE server loop -
