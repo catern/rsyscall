@@ -105,7 +105,7 @@ class FuseFS:
         # filesystem. As usual, we should avoid doing work on the root thread, and instead do it in
         # children.
 
-    async def read(self) -> t.List[FuseInList]:
+    async def read(self) -> FuseInList:
         # /dev/fuse only returns complete packets, so we don't need to rebuffer, wonderful.
         read, unused = await self.devfuse.read(self.buf)
         msgs = await read.read()
