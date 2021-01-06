@@ -46,10 +46,15 @@ class MountTask(rsyscall.far.Task):
             with target.borrow(self):
                 with filesystemtype.borrow(self):
                     with data.borrow(self):
-                        return (await _mount(
-                            self.sysif,
-                            source.near, target.near, filesystemtype.near,
-                            mountflags, data.near))
+                        try:
+                            return (await _mount(
+                                self.sysif,
+                                source.near, target.near, filesystemtype.near,
+                                mountflags, data.near))
+                        except OSError as exn:
+                            exn.filename = source.value
+                            exn.filename2 = (target.value, filesystemtype.value, data.value)
+                            raise
 
     async def umount(self, target: WrittenPointer[t.Union[str, os.PathLike]], flags: UMOUNT=UMOUNT.NONE) -> None:
         with target.borrow(self):
