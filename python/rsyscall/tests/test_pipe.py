@@ -1,6 +1,7 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
 from rsyscall import local_thread
 
+from rsyscall.sys.socket import MSG
 from rsyscall.sys.uio import IovecList
 from rsyscall.unistd import Pipe
 from rsyscall.fcntl import O
@@ -37,4 +38,4 @@ class TestPipe(TrioTestCase):
         in_data = await self.thr.ptr(b"hello")
         written, _ = await self.pipe.write.write(in_data)
         with self.assertRaises(OSError):
-            valid, _ = await self.pipe.read.recv(written, 0)
+            valid, _ = await self.pipe.read.recv(written, MSG.NONE)
