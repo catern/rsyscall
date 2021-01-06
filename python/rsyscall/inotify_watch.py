@@ -6,7 +6,6 @@ Nothing special here, this is just normal inotify usage.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from dneio import RequestQueue, reset
-from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.memory.ram import RAM
 from rsyscall.near.types import WatchDescriptor
@@ -18,7 +17,6 @@ import trio
 import typing as t
 
 from rsyscall.sys.inotify import InotifyFlag, IN, InotifyEvent, InotifyEventList
-from rsyscall.limits import NAME_MAX
 
 __all__ = [
     'Watch',
@@ -90,8 +88,7 @@ class Watch:
 
 
 _inotify_read_size = 4096
-_inotify_minimum_size_to_read_one_event = (ffi.sizeof('struct inotify_event') + NAME_MAX + 1)
-assert _inotify_read_size > _inotify_minimum_size_to_read_one_event
+assert _inotify_read_size > InotifyEvent.MINIMUM_SIZE_TO_READ_ONE_EVENT
 
 class Inotify:
     "An inotify file descriptor, which allows monitoring filesystem paths for events."

@@ -1,6 +1,7 @@
 "`#include <sys/inotify.h>`"
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
+from rsyscall.limits import NAME_MAX
 from rsyscall.near.types import WatchDescriptor
 from rsyscall.struct import Serializable
 import typing as t
@@ -53,6 +54,7 @@ class InotifyEvent:
     mask: IN
     cookie: int
     name: t.Optional[str]
+    MINIMUM_SIZE_TO_READ_ONE_EVENT = ffi.sizeof('struct inotify_event') + NAME_MAX + 1
 
     def to_bytes(self) -> bytes:
         if self.name is not None:
