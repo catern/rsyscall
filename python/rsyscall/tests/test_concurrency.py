@@ -48,7 +48,7 @@ class TestConcur(TrioTestCase):
             for val, coro in many[::-1]:
                 if val == 1337:
                     try:
-                        failing_function(x)
+                        failing_function(x) # type: ignore
                     except Exception as e:
                         coro.resume(outcome.Error(e))
                 else:
