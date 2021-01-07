@@ -1,7 +1,6 @@
 import unittest
 from rsyscall.tests.trio_test_case import TrioTestCase
 from rsyscall import local_thread
-from rsyscall.tasks.exec import spawn_exec
 from rsyscall.sys.socket import AF, SOCK, Socketpair
 from rsyscall.unistd import Pipe, SEEK
 from rsyscall.fcntl import O

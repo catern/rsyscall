@@ -1,6 +1,5 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
 from rsyscall import local_thread
-from rsyscall.tasks.exec import spawn_exec
 from rsyscall.sys.socket import AF, SOCK, Socketpair
 from rsyscall.unistd import Pipe
 from rsyscall.fcntl import O
@@ -14,15 +13,6 @@ class TestPidns(TrioTestCase):
         self.local = local_thread
         self.store = local_store
         self.init = await self.local.clone(CLONE.NEWUSER|CLONE.NEWPID|CLONE.FILES)
-
-    async def asyncTearDown(self) -> None:
-        await self.init.close()
-
-    async def test_spawn(self) -> None:
-        await assert_thread_works(self, self.init)
-        thread = await spawn_exec(self.init, self.store)
-        async with thread:
-            await assert_thread_works(self, thread)
 
     async def test_cat(self) -> None:
         cat = await self.local.environ.which('cat')
