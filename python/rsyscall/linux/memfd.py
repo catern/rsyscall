@@ -10,7 +10,8 @@ class MFD(enum.IntFlag):
     
 #### Classes ####
 from rsyscall.handle.fd import T_fd, FileDescriptorTask
-from rsyscall.handle.pointer import WrittenPointer
+if t.TYPE_CHECKING:
+    from rsyscall.handle.pointer import WrittenPointer
 
 class MemfdTask(FileDescriptorTask[T_fd]):
     async def memfd_create(self, name: WrittenPointer[t.Union[str, os.PathLike]], flags: MFD=MFD.NONE) -> T_fd:

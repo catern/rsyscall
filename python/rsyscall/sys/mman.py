@@ -1,9 +1,11 @@
 "`#include <sys/mman.h>`"
 from __future__ import annotations
 from rsyscall._raw import lib # type: ignore
+from rsyscall.linux.memfd import MFD
 import enum
 
 __all__ = [
+    "MFD",
     "PROT",
     "MAP",
     "MappableFileDescriptor",

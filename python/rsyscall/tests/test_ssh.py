@@ -8,7 +8,7 @@ from rsyscall import local_thread
 
 from rsyscall.unistd import SEEK
 from rsyscall.signal import Sigset, HowSIG
-from rsyscall.sys.memfd import MFD
+from rsyscall.sys.mman import MFD
 from rsyscall.sched import CLONE
 
 from rsyscall.handle import FileDescriptor

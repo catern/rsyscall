@@ -58,7 +58,7 @@ from rsyscall.handle import WrittenPointer, FileDescriptor, Task
 from rsyscall.path import Path
 from rsyscall.sched import CLONE
 from rsyscall.sys.socket import SOCK, AF, SendmsgFlags, SendMsghdr, CmsgList, CmsgSCMRights
-from rsyscall.sys.memfd import MFD
+from rsyscall.sys.mman import MFD
 from rsyscall.sys.uio import IovecList
 from rsyscall.sys.un import SockaddrUn
 from rsyscall.signal import SIG, Sigset, SignalBlock

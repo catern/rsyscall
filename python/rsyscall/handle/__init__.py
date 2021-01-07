@@ -48,7 +48,6 @@ from rsyscall.sys.timerfd  import TimerfdTask,  TimerFileDescriptor
 from rsyscall.sys.epoll    import EpollTask,    EpollFileDescriptor
 from rsyscall.sys.inotify  import InotifyTask,  InotifyFileDescriptor
 from rsyscall.sys.signalfd import SignalfdTask, SignalFileDescriptor
-from rsyscall.sys.memfd    import MemfdTask
 from rsyscall.sys.mman     import MemoryMappingTask, MappableFileDescriptor
 from rsyscall.sys.stat     import               StatFileDescriptor
 from rsyscall.signal       import SignalTask
@@ -56,6 +55,7 @@ from rsyscall.sys.socket   import SocketTask,   SocketFileDescriptor
 from rsyscall.sys.ioctl    import               IoctlFileDescriptor
 from rsyscall.linux.dirent import               GetdentsFileDescriptor
 from rsyscall.linux.futex  import FutexTask
+from rsyscall.linux.memfd  import MemfdTask
 from rsyscall.sys.uio      import               UioFileDescriptor
 from rsyscall.unistd       import FSTask,       FSFileDescriptor
 from rsyscall.unistd.pipe  import PipeTask
