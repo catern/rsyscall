@@ -81,13 +81,9 @@ class TestIP(TrioTestCase):
         threads = [await self.thr.clone() for _ in range(10)]
         in_ptrs = [await thr.ptr(data) for thr in threads]
         handles = [thr.task.inherit_fd(orig_in_fd) for thr in threads]
-        afd = await self.thr.make_afd(orig_in_fd)
-        # afd.status.posedge(EPOLL.OUT)
-        handles = [afd.with_handle(handle) for handle in handles]
         async def run_send(thread: Thread, in_ptr: Pointer, fd: FileDescriptor) -> None:
             for i in range(count):
                 in_ptr, rest = await fd.write(in_ptr)
-                # afd.status.posedge(EPOLL.OUT)
                 if rest.size() != 0:
                     print("failure! rest.size() is", rest.size())
                 self.assertEqual(rest.size(), 0)
