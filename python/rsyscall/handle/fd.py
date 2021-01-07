@@ -90,7 +90,7 @@ class BaseFileDescriptor:
         """
         if not self.is_only_handle():
             raise Exception("can't close this fd", self, "there are handles besides this one to it",
-                            list(self._get_global_handles()))
+                            self._get_global_handles())
         if not self.valid:
             raise Exception("can't close an invalid FD handle")
         closed = await self.invalidate()
@@ -189,23 +189,18 @@ class BaseFileDescriptor:
                             "but after removing handle A, there are no handles left. Huh?")
         return new
 
-    def _get_global_handles(self) -> t.List[BaseFileDescriptor]:
+    def _get_global_handles(self) -> WeakSet[BaseFileDescriptor]:
         return self.task.fd_table.near_to_handles[self.near]
 
     def is_only_handle(self) -> bool:
         self._validate()
         return len(self._get_global_handles()) == 1
 
-    def _remove_from_tracking(self) -> t.List[BaseFileDescriptor]:
+    def _remove_from_tracking(self) -> WeakSet[BaseFileDescriptor]:
         self.task.fd_handles.remove(self)
         handles = self._get_global_handles()
         handles.remove(self)
         return handles
-
-    def __del__(self) -> None:
-        if self.valid:
-            if len(self._remove_from_tracking()) == 0:
-                logger.debug("leaked fd: %s", self)
 
     def __int__(self) -> int:
         return self.near.number
@@ -220,8 +215,8 @@ async def _close(sysif: SyscallInterface, fd: rsyscall.near.FileDescriptor) -> N
 class FDTable(rsyscall.far.FDTable):
     def __init__(self, creator_pid: int, parent: FDTable=None) -> None:
         super().__init__(creator_pid)
-        self.near_to_handles: t.Dict[rsyscall.near.FileDescriptor, t.List[BaseFileDescriptor]] = {}
-        self.tasks: t.List[FileDescriptorTask] = []
+        self.near_to_handles: t.Dict[rsyscall.near.FileDescriptor, WeakSet[BaseFileDescriptor]] = {}
+        self.tasks: WeakSet[FileDescriptorTask] = WeakSet([])
         if parent:
             self.inherited: WeakSet[BaseFileDescriptor] = WeakSet(
                 itertools.chain(itertools.chain.from_iterable(parent.near_to_handles.values()),
@@ -234,7 +229,7 @@ class FDTable(rsyscall.far.FDTable):
         self.inherited = WeakSet()
 
     def _get_task_in_table(self) -> t.Optional[FileDescriptorTask]:
-        for task in self.tasks:
+        for task in list(self.tasks):
             if task.fd_table is not self:
                 self.tasks.remove(task)
             elif task.manipulating_fd_table:
@@ -257,7 +252,7 @@ class FDTable(rsyscall.far.FDTable):
             # some decrepit task where we closed the syscallinterface but didn't exit the task.
             assert fd not in self.near_to_handles, f"fd {fd} was somehow reopened before it was actually closed"
             # put the fd back, some other task will close it
-            self.near_to_handles[fd] = []
+            self.near_to_handles[fd] = WeakSet()
 
     async def gc_using_task(self, task: FileDescriptorTask) -> None:
         gc.collect()
@@ -292,7 +287,7 @@ class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        self.fd_handles: t.List[T_fd] = []
+        self.fd_handles: WeakSet[T_fd] = WeakSet()
         self.manipulating_fd_table = False
         self._add_to_active_fd_table_tasks()
 
@@ -305,8 +300,8 @@ class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
             raise Exception("can't make a new FD handle while manipulating_fd_table==True")
         handle = self._file_descriptor_constructor(fd)
         logger.debug("%s: made handle %s from %s", self, handle, fd)
-        self.fd_handles.append(handle)
-        self.fd_table.near_to_handles.setdefault(fd, []).append(handle)
+        self.fd_handles.add(handle)
+        self.fd_table.near_to_handles.setdefault(fd, WeakSet()).add(handle)
         return handle
 
     def make_fd_handle(self, fd: rsyscall.near.FileDescriptor) -> T_fd:
@@ -348,7 +343,7 @@ class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
             raise Exception("tried to inherit non-inherited fd", fd)
 
     def _add_to_active_fd_table_tasks(self) -> None:
-        self.fd_table.tasks.append(self)
+        self.fd_table.tasks.add(self)
 
     def _make_fresh_fd_table(self) -> FDTable:
         """Make a new fd table that is a copy of the old one
@@ -359,7 +354,9 @@ class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
         self.fd_table = FDTable(self.near_process.id)
         near_to_handles = self.fd_table.near_to_handles
         for handle in self.fd_handles:
-            near_to_handles.setdefault(handle.near, []).append(handle)
+            if handle.near not in near_to_handles:
+                near_to_handles[handle.near] = WeakSet()
+            near_to_handles[handle.near].add(handle)
         return self.fd_table
 
     async def run_fd_table_gc(self, use_self: bool=True) -> None:
