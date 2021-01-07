@@ -64,7 +64,11 @@ from rsyscall.handle.fd import BaseFileDescriptor
 class FcntlFileDescriptor(BaseFileDescriptor):
     async def fcntl(self, cmd: F, arg: t.Optional[int]=None) -> int:
         self._validate()
-        return (await _fcntl(self.task.sysif, self.near, cmd, arg))
+        try:
+            return (await _fcntl(self.task.sysif, self.near, cmd, arg))
+        except OSError as exn:
+            exn.filename = (self, cmd, arg)
+            raise
 
 #### Raw syscalls ####
 import rsyscall.near.types as near
