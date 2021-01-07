@@ -48,6 +48,16 @@ class F(enum.IntEnum):
     SETFD = lib.F_SETFD
     GETFD = lib.F_GETFD
     SETFL = lib.F_SETFL
+    ADD_SEALS = lib.F_ADD_SEALS
+    GET_SEALS = lib.F_GET_SEALS
+
+class F_SEAL(enum.IntEnum):
+    "The single argument used with fcntl F.ADD_SEALS and F.GET_SEALS"
+    SEAL = lib.F_SEAL_SEAL
+    SHRINK = lib.F_SEAL_SHRINK
+    GROW = lib.F_SEAL_GROW
+    WRITE = lib.F_SEAL_WRITE
+    FUTURE_WRITE = lib.F_SEAL_FUTURE_WRITE
 
 class FD(enum.IntFlag):
     """The argument to fcntl F.SETFD and return value of fcntl F.GETFD

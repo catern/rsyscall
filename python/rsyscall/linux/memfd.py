@@ -7,6 +7,10 @@ import enum
 class MFD(enum.IntFlag):
     NONE = 0
     CLOEXEC = lib.MFD_CLOEXEC
+    ALLOW_SEALING = lib.MFD_ALLOW_SEALING
+    HUGETLB = lib.MFD_HUGETLB
+    HUGE_2MB = lib.MFD_HUGE_2MB
+    HUGE_1GB = lib.MFD_HUGE_1GB
     
 #### Classes ####
 from rsyscall.handle.fd import T_fd, FileDescriptorTask
