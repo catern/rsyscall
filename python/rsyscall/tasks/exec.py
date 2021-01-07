@@ -87,6 +87,11 @@ async def rsyscall_exec(
         encode(passed_data_sock), encode(passed_syscall_sock), encode(passed_syscall_sock),
         *[encode(fd) for fd in fds_to_inherit],
     ), [child.monitor.sigfd.signal_block])
+    for fd in fds_to_not_inherit:
+        # The fd is already closed, invalidate the handle so we don't accidentally use it again.
+        # The copy of the fd remaining in the fd table we left will be closed by GC.
+        assert fd._invalidate()
+        del child.task.fd_table.near_to_handles[fd.near]
     # a new address space needs a new allocator and transport; we mutate the RAM so things
     # that have stored the RAM continue to work.
     child.ram.allocator = memory.AllocatorClient.make_allocator(child.task)
