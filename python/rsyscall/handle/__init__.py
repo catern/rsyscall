@@ -245,6 +245,8 @@ class Task(
             else:
                 fd_n = None
             stack.enter_context(pathname.borrow(self))
+            argv.check_address_space(self)
+            envp.check_address_space(self)
             for arg in [*argv.value, *envp.value]:
                 stack.enter_context(arg.borrow(self))
             self.manipulating_fd_table = True
@@ -266,6 +268,8 @@ class Task(
                      command: Command=None,
     ) -> None:
         filename.check_address_space(self)
+        argv.check_address_space(self)
+        envp.check_address_space(self)
         for arg in [*argv.value, *envp.value]:
             arg.check_address_space(self)
         self.manipulating_fd_table = True
