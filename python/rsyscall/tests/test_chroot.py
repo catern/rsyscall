@@ -16,7 +16,6 @@ class TestChroot(TrioTestCase):
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()
 
-    @unittest.skip("can't do this on my chromeos system :(")
     async def test_basic(self) -> None:
         await self.thr.mkdir(self.path/"proc")
         await self.thr.mount("/proc", self.path/"proc", "", MS.BIND, "")
