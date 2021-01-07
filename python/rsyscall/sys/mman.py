@@ -3,6 +3,14 @@ from __future__ import annotations
 from rsyscall._raw import lib # type: ignore
 import enum
 
+__all__ = [
+    "PROT",
+    "MAP",
+    "MappableFileDescriptor",
+    "MemoryMappingTask",
+    "MemoryMapping",
+]
+
 class PROT(enum.IntFlag):
     EXEC = lib.PROT_EXEC
     READ = lib.PROT_READ
