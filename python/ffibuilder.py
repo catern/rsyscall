@@ -17,6 +17,7 @@ ffibuilder.set_source_pkgconfig(
 #include <net/if.h>
 #include <netinet/ip.h>
 #include <netinet/ip.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <rsyscall.h>
 #include <sched.h>
@@ -943,6 +944,48 @@ struct sockaddr_storage {
     sa_family_t    ss_family;
     char _ss_padding[...];
 };
+
+/* TCP setsockopt options, from netinet/tcp.h */
+
+#define TCP_NODELAY              ... /* Don't delay send to coalesce packets  */
+#define TCP_MAXSEG               ... /* Set maximum segment size  */
+#define TCP_CORK                 ... /* Control sending of partial frames  */
+#define TCP_KEEPIDLE             ... /* Start keeplives after this period */
+#define TCP_KEEPINTVL            ... /* Interval between keepalives */
+#define TCP_KEEPCNT              ... /* Number of keepalives before death */
+#define TCP_SYNCNT               ... /* Number of SYN retransmits */
+#define TCP_LINGER2              ... /* Life time of orphaned FIN-WAIT-2 state */
+#define TCP_DEFER_ACCEPT         ... /* Wake up listener only when data arrive */
+#define TCP_WINDOW_CLAMP         ... /* Bound advertised window */
+#define TCP_INFO                 ... /* Information about this connection. */
+#define TCP_QUICKACK             ... /* Bock/reenable quick ACKs.  */
+#define TCP_CONGESTION           ... /* Congestion control algorithm.  */
+#define TCP_MD5SIG               ... /* TCP MD5 Signature (RFC2385) */
+#define TCP_COOKIE_TRANSACTIONS  ... /* TCP Cookie Transactions */
+#define TCP_THIN_LINEAR_TIMEOUTS ... /* Use linear timeouts for thin streams*/
+#define TCP_THIN_DUPACK          ... /* Fast retrans. after 1 dupack */
+#define TCP_USER_TIMEOUT         ... /* How long for loss retry before timeout */
+#define TCP_REPAIR               ... /* TCP sock is under repair right now */
+#define TCP_REPAIR_QUEUE         ... /* Set TCP queue to repair */
+#define TCP_QUEUE_SEQ            ... /* Set sequence number of repaired queue. */
+#define TCP_REPAIR_OPTIONS       ... /* Repair TCP connection options */
+#define TCP_FASTOPEN             ... /* Enable FastOpen on listeners */
+#define TCP_TIMESTAMP            ... /* TCP time stamp */
+#define TCP_NOTSENT_LOWAT        ... /* Limit number of unsent bytes in write queue.  */
+#define TCP_CC_INFO              ... /* Get Congestion Control (optional) info.  */
+#define TCP_SAVE_SYN             ... /* Record SYN headers for new connections.  */
+#define TCP_SAVED_SYN            ... /* Get SYN headers recorded for connection.  */
+#define TCP_REPAIR_WINDOW        ... /* Get/set window parameters. */
+#define TCP_FASTOPEN_CONNECT     ... /* Attempt FastOpen with connect.  */
+#define TCP_ULP                  ... /* Attach a ULP to a TCP connection.  */
+#define TCP_MD5SIG_EXT           ... /* TCP MD5 Signature with extensions.  */
+#define TCP_FASTOPEN_KEY         ... /* Set the key for Fast Open (cookie).  */
+#define TCP_FASTOPEN_NO_COOKIE   ... /* Enable TFO without a TFO cookie.  */
+#define TCP_ZEROCOPY_RECEIVE     ...
+#define TCP_INQ                  ... /* Notify bytes available to read as a cmsg on read.  */
+#define TCP_CM_INQ               ...
+#define TCP_TX_DELAY             ... /* Delay outgoing packets by XX usec.  */
+
 
 /* Internet address. */
 struct in_addr {
