@@ -32,7 +32,7 @@ class SockaddrIn(Sockaddr):
 
     def to_bytes(self) -> bytes:
         addr = ffi.new('struct sockaddr_in*', (AF.INET, socket.htons(self.port), (socket.htonl(int(self.addr)),)))
-        return ffi.buffer(addr)
+        return bytes(ffi.buffer(addr))
 
     T = t.TypeVar('T', bound='SockaddrIn')
     @classmethod
