@@ -1,0 +1,200 @@
+OK so! so so so so so.
+* title
+** rsyscall: A cross-process syscall API for Linux
+** [fork replacement thing]
+This is probably a nicer focus.
+
+Let's emphasize clone?
+
+Or really it's emphasizing,
+creating an object up front and populating it.
+
+Practical cross-process creation for Linux
+
+A practical replacement for fork for Linux
+
+Process creation on Linux
+
+A complete replacement for fork on Linux
+
+Maybe,
+
+"Cross-process APIs for Linux"?
+
+hmm need to read more about keykos and eros process creation I guess?
+
+not clear what L4 originally used for process/thread creation,
+but seL4 said they were very influenced by keykos/eros.
+
+hmm the exos paper isn't super helpful either
+
+I guess seL4 will be good to cite
+
+"Process creation" is a keyword that's important.
+*** thoughts
+process initialization
+
+cross-process is probably an important keyword.. but.. I don't want this article to be about that.
+
+what would I title one about cross-process?
+
+well I already have that identified.
+
+Better process initialization on Linux with rsyscall
+
+Maybe?
+*** aha
+direct-style process creation
+
+"direct-style" just being a nicer way to say "imperative"
+
+imperative process creation
+
+doesn't sound good because it says "imperative"
+
+Direct-style process creation on Linux
+
+yes that seems good
+*** performance I guess?
+can mmap a bunch of stuff and show that without having to copy page tables, it's faster
+
+can show a chart even, two lines, speed with and without, nice
+*** features to emphasize
+- it covers everything you might want unlike posix_spawn
+- it's immediately deployable
+- it's efficient
+- it has a coherent theory behind it and is relatively easy to use
+** Direct-style process creation on Linux
+* outline
+** abstract
+Traditional process creation interfaces are complex to use, limited in power, and difficult to abstract over.
+We develop an alternative process creation interface for Linux
+which allows a program to create a new process in an inert state
+and then initialize it from the outside by directly operating on it
+in the same style as any other operating system object.
+
+
+This method of process creation results in more comprehensible programs, 
+has better error handling,
+is more efficient,
+and is more amenable to abstraction.
+Our implementation is immediately deployable without kernel modifications on non-ancient Linux kernel versions.
+** introduction
+
+Processes have significant power for abstraction.
+
+They can be used to provide a variety of useful constructs,
+such as a dataflow web, sandboxed isolation, program interfaces.
+
+Capability-oriented operating systems
+encourage creating processes with all the resources they will need for their execution up front,
+and prevent further resource acquisition,
+providing strong security guarantees.
+
+This is also a powerful mechanism for launching programs with defined interfaces.
+
+Capability-based systems have been developed for Unix, such as Capsicum.
+However, even without such advances,
+Unix systems already can take advantage of much of these properties.
+
+A program can be launched with
+specific file descriptors, current working directory, and other attributes already set up,
+simplifying programming.
+
+The primary obstacle is that such process initialization is painful and error-prone,
+especially as the use cases become more complex.
+
+For example, setting up a pipe between a parent and child process requires
+(blah blah blah)
+
+TODO another maybe example is binding a listening socket up front?
+you can bind that outside but 
+
+examples:
+- capsicum/capabilities
+- UCSPI
+
+I'm sure I'll think of some more
+
+(Right, ucspi is an example of abstracting a program from the resource it's using,
+which is something processes can do without any abstraction code existing in the program at all;
+it's an abstraction provided by the kernel.
+so the interface for the program can be "give me a file descriptor",
+instead of "give me a specification for a resource to open".)
+
+It's not that hard but it's 1. hard to abstract and therefore 2. scales badly with complexity.
+We want to reduce it to the bare minimum.
+
+
+with all the resou
+
+
+On Unix, the process interface is powerful enough that
+a capability-
+
+
+intro the concepts   
+
+extended abstract?
+
+what more things are there?
+
+we have a lot of lavish enthusiasm about distributed running of processes,
+but that's not necessarily suitable.
+
+maybe something about starting two processes with shared secret/stuff/config passed down?
+
+let's not get too crazy and removed from reality. let's stay calm and normal.
+
+we want to show several interesting features that you can implement with processes.
+
+And we need to demonstrate that our style actually makes things easier. hm.
+well, it's definitely different, and I contend easier...
+we need to clean it up a little.
+
+yeah let's get rid of unshare_files_and_replace where we can, too abstracted
+
+we can use inherit instead
+*** introduction gist
+- Processes are capable of providing many features
+  - Abstracting from what kind of resource you're using (ucspi)
+  - Sandboxing/capability security
+  - Pipelines, and more general parallel processing networks
+  - Containers and stuff? Namespaces?
+  - Failure monitoring? Concurrency control? Concurrency in general? Service-oriented distributed systems?
+    Shared-nothing message-passing concurrency? (aka "distributed systems")
+- It is hard to use processes for these features because it is hard to create complex processes
+  - Initializing a process with specific resources is painful
+    - TODO Why? need to establish this more
+  - We delegate many of these features to specific separate programs/servers to abstract over them,
+    which means we can't use these features in combination.
+    - shells, container engines, process supervisors
+- If we make it simpler to create processes, we can increase our usage of these features, including in combination
+  - This will also make it possible to replace separate programs running as system servers, with libraries
+- TODO look at my SOSP rant thought process thing
+** background
+*** fork weaknesses
+    fork in the road paper
+
+    error handling
+*** spawn weaknesses
+    limited number of modifiable things
+
+    limited expressiveness (conditionals?)
+
+    error handling
+*** direct-style process creation
+    keykos
+
+    creating a process
+
+    SEL4 has this style.
+    https://docs.sel4.systems/Tutorials/threads.html
+
+** overview/example
+   The primary entry point
+   We provide direct-style process creation for Linux.
+** detailed design and implementation
+** evaluation (or, measurement)
+something?
+** conclusion
