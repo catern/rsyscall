@@ -34,6 +34,7 @@ import typing as t
 
 @dataclass(frozen=True)
 class MemoryMapping:
+    __slots__ = ('task', 'near', 'file')
     task: MemoryMappingTask
     near: rsyscall.near.MemoryMapping
     file: rsyscall.far.File
