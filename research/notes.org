@@ -24323,6 +24323,21 @@ lol so what if I #included the filesystem,
 and made it visible as a set of nested structures?
 
 and then the dynamic linker would handle opening the file or whatever?
+* names for thread
+  rprocess
+  thread
+  context
+  task
+
+  it's really a kernel context that you can do syscalls inside.
+  it's like, a tasklet, or, whatever that microthread thing for async stuff on kernel stacks was.
+
+  it's a kernel context that we can do a syscall on. mmmmmmmmmmmm.
+
+  keykos calls them domains
+  blllll
+
+  contextsssss?
 * paper response
 My main concern is that the paper seems to mix the syscall interface
 and the application programming interface (API). It's defensible to
