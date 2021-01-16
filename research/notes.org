@@ -22136,6 +22136,338 @@ specifically TCP_NODELAY
    yeah sure
 
    works perfectly!
+** TODO fix EpFD gc
+   HmmmMMMMmm
+
+   ok so it looks like the epollwaiter is retaining a reference to the fd because,
+   we,
+   have this EFD which references it which is referenced by the epoller callback.
+
+   awkward, hm.
+*** thinking
+    When an object A calls into object B and blocks, if all the references to A disappear,
+    it will still be kept around because B has a reference upstack to A.
+
+    So should return addresses be weak references?
+
+    Ask the E people about this
+
+    oh hey
+    <xentrac> catern: when B responds to A's message, A can become active and send a reference to itself elsewhere --- you'd have a problem like reanimation through finalization
+
+    interesting point...
+
+    so in my situation... that wouldn't happen, I guess...?
+
+    actually what does it even mean to have a reference to A.......
+    i guess it means that A has an inverse-reference to you - a way to send you data...
+    including a reference to your stack, say, since you called in.
+
+    ok so if this was regular callbacks we'd have the same problem, right,
+    where the epoller has a ref to the callback to call back into the object, sure.
+
+    also, I still need to actually delete the fd from the epoller.
+    I probably should focus on that part, since that's actually the constraining part!
+    hm.
+    we could do something on __del__ of AFD...
+
+    we need to do something async anyway,
+    so maybe we can do it in _run in the Epoller...
+    since that has to run anyway...
+
+    ok, so in theory we can maybe...
+    look at everyone waiting for events in the queue, and...
+    unregister ones that are removed?
+
+    i mean, okay, maybe we can just, like,
+    perform EPOLL_CTL.DELs synchronously in the Epoller._run loop?
+    we could have the _run loop send a "delete me please" request maybe?
+
+    oh wait no we can't do it in epoll loop because,
+    we don't actually necessarily have a reference to the... fd... in...
+    the epoller task - because the epfd is inherited from the root epoller,
+    and only used for registration in child tasks,
+    and the root epoller task doesn't actually have those fds which are only in child tasks,
+    right right okay.
+
+    so, i mean... how do we handle this then?
+    we *could* do deletion asynchronously under reset.
+    but..
+
+    how/when would we know to do that?
+    well...
+    i guess when EPFD closes,
+    or rather, when it gets __del__'d.
+
+    (in theory I guess we could do the same to close regular FDs, hm)
+
+    that all sounds rather bonkers tho, so maybe not a good idea...
+
+    i mean, okay, when the AFD dies,
+    we want to shut down the EPFD, sure.
+    well, we do have with_handle which is supposed to allow multiple references...
+
+    but okay let's suppose that, say, EPFD._run has a weak reference to EPFD.
+
+    and when EPFD is dead it...
+
+    I guess just stops running?
+    but if there are still events in Epoller for this fd, then...
+    well, we'll have an exception in Epoller, then. maybe that's fine?
+
+    or maybe we call delete to delete it from the epfd?
+
+    hmm it's complex, hm.
+
+    also we don't want to wait for the next fd event to do it - we want to do it immediately on GC
+    because of course, we might never get another fd event!
+
+    maybe we don't reference the object in _run?
+
+    heck we already don't need to reference the fd!
+
+    so in theory if we just nulled out self, we could have a mostly-working implementation..
+
+    and... I guess we're saying, we need to do that anyway.
+    because otherwise we won't know when to gc ourselves and delete ourselves from the epollfd.
+
+    so even if we don't call delete in __del__,
+    we still want to make a weak reference, kinda.
+
+    ok so sure, now we're back to the question of weak references again I guess
+
+    I could do a... request_weak method...
+
+    which... only holds a weakref to the continuation, and throws away the result if it's gone.
+    er, but it will always be gone, lol.
+    i need one of those ephemeron things lol, which I literally just learned about,
+    now my brain is broken SIGH
+
+    ok but what if I want to make a call into something else afterwards? like xentrac said?
+    well... where's my GC root coming from? who says I deserve to stay alive?
+
+    although I guess A, receiving a call from B,
+    might have information relevant for C which resurrects A by sending an A-ref to C...
+
+    but I mean, what if I don't have any such means?
+    what if I'm utterly reliant on people calling in to me?
+
+    well, I mean, I guess we're talking about,
+    I'll update my state or something on my stack,
+    then call into this other thing which can send stuff back to me or whatever.....
+
+    i mean, the assumption is that reading my state takes a message too.
+
+    and so, what if no-one can send a message to me?
+    and I don't have a reference to anyone else?
+    how do I know I should die? do I need to just suicide?
+    that's a lot of work!
+    (how morbid...)
+    
+    i mean what if we were talking about regular ole objects here?
+    ok, so I have a reference to this object and I call it every so often.
+
+    and it provides some service, and if no-one cares about that service anymore I don't need to be calling into it.
+
+    sure and that service is managed by this queue.
+    if this queue is GC'd away then, we don't care about these events.
+    it seems unprincipled - like all these wacky smalltalk people.
+
+    yeah can't we make this automatic somehow?
+    the queue...
+
+    i mean what should even happen if we have some data and the object is dead?
+    i mean, clearly that violates linearity to just drop it.
+    we can't just drop it, we have to deliver it somewhere, to the person who wanted it.
+
+    but, at the same time...
+    we don't want to keep A alive if the actual ultimate recipient is... now dead...
+
+    and that recipient being dead kinda implies that we can drop the value at least at some point
+
+    hm it's really strange hm.
+
+    like how do I do the tracing of ownership here to know that the object deserves to stay alive?
+
+    hmm, since B only uses A through an interface, maybe I can detect that most of the object is now useless??
+
+    ok let's just do the weak call thing
+
+    so how to do this, hm.
+
+    we need a...
+    shift, maybe? which gives us a weak reference...?
+
+    hmm mmm m mmmm m
+
+    ok so how about we just shift,
+    then take a weak reference to the continuation,
+    and associate it with the queue that on the end will send the requests to this coroutine,
+    and so that continuation is just totally normal,
+    but it's only kept alive as long as the queue on the other end is alive.
+
+    aha! okay so we'll just store a strong reference to the continuation in the object!
+    genius! 
+
+    okay hm mm.
+
+    so basically, when we do the shift,
+    we'll make a weak reference to the continuation,
+    put the real one somewhere else,
+    and pass the weak reference through to the caller...
+
+    although we actually do need a special kinda continuation thing which checks if the weakref is nulled,
+    and discards the value if so.
+
+    ok we'll just have a WeakContinuation which wraps a WeakRef[Continuation],
+    ezpz.
+
+    ah.. ha... ha....
+
+    ok so this problem is more common than I thought
+
+    it also applies to SyscallConnection - and, I guess, anything that makes any syscall or anything
+
+    because the coroutines stay around...
+
+    on the plus side, I feel like "just GC it" is a kinda nice cancellation mechanism
+
+    ok so... put weak requests everywhere I guess...?
+
+    i don't really want weak requests for actual syscalls tho! right?
+
+    hm yeah this definitely seems related to cancellation
+    i guess this will be at least part of my way to handle cancellation.
+    although... we kinda want to... actually give the other side a notification of cancellation
+
+    cuz, ideally, they would just drop their reference, hm.
+
+    Hmm maybe cancellation can just be collection 
+
+    A strong reference is like shielding from cancellation: you can't be collected.
+
+    And a weak reference is like allowing cancellation
+
+    And the notification on both of these is finalizers, I guess?
+
+    hmmm but finalizers are not good tho
+
+    i mean, a weak reference for the return value implies,
+    that we can maybe perform the operation and finish it and we don't care.
+    so nondet finalization is fine.
+
+    but what exactly is finalization for?
+    native resources and a safety net for explicit termination, it sounds like...
+
+    silly!
+
+    notification of cancellation seems hard and pointless
+
+    if we just always let the operation complete and go into the void if the return address has been collected,
+    that seems more natural.
+
+    especially because we can imagine, like... GCing part of the code object or the closure that it's returned to,
+    basically skipping doing some of the stuff,
+    because we know it's no longer relevant.
+
+    (although in reality, there is a real side effect - calls back into the epoller!)
+
+    (but... I guess... we could argue that that doesn't actually have an effect?)
+
+    except there is one real possible effect that it prevents: an exception from seeing an unknown event.
+    hm.
+
+    i could pass a list of objects which could use the coroutine into weak_shift
+
+    so that the coroutine is kept alive as long as at least one of them is alive?
+
+    but really I want them to reference the coroutine more directly.
+*** loom
+Hi loom-dev,
+
+I've followed with great interest the development of Project Loom,
+even as a bystander who does not frequently program in Java. The use
+of delimited continuations to provide normal synchronous programming,
+without forcing users to annotate functions or call-sites with
+asynchronous effects, seems like the best way forward for many
+imperative languages. I've worked on similar things myself.[1]
+
+I have an idea which maybe you've considered before, and I'm curious
+to know if you've encountered any similar concepts.  If this is
+inappropriate for this list please let me know.
+
+It's often desirable to be able to cancel an operation. For example, a
+worker thread might receive some request with some parameters from
+another thread and queue it to be performed later; at some point
+before the operation is complete and the result is returned to the
+requester, the request (and the result) might become irrelevant; in
+such a situation, the result can be discarded, and the worker thread
+would be notified in some way so that it can avoid expending resources
+on actually performing the operation (if it hasn't yet been
+unavoidably started, or can still be interrupted).
+
+One can conceptualize the original request as being accompanied by a
+result-continuation, corresponding to the original requesting thread,
+which the worker thread will call with the result.
+
+In that model, cancellation could be implemented with weak references
+and a finalizer: If the result-continuation is referenced weakly, then
+if the garbage collector begins to consider the continuation garbage,
+a finalizer can notify the worker thread that the request has been
+cancelled, and the worker thread can discard the result if and when it
+sees the reference to the result-continuation has already been
+cleared.
+
+Cancellation of an operation, then, would happen if and only if the GC
+considered the original thread requesting the operation to be garbage.
+For example, perhaps if a thread was maintaining some specific object,
+that object would have the only reference to that thread; then if the
+object became garbage, the thread would too, and whatever operation
+the thread is currently blocked in (if any) would be cancelled.
+
+Finalizers, of course, are scary, so this is probably unrealistic, but
+it replaces two features with one, which is nice.
+
+Have you ever encountered or considered such ideas before?
+
+Either way, thanks for working on Project Loom!
+
+[1]: https://github.com/catern/rsyscall/blob/master/python/dneio/__init__.py
+*** more gc notes
+    hey this polymorphic unused variable stuff is really interesting,
+    that variables assigned a type variable as their type,
+    are garbage.
+
+    maybe this is a type-theoretic way to handle weak references?
+    perhaps a weak reference is actually "polymorphic" in some sense...
+
+    also how does this extend to existentials?
+    I guess, if we do an existential closure, then erase some types of things,
+    we don't actually need to have the values that got erased to polymorphic values...
+    or, well, I guess we do? because the values are not abstract in the implementation of the existential.
+
+    so this is more like...
+    type variables that get "leaked" and passed out of the context they're in;
+    if one occurs, it's garbage!
+
+    ok so the reason this is a new idea that's interesting to me is,
+    previously I was thinking that everything reachable was not-garbage,
+    but this shows that (in a richly typed system) some reachable things are garbage!
+    (so that's an obvious way to represent weak references, which are reachable, but garbage)
+    right if the concrete type of things in a cache is not found through unification...
+    then they must be garbage? although that only lets us gc everything...
+    ah but they aren't necessarily garbage, they just aren't kept alive by those references.
+** TODO figure out how to properly keep references around to FDs that get serialized down or passed as args
+   now that I'm properly garbage collecting, this is actually an issue
+
+   I have an interface for spawning a subprocess. Currently, it takes a list of arguments as a List[Union[str, bytes, os.PathLike]], uses os.fsencode to turn them into bytes.
+   Those arguments are stored for later debugging, so I don't want users to call str(whatever) before passing the argument;
+   I'd rather they pass objects which can then be converted into strings/bytes by the process-spawn function.
+   To achieve this, I could either have the process-spawn function call "str" on each argument,
+   or I could recommend that users add __fspath__ to their random non-path objects (which would be compatible with os.fsencode). Which one should I do?
+
+   ok I just went with __fspath__
+
 ** TODO re-add fork method, maybe?
    now that thread.clone() actually is the same as fork (except for CLONE_VM, but that's minor),
    it's not quite so weird to call it thread.fork()...
@@ -30002,4 +30334,9 @@ it sounds like they just wrote the non-contiguous array implementation as a tree
   exceptionless system calls are the interesting thing in io_uring, and rsyscall does that too.
 
   it just so happens that that's merged together with asynchrnonous file IO stuff in io_uring, for some reason.
-  
+* HotOS 2021
+  I guess I should cut down my paper for HotOS.
+  and maybe make it more theoretical?
+
+  oh I don't even have the paper in research/, sigh
+  I need to merge it I guess
