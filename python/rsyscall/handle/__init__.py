@@ -259,6 +259,7 @@ class Task(
             self._make_fresh_address_space()
             if isinstance(self.process, ChildProcess):
                 self.process.did_exec(command)
+        await self.sysif.close_interface()
 
     async def execve(self, filename: WrittenPointer[t.Union[str, os.PathLike]],
                      argv: WrittenPointer[ArgList],
@@ -281,6 +282,7 @@ class Task(
         self._make_fresh_address_space()
         if isinstance(self.process, ChildProcess):
             self.process.did_exec(command)
+        await self.sysif.close_interface()
 
     async def exit(self, status: int) -> None:
         self.manipulating_fd_table = True
