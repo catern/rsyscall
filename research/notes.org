@@ -18971,7 +18971,7 @@ but you can't actually
 we should properly support multi-threaded waiting for the next child state - or something.
 
 waiting for death, at least.
-** TODO fexecve/execveat support
+** DONE fexecve/execveat support
    So one issue is that scripts need to read their exec'd file after startup,
    and when fexec'd, the fd needs to be passed down to them.
 
@@ -19012,6 +19012,32 @@ waiting for death, at least.
 
    yeah I don't think people would expect setns or exec to be fd methods,
    even despite the uniformity.
+** DONE stop using unshare_files_and_replace
+   Hmm
+
+   OK so one issue is that we need to have the only handle to the destination for relpacing in the task/table,
+   cuz we're gonna replace it.
+
+   so ummm yeah we need a handle for it hmmmm
+
+   replacing a specific number is bad but we need to support it, fine.
+
+1. multiple handles fine
+2. dup2, it's okay to have it use the source task with source.dup2(target)
+3. let's (at least at first) use .inherit to do things, instead of making handle before hand;
+   we *might* want to make inheritance actually implicit later, but let's see explicit at first;
+   that's still an improvement because there's no up-front need to make handles
+   this is the main change.
+
+and how were we maintaining handles to things before, anyway?
+looks like the handles just got dropped and we were lucky, hmm. maybe?
+
+ah! no, the targets are actually now handles to the new fds after dup3;
+although this doesn't work if the maybe_copy actually copied
+
+anyway this all stinks and is precisely what I wanted to prevent needing
+
+aha ok I like this inherit_fd thing, this is good and nice.
 ** DONE AFD lets you write on fds which will never be writable, and blocks forever
    maybe we *should* optimistically try to write?
 
