@@ -81,7 +81,7 @@ class ChildState:
         }[self.code])
 
     def died(self) -> bool:
-        return self.state(W.EXITED)
+        return self.code in {CLD.EXITED, CLD.KILLED, CLD.DUMPED}
 
     def clean(self) -> bool:
         return self.code == CLD.EXITED and self.exit_status == 0
