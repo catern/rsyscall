@@ -125,9 +125,7 @@ class FileDescriptor(
 
     """
     __slots__ = ()
-    def __init__(self, task: Task, near: rsyscall.near.FileDescriptor) -> None:
-        super().__init__(task, near)
-        self.task: Task = task
+    task: Task
 
     def as_proc_path(self) -> Path:
         """Return the /proc/{pid}/fd/{num} path pointing to this FD.
@@ -215,7 +213,7 @@ class Task(
 
     def _file_descriptor_constructor(self, fd: rsyscall.near.FileDescriptor) -> FileDescriptor:
         # for extensibility
-        return FileDescriptor(self, fd)
+        return FileDescriptor(self, fd, True)
 
     def _make_fresh_address_space(self) -> None:
         self.address_space = rsyscall.far.AddressSpace(self.process.near.id)

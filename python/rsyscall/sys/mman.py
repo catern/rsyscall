@@ -64,9 +64,7 @@ class MemoryMappingTask(FileDescriptorTask):
         return MemoryMapping(self, ret, rsyscall.far.File())
 
 class MappableFileDescriptor(BaseFileDescriptor):
-    def __init__(self, task: MemoryMappingTask, near: near.FileDescriptor) -> None:
-        super().__init__(task, near)
-        self.task: MemoryMappingTask = task
+    task: MemoryMappingTask
 
     async def mmap(self, length: int, prot: PROT, flags: MAP,
                    offset: int=0,

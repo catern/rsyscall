@@ -39,14 +39,6 @@ class BaseFileDescriptor:
     near: rsyscall.near.FileDescriptor
     valid: bool
 
-    def __init__(self,
-                 task: FileDescriptorTask,
-                 near: rsyscall.near.FileDescriptor,
-    ) -> None:
-        self.task = task
-        self.near = near
-        self.valid = True
-
     def _validate(self) -> None:
         if not self.valid:
             raise Exception("handle is no longer valid")
