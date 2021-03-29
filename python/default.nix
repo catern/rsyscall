@@ -72,6 +72,7 @@ pytest ];
       dnspython
       pyroute2
       outcome
+      graphviz
   ];
   miredo = pkgs.miredo;
   nix = nix;
