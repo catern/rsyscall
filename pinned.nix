@@ -1,5 +1,5 @@
-import /home/sbaugh/.local/src/nixpkgs {}
-# import (builtins.fetchTarball {
-#   url = https://github.com/nixos/nixpkgs/archive/7e120085693d7fb6a33d78dbae9e0934e043f85e.tar.gz;
-#   sha256 = "1jkjv2gmvw0bh31i695kxm6vnki8zxz5xp59mxz6s8pdw7pw31nj";
-# }) {}
+# import /home/sbaugh/.local/src/nixpkgs {}
+import (builtins.fetchTarball {
+  url = https://github.com/nixos/nixpkgs/archive/d3f7e969b9860fb80750147aeb56dab1c730e756.tar.gz;
+  sha256 = "13z5lsgfgpw2wisglicy7krjrhypcc2y7krzxn54ybcninyiwhsn";
+}) {}
