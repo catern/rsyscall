@@ -1398,6 +1398,87 @@ of the intro, you want them to be convinced to accept the paper
      definitely can read it with the view of,
      the reader can read only the intro!! they need to be!!
      convinced!!!
+
+     ok yeah.
+
+     we want to put all our good stuff in the intro, for sure.
+
+     not just "we have good stuff".
+
+     we have to talk about our implementation. that's fine.
+
+     i've heard that outlines are a waste of space,
+     fine, i'll get rid of it.
+
+     should maybe mention capability-security principles?
+     some of the basics of the overview?
+
+     and also some of the implementation stuff
+
+     and if I'm doing that, then definitely some example stuff.
+     should I maybe even include a code example in the intro?
+**** unrelated thought
+     should I really be laying out my opinions in the background?
+     like, direct-style is a custom dsl?
+     hm
+
+     could cut that down, sure.
+
+     also the examples.
+
+     the implementation section seems small enough already.
+
+     although moving the kernel additions to a different section to help skimming might be good.
+**** ok so again what are we changing about the intro
+     - a little implementation stuff
+     - cap-sec principles
+     - maybe even an example
+
+     more related work is necessary.
+     with citations.
+     the background section is rather un-cited.
+
+     maybe let's review the background section to pare it down?
+
+     we clearly need more cites.
+
+     ok what he mentioned was related work with cites and teaser of the results.
+
+     i don't have either of those.
+
+     should mention that the classification is one of our contributions.
+
+     say, direct-style (a classification original to this work)
+
+     let's include an example for sure yeah
+
+     and also, the table of background.
+
+     the start of the intro is good,
+     but I think we should rework the later part to just be what we have in overview right now.
+
+     yeah sure.
+
+     ok let's dooo iittt
+
+     aha ok merging the overview in works great.
+
+     now we just need maybe,
+     more impl,
+     and more background.
+
+     i think we have enough impl
+     and enough evaluation.
+     one paragraph is enough for each.
+
+     now we just need more background.
+**** background section balance
+     maybe the background section should be "state of the art"?
+     or "analysis"?
+     or "related work"?
+**** other thought
+     why not C
+     why not kernel
 *** evaluation
 I do think the evaluation is a little slim
 11:09
@@ -1411,6 +1492,12 @@ you should compare to something more optimized
 I'd want to see more experiments evaluating different aspects of the system
 11:10
 and integration with applications that you can talk about in detail
+**** hmm
+     maybe we should be benchmarking the things we talk about in implementation.
+
+     like... time to exec?
+     time to detect success of exec?
+     close_cloexec?
 *** show different applications using the new primitive
     and how it helps them
 *** compare to something more optimized than python sub-process

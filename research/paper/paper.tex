@@ -2,6 +2,7 @@
 \usepackage{usenix2019_v3}
 
 \usepackage{tikz}
+\usepackage{dblfloatfix}
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{pifont}
@@ -17,6 +18,12 @@
 \usepackage{booktabs}
 \usepackage{paralist}
 \usepackage{titlesec}
+
+% Ugh, these aren't the same size right now.
+\newcommand{\tbad}{\xmark:}
+\newcommand{\tgood}{\cmark:}
+% \newcommand{\tbad}{\text{\sffamily X} :}
+% \newcommand{\tgood}{\checkmark:}
 
 \titleformat*{\subsection}{\normalsize\bfseries}
 \titleformat*{\subsubsection}{\normalsize\bfseries}
@@ -49,6 +56,33 @@ Our implementation is immediately deployable without kernel modifications on any
 \section{Introduction}\label{introduction}
 Existing process creation interfaces can be divided into three categories:
 Fork-style, spawn-style, and direct-style.
+\begin{table*}
+\begin{tabular}{l|l|l|l}
+% BEGIN RECEIVE ORGTBL compare
+ & fork & spawn & direct-style\\
+\hline
+Requirements on parent process & \tbad Single-threaded, small memory & \tgood None & \tgood None\\
+Programming model & \tbad Complex (returns twice) & \tgood Simple (single call) & \tgood Simple (imperative)\\
+Maximally powerful & \tgood Yes, can call any syscall & \tbad No, limited interface & \tgood Yes, can call any syscall\\
+Reporting of results & \tbad Requires IPC & \tbad Not fine-grained & \tgood From individual child syscalls\\
+Non-inherited attributes & Mutated by code in child & Set by arguments & Mutated by code in parent\\
+% END RECEIVE ORGTBL compare
+\end{tabular}
+\caption{Features of fork-style vs spawn-style vs direct-style}
+\label{tab:styles}
+\end{table*}
+\begin{comment}
+#+ORGTBL: SEND compare orgtbl-to-latex :splice t
+|                                | fork                                | spawn                       | direct-style                          |
+|--------------------------------+-------------------------------------+-----------------------------+---------------------------------------|
+| Requirements on parent process | \tbad Single-threaded, small memory | \tgood None                 | \tgood None                           |
+| Programming model              | \tbad Complex (returns twice)       | \tgood Simple (single call) | \tgood Simple (imperative)            |
+| Maximally powerful             | \tgood Yes, can call any syscall    | \tbad No, limited interface | \tgood Yes, can call any syscall      |
+| Reporting of results           | \tbad Requires IPC                  | \tbad Not fine-grained      | \tgood From individual child syscalls |
+| Non-inherited attributes       | Mutated by code in child            | Set by arguments            | Mutated by code in parent             |
+% $
+\end{comment}
+Table \ref{tab:styles} summarizes the differences between each style.
 
 Fork-style (such as \texttt{fork}) and spawn-style (such as \texttt{posix\_spawn}) are the most popular,
 but have a number of disadvantages.
@@ -69,61 +103,86 @@ Direct-style does not constrain the calling process,
 easily branches at any step of the initialization,
 and can create any kind of process supported by the underlying system.
 
-Our contribution is an implementation of direct-style process creation for Linux,
-making use of our work on the \texttt{rsyscall} project.
-The \texttt{rsyscall} project develops language-specific ``process-independent'' system call libraries for Linux,
-which replace libc system call wrappers,
-and allow a program to perform cross-process system calls.
-\texttt{rsyscall} works entirely in userspace
-and can be deployed on existing Linux systems without kernel modifications.
-\texttt{rsyscall} is currently focused on supporting, and is implemented in, Python,
+We'll discuss each style in more detail in section \ref{background}.
+
+To perform direct-style process creation on Linux,
+we need an API where we explicitly specify in which process we want to make a syscall.
+This differs from the normal mode of operation on Linux,
+where programs making syscalls implicitly operate on the current process.
+
+Our contribution in this paper is this API, through the \texttt{rsyscall} library.
+The \texttt{rsyscall} project develops
+language-specific, object-capability-model, low-abstraction libraries for the Linux syscall interface,
+bypassing libc.
+\texttt{rsyscall} is currently focused on supporting Python,
 but can be ported to other languages;
 the examples we show in this paper will be in Python,
 but generalize easily to other languages.
-
-Our direct-style process creation implementation uses \texttt{clone} to create a child process in an embryonic state
-which can then be manipulated from user code in the parent process using syscalls with \texttt{rsyscall}.
-A direct-style \texttt{clone} has all the advantages of direct-style process creation
-over Linux's fork-style \texttt{fork} and spawn-style \texttt{posix\_spawn}:
-\begin{compactitem}
-\item
-  Processes can be created correctly and performantly from any parent process,
-  with a straightforward, familiar API.
-\item
-  Processes can be created with the full set of Linux features.
-\item
-  Syscall results are reported individually to the parent process.
-  % rather than batched together as with spawn-style or manually reported via IPC as with fork-style.
-\end{compactitem}
-
-We've implemented a variety of useful applications using direct-style process creation on Linux,
-which we'll demonstrate in this paper.
-Direct-style \texttt{clone} has minimal performance cost in normal situations,
-and can outperform \texttt{fork} in some cases.
-We have deployed direct-style process creation in production internally at \twosigma.
-
-Our implementation is distributed as a feature of \texttt{rsyscall},
-and is immediately deployable, entirely in userspace, on recent Linux kernels.
 \texttt{rsyscall} is open source and available from
 [Github url].
-% \url{https://github.com/catern/rsyscall}.
 
-This paper is organized in several sections.
-\begin{compactitem}
-\item Section \ref{background} provides background on fork-style, spawn-style, and direct-style process creation,
-and considers their advantages and disadvantages in more depth.
-\item Section \ref{overview} discusses the design of the API,
-including our usage of \texttt{rsyscall}.
-\item Section \ref{examples} shows examples of direct-style process creation in Python on Linux,
+Unlike POSIX C libraries such as glibc or musl,
+an \texttt{rsyscall} library is organized based on the object-capability model.
+The capabilities to make syscalls in any given process are reified as language objects.
+If the capability to make syscalls in a specific process is not passed (in some way) to a function,
+then that function cannot make syscalls in that process.
+
+Due to this design, an \texttt{rsyscall} program can make use of multiple processes at once,
+by manipulating capabilities for multiple processes.
+The relevant two capabilities for this paper are the initial capability to the ``local'' process,
+and capabilities to child processes.
+The ``local'' process is the one which hosts the runtime for the running program,
+and in which a legacy libc would implicitly make syscalls.
+Every \texttt{rsyscall} program starts with the ``local'' process
+and uses it to bootstrap the initial capabilities for other processes.
+
+To perform direct-style process creation,
+we use \texttt{rsyscall} to call \texttt{clone} on the ``local'' process to create a new child process.
+We call various syscalls in the child process to mutate it until it reaches the desired state,
+at which point we can call \texttt{exec} in the child process to start it running on its own.
+After that, the process is no longer under our control, and it functions like any other child process.
+The child process can be monitored using normal Linux child monitoring syscalls,
+such as \texttt{waitid}.
+
+These child process capabilities are created and managed in userspace,
+by launching new processes running a syscall server,
+which receives syscall requests, performs the syscall, and returns the response.
+No kernel modifications are required, and \texttt{rsyscall} is immediately deployable on recent Linux kernel.
+We discuss the implementation in depth in section \ref{implementation},
+and examine several difficult process-creation related details.
+
+\lstinputlisting[float=h,language=Python,label={basic},caption={Create new process, change CWD, and exec}]
+{examples/basic/direct.py}
+Listing \ref{basic} shows a program using \texttt{rsyscall}.
+We create a new child process using \texttt{clone} on the local process \verb|local|,
+and receive back a capability to control it.
+We call \texttt{chdir} in the child process to change its working directory to \texttt{/dev}.
+Then we call \texttt{execv} in the child,
+passing the path of the \texttt{cat} executable
+and the arguments to the new executable.
+The name of the executable is passed as the first argument,
+as is typical in Unix.
+Calling \texttt{execv} consumes the capability,
+and later use of this child process capability will fail with an exception.
+
+The behavior of system calls made on a remote process through \texttt{rsyscall}
+is identical to the behavior of system calls made implicitly on the current process through libc.
+This is an API that systems programmers are already familiar with,
+and which is already thoroughly documented through Linux system call manpages.
+The novelty is constrained to the newly explicit process capabilities.
+Besides flattening the learning curve,
+this also ensures that direct-style \texttt{clone} will always be at least as powerful as \texttt{fork}.
+
+We show more examples of direct-style process creation in section \ref{examples},
 including use of process features which are difficult to use on Linux with \texttt{fork} or \texttt{posix\_spawn}.
-\item Section \ref{implementation} explores our implementation in depth,
-and discusses several difficult process-creation related details of \texttt{rsyscall}.'s implementation.
-\item Section \ref{evaluation} evaluates our results using both quantitative and qualitative approaches.
-\item Section \ref{related_work} examines other work which also touches on the topics covered by this paper.
-\item Section \ref{future_work} lists several directions for future work
-related to direct-style process creation and to \texttt{rsyscall}.
-\item Section \ref{conclusions} briefly outlines our conclusions about direct-style and the future of process creation.
-\end{compactitem}
+
+Direct-style \texttt{clone} has acceptable performance cost,
+and can outperform \texttt{fork} in some cases.
+The performance overhead of creating processes with direct-style clone
+is comparable to the performance cost of creating processes while inside a Linux namespace.
+At \twosigma, we have deployed direct-style process creation in production
+inside a library for distributed system deployment, Toplevel.
+We evaluate in further detail in section \ref{evaluation}.
 \section{Background on process-creation}\label{background}
 As mentioned in the introduction,
 on most operating systems today,
@@ -131,38 +190,6 @@ the available interfaces for process creation
 are either "fork-style" or "spawn-style".
 A few operating systems have a third style, which we refer to as "direct-style".
 
-% Ugh, these aren't the same size right now.
-\newcommand{\tbad}{\xmark:}
-\newcommand{\tgood}{\cmark:}
-% \newcommand{\tbad}{\text{\sffamily X} :}
-% \newcommand{\tgood}{\checkmark:}
-
-\begin{table*}
-\begin{tabular}{l|l|l|l}
-% BEGIN RECEIVE ORGTBL compare
- & fork-style & spawn-style & direct-style\\
-\hline
-Works with any caller & \tbad No threads or large memory & \tgood Yes & \tgood Yes\\
-Programming model & \tbad Complex (returns twice) & \tgood Simple (single call) & \tgood Simple (imperative)\\
-Maximally powerful & \tgood Yes, can call any syscall & \tbad No, limited interface & \tgood Can call any syscall\\
-Error handling & \tbad Poor, requires IPC & \tbad Poor, not fine-grained & \tgood Reports individual errors\\
-Non-copied attributes & Mutated by code in child & Set by arguments & Mutated by code in parent\\
-% END RECEIVE ORGTBL compare
-\end{tabular}
-\caption{Features of fork-style vs spawn-style vs direct-style}
-\label{tab:ease}
-\end{table*}
-\begin{comment}
-#+ORGTBL: SEND compare orgtbl-to-latex :splice t
-|                       | fork-style                       | spawn-style                  | direct-style                     |
-|-----------------------+----------------------------------+------------------------------+----------------------------------|
-| Works with any caller | \tbad No threads or large memory | \tgood Yes                   | \tgood Yes                       |
-| Programming model     | \tbad Complex (returns twice)    | \tgood Simple (single call)  | \tgood Simple (imperative)       |
-| Maximally powerful    | \tgood Yes, can call any syscall | \tbad No, limited interface  | \tgood Can call any syscall      |
-| Error handling        | \tbad Poor, requires IPC         | \tbad Poor, not fine-grained | \tgood Reports individual errors |
-| Non-copied attributes | Mutated by code in child         | Set by arguments             | Mutated by code in parent        |
-% $
-\end{comment}
 \subsection{Fork-style}
 By far the most well-known fork-style interface is Unix's fork.\cite{forkhist}
 With a fork-style interface,
@@ -326,66 +353,6 @@ Such an interface, like fork-style and spawn-style,
 would implicitly copy some attributes to the new process,
 rather than being capability-oriented and requiring all attributes to be specified explicitly.
 This is the kind of direct-style interface that we contribute in this paper.
-\section{Overview of API}\label{overview}
-In most operating system APIs, including the ones available on Linux,
-when a program makes a syscall, it implicitly operates on the current process.
-To perform direct-style process creation on Linux,
-we need an API where we instead explicitly specify in which process we want to make a syscall.
-
-\texttt{rsyscall} provides this API.
-The \texttt{rsyscall} project develops
-language-specific, object-capability-model, low-abstraction libraries for the Linux syscall interface,
-bypassing libc.
-
-Unlike POSIX C libraries such as glibc or musl,
-an \texttt{rsyscall} library is organized based on the object-capability model.
-The capabilities to make syscalls in any given process are reified as language objects.
-If the capability to make syscalls in a specific process is not passed (in some way) to a function,
-then that function cannot make syscalls in that process.
-
-Due to this design, an \texttt{rsyscall} program can make use of multiple processes at once,
-by manipulating capabilities for multiple processes.
-The relevant two capabilities for this paper are the initial capability to the ``local'' process,
-and capabilities to child processes.
-The ``local'' process is the one which hosts the runtime for the running program,
-and in which a legacy libc would implicitly make syscalls.
-Every \texttt{rsyscall} program starts with the ``local'' process
-and uses it to bootstrap the initial capabilities for other processes.
-
-To perform direct-style process creation,
-we use \texttt{rsyscall} to call \texttt{clone} on the ``local'' process to create a new child process.
-We call various syscalls in the child process to mutate it until it reaches the desired state,
-at which point we can call \texttt{execve} in the child process to start it running on its own.
-After that, the process is no longer under our control, and it functions like any other child process.
-The child process can be monitored using normal Linux child monitoring syscalls,
-such as \texttt{waitid}.
-
-\lstinputlisting[float=ht,language=Python,label={basic},caption={Creating a new process, changing CWD, and execing}]
-{examples/basic/direct.py}
-Listing \ref{basic} shows this in action in Python.
-We create a new child process using \texttt{clone} on the local process \verb|local|,
-and receive back a capability to control it.
-We call \texttt{chdir} in the child process to change its working directory to \texttt{/dev}.
-Then we call \texttt{execve} in the child,
-passing the path of the \texttt{cat} executable,
-the arguments to the new executable,
-and the unchanged set of environment variables.
-The name of the executable is passed as the first argument,
-as is typical in Unix.
-Calling \texttt{execve} consumes the capability,
-and later use of this child process capability will fail with an exception.
-
-The behavior of system calls made on a remote process through \texttt{rsyscall}
-is identical to the behavior of system calls made implicitly on the current process through libc.
-This is an API that systems programmers are already familiar with,
-and which is already thoroughly documented through Linux system call manpages.
-The novelty is constrained to the newly explicit process capabilities.
-
-The lack of novelty in the API is important not only for the learning curve,
-but also for power.
-Since we are using conventional Linux system calls,
-just in a cross-process way,
-direct-style \texttt{clone} will always be at least as powerful as \texttt{fork}.
 \section{Examples}\label{examples}
 In this section,
 we'll demonstrate direct-style process creation
@@ -443,8 +410,6 @@ Finally, we execute some executable in the child process,
 passing the file descriptor number as an argument;
 since we disabled \texttt{CLOEXEC} on the file descriptor,
 the executable will be able to use that file descriptor through that file descriptor number.
-Unlike in listing \ref{basic}, we call the \texttt{execv} wrapper rather than \texttt{execve},
-so that we don't need to pass the (unmodified) environment to every \texttt{exec} call in these examples.
 \subsection{Non-shared-memory concurrency}
 Processes run concurrently,
 which allows exploiting the parallelism of the underlying hardware.
