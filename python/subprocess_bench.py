@@ -144,28 +144,16 @@ async def main() -> None:
         return [(i, await run_many(mode, 10**i)) for i in range(3)]
     subprocess = [(0, 1662.7047061920166), (1, 1666.396141052246), (2, 1668.2496070861816), (3, 1670.4914569854736), (4, 2006.0789585113525), (5, 10209.86270904541), (6, 48588.73701095581)]
     rsyscall = [(0, 2229.5007705688477), (1, 2258.697509765625), (2, 2234.3757152557373), (3, 2238.978862762451), (4, 2196.8472003936768), (5, 2204.909563064575), (6, 2199.6195316314697)]
-    subprocess = await get_data("subprocess")
+    # subprocess = await get_data("subprocess")
+    # rsyscall = await get_data("rsyscall")
     print("subprocess =", subprocess)
-    rsyscall = await get_data("rsyscall")
     print("rsyscall =", rsyscall)
-    nest = await get_data("nest")
-    print("nest =", nest)
-    nestnest = await get_data("nestnest")
-    print("nestnest =", nestnest)
-    flags = await get_data("flags")
-    print("flags =", flags)
     fig, ax = plt.subplots(figsize=(6.4,3.2))
     plt.xscale('log')
     plt.yscale('log')
     ax.plot([10**x for x, y in subprocess], [y for x, y in subprocess], 'o-', label="Python subprocess",
             linewidth=4, markersize=12)
     ax.plot([10**x for x, y in rsyscall], [y for x, y in rsyscall], '^-', label="rsyscall clone",
-            linewidth=4, markersize=12)
-    ax.plot([10**x for x, y in nest], [y for x, y in nest], '^-', label="rsyscall nest",
-            linewidth=4, markersize=12)
-    ax.plot([10**x for x, y in nestnest], [y for x, y in nestnest], '^-', label="rsyscall nestnest",
-            linewidth=4, markersize=12)
-    ax.plot([10**x for x, y in flags], [y for x, y in flags], '^-', label="rsyscall clone(NEWPID|NEWNS)",
             linewidth=4, markersize=12)
     ax.legend()
     
