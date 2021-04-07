@@ -32,6 +32,8 @@
 \lstset{
 language=Python,
 basicstyle=\small\ttfamily,
+keywordstyle=,
+stringstyle=\color{red},
 frame=tb,
 columns=fullflexible,
 showstringspaces=false,
@@ -252,12 +254,11 @@ to meet the specific needs of individual real-world applications.
 \subsection{Abstraction through file descriptor passing}\label{fd_abstraction}
 In Linux (and Unix in general),
 a program can pass file descriptors from the parent process to a child process
-by using file descriptor inheritance.
+by using file descriptor inheritance.\cite{tlpi}
 All open file descriptors are copied at process creation time from the parent process to the child process;
 the child process can then make independent use of the file descriptors.
 We'll discuss this important feature further in section \ref{fdtables}.
 
-% TODO need to clarify this more, this is v2, Larry didn't like v1 beyond first sentence
 Most resources in Linux are managed through file descriptors,
 so this allows the parent process to pass a variety of resources to the child process,
 such as files, network connections, pipes, or other resources.\cite{ucspi}
@@ -276,6 +277,9 @@ we first open a file with read-write permission in the local process.
 Then we create a child process,
 which inherits all file descriptors from its parent.
 We indicate that we want to operate on the child's inherited copy of the file descriptor with \verb|child.inherit_fd|.
+\texttt{inherit\_fd} performs no system calls,
+it just updates bookkeeping to create a new handle for the inherited file descriptor;
+we'll discuss it in more depth in section \ref{handles}.
 Then we disable \texttt{CLOEXEC} on the child's file descriptor,
 which on Linux we can do by clearing the FD flags with \verb|fcntl(fd, F_SETFD, 0)|.
 Finally, we execute some executable in the child process,
@@ -284,55 +288,51 @@ since we disabled \texttt{CLOEXEC} on the file descriptor,
 the executable will be able to use that file descriptor through that file descriptor number.
 \subsection{Non-shared-memory concurrency}
 Processes run concurrently,
-which allows exploiting the parallelism of the underlying hardware.
+which enables more modular programs
+and allows exploiting the parallelism of the underlying hardware.
 Since processes don't share memory,
 they can provide a less complex parallel programming environment
-than shared-memory thread-based approaches.
+than shared-memory thread-based approaches.\cite{threads}
 
-One of the most popular parallel programming environments is the Unix shell,
-which obtains its parallelism by running multiple processes connected via pipes.
-The Unix shell has a relatively constrained form of parallel processing,
-but it's also possible to create more complex webs of parallel processes,
-where, for example, one process might take multiple inputs over multiple pipes,
-or produce multiple outputs.
-
-\lstinputlisting[float=*ht,language=Python,label={pipe},caption={Creating a parallel processing pipeline}]
+\lstinputlisting[float,language=Python,label={pipe},caption={Creating a parallel processing pipeline}]
 {examples/pipe/direct.py}
 In listing \ref{pipe},
 we execute a few programs in parallel,
 connected by pipes.
+The \texttt{source} program generates two outputs, which go to \texttt{video\_sink} and \texttt{audio\_sink}.
 We first create two pipes in the local process,
-then inherit them down to several child processes using a helper function, \verb|as_argument|,
+then inherit them down to several child processes using a helper function, \verb|argfd|,
 which uses \verb|inherit_fd| and \texttt{fcntl} as described in section \ref{fd_abstraction}.
 We call exec in each child process, passing some file descriptors as arguments to the new programs.
 The whole system then runs in parallel,
 as normal child processes.
 \subsection{Customization without explicit support}
-While, ideally, all resources would be passed by file descriptor\cite{capsicum},
+While, ideally, all resources would be passed by file descriptor,
 Unix has a number of resources that are global,
 such as the pid space or the mount table,
-and which cannot be changed on a per-process basis.
+and which cannot be changed on a per-process basis.\cite{capsicum}
 
-In Linux, most global resources have been made process-local
-through the namespaces system.
+In Linux, many global resources have been made process-local
+through the namespaces system.\cite{lwn_namespaces}
 Like other process-local resources such as the current working directory,
 namespaces are typically set up at process creation time.
 
-The most popular usage of namespaces is for large-scale container systems such as Docker;
-however, this is far from the only use.
+One key use of namespaces is to implement large-scale container systems such as Docker.\cite{lwn_namespaces}
+However, this is far from the only use.
 With an adaquate process creation primitive,
 namespaces can be used easily on a much smaller scale.
 
 Namespaces, like all process-local resources,
 can be used to customize a program's behavior
 in ways that were not anticipated at development time
-by customizing the environment the process runs in.
-Other system calls such as \texttt{chroot} can also be used for this.
+by customizing the environment the process runs in.\cite{plan9ns}
+Other system calls such as \texttt{chdir} and \texttt{chroot} can also be used for this,
+but namespaces allow new ways of customization.\cite{mount_namespaces}
 
 \lstinputlisting[float,language=Python,label={mount},caption={Overriding absolute path using a mount namespace}]
 {examples/mount/direct.py}
-One classic form of customization enabled by namespaces
-is overriding files at paths that were hardcoded into a program we can't change,
+One classic form of customization
+is overriding files at paths that were hardcoded into a program,
 without changing those files for the rest of the system.
 In listing \ref{mount},
 we create a new child process as normal,
@@ -341,19 +341,19 @@ pass an argument to \texttt{clone}.
 
 \verb|CLONE_NEWNS| causes clone to create the process in a new mount namespace,
 which allows us to manipulate the filesystem tree in a way that only this process will see
-using the \texttt{mount} system call.
+using the \texttt{mount} system call.\cite{mount_namespaces}\cite{clone}
 We call \texttt{mount}, passing \texttt{MS.BIND}, to make the file \verb|/home/foo/custom_foo.conf|
-appear at the path \verb|/etc/foo.conf|.
-This is known as a bind mount.
+appear at the path \verb|/etc/foo.conf|;
+this is known as a bind mount.\cite{mount}
 Then we execute some executable,
 which, when it opens \verb|/etc/foo.conf|, will see the contents of our \verb|custom_foo.conf|.
 \subsection{Sandboxing}
 At process creation time,
 we can not only pass resources and customize the process's environment,
 we can also deny the process access to resources that it otherwise receives by default.
-This is a key part of creating a secure sandbox for potentially malicious code.
+This is a key part of creating a secure sandbox for potentially malicious code.\cite{seccomp}\cite{firejail}\cite{gvisor}
 
-\lstinputlisting[float=*ht,language=Python,label={unmount},caption={Unmount all and run executable via fexec}]
+\lstinputlisting[float,language=Python,label={unmount},caption={Unmount all and run executable via fexec}]
 {examples/unmount/direct.py}
 In listing \ref{unmount}
 we create a new child process,
@@ -372,8 +372,8 @@ We then exec the file we opened earlier, using \texttt{fexec},
 which allows execing a file descriptor,
 and also pass the database file descriptor as an argument,
 as in listing \ref{fds}.
-(The underlying system call for \texttt{fexec} is \texttt{execveat};
-this \texttt{fexec} is a helper function.)
+The underlying system call for \texttt{fexec} is \texttt{execveat};
+this \texttt{fexec} is a helper function.\cite{execveat}
 Note that this executable must be statically linked,
 or it wouldn't work in an empty filesystem namespace,
 with no libraries to dynamically link against.
@@ -381,8 +381,8 @@ with no libraries to dynamically link against.
 By removing the filesystem tree from the view of this process,
 we can run this executable with greater confidence
 that it won't be able to tamper with the rest of the system.
-A sandbox which is truly robust against malicious or compromised programs requires some additional steps,
-but this is a substantial start.
+A sandbox which is truly robust against malicious or compromised programs requires additional steps,
+but this is a substantial start.\cite{firejail}\cite{gvisor}
 Such a technique can also be used when a full sandbox is not relevant,
 to ease reasoning about the behavior of the program being run
 and protect against bugs.
@@ -390,10 +390,10 @@ and protect against bugs.
 Even if the process needs additional resources,
 those can be explicitly passed down through file descriptor passing,
 as we do here with the database file descriptor.
-This allows us to approximate capability-based security\cite{capsicum}.
+This allows us to approximate capability-based security.\cite{capsicum}
 \subsection{Nested clone and pid namespaces}
 Process-local resources can also be used to control the lifetime of resources used by that process.
-Many Linux resources are not automatically cleaned up on process exit;
+Some Linux resources are not automatically cleaned up on process exit;
 a poorly coded program may allocate global resources
 and not ensure that they are cleaned up,
 leaving behind unused garbage on the system.
@@ -401,19 +401,19 @@ leaving behind unused garbage on the system.
 One resource which is not automatically cleaned up is processes themselves;
 if we run a program which itself spawns subprocesses,
 those subprocesses may unintentionally leak,
-and be left running on the system even after the program itself has stopped.
+and be left running on the system even after the program itself has stopped.\cite{caternfork}
 
 We can use a pid namespace to solve this issue.
 The lifetime of all processes in a pid namespace is tied to the first process created in it,
 the init process.
 When the init process dies,
-all other processes in the pid namespace are destroyed.
+all other processes in the pid namespace are destroyed.\cite{pid_namespaces}
 
-\lstinputlisting[float=*ht,language=Python,label={pidns},caption={Nested clone and pid namespace}]
+\lstinputlisting[float,language=Python,label={pidns},caption={Nested clone and pid namespace}]
 {examples/pidns/direct.py}
 In listing \ref{pidns},
 we create a child process which we call \texttt{init},
-passing \verb|CLONE_NEWPID| to create it in a new pid namespace.
+passing \verb|CLONE_NEWPID| to create it in a new pid namespace.\cite{clone}
 
 To create another process in the pid namespace,
 we clone again, this time from \texttt{init}.
@@ -427,26 +427,42 @@ just as we would monitor \texttt{init} from its parent process.
 \texttt{init} in a pid namespace has some special powers and responsibilities.
 We can handle these responsibilities ourselves directly from our program,
 or we can continue on by execing an init daemon in \texttt{init} to handle it for us.
+\cite{pid_namespaces}\cite{tini}\cite{dumb_init}
 
 In either case, when \texttt{init} dies,
 the pid namespace will be destroyed,
 and \texttt{grandchild} will be cleaned up.
 \subsection{Shared file descriptor tables}\label{shared_fd_table}
-A library can create a child process to perform a useful service.
-This can sometimes be done more easily when the child process shares file descriptors with the parent.
+We can create a child process which shares its file descriptor table with the parent process.
+This can be useful for a variety of purposes,
+such as accessing resources in other namespaces, or in multiple namespaces at once.
+We'll give one example using FUSE.
 
-\lstinputlisting[float=*ht,language=Python,label={fuse},caption={Shared file descriptor tables}]
+The Filesystem in Userspace (FUSE) Linux subsystem allows a userspace program
+to implement a filesystem.\cite{fuse}
+Many interesting filesystems have been implemented using FUSE,
+representing a variety of resources as files.\cite{sshfs}\cite{encfs}\cite{mp3fs}
+
+For improved modularity, we might want to mount and use a FUSE filesystem in our program,
+in a way that no other process can see it,
+without entering a new namespace ourselves.
+We can do this by creating a child process that shares its file descriptor tables with the parent process.
+
+\lstinputlisting[float,language=Python,label={fuse},caption={Shared file descriptor tables}]
 {examples/fuse/direct.py}
 In listing \ref{fuse},
 we first create a child process \verb|ns_child| in a new mount namespace with \verb|CLONE_NEWNS|,
-and, for the first time, also pass \verb|CLONE_FILES|,
-which causes the file descriptor table to be shared between the parent process and the child process.
-We create a grandchild off of \verb|ns_child|
+and this time also pass \verb|CLONE_FILES|,
+which causes the file descriptor table to be shared between the parent process and the child process.\cite{clone}
+We create another child from \verb|ns_child|
 and use it to exec a FUSE filesystem,
 which will appear only in the mount namespace of \verb|ns_child| and its descendents.
 Then we can open FUSE files in \verb|ns_child|
 and use those files in the parent process,
 through the shared file descriptor table.
+We call \texttt{local.use\_fd} which, like \texttt{inherit\_fd},
+merely updates bookkeeping to create a new handle for the file descriptor existing in the shared fd table;
+we'll discuss \texttt{use\_fd} in section \ref{handles}.
 
 File descriptor passing over a Unix domain socket
 can allow similar behavior without sharing the file descriptor table,
@@ -476,11 +492,20 @@ typically a pair of pipes.
 We use file descriptors for transport of data rather than shared memory
 to support straightforward integration with event loops.
 
-ptrace provides a way to perform arbitrary actions on other processes,
+We chose to implement in userspace first,
+rather than immediately implementing this in the kernel,
+to aid deployability
+and to allow fast iteration while developing userspace code using these features.
+In the past, attempts to upstream kernel support for novel features without extensive userspace usage
+has had a poor reception in the Linux kernel community.\cite{lwn_checkpoint}\cite{first_class_address_space}
+We believe proving viability in userspace first will be better in the long term.
+
+\texttt{ptrace} provides a way to perform arbitrary actions on other processes,
 including system calls,
-but is not suitable for us.
-Among other issues, it has the substantial disadvantage of not permitting multiple ptracers.
-A ptrace-based implementation would prevent using \texttt{strace} or \texttt{gdb} on \texttt{rsyscall}-controlled processes,
+but is not suitable for us.\cite{ptrace}
+Among other issues, it has the substantial disadvantage of not supporting multiple ptracers.
+A \texttt{ptrace}-based implementation would therefore prevent
+using \texttt{strace} or \texttt{gdb} on \texttt{rsyscall}-controlled processes,
 which is an unacceptable limitation for a general-purpose utility.
 
 Many syscalls either take or return pointers to memory,
@@ -488,11 +513,12 @@ and require the caller to read or write that memory to provide arguments or rece
 Therefore, an \texttt{rsyscall} library needs a way to access memory in the target process.
 
 The most simple way to access memory is for the local process to be in the same address space as the target process.
-This is the case most of the time; we pass \verb|CLONE_VM| to \texttt{clone} by default in the Python wrapper.
+This is the case most of the time; we pass \verb|CLONE_VM| to \texttt{clone} by default
+in the \texttt{rsyscall} wrapper for \texttt{clone}.
 
 Sometimes, the target process may be in another address space;
 for example, if the target process is at a different privilege level,
-it must be in a different address space.
+we will want it to be in a different address space for security reasons.\cite{vfork_dangerous}
 There are a number of available techniques in that scenario;
 we choose to copy memory over a pair of pipes,
 again using file descriptors for the sake of easy event-loop integration.
@@ -504,7 +530,7 @@ Besides \texttt{clone}, \texttt{vfork} and \texttt{fork} also create processes,
 but they are not suitable for flexible direct-style process creation.
 \texttt{vfork} suspends execution of the parent process
 while waiting for the child process to exit or call \texttt{execve},
-which is immediately unsuitable.
+which is immediately unsuitable.\cite{vfork}
 \texttt{fork} lacks many features which are restricted to \texttt{clone}.
 For example, with \texttt{fork},
 we could not create child processes which share the parent's address space,
@@ -537,7 +563,7 @@ naively waiting for a response to the syscall request may leave us waiting forev
 There is a traditional technique used with \texttt{fork}
 to detect a successful \texttt{execve} using a pipe,
 which unfortunately won't work for us.
-In this technique, the parent process creates a pipe before forking,
+With this technique, the parent process creates a pipe before forking,
 ensures both ends are marked \verb|O_CLOEXEC|,
 performs the fork,
 closes the write end of the pipe,
@@ -567,7 +593,7 @@ crucially, perform a futex wakeup on it.
 
 Futexes are usually used for the implementation of userspace shared-memory synchronization constructs,
 but the relevant detail for us here is that we can wait on an address
-until a futex wakeup is performed on that address.
+until a futex wakeup is performed on that address.\cite{futex}
 This means we can wait on \texttt{ctid} until the futex wakeup is performed,
 and in this way get notified of the child process calling \texttt{execve} or exiting.
 A process can only wait on one futex at a time;
@@ -584,7 +610,8 @@ whichever comes first.
 Either will normally indicate that the syscall fails,
 but if the futex process exits,
 without the child process itself exiting,
-then we can catch that in \texttt{execve} and know that the child has successfully called \texttt{execve}.
+then we can catch that in \texttt{execve}
+and know that the child has successfully completed an \texttt{execve} call.
 
 If the futex process and child process both exit,
 it's ambiguous whether the child process successfully called \texttt{execve};
@@ -611,13 +638,13 @@ when the \verb|CLONE_FILES| flag is passed to \texttt{clone},
 the parent process and the child process will share a single file descriptor table,
 so changes to the file descriptor table made in one process will affect the other.
 
-The file descriptor table can be unshared by calling \verb|unshare(CLONE_FILES)| or \texttt{execve}.
+The file descriptor table can then be unshared by calling \verb|unshare(CLONE_FILES)| or \texttt{execve}.
 After either system call, the process will have a new file descriptor table
 which is no longer shared with any other process.
 All the file descriptors existing in the old table at the time of the system call
 will be copied into the new file descriptor table,
 except for, in the case of \texttt{execve}, file descriptors with the \texttt{CLOEXEC} flag set.
-\subsubsection{Tracking file descriptors through handles}
+\subsubsection{Tracking file descriptors through handles}\label{handles}
 After \texttt{clone}, \verb|unshare(CLONE_FILES)|, or \texttt{execve}
 has copied all the file descriptors from some old table into a new table,
 we need to decide which file descriptors we want to keep open in the new table,
@@ -649,6 +676,9 @@ This requires careful management of \texttt{CLOEXEC}.
 
 When a child process is created,
 there are no file descriptor handles associated with it.
+We can make file descriptor handles by opening file descriptors in the child,
+or by creating new handles for file descriptors opened in other processes.
+
 We can use the \verb|inherit_fd| function to create handles for inherited file descriptors.
 \verb|inherit_fd| takes a file descriptor handle associated with the parent process,
 and, if that file descriptor was open at the time the child process was created,
@@ -656,6 +686,13 @@ creates a new handle associated with the child process
 for the child process's copy of that file descriptor.
 Once the inherited file descriptors are closed as described in section \ref{cloexec},
 \verb|inherit_fd| can no longer be used.
+
+If the process shares its file descriptor table with any other processes,
+we can use the \verb|use_fd| function to create handles for file descriptors
+in the shared file descriptor table.
+\verb|use_fd| takes as arguments a process $A$
+and a file descriptor handle associated with any process sharing that process's file descriptor table;
+it returns a new handle associated with process $A$ for that file descriptor.
 \subsubsection{Closing file descriptors after inheritance}\label{cloexec}
 After creating a new file descriptor table,
 and determining which file descriptors should be kept open,
@@ -668,6 +705,7 @@ if the write end is copied into a new file descriptor table between creating and
 and the write end is never closed in the new table,
 the read end will never get an EOF.
 
+% TODO should definitely cite this
 However, we can't simply close all other file descriptors,
 because we must preserve the semantics of implicit file descriptor inheritance.
 The possibility of implicit inheritance of file descriptors is an old Unix feature,
@@ -705,18 +743,17 @@ this would replace our userspace implementation of \verb|close_cloexec|.
 
 For \texttt{execve}, \verb|close_cloexec| is, in some sense, done automatically for us by the kernel;
 except we don't get the chance to preserve live file descriptors handles,
-without first unsetting \texttt{CLOEXEC} on them.
+other than by unsetting \texttt{CLOEXEC} on them before calling \texttt{execve}.
 Again an extension to the kernel would be useful:
-A new argument to \texttt{execve} which allows specifying a list of file descriptors to inherit
-despite the \texttt{CLOEXEC} flag.
-This would allow programs to avoid the pattern
+A new argument to \texttt{execve} which allows specifying a list of file descriptors
+which should be inherited across \texttt{execve} even if \texttt{CLOEXEC} is set on them.
+This new argument would allow programs to avoid the pattern
 of unsetting \texttt{CLOEXEC}, calling \texttt{execve}, and then immediately re-setting \texttt{CLOEXEC},
-just to inherit a file descriptor across a single exec.
-This might seem minor,
-but unsetting \texttt{CLOEXEC} before \texttt{execve} is not possible
-when the process calling \texttt{execve} has a shared file descriptor table,
-because some other process might call \texttt{execve} as well,
-and erroneously inherit the file descriptor.
+just to inherit a file descriptor across a single \texttt{execve}.
+This is primarily useful when the process calling \texttt{execve} has a shared file descriptor table;
+in that case, unsetting \texttt{CLOEXEC} before \texttt{execve} is not possible,
+because some other process might also call \texttt{execve}
+and erroneously inherit the file descriptor from the shared file descriptor table.
 \section{Evaluation}\label{evaluation}
 Our goal is a powerful approach to process creation that is easy to use correctly.
 Performance of our implementation is secondary,
@@ -731,7 +768,7 @@ We evaluate the degree to which we meet this goal by answering the following que
   and find substantial benefits for direct-style.
 \item
   Does our \texttt{rsyscall}-based direct-style process creation interface
-  have acceptable overhead relative to the alternatives?
+  have acceptable performance overhead relative to the alternatives?
   We evaluate a number of microbenchmarks in \ref{subprocess_bench},
   and find an acceptable level of overhead.
 \item
@@ -754,35 +791,36 @@ so we compare only to fork-style.
 The line counts of the direct-style and fork-style implementations are listed in table \ref{tab:ease}.
 Direct-style consistently takes under half the lines to express the same functionality.
 
-\lstinputlisting[float=ht,language=Python,label={basic_fork},caption={Fork-style: Creating a new process, changing CWD, and execing}]
+\lstinputlisting[float,language=Python,label={basic_fork},caption={Fork-style: Creating a new process, changing CWD, and execing}]
 {examples/basic/fork.py}
-Listing \ref{basic_fork} gives an example of one of our fork-style implementations,
-corresponding to the direct-style example in listing \ref{basic}.
+Listing \ref{basic_fork} shows one of our fork-style implementations,
+corresponding to the direct-style implementation in listing \ref{basic}.
 
 In our fork-style implementations,
-we assume a great deal of infrastructure is available to make fork-style simpler.
+we assume substantial infrastructure is available to make fork-style simpler;
+despite this, fork-style implementations are still significantly more verbose than direct-style.
 We assume the existence of a robust IPC system,
+with communication channels set up automatically between the parent process and the child process,
 with an already-defined protocol which can cover all errors from all system calls.
-Despite this, fork-style implementations are still significantly more verbose than direct-style.
 
-The main source of additional code in the fork-style implementation
+The main source of additional code in fork-style implementations
 is reporting errors back to the main program using IPC.
-If a program that is already reporting errors to some other destination,
-such code is not necessary;
-for example, a process supervisor or a shell might write process startup errors
-as textual logs which are read by a human.
-If a program does not already have such a destination for errors,
-then robustly dealing with errors in \texttt{fork} requires this additional IPC code.
+This pattern is common in complex usage of fork.\cite{posix_spawn_error_pipe}\cite{python_subprocess_errpipe}
+Many users of fork avoid complex IPC
+by encoding a subset of the error information into the exit code of the child process
+when an error is encountered during child setup.
+Such code still must be explicitly written, like the IPC code we show,
+and code in the parent process must detect the error by decoding the exit code.
 
-Direct-style does not require any extra work to report errors;
+Direct-style does not require any extra work to report errors from the child process;
 errors are reported just like any other system call.
 This is the main immediately-visible simplification of using direct-style process creation.
 
 Direct-style also removes the need to be concerned about the state of the calling process,
 though this simplification is not immediately visible in a small example.
-The fork-style examples may break if there are multiple threads in the calling process,
+The fork-style implementations may break if there are multiple threads in the calling process,
 and may be slow if the calling process has large amounts of memory mapped, as we'll see in section \ref{subprocess_bench}.
-The direct-style examples do not have these limitations.
+The direct-style implementations do not have these limitations.
 \subsection{Microbenchmark results}\label{subprocess_bench}
 \subsubsection{Basic process creation}
 \begin{figure}[h!]
@@ -809,6 +847,8 @@ this takes an average of 1.4 milliseconds at low memory,
 while \texttt{rsyscall}'s \texttt{clone} takes an average of 2.2 milliseconds at any memory usage.
 As expected, the fork-based implementations scale poorly with memory usage,
 and the C implementations vastly outperform the Python implementations.
+\texttt{posix\_spawn} takes an average of 440 microseconds to start a process,
+regardless of the memory usage of the calling process.
 
 We perform another microbenchmark to evaluate the overhead of performing additional modifications of the child process.
 We call \texttt{getpid} from Python
@@ -858,7 +898,7 @@ from a variety of parent processes: the local process,
 a child (created with \texttt{clone()}),
 a grandchild (created with \texttt{clone().clone()}),
 or a child in a different namespace (created with \verb=clone(CLONE_NEWNS|CLONE_NEWPID)=).
-We've also specified different combinations of flags for the process being created in the benchmark.
+We've also specified different combinations of flags for the child process being created in the benchmark.
 We don't include the Python standard library in these benchmarks
 as there's no way to create nested child processes or specify \texttt{CLONE} flags in the Python standard library.
 The results are in figure \ref{fig:clone_bench}.
@@ -883,6 +923,8 @@ is around 2 milliseconds, comparable to the cost of running with \texttt{rsyscal
 Note also that the overhead of creating a new process inside a new namespace
 (the difference between the \texttt{clone()} and \texttt{clone(NS|PID)} child processes)
 is around 15 milliseconds; subtantially greater than the overhead of \texttt{rsyscall}.
+As namespaces are widely used,
+this suggests our overhead is acceptable.
 \subsection{Usage in the real world}\label{realworld}
 At \twosigma we have used \texttt{rsyscall} and direct-style process creation
 to implement an internal distributed system deployment library, written in Python,
@@ -918,16 +960,16 @@ while the new example takes an average of 16 seconds.
 
 Easy file descriptor inheritance has also allowed us to treat file descriptors as a uniform interface in Toplevel.
 We pass around file descriptors freely inside Toplevel.
-A given component can be implemented with a separate process which has the file descriptor passed down,
-running a program written in native code for performance,
-or implemented in-process with a Python implementation for flexibility;
-either is possible behind a uniform file descriptor interface.
+This uniform interface allows us to flexibly swap implementations between in-process and out-of-process,
+allowing us to decide on a case-by-case basis
+whether we prefer the flexibility of an in-process Python implementation,
+or the performance of a native code implementation running in a child process.
 
 We've also made use of namespaces,
 chiefly user namespaces and pid namespaces.
 For legacy applications which directly start subprocesses,
 we prevent process leaking with a pid namespace.
-This is part of strategy of noninterference and cleanup
+This is part of a strategy of noninterference and cleanup
 that ensures that multiple users of Toplevel
 can coexist simultaneously on the same host,
 even if running the same system.
