@@ -18,6 +18,7 @@
 \titlespacing{\subsubsection}{0pt}{0.5ex}{0ex}
 
 \begin{document}
+\newcommand{\twosigma}{[tech company]} 
 \date{}
 \title{\Large \bf DRAFT: Direct-style process creation on Linux}
 % \author{
@@ -87,14 +88,16 @@ over Linux's fork-style \texttt{fork} and spawn-style \texttt{posix\_spawn}:
 \end{compactitem}
 
 We've implemented a variety of useful applications using direct-style process creation on Linux,
-which we'll showcase in brief in this paper.
+which we'll demonstrate in this paper.
 Direct-style \texttt{clone} has minimal performance cost in normal situations,
 and can outperform \texttt{fork} in some cases.
-We have deployed direct-style process creation in production internally at Two Sigma.
+We have deployed direct-style process creation in production internally at \twosigma.
 
 Our implementation is distributed as a feature of \texttt{rsyscall},
 and is immediately deployable on recent Linux kernels.
-\texttt{rsyscall} is open source and available from \url{https://github.com/catern/rsyscall}.
+\texttt{rsyscall} is open source and available from
+[Github url].
+% \url{https://github.com/catern/rsyscall}.
 
 This paper is organized in several sections.
 \begin{compactitem}
@@ -662,7 +665,7 @@ most system calls can be called as normal.
 The new process can be modified freely through \texttt{chdir}, \texttt{dup2}, and other system calls.
 Out of system calls related to process creation,
 only \texttt{execve} and \texttt{unshare} need substantial further attention.
-\subsection{\texttt{exec}}
+\subsection{\texttt{exec}}\label{execve}
 \texttt{execve} is unusual and requires careful design,
 because when it is successful, it does not return.
 Therefore we need a way to determine if \texttt{execve} is successful;
@@ -980,12 +983,10 @@ gvisor\cite{gvisor} and ViewOS\cite{viewos} are two examples.
 In both systems,
 system calls made in one process are intercepted,
 and serviced by another process.
-Also relevant is seccomp system call interception,
-which can be used to intercept system calls and emulate them in another process.
 
 Some systems forward system calls elsewhere for asynchronous execution.
 FlexSC\cite{flexsc} is one example.
-System calls were forwarded to dedicated system call execution threads.
+System calls in FlexSC are forwarded to a pool of dedicated system call execution threads.
 The recently added Linux feature \verb|io_uring| is, in some sense, another example;
 it supports sending a subset of system calls to the kernel,
 which executes them asynchronously,
@@ -995,12 +996,9 @@ Some systems call system calls in other processes for debugging or introspection
 strace, gdb, and CRIU\cite{criu} are examples of this.
 These systems typically uses ptrace,
 which is capable of operating on multiple processes at once.
-Unfortunately, as discussed in section \ref{implementation},
-ptrace is unsuitable as a mechanism for a general purpose system since it is not re-entrant;
-a process which is already being ptraced cannot be ptraced again,
-so using ptrace as a cross-process system call mechanism would disallow use of strace or debuggers.
+As discussed in section \ref{implementation},
+a ptrace-based has approach has limitations which make it unsuitable for \texttt{rsyscall}.
 \subsection{Process capabilities}
-We mentioned the concept of process capabilities while discussing the design of \texttt{rsyscall} in section \ref{overview}.
 The Capsicum system provides something called process descriptors\cite{capsicum},
 which is a file descriptor handle for a process.
 A similar feature has been recently added to Linux in the form of the pidfd API\cite{pidfd}.
@@ -1011,43 +1009,32 @@ rather than exercising full control over the process.
 The Capsicum system provides a set of system calls
 which can be used to provide a capability-secure sandbox.\cite{capsicum}
 Latter efforts\cite{oblivious}, including CloudABI\cite{cloudabi} and WASI\cite{wasi},
-are focused primarily on backwards compatibility with the existing POSIX environment, and ease of porting existing code.
-Programs ported to the capability-secure environment
-are typically launched with an accompanying spawn-style wrapper.
-This means that capability-secure processes are created primarily by an API
-that is distinct from the capability-secure syscall API they have access to,
-which makes it harder for a capability-secure process to spawn further capability-secure processes of its own.
-Direct-style process creation could make it easier to create capability-secure processes 
-from the capability-secure syscall API,
-and reduce the need for a separate spawn-style wrapper.
+developed this into a partial or full replacement for a POSIX libc.
+Like all other Unix libcs that we know of,
+these libc-replacements implicitly make system calls on the current process,
+rather than using an explicit process capability as \texttt{rsyscall} does.
 
-Also related is the PLASH, ``Principle of Least Authority Shell''\cite{plash}.
-PLASH provides a spawn-style API (in the form of a shell)
-to launch processes in a capability-secure environment.
+PLASH provides a spawn-style API, in the form of a shell,
+to launch processes in a capability-secure environment.\cite{plash}
 PLASH, like all spawn-style APIs, abstracts over the native Linux environment,
 and is therefore limited in what kind of processes it can create.
 \section{Future work}\label{future_work}
 \subsection{Other applications of \texttt{rsyscall}}
 Most avenues of future work focus on \texttt{rsyscall}.
 \texttt{rsyscall} was not developed solely for the purpose of this paper,
-and it has many uses unrelated to direct-style process creation,
+and it has other uses unrelated to direct-style process creation,
 such as asynchronous system calls, exceptionless system calls\cite{flexsc}, cross-host operations, among others.
 We are actively exploring such applications,
 as well as broadening \texttt{rsyscall}'s language support.
 \subsection{Kernel support}
 \texttt{rsyscall}'s cross-process syscalls can be performed entirely in userspace,
 which has substantial benefits for deployability.
-Nevertheless, direct kernel support for creating a stub process and performing syscalls in the context of that process
+Nevertheless, direct support in the Linux kernel
+for creating a stub process and performing syscalls in the context of that process
 may provide efficiency benefits, as well as reducing userspace-visible complexity.
 
-Several other aspects of our implementation would be improved by kernel support.
-We discussed these in the implementation section;
-in brief, we would most benefit from kernel support for
-detecting when a child process finishes =execve=,
-closing all =CLOEXEC= file descriptors except for an explicitly specified list,
-and explicitly specifying a list of =CLOEXEC= file descriptors to inherit over =excve=.
-Implementing these features in the kernel in a generally useful way, and upstreaming them,
-is an important direction for our future work.
+Several other aspects of our implementation would also be improved by new features in the Linux kernel,
+as discussed in sections \ref{execve} and \ref{cloexec}.
 \subsection{Portability to other Unix systems}
 Other non-Linux systems
 could adopt the techniques of this paper
@@ -1056,27 +1043,13 @@ Currently, our focus is on Linux,
 but others may wish to explore porting these techniques to other operating systems.
 \subsection{Large scale open source usage}
 We have made use of the techniques described in this paper
-in proprietary software at Two Sigma.
+in proprietary software at \twosigma.
 While this gives us personally greater confidence in these techniques,
-it would be better to use them in a publicly available, open source system.
+it would be beneficial to use them in a publicly available, open source system.
+Likely the best 
 Either porting an existing system to use these techniques,
 or using these techniques to create a substantial new system from scratch,
-would provide a meaningful demonstration of the viability of these techniques.
-% \subsection{file descriptor lifetime management}
-% % TODO this is hard to explain, probably best to drop this
-% Keeping file descriptors open if and only if there is a specific process using that file descriptor
-% is not the only possibility.
-% Keep in mind that "a process using the file descriptor" is a slight abuse of terminology;
-% processes don't use file descriptors, programs do, and in our system there is only one program.
-% To reflect this, we could instead more directly use file descriptors in a process-agnostic way;
-% this would support the creation of objects
-% which work transparently across multiple processes which share a file descriptor table.
-% Such objects would automatically use the relevant process to perform the syscalls for any specific operation.
-% A process-centric view of file descriptors instead forces each object to be associated with one process.
-% Nevertheless, we found that the process-centric perspective better matches the existing intuitions of users,
-% especially those with prior experience in programming with processes.
-% We hope that future systems for multi-process programming
-% might explore an object-centric approach for managing resources.
+would provide a substantial demonstration of the viability of these techniques.
 \section{Conclusions}\label{conclusions}
 Direct-style process creation is much less known and much less used than fork-style and spawn-style.
 We have implemented direct-style process creation for Linux.

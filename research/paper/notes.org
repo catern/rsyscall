@@ -1114,3 +1114,11 @@ parent_fd = local_thread.use_fd(fd)
      to launch processes in a capability-secure environment.
      PLASH, like all spawn-style APIs, abstracts over the native Linux environment,
      and is therefore limited in what kind of processes it can create.
+* questions
+  page length? 14 too much?
+
+  citations? do I need them now?
+* things to do
+  ok, let's strip out the "thread" term.
+  it's too confusing,
+  and I don't want to unify.
