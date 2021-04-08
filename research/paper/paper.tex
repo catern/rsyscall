@@ -41,7 +41,8 @@ belowskip=0pt,
 }
 
 \begin{document}
-\newcommand{\twosigma}{[tech company]} 
+\newcommand{\twosigma}{{[tech company]}}
+\newcommand{\githuburl}{[Github url]}
 \date{}
 \title{\Large \bf DRAFT: Direct-style process creation on Linux}
 % \author{
@@ -163,7 +164,7 @@ but the library can be ported to other languages.
 The examples we show in this paper will be in Python,
 but generalize easily.
 \texttt{rsyscall} is open source and available from
-[Github url].
+\githuburl{}.
 
 Unlike typical C libraries such as glibc or musl,
 the \texttt{rsyscall} library is organized based on the object-capability model.\cite{capmyths}
@@ -224,7 +225,7 @@ without worse performance in the presence of large memory usage,
 and without the possibility of bugs in the presence of multi-threading.
 The performance overhead of creating processes with direct-style clone
 is comparable to the performance cost of creating processes while inside a Linux namespace.
-At \twosigma, we have deployed direct-style process creation
+At \twosigma{}, we have deployed direct-style process creation
 as part of a library for distributed system deployment, used in production.
 We evaluate in further detail in section \ref{evaluation}.
 \section{Examples}\label{examples}
@@ -773,7 +774,7 @@ We evaluate the degree to which we meet this goal by answering the following que
   and find an acceptable level of overhead.
 \item
   Does direct-style process creation perform well in the ``real world''?
-  We discuss our positive experience with using direct-style process creation at \twosigma in \ref{realworld}.
+  We discuss our positive experience with using direct-style process creation at \twosigma{} in \ref{realworld}.
 \end{compactitem}
 \subsection{Ease of programming with direct-style}\label{ease}
 \begin{table}
@@ -926,7 +927,7 @@ is around 15 milliseconds; subtantially greater than the overhead of \texttt{rsy
 As namespaces are widely used,
 this suggests our overhead is acceptable.
 \subsection{Usage in the real world}\label{realworld}
-At \twosigma we have used \texttt{rsyscall} and direct-style process creation
+At \twosigma{} we have used \texttt{rsyscall} and direct-style process creation
 to implement an internal distributed system deployment library, written in Python,
 which we'll refer to here as Toplevel.
 Toplevel is in use in production,
@@ -1089,7 +1090,7 @@ but others may wish to explore porting these techniques to other operating syste
 % TODO maybe we could get rid of this paragraph?
 \subsection{Large scale open source usage}
 We would like to open source libraries built on top of direct-style process creation.
-From our experience using such libraries at \twosigma,
+From our experience using such libraries at \twosigma{},
 we believe this would greatly ease the development of complex systems involving processes,
 and would provide a substantial demonstration of the power of direct-style process creation.
 \section{Conclusions}\label{conclusions}
