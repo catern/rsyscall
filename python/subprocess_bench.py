@@ -13,6 +13,7 @@ import rsyscall.tasks.local as local
 import sys
 from rsyscall.sys.wait import W
 from rsyscall import Command, Path
+from rsyscall.sched import CLONE
 
 import rsyscall.nix as nix
 from rsyscall.tasks.stdin_bootstrap import stdin_bootstrap, stdin_bootstrap_path_from_store
@@ -36,20 +37,46 @@ async def run_benchmark(mode: str, mmaps: int) -> t.Tuple[int, int]:
         # set POPULATE so it actually gets faulted in; if it isn't
         # already in the page tables, there's no slowdown
         await local.thread.task.mmap(4096, PROT.READ|PROT.WRITE, MAP.PRIVATE|MAP.ANONYMOUS|MAP.POPULATE)
-    cmd = await local.thread.environ.which('true')
+    cmd = await local.thread.environ.which('cat')
     await local.thread.environ.as_arglist(local.thread.ram)
+    cwd = await local.thread.ptr(Path("/dev"))
     async def subp_run() -> None:
-        popen = subprocess.Popen([cmd.executable_path], preexec_fn=lambda: None)
+        popen = subprocess.Popen([cmd.executable_path, './null'], cwd=cwd.value)
         popen.wait()
     async def rsys_run() -> None:
-        thread = await local.thread.clone()
-        child = await thread.execv(cmd.executable_path, [cmd.executable_path])
-        await child.waitpid(W.EXITED)
-        await thread.close()
+        child = await local.thread.clone()
+        await child.task.chdir(cwd)
+        child_proc = await child.execv(cmd.executable_path, [cmd.executable_path, "./null"])
+        await child_proc.waitpid(W.EXITED)
+        await child.close()
     if mode == 'subprocess':
         run = subp_run
     elif mode == 'rsyscall':
         run = rsys_run
+    elif mode == 'nest':
+        nesting_child = await local.thread.clone()
+        async def run() -> None:
+            child = await nesting_child.clone()
+            await child.task.chdir(cwd)
+            child_proc = await child.execv(cmd.executable_path, [cmd.executable_path, "./null"])
+            await child_proc.waitpid(W.EXITED)
+            await child.close()
+    elif mode == 'nestnest':
+        first_nesting_child = await local.thread.clone()
+        second_nesting_child = await first_nesting_child.clone()
+        async def run() -> None:
+            child = await second_nesting_child.clone()
+            await child.task.chdir(cwd)
+            child_proc = await child.execv(cmd.executable_path, [cmd.executable_path, "./null"])
+            await child_proc.waitpid(W.EXITED)
+            await child.close()
+    elif mode == 'flags':
+        async def run() -> None:
+            child = await local.thread.clone(CLONE.NEWPID|CLONE.NEWNS)
+            await child.task.chdir(cwd)
+            child_proc = await child.execv(cmd.executable_path, [cmd.executable_path, "./null"])
+            await child_proc.waitpid(W.EXITED)
+            await child.close()
     prep_count = 20
     count = 100
     before_prep = time.time()
@@ -65,7 +92,7 @@ async def run_benchmark(mode: str, mmaps: int) -> t.Tuple[int, int]:
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description='Do benchmarking of rsyscall vs subprocess.run')
-    parser.add_argument('--run-benchmark', choices=['subprocess', 'rsyscall'])
+    parser.add_argument('--run-benchmark', choices=['subprocess', 'rsyscall', 'nest', 'nestnest', 'flags'])
     parser.add_argument('--mmaps', type=int, default=0)
     parser.add_argument('--no-use-setpriority', help="don't setpriority before benchmarking; doing that requires privileges,"
                         " which are attained by running the benchmark with sudo (handled internally)",
@@ -114,18 +141,32 @@ async def main() -> None:
             times.append(time)
         return(mean(times))
     async def get_data(mode: str) -> t.List[t.Tuple[int, int]]:
-        return [(i, await run_many(mode, 10**i)) for i in range(7)]
-    subprocess = [(0, 1482.3333333333333), (1, 1530.3333333333333), (2, 1504.6666666666667), (3, 1665.3333333333333), (4, 1873.3333333333333)]
-    rsyscall = [(0, 2249.3333333333335), (1, 2234.3333333333335), (2, 2261.6666666666665), (3, 2241.3333333333335), (4, 2321.3333333333335)]
+        return [(i, await run_many(mode, 10**i)) for i in range(3)]
+    subprocess = [(0, 1662.7047061920166), (1, 1666.396141052246), (2, 1668.2496070861816), (3, 1670.4914569854736), (4, 2006.0789585113525), (5, 10209.86270904541), (6, 48588.73701095581)]
+    rsyscall = [(0, 2229.5007705688477), (1, 2258.697509765625), (2, 2234.3757152557373), (3, 2238.978862762451), (4, 2196.8472003936768), (5, 2204.909563064575), (6, 2199.6195316314697)]
     subprocess = await get_data("subprocess")
-    rsyscall = await get_data("rsyscall")
     print("subprocess =", subprocess)
+    rsyscall = await get_data("rsyscall")
     print("rsyscall =", rsyscall)
-    fig, ax = plt.subplots()
+    nest = await get_data("nest")
+    print("nest =", nest)
+    nestnest = await get_data("nestnest")
+    print("nestnest =", nestnest)
+    flags = await get_data("flags")
+    print("flags =", flags)
+    fig, ax = plt.subplots(figsize=(6.4,3.2))
     plt.xscale('log')
     plt.yscale('log')
-    ax.plot([10**x for x, y in subprocess], [y for x, y in subprocess], 'o-', label="Python subprocess")
-    ax.plot([10**x for x, y in rsyscall], [y for x, y in rsyscall], '^-', label="rsyscall")
+    ax.plot([10**x for x, y in subprocess], [y for x, y in subprocess], 'o-', label="Python subprocess",
+            linewidth=4, markersize=12)
+    ax.plot([10**x for x, y in rsyscall], [y for x, y in rsyscall], '^-', label="rsyscall clone",
+            linewidth=4, markersize=12)
+    ax.plot([10**x for x, y in nest], [y for x, y in nest], '^-', label="rsyscall nest",
+            linewidth=4, markersize=12)
+    ax.plot([10**x for x, y in nestnest], [y for x, y in nestnest], '^-', label="rsyscall nestnest",
+            linewidth=4, markersize=12)
+    ax.plot([10**x for x, y in flags], [y for x, y in flags], '^-', label="rsyscall clone(NEWPID|NEWNS)",
+            linewidth=4, markersize=12)
     ax.legend()
     
     ax.set(xlabel='Pages mapped in memory', ylabel='time (us)')
