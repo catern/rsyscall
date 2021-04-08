@@ -1004,6 +1004,51 @@ As a result, though implementations in native code and in the kernel would likel
 we have chosen to not invest effort into optimizing process creation at this micro-level,
 to preserve implementation simplicity;
 such optimization is reserved for future work.
+
+\subsection{Microbenchmarks for nested processes}\label{clone_bench}
+\begin{figure}[h!]
+\centering
+ \includegraphics[width=0.5\textwidth]{clone_bench}
+ \caption{Time to create different processes, by variety of parent process}
+ \label{fig:clone_bench}
+\end{figure}
+
+As demonstrated in sections \ref{pidns} and \ref{fuse},
+\texttt{rsyscall} supports nested operation.
+That is, we can spawn a child from one of our children;
+this can impact performance.
+\texttt{clone} also supports specifying a variety of flags to create new namespaces when creating the child,
+which can also impact performance.
+
+We've benchmarked process creation using the same benchmark as in section \ref{subprocess_bench}
+from a variety of parent processes: the local process,
+a child (created with \texttt{clone()}),
+a grandchild (created with \texttt{clone().clone()}),
+or a child in a different namespace (created with \verb=clone(CLONE_NEWNS|CLONE_NEWPID)=).
+We've also specified different combinations of flags for the process being created in the benchmark.
+The results are in figure \ref{fig:clone_bench}.
+We don't include the Python standard library in these benchmarks
+as there's no way to specify \texttt{CLONE} flags in the Python stdlib.
+
+Process creation in a child has a significant performance impact,
+primarily because of the overhead of performing syscalls in a child.
+Performance of process creation in a grandchild is the same as in a child,
+because there is no additional overhead for syscalls in a grandchild relative to a child.
+Benchmarking \texttt{getpid} in a grandchild
+confirms that the average time per \texttt{getpid} call is still 561 microseconds on our benchmark setup.
+
+The use of namespaces also has a significant impact,
+both when the parent process is in a namespace, and when the child process is created in a namespace.
+We perform the benchmark with no clone flags, and with the common clone flags
+\verb|CLONE_NEWNS| and \verb|CLONE_NEWPID|, first on their own and then together.
+This benchmark essentially measures the performance of the Linux namespaces system, not the work in this paper,
+but it is illustrative to compare it to the performance of \texttt{rsyscall}.
+Note that the cost of creating a new child process from a parent process that is already inside a namespace
+(the difference between the \texttt{clone()} and \texttt{clone(NS|PID)} parent processes)
+is around 2 milliseconds, comparable to the cost of running with \texttt{rsyscall}.
+Note also that the overhead of creating a new process inside a new namespace
+(the difference between the \texttt{clone()} and \texttt{clone(NS|PID)} child processes)
+is around 15 milliseconds; subtantially greater than the overhead of \texttt{rsyscall}.
 \subsection{Usage in the real world}\label{realworld}
 At \twosigma we have used \texttt{rsyscall} and direct-style process creation
 as a component of an internal distributed system deployment library, written in Python.

@@ -1467,8 +1467,56 @@ and integration with applications that you can talk about in detail
 
      yeah, that seems fine,
      let's actually test it though.
+
+     hm. lol. not true, making these namespaces is significantly costly.
+     that's cool, it means our overhead is dwarfed by the overhead of the namespaces we enable.
+
+     anyway, definitely something to mention.
+
+     maybe should uhhh...
+
+     have some other kind of axis?
+
+     we can just say "none of these scale poorly with memory usage".
+
+     yeah we can just have a table of times.
+
+     and with getpid, too.
+
+     is there anything else we might want in the getpid table? hm.
+
+     oh, we can have getpid and clone times both in the same table. yeah, that sounds good.
+     maybe one other thing, hmm.
+
+     right so the arrangement is like this:
+
+     - run with stdlib
+     - run on local thread
+     - run on nested thread
+     - run on doubly nested thread
+     - run on nested thread with CLONE.NEWNS|CLONE.NEWPID
+
+     and the top is
+     - clone/exec
+     - clone/exec with CLONE.NEWNS|CLONE.NEWPID
+     - getpid
+
+     yeah that sounds good
 **** nested children
      we use these a lot, definitely good to bench them
+
+     ok cool we benchmarked process creation nested once and twice,
+     and also getpid.
+     those are good numbers.
+
+     we should also include creation with different clone flags on the same graph.
+
+     could probably just say double nesting has no effect on the performance,
+     rather than including a separate line
+
+     ok so we definitely need a bar chart for this I guess.
+
+     hm i don't see anything caring about colorblindness so I guess i'll just go with colors to distinguish.
 *** integration with applications that you can talk about in detail
     OK, ok ok. I can talk about tss/integration in more detail,
     that should be fine.
@@ -1526,6 +1574,48 @@ and integration with applications that you can talk about in detail
     which is enabled in part by easy process creation... but not a ton.
 
     let's go ahead and do this.
+
+    what other performance things could we do?
+    we could compare across a lot more old and new tests;
+    but that's just bulking up that one snippet.
+
+    what other perf metrics...
+
+    well so these are end to end, right..
+    system start is the main thing.
+    what does systemd-analyze look at?
+
+    it talks about boot time, sure.
+
+    we should mention that we don't run system-wide, maybe?
+    we strongly considered system-wide things like systemd,
+    but they were ultimately unsuitable do to their orientation towards running system-wide
+    or session-wide.
+
+    we could compare our time with socket activation,
+    relative to time taken when you do things in strict dependency order?
+    that's probably a good idea...
+    we can also have the datapoint of the old system too.
+
+    what about detecting system startup?
+    that's kind of a socket-activation thing, we defer doing that...
+    but we do have various techniques, like connecting in through telnet.
+    yeah hm. that's really just socket activation, let's put that in there
+
+    we could mention, maybe... the ability to interactively start things?
+    from a repl?
+    i'm not sure that's a consequence of direct style, hm hm.
+    mmm...
+
+    well, it's a consequence of the fact that we're programming system startup in a real programming language,
+    rather than some DSL,
+    which is in turn enabled by direct-style. hmm...
+    and that it's all in one process. that's hard to do, many things have start scripts!
+    yeah we can elaborate this nicely.
+    well, we already were doing things all in one place with, like, supervise.
+    the API didn't fundamentally change - although, we did get more able to do fd passing, for sure.
+    let's look at the diffs since the rsyscall conversion?
+    shrug, not much there. hm.
 **** file descriptor inheritance
      we should center this,
      and talk about socket activation as a consequence.
@@ -1557,6 +1647,16 @@ and integration with applications that you can talk about in detail
      socket activation of those too.
 
      good performance thing
+
+    we could compare our time with socket activation,
+    relative to time taken when you do things in strict dependency order?
+    that's probably a good idea...
+    we can also have the datapoint of the old system too.
+
+    what about detecting system startup?
+    that's kind of a socket-activation thing, we defer doing that...
+    but we do have various techniques, like connecting in through telnet.
+    yeah hm. that's really just socket activation, let's put that in there
 ***** fds as interface
      how do the sims really fit in?
      they are python programs,
