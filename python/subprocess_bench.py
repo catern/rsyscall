@@ -68,7 +68,7 @@ async def run_benchmark(mode: str, mmaps: int) -> t.Tuple[int, int]:
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description='Do benchmarking of rsyscall vs subprocess.run')
-    parser.add_argument('--run-benchmark', choices=['subprocess', 'rsyscall', 'fork', 'posix_spawn'])
+    parser.add_argument('--run-benchmark', choices=['subprocess', 'rsyscall', 'fork', 'vfork', 'posix_spawn'])
     parser.add_argument('--mmaps', type=int, default=0)
     parser.add_argument('--no-use-setpriority', help="don't setpriority before benchmarking; doing that requires privileges,"
                         " which are attained by running the benchmark with sudo (handled internally)",
@@ -102,7 +102,7 @@ async def main() -> None:
             # strace - the betrayer! - claims that we're passing -20. lies!
             await child.task.setpriority(PRIO.PROCESS, 40)
         await child.inherit_fd(fd).dup2(child.stdout)
-        if mode in ['fork', 'posix_spawn']:
+        if mode in ['fork', 'vfork', 'posix_spawn']:
             proc = await child.exec(native_cmd.args(mode, str(mmaps)))
         else:
             proc = await child.exec(cmd.args(
@@ -131,10 +131,12 @@ async def main() -> None:
     # subprocess = await get_data("subprocess")
     # rsyscall = await get_data("rsyscall")
     # fork = await get_data("fork")
+    vfork = await get_data("vfork")
     # posix_spawn = await get_data("posix_spawn")
     print("subprocess =", subprocess)
     print("rsyscall =", rsyscall)
     print("fork =", fork)
+    print("vfork =", vfork)
     print("posix_spawn =", posix_spawn)
     fig, ax = plt.subplots(figsize=(6.4,3.2))
     plt.xscale('log')
@@ -144,6 +146,8 @@ async def main() -> None:
     ax.plot([10**x for x, y in subprocess], [y for x, y in subprocess], 'o-', label="Python subprocess",
             linewidth=4, markersize=12)
     ax.plot([10**x for x, y in fork], [y for x, y in fork], 'P-', label="C fork",
+            linewidth=4, markersize=12)
+    ax.plot([10**x for x, y in vfork], [y for x, y in vfork], 'X-', label="C vfork",
             linewidth=4, markersize=12)
     ax.plot([10**x for x, y in posix_spawn], [y for x, y in posix_spawn], 'D-', label="C posix_spawn",
             linewidth=4, markersize=12)

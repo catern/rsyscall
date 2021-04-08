@@ -89,9 +89,9 @@ async def run_benchmark(run_mode: str, thing_mode: str) -> int:
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description='Do benchmarking of rsyscall vs subprocess.run')
-    run_modes = ['stdlib', 'rsyscall', 'nest', 'nestnest', 'flags']
+    run_modes = ['rsyscall', 'nest', 'nestnest', 'flags']
     parser.add_argument('--run-mode', choices=run_modes)
-    thing_modes = ['spawn', 'spawn_newns', 'spawn_newpid', 'spawn_newnspid', 'getpid']
+    thing_modes = ['spawn', 'spawn_newns', 'spawn_newpid', 'spawn_newnspid']
     parser.add_argument('--thing-mode', choices=thing_modes)
     parser.add_argument('--no-use-setpriority', help="don't setpriority before benchmarking; doing that requires privileges,"
                         " which are attained by running the benchmark with sudo (handled internally)",
@@ -138,13 +138,17 @@ async def main() -> None:
             time = float(data)*1000*1000
             times.append(time)
         return(mean(times))
-    data = {}
-    # for run_mode in run_modes:
-    #     for thing_mode in thing_modes:
-    #         result = await run_many(run_mode, thing_mode)
-    #         print(run_mode, thing_mode, result)
-    #         data.setdefault(run_mode, dict())[thing_mode] = result
-    data = {'stdlib': {'spawn': 2007.1125030517578, 'spawn_newns': 0.11444091796875, 'spawn_newpid': 0.12159347534179688, 'spawn_newnspid': 0.11682510375976562, 'getpid': 0.26226043701171875}, 'rsyscall': {'spawn': 2529.780864715576, 'spawn_newns': 13988.24691772461, 'spawn_newpid': 5273.432731628418, 'spawn_newnspid': 18028.690814971924, 'getpid': 2.9802322387695312}, 'nest': {'spawn': 6177.570819854736, 'spawn_newns': 17389.936447143555, 'spawn_newpid': 9014.687538146973, 'spawn_newnspid': 20700.04940032959, 'getpid': 563.5333061218262}, 'nestnest': {'spawn': 6025.547981262207, 'spawn_newns': 18550.291061401367, 'spawn_newpid': 9081.511497497559, 'spawn_newnspid': 20390.050411224365, 'getpid': 565.2284622192383}, 'flags': {'spawn': 8093.023300170898, 'spawn_newns': 19847.97239303589, 'spawn_newpid': 13652.007579803467, 'spawn_newnspid': 25846.922397613525, 'getpid': 550.5990982055664}}
+    raw_data = {}
+    # for i in range(args.num_runs):
+    #     print("run", i)
+    #     for run_mode in run_modes:
+    #         for thing_mode in thing_modes:
+    #             result = await run_bench(run_mode, thing_mode)
+    #             time = float(result)*1000*1000
+    #             raw_data.setdefault(run_mode, dict()).setdefault(thing_mode, list()).append(time)
+    # data = {run_mode: {thing_mode: mean(values) for thing_mode, values in thing_values.items()}
+    #         for run_mode, thing_values in raw_data.items()}
+    data = {'rsyscall': {'spawn': 2143.242041269938, 'spawn_newns': 12769.540945688883, 'spawn_newpid': 5203.498045603435, 'spawn_newnspid': 16132.054646809896}, 'nest': {'spawn': 5643.887122472127, 'spawn_newns': 15543.795108795166, 'spawn_newpid': 8705.60614267985, 'spawn_newnspid': 19266.490300496418}, 'nestnest': {'spawn': 5649.184544881185, 'spawn_newns': 15834.43284034729, 'spawn_newpid': 8707.117160161337, 'spawn_newnspid': 19424.70908164978}, 'flags': {'spawn': 7850.373109181722, 'spawn_newns': 18372.32240041097, 'spawn_newpid': 13005.960702896118, 'spawn_newnspid': 23936.61292394002}}
     print("data =", data)
     def line(row: t.List) -> str:
         return " & ".join(str(x) for x in row) + " \\\\"
@@ -170,7 +174,7 @@ async def main() -> None:
     fig, ax = plt.subplots()
     positions = x - 1.5*width
     print(positions)
-    for run_mode in run_modes[1:]:
+    for run_mode in run_modes:
         rects = ax.bar(positions, [round(data[run_mode][thing]/1000, 1) for thing in labels], width,
                        label={
                            'rsyscall':'local',
@@ -182,7 +186,7 @@ async def main() -> None:
         positions += width
     
     # Add some text for labels, title and custom x-axis tick labels, etc.
-    ax.set_ylabel('Milliseconds')
+    ax.set_ylabel('Milliseconds to create child')
     # ax.set_title('Time to create different processes, by variety of parent process')
     ax.set_xlabel('Child process')
     ax.set_xticks(x)
