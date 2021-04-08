@@ -1888,3 +1888,114 @@ and integration with applications that you can talk about in detail
     could be worth it, at least i'll keep it in this list so I don't keep having the idea.
 
      
+* irc feedback
+** move citations before period
+** consistent formatting fork and spawn
+** have central contributions section
+** DONE fix weird alignment in style comparison table
+** fix hideous whitespace
+section 3.3.2
+
+For \texttt{unshare(CLONE\_FILES)}, we perform \texttt{close\_cloexec} automatically in userspace.
+** DONE clarify how local syscalls are made
+catern: in Sec. 3.0, I’m missing something on “syscall server”. After going in order through Sec. 2, I still do.
+Is the syscall server a separate thread?
+
+quite important!
+** discuss clone directly
+   and implementing the necessary parts.
+
+   probably should explicitly talk about clone!
+   we have space now.
+*** better comparison to fork
+   why not have fork execute a lambda,
+   and have that return a value.
+
+   well that would ultimately regress to, like, sfork.
+   run a lambda in the child and return once it's done with exec or exit,
+   or raised an exception out.
+
+   maybe i should talk more about the,
+   run code in the process to initialize it,
+   model.
+   that's what the fork model is ultimately,
+   and it's awkward.
+
+   the programming model is awkward, the error handling is awkward
+
+   we should probably talk about clone launching a function explicitly.
+
+   yeah launching a function is a good thing to examine.
+
+   that also discusses clone directly.
+
+   we can talk about that in the evaluation?
+** include other fork-style implementations in appendix
+   mmm okayyyy maybe
+** talk about correctness?
+   development process, how many lines of code, etc.
+
+   well, maybe not.
+   or maybe!
+
+   we could include it in our implementation section
+
+   things we do:
+   use types
+   plenty of runtime asserts on correctness of references
+
+   reasons it's hard:
+   lots of different namespaces for references
+
+   (we have the near/far system for that)
+** DONE mention event loops
+   justify their presence?
+
+   they appear suddenly in implementation section
+
+   A key design constraint is integration with event loops.
+   Some parts of our implementation 
+   require waiting for multiple events at the same time;
+   we'll discuss one instance in section \ref{execve}.
+   This is performed via event loop.
+   
+   This depends on event loop 
+   Furthermore, 
+
+   A key design constraint is integration with event loops.
+   While in section \ref{examples} we have only shown a traditional, synchronous API,
+   calling a syscall in another process which may block should not require the calling process to block as well.
+   Many programming languages, including Python, depend on event loops for their asynchronous, concurrent APIs,
+   and so we should 
+   Achieving this in typical programming requires integration with 
+
+   Even if a syscall in a target process is synchronous,
+   this should not require the calling process to synchronously 
+   Calling a syscall in a target process should not require the calling process to block processing of .
+   
+   and 
+   so a key design constraint is integration with event loops.
+   we should be able to integrate with an event loop to remove
+   We take care to function asynchronously;
+   our Python implementation has full support for asynchronous op
+** talk about "only one program is in scope"
+   "we" means the program controlling multiple processes
+** fd gc motivation
+<pgiarrusso> catern: now 3.3.2 provides some motivation that was needed earlier
+ — "leaving unwanted file descriptors open [...] causes bugs"
+<pgiarrusso> that belongs in 3.3.0, methinks
+
+<pgiarrusso> catern: so I got 3.3.2 more than 3.3.1, either because of discussion or motivation
+> pgiarrusso: that's a bit unexpected for me, hm, yeah, maybe I will move that line you mentioned from 3.3.2 earlier
+<pgiarrusso> catern: that's the only section where I struggled
+<pgiarrusso> catern: it sounds like "understanding bias/blindness" or however that's called — you understand this well but...
+> yeah, that's exactly what I'm thinking right now
+<pgiarrusso> also 3.3.2 _is_ complicated
+<pgiarrusso> I'd focus some effort on this section, it seems to need more work
+<pgiarrusso> I suspect walking through an example _there_ would help understand the motivation and what is happening
+** citations
+<pgiarrusso> catern: and last, your biblio has both overflowing links and unwanted lowercase
+ like `Standardizing wasi: A system interface to run webassembly outside the web.` — 
+you need to manually write  `{WASI}` and `{WebAssembly}` in the source bibtex
+<pgiarrusso> (the braces belong to latex, the backquotes are markdown-like formatting)
+*** weird linebreaking on USENIX Association cite

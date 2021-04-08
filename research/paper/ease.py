@@ -9,7 +9,7 @@ def extract_label(line: str) -> str:
     label, _ = rest.split("},caption")
     return label
 
-listing_labels = [extract_label(line) for line in open(dirname/"paper.tex") if line.startswith("\\lstinputlisting")]
+listing_labels = [extract_label(line) for line in open(dirname/"paper.tex") if line.startswith("\\lstinputlisting") and "fork" not in line]
 
 headings = (
     "Name",
