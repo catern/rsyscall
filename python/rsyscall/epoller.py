@@ -102,7 +102,6 @@ __all__ = [
     "Epoller",
     "EpolledFileDescriptor",
     "AsyncFileDescriptor",
-    "EOFException",
     "AsyncReadBuffer",
 ]
 
@@ -648,10 +647,6 @@ class AsyncFileDescriptor:
 ################################################################################
 # Miscellaneous helpers
 
-class EOFException(Exception):
-    "Thrown when AsyncReadBuffer hits an EOF before reading all the requested data."
-    pass
-
 class AsyncReadBuffer:
     """A buffer for parsing variable-length streaming data.
 
@@ -666,7 +661,7 @@ class AsyncReadBuffer:
         self.buf = b""
         self.unread_ptr: t.Optional[Pointer] = None
 
-    async def _read(self) -> t.Optional[bytes]:
+    async def _read(self) -> bytes:
         "Read some bytes; return None on EOF."
         if self.unread_ptr is None:
             ptr = await self.fd.ram.malloc(bytes, 4096)
@@ -677,19 +672,14 @@ class AsyncReadBuffer:
             data = b''
         self.unread_ptr = None
         if len(data) == 0:
-            if len(self.buf) != 0:
-                raise EOFException("got EOF while we still hold unhandled buffered data")
-            else:
-                return None
+            raise EOFError
         else:
             return data
 
-    async def read_length(self, length: int) -> t.Optional[bytes]:
-        "Read exactly this many bytes; return None on EOF."
+    async def read_length(self, length: int) -> bytes:
+        "Read exactly this many bytes; raises on EOF."
         while len(self.buf) < length:
             data = await self._read()
-            if data is None:
-                return None
             self.buf += data
         section = self.buf[:length]
         self.buf = self.buf[length:]
@@ -698,9 +688,11 @@ class AsyncReadBuffer:
     async def read_cffi(self, name: str) -> t.Any:
         "Read, parse, and return this fixed-size cffi type."
         size = ffi.sizeof(name)
-        data = await self.read_length(size)
-        if data is None:
-            raise EOFException("got EOF while expecting to read a", name)
+        try:
+            data = await self.read_length(size)
+        except EOFError as e:
+            e.args = ("got EOF while expecting to read a", name, "of size", size)
+            raise
         nameptr = name + '*'
         dest = ffi.new(nameptr)
         # ffi.cast drops the reference to the backing buffer, so we have to copy it
@@ -711,17 +703,20 @@ class AsyncReadBuffer:
     async def read_struct(self, cls: t.Type[T_fixed_size]) -> T_fixed_size:
         "Read one fixed-size struct from the buffer, or return None if that's not possible"
         size = cls.sizeof()
-        data = await self.read_length(size)
-        if data is None:
-            raise EOFException("got EOF while expecting to read a", cls)
+        try:
+            data = await self.read_length(size)
+        except EOFError as e:
+            e.args = ("got EOF while expecting to read a", cls, "of size", size)
+            raise
         return cls.get_serializer(self.fd.handle.task).from_bytes(data)
 
     async def read_length_prefixed_string(self) -> bytes:
         "Read a bytestring which is prefixed with a 64-bit native-byte-order size."
         elem_size = await self.read_cffi('size_t')
-        elem = await self.read_length(elem_size)
-        if elem is None:
-            raise EOFException("got EOF while expecting to read environment element of length", elem_size)
+        try:
+            elem = await self.read_length(elem_size)
+        except EOFError as e:
+            e.args = ("got EOF while expecting to read environment element of length", elem_size)
         return elem
 
     async def read_length_prefixed_array(self, length: int) -> t.List[bytes]:
@@ -771,21 +766,25 @@ class AsyncReadBuffer:
         "Read and return a line, stripping the newline character."
         ret = await self.read_until_delimiter(b"\n")
         if ret is None:
-            raise EOFException("hangup before reading full line")
+            raise EOFError("hangup before reading full line")
         return ret
 
     async def read_netstring(self) -> bytes:
         "Read a netstring, as defined by DJB."
         length_bytes = await self.read_until_delimiter(b':')
         if length_bytes is None:
-            raise EOFException("hangup before reaching colon at end of netstring size")
+            raise EOFError("hangup before reaching colon at end of netstring size")
         length = int(length_bytes)
-        data = await self.read_length(length)
-        if data is None:
-            raise EOFException("hangup before netstring data")
-        comma = await self.read_length(1)        
-        if comma is None:
-            raise EOFException("hangup before comma at end of netstring")
+        try:
+            data = await self.read_length(length)
+        except EOFError as e:
+            e.args = ("hangup before we read netstring data of size", length)
+            raise
+        try:
+            comma = await self.read_length(1)
+        except EOFError as e:
+            e.args = ("hangup before comma at end of netstring",)
+            raise
         if comma != b",":
             raise Exception("bad netstring delimiter", comma)
         return data
