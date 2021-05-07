@@ -25,3 +25,5 @@ cd rsyscall/python
 nix-shell
 python
 #+end_src
+* Discussion
+irc://chat.freenode.net/#rsyscall
