@@ -35,12 +35,17 @@ class W(enum.IntFlag):
     ALL = lib._WALL
     NOTHREAD = lib._WNOTHREAD
 
+
 class UncleanExit(Exception):
+    "Thrown when a process exits uncleanly"
+    state: ChildState
+    "State of the child at exit"
+    command: t.Optional[Command]
+    "Optionally attached to UncleanExit as useful information for debugging"
+
     def __init__(self, state: ChildState, command: Command=None) -> None:
         super().__init__(state, command)
         self.state = state
-        # this is optionally attached to UncleanExit as a useful additional bit
-        # of information for debugging.
         self.command = command
 
 @dataclass
