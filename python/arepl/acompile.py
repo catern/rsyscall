@@ -8,31 +8,6 @@ import types
 import inspect
 import typing as t
 
-def without_co_newlocals(code: types.CodeType) -> types.CodeType:
-    """Return a copy of this code object with the CO_NEWLOCALS flag unset.
-
-    This code object, when executed, will not create a new scope; this is useful for
-    functions running in REPLs, I suppose.
-
-    """
-    return types.CodeType(
-        code.co_argcount,
-        code.co_kwonlyargcount,
-        code.co_nlocals,
-        code.co_stacksize,
-        code.co_flags & ~inspect.CO_NEWLOCALS,
-        code.co_code,
-        code.co_consts,
-        code.co_names,
-        code.co_varnames,
-        code.co_filename if code.co_filename is not None else "<without_co_newlocals>",
-        code.co_name,
-        code.co_firstlineno,
-        code.co_lnotab,
-        code.co_freevars,
-        code.co_cellvars
-    )
-
 @dataclass
 class _InternalResult(Exception):
     is_expression: bool
@@ -83,5 +58,5 @@ async def {wrapper_name}():
     func = global_vars[wrapper_name]
     del global_vars[wrapper_name]
     # don't create a new local variable scope
-    func.__code__ = without_co_newlocals(func.__code__)
+    func.__code__ = func.__code__ .replace(co_flags=func.__code__.co_flags & ~inspect.CO_NEWLOCALS)
     return func()

@@ -26,7 +26,7 @@ let
   rsyscall = (import ../c);
 in
 
-with pkgs.python37Packages;
+with pkgs.python39Packages;
 buildPythonPackage {
   name = "rsyscall";
   src = ./.;
@@ -46,7 +46,7 @@ buildPythonPackage {
   nativeBuildInputs = [
       pkgs.pkg-config pkgs.openssh nix
       rsyscall
-      pdoc3
+      (pdoc3.overridePythonAttrs (_: { doCheck = false; }))
   ];
   # not sure how to set up the deps. we use binaries and libraries from C
   # rsyscall at build time to run tests; and we also use them at runtime for our
