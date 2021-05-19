@@ -10,6 +10,8 @@ __all__ = [
 ]
 
 class PR(enum.IntEnum):
+    GET_NAME = lib.PR_GET_NAME
+    SET_NAME = lib.PR_SET_NAME
     SET_PDEATHSIG = lib.PR_SET_PDEATHSIG
     CAP_AMBIENT = lib.PR_CAP_AMBIENT
 
@@ -18,6 +20,7 @@ class PR_CAP_AMBIENT(enum.IntEnum):
 
 #### Classes ####
 import rsyscall.far
+from rsyscall.handle.pointer import Pointer, WrittenPointer, ReadablePointer
 from rsyscall.sys.capability import CAP
 from rsyscall.signal import SIG
 
@@ -30,12 +33,26 @@ class PrctlTask(rsyscall.far.Task):
     async def prctl_cap_ambient(self, option: t.Literal[PR.CAP_AMBIENT], arg2: PR_CAP_AMBIENT, arg3: CAP) -> int:
         return await _prctl(self.sysif, option, arg2, arg3)
 
+    async def prctl_get_name(self, option: t.Literal[PR.GET_NAME], arg2: Pointer[str]) -> ReadablePointer[str]:
+        with arg2.borrow(self) as arg2_n:
+            await _prctl(self.sysif, option, arg2_n)
+            return arg2.readable_split(16)[0]
+
+    async def prctl_set_name(self, option: t.Literal[PR.SET_NAME], arg2: WrittenPointer[str]) -> None:
+        with arg2.borrow(self) as arg2_n:
+            await _prctl(self.sysif, option, arg2_n)
+            return None
+
     @t.overload
     async def prctl(self, option: t.Literal[PR.SET_PDEATHSIG], arg2: t.Union[SIG, t.Literal[0]]) -> None: ...
     @t.overload
     async def prctl(self, option: t.Literal[PR.CAP_AMBIENT], arg2: PR_CAP_AMBIENT, arg3: CAP) -> int: ...
+    @t.overload
+    async def prctl(self, option: t.Literal[PR.GET_NAME], arg2: Pointer[str]) -> ReadablePointer[str]: ...
+    @t.overload
+    async def prctl(self, option: t.Literal[PR.SET_NAME], arg2: WrittenPointer[str]) -> None: ...
 
-    async def prctl(self, option: PR, arg2, arg3=0, arg4=0, arg5=0) -> t.Union[int, None]:
+    async def prctl(self, option: PR, arg2, arg3=0, arg4=0, arg5=0) -> t.Union[int, Pointer, None]:
         """operations on a process or thread
 
         This has overloads for each prctl option, so it's type-safe to use this method.
@@ -46,6 +63,10 @@ class PrctlTask(rsyscall.far.Task):
             return await self.prctl_set_pdeathsig(option, arg2)
         elif option is PR.CAP_AMBIENT:
             return await self.prctl_cap_ambient(option, arg2, arg3)
+        elif option is PR.GET_NAME:
+            return await self.prctl_get_name(option, arg2)
+        elif option is PR.SET_NAME:
+            return await self.prctl_set_name(option, arg2)
         else:
             return await _prctl(self.sysif, option, arg2, arg3, arg4, arg5)
 
