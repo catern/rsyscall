@@ -1,94 +1,55 @@
 * desirable kernel features
 ** notification of exec (more specifically: mm_release) through wait
-   This way we can detect when a child task/thread has called exec,
-   and free any resources they had.
-   Otherwise there's no way to know for sure that they're done execing.
+   This way we can detect when a child task has called exec,
+   and free any resources that the child was using in shared address spaces/namespaces/fd tables.
+   Without this, there's no good way to know for sure that they're done execing.
 
-   This is like CLONE_CHILD_CLEARTID,
-   but that only has a futex interface,
-   which is not suitable for an event loop.
+   Currently I'm using CLONE_CHILD_CLEARTID and monitoring the resulting futex.
+   Using futexes from an event loop is quite painful though;
+   currently I'm just starting one task to monitor each futex,
+   which doubles the number of tasks I'm run.
 
-   Currently I'm just starting one thread to monitor each futex,
-   which duplicates the number of threads I run.
+   Things which don't work:
+   - ptrace doesn't work because ptrace sucks and break gdb/strace.
+   - Passing down one end of a cloexec pipe doesn't work because if we're a CLONE_FILES thread calling exec,
+     the end will still be open in other threads.
+   - Various privileged interfaces don't work because they're privileged.
+   - vfork is interestingly close but ultimately doesn't work since it's not actually parallel;
+     I investigated it in https://github.com/catern/sfork
+** a CLOSE_RANGE_DO_CLOEXEC flag for close_range to close only CLOEXEC files
+   This way we can clean up a newly created fd table (e.g. created by fork/clone/unshare)
+   and remove any file descriptors which should not be inherited (e.g. private process-specific file descriptors),
+   while still retaining the ability to implicitly inherit file descriptors
+   in the same way environment variables are inherited.
 
-   ptrace doesn't work because ptrace sucks and break gdb/strace.
-
-   Passing down one end of a cloexec pipe doesn't work because if we're a CLONE_FILES thread calling exec,
-   the end will still be open in other threads.
-
-   Using futexes from a normal event loop sucks.
-
-   vfork is kind of similar but sucks.
-
-   I think this would allow an asynchronous posix_spawn.
-
-   Currently posix_spawn *must* take over the thread to use vfork.
-   But if you want to spawn another thread to do it...
-
-   ugh then I guess you can just do that, spawn another thread and then posix_spawn.
-
-   Oh but that messes up your child relationship! So yeah, you can't do that!
-** a CLONE_DO_CLOEXEC flag to pass to clone, to close CLOEXEC fds
-   This would be good and useful.
-
-   Though we can do it in userspace, it's ugly and requires creating an extra thread for full correctness.
-
-   And it would be simple.
-   Just need to call do_close_on_exec.
-
-   oh god, clone really is out of flags
-** sigkill-resilient filicide
-   Maybe, like, the combination of supervise and PDEATHSIG?
-
-   Except, we'd want like,
-   CHILDDEATHSIG...
-   a signal to send to your children when you die.
-
-   If we want to combine this with a better proc interface,
-   we could maybe have some kind of childgroupfd,
-   which when closed, kills all the children in that group.
-
-   We can't realistically enforce things the same way capsicum does,
-   which is to ban usage of non-forkfd process creation.
-   Also I don't think that's robust to loops anyway.
-
-   Oh, the same is true for the childgroupfd then.
-   Well, no, they can create childgroupfd within them, but,
-   they're still contained in the childgroupfd.
-
-   Oh! Let's just have an inheritable PDEATHSIG which can't be unset!
-   That's easier conceptually.
-   Though, reparenting will still happen before the actual signalling, which is awkward.
-
-   Maybe I should have the inheritable PDEATHSIG thing partnered with a clonefd?
-   And the inheritable PDEATHSIG doesn't kill things made with clonefd.
-   That way you can make pseudo-persistent processes which live past a tree's death.
-
-   There are several things we want:
-   - it should work to kill legacy processes that don't use this API
-   - there should be a means for processes to still daemonize if we want to allow that
-
-   A childgroupfd does actually meet these.
-   If we have a childgroupfd,
-   all the children in it can be killed when we close it,
-   but not if they are inside their own childgroupfd.
-
-   Like process groups, but as a file descriptor?
-   Hmm, that seems like a nice idea.
-
-   So you can escape the process group easily, is the thing?
-   Maybe we have a flag, "escapable" or not.
-
-   Of course, escaping will just require that something has a reference to its own process group fd.
-   oh, capsicum doesn't support passing process fds
-** remove old confusing comment from dequeue_signal
-   in signal.c
-
-   It just wasn't removed in b8fceee17a310f189188599a8fa5e9beaff57eb0 when it should have been
+   The need to clean up an fd table after fork is well known,
+   but why do we want to implicitly inherit file descriptors?
+   Well, for example, we might mention a file descriptor in an environment variable that is read by some library.
+   In the same way that customizing libraries via environment variables is useful,
+   we want to be able to pass resources down to libraries without processes being explicitly aware.
+   This implicit inheritance matches how root, cwd, =/dev/tty=, and other resources are implicitly inherited today,
+   so they could be replaced with more formal file descriptor capabilities.
+   And we could change env vars like DISPLAY/WAYLAND_DISPLAY to, instead of containing an address,
+   contain the file descriptor number to use when connecting to X/Wayland.
+** a CLONE_TERMINATE_ON_CLOSE and an inheritable PR_SET_PDEATHSIG
+   Basically what's described in the "Long term" section in http://catern.com/process.html#org1a3bd92.
 ** bindat, connectat
-   Would be nice to be able to pass a dirfd for these. And also lift the length limit.
-** some way to deal with fd inheritance?
-   CLOUNSHARE?
+   That is, versions of bind and connect which take a dirfd and work with AT_EMPTY_PATH.
+   One can do this today with /proc, but then /proc needs to be mounted.
+
+   At the same time (as part of this compatibility break),
+   lifting the Unix socket address length limit would be good.
+*** stretch goal: extend these to work with INET sockets
+    We should be able to represent a sockaddr_in with a file descriptor.
+
+    Right now, we call =accept= on a nice, capability-safe file descriptor;
+    but we call =connect= on an arbitrary name.
+    You should be able to =connect= to a capability representing a network location.
+
+    They two calls are symmetric in what they return:
+    they both give you back a connected file descriptor.
+    But they're not symmetric in what arguments they take.
+    They should be!
 ** the ability to take existing memory and wrap it up in a memfd
    This would be useful to allow a uniform interface for operations.
 
@@ -97,35 +58,19 @@
    we could just have a single interface that operates on file descriptors.
 
    Anyone who wants to operate on memory has to wrap it up in a memfd first.
-** clone_child_settid doesn't seem to work without clone_vm
-   i.e. it doesn't work when the child is in a different address space
-** exec needs to take a list of fds
-   fds that it should pass down through exec.
+** An argument to exec that lists FDs that shouldn't be closed, even if they're CLOEXEC
+   This way we don't have to unset CLOEXEC from FDs if we want them to be inherited.
 
-   Even if they are cloexec.
+   This has two use cases:
+   - We can then use execveat(fd, AT_EMPTY_PATH) to execute scripts (i.e., executables using #!).
+     Without this, we have to mark the FD as not CLOEXEC, so it will be leaked and implicitly inherited,
+     which is not good.
+   - A task that is currently sharing its file descriptor space with other tasks
+     will be able to call exec and pass down fds;
+     currently that's not safely possible, because they would have to unset CLOEXEC on fds,
+     which might cause them to be leaked by other concurrently executing tasks in the same fd table.
 
-   Then cloexec can be inherited.
-
-   This allows us to use execveat on scripts and things.
-
-   We just put the fd in the pass-down list.
-
-   Of equal relevance, this also allows shared-fd-space tasks to exec and pass down fds.
-   (otherwise they can't remove cloexec because it's racy)
-
-   Hey, and exec has a remaining argument left!
-   We could add it!
-** make connect(Address), accept(FileDescriptor) symmetric
-   i.e. so it's connect(FileDescriptor) and accept(FileDescriptor)
-** unify connect/accept with passing file descriptors
-   This would be a nice design...
-
-   Even better would be to unify it also with openat.
-
-   Then there'd be only one ways to get a file descriptor:
-   Use openat on another file descriptor.
-
-   (well, and also by passing it in)
+   execveat even has a remaining argument left, so we could add it :)
 ** being able to pass a NULL name to memfd_create
    Requiring memory to allocate memory makes it impossible to bootstrap memory allocate using memfd_create.
 ** add a MAP_DONT_ROUND flag for mmap to not round the length and offset to page size
@@ -135,8 +80,7 @@
    But because mmap rounds the length up,
    munmap on the resulting mapping won't work with the mapping we pass in.
 
-   We'd rather fail to mmap,
-   than get a mapping that unexpectedly can't be munmap'd.
+   We'd rather fail to mmap than get a mapping that unexpectedly can't be munmap'd.
 
    If we get a file descriptor passed to us from someone else,
    that file descriptor might have a larger page size than we expect,
@@ -145,13 +89,10 @@
 
    Plus we probably also want an fcntl to get the page size.
 
-   Ah, and also this flag should probably require that we pass MAP_HUGETLB and the right size bits
-   if we're mapping a hugetlb file descriptor.
-   That way we won't accidentally pass the correct length?
-   I guess if we accidentally pass the correct length then it's fine.
-
-   Still probably should require the right size bits.
-** CLONE_PARENT doesn't need to be disallowed for container inits
+   Also, this MAP_DONT_ROUND flag should require that we pass MAP_HUGETLB and the right size bits
+   if we're mapping a hugetlb file descriptor;
+   otherwise we'd run into the bug mentioned in the bug section below.
+** Allow CLONE_PARENT for container inits
    It's already possible to make siblings of a container init,
    and any other process can call CLONE_PARENT whenever it wants.
 
@@ -171,16 +112,19 @@
    If I can just put additional flags in accept4,
    that allows me to conveniently do additional typechecking of my accept.
 
-   similar to nsenter.
+   It may sound absurd, but it's the same as nsenter.
 
    Then I can make sure that the address buffer is the right size, without oversizing it,
-   and also know how to parse it.
+   and also I'll be sure that I know how to parse the address buffer.
+
+   On the other hand, this would kind of be bad for capability-safe generic processing stuff...
 ** at-functions should operate on the fd when a null pointer is passed for the pathname
-   That way I don't have to allocate memory for them :(
+   They shouldn't require you to allocate memory for an empty path if you just want to operate on file descriptors. :(
 ** for processes in a pidns, if the parent is outside the pidns, don't reap the zombie when init dies
    This is useful when using unshare(CLONE_NEWPID).
    In that situation, we can make init as one of our children,
-   and then keep forking children into the pidns.
+   and then keep forking children into the pidns,
+   and get nice cleanup behavior like we want in http://catern.com/process.html.
 
    But, if init dies, then all of our children die - that's good,
    except we don't get their death event, because their zombies are automatically reaped!
@@ -188,30 +132,39 @@
    So our naive program that was just starting children in a pid namespace without being modified,
    now is faced with a terrible surprise when it starts getting ECHILD from all its waitpids,
    or never otherwise gets notified of child death.
-
-   This doesn't work!
 ** prctl to set cloexec for every new fd
    I'm not sure that I'll get it right.
 ** MSG_WAITALL for send
-   then we could implement syscall sending so simply!
+   Then we could implement syscall sending so simply!
    also memory access!
 * possible kernel bugs
-** MMAP_GROWSDOWN doesn't seem to work
-   It doesn't grow.
-** CLONE_CHILD_CLEARTID doesn't seem to work if you don't pass CLONE_VM
+** remove old confusing comment from dequeue_signal
+   in signal.c
+
+   It just wasn't removed in b8fceee17a310f189188599a8fa5e9beaff57eb0 when it should have been
+** MMAP_GROWSDOWN doesn't work
+   It doesn't grow. Possibly deliberately, in which case this is a man-pages bug.
+** CLONE_CHILD_CLEARTID work if you don't pass CLONE_VM
    Even if the address is in shared memory (mapped with MAP_SHARED, same inode and everything in both processes),
-   it doesn't seem to do a futex wakeup.
+   it doesn't do a futex wakeup.
 
-   Didn't yet check whether the address is cleared or not - probably not.
-
-   Oh, this is probably due to the number of mm owners being 1.
-   It skips the wakeup in that case. Infuriatingly...
-** (possibly creates userspace bugs) munmap works differently on hugetlb files
+   This is because it skips the wakeup if the number of mm owners being 1.
+** CLONE_CHILD_SETTID doesn't work work without CLONE_VM
+   That is, it doesn't work when the child is in a different address space. Not sure why...
+** munmap works differently on hugetlb files
    This means that if I control the file that some userspace program mmaps,
    I can ensure that their later munmap will fail.
 
-   That seems at least good enough for a denial of service,
+   That seems at least good enough for a userspace denial of service,
    and possibly could even cause security problems.
+** CLONE_SIGHAND + CLONE_NEWPID don't work right together (see pidns.c)
+   signal(SIGCHLD, SIG_IGN) seems to be set in the parent when I kill the pid namespace init (my child).
+
+   So I don't get the SIGCHLD signal.
+
+   More than that, even if I have the SIGCHLD signal blocked in the parent, it doesn't get set as pending to me.
+
+   Strange, strange.
 ** epoll with EPOLLET doesn't report up-edges if the down-edge has already happened
    I bet epoll doesn't actually send me every edge.
 
@@ -256,6 +209,7 @@
 
    the people in #kernelnewbies said to report a bug so I guess I will
 
+#+begin_quote
 > argh
 > epollfd has an annoying behavior where if an FD registered on it becomes readable, the epollfd will indicates as readable when checked with select/poll/another epoll instance...
 > but if the FD is read to EAGAIN before the epollfd is epoll_waited on, you won't actually get an event for it, and the epoll_wait will block
@@ -280,11 +234,4 @@
 > you just have to have a proper ownership model, so that fds registered on epoll can't be closed without going through epoll
 <derRichard> yeah
 <derRichard> and if you know that, you better report a bug
-** CLONE_SIGHAND + CLONE_NEWPID don't work right together (see pidns.c)
-   signal(SIGCHLD, SIG_IGN) seems to be set in the parent when I kill the pid namespace init (my child).
-
-   So I don't get the SIGCHLD signal.
-
-   More than that, even if I have the SIGCHLD signal blocked in the parent, it doesn't get set as pending to me.
-
-   Strange, strange.
+#+end_quote
