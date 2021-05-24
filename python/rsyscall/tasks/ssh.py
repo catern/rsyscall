@@ -181,7 +181,7 @@ async def make_bootstrap_dir(
     """
     stdout_pipe = await (await parent.task.pipe(
         await parent.ram.malloc(Pipe))).read()
-    async_stdout = await parent.make_afd(stdout_pipe.read)
+    async_stdout = await parent.make_afd(stdout_pipe.read, set_nonblock=True)
     child = await parent.clone()
     await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
     await child.task.inherit_fd(bootstrap_executable).dup2(child.stdin)
@@ -212,7 +212,7 @@ async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
     "Forward Unix socket connections to local_path to the socket at remote_path, over ssh"
     stdout_pipe = await (await thread.task.pipe(
         await thread.ram.malloc(Pipe))).read()
-    async_stdout = await thread.make_afd(stdout_pipe.read)
+    async_stdout = await thread.make_afd(stdout_pipe.read, set_nonblock=True)
     child = await thread.clone()
     await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
     await child.task.chdir(await thread.ptr(local_path.parent))
@@ -255,7 +255,7 @@ async def ssh_bootstrap(
     # it would be better if sh supported fexecve, then I could unlink it before I exec...
     # Connect to local socket 4 times
     async def make_async_connection() -> AsyncFileDescriptor:
-        sock = await parent.make_afd(await parent.task.socket(AF.UNIX, SOCK.STREAM))
+        sock = await parent.make_afd(await parent.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         await sock.connect(local_data_addr)
         return sock
     async_local_syscall_sock = await make_async_connection()

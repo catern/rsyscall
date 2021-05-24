@@ -57,14 +57,14 @@ class TestEpoller(TrioTestCase):
 
     async def test_afd_with_handle(self):
         pipe = await self.thr.pipe()
-        afd = await self.thr.make_afd(pipe.write)
+        afd = await self.thr.make_afd(pipe.write, set_nonblock=True)
         new_afd = afd.with_handle(pipe.write)
         await new_afd.write_all_bytes(b'foo')
 
     async def test_delayed_eagain(self):
         pipe = await self.thr.pipe()
         thread = await self.thr.clone()
-        async_pipe_rfd = await thread.make_afd(thread.inherit_fd(pipe.read))
+        async_pipe_rfd = await thread.make_afd(thread.inherit_fd(pipe.read), set_nonblock=True)
         # write in parent, read in child
         input_data = b'hello'
         buf_to_write: Pointer[bytes] = await self.thr.ptr(input_data)
@@ -93,8 +93,8 @@ class TestEpoller(TrioTestCase):
     async def test_wrong_op_on_pipe(self):
         "Reading or writing to the wrong side of a pipe fails immediately with an error"
         pipe = await self.thr.pipe()
-        async_pipe_wfd = await self.thr.make_afd(pipe.write)
-        async_pipe_rfd = await self.thr.make_afd(pipe.read)
+        async_pipe_wfd = await self.thr.make_afd(pipe.write, set_nonblock=True)
+        async_pipe_rfd = await self.thr.make_afd(pipe.read, set_nonblock=True)
         # we actually are defined to get EBADF in this case, which is
         # a bit of a worrying error, but whatever
         with self.assertRaises(OSError) as cm:

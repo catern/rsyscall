@@ -90,7 +90,7 @@ class HTTPClient:
 
     @staticmethod
     async def connect_unix(thread: Thread, addr: WrittenPointer[SockaddrUn]) -> HTTPClient:
-        sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+        sock = await thread.make_afd(await thread.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         await sock.connect(addr)
         return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
             ("Host", "localhost"),
@@ -100,7 +100,7 @@ class HTTPClient:
 
     @staticmethod
     async def connect_inet(thread: Thread, addr: SockaddrIn) -> HTTPClient:
-        sock = await thread.make_afd(await thread.task.socket(AF.INET, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+        sock = await thread.make_afd(await thread.socket(AF.INET, SOCK.STREAM|SOCK.NONBLOCK))
         await sock.connect(await thread.ram.ptr(addr))
         return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
             ("Host", "localhost"),

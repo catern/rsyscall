@@ -68,8 +68,8 @@ class ConsoleGenie(WishGranter):
 
             to_term_pipe = await (await self.thread.task.pipe(await self.thread.ram.malloc(Pipe))).read()
             from_term_pipe = await (await self.thread.task.pipe(await self.thread.ram.malloc(Pipe))).read()
-            async_from_term = await self.thread.make_afd(from_term_pipe.read)
-            async_to_term = await self.thread.make_afd(to_term_pipe.write)
+            async_from_term = await self.thread.make_afd(from_term_pipe.read, set_nonblock=True)
+            async_to_term = await self.thread.make_afd(to_term_pipe.write, set_nonblock=True)
             try:
                 cat_stdin_thread = await self.thread.clone()
                 await cat_stdin_thread.task.inherit_fd(to_term_pipe.read).dup2(cat_stdin_thread.stdin)
@@ -129,8 +129,7 @@ class ConsoleServerGenie(WishGranter):
         sock_name = self._uniquify_name(f'{wisher_frame.f_code.co_name}-{wisher_frame.f_lineno}')
         sock_path = self.sockdir/sock_name
         cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path))
-        sockfd = await self.thread.make_afd(
-            await self.thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+        sockfd = await self.thread.make_afd(await self.thread.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         await sockfd.bind(await self.thread.ptr(await SockaddrUn.from_path(self.thread, sock_path)))
         await sockfd.handle.listen(10)
         async with trio.open_nursery() as nursery:

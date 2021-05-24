@@ -228,7 +228,7 @@ async def _connect_and_send(self: PersistentThread, thread: Thread, fds: t.List[
     file descriptors, and uses them in a special way.
 
     """
-    sock = await thread.make_afd(await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK, 0), nonblock=True)
+    sock = await thread.make_afd(await thread.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
     sockaddr_un = await SockaddrUn.from_path(thread, self.persistent_path)
     async def sendmsg_op(sem: RAM) -> t.Tuple[
             WrittenPointer[SockaddrUn], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:

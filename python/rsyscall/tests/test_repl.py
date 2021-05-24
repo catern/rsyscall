@@ -16,13 +16,11 @@ class TestREPL(TrioTestCase):
         self.sock_path = self.tmpdir.path/"repl.sock"
 
     async def test_repl(self) -> None:
-        sockfd = await self.thr.make_afd(
-            await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+        sockfd = await self.thr.make_afd(await self.thr.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, self.sock_path))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
-        clientfd = await self.thr.make_afd(
-            await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+        clientfd = await self.thr.make_afd(await self.thr.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         await clientfd.connect(addr)
         await clientfd.write_all_bytes(b"foo = 11\n")
         await clientfd.write_all_bytes(b"return foo * 2\n")

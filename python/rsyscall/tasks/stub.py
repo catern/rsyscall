@@ -79,8 +79,7 @@ class StubServer:
     @classmethod
     async def listen_on(cls, thread: Thread, path: Path) -> StubServer:
         "Start listening on the passed-in path for stub connections."
-        sockfd = await thread.make_afd(
-            await thread.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+        sockfd = await thread.make_afd(await thread.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         addr = await thread.ram.ptr(await SockaddrUn.from_path(thread, path))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)

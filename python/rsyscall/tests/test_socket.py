@@ -31,12 +31,12 @@ class TestSocket(TrioTestCase):
         connfd = await sockfd.accept()
 
     async def test_listen_async(self) -> None:
-        sockfd = await self.thr.make_afd(await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+        sockfd = await self.thr.make_afd(await self.thr.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, self.path/"sock"))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
 
-        clientfd = await self.thr.make_afd(await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+        clientfd = await self.thr.make_afd(await self.thr.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         await clientfd.connect(addr)
         connfd, client_addr = await sockfd.accept_addr()
         logger.info("%s, %s", addr, client_addr)
@@ -45,13 +45,12 @@ class TestSocket(TrioTestCase):
         await clientfd.close()
 
     async def test_listen_async_accept(self) -> None:
-        sockfd = await self.thr.make_afd(await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+        sockfd = await self.thr.make_afd(await self.thr.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, self.path/"sock"))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
 
-        clientfd = await self.thr.make_afd(
-            await self.thr.task.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK), nonblock=True)
+        clientfd = await self.thr.make_afd(await self.thr.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         await clientfd.connect(addr)
 
         connfd_h, client_addr = await sockfd.accept_addr(SOCK.NONBLOCK)

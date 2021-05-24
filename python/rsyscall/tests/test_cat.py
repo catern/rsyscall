@@ -26,8 +26,8 @@ class TestCat(TrioTestCase):
         await self.child.check()
 
     async def test_cat_async(self) -> None:
-        stdin = await self.thr.make_afd(self.pipe_in.write, nonblock=False)
-        stdout = await self.thr.make_afd(self.pipe_out.read, nonblock=False)
+        stdin = await self.thr.make_afd(self.pipe_in.write, set_nonblock=True)
+        stdout = await self.thr.make_afd(self.pipe_out.read, set_nonblock=True)
         in_data = await self.thr.ram.ptr(b"hello")
         written, _ = await stdin.write(in_data)
         valid, _ = await stdout.read(written)

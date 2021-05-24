@@ -170,9 +170,15 @@ class Thread:
         """
         return await self.ram.ptr(data)
 
-    async def make_afd(self, fd: FileDescriptor, nonblock: bool=False) -> AsyncFileDescriptor:
-        "Make an AsyncFileDescriptor; set `nonblock` to True if the fd is already nonblocking."
-        if not nonblock:
+    async def make_afd(self, fd: FileDescriptor, set_nonblock: bool=False) -> AsyncFileDescriptor:
+        """Make an AsyncFileDescriptor; make it nonblocking if `set_nonblock` is True.
+
+        Make sure that `fd` is already in non-blocking mode;
+        such as by accepting it with the `SOCK.NONBLOCK` flag;
+        if it's not, you can pass set_nonblock=True to make it nonblocking.
+
+        """
+        if set_nonblock:
             await fd.fcntl(F.SETFL, O.NONBLOCK)
         return await AsyncFileDescriptor.make(self.epoller, self.ram, fd)
 
