@@ -26,7 +26,7 @@ from rsyscall.sched import CLONE
 from rsyscall.signal import Sigset, SIG, SignalBlock, HowSIG
 from rsyscall.sys.mount import MS
 from rsyscall.sys.wait import ChildState, W
-from rsyscall.sys.socket import Socketpair, AF, SOCK
+from rsyscall.sys.socket import Socketpair, AF, SOCK, T_sockaddr, Sockbuf
 from rsyscall.unistd import Pipe, ArgList
 
 logger = logging.getLogger(__name__)
@@ -217,6 +217,23 @@ class Thread:
             _, to_write = await fd.write(to_write)
         await fd.close()
         return out
+
+    async def bind_getsockname(self, sock: FileDescriptor, addr: T_sockaddr) -> T_sockaddr:
+        """Call bind and then getsockname on `sock`.
+
+        bind followed by getsockname is a common pattern when allocating unused
+        source ports with SockaddrIn(0, ...).  Unfortunately, memory allocation
+        for getsockname is quite verbose, so it would be nice to have a helper
+        to make that pattern easier. Since we don't want to encourage usage of
+        getsockname (it should be rarely used outside of that pattern), we add a
+        helper for that specific pattern, rather than getsockname on its own.
+
+        """
+        written_addr_ptr = await self.ram.ptr(addr)
+        await sock.bind(written_addr_ptr)
+        sockbuf_ptr = await sock.getsockname(await self.ram.ptr(Sockbuf(written_addr_ptr)))
+        addr_ptr = (await sockbuf_ptr.read()).buf
+        return await addr_ptr.read()
 
     async def mkdir(self, path: Path, mode=0o755) -> Path:
         "Make a directory at this path"
