@@ -69,6 +69,14 @@ class MSG(enum.IntFlag):
     DONTWAIT = lib.MSG_DONTWAIT
     OOB = lib.MSG_OOB
 
+family_to_class: t.Dict[AF, t.Type[Sockaddr]] = {}
+def _register_sockaddr(sockaddr: t.Type[Sockaddr]) -> None:
+    if sockaddr.family in family_to_class:
+        raise Exception("tried to register sockaddr", sockaddr, "for family", sockaddr.family,
+                        "but there's already a class registered for that family:",
+                        family_to_class[sockaddr.family])
+    family_to_class[sockaddr.family] = sockaddr
+
 class Sockaddr(Struct):
     """struct sockaddr. This is not really useful to allocate on its own; you want the derived classes.
 
@@ -96,15 +104,12 @@ class Sockaddr(Struct):
     def sizeof(cls) -> int:
         return ffi.sizeof('struct sockaddr')
 
-T_sockaddr = t.TypeVar('T_sockaddr', bound='Sockaddr')
+    def parse(self) -> Sockaddr:
+        "Using the family field, return the correct Sockaddr type that this actually contains."
+        cls = family_to_class[self.family]
+        return cls.from_bytes(self.to_bytes())
 
-family_to_class: t.Dict[AF, t.Type[Sockaddr]] = {}
-def _register_sockaddr(sockaddr: t.Type[Sockaddr]) -> None:
-    if sockaddr.family in family_to_class:
-        raise Exception("tried to register sockaddr", sockaddr, "for family", sockaddr.family,
-                        "but there's already a class registered for that family:",
-                        family_to_class[sockaddr.family])
-    family_to_class[sockaddr.family] = sockaddr
+T_sockaddr = t.TypeVar('T_sockaddr', bound='Sockaddr')
 
 class SOCK(enum.IntFlag):
     NONE = 0
@@ -200,11 +205,6 @@ class SockaddrStorage(Sockaddr):
     @classmethod
     def sizeof(cls) -> int:
         return ffi.sizeof('struct sockaddr_storage')
-
-    def parse(self) -> Sockaddr:
-        "Using the family field, return the correct Sockaddr type that this actually contains."
-        cls = family_to_class[self.family]
-        return cls.from_bytes(self.to_bytes())
 
 @dataclass
 class Sockbuf(t.Generic[T], HasSerializer):

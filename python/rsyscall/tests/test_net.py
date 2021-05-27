@@ -42,6 +42,8 @@ class TestNet(TrioTestCase):
         addr = SockaddrIn(0, '10.0.0.1')
         ptr = await ptr.write(Ifreq(name, addr=addr))
         await sock.ioctl(SIOC.SIFADDR, ptr)
+        await sock.ioctl(SIOC.GIFADDR, ptr)
+        self.assertEqual(addr, (await ptr.read()).addr.parse())
 
     async def test_rtnetlink(self) -> None:
         netsock = await self.thr.task.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)

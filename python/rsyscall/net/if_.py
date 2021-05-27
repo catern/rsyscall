@@ -5,7 +5,7 @@ The associated manpage is netdevice(7)
 """
 from __future__ import annotations
 from rsyscall._raw import ffi, lib # type: ignore
-from rsyscall.netinet.ip import SockaddrIn
+from rsyscall.sys.socket import Sockaddr
 from rsyscall.struct import Struct
 import enum
 import typing as t
@@ -119,11 +119,11 @@ class AddressField:
     def __init__(self, name: str) -> None:
         self.name = name
 
-    def __get__(self, instance, owner) -> SockaddrIn:
+    def __get__(self, instance, owner) -> Sockaddr:
         data_bytes = bytes(ffi.buffer(ffi.addressof(instance.cffi, self.name)))
-        return SockaddrIn.from_bytes(data_bytes)
+        return Sockaddr.from_bytes(data_bytes)
 
-    def __set__(self, instance, value: SockaddrIn) -> None:
+    def __set__(self, instance, value: Sockaddr) -> None:
         data_bytes = value.to_bytes()
         ffi.memmove(ffi.addressof(instance.cffi, self.name),
                     ffi.from_buffer(data_bytes), len(data_bytes))
@@ -153,7 +153,7 @@ class Ifreq(Struct):
     ifindex = IntField("ifr_ifindex")
     flags = IFFField("ifr_flags")
     
-    def __init__(self, name: str=None, *, addr: SockaddrIn=None, flags: IFF=None, cffi=None) -> None:
+    def __init__(self, name: str=None, *, addr: Sockaddr=None, flags: IFF=None, cffi=None) -> None:
         if cffi is None:
             cffi = ffi.new('struct ifreq*')
         self.cffi = cffi
@@ -191,6 +191,7 @@ class Ifreq(Struct):
 
 #### Tests ####
 from unittest import TestCase
+from rsyscall.netinet.ip import SockaddrIn
 class TestIf(TestCase):
     def test_ifreq(self) -> None:
         initial = Ifreq()
@@ -198,5 +199,7 @@ class TestIf(TestCase):
         initial.addr = SockaddrIn(42, "127.0.0.1")
         output = Ifreq.from_bytes(initial.to_bytes())
         self.assertEqual(initial.name, output.name)
-        self.assertEqual(initial.addr.port, output.addr.port)
-        self.assertEqual(initial.addr.addr, output.addr.addr)
+        addr = t.cast(SockaddrIn, initial.addr.parse())
+        self.assertIsInstance(addr, SockaddrIn)
+        self.assertEqual(initial.addr.port, addr.port)
+        self.assertEqual(initial.addr.addr, addr.addr)
