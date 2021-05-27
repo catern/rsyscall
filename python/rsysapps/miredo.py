@@ -27,7 +27,7 @@ from rsyscall.netinet.in_ import SockaddrIn
 from rsyscall.netinet.ip import IP, IPPROTO
 from rsyscall.linux.netlink import SockaddrNl, NETLINK
 from rsyscall.linux.rtnetlink import RTMGRP
-from rsyscall.net.if_ import Ifreq, IFF_TUN, TUNSETIFF, SIOCGIFINDEX
+from rsyscall.net.if_ import Ifreq, IFF, TUNSETIFF, SIOC
 
 import rsyscall.nix as nix
 
@@ -84,10 +84,10 @@ async def make_tun(thread: Thread, name: str, reqsock: FileDescriptor) -> t.Tupl
     # open /dev/net/tun
     tun_fd = await thread.task.open(await thread.ptr(Path("/dev/net/tun")), O.RDWR)
     # register TUN interface name for this /dev/net/tun fd
-    ifreq = await thread.ptr(Ifreq(name, flags=IFF_TUN))
+    ifreq = await thread.ptr(Ifreq(name, flags=IFF.TUN))
     await tun_fd.ioctl(TUNSETIFF, ifreq)
     # use reqsock to look up the interface index of the TUN interface by name (reusing the previous Ifreq)
-    await reqsock.ioctl(SIOCGIFINDEX, ifreq)
+    await reqsock.ioctl(SIOC.GIFINDEX, ifreq)
     tun_index = (await ifreq.read()).ifindex
     return tun_fd, tun_index
 

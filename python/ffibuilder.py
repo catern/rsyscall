@@ -1019,9 +1019,69 @@ struct ifreq {
     };
 };
 
+// Socket configuration ioctls
+#define SIOCGIFNAME ... // get iface name
+#define SIOCSIFLINK ... // set iface channel
+#define SIOCGIFCONF ... // get iface list
+#define SIOCGIFFLAGS ... // get flags
+#define SIOCSIFFLAGS ... // set flags
+#define SIOCGIFADDR ... // get PA address
+#define SIOCSIFADDR ... // set PA address
+#define SIOCGIFDSTADDR ... // get remote PA address
+#define SIOCSIFDSTADDR ... // set remote PA address
+#define SIOCGIFBRDADDR ... // get broadcast PA address
+#define SIOCSIFBRDADDR ... // set broadcast PA address
+#define SIOCGIFNETMASK ... // get network PA mask
+#define SIOCSIFNETMASK ... // set network PA mask
+#define SIOCGIFMETRIC ... // get metric
+#define SIOCSIFMETRIC ... // set metric
+#define SIOCGIFMEM ... // get memory address (BSD)
+#define SIOCSIFMEM ... // set memory address (BSD)
+#define SIOCGIFMTU ... // get MTU size
+#define SIOCSIFMTU ... // set MTU size
+#define SIOCSIFNAME ... // set interface name
+#define SIOCSIFHWADDR ... // set hardware address
+#define SIOCGIFENCAP ... // get/set encapsulations
+#define SIOCSIFENCAP ...
+#define SIOCGIFHWADDR ... // Get hardware address
+#define SIOCGIFSLAVE ... // Driver slaving support
+#define SIOCSIFSLAVE ...
+#define SIOCADDMULTI ... // Multicast address lists
+#define SIOCDELMULTI ...
+#define SIOCGIFINDEX ... // name -> if_index mapping
+#define SIOCSIFPFLAGS ... // set/get extended flags set
+#define SIOCGIFPFLAGS ...
+#define SIOCDIFADDR ... // delete PA address
+#define SIOCSIFHWBROADCAST ... // set hardware broadcast addr
+#define SIOCGIFCOUNT ... // get number of devices
+
+// device flags, in ifr_flags with SIOC{G,S}IFFLAGS
+#define IFF_UP ...          // Interface is running.
+#define IFF_BROADCAST ...   // Valid broadcast address set.
+#define IFF_DEBUG ...       // Internal debugging flag.
+#define IFF_LOOPBACK ...    // Interface is a loopback interface.
+#define IFF_POINTOPOINT ... // Interface is a point-to-point link.
+#define IFF_RUNNING ...     // Resources allocated.
+#define IFF_NOARP ...       // No arp protocol, L2 destination address not set.
+#define IFF_PROMISC ...     // Interface is in promiscuous mode.
+#define IFF_NOTRAILERS ...  // Avoid use of trailers.
+#define IFF_ALLMULTI ...    // Receive all multicast packets.
+#define IFF_MASTER ...      // Master of a load balancing bundle.
+#define IFF_SLAVE ...       // Slave of a load balancing bundle.
+#define IFF_MULTICAST ...   // Supports multicast
+#define IFF_PORTSEL ...     // Is able to select media type via ifmap.
+#define IFF_AUTOMEDIA ...   // Auto media selection active.
+#define IFF_DYNAMIC ...     // The addresses are lost when the interface goes down.
+// glibc doesn't have these in its headers for some reason
+// #define IFF_LOWER_UP ...    // Driver signals L1 up (since Linux 2.6.17)
+// #define IFF_DORMANT ...     // Driver signals dormant (since Linux 2.6.17)
+// #define IFF_ECHO ...        // Echo sent packets (since Linux 2.6.25)
+
 #define TUNSETIFF ...
+// TUNSETIFF flags
 #define IFF_TUN ...
-#define SIOCGIFINDEX ...
+#define IFF_TAP ...
+#define IFF_NO_PI ...
 
 // netlink
 
