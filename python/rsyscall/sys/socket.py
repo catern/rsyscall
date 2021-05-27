@@ -90,7 +90,7 @@ class Sockaddr(Struct):
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct sockaddr*', ffi.from_buffer(data))
-        return cls(struct.ss_family, struct.ss_data)
+        return cls(struct.sa_family, bytes(ffi.buffer(struct.sa_data)))
 
     @classmethod
     def sizeof(cls) -> int:
