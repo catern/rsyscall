@@ -3,6 +3,7 @@ from rsyscall import local_thread
 from rsyscall.fcntl import O
 from rsyscall.sys.socket import AF, SOCK
 from rsyscall.net.if_ import *
+from rsyscall.netinet.ip import SockaddrIn
 from rsyscall.linux.netlink import *
 from rsyscall.linux.rtnetlink import *
 from pyroute2 import IPBatch
@@ -37,6 +38,10 @@ class TestNet(TrioTestCase):
         await sock.ioctl(SIOC.SIFFLAGS, ptr)
         await sock.ioctl(SIOC.GIFFLAGS, ptr)
         self.assertIn(IFF.UP, (await ptr.read()).flags) # type: ignore
+        # add IP address
+        addr = SockaddrIn(0, '10.0.0.1')
+        ptr = await ptr.write(Ifreq(name, addr=addr))
+        await sock.ioctl(SIOC.SIFADDR, ptr)
 
     async def test_rtnetlink(self) -> None:
         netsock = await self.thr.task.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)

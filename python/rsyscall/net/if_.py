@@ -153,12 +153,14 @@ class Ifreq(Struct):
     ifindex = IntField("ifr_ifindex")
     flags = IFFField("ifr_flags")
     
-    def __init__(self, name: str=None, *, flags: IFF=None, cffi=None) -> None:
+    def __init__(self, name: str=None, *, addr: SockaddrIn=None, flags: IFF=None, cffi=None) -> None:
         if cffi is None:
             cffi = ffi.new('struct ifreq*')
         self.cffi = cffi
         if name is not None:
             self.name = name
+        if addr is not None:
+            self.addr = addr
         if flags is not None:
             self.flags = flags
 
