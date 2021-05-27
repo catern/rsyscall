@@ -21,14 +21,12 @@ class SockaddrIn(Sockaddr):
 
     """
     port: int
-    _addr: t.Union[str, int, ipaddress.IPv4Address]
+    addr: ipaddress.IPv4Address
     family = AF.INET
-    def __post_init__(self) -> None:
-        # the dataclass is frozen so we have to do this; we want to support
-        # str/int arguments when constructing a SockaddrIn, but always have them
-        # be IPv4Address when read back out.
-        object.__setattr__(self, 'addr', ipaddress.IPv4Address(self._addr))
-        self.addr: ipaddress.IPv4Address
+    def __init__(self, port: int, addr: t.Union[str, int, ipaddress.IPv4Address]) -> None:
+        # the dataclass is frozen so we have to use __setattr__
+        object.__setattr__(self, 'port', port)
+        object.__setattr__(self, 'addr', ipaddress.IPv4Address(addr))
 
     def to_bytes(self) -> bytes:
         addr = ffi.new('struct sockaddr_in*', (AF.INET, socket.htons(self.port), (socket.htonl(int(self.addr)),)))
