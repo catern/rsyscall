@@ -15,7 +15,6 @@ from rsyscall.handle import FileDescriptor, Path
 from dataclasses import dataclass
 from rsyscall.struct import Int32
 from rsyscall.monitor import AsyncChildProcess
-from rsyscall.memory.ram import RAMThread
 
 import rsyscall.tasks.local as local
 from rsyscall.sys.capability import CAP, CapHeader, CapData
@@ -60,14 +59,12 @@ class Miredo:
     privproc_child: AsyncChildProcess
     client_child: AsyncChildProcess
 
-async def add_to_ambient_caps(thr: RAMThread, capset: t.Set[CAP]) -> None:
-    hdr_ptr = await thr.ptr(CapHeader())
-    data_ptr = await thr.ram.malloc(CapData)
-    await thr.task.capget(hdr_ptr, data_ptr)
+async def add_to_ambient_caps(thr: Thread, capset: t.Set[CAP]) -> None:
+    hdr = await thr.ptr(CapHeader())
+    data_ptr = await thr.task.capget(hdr_ptr, await thr.malloc(CapData))
     data = await data_ptr.read()
     data.inheritable.update(capset)
-    data_ptr = await data_ptr.write(data)
-    await thr.task.capset(hdr_ptr, data_ptr)
+    await thr.task.capset(hdr_ptr, await data_ptr.write(data))
     for cap in capset:
         await thr.task.prctl(PR.CAP_AMBIENT, PR_CAP_AMBIENT.RAISE, cap)
 

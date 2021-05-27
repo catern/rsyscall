@@ -120,7 +120,7 @@ class CapData(Struct):
         return ffi.sizeof('struct __user_cap_data_struct[2]')
 
 #### Classes ####
-from rsyscall.handle.pointer import Pointer, WrittenPointer
+from rsyscall.handle.pointer import Pointer, WrittenPointer, ReadablePointer
 import rsyscall.far
 
 class CapabilityTask(rsyscall.far.Task):
@@ -129,10 +129,11 @@ class CapabilityTask(rsyscall.far.Task):
             with datap.borrow(self):
                 await _capset(self.sysif, hdrp.near, datap.near)
 
-    async def capget(self, hdrp: Pointer[CapHeader], datap: Pointer[CapData]) -> None:
+    async def capget(self, hdrp: WrittenPointer[CapHeader], datap: Pointer[CapData]) -> ReadablePointer[CapData]:
         with hdrp.borrow(self):
             with datap.borrow(self):
                 await _capget(self.sysif, hdrp.near, datap.near)
+                return datap._readable()
 
 #### Raw syscalls ####
 import rsyscall.near.types as near
