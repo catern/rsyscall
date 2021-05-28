@@ -28,14 +28,13 @@ class Tun:
         # put each tun in a separate netns; I tried putting them in
         # the same netns, but got silent packet delivery failures.
         thr = await parent.clone(CLONE.NEWNET|CLONE.FILES)
-        self = cls(
-            thr,
-            await thr.task.open(await thr.ptr("/dev/net/tun"), O.RDWR),
-            'tun0',
-            addr,
-            await thr.task.socket(AF.INET, SOCK.STREAM),
-        )
-        await self.fd.ioctl(TUNSETIFF, await self.thr.ptr(Ifreq(self.name, flags=IFF.TUN|IFF.NO_PI)))
+        fd = await thr.task.open(await thr.ptr("/dev/net/tun"), O.RDWR)
+        ifreq = await thr.ptr(Ifreq('tun%d', flags=IFF.TUN|IFF.NO_PI))
+        await fd.ioctl(TUNSETIFF, ifreq)
+        self = cls(thr, fd,
+                   (await ifreq.read()).name,
+                   addr,
+                   await thr.task.socket(AF.INET, SOCK.STREAM))
         # set up the tun - these ioctls don't actually affect the socket
         await self.sock.ioctl(SIOC.SIFFLAGS, await self.thr.ptr(Ifreq(self.name, flags=IFF.UP)))
         await self.sock.ioctl(SIOC.SIFADDR, await self.thr.ptr(Ifreq(self.name, addr=SockaddrIn(0, self.addr))))
