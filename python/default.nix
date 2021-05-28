@@ -35,7 +35,9 @@ buildPythonPackage {
   mypy
   # (mypy.overrideAttrs (_: { src = /home/sbaugh/.local/src/mypy; }))
   typing-extensions
-pytest ];
+  pytest
+  pkgs.socat
+  ];
   # ssh tests don't work because the build user's login shell is /noshell :(
   # net tests don't work because /dev/net/tun doesn't exist
   # nix tests don't work because something about "error: creating directory '/nix/var': Permission denied"
