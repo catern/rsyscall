@@ -30340,3 +30340,140 @@ it sounds like they just wrote the non-contiguous array implementation as a tree
 
   oh I don't even have the paper in research/, sigh
   I need to merge it I guess
+* ssh forwarding
+  okay, I really want to be able to pass in fds to ssh
+
+  so, I can forward to host and port, which I guessss is good.
+  I should do that, really, because otherwise, I'm not in a great place...
+
+  so that's done with SSHMUX_COMMAND_STDIO_FWD
+  mm_send_fd is the nice thing to search for in mux.c
+
+  (ProxyUseFdpass is mildly interesting, as is the -F option to BSD netcat, heh...)
+
+  ok so there's stdio_fwd and there's new_session.
+  both of those allow passing an fd.
+
+  okaaay so stdio_fwd seems limited to only support connecting to a host/port;
+  that's fine, that's fine...
+
+  but what about session?
+  that allows me to pass stdin/out/err and run a command.
+  it could be good, I guess.
+
+  good as a way to hack my way to arbitrary channels (have the command pass the fds elsewhere)
+  and forwarding to unix sockets (have the command run socat)
+
+  also there's MUX_C_PROXY.
+  what if ssh, maybe, supports some kind of upgrade mode?
+  ala HTTP upgrade
+
+  also what if. um. wait. ok.
+
+  okay so this is already a failure because,
+  there's no support for,
+  passing in a listening socket for the forward.
+
+  ugh!
+
+  yeah that's the thing I want most of all.
+
+  MUX_C_PROXY - so what if it supports upgrade? well... I guess if it supports upgrade after connecting to a unix socket,
+  then that would be good.
+  but still - that's a minor feature... I think?
+
+  oh, wait, right right,
+  I don't care if I pass in a listening socket!
+
+  i can drive the accept loop myself.
+
+  right, so this is success, actually!
+
+  I guess what I would really want is... to be able to arbitrarily control what fds the remote side uses.
+
+  basically some kind of...
+  ProxyUseFdpass,
+  except, on the remote side.
+  like run this command... and get out some fds from it...
+  and then forward channels to that fd.
+
+  yeah, I guess that's what I want, that would be the perfect form.
+
+  ok so I guess I need to switch to the mux form.
+  I can override the user's mux and ignore it, that's fine.
+
+  and... I'll add the fdpass stdio fwd feature later.
+  stdio_fwd_fdpass
+** proposal
+Hi,
+
+I have a feature that I'd like to implement if it's acceptable to the
+OpenSSH developers.
+
+In short, I'd like to implement a mode for running an ssh session which
+functions like ProxyCommand+ProxyUseFdpass: the specified command is
+passed a socketpair, and is then expected to pass out a file descriptor;
+IO from the client will then be forwarded to and from that file
+descriptor.
+
+This is similar to -W, except that instead of forwarding stdin to a
+socket connected to a specified host and port, stdin is forwarded to an
+arbitrary file descriptor as passed out by the command.
+
+The advantage relative to today is reduced overhead and reduced
+complexity.  One could achieve similar behavior today by just running a
+command which proxies stdio to a user-specified file descriptor; but the
+extra command both adds overhead and increases complexity.  The argument
+is the same as the argument for ProxyUseFdpass: By allowing the user to
+specify which file descriptor OpenSSH should forward data to, that
+overhead and complexity is elimiated.
+
+I'm not an expert on the SSH protocol, but I believe this would require
+a protocol change; a new @openssh.com channel type, perhaps called
+fdpass@openssh.com.
+
+Use cases for this:
+
+- -W-style socket forwarding for AF_UNIX and other socket families. This
+is useful for, among other things, accessing remote daemons without
+extra overhead.
+
+- More customization of AF_INET socket parameters for -W, including
+customization of the source address. This could be achieved with an
+invocation of "ssh -XXX nc -f -s 1.2.3.4". (I see this was
+coincidentally requested on this list a few weeks ago)
+
+- Implementation of other more dynamic forwarding modes, without added
+overhead, and without requiring OpenSSH to support them. As a concrete
+example, I'd like to use TCP forwarding like -L, but with a listening
+socket pre-created by the user and passed in to ssh; this is useful when
+using chroot/container/network namespacing features, where ssh might be
+running in a separate container from the listening socket. This could be
+achieved with minimal overhead by a simple user-written script which
+accepts connections on the listening socket and runs "ssh -XXX nc -f
+1.2.3.4 1234" for each connection.
+
+- In general, zero-extra-overhead usage of SSH channels. With this
+fd-passing behavior, the user is able to determine the file descriptors
+used by OpenSSH on both sides, and OpenSSH simply forwards data from the
+user-controlled file descriptors on one side to the other side.
+Zero-overhead access to SSH channels like this has many uses in
+application programming.
+
+I'm happy to implement this with whatever design is preferred by the
+OpenSSH developers, as long as it provides the core feature of
+user-controlled minimal-overhead access to SSH channels which are
+maintained by OpenSSH, without the user having to implement the SSH
+protocol.
+
+Thanks for OpenSSH!
+* tap netns bump thing
+  woah woah!!
+
+  ssh supports a tun forwarding mode!
+
+  maybe we can just run it in the netns?
+
+  ah no it just forwards tun to tun, kind of a clever hack;
+  it doesn't actually know about Ethernet or TCP/IP,
+  it just receives packets from one TUN and sends them to another TUN on another host
