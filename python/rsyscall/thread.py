@@ -281,7 +281,7 @@ class Thread:
     def inherit_fd(self, fd: FileDescriptor) -> FileDescriptor:
         return self.task.inherit_fd(fd)
 
-    async def clone(self, flags: CLONE=CLONE.NONE) -> ChildThread:
+    async def clone(self, flags: CLONE=CLONE.NONE, automatically_write_user_mappings: bool=True) -> ChildThread:
         """Create a new child thread
 
         manpage: clone(2)
@@ -322,7 +322,7 @@ class Thread:
             stdout=self.stdout.inherit(task),
             stderr=self.stderr.inherit(task),
         ), child_process)
-        if flags & CLONE.NEWUSER:
+        if flags & CLONE.NEWUSER and automatically_write_user_mappings:
             # hack, we should really track the [ug]id ahead of this so we don't have to get it
             # we have to get the [ug]id from the parent because it will fail in the child
             uid = await self.task.getuid()
