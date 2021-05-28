@@ -4,6 +4,7 @@ Abandon all hope, ye who enter here.
 
 """
 import typing as t
+import errno
 
 #### Classes ####
 from rsyscall.handle.fd import BaseFileDescriptor
@@ -13,7 +14,12 @@ class IoctlFileDescriptor(BaseFileDescriptor):
     async def ioctl(self, request: int, arg: Pointer) -> int:
         self._validate()
         arg._validate()
-        return (await _ioctl(self.task.sysif, self.near, request, arg.near))
+        try:
+            return (await _ioctl(self.task.sysif, self.near, request, arg.near))
+        except OSError as e:
+            if e.errno == errno.ENOTTY:
+                e.filename = request
+            raise
 
 #### Raw syscalls ####
 import rsyscall.near.types as near
