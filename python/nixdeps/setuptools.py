@@ -4,7 +4,7 @@ setuptools automatically registers this entry-point when you have the
 nixdeps module on your PYTHONPATH. Then you can provide the following
 keyword argument to `setup`:
 ```
-nix_deps = {'mypkg._whatever': ['hello', 'goodbye']}
+nixdeps = {'mypkg._whatever': ['hello', 'goodbye']}
 ```
 and then, if you have dependencies on the 'hello' and 'goodbye' Nix
 packages, after a setuptools build, you will be able to use:
@@ -45,7 +45,7 @@ from distutils import log
 import subprocess
 
 __all__ = [
-    'nix_deps',
+    'nixdeps',
 ]
 
 def write_json(output_path: Path, path: str, closure: t.List[str]) -> None:
@@ -159,8 +159,8 @@ def add_deps_module(dist, module_name: str, deps: t.List[str]) -> None:
                 generate_mod(self, output_path)
     dist.cmdclass['build_ext'] = build_ext_make_mod
 
-def nix_deps(dist, attr: str, value) -> None:
+def nixdeps(dist, attr: str, value) -> None:
     "The main setuptools entry point. Automatically registered with setuptools via distutils.setup_keywords"
-    assert attr == 'nix_deps'
+    assert attr == 'nixdeps'
     for module_name, deps in value.items():
         add_deps_module(dist, module_name, deps)
