@@ -6,18 +6,18 @@ import typing as t
 import json
 
 __all__ = [
-    'Nixdep',
+    'PackageClosure',
     'import_nixdep',
 ]
 
 @dataclass
-class Nixdep:
+class PackageClosure:
     path: Path
     closure: t.List[Path]
 
-_imported_nixdeps: t.Dict[t.Tuple[str, str], Nixdep] = {}
+_imported_nixdeps: t.Dict[t.Tuple[str, str], PackageClosure] = {}
 
-def import_nixdep(module: str, name: str) -> Nixdep:
+def import_nixdep(module: str, name: str) -> PackageClosure:
     """Import a Nix dependency as specified by nixdeps at setuptools build time
 
     With import_nixdep, you can import a Nix dependency and learn its path in a relatively
@@ -35,6 +35,6 @@ def import_nixdep(module: str, name: str) -> Nixdep:
     data = json.loads(text)
     path = Path(data["path"])
     closure = [Path(elem) for elem in data["closure"]]
-    nixdep = Nixdep(path, closure)
+    nixdep = PackageClosure(path, closure)
     _imported_nixdeps[(module, name)] = nixdep
     return nixdep
