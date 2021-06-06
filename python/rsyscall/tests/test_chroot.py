@@ -15,6 +15,7 @@ class TestChroot(TrioTestCase):
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()
 
+    @unittest.skip
     async def test_basic(self) -> None:
         await self.thr.mkdir(self.tmpdir/"proc")
         await self.thr.mount("/proc", self.tmpdir/"proc", "", MS.BIND, "")

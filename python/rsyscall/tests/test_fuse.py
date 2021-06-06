@@ -52,6 +52,7 @@ class TestFUSE(TrioTestCase):
             raise Exception("expected", cls, "got", op)
         return op
 
+    @unittest.skip
     async def test_basic(self) -> None:
         data_read_from_fuse = b"this is some data read from fuse"
         @self.nursery.start_soon
@@ -120,6 +121,7 @@ class TestFUSE(TrioTestCase):
         # close file
         await self.fuse.write((await self.assertRead(FuseReleasedirOp)).respond())
 
+    @unittest.skip
     async def test_symlink(self) -> None:
         @self.nursery.start_soon
         async def open() -> None:
