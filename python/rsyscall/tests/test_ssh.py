@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from rsyscall.tests.trio_test_case import TrioTestCase
 import rsyscall.thread
-from rsyscall.nix import enter_nix_container, deploy, bash_nixdep, coreutils_nixdep, hello_nixdep
+from rsyscall.nix import enter_nix_container, deploy
 import rsyscall._nixdeps.nix
+import rsyscall._nixdeps.hello
+import rsyscall._nixdeps.coreutils
+import rsyscall._nixdeps.bash
 from rsyscall.tasks.ssh import *
 from rsyscall import local_thread
 
@@ -62,12 +65,12 @@ class TestSSH(TrioTestCase):
         self.assertEqual(data, await read_data.read())
 
     async def test_exec_true(self) -> None:
-        bash = (await deploy(self.local, bash_nixdep)).bin('bash')
+        bash = (await deploy(self.local, rsyscall._nixdeps.bash.closure)).bin('bash')
         await self.remote.run(bash.args('-c', 'true'))
 
     async def test_exec_pipe(self) -> None:
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)
-        cat = (await deploy(self.local, coreutils_nixdep)).bin('cat')
+        cat = (await deploy(self.local, rsyscall._nixdeps.coreutils.closure)).bin('cat')
         thread = await self.remote.clone()
         cat_side = thread.task.inherit_fd(remote_sock)
         await remote_sock.close()
@@ -91,7 +94,7 @@ class TestSSH(TrioTestCase):
         await local_child.kill()
 
     async def test_copy(self) -> None:
-        cat = (await deploy(self.local, coreutils_nixdep)).bin('cat')
+        cat = (await deploy(self.local, rsyscall._nixdeps.coreutils.closure)).bin('cat')
 
         local_file = await self.local.task.memfd_create(await self.local.ptr("source"))
         remote_file = await self.remote.task.memfd_create(await self.remote.ptr("dest"))
@@ -130,5 +133,5 @@ class TestSSH(TrioTestCase):
         tmpdir = await mkdtemp(self.local)
         async with tmpdir:
             await enter_nix_container(self.local, rsyscall._nixdeps.nix.closure, self.remote, tmpdir)
-            hello = (await deploy(self.remote, hello_nixdep)).bin('hello')
+            hello = (await deploy(self.remote, rsyscall._nixdeps.hello.closure)).bin('hello')
             await self.remote.run(hello)

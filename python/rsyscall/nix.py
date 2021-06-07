@@ -37,9 +37,6 @@ __all__ = [
     "copy_tree",
     "enter_nix_container",
     "deploy",
-    "bash_nixdep",
-    "coreutils_nixdep",
-    "hello_nixdep",
 ]
 
 async def _exec_tar_copy_tree(src: ChildThread, src_paths: t.Sequence[t.Union[str, os.PathLike]], src_fd: FileDescriptor,
@@ -176,7 +173,3 @@ async def deploy(thread: Thread, package: PackageClosure) -> PackagePath:
         except (PermissionError, FileNotFoundError):
             await _deploy(local_thread, thread, package)
     return PackagePath(package.path)
-
-from rsyscall._nixdeps.bash import closure as bash_nixdep
-from rsyscall._nixdeps.coreutils import closure as coreutils_nixdep
-from rsyscall._nixdeps.hello import closure as hello_nixdep

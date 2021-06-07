@@ -5,6 +5,8 @@ from rsyscall.nix import *
 from rsyscall.sched import CLONE
 from rsyscall.stdlib import mkdtemp
 import rsyscall._nixdeps.nix
+import rsyscall._nixdeps.hello
+import rsyscall._nixdeps.nix
 
 class TestNix(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -16,12 +18,12 @@ class TestNix(TrioTestCase):
         await self.tmpdir.cleanup()
 
     async def test_hello(self) -> None:
-        hello = (await deploy(self.thr, hello_nixdep)).bin("hello")
+        hello = (await deploy(self.thr, rsyscall._nixdeps.hello.closure)).bin("hello")
         await self.thr.run(hello)
 
     async def test_with_daemon(self) -> None:
         nix_daemon = (await deploy(self.thr, rsyscall._nixdeps.nix.closure)).bin("nix-daemon")
         nd_child = await (await self.thr.clone()).exec(nix_daemon)
         self.thr.environ['NIX_REMOTE'] = 'daemon'
-        hello = (await deploy(self.thr, hello_nixdep)).bin("hello")
+        hello = (await deploy(self.thr, rsyscall._nixdeps.hello.closure)).bin("hello")
         await self.thr.run(hello)
