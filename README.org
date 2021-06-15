@@ -26,4 +26,5 @@ nix-shell
 python
 #+end_src
 * Discussion
-irc://chat.freenode.net/#rsyscall
+irc://irc.oftc.net/#rsyscall
+
