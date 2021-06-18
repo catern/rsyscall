@@ -42,7 +42,8 @@ buildPythonPackage {
   # net tests don't work because /dev/net/tun doesn't exist
   # nix tests don't work because something about "error: creating directory '/nix/var': Permission denied"
   # test_pgid doesn't work because /proc/sys/kernel/ns_last_pid isn't available for some reason
-  checkPhase = "pytest rsyscall -k 'not ssh and not test_net and not test_nix and not test_pgid'";
+  # fuse tests don't work because /dev/fuse doesn't exist
+  checkPhase = "pytest rsyscall -k 'not ssh and not test_net and not test_nix and not test_pgid and not test_fuse'";
   nativeBuildInputs = [
       pkgs.pkg-config pkgs.openssh nix
       rsyscall
