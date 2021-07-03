@@ -1,0 +1,7 @@
+* Perspective
+- Infrastructure as code is cool
+- Writing regular code to set up my infrastructure is cool
+- JSON, YAML, "declarative" config files are not cool
+- Ansible
+- Pulumi is cool
+* rsyscall lets you 

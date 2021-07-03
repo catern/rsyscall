@@ -1,0 +1,6 @@
+* Perspective
+- Object-capability security is cool
+- Capsicum is cool
+- CloudABI is cool
+
+
