@@ -30477,3 +30477,293 @@ Thanks for OpenSSH!
   ah no it just forwards tun to tun, kind of a clever hack;
   it doesn't actually know about Ethernet or TCP/IP,
   it just receives packets from one TUN and sends them to another TUN on another host
+* rework nix.py
+hmmm so we want the paths to be pure...
+
+hmm what should I call Nixdep/StorePath...
+
+it's really a derivation...
+
+let's just call it StorePath.
+
+yeah it's a storepath,
+see https://nixos.org/manual/nix/unstable/glossary.html
+
+hmmmmmmmm
+
+and a nixdep is something that I generated with setup.py.
+
+with some name.
+
+hmmmmmmmmmmmmmmmmmmmmmm
+
+well, I don't really need this cache.
+all I really need is... the nix-store command
+which I can find with which, in the same way I'm finding tar.
+
+so let's... make that change.... I guess?
+
+hmmm.
+no I can't do that...
+because nix-store is not always on PATH,
+I might have, say, just deployed it, or something like that.
+I guess I could maybe implicitly add it to the path cache,
+but that would be insane...
+
+an explicit capability is preferable...
+
+but I guess it doesn't have to be a stateful one...
+
+well, Store is useful, but...
+I guess we can have a... Store.from_thread?
+
+or, that's a bit awkward.
+
+let's just have a deploy which takes a thread instead,
+and which internally does Store.from_thread.
+
+and actually.
+it should just take a thread and a PackageClosure,
+and use Store.from_thread,
+and deploy the PackageClosure to that thread.
+
+I mean... it's very lame that this requires that the thread have nix-store on PATH, hm.
+ugggh hmmmmmMM
+
+should I just have yet another capability?
+this one for "can write to the nix store on the target host"?
+there's only one nix store... I'm fairly happy to have a dynamic failure...
+it's just that I want to be able to deploy into containers without issues...
+
+eh. this is lame, yes, but it's not too lame;
+I really want nix to be just something which is already-configured,
+and that I can assume...
+and that includes having it on PATH.
+
+if that becomes an issue,
+I can, well...
+I can always just mutate PATH to add it, after the deployment...
+
+we won't do that now, but it's an option, for sure.
+
+okay so a deploy function which takes just (Thread, PackageClosure)
+and returns...?
+a path?
+another PackageClosure?
+
+to follow vats, we would return PackageClosure,
+and that would have methods for getting .bin etc
+
+maybe I should give Command default arguments for args and env,
+such that it just does [path.name], {}.
+that would be pretty good actually...
+
+so it will be something like...
+#+begin_src python
+cmd = Command((await deploy(thread, orderd))/"bin/orderd")
+#+end_src
+
+I guess? kinda wordy...
+
+#+begin_src python
+cmd = await deploy_command(thread, orderd, "orderd")
+#+end_src
+
+Yeah?
+
+that's a little magical tho....
+
+how about:
+#+begin_src python
+# in module
+orderd = Command(orderd_package.path/"bin/orderd")
+
+# in function
+await deploy(thread, orderd_package)
+cmd = orderd
+#+end_src
+
+that seems a *little* distastefully side-effectful,
+but it's... essentially fine.
+
+oh, the fact that we still need to wrap it in command is annoying...
+
+okay well how about...
+
+Command((await orderd.deploy(thread))/"bin/orderd")
+
+hmm, gross.
+
+okay, how about I just embrace it?
+
+#+begin_src python
+# in module
+orderd = orderd_package.bin("orderd")
+
+# in function
+await deploy(thread, orderd_package)
+cmd = orderd
+#+end_src
+
+or even...
+
+#+begin_src python
+cmd = await nix_deploy_command(thread, orderd_package, "bin/orderd")
+#+end_src
+
+#+begin_src python
+cmd = (await nix_deploy(thread, orderd_package)).bin("orderd")
+#+end_src
+
+#+begin_src python
+cmd = (await orderd_package.deploy(thread)).bin("orderd")
+#+end_src
+
+#+begin_src python
+cmd = await orderd_package.deploy_bin(thread, "orderd")
+#+end_src
+
+ok kai likes
+#+begin_src python
+cmd = await nix.deploy_command(thread, orderd_package, "bin/orderd")
+#+end_src
+
+we'll... go with that, I guess.
+
+honestly it looks good to me too actually
+
+ok so we just need to do that rework and we'll be good...
+
+
+ooh further idea!!!!!
+let's actually generate Python code instead of using JSON.
+then we could do...
+"from exampled.package import exampled_package"
+or something..
+
+writing out JSON and parsing it, is lame.
+
+"from exampled._package import foo"
+
+hmmm
+
+"from exampled._generated import package"
+
+although, actually this is a bit confusing maybe...
+
+hm no I think it's fine
+
+"from exampled._ffi" or...
+
+"from exampled import _package"
+
+except I'm writing exampled at that moment...
+
+"from exampled._nixdeps import exampled"
+
+aha. there we go...
+
+"from exampled._nixdeps import exampled as exampled_package"
+
+the generating-python approach is much better.
+it works with mypy,
+I can know if I'm importing something valid, etc.
+no strings!
+
+ok I think the lack of a _package suffix is fine.
+
+so! let's restructure things to work that way!
+
+
+ummm so we were mid-removing nix from Store...
+but I think it's fine as it is actually?
+
+yeah...
+the structure with local store is fine...
+although...
+yeah it's fine
+
+- add Store.from_thread
+- add deploy_command
+- add generated python instead of import_nixdep
+
+
+oh okay so we should put one package per module for fast import
+
+and, we shouldn't make Paths out of the paths,
+leave them as strings.
+(or maybe just make the actual path a Path?)
+
+and, we should import "package" or "pkg" from that
+
+and... we should have the setuptools entry point take either a list or a single file.
+
+and create a directory with a list.
+
+so then it will look like:
+#+begin_src python
+from orderd._nixdep import pkg
+#+end_src
+or
+#+begin_src python
+from orderd._nixdep import package
+#+end_src
+
+I do like the former more...
+oh but package is much easier to pick out.
+let's go with that.
+
+or maybe even package_closure?
+
+I like "package", it's nicely clear.
+
+ok!
+
+ok so I did the "leave as strings" and the "generated python" parts...
+
+okay so to do from_thread nicely,
+and get rid of local_store,
+we need..
+
+OHO!!
+okay HERE we go!
+
+we'll have a nix.deploy function which returns a *new class*,
+which has all the helper functions like .bin as sync methods.
+now THAT's what I'm talkin' about!!!
+
+anyway we'll use that everywhere.
+#+begin_src python
+from rsyscall._nixdeps.openssh import package_closure
+package = await nix.deploy(thread, package_closure)
+return package.bin('ssh-keygen'), package.bin('sshd')
+#+end_src
+
+ahh that's quite nice yeah.
+
+okay honestly let's just... drop the store entirely.
+
+we can add roots back in later...
+
+ok first we drop the nix packageclosure from the store...
+
+ok all done!
+
+now maybe I should rename the _closure thing?
+
+how about... {dep}_closure?
+that might be nicer, yeah, even though it's duplication...
+or what if I import by the full path?
+
+hmmm that's interesting...
+#+begin_src python
+import rsyscall._nixdeps.openssh
+package = await nix.deploy(thread, rsyscall._nixdeps.openssh.closure)
+return package.bin('ssh-keygen'), package.bin('sshd')
+#+end_src
+
+yeah... that's kind of cool actually!
+
+ok, so I like where I've ended up. this is good, good.
+
+now we can write the full example.
