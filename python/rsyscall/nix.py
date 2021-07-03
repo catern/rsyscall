@@ -4,7 +4,7 @@ We use the nixdeps module to create build-time dependencies on Nix
 derivations; setuptools will write out the paths and closures of the
 Nix derivations we depend on.
 
-We can use those dependencies through import_nix_dep, which returns
+We can use those dependencies by importing the `closure` module variables,
 PackageClosure instances, which are independent of any specific thread.  To
 turn a PackageClosure into a usable path, we can pass it to Store.realise,
 which checks if the path is already deployed in that specific store,
@@ -43,8 +43,8 @@ __all__ = [
     "hello_nixdep",
 ]
 
-async def _exec_tar_copy_tree(src: ChildThread, src_paths: t.List[Path], src_fd: FileDescriptor,
-                              dest: ChildThread, dest_path: Path, dest_fd: FileDescriptor) -> None:
+async def _exec_tar_copy_tree(src: ChildThread, src_paths: t.Sequence[t.Union[str, os.PathLike]], src_fd: FileDescriptor,
+                              dest: ChildThread, dest_path: t.Union[str, os.PathLike], dest_fd: FileDescriptor) -> None:
     "Exec tar to copy files between two paths"
     dest_tar = await dest.environ.which("tar")
     src_tar = await dest.environ.which("tar")
@@ -64,7 +64,7 @@ async def _exec_tar_copy_tree(src: ChildThread, src_paths: t.List[Path], src_fd:
     await src_child.check()
     await dest_child.check()
 
-async def copy_tree(src: Thread, src_paths: t.List[Path], dest: Thread, dest_path: Path) -> None:
+async def copy_tree(src: Thread, src_paths: t.Sequence[t.Union[str, os.PathLike]], dest: Thread, dest_path: t.Union[str, os.PathLike]) -> None:
     """Copy all the listed `src_paths` to subdirectories of `dest_path`
 
     Example: if we pass src_paths=['/a/b', 'c'], dest_path='dest',
@@ -76,7 +76,7 @@ async def copy_tree(src: Thread, src_paths: t.List[Path], dest: Thread, dest_pat
                               await dest.clone(), dest_path, dest_fd)
 
 async def _exec_nix_store_transfer_db(
-        src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor, closure: t.List[Path],
+        src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor, closure: t.Sequence[t.Union[str, os.PathLike]],
         dest: ChildThread, dest_nix_store: Command, dest_fd: FileDescriptor,
 ) -> None:
     "Exec nix-store to copy the Nix database for a closure between two stores"
@@ -91,7 +91,7 @@ async def _exec_nix_store_transfer_db(
     await dest_child.check()
 
 async def bootstrap_nix_database(
-        src: Thread, src_nix_store: Command, closure: t.List[Path],
+        src: Thread, src_nix_store: Command, closure: t.Sequence[t.Union[str, os.PathLike]],
         dest: Thread, dest_nix_store: Command,
 ) -> None:
     "Bootstrap the store used by `dest` with the necessary database entries for `closure`, coming from `src`'s store"
@@ -130,7 +130,8 @@ async def deploy_nix_bin(store: Store, dest: Thread) -> Store:
     return Store(dest, store.nix)
 
 async def _exec_nix_store_import_export(
-        src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor, closure: t.List[Path],
+        src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor,
+        closure: t.Sequence[t.Union[str, os.PathLike]],
         dest: ChildThread, dest_nix_store: Command, dest_fd: FileDescriptor,
 ) -> None:
     "Exec nix-store to copy a closure of paths between two stores"
@@ -163,7 +164,7 @@ class Store:
         self._add_root(nix)
 
     def _add_root(self, package: PackageClosure) -> None:
-        self.roots.add(package.path)
+        self.roots.add(Path(package.path))
 
     async def _create_root(self, package: PackageClosure, path: WrittenPointer[Path]) -> Path:
         # TODO create a Nix temp root pointing to this path
@@ -173,9 +174,10 @@ class Store:
 
     async def realise(self, package: PackageClosure) -> Path:
         "Turn a PackageClosure into a Path, deploying it to this store if necessary"
-        if package.path in self.roots:
-            return package.path
-        ptr = await self.thread.ram.ptr(package.path)
+        path = Path(package.path)
+        if path in self.roots:
+            return path
+        ptr = await self.thread.ram.ptr(path)
         try:
             await self.thread.task.access(ptr, OK.R)
         except (PermissionError, FileNotFoundError):
@@ -191,16 +193,15 @@ class Store:
 
 local_store: Store
 nix: PackageClosure
-_imported_store_paths: t.Dict[str, PackageClosure] = {}
 # This is some hackery to make it possible to import rsyscall.nix without being
-# built with Nix, as long as you don't use import_nix_dep, nix, or local_store.
+# built with Nix, as long as you don't use nix or local_store.
 def _get_nix() -> PackageClosure:
     global nix
     if "nix" in globals():
         return nix
     else:
-        nix = nixdeps.import_nixdep('rsyscall._nixdeps', 'nix')
-        _imported_store_paths['nix'] = nix
+        from rsyscall._nixdeps.nix import closure
+        nix = closure
         return nix
 
 from rsyscall import local_thread
@@ -214,17 +215,6 @@ def __getattr__(name: str) -> t.Any:
         return local_store
     raise AttributeError(f"module {__name__} has no attribute {name}")
 
-def import_nix_dep(name: str) -> PackageClosure:
-    "Import the Nixdep with this name, returning it as a PackageClosure"
-    if name in _imported_store_paths:
-        return _imported_store_paths[name]
-    store_path = nixdeps.import_nixdep('rsyscall._nixdeps', name)
-    # the local store has a root for every PackageClosure; that's where the
-    # paths actually originally are.
-    __getattr__("local_store")._add_root(store_path)
-    _imported_store_paths[name] = store_path
-    return store_path
-
-bash_nixdep: PackageClosure = import_nix_dep("bash")
-coreutils_nixdep: PackageClosure = import_nix_dep("coreutils")
-hello_nixdep: PackageClosure = import_nix_dep("hello")
+from rsyscall._nixdeps.bash import closure as bash_nixdep
+from rsyscall._nixdeps.coreutils import closure as coreutils_nixdep
+from rsyscall._nixdeps.hello import closure as hello_nixdep

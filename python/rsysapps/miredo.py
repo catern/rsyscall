@@ -30,7 +30,7 @@ from rsyscall.net.if_ import Ifreq, IFF, TUNSETIFF, SIOC
 
 import rsyscall.nix as nix
 
-miredo_nixdep = nix.import_nix_dep("miredo")
+from rsyscall._nixdeps.miredo import closure as miredo_nixdep
 
 @dataclass
 class MiredoExecutables:

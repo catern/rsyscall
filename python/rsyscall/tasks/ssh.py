@@ -99,8 +99,10 @@ class SSHExecutables:
 
     @classmethod
     async def from_store(cls, store: nix.Store) -> SSHExecutables:
-        ssh_path = await store.realise(nix.import_nix_dep("openssh"))
-        rsyscall_path = await store.realise(nix.import_nix_dep("rsyscall"))
+        import rsyscall._nixdeps.openssh
+        import rsyscall._nixdeps.rsyscall
+        ssh_path = await store.realise(rsyscall._nixdeps.openssh.closure)
+        rsyscall_path = await store.realise(rsyscall._nixdeps.rsyscall.closure)
         base_ssh = SSHCommand.make(ssh_path/"bin"/"ssh")
         bootstrap_path = rsyscall_path/"libexec"/"rsyscall"/"rsyscall-bootstrap"
         return SSHExecutables(base_ssh, bootstrap_path)
@@ -323,7 +325,8 @@ class SSHDExecutables:
 
     @classmethod
     async def from_store(cls, store: nix.Store) -> SSHDExecutables:
-        ssh_path = await store.realise(nix.import_nix_dep("openssh"))
+        import rsyscall._nixdeps.openssh
+        ssh_path = await store.realise(rsyscall._nixdeps.openssh.closure)
         ssh_keygen = Command(ssh_path/"bin"/"ssh-keygen", ["ssh-keygen"], {})
         sshd = SSHDCommand.make(ssh_path/"bin"/"sshd")
         return SSHDExecutables(ssh_keygen, sshd)

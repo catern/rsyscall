@@ -7,7 +7,7 @@ T_command = t.TypeVar('T_command', bound="Command")
 class Command:
     "A convenient builder-pattern representation of the arguments to execve."
     def __init__(self,
-                 executable_path: Path,
+                 executable_path: t.Union[str, os.PathLike],
                  arguments: t.List[t.Union[str, os.PathLike]],
                  env_updates: t.Mapping[str, t.Union[str, os.PathLike]]) -> None:
         self.executable_path = executable_path
