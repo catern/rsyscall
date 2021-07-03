@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall.nix import local_store
 from rsyscall.tasks.stdin_bootstrap import *
 
 from rsyscall import local_thread
@@ -12,7 +11,7 @@ from rsyscall.command import Command
 class TestStdinboot(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local_thread
-        path = await stdin_bootstrap_path_from_store(local_store)
+        path = await stdin_bootstrap_path_with_nix(self.local)
         self.command = Command(path, ['rsyscall-stdin-bootstrap'], {})
         self.local_child, self.remote = await stdin_bootstrap(self.local, self.command)
 

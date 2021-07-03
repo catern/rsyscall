@@ -1,6 +1,5 @@
 from __future__ import annotations
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall.nix import local_store
 from rsyscall import local_thread
 from rsyscall.tasks.persistent import *
 from rsyscall.tasks.ssh import make_local_ssh
@@ -14,7 +13,6 @@ import unittest
 class TestPersistent(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thread = local_thread
-        self.store = local_store
         self.tmpdir = await mkdtemp(self.thread, "test_stub")
         self.sock_path = self.tmpdir/"persist.sock"
 
@@ -52,7 +50,7 @@ class TestPersistent(TrioTestCase):
         await thread.exit(0)
 
     async def test_ssh_same(self) -> None:
-        host = await make_local_ssh(self.thread, self.store)
+        host = await make_local_ssh(self.thread)
         local_child, remote_thread = await host.ssh(self.thread)
         per_thr = await clone_persistent(remote_thread, self.sock_path)
         await per_thr.reconnect(remote_thread)
@@ -61,7 +59,7 @@ class TestPersistent(TrioTestCase):
 
     async def test_ssh_new(self) -> None:
         "Start the persistent thread from one ssh thread, then reconnect to it from a new ssh thread."
-        host = await make_local_ssh(self.thread, self.store)
+        host = await make_local_ssh(self.thread)
         local_child, remote_thread = await host.ssh(self.thread)
         per_thr = await clone_persistent(remote_thread, self.sock_path)
 

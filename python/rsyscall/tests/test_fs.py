@@ -1,5 +1,4 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall.nix import local_store
 from rsyscall import local_thread
 
 from rsyscall import Pointer
@@ -15,7 +14,6 @@ from rsyscall.environ import ExecutablePathCache, ExecutableNotFound
 class TestFS(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local_thread
-        self.store = local_store
         self.tmpdir = await mkdtemp(self.thr)
 
     async def asyncTearDown(self) -> None:

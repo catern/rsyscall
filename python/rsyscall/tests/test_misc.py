@@ -2,7 +2,6 @@ from __future__ import annotations
 import unittest
 
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall.nix import local_store
 
 from rsyscall import local_thread
 
@@ -16,7 +15,6 @@ from rsyscall.sched import CLONE
 class TestMisc(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local_thread
-        self.store = local_store
         self.thr = await self.local.clone()
 
     async def asyncTearDown(self) -> None:

@@ -5,13 +5,11 @@ from rsyscall.unistd import Pipe
 from rsyscall.fcntl import O
 
 from rsyscall.sched import CLONE
-from rsyscall.nix import local_store
 from rsyscall.tests.utils import assert_thread_works
 
 class TestPidns(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local_thread
-        self.store = local_store
         self.init = await self.local.clone(CLONE.NEWUSER|CLONE.NEWPID|CLONE.FILES)
 
     async def test_cat(self) -> None:

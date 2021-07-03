@@ -1,6 +1,5 @@
 "A program developed for SIGBOVIK2020; see research/sigbovik2020 for more information."
 from __future__ import annotations
-from rsyscall.nix import local_store
 import shlex
 
 from rsyscall.sched import CLONE
@@ -146,7 +145,7 @@ async def symsh_main(thread: Thread, command: Command) -> None:
         path = tmpdir/"path"
         await thr.mkdir(path)
         async with trio.open_nursery() as nursery:
-            stub_server = await StubServer.make(thr, local_store, tmpdir, "stub")
+            stub_server = await StubServer.make(thr, tmpdir, "stub")
             stub_path = tmpdir/"stub"
             commands: t.List[CommandData] = []
             @nursery.start_soon

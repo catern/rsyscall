@@ -8,14 +8,12 @@ from rsyscall.sys.wait import W, Siginfo
 
 from rsyscall.sched import CLONE
 from rsyscall.handle import Process
-from rsyscall.nix import local_store
 from rsyscall.tests.utils import assert_thread_works
 from rsyscall.signal import SIG
 
 class TestProc(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local_thread
-        self.store = local_store
         self.init = await self.local.clone(CLONE.NEWUSER|CLONE.NEWPID)
         # set up proc
 

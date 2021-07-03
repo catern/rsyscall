@@ -1,6 +1,5 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
 from rsyscall import local_thread
-from rsyscall.nix import local_store
 import shlex
 
 from rsyscall.sched import CLONE

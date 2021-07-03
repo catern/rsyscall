@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from rsyscall.tests.trio_test_case import TrioTestCase
 import rsyscall.thread
-from rsyscall.nix import local_store, enter_nix_container, bash_nixdep, coreutils_nixdep, hello_nixdep
+from rsyscall.nix import enter_nix_container, deploy, bash_nixdep, coreutils_nixdep, hello_nixdep
+import rsyscall._nixdeps.nix
 from rsyscall.tasks.ssh import *
 from rsyscall import local_thread
 
@@ -31,8 +32,7 @@ async def start_cat(thread: Thread, cat: Command,
 class TestSSH(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local_thread
-        self.store = local_store
-        self.host = await make_local_ssh(self.local, self.store)
+        self.host = await make_local_ssh(self.local)
         self.local_child, self.remote = await self.host.ssh(self.local)
 
     async def asyncTearDown(self) -> None:
@@ -62,12 +62,12 @@ class TestSSH(TrioTestCase):
         self.assertEqual(data, await read_data.read())
 
     async def test_exec_true(self) -> None:
-        bash = await self.store.bin(bash_nixdep, "bash")
+        bash = (await deploy(self.local, bash_nixdep)).bin('bash')
         await self.remote.run(bash.args('-c', 'true'))
 
     async def test_exec_pipe(self) -> None:
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)
-        cat = await self.store.bin(coreutils_nixdep, "cat")
+        cat = (await deploy(self.local, coreutils_nixdep)).bin('cat')
         thread = await self.remote.clone()
         cat_side = thread.task.inherit_fd(remote_sock)
         await remote_sock.close()
@@ -91,7 +91,7 @@ class TestSSH(TrioTestCase):
         await local_child.kill()
 
     async def test_copy(self) -> None:
-        cat = await self.store.bin(coreutils_nixdep, "cat")
+        cat = (await deploy(self.local, coreutils_nixdep)).bin('cat')
 
         local_file = await self.local.task.memfd_create(await self.local.ptr("source"))
         remote_file = await self.remote.task.memfd_create(await self.remote.ptr("dest"))
@@ -129,6 +129,6 @@ class TestSSH(TrioTestCase):
         # remote enters the container
         tmpdir = await mkdtemp(self.local)
         async with tmpdir:
-            store = await enter_nix_container(local_store, self.remote, tmpdir)
-            hello = await store.bin(hello_nixdep, "hello")
+            await enter_nix_container(self.local, rsyscall._nixdeps.nix.closure, self.remote, tmpdir)
+            hello = (await deploy(self.remote, hello_nixdep)).bin('hello')
             await self.remote.run(hello)

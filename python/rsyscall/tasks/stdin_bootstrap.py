@@ -37,13 +37,13 @@ from rsyscall.sys.socket import SOCK, AF, SendmsgFlags, Socketpair, SendMsghdr, 
 from rsyscall.sys.uio import IovecList
 
 __all__ = [
-    "stdin_bootstrap_path_from_store",
+    "stdin_bootstrap_path_with_nix",
     "stdin_bootstrap",
 ]
 
 logger = logging.getLogger(__name__)
 
-async def stdin_bootstrap_path_from_store(store: nix.Store) -> Path:
+async def stdin_bootstrap_path_with_nix(thread: Thread) -> Path:
     """Get the path to the rsyscall-stdin-bootstrap executable.
 
     We return a Path rather than a Command because the typical usage
@@ -52,7 +52,7 @@ async def stdin_bootstrap_path_from_store(store: nix.Store) -> Path:
 
     """
     import rsyscall._nixdeps.rsyscall
-    rsyscall_path = await store.realise(rsyscall._nixdeps.rsyscall.closure)
+    rsyscall_path = await nix.deploy(thread, rsyscall._nixdeps.rsyscall.closure)
     return rsyscall_path/"libexec"/"rsyscall"/"rsyscall-stdin-bootstrap"
 
 async def stdin_bootstrap(

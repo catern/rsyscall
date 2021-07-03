@@ -6,16 +6,17 @@ Nix derivations we depend on.
 
 We can use those dependencies by importing the `closure` module variables,
 PackageClosure instances, which are independent of any specific thread.  To
-turn a PackageClosure into a usable path, we can pass it to Store.realise,
+turn a PackageClosure into a usable path, we can pass it to `deploy`,
 which checks if the path is already deployed in that specific store,
 and returns the path if so. If the path isn't deployed already,
-Store.realise will deploy it for us.
+`deploy` will deploy it for us.
 
 """
 from __future__ import annotations
 import typing as t
 import os
 import rsyscall.handle as handle
+from rsyscall import local_thread
 from rsyscall.thread import Thread, ChildThread
 from rsyscall.command import Command
 import trio
@@ -35,9 +36,7 @@ from rsyscall.unistd import Pipe, OK
 __all__ = [
     "copy_tree",
     "enter_nix_container",
-    "local_store",
-    "nix",
-    "Store",
+    "deploy",
     "bash_nixdep",
     "coreutils_nixdep",
     "hello_nixdep",
@@ -100,10 +99,13 @@ async def bootstrap_nix_database(
     await _exec_nix_store_transfer_db(await src.clone(), src_nix_store, src_fd, closure,
                                       await dest.clone(), dest_nix_store, dest_fd)
 
-async def enter_nix_container(store: Store, dest: Thread, dest_dir: Path) -> Store:
-    """Move `dest` into a container in `dest_dir`, deploying Nix inside and returning the Store thus-created
+async def enter_nix_container(
+        src: Thread, nix: PackageClosure,
+        dest: Thread, dest_dir: Path,
+) -> None:
+    """Move `dest` into a container in `dest_dir`, deploying Nix inside.
 
-    We can then use Store.realise to deploy other things into this container,
+    We can then use `deploy` to deploy other things into this container,
     which we can use from the `dest` thread or any of its children.
 
     """
@@ -111,23 +113,23 @@ async def enter_nix_container(store: Store, dest: Thread, dest_dir: Path) -> Sto
     if 'NIX_REMOTE' in dest.environ:
         del dest.environ['NIX_REMOTE']
     # copy the binaries over
-    await copy_tree(store.thread, store.nix.closure, dest, dest_dir)
+    await copy_tree(src, nix.closure, dest, dest_dir)
     # enter the container
     await dest.unshare(CLONE.NEWNS|CLONE.NEWUSER)
     await dest.mount(dest_dir/"nix", "/nix", "none", MS.BIND, "")
     # init the database
-    nix_store = Command(store.nix.path/'bin/nix-store', ['nix-store'], {})
-    await bootstrap_nix_database(store.thread, nix_store, store.nix.closure, dest, nix_store)
-    return Store(dest, store.nix)
+    nix_store = Command(nix.path/'bin/nix-store', ['nix-store'], {})
+    await bootstrap_nix_database(src, nix_store, nix.closure, dest, nix_store)
+    # add nix.path to PATH; TODO add a real API for this
+    dest.environ.path.paths.append(Path(nix.path/'bin'))
 
-async def deploy_nix_bin(store: Store, dest: Thread) -> Store:
+async def deploy_nix_bin(src: Thread, nix: PackageClosure, dest: Thread) -> None:
     "Deploy the Nix binaries from `store` to /nix through `dest`"
     # copy the binaries over
-    await copy_tree(store.thread, store.nix.closure, dest, Path("/nix"))
+    await copy_tree(src, nix.closure, dest, Path("/nix"))
     # init the database
-    nix_store = Command(store.nix.path/'bin/nix-store', ['nix-store'], {})
-    await bootstrap_nix_database(store.thread, nix_store, store.nix.closure, dest, nix_store)
-    return Store(dest, store.nix)
+    nix_store = Command(nix.path/'bin/nix-store', ['nix-store'], {})
+    await bootstrap_nix_database(src, nix_store, nix.closure, dest, nix_store)
 
 async def _exec_nix_store_import_export(
         src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor,
@@ -145,75 +147,35 @@ async def _exec_nix_store_import_export(
     await src_child.check()
     await dest_child.check()
 
-async def nix_deploy(src: Store, dest: Store, path: PackageClosure) -> None:
-    "Deploy a PackageClosure from the src Store to the dest Store"
-    [(local_fd, dest_fd)] = await dest.thread.open_channels(1)
-    src_fd = local_fd.move(src.thread.task)
+async def _deploy(src: Thread, dest: Thread, path: PackageClosure) -> None:
+    "Deploy a PackageClosure from the src Thread to the dest Thread"
+    [(local_fd, dest_fd)] = await dest.open_channels(1)
+    src_fd = local_fd.move(src.task)
     await _exec_nix_store_import_export(
-        await src.thread.clone(),
-        Command(src.nix.path/'bin/nix-store', ['nix-store'], {}), src_fd, path.closure,
-        await dest.thread.clone(),
-        Command(dest.nix.path/'bin/nix-store', ['nix-store'], {}), dest_fd)
+        await src.clone(),
+        await src.environ.which('nix-store'),
+        src_fd, path.closure,
+        await dest.clone(),
+        await dest.environ.which('nix-store'),
+        dest_fd)
 
-class Store:
-    "Some Nix store, containing some derivations, and capable of realising new derivations"
-    def __init__(self, thread: Thread, nix: PackageClosure) -> None:
-        self.thread = thread
-        self.nix = nix
-        self.roots: t.Set[Path] = set()
-        self._add_root(nix)
+class PackagePath(Path):
+    "A Path with a few helper methods useful for Nix packages"
+    def bin(self, name: str) -> Path:
+        return Command(self/"bin"/name, [name], {})
 
-    def _add_root(self, package: PackageClosure) -> None:
-        self.roots.add(Path(package.path))
-
-    async def _create_root(self, package: PackageClosure, path: WrittenPointer[Path]) -> Path:
-        # TODO create a Nix temp root pointing to this path
-        self._add_root(package)
-        # TODO would be cool to store and return a WrittenPointer[Path]
-        return path.value
-
-    async def realise(self, package: PackageClosure) -> Path:
-        "Turn a PackageClosure into a Path, deploying it to this store if necessary"
-        path = Path(package.path)
-        if path in self.roots:
-            return path
-        ptr = await self.thread.ram.ptr(path)
+async def deploy(thread: Thread, package: PackageClosure) -> PackagePath:
+    "Deploy a PackageClosure to the filesystem of this Thread"
+    if thread is not local_thread:
+        # for remote threads, we need to check if it's actually there,
+        # and deploy it if it's not there.
+        # TODO we should really make and return a Nix GC root, too...
+        ptr = await thread.ptr(package.path)
         try:
-            await self.thread.task.access(ptr, OK.R)
+            await thread.task.access(ptr, OK.R)
         except (PermissionError, FileNotFoundError):
-            await nix_deploy(local_store, self, package)
-            return await self._create_root(package, ptr)
-        else:
-            return await self._create_root(package, ptr)
-
-    async def bin(self, package: PackageClosure, name: str) -> Command:
-        "Realise this PackageClosure, then return a Command for the binary named `name`"
-        path = await self.realise(package)
-        return Command(path/"bin"/name, [name], {})
-
-local_store: Store
-nix: PackageClosure
-# This is some hackery to make it possible to import rsyscall.nix without being
-# built with Nix, as long as you don't use nix or local_store.
-def _get_nix() -> PackageClosure:
-    global nix
-    if "nix" in globals():
-        return nix
-    else:
-        from rsyscall._nixdeps.nix import closure
-        nix = closure
-        return nix
-
-from rsyscall import local_thread
-
-def __getattr__(name: str) -> t.Any:
-    if name == "nix":
-        return _get_nix()
-    elif name == "local_store":
-        global local_store
-        local_store = Store(local_thread, _get_nix())
-        return local_store
-    raise AttributeError(f"module {__name__} has no attribute {name}")
+            await _deploy(local_thread, thread, package)
+    return PackagePath(package.path)
 
 from rsyscall._nixdeps.bash import closure as bash_nixdep
 from rsyscall._nixdeps.coreutils import closure as coreutils_nixdep

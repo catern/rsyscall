@@ -98,11 +98,11 @@ class SSHExecutables:
     bootstrap_path: Path
 
     @classmethod
-    async def from_store(cls, store: nix.Store) -> SSHExecutables:
+    async def with_nix(cls, thread: Thread) -> SSHExecutables:
         import rsyscall._nixdeps.openssh
         import rsyscall._nixdeps.rsyscall
-        ssh_path = await store.realise(rsyscall._nixdeps.openssh.closure)
-        rsyscall_path = await store.realise(rsyscall._nixdeps.rsyscall.closure)
+        ssh_path = await nix.deploy(thread, rsyscall._nixdeps.openssh.closure)
+        rsyscall_path = await nix.deploy(thread, rsyscall._nixdeps.rsyscall.closure)
         base_ssh = SSHCommand.make(ssh_path/"bin"/"ssh")
         bootstrap_path = rsyscall_path/"libexec"/"rsyscall"/"rsyscall-bootstrap"
         return SSHExecutables(base_ssh, bootstrap_path)
@@ -324,10 +324,10 @@ class SSHDExecutables:
     sshd: SSHDCommand
 
     @classmethod
-    async def from_store(cls, store: nix.Store) -> SSHDExecutables:
+    async def with_nix(cls, thread: Thread) -> SSHDExecutables:
         import rsyscall._nixdeps.openssh
-        ssh_path = await store.realise(rsyscall._nixdeps.openssh.closure)
-        ssh_keygen = Command(ssh_path/"bin"/"ssh-keygen", ["ssh-keygen"], {})
+        ssh_path = await nix.deploy(thread, rsyscall._nixdeps.openssh.closure)
+        ssh_keygen = ssh_path.bin('ssh-keygen')
         sshd = SSHDCommand.make(ssh_path/"bin"/"sshd")
         return SSHDExecutables(ssh_keygen, sshd)
 
@@ -374,13 +374,13 @@ async def make_local_ssh_from_executables(thread: Thread,
     return executables.host(to_host)
 
 # Helpers
-async def make_ssh_host(store: nix.Store, to_host: t.Callable[[SSHCommand], SSHCommand]) -> SSHHost:
-    ssh = await SSHExecutables.from_store(store)
+async def make_ssh_host(thread: Thread, to_host: t.Callable[[SSHCommand], SSHCommand]) -> SSHHost:
+    ssh = await SSHExecutables.with_nix(thread)
     return ssh.host(to_host)
 
-async def make_local_ssh(thread: Thread, store: nix.Store) -> SSHHost:
+async def make_local_ssh(thread: Thread) -> SSHHost:
     "Look up the ssh executables and return an SSHHost which sshs to localhost; useful for testing"
-    ssh = await SSHExecutables.from_store(store)
-    sshd = await SSHDExecutables.from_store(store)
+    ssh = await SSHExecutables.with_nix(thread)
+    sshd = await SSHDExecutables.with_nix(thread)
     return (await make_local_ssh_from_executables(thread, ssh, sshd))
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall.nix import local_store
 from rsyscall.tasks.stub import *
 
 import rsyscall.nix as nix
@@ -16,12 +15,11 @@ import os
 class TestStub(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.local = local_thread
-        self.store = nix.local_store
         self.tmpdir = await mkdtemp(self.local, "test_stub")
         # make sure that this name doesn't collide with shell builtins
         # so it can be run from the shell in test_read_stdin
         self.stub_name = "dummy_stub"
-        self.server = await StubServer.make(self.local, self.store, self.tmpdir, self.stub_name)
+        self.server = await StubServer.make(self.local, self.tmpdir, self.stub_name)
         self.thread = await self.local.clone()
 
     async def asyncTearDown(self) -> None:
