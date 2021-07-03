@@ -15,14 +15,13 @@ class TestSocket(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local_thread
         self.tmpdir = await mkdtemp(self.thr)
-        self.path = self.tmpdir.path
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()
 
     async def test_listen(self) -> None:
         sockfd = await self.thr.task.socket(AF.UNIX, SOCK.STREAM)
-        addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, self.path/"sock"))
+        addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, self.tmpdir/"sock"))
         await sockfd.bind(addr)
         await sockfd.listen(10)
 
@@ -32,7 +31,7 @@ class TestSocket(TrioTestCase):
 
     async def test_listen_async(self) -> None:
         sockfd = await self.thr.make_afd(await self.thr.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
-        addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, self.path/"sock"))
+        addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, self.tmpdir/"sock"))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
 
@@ -46,7 +45,7 @@ class TestSocket(TrioTestCase):
 
     async def test_listen_async_accept(self) -> None:
         sockfd = await self.thr.make_afd(await self.thr.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
-        addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, self.path/"sock"))
+        addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, self.tmpdir/"sock"))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
 
@@ -99,7 +98,7 @@ class TestSocket(TrioTestCase):
 
     async def test_long_sockaddr(self) -> None:
         "SockaddrUn.from_path works correctly on long Unix socket paths"
-        longdir = await self.thr.ram.ptr(self.path/("long"*50))
+        longdir = await self.thr.ram.ptr(self.tmpdir/("long"*50))
         await self.thr.task.mkdir(longdir)
         addr = await self.thr.ram.ptr(await SockaddrUn.from_path(self.thr, longdir.value/"sock"))
 

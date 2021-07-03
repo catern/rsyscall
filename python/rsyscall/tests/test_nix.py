@@ -9,7 +9,7 @@ class TestNix(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.tmpdir = await mkdtemp(local_thread)
         self.thr = await local_thread.clone()
-        self.store = await enter_nix_container(local_store, self.thr, self.tmpdir.path)
+        self.store = await enter_nix_container(local_store, self.thr, self.tmpdir)
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()

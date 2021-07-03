@@ -129,6 +129,6 @@ class TestSSH(TrioTestCase):
         # remote enters the container
         tmpdir = await mkdtemp(self.local)
         async with tmpdir:
-            store = await enter_nix_container(local_store, self.remote, tmpdir.path)
+            store = await enter_nix_container(local_store, self.remote, tmpdir)
             hello = await store.bin(hello_nixdep, "hello")
             await self.remote.run(hello)

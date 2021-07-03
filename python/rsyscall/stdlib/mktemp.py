@@ -27,14 +27,12 @@ async def mkdtemp(thr: Thread, prefix: str="mkdtemp") -> 'TemporaryDirectory':
     await thr.task.mkdir(await thr.ram.ptr(parent/name), 0o700)
     return TemporaryDirectory(thr, parent, name)
 
-class TemporaryDirectory:
+class TemporaryDirectory(Path):
     "A temporary directory we've created and are responsible for cleaning up."
     def __init__(self, thr: Thread, parent: Path, name: str) -> None:
         "Don't directly instantiate, use rsyscall.mktemp.mkdtemp to create this class."
         self.thr = thr
-        self.parent = parent
-        self.name = name
-        self.path = parent/name
+        super().__init__(parent, name)
 
     async def cleanup(self) -> None:
         """Delete this temporary directory and everything inside it.
@@ -52,7 +50,7 @@ class TemporaryDirectory:
         await child.check()
 
     async def __aenter__(self) -> Path:
-        return self.path
+        return self
 
     async def __aexit__(self, *args, **kwargs):
         await self.cleanup()

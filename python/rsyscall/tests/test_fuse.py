@@ -37,7 +37,7 @@ class TestFUSE(TrioTestCase):
         self.tmpdir = await mkdtemp(local_thread)
         self.thr = await local_thread.clone(CLONE.NEWUSER|CLONE.NEWNS)
         self.child = await self.thr.clone()
-        self.path = self.tmpdir.path/"path"
+        self.path = self.tmpdir/"path"
         await self.thr.mkdir(self.path)
         self.fuse = await FuseFS.mount(self.thr, self.path)
 

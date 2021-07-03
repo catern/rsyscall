@@ -18,25 +18,24 @@ class TestStub(TrioTestCase):
         self.local = local_thread
         self.store = nix.local_store
         self.tmpdir = await mkdtemp(self.local, "test_stub")
-        self.path = self.tmpdir.path
         # make sure that this name doesn't collide with shell builtins
         # so it can be run from the shell in test_read_stdin
         self.stub_name = "dummy_stub"
-        self.server = await StubServer.make(self.local, self.store, self.path, self.stub_name)
+        self.server = await StubServer.make(self.local, self.store, self.tmpdir, self.stub_name)
         self.thread = await self.local.clone()
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()
 
     async def test_exit(self) -> None:
-        command = Command(self.path/self.stub_name, [self.stub_name], {})
+        command = Command(self.tmpdir/self.stub_name, [self.stub_name], {})
         child = await self.thread.exec(command)
         self.nursery.start_soon(child.check)
         argv, new_thread = await self.server.accept()
         await new_thread.exit(0)
 
     async def test_async(self) -> None:
-        command = Command(self.path/self.stub_name, [self.stub_name], {})
+        command = Command(self.tmpdir/self.stub_name, [self.stub_name], {})
         child = await self.thread.exec(command)
         self.nursery.start_soon(child.check)
         argv, new_thread = await self.server.accept()
@@ -44,7 +43,7 @@ class TestStub(TrioTestCase):
 
     async def test_read_stdin(self) -> None:
         data_in = "hello"
-        command = self.thread.environ.sh.args("-c", f"printf {data_in} | {self.stub_name}").env(PATH=os.fsdecode(self.path))
+        command = self.thread.environ.sh.args("-c", f"printf {data_in} | {self.stub_name}").env(PATH=os.fsdecode(self.tmpdir))
         child = await self.thread.exec(command)
         self.nursery.start_soon(child.check)
         argv, new_thread = await self.server.accept()

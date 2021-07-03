@@ -13,7 +13,7 @@ class TestREPL(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.thr = local_thread
         self.tmpdir = await mkdtemp(self.thr, "test_stub")
-        self.sock_path = self.tmpdir.path/"repl.sock"
+        self.sock_path = self.tmpdir/"repl.sock"
 
     async def test_repl(self) -> None:
         sockfd = await self.thr.make_afd(await self.thr.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))

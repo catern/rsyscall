@@ -17,19 +17,18 @@ class TestFS(TrioTestCase):
         self.thr = local_thread
         self.store = local_store
         self.tmpdir = await mkdtemp(self.thr)
-        self.path = self.tmpdir.path
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()
 
     async def test_copy(self) -> None:
-        source_file = await self.thr.task.open(await self.thr.ram.ptr(self.path/"source"), O.RDWR|O.CREAT)
+        source_file = await self.thr.task.open(await self.thr.ram.ptr(self.tmpdir/"source"), O.RDWR|O.CREAT)
         data = b'hello world'
         buf: Pointer[bytes] = await self.thr.ram.ptr(data)
         valid, rest = await source_file.write(buf)
         buf = valid + rest
         await source_file.lseek(0, SEEK.SET)
-        dest_file = await self.thr.task.open(await self.thr.ram.ptr(self.path/"dest"), O.RDWR|O.CREAT)
+        dest_file = await self.thr.task.open(await self.thr.ram.ptr(self.tmpdir/"dest"), O.RDWR|O.CREAT)
 
         thread = await self.thr.clone()
         cat = await self.thr.environ.which("cat")
@@ -42,7 +41,7 @@ class TestFS(TrioTestCase):
         self.assertEqual(await (await dest_file.read(buf))[0].read(), data)
 
     async def test_getdents(self) -> None:
-        dirfd = await self.thr.task.open(await self.thr.ram.ptr(self.path), O.DIRECTORY)
+        dirfd = await self.thr.task.open(await self.thr.ram.ptr(self.tmpdir), O.DIRECTORY)
         dent_buf = await self.thr.ram.malloc(DirentList, 4096)
         valid, rest = await dirfd.getdents(dent_buf)
         self.assertCountEqual([dirent.name for dirent in await valid.read()], ['.', '..'])
@@ -65,7 +64,7 @@ class TestFS(TrioTestCase):
 
     async def test_getdents_noent(self) -> None:
         "getdents on a removed directory returns ENOENT/FileNotFoundError"
-        name = await self.thr.ram.ptr(self.path/"foo")
+        name = await self.thr.ram.ptr(self.tmpdir/"foo")
         await self.thr.task.mkdir(name)
         dirfd = await self.thr.task.open(name, O.DIRECTORY)
         await self.thr.task.rmdir(name)
@@ -82,7 +81,7 @@ class TestFS(TrioTestCase):
 
     async def test_fdat(self) -> None:
         "The *at system calls on FileDescriptor work"
-        root = await self.thr.task.open(await self.thr.ptr(self.path), O.DIRECTORY)
+        root = await self.thr.task.open(await self.thr.ptr(self.tmpdir), O.DIRECTORY)
         name = await self.thr.ptr("foo")
         await root.mkdirat(name)
         await root.rmdirat(name)
@@ -101,7 +100,7 @@ class TestFS(TrioTestCase):
     async def test_which(self) -> None:
         names = []
         for i in range(5):
-            name = await self.thr.ram.ptr(self.path/f"dir{i}")
+            name = await self.thr.ram.ptr(self.tmpdir/f"dir{i}")
             names.append(name)
             await self.thr.task.mkdir(name)
         cache = ExecutablePathCache(self.thr.task, self.thr.ram, [str(name.value) for name in names])
