@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from rsyscall.tests.trio_test_case import TrioTestCase
 from rsyscall import local_thread, FileDescriptor, Thread
 from rsyscall.fcntl import O
-from rsyscall.sys.socket import AF, SOCK, SO, SOL
+from rsyscall.sys.socket import AF, SOCK, SO, SOL, Sockbuf
 from rsyscall.net.if_ import *
 from rsyscall.netinet.ip import SockaddrIn
 from rsyscall.linux.netlink import *
@@ -14,6 +14,7 @@ import ipaddress
 import logging
 import trio
 logger = logging.getLogger(__name__)
+from rsyscall.struct import Int32
 
 @dataclass
 class Tun:
@@ -84,6 +85,33 @@ class TestNet(TrioTestCase):
         await sock.ioctl(SIOC.SIFADDR, ptr)
         await sock.ioctl(SIOC.GIFADDR, ptr)
         self.assertEqual(addr, (await ptr.read()).addr.parse())
+
+    async def test_reuseaddr_listen(self) -> None:
+        """If you use SO.REUSEADDR, your local and peer address can be the same
+
+        This is kind of alarming and surprising, but it's a real behavior.
+        """
+        await self.thr.unshare(CLONE.NEWNET)
+        sockfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
+        await sockfd.ioctl(SIOC.SIFFLAGS, await self.thr.ptr(Ifreq("lo", flags=IFF.UP)))
+
+        local = await self.thr.task.open(await self.thr.ram.ptr("/proc/sys/net/ipv4/ip_local_port_range"), O.RDWR)
+        await local.write(await self.thr.ptr("40000 40000\n"))
+
+        await sockfd.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.thr.ptr(Int32(1)))
+        addr = await self.thr.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
+
+        sockfd2 = await self.thr.task.socket(AF.INET, SOCK.STREAM)
+        await sockfd2.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.thr.ptr(Int32(1)))
+        await sockfd2.bind(await self.thr.ptr(addr))
+        await sockfd.listen(10)
+
+        await sockfd2.connect(await self.thr.ptr(addr))
+
+        sockbuf_ptr = await sockfd2.getsockname(await self.thr.ptr(Sockbuf(await self.thr.malloc(SockaddrIn))))
+        self.assertEqual(addr, await (await sockbuf_ptr.read()).buf.read())
+        sockbuf_ptr = await sockfd2.getpeername(await self.thr.ptr(Sockbuf(await self.thr.malloc(SockaddrIn))))
+        self.assertEqual(addr, await (await sockbuf_ptr.read()).buf.read())
 
     async def test_rtnetlink(self) -> None:
         await self.thr.unshare(CLONE.NEWNET)
