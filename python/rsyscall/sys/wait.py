@@ -36,12 +36,12 @@ class W(enum.IntFlag):
     NOTHREAD = lib._WNOTHREAD
 
 
-class UncleanExit(Exception):
-    "Thrown when a process exits uncleanly"
+class CalledProcessError(Exception):
+    "Thrown when a process exits uncleanly; like `subprocess.CalledProcessError`"
     state: ChildState
     "State of the child at exit"
     command: t.Optional[Command]
-    "Optionally attached to UncleanExit as useful information for debugging"
+    "Optionally attached to CalledProcessError as useful information for debugging"
 
     def __init__(self, state: ChildState, command: Command=None) -> None:
         super().__init__(state, command)
@@ -95,7 +95,7 @@ class ChildState:
         if self.clean():
             return None
         else:
-            raise UncleanExit(self)
+            raise CalledProcessError(self)
 
     def killed_with(self) -> SIG:
         """What signal was the child killed with?

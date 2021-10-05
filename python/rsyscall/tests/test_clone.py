@@ -8,6 +8,7 @@ from rsyscall.sched import CLONE
 from rsyscall.signal import SIG, Sigset
 from rsyscall.stdlib import mkdtemp
 from rsyscall.sys.signalfd import SignalfdSiginfo
+from rsyscall.sys.wait import CalledProcessError
 
 class TestClone(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -61,8 +62,9 @@ class TestClone(TrioTestCase):
         await thread.exit(0)
 
     async def test_exec(self) -> None:
-        child = await self.thr.exec(self.thr.environ.sh.args('-c', 'true'))
-        await child.check()
+        child = await self.thr.exec(self.thr.environ.sh.args('-c', 'false'))
+        with self.assertRaises(CalledProcessError):
+            await child.check()
 
     async def test_check_in_nursery(self) -> None:
         "We broke this with some concurrency refactoring once"
