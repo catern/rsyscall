@@ -2,7 +2,7 @@
 
 In the analogy to near and far pointers, this file is where we define
 segment ids and far pointers. A far pointer is a near pointer plus a
-segment id. See near.py for more on this analogy.
+segment id. See `rsyscall.near` for more on this analogy.
 
 Note, we don't actually define any far pointers at the moment. We used
 to, but we removed them all in favor of handles; handles are more
