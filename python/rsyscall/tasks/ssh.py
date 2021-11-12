@@ -100,9 +100,9 @@ class SSHExecutables:
     @classmethod
     async def with_nix(cls, thread: Thread) -> SSHExecutables:
         import rsyscall._nixdeps.openssh
-        import rsyscall._nixdeps.rsyscall
+        import rsyscall._nixdeps.librsyscall
         ssh_path = await nix.deploy(thread, rsyscall._nixdeps.openssh.closure)
-        rsyscall_path = await nix.deploy(thread, rsyscall._nixdeps.rsyscall.closure)
+        rsyscall_path = await nix.deploy(thread, rsyscall._nixdeps.librsyscall.closure)
         base_ssh = SSHCommand.make(ssh_path/"bin"/"ssh")
         bootstrap_path = rsyscall_path/"libexec"/"rsyscall"/"rsyscall-bootstrap"
         return SSHExecutables(base_ssh, bootstrap_path)

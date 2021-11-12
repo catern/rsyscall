@@ -51,8 +51,8 @@ async def stdin_bootstrap_path_with_nix(thread: Thread) -> Path:
     command, such as sudo.
 
     """
-    import rsyscall._nixdeps.rsyscall
-    rsyscall_path = await nix.deploy(thread, rsyscall._nixdeps.rsyscall.closure)
+    import rsyscall._nixdeps.librsyscall
+    rsyscall_path = await nix.deploy(thread, rsyscall._nixdeps.librsyscall.closure)
     return rsyscall_path/"libexec"/"rsyscall"/"rsyscall-stdin-bootstrap"
 
 async def stdin_bootstrap(

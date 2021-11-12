@@ -15,7 +15,7 @@ setup(name='rsyscall',
       license='MIT',
       cffi_modules=["ffibuilder.py:ffibuilder"],
       packages=find_packages(),
-      nixdeps={'rsyscall._nixdeps': ['miredo', 'nix', 'rsyscall', 'openssh', 'bash', 'coreutils', 'hello']},
+      nixdeps={'rsyscall._nixdeps': ['miredo', 'nix', 'librsyscall', 'openssh', 'bash', 'coreutils', 'hello']},
       include_package_data=True,
       entry_points={
           'distutils.setup_keywords': [

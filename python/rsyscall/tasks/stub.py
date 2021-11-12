@@ -88,8 +88,8 @@ class StubServer:
     @classmethod
     async def make(cls, thread: Thread, dir: Path, name: str) -> StubServer:
         "In the passed-in dir, make a listening stub server and an executable to connect to it."
-        import rsyscall._nixdeps.rsyscall
-        rsyscall_path = await nix.deploy(thread, rsyscall._nixdeps.rsyscall.closure)
+        import rsyscall._nixdeps.librsyscall
+        rsyscall_path = await nix.deploy(thread, rsyscall._nixdeps.librsyscall.closure)
         stub_path = rsyscall_path/"libexec"/"rsyscall"/"rsyscall-unix-stub"
         sock_path = dir/f'{name}.sock'
         server = await StubServer.listen_on(thread, sock_path)

@@ -72,11 +72,10 @@ buildPythonPackage {
     outcome
   ];
   inherit miredo nix librsyscall openssh bash coreutils hello;
-  rsyscall = librsyscall;
   exportReferencesGraph = [
     "miredo" miredo
     "nix" nix
-    "rsyscall" librsyscall
+    "librsyscall" librsyscall
     "openssh" openssh
     "bash" bash
     "coreutils" coreutils
