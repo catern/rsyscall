@@ -10,6 +10,7 @@ from rsyscall.linux.rtnetlink import *
 from pyroute2 import IPBatch
 from rsyscall.sched import CLONE
 from rsyscall.thread import write_user_mappings
+import errno
 import ipaddress
 import logging
 import trio
@@ -171,3 +172,37 @@ class TestNetLocalPort(TrioTestCase):
         self.assertEqual(addr, await (await sockbuf_ptr.read()).buf.read())
         sockbuf_ptr = await sockfd2.getpeername(await self.thr.ptr(Sockbuf(await self.thr.malloc(SockaddrIn))))
         self.assertEqual(addr, await (await sockbuf_ptr.read()).buf.read())
+
+    async def test_stream_reuseaddr(self) -> None:
+        "With STREAM sockets, even if you use SO.REUSEADDR, binding 0 twice will never give you the same port."
+        sockfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
+        await sockfd.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.thr.ptr(Int32(1)))
+        await sockfd.bind(await self.thr.ram.ptr(SockaddrIn(0, '127.0.0.1')))
+
+        sockfd2 = await self.thr.task.socket(AF.INET, SOCK.STREAM)
+        await sockfd2.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.thr.ptr(Int32(1)))
+        with self.assertRaises(OSError) as cm:
+            await sockfd2.bind(await self.thr.ram.ptr(SockaddrIn(0, '127.0.0.1')))
+        self.assertEqual(cm.exception.errno, errno.EADDRINUSE)
+
+    async def test_dgram(self) -> None:
+        "With DGRAM sockets, without SO.REUSEADDR, binding 0 twice will never give you the same port."
+        sockfd = await self.thr.task.socket(AF.INET, SOCK.DGRAM)
+        await sockfd.bind(await self.thr.ram.ptr(SockaddrIn(0, '127.0.0.1')))
+
+        sockfd2 = await self.thr.task.socket(AF.INET, SOCK.DGRAM)
+        with self.assertRaises(OSError) as cm:
+            await sockfd2.bind(await self.thr.ram.ptr(SockaddrIn(0, '127.0.0.1')))
+        self.assertEqual(cm.exception.errno, errno.EADDRINUSE)
+
+    async def test_dgram_reuseaddr(self) -> None:
+        "With DGRAM sockets, if you use SO.REUSEADDR, binding 0 *can* give you the same port."
+        sockfd = await self.thr.task.socket(AF.INET, SOCK.DGRAM)
+        await sockfd.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.thr.ptr(Int32(1)))
+        addr = await self.thr.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
+
+        sockfd2 = await self.thr.task.socket(AF.INET, SOCK.DGRAM)
+        await sockfd2.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.thr.ptr(Int32(1)))
+        addr2 = await self.thr.bind_getsockname(sockfd2, SockaddrIn(0, '127.0.0.1'))
+
+        self.assertEqual(addr, addr2)
