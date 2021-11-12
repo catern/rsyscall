@@ -86,33 +86,6 @@ class TestNet(TrioTestCase):
         await sock.ioctl(SIOC.GIFADDR, ptr)
         self.assertEqual(addr, (await ptr.read()).addr.parse())
 
-    async def test_reuseaddr_listen(self) -> None:
-        """If you use SO.REUSEADDR, your local and peer address can be the same
-
-        This is kind of alarming and surprising, but it's a real behavior.
-        """
-        await self.thr.unshare(CLONE.NEWNET)
-        sockfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
-        await sockfd.ioctl(SIOC.SIFFLAGS, await self.thr.ptr(Ifreq("lo", flags=IFF.UP)))
-
-        local = await self.thr.task.open(await self.thr.ram.ptr("/proc/sys/net/ipv4/ip_local_port_range"), O.WRONLY)
-        await local.write(await self.thr.ptr("40000 40000\n"))
-
-        await sockfd.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.thr.ptr(Int32(1)))
-        addr = await self.thr.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
-
-        sockfd2 = await self.thr.task.socket(AF.INET, SOCK.STREAM)
-        await sockfd2.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.thr.ptr(Int32(1)))
-        await sockfd2.bind(await self.thr.ptr(addr))
-        await sockfd.listen(10)
-
-        await sockfd2.connect(await self.thr.ptr(addr))
-
-        sockbuf_ptr = await sockfd2.getsockname(await self.thr.ptr(Sockbuf(await self.thr.malloc(SockaddrIn))))
-        self.assertEqual(addr, await (await sockbuf_ptr.read()).buf.read())
-        sockbuf_ptr = await sockfd2.getpeername(await self.thr.ptr(Sockbuf(await self.thr.malloc(SockaddrIn))))
-        self.assertEqual(addr, await (await sockbuf_ptr.read()).buf.read())
-
     async def test_rtnetlink(self) -> None:
         await self.thr.unshare(CLONE.NEWNET)
         netsock = await self.thr.task.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
@@ -158,3 +131,43 @@ class TestNet(TrioTestCase):
             accepted_conn = await acc.sock.accept()
         await conn.sock.write(await self.thr.ptr(b'hello world'))
         await accepted_conn.read(await self.thr.malloc(bytes, 4096))
+
+class TestNetLocalPort(TrioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.thr = await local_thread.clone(CLONE.NEWUSER, automatically_write_user_mappings=False)
+        await write_user_mappings(
+            self.thr,
+            await local_thread.task.getuid(), await local_thread.task.getgid(),
+            0, 0,
+        )
+        await self.thr.unshare(CLONE.NEWNET)
+        local = await self.thr.task.open(await self.thr.ram.ptr("/proc/sys/net/ipv4/ip_local_port_range"), O.WRONLY)
+        await local.write(await self.thr.ptr("40000 40000\n"))
+        await local.close()
+
+        self.ioctl_sock = await self.thr.task.socket(AF.INET, SOCK.STREAM)
+        await self.ioctl_sock.ioctl(SIOC.SIFFLAGS, await self.thr.ptr(Ifreq("lo", flags=IFF.UP)))
+
+    async def asyncTearDown(self) -> None:
+        await self.thr.exit(0)
+
+    async def test_reuseaddr_listen(self) -> None:
+        """If you use SO.REUSEADDR, your local and peer address can be the same
+
+        This is kind of alarming and surprising, but it's a real behavior.
+        """
+        sockfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
+        await sockfd.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.thr.ptr(Int32(1)))
+        addr = await self.thr.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
+
+        sockfd2 = await self.thr.task.socket(AF.INET, SOCK.STREAM)
+        await sockfd2.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.thr.ptr(Int32(1)))
+        await sockfd2.bind(await self.thr.ptr(addr))
+        await sockfd.listen(10)
+
+        await sockfd2.connect(await self.thr.ptr(addr))
+
+        sockbuf_ptr = await sockfd2.getsockname(await self.thr.ptr(Sockbuf(await self.thr.malloc(SockaddrIn))))
+        self.assertEqual(addr, await (await sockbuf_ptr.read()).buf.read())
+        sockbuf_ptr = await sockfd2.getpeername(await self.thr.ptr(Sockbuf(await self.thr.malloc(SockaddrIn))))
+        self.assertEqual(addr, await (await sockbuf_ptr.read()).buf.read())
