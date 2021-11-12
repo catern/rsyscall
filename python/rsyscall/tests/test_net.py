@@ -196,7 +196,10 @@ class TestNetLocalPort(TrioTestCase):
         self.assertEqual(cm.exception.errno, errno.EADDRINUSE)
 
     async def test_dgram_reuseaddr(self) -> None:
-        "With DGRAM sockets, if you use SO.REUSEADDR, binding 0 *can* give you the same port."
+        """With DGRAM sockets, if you use SO.REUSEADDR, binding 0 *can* give you the same port.
+
+        But note that you can also just set REUSEADDR after binding.
+        """
         sockfd = await self.thr.task.socket(AF.INET, SOCK.DGRAM)
         await sockfd.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.thr.ptr(Int32(1)))
         addr = await self.thr.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
