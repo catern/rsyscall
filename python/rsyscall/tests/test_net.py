@@ -7,7 +7,7 @@ from rsyscall.net.if_ import *
 from rsyscall.netinet.ip import SockaddrIn
 from rsyscall.linux.netlink import *
 from rsyscall.linux.rtnetlink import *
-from pyroute2 import IPBatch
+from pyroute2.iproute import IPBatch
 from rsyscall.sched import CLONE
 from rsyscall.thread import write_user_mappings
 import errno
