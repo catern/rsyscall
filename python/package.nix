@@ -3,17 +3,7 @@
 , nix
 , socat
 , pkg-config
-, s6
-, miredo
-, postgresql_11
-, iproute
 , openssh
-, opensmtpd
-, dovecot
-, hydra
-, powerdns
-, bubblewrap
-, nginx
 , coreutils
 }:
 
@@ -39,15 +29,8 @@ buildPythonPackage {
   '';
   nativeBuildInputs = [
     pkg-config
-    openssh
-    nix
-    librsyscall
     (pdoc3.overridePythonAttrs (_: { doCheck = false; }))
   ];
-  # not sure how to set up the deps. we use binaries and libraries from C
-  # rsyscall at build time to run tests; and we also use them at runtime for our
-  # actual functionality. so should rsyscall be in nativeBuildInputs or
-  # buildInputs? strictDeps fails if it's in nativeBuildInputs...
   buildInputs = [
     cffi
     librsyscall
@@ -55,8 +38,6 @@ buildPythonPackage {
   propagatedBuildInputs = [
     trio
     typeguard
-    h11
-    dnspython
     pyroute2
     outcome
     nixdeps
