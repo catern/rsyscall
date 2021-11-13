@@ -14,9 +14,7 @@
 , powerdns
 , bubblewrap
 , nginx
-, bash
 , coreutils
-, hello
 }:
 
 with pythonPackages;
@@ -64,13 +62,10 @@ buildPythonPackage {
     nixdeps
   ];
   exportReferencesGraph = [
-    "miredo" miredo
     "nix" nix
     "librsyscall" librsyscall
     "openssh" openssh
-    "bash" bash
     "coreutils" coreutils
-    "hello" hello
   ];
 }
 

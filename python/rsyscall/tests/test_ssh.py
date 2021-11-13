@@ -4,9 +4,7 @@ from rsyscall.tests.trio_test_case import TrioTestCase
 import rsyscall.thread
 from rsyscall.nix import enter_nix_container, deploy
 import rsyscall._nixdeps.nix
-import rsyscall._nixdeps.hello
 import rsyscall._nixdeps.coreutils
-import rsyscall._nixdeps.bash
 from rsyscall.tasks.ssh import *
 from rsyscall import local_thread
 
@@ -65,8 +63,8 @@ class TestSSH(TrioTestCase):
         self.assertEqual(data, await read_data.read())
 
     async def test_exec_true(self) -> None:
-        bash = (await deploy(self.local, rsyscall._nixdeps.bash.closure)).bin('bash')
-        await self.remote.run(bash.args('-c', 'true'))
+        true = (await deploy(self.local, rsyscall._nixdeps.coreutils.closure)).bin('true')
+        await self.remote.run(true)
 
     async def test_exec_pipe(self) -> None:
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)
@@ -133,5 +131,5 @@ class TestSSH(TrioTestCase):
         tmpdir = await mkdtemp(self.local)
         async with tmpdir:
             await enter_nix_container(self.local, rsyscall._nixdeps.nix.closure, self.remote, tmpdir)
-            hello = (await deploy(self.remote, rsyscall._nixdeps.hello.closure)).bin('hello')
+            hello = (await deploy(self.remote, rsyscall._nixdeps.coreutils.closure)).bin('echo').args('hello world')
             await self.remote.run(hello)
