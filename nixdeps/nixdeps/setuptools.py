@@ -56,18 +56,12 @@ def write_init(output: Path) -> None:
     with output.open('w') as f:
         pass
 
-def get_dep_with_nix_store(dep: str) -> t.Tuple[str, t.List[str]]:
-    exported = os.environ['exportReferencesGraph'].split(' ')
-    for name, path in zip(exported[::2], exported[1::2]):
-        if name == dep:
-            break
-    else:
-        raise Exception("couldn't find dep", dep, "in exportReferencesGraph")
+def get_dep_with_nix_store(dep: str, path: str) -> t.List[str]:
     # use nix-store to dump the closure
     closure_text = subprocess.run(["nix-store", "--query", "--requisites", path],
                                   capture_output=True, check=True).stdout
     closure = [line.decode() for line in closure_text.split()]
-    return path, closure
+    return closure
 
 def parse_references_graph(lines: t.List[str]) -> t.Dict[str, t.List[str]]:
     it = iter(lines)
@@ -86,36 +80,42 @@ def closure_of(path: str, refs: t.Dict[str, t.List[str]]) -> t.Set[str]:
         {path} if ref == path else closure_of(ref, refs)
         for ref in refs[path]])
 
-def get_dep_from_exported_graph(nix_build_top: Path, dep: str) -> t.Tuple[str, t.List[str]]:
+def get_dep_from_exported_graph(nix_build_top: Path, dep: str, path: str) -> t.List[str]:
     # we're in a real build, use output of exportReferencesGraph
     closure_path = nix_build_top/dep
     with open(closure_path, 'r') as f:
         raw_db = f.read()
     lines = raw_db.split()
-    path = lines[0]
     refs = parse_references_graph(lines)
-    return path, list(closure_of(path, refs))
+    return list(closure_of(path, refs))
 
-def get_fake_dep(dep: str) -> t.Tuple[str, t.List[str]]:
+def get_fake_dep(dep: str, path: str) -> t.List[str]:
     # just fake it
     log.info("making up fake dep for %s" % dep)
-    return "/dev/null/" + dep, ["/dev/null/" + dep + "/closure"]
+    return ["/dev/null/" + dep + "/closure"]
 
 def build_deps_module(self, output_dir: Path, deps: t.List[str]) -> None:
     "Write out to `output_dir` the .py files containing the specification for `deps`"
-    nix_build_top = os.environ.get('NIX_BUILD_TOP')
-    if 'IN_NIX_SHELL' in os.environ:
-        get_dep = get_dep_with_nix_store
-    elif nix_build_top:
-        get_dep = functools.partial(get_dep_from_exported_graph, Path(nix_build_top))
+    if 'exportReferencesGraph' in os.environ:
+        envvar = os.environ['exportReferencesGraph'].split(' ')
+        exportReferencesGraph = dict(zip(envvar[::2], envvar[1::2]))
+        if 'IN_NIX_SHELL' in os.environ:
+            get_dep = get_dep_with_nix_store
+        else:
+            get_dep = functools.partial(get_dep_from_exported_graph, Path(os.environ['NIX_BUILD_TOP']))
     else:
+        exportReferencesGraph = {
+            dep: "/dev/null/" + dep
+            for dep in deps
+        }
         get_dep = get_fake_dep
     log.info("generating Nix deps module in %s" % output_dir)
     self.mkpath(str(output_dir))
     self.execute(write_init, [output_dir/"__init__.py"])
     for dep in deps:
         log.info("writing Nix dep %s" % dep)
-        path, closure = get_dep(dep)
+        path = exportReferencesGraph[dep]
+        closure = get_dep(dep, path)
         self.execute(write_python, [output_dir/(dep + '.py'), path, closure])
 
 def add_deps_module(dist, module_name: str, deps: t.List[str]) -> None:
