@@ -17,9 +17,4 @@ setup(name='rsyscall',
       packages=find_packages(),
       nixdeps={'rsyscall._nixdeps': ['miredo', 'nix', 'librsyscall', 'openssh', 'bash', 'coreutils', 'hello']},
       include_package_data=True,
-      entry_points={
-          'distutils.setup_keywords': [
-              "nixdeps = nixdeps.setuptools:nixdeps",
-          ],
-      },
 )

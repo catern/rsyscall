@@ -70,6 +70,7 @@ buildPythonPackage {
     dnspython
     pyroute2
     outcome
+    nixdeps
   ];
   exportReferencesGraph = [
     "miredo" miredo

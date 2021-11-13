@@ -1,14 +1,17 @@
+let
+  pythonOverrides = final: prev: {
+    rsyscall = final.callPackage ./python/package.nix { };
+    nixdeps = final.callPackage ./nixdeps/package.nix { };
+  };
+in
 self: super: {
   librsyscall = self.callPackage ./c/package.nix { };
+
   python38 = super.python38.override {
-    packageOverrides = final: prev: {
-      rsyscall = final.callPackage ./python/package.nix { };
-    };
+    packageOverrides = pythonOverrides;
   };
   python39 = super.python39.override {
-    packageOverrides = final: prev: {
-      rsyscall = final.callPackage ./python/package.nix { };
-    };
+    packageOverrides = pythonOverrides;
   };
 
   python38Packages = self.python38.pkgs;
