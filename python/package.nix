@@ -35,7 +35,10 @@ buildPythonPackage {
   # nix tests don't work because something about "error: creating directory '/nix/var': Permission denied"
   # test_pgid doesn't work because /proc/sys/kernel/ns_last_pid isn't available for some reason
   # fuse tests don't work because /dev/fuse doesn't exist
-  checkPhase = "pytest rsyscall -k 'not ssh and not test_net and not test_nix and not test_pgid and not test_fuse'";
+  checkPhase = ''
+  cd $out
+  pytest -k 'not test_ssh and not test_net and not test_nix and not test_pgid and not test_fuse'
+  '';
   nativeBuildInputs = [
     pkg-config
     openssh
@@ -47,21 +50,9 @@ buildPythonPackage {
   # rsyscall at build time to run tests; and we also use them at runtime for our
   # actual functionality. so should rsyscall be in nativeBuildInputs or
   # buildInputs? strictDeps fails if it's in nativeBuildInputs...
-  strictDeps = false;
-  nativePropagatedBuildInputs = [
-    s6
-    # miredo
-    postgresql_11
-    iproute
-    # opensmtpd
-    dovecot
-    # hydra
-    powerdns
-    bubblewrap
-    nginx
-  ];
   buildInputs = [
     cffi
+    librsyscall
   ];
   propagatedBuildInputs = [
     trio
