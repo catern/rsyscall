@@ -39,3 +39,6 @@ __pycache__
 /research/sigbovik2020/paper.out
 /python/strace/
 result
+/nixdeps/dist/
+/nixdeps/nixdeps.egg-info/
+/python/dist/
