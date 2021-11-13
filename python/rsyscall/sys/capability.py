@@ -54,6 +54,9 @@ class CAP(enum.IntEnum):
     WAKE_ALARM = lib.CAP_WAKE_ALARM
     BLOCK_SUSPEND = lib.CAP_BLOCK_SUSPEND
     AUDIT_READ = lib.CAP_AUDIT_READ
+    PERFMON = lib.CAP_PERFMON
+    BPF = lib.CAP_BPF
+    CHECKPOINT_RESTORE = lib.CAP_CHECKPOINT_RESTORE
 
 def to_uint32s(caps: t.Set[CAP]) -> t.Tuple[int, int]:
     ret: t.List[int] = [0, 0]
