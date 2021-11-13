@@ -71,7 +71,6 @@ buildPythonPackage {
     pyroute2
     outcome
   ];
-  inherit miredo nix librsyscall openssh bash coreutils hello;
   exportReferencesGraph = [
     "miredo" miredo
     "nix" nix

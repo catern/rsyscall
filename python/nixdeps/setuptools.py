@@ -15,25 +15,17 @@ import mypkg._whatever.goodbye as goodbye
 goodbye.closure
 ```
 
-BUG: Note that we currently require you depend on packages by
-explicitly setting environment variables containing the paths of those
-packages. This can be done by, e.g.:
+For this to work, you need to add "hello" and "goodbye" to
+exportReferencesGraph, like this:
 ```
 buildPythonPackage {
-  hello = pkgs.hello;
-  goodbye = pkgs.goodbye;
-  ...
+  exportReferencesGraph = [
+    "hello" pkgs.hello
+    "goodbye" pkgs.goodbye
+  ];
 }
 ```
-Merely having your dependencies in buildInputs will not work,
-i.e. this is not sufficient:
-```
-buildPythonPackage {
-  buildInputs = [ pkgs.hello pkgs.goodbye ];
-}
-```
-This will be fixed later, so all you have to do is have the packages
-in buildInputs; this means propagatedBuildInputs etc. will also work.
+Otherwise, we can't get the closure.
 
 """
 import setuptools
@@ -65,9 +57,12 @@ def write_init(output: Path) -> None:
         pass
 
 def get_dep_with_nix_store(dep: str) -> t.Tuple[str, t.List[str]]:
-    if dep not in os.environ:
-        raise Exception("couldn't find dep", dep, "in environment")
-    path = os.environ[dep]
+    exported = os.environ['exportReferencesGraph'].split(' ')
+    for name, path in zip(exported[::2], exported[1::2]):
+        if name == dep:
+            break
+    else:
+        raise Exception("couldn't find dep", dep, "in exportReferencesGraph")
     # use nix-store to dump the closure
     closure_text = subprocess.run(["nix-store", "--query", "--requisites", path],
                                   capture_output=True, check=True).stdout
