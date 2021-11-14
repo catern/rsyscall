@@ -656,8 +656,9 @@ class AsyncReadBuffer:
     helper methods to make it easier to read and parse such streams.
 
     """
-    def __init__(self, fd: AsyncFileDescriptor) -> None:
+    def __init__(self, fd: AsyncFileDescriptor, parsing_ffi=None) -> None:
         self.fd = fd
+        self.ffi = parsing_ffi or ffi
         self.buf = b""
         self.unread_ptr: t.Optional[Pointer] = None
 
@@ -688,17 +689,17 @@ class AsyncReadBuffer:
 
     async def read_cffi(self, name: str, remove: bool=True) -> t.Any:
         "Read, parse, and return this fixed-size cffi type."
-        size = ffi.sizeof(name)
+        size = self.ffi.sizeof(name)
         try:
             data = await self.read_length(size, remove=remove)
         except EOFError as e:
             e.args = ("got EOF while expecting to read a", name, "of size", size)
             raise
         nameptr = name + '*'
-        dest = ffi.new(nameptr)
+        dest = self.ffi.new(nameptr)
         # ffi.cast drops the reference to the backing buffer, so we have to copy it
-        src = ffi.cast(nameptr, ffi.from_buffer(data))
-        ffi.memmove(dest, src, size)
+        src = self.ffi.cast(nameptr, self.ffi.from_buffer(data))
+        self.ffi.memmove(dest, src, size)
         return dest[0]
 
     async def read_struct(self, cls: t.Type[T_fixed_size]) -> T_fixed_size:
