@@ -662,7 +662,7 @@ class AsyncReadBuffer:
         self.unread_ptr: t.Optional[Pointer] = None
 
     async def _read(self) -> bytes:
-        "Read some bytes; return None on EOF."
+        "Read some bytes; raises on EOF."
         if self.unread_ptr is None:
             ptr = await self.fd.ram.malloc(bytes, 4096)
             self.unread_ptr, _ = await self.fd.read(ptr)
