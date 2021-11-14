@@ -676,20 +676,21 @@ class AsyncReadBuffer:
         else:
             return data
 
-    async def read_length(self, length: int) -> bytes:
+    async def read_length(self, length: int, remove: bool=True) -> bytes:
         "Read exactly this many bytes; raises on EOF."
         while len(self.buf) < length:
             data = await self._read()
             self.buf += data
         section = self.buf[:length]
-        self.buf = self.buf[length:]
+        if remove:
+            self.buf = self.buf[length:]
         return section
 
-    async def read_cffi(self, name: str) -> t.Any:
+    async def read_cffi(self, name: str, remove: bool=True) -> t.Any:
         "Read, parse, and return this fixed-size cffi type."
         size = ffi.sizeof(name)
         try:
-            data = await self.read_length(size)
+            data = await self.read_length(size, remove=remove)
         except EOFError as e:
             e.args = ("got EOF while expecting to read a", name, "of size", size)
             raise
