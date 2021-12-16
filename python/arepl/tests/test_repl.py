@@ -12,10 +12,13 @@ def await_pure(awaitable: t.Awaitable[T]) -> T:
     else:
         raise Exception("this awaitable actually is impure! it yields!")
 
+async def anoop() -> None:
+    return None
+
 class TestPure(unittest.TestCase):
     def test_add(self) -> None:
         async def test() -> None:
-            repl = PureREPL({})
+            repl = PureREPL({'anoop': anoop})
             async def eval(line: str) -> t.Any:
                 result = await repl.add_line(line + '\n')
                 if isinstance(result, ExpressionResult):
@@ -26,4 +29,5 @@ class TestPure(unittest.TestCase):
             self.assertEqual(await eval('1+1'), 2)
             await repl.add_line('foo = 1\n')
             self.assertEqual(await eval('foo*4'), 4)
+            self.assertEqual(await eval('await anoop()'), None)
         await_pure(test())
