@@ -107,7 +107,7 @@ async def run_repl(read: t.Callable[[], t.Awaitable[bytes]],
                 else:
                     await print_exn(result.exception)
             elif isinstance(result, ExpressionResult):
-                await print_to_user(result.value)
+                await write((repr(result.value) + "\n").encode())
                 global_vars['_'] = result.value
             elif isinstance(result, FallthroughResult):
                 pass
