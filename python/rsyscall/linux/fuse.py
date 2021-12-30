@@ -110,10 +110,6 @@ class FOPEN(enum.IntEnum):
     KEEP_CACHE = lib.FOPEN_KEEP_CACHE
     NONSEEKABLE = lib.FOPEN_NONSEEKABLE
 
-class FUSE_ATTR(enum.IntEnum):
-    NONE = 0
-    SUBMOUNT = lib.FUSE_ATTR_SUBMOUNT
-
 FUSE_MIN_READ_BUFFER = lib.FUSE_MIN_READ_BUFFER
 
 @dataclass
@@ -130,7 +126,6 @@ class FuseAttr(Struct):
     gid: int
     rdev: int
     blksize: int
-    flags: FUSE_ATTR=FUSE_ATTR.NONE
 
     def _to_cffi_dict(self) -> t.Dict[str, int]:
         return {
@@ -149,7 +144,7 @@ class FuseAttr(Struct):
 	    "gid": self.gid,
 	    "rdev": self.rdev,
 	    "blksize": self.blksize,
-            "flags": self.flags,
+            "padding": 0,
         }
 
     def to_bytes(self) -> bytes:
@@ -171,7 +166,6 @@ class FuseAttr(Struct):
 	    gid=struct.gid,
 	    rdev=struct.rdev,
 	    blksize=struct.blksize,
-	    flags=FUSE_ATTR(struct.flags),
         )
 
     @classmethod

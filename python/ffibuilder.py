@@ -738,9 +738,6 @@ enum fuse_opcode {
 
 #define FUSE_MIN_READ_BUFFER ...
 
-// flags for fuse_attr
-#define FUSE_ATTR_SUBMOUNT ...
-
 struct fuse_attr {
 	uint64_t	ino;
 	uint64_t	size;
@@ -757,7 +754,7 @@ struct fuse_attr {
 	uint32_t	gid;
 	uint32_t	rdev;
 	uint32_t	blksize;
-	uint32_t	flags;
+	uint32_t	padding;
 };
 
 struct fuse_in_header {
