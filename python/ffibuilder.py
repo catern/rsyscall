@@ -754,7 +754,7 @@ struct fuse_attr {
 	uint32_t	gid;
 	uint32_t	rdev;
 	uint32_t	blksize;
-	uint32_t	padding;
+	...;
 };
 
 struct fuse_in_header {
@@ -799,7 +799,7 @@ struct fuse_init_out {
 
 struct fuse_open_in {
 	uint32_t	flags;
-	uint32_t	unused;
+	...;
 };
 
 #define FOPEN_DIRECT_IO   ...
@@ -809,7 +809,7 @@ struct fuse_open_in {
 struct fuse_open_out {
 	uint64_t	fh;
 	uint32_t	open_flags;
-	uint32_t	padding;
+	...;
 };
 
 struct fuse_entry_out {
@@ -832,7 +832,7 @@ struct fuse_read_in {
 	uint32_t	read_flags;
 	uint64_t	lock_owner;
 	uint32_t	flags;
-	uint32_t	padding;
+	...;
 };
 
 #define FUSE_GETATTR_FH ...
@@ -865,8 +865,7 @@ struct fuse_direntplus {
 
 struct fuse_flush_in {
 	uint64_t	fh;
-	uint32_t	unused;
-	uint32_t	padding;
+	...;
 	uint64_t	lock_owner;
 };
 
@@ -879,12 +878,12 @@ struct fuse_release_in {
 
 struct fuse_getxattr_in {
 	uint32_t	size;
-	uint32_t	padding;
+	...;
 };
 
 struct fuse_getxattr_out {
 	uint32_t	size;
-	uint32_t	padding;
+	...;
 };
 
 // socket stuff
