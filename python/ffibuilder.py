@@ -800,12 +800,9 @@ struct fuse_init_out {
         ...;
 };
 
-// open_flags
-#define FUSE_OPEN_KILL_SUIDGID	...
-
 struct fuse_open_in {
 	uint32_t	flags;
-	uint32_t	open_flags;
+	uint32_t	unused;
 };
 
 #define FOPEN_DIRECT_IO   ...

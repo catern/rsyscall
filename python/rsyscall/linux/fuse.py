@@ -114,10 +114,6 @@ class FUSE_ATTR(enum.IntEnum):
     NONE = 0
     SUBMOUNT = lib.FUSE_ATTR_SUBMOUNT
 
-class FUSE_OPEN(enum.IntEnum):
-    NONE = 0
-    KILL_SUIDGID = lib.FUSE_OPEN_KILL_SUIDGID
-
 FUSE_MIN_READ_BUFFER = lib.FUSE_MIN_READ_BUFFER
 
 @dataclass
@@ -324,18 +320,17 @@ class FuseLookupOp(FuseIn):
 @dataclass
 class FuseOpenIn(Struct):
     flags: O
-    open_flags: FUSE_OPEN=FUSE_OPEN.NONE
 
     T = t.TypeVar('T', bound='FuseOpenIn')
     @classmethod
     def from_bytes(cls: t.Type[T], data: bytes) -> T:
         struct = ffi.cast('struct fuse_open_in*', ffi.from_buffer(data))
-        return cls(flags=O(struct.flags), open_flags=FUSE_OPEN(struct.open_flags))
+        return cls(flags=O(struct.flags))
 
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct fuse_open_in*', {
             'flags': self.flags,
-            'open_flags': self.open_flags,
+            'unused': 0,
         })))
 
     @classmethod
