@@ -17,7 +17,7 @@ except that it's some pre-existing research which we used to implement symsh.
 rsyscall sure made it a lot easier to implement this!)
 
 The implementation is entirely contained in
-[[file:~/.local/src/rsyscall/python/rsyscall/scripts/symsh.py][symsh.py]].
+[[file:../../python/rsyscall/scripts/symsh.py][symsh.py]].
 
 A simple example can be run with
 =python -m rsyscall.scripts.symsh example=.
