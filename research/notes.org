@@ -30767,3 +30767,17 @@ yeah... that's kind of cool actually!
 ok, so I like where I've ended up. this is good, good.
 
 now we can write the full example.
+* need to work with signals delivered to other threads in our thread group
+
+  hmmm
+
+  so the, "just install a handler that tkills" approach could work.
+
+  and it works okay with Python signal handlers, indeed.
+
+  but I guess exposure to Python is not great..
+
+  but this is pretty important, tractor might have this issue....
+* call execve at import time
+  lol I don't know what this would do but it w ould be funny.
+  (that's a way to get rid of alll the other threads when rsyscall is imported)
