@@ -22509,6 +22509,80 @@ Either way, thanks for working on Project Loom!
    maybe we can just drop support for rsyscall_exec, ugh.
 
    yeah for goodness sake, just delete it!
+** TODO fix signals being dropped when received by other threads
+   so, okay...
+
+   if I'm in the local thread, then...
+
+   there are other threads which might receive the signals.
+   so...
+   you can set a signal handler but you can't set a global signal block.
+
+   oh hm... well...
+
+   what if we make a handler which... checks local.thread to see if a signal is blocked...
+   and if so, re-raises it?
+   yes, makes sense.
+
+   okay hm that requires me to install handlers for all signals. hm.
+
+   we could do that, and assume signal handler chaining will be done properly by everything...
+
+   yyyyyyyyyyyyyeah okaaaaaaaaaayyyyyyyyyy
+
+   we also could override Sigset to automatically add and remove handlers
+
+   it's kind of lame that there are thread-directed signals and thread-level signal blocks,
+   and thread-group-directed signals but no thread-group-level signal blocks.
+
+   lame! lame!
+
+   wait... why... does...
+   the python signal handler not get inherited and break?
+   uhhh. hmm....
+   because the signals are blocked, maybe?
+   so sigwinch was only a problem because it wasn't blocked? hmmmm.
+
+   sharing signal handlers... is risky...
+   we need to clear them....
+
+   yeah so let's try a test where we unblock a signal.
+*** new solution
+ah! ah! ah!
+
+I'll add a handler which justs blocks the signal then raises it!
+
+that will lead to all threads blocking it!
+
+brilliant
+
+okay so:
+1. I need the pointer to the signal handler
+2. I need to be able to actually set signal handlers, which may involve some sigreturn, SA_RESTORER stuff.
+*** how to set signal handlers
+so let's just go ahead and try and set it and see if just setting sigprocmask works.
+*** much later
+okay so... to do this I would need a reference to the loader...
+to grab the signal handler function...
+
+which hopefully should be fine...
+
+hmmmmmmmm
+
+WAIT A SECOND
+
+NO OK
+
+I will just use pidfd instead.
+and remove signal handling entirely...
+
+much better.
+
+and I don't need to really worry about deployability, since I'm leaving TS.
+
+yeah so then I don't need to worry about signals at all
+
+much better solution.
 * fuse stuff
   ok so one thing we noticed in fuse is,
   if we don't close the devfuse, then other threads making syscalls will get stuck in D-wait,
@@ -30781,3 +30855,7 @@ now we can write the full example.
 * call execve at import time
   lol I don't know what this would do but it w ould be funny.
   (that's a way to get rid of alll the other threads when rsyscall is imported)
+* explain how things work yo
+okaaaaaaaaaay hmmmmmm
+
+so 
