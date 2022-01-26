@@ -19,7 +19,6 @@ class AT(enum.IntFlag):
 
 class O(enum.IntFlag):
     "The flags argument to open and some other syscalls."
-    NONE = 0
     RDONLY = lib.O_RDONLY
     WRONLY = lib.O_WRONLY
     RDWR = lib.O_RDWR

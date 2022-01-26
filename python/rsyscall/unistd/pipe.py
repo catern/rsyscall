@@ -54,7 +54,7 @@ from rsyscall.fcntl import O
 from rsyscall.handle.pointer import Pointer, LinearPointer
 
 class PipeTask(FileDescriptorTask):
-    async def pipe(self, buf: Pointer[Pipe], flags: O=O.NONE) -> LinearPointer[Pipe]:
+    async def pipe(self, buf: Pointer[Pipe], flags: O=O(0)) -> LinearPointer[Pipe]:
         """create pipe
 
         manpage: pipe2(2)
