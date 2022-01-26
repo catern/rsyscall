@@ -6,7 +6,7 @@ AC_PROG_CC
 AM_PROG_AR
 AM_PROG_AS
 LT_INIT
-dnl workaround for https://github.com/kimwalisch/primesieve/issues/16
+dnl workaround for https://debbugs.gnu.org/20082
 AC_SUBST(AR_FLAGS, [cr])
 PKG_INSTALLDIR
 AC_CONFIG_HEADERS([config.h])
