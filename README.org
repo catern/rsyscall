@@ -25,6 +25,45 @@ cd rsyscall/python
 nix-shell
 python
 #+end_src
+
+Or you can build it by hand in a virtual environment:
+#+begin_src bash
+git clone https://github.com/catern/rsyscall
+cd rsyscall
+python3 -m venv venv
+. venv/bin/activate
+pip install -U pip
+
+cd c
+autoreconf -fvi
+./configure --prefix=$PWD/../venv
+make install
+cd ..
+export LD_LIBRARY_PATH=$PWD/venv/lib
+export PKG_CONFIG_PATH=$PWD/venv/lib/pkgconfig
+
+pip install -e python/
+python
+#+end_src
+* Getting started
+rsyscall is an async library that uses [[https://trio.readthedocs.io][Trio]], so the easiest way to
+try it out is with an async Python REPL. [[https://ipython.org/][IPython]] provides a convenient
+REPL:
+#+begin_example
+$ pip install ipython
+$ ipython
+In [1]: %autoawait trio
+
+In [2]: import rsyscall
+
+In [3]: t = await rsyscall.local_thread.clone()
+
+In [4]: written, unwriten = await t.stdout.write(await t.ptr("Hello world!\n"))
+Hello world!
+
+In [5]: await written.read()
+Out[5]: 'Hello world!\n'
+#+end_example
 * Discussion
 irc://irc.oftc.net/#rsyscall
 
