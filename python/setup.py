@@ -15,6 +15,10 @@ setup(name='rsyscall',
       license='MIT',
       cffi_modules=["ffibuilder.py:ffibuilder"],
       packages=find_packages(),
+      install_requires=["cffi", "trio", "typeguard"],
+      extras_require={
+          "rsysapps": ["h11"],
+      },
       nixdeps={'rsyscall._nixdeps': ['nix', 'librsyscall', 'openssh', 'coreutils']},
       include_package_data=True,
 )
