@@ -225,11 +225,6 @@ class Task(
         if flags:
             await _unshare(self.sysif, flags)
 
-    async def setns_user(self, fd: FileDescriptor) -> None:
-        # can't setns to a user namespace while sharing CLONE_FS
-        await self.unshare(CLONE.FS)
-        await self.setns(fd, CLONE.NEWUSER)
-
     async def execveat(self, fd: t.Optional[FileDescriptor],
                        pathname: WrittenPointer[t.Union[str, os.PathLike]],
                        argv: WrittenPointer[ArgList],
