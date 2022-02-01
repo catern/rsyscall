@@ -1,7 +1,8 @@
 * Summary
-rsyscall provides an interface to an ever-growing subset of Linux system calls. This interface is:
+rsyscall is a library which provides a interface to an ever-growing subset of Linux system calls.
+This interface is:
 - *process-independent*: all system calls are called as methods on process objects,
-  which can refer to the "local" process or to other processes under our control.
+  which can refer to the "local" process or to other processes under our control, possibly on remote hosts.
 - *type-safe*: many Linux API constraints, which are usually left to user code to enforce,
   are made explicit in the type system.
 - *low-level*: any action which is possible with the underlying Linux APIs,
