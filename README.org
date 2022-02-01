@@ -59,11 +59,8 @@ In [2]: import rsyscall
 
 In [3]: t = await rsyscall.local_thread.clone()
 
-In [4]: written, unwriten = await t.stdout.write(await t.ptr("Hello world!\n"))
+In [4]: await t.stdout.write(await t.ptr("Hello world!\n"))
 Hello world!
-
-In [5]: await written.read()
-Out[5]: 'Hello world!\n'
 #+end_example
 * Discussion
 irc://irc.oftc.net/#rsyscall
