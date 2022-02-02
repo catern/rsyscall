@@ -1,5 +1,4 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import local_thread
 
 from rsyscall.sys.socket import *
 from rsyscall.netinet.in_ import *
@@ -8,9 +7,6 @@ import trio
 import unittest
 
 class TestIP(TrioTestCase):
-    async def asyncSetUp(self) -> None:
-        self.thr = local_thread
-
     async def test_stream_listen(self) -> None:
         sockfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
         addr = await self.thr.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))

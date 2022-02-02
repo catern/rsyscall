@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import local_thread, FileDescriptor, Thread
+from rsyscall import FileDescriptor, Thread
 from rsyscall.fcntl import O
 from rsyscall.sys.socket import AF, SOCK, SO, SOL, Sockbuf
 from rsyscall.net.if_ import *
@@ -47,10 +47,10 @@ class Tun:
 
 class TestNet(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = await local_thread.clone(CLONE.NEWUSER, automatically_write_user_mappings=False)
+        parent, self.thr = self.thr, await self.thr.clone(CLONE.NEWUSER, automatically_write_user_mappings=False)
         await write_user_mappings(
             self.thr,
-            await local_thread.task.getuid(), await local_thread.task.getgid(),
+            await parent.task.getuid(), await parent.task.getgid(),
             0, 0,
         )
 
@@ -135,10 +135,10 @@ class TestNet(TrioTestCase):
 
 class TestNetLocalPort(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = await local_thread.clone(CLONE.NEWUSER, automatically_write_user_mappings=False)
+        parent, self.thr = self.thr, await self.thr.clone(CLONE.NEWUSER, automatically_write_user_mappings=False)
         await write_user_mappings(
             self.thr,
-            await local_thread.task.getuid(), await local_thread.task.getgid(),
+            await parent.task.getuid(), await parent.task.getgid(),
             0, 0,
         )
         await self.thr.unshare(CLONE.NEWNET)

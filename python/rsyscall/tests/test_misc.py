@@ -3,8 +3,6 @@ import unittest
 
 from rsyscall.tests.trio_test_case import TrioTestCase
 
-from rsyscall import local_thread
-
 from rsyscall.thread import do_cloexec_except
 
 from rsyscall.tests.utils import do_async_things
@@ -14,8 +12,7 @@ from rsyscall.sched import CLONE
 
 class TestMisc(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local_thread
-        self.thr = await self.local.clone()
+        self.thr = await self.thr.clone()
 
     async def asyncTearDown(self) -> None:
         await self.thr.exit(0)

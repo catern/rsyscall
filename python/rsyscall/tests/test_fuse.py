@@ -1,5 +1,4 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import local_thread
 import shlex
 
 from rsyscall.sched import CLONE
@@ -33,8 +32,8 @@ import unittest
 
 class TestFUSE(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.tmpdir = await mkdtemp(local_thread)
-        self.thr = await local_thread.clone(CLONE.NEWUSER|CLONE.NEWNS)
+        self.tmpdir = await mkdtemp(self.thr)
+        self.thr = await self.thr.clone(CLONE.NEWUSER|CLONE.NEWNS)
         self.child = await self.thr.clone()
         self.path = self.tmpdir/"path"
         await self.thr.mkdir(self.path)

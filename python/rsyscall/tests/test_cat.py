@@ -1,5 +1,4 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import local_thread
 
 from rsyscall.unistd import Pipe
 from rsyscall.fcntl import O
@@ -7,7 +6,6 @@ from rsyscall.sched import CLONE
 
 class TestCat(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = local_thread
         self.cat = await self.thr.environ.which("cat")
         self.pipe_in = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()
         self.pipe_out = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()

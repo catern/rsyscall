@@ -3,17 +3,14 @@ from __future__ import annotations
 from rsyscall.tests.trio_test_case import TrioTestCase
 from rsyscall.tasks.stdin_bootstrap import *
 
-from rsyscall import local_thread
-
 from rsyscall.tests.utils import do_async_things
 from rsyscall.command import Command
 
 class TestStdinboot(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local_thread
-        path = await stdin_bootstrap_path_with_nix(self.local)
+        path = await stdin_bootstrap_path_with_nix(self.thr)
         self.command = Command(path, ['rsyscall-stdin-bootstrap'], {})
-        self.local_child, self.remote = await stdin_bootstrap(self.local, self.command)
+        self.local_child, self.remote = await stdin_bootstrap(self.thr, self.command)
 
     async def asyncTearDown(self) -> None:
         await self.local_child.kill()

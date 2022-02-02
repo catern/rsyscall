@@ -1,5 +1,4 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import local_thread
 
 from rsyscall.sys.socket import *
 from rsyscall.sys.un import *
@@ -13,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 class TestSocket(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = local_thread
         self.tmpdir = await mkdtemp(self.thr)
 
     async def asyncTearDown(self) -> None:

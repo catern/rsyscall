@@ -1,5 +1,4 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import local_thread
 
 from rsyscall.stdlib import mkdtemp
 from rsyscall.sys.mount import MS
@@ -9,8 +8,8 @@ import unittest
 
 class TestChroot(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.tmpdir = await mkdtemp(local_thread)
-        self.thr = await local_thread.clone(CLONE.NEWUSER|CLONE.NEWNS)
+        self.tmpdir = await mkdtemp(self.thr)
+        self.thr = await self.thr.clone(CLONE.NEWUSER|CLONE.NEWNS)
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()

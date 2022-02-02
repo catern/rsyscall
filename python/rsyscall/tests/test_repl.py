@@ -1,6 +1,5 @@
 from __future__ import annotations
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import local_thread
 from arepl import *
 from rsyscall.wish import serve_repls
 from rsyscall.stdlib import mkdtemp
@@ -11,7 +10,6 @@ import typing as t
 
 class TestREPL(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = local_thread
         self.tmpdir = await mkdtemp(self.thr, "test_stub")
         self.sock_path = self.tmpdir/"repl.sock"
 

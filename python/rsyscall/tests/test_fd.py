@@ -1,13 +1,9 @@
-from rsyscall import local_thread
 from rsyscall.fcntl import O
 from rsyscall.sched import CLONE
 from rsyscall.tests.trio_test_case import TrioTestCase
 import gc
 
 class TestFS(TrioTestCase):
-    async def asyncSetUp(self) -> None:
-        self.thr = local_thread
-
     async def test_fd_gc(self) -> None:
         "Verify that file descriptors actually get GC'd."
         gc.collect()

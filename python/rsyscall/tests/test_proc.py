@@ -1,6 +1,5 @@
 import unittest
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import local_thread
 from rsyscall.sys.socket import AF, SOCK, Socketpair
 from rsyscall.unistd import Pipe, SEEK
 from rsyscall.fcntl import O
@@ -13,8 +12,7 @@ from rsyscall.signal import SIG
 
 class TestProc(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local_thread
-        self.init = await self.local.clone(CLONE.NEWUSER|CLONE.NEWPID)
+        self.init = await self.thr.clone(CLONE.NEWUSER|CLONE.NEWPID)
         # set up proc
 
     async def test_pgid(self) -> None:

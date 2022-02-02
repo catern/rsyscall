@@ -1,5 +1,4 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import local_thread
 from rsyscall.fcntl import O
 from rsyscall.sys.prctl import *
 from rsyscall.sys.capability import *
@@ -7,8 +6,7 @@ from rsyscall.sched import CLONE
 
 class TestUser(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.local = local_thread
-        self.thr = await self.local.clone(CLONE.NEWUSER)
+        self.thr = await self.thr.clone(CLONE.NEWUSER)
 
     async def asyncTearDown(self) -> None:
         await self.thr.exit(0)

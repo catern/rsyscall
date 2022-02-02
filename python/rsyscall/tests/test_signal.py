@@ -1,11 +1,7 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import local_thread
 from rsyscall.signal import *
 
 class TestSignal(TrioTestCase):
-    async def asyncSetUp(self) -> None:
-        self.thr = local_thread
-
     async def test_sigaction(self) -> None:
         sa = Sigaction(Sighandler.DFL)
         ptr = await self.thr.ram.ptr(sa)
