@@ -839,14 +839,14 @@ struct fuse_read_in {
 
 struct fuse_getattr_in {
 	uint32_t	getattr_flags;
-	uint32_t	dummy;
+        ...;
 	uint64_t	fh;
 };
 
 struct fuse_attr_out {
 	uint64_t	attr_valid;	/* Cache timeout for the attributes */
 	uint32_t	attr_valid_nsec;
-	uint32_t	dummy;
+        ...;
 	struct fuse_attr attr;
 };
 

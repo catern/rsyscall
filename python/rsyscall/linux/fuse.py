@@ -144,7 +144,6 @@ class FuseAttr(Struct):
 	    "gid": self.gid,
 	    "rdev": self.rdev,
 	    "blksize": self.blksize,
-            "padding": 0,
         }
 
     def to_bytes(self) -> bytes:
@@ -324,7 +323,6 @@ class FuseOpenIn(Struct):
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct fuse_open_in*', {
             'flags': self.flags,
-            'unused': 0,
         })))
 
     @classmethod
@@ -403,7 +401,6 @@ class FuseReadIn(Struct):
             'size': self.size,
             'read_flags': self.read_flags,
             'flags': self.flags,
-            'padding': 0,
         })))
 
     @classmethod
@@ -510,7 +507,6 @@ class FuseGetattrIn(Struct):
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct fuse_getattr_in*', {
             'getattr_flags': self.getattr_flags,
-            'dummy': 0,
             'fh': self.fh,
         })))
 
@@ -532,8 +528,6 @@ class FuseFlushIn(Struct):
     def to_bytes(self) -> bytes:
         return bytes(ffi.buffer(ffi.new('struct fuse_flush_in*', {
             'fh': self.fh,
-            'unused': 0,
-            'padding': 0,
             'lock_owner': self.lock_owner,
         })))
 
@@ -584,7 +578,6 @@ class FuseReleaseIn(Struct):
             'fh': self.fh,
             'flags': self.flags,
             'release_flags': self.release_flags,
-            'unused': 0,
         })))
 
     @classmethod
@@ -671,7 +664,6 @@ class FuseGetxattrIn(Serializable):
         data = self.data + "\0"
         return bytes(ffi.buffer(ffi.new('struct fuse_getxattr_in*', {
             'size': len(data),
-            'padding': 0,
         })))
 
 @dataclass
@@ -936,7 +928,6 @@ class FuseOpenOut(Struct):
         return bytes(ffi.buffer(ffi.new('struct fuse_open_out*', {
             'fh': self.fh,
             'open_flags': self.open_flags,
-            'padding': 0,
         })))
 
     @classmethod
@@ -1005,7 +996,6 @@ class FuseAttrOut(Struct):
         return bytes(ffi.buffer(ffi.new('struct fuse_attr_out*', {
             'attr_valid': self.attr_valid.sec,
             'attr_valid_nsec': self.attr_valid.nsec,
-            'dummy': 0,
             'attr': self.attr._to_cffi_dict(),
         })))
 
@@ -1211,7 +1201,6 @@ class FuseGetxattrOut(Serializable):
         data = self.data + "\0"
         return bytes(ffi.buffer(ffi.new('struct fuse_getxattr_out*', {
             'size': len(data),
-            'padding': 0,
         })))
 
 @dataclass
