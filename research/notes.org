@@ -30859,3 +30859,337 @@ now we can write the full example.
 okaaaaaaaaaay hmmmmmm
 
 so 
+* names
+thread
+process
+rprocess
+
+it used to be called
+"StandardTask"
+or
+"RsyscallThread"
+
+hmmm
+
+rprocess is a decent name, except:
+
+- RProcess is long
+- the camel-casing is awkward
+- PersistentRProcess reads weirldy
+
+
+process...
+
+processss....
+
+Sysif..
+
+Task...
+
+kctx...
+
+handle...
+
+segment...
+
+capability...
+
+kernel..????
+
+linux...???
+
+kernel, because it's the thing you make syscalls in?
+
+it's the thing which handles your syscalls
+
+that's tempting, because passing around a kernel... very appealing!
+
+like, it's more obvious what's happening when you pass around a kernel.
+
+or operating system?
+
+maybe there's a word like Host which could work, argh.
+
+Core
+
+i mean, really, the thing you're talking to is:
+the kernel.
+
+Syscaller
+
+can't possibly get confused about what that does, I guess...
+
+I feel like it robs some potential for intuition though...
+
+Host is really appealing
+
+Host, Kernel...
+
+Node?
+
+platform
+architecture
+interface
+
+
+Node, Host, Kernel...
+Environment
+
+i actually think process is maybe deeply confusing...
+
+kernel might actually be better
+
+System?
+
+(connotes multiplicity too much)
+
+okay, wait, I want to be a thin layer over Unix.
+
+so what am I, then?
+
+what do the local sysif and the remote one have in common?
+
+well, I'm the Sysif
+
+or Syscaller or something...
+
+and there's a process, and a pid, and namespaces...
+
+so it's a process + a way to control that process, ya ya ya...
+
+
+okay, Process or RProcess is clearly the best.
+
+
+
+NO wait no argh, "Process" is just so confusing
+
+like rsyscall.Processs... confusing!
+
+doesn't make any sense when passed around!
+
+KernelContext??
+
+but what does it mean to exec in a KernelContext?
+
+maybe I really do need some novel name that doesn't apply to anything.
+
+session? like, session on a host?
+
+i'ms tarting to like host better because, the rsyscall process is,
+a host for us.
+** desiderata for a name
+- Exec makes sense: it should make sense to call .exec on a child-variation of it
+- As argument: it should make some sense when passed around to lots of functions
+- No existing class: it shouldn't overlap with any existing rsyscall classes
+- Overlap with concepts: it shouldn't overlap with any concepts which it actually isn't
+- Big: it should convey that it's "heavy" and "big"
+- One word: it should be one word
+- Arbitrary execution: it shouldn't suggest that syscalls are all we can do
+
+- it should connote that it has various internal details??
+- it should connote that... we can have multiple for an environment... (anti-Host requirement)
+- um, it should connote...
+
+  I mean, maybe Executor is fine.
+  hmm....
+
+  I need some new word which is a variation of process.
+
+  cuz like executor seems inane
+** table
+|                | execve | Good as arg | No existing class | No concept overlap | Heavy | Not just syscalls | One word |
+|----------------+--------+-------------+-------------------+--------------------+-------+-------------------+----------|
+| Thread         |        |             | X                 |                    | X     | X                 | X        |
+|----------------+--------+-------------+-------------------+--------------------+-------+-------------------+----------|
+| Process        | X      |             |                   | X                  | X     | X                 | X        |
+| RProcess       | X      | /           | X                 | X                  | X     | X                 |          |
+|----------------+--------+-------------+-------------------+--------------------+-------+-------------------+----------|
+| Kernel         |        | X           | X                 |                    |       |                   | X        |
+| KernelContext  |        | X           | X                 | X                  | X     |                   |          |
+| Host/Core/Node |        | X           | X                 | X                  |       | X                 | X        |
+|----------------+--------+-------------+-------------------+--------------------+-------+-------------------+----------|
+| Syscaller      | X      | X           | X                 | X                  | X     |                   | X        |
+|----------------+--------+-------------+-------------------+--------------------+-------+-------------------+----------|
+| Executor       | X      | X           | X                 | X                  | X     | X                 | X        |
+** process variations
+proceed?
+
+starting with proc and ending with something else?
+
+Crocess
+Krocess
+Mrocess
+Nrocess
+Qrocess
+Trocess
+Xrocess
+
+ess
+
+Concess
+
+Process
+
+Task?
+
+
+okay, why don't I just say exactly what it is?
+
+it's a process which is controlled by your program
+
+controlled by whoever has access to the cap, that is
+
+so it's like a ControlledProcess
+
+but all processes are controlled by the program that is running in them.
+but this is controlled by something outside it
+
+so it's a RemoteControlledProcess
+
+but not always, right,
+because the local process isn't remote as such.
+
+but... the idea is that you can pass the cap around and have ownership over what the process does
+
+so, actually, maybe I should come up with a word like inchoate process?
+like how I was talking about things in direct-style process creation?
+
+yeah, I need something to refer to this idea of a...
+half-created process, partial process, kinda thing.
+
+baby process lol
+
+precess????
+
+improcess
+unprocess
+
+partcess
+
+demiprocess
+
+puercess
+
+differences between process and precess:
+- precess doesn't have threads nor memory mappings of an executable
+- a precess you can manipulate by poking around in its internals and doing things with its resources,
+  a process you can only manipulate by sending it signals
+
+> so is your argument just, I should be able to create_thread and memory map after a process is already running?
+<heat> there's no need to throw all that powerful API away after construction
+<heat> yes
+
+hmm I need to think about that...
+maybe there's no real difference between process and precess...
+
+if you have cross-process operations in a real way,
+why shouldn't you be able to keep operating afterwards?
+
+on the other hand:
+if you don't actually have threads...
+it doesn't mean too much...
+
+on the other other hand,
+if you are explicit with your caps...
+
+i mean i guess you could share a cap between two places
+
+actually no I think it's reasonable to have linearity in caps:
+you might want to explicitly give up access to something when you give it to someone else,
+to avoid shared mutability.
+
+
+AHA!!!
+I'll call it Process
+
+and I'll *RENAME* the other processes to be "Pid"!
+or other things
+
+and, ChildPid is actually good!
+because, actually, I can safely signal pgroups too with it!
+** start with renaming to pid
+yeah.
+
+then after I finish that, I can rename thread to process with no problems
+
+okay so do I rename near.Process to pid too?
+merge near.ProcessGroup and near.Process?
+
+well I do actually use the difference between them to change kill behavior...
+
+so I have a single function which can kill both processes and process groups...
+hmmmmmm
+
+buuuuuuuuut I don't actually use that
+
+hmmmm
+
+so having a pidfd pins both process and process group.
+
+so..
+
+okay let's just change everything to process/pid, get rid of processgroup,
+and we'll be good.
+
+let's do that in a single commit too
+
+okaaayyyyyy sooooooo
+
+waitid also uses processgroup in this way, hm.
+
+maybe it should be...
+
+Pid and Pgid?
+
+instead of processgroup and process?
+
+yeah, yeah, it's not actually a handle anyway even if it's near...
+
+but wait, nothing is, actually...
+
+none of the near types are owning...
+
+but then again!
+we are saying "address" and "filedescriptor" here.
+
+i guess pid would be more in keeping, for sure...
+
+memorymapping is weird too
+
+maybe I should say...
+
+ProcessId
+
+yes okay and then ChildPid, because it represents more than just a ProcessId
+** DONE typing
+ummm okay my types are broken
+
+but actually I can fix them ezmode by adding proper stub support, interesting.
+
+okay... then I could remove these ignore missing imports...
+
+lol can't believe this is so broken...
+
+okay let's start with fixing these type errors
+*** TODO add type stubs from mypy and so on
+** DONE rename add_child_process to add_child_pid
+** DONE rename ThreadProcess and Process to ThreadPid and Pid
+** rename rsyscall.handle.process to rsyscall.handle.pid
+actually not going to do this
+** DONE rename variable names "process" to "pid"
+*** DONE ChildThread.process
+*** DONE Task.process
+*** DONE monitor
+okay... actually I'll just leave this be.
+it's not too annoying
+
+okay takebacksies, I changed it
+** DONE maybe call ProcessId and ProcessGroupId Pid and Pgid?
+I mean, hm. hMM mm.
+
+I guess it's not that bad to do that, fine, fine.
+** TODO issue: Process conflicts with other "processes"
+maybe I'll say rprocess at some point?
+
+hmmmmmm
