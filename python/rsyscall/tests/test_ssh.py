@@ -15,14 +15,14 @@ from rsyscall.sched import CLONE
 from rsyscall.handle import FileDescriptor
 from rsyscall.thread import Thread, Command
 from rsyscall.command import Command
-from rsyscall.monitor import AsyncChildProcess
+from rsyscall.monitor import AsyncChildPid
 from rsyscall.stdlib import mkdtemp
 
 # import logging
 # logging.basicConfig(level=logging.DEBUG)
 
 async def start_cat(thread: Thread, cat: Command,
-                    stdin: FileDescriptor, stdout: FileDescriptor) -> AsyncChildProcess:
+                    stdin: FileDescriptor, stdout: FileDescriptor) -> AsyncChildPid:
     thread = await thread.clone()
     await thread.task.inherit_fd(stdin).dup2(thread.stdin)
     await thread.task.inherit_fd(stdout).dup2(thread.stdout)

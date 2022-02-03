@@ -77,7 +77,7 @@ from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.clone import clone_child_task
 from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.sched import Stack
-from rsyscall.handle import WrittenPointer, ThreadProcess, Pointer, Task, FileDescriptor
+from rsyscall.handle import WrittenPointer, ThreadPid, Pointer, Task, FileDescriptor
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.near.sysif import SyscallInterface, SyscallSendError
 from rsyscall.sys.syscall import SYS
@@ -89,7 +89,7 @@ from dataclasses import dataclass
 import logging
 from rsyscall.memory.ram import RAM
 
-from rsyscall.monitor import ChildProcessMonitor
+from rsyscall.monitor import ChildPidMonitor
 from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.sys.epoll import EPOLL
 
@@ -208,7 +208,7 @@ async def clone_persistent(
     epoller = await Epoller.make_root(ram, task)
     signal_block = SignalBlock(task, await ram.ptr(Sigset({SIG.CHLD})))
     # TODO use an inherited signalfd instead
-    child_monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
+    child_monitor = await ChildPidMonitor.make(ram, task, epoller, signal_block=signal_block)
     return PersistentThread(Thread(
         task, ram,
         parent.connection.inherit(task, ram),

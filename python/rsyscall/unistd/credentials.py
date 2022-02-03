@@ -5,7 +5,7 @@ import typing as t
 
 #### Classes ####
 if t.TYPE_CHECKING:
-    from rsyscall.handle.process import ChildProcess
+    from rsyscall.handle.process import ChildPid
 import rsyscall.far
 
 class CredentialsTask(rsyscall.far.Task):
@@ -21,7 +21,7 @@ class CredentialsTask(rsyscall.far.Task):
     async def getpgid(self) -> near.Pgid:
         return (await _getpgid(self.sysif, None))
 
-    async def setpgid(self, pgid: t.Optional[ChildProcess]=None) -> None:
+    async def setpgid(self, pgid: t.Optional[ChildPid]=None) -> None:
         if pgid is None:
             await _setpgid(self.sysif, None, None)
         else:

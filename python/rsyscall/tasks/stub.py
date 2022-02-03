@@ -47,7 +47,7 @@ import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM
 import rsyscall.nix as nix
 from rsyscall.epoller import Epoller, AsyncFileDescriptor, AsyncReadBuffer
-from rsyscall.monitor import ChildProcessMonitor
+from rsyscall.monitor import ChildPidMonitor
 from rsyscall.command import Command
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 
@@ -171,7 +171,7 @@ async def _setup_stub(
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     # I guess I need to write out the set too in describe
     epoller = await Epoller.make_root(ram, base_task)
-    child_monitor = await ChildProcessMonitor.make(ram, base_task, epoller)
+    child_monitor = await ChildPidMonitor.make(ram, base_task, epoller)
     connection = make_connection(base_task, ram,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
     new_thread = Thread(

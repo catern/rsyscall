@@ -8,7 +8,7 @@ from rsyscall.handle import FileDescriptor, WrittenPointer, Pointer, Task
 from rsyscall.handle.fd import _close
 from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.memory.ram import RAM
-from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
+from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.network.connection import Connection
 from rsyscall.path import Path
 from rsyscall.struct import FixedSize, T_fixed_size, HasSerializer, T_has_serializer, FixedSerializer, T_fixed_serializer, T_pathlike
@@ -89,7 +89,7 @@ class Thread:
                  connection: Connection,
                  loader: NativeLoader,
                  epoller: Epoller,
-                 child_monitor: ChildProcessMonitor,
+                 child_monitor: ChildPidMonitor,
                  environ: Environment,
                  stdin: FileDescriptor,
                  stdout: FileDescriptor,
@@ -303,12 +303,12 @@ class Thread:
         if flags & CLONE.NEWPID:
             # if the new process is pid 1, then CLONE_PARENT isn't allowed so we can't use inherit_to_child.
             # if we are a reaper, than we don't want our child CLONE_PARENTing to us, so we can't use inherit_to_child.
-            # in both cases we just fall back to making a new ChildProcessMonitor for the child.
+            # in both cases we just fall back to making a new ChildPidMonitor for the child.
             epoller = await Epoller.make_root(ram, task)
             # this signal is already blocked, we inherited the block, um... I guess...
             # TODO handle this more formally
             signal_block = SignalBlock(task, await ram.ptr(Sigset({SIG.CHLD})))
-            monitor = await ChildProcessMonitor.make(ram, task, epoller, signal_block=signal_block)
+            monitor = await ChildPidMonitor.make(ram, task, epoller, signal_block=signal_block)
         else:
             epoller = self.epoller.inherit(ram)
             monitor = self.monitor.inherit_to_child(task)
@@ -416,13 +416,13 @@ class Thread:
 
 class ChildThread(Thread):
     "A thread that we know is also a direct child process of another thread"
-    def __init__(self, thr: Thread, process: AsyncChildProcess) -> None:
+    def __init__(self, thr: Thread, process: AsyncChildPid) -> None:
         super()._init_from(thr)
         self.process = process
 
     async def _execve(self, path: t.Union[str, os.PathLike], argv: t.List[str], envp: t.List[str],
                       command: Command=None,
-    ) -> AsyncChildProcess:
+    ) -> AsyncChildPid:
         "Call execve, abstracting over memory; self.{exec,execve} are probably preferable"
         async def op(sem: RAM) -> t.Tuple[WrittenPointer[t.Union[str, os.PathLike]],
                                           WrittenPointer[ArgList],
@@ -439,7 +439,7 @@ class ChildThread(Thread):
     async def execv(self, path: t.Union[str, os.PathLike],
                     argv: t.Sequence[t.Union[str, os.PathLike]],
                     command: Command=None,
-    ) -> AsyncChildProcess:
+    ) -> AsyncChildPid:
         """Replace the running executable in this thread with another; see execve.
         """
         async def op(sem: RAM) -> t.Tuple[WrittenPointer[t.Union[str, os.PathLike]], WrittenPointer[ArgList]]:
@@ -455,7 +455,7 @@ class ChildThread(Thread):
                      env_updates: t.Mapping[str, t.Union[str, os.PathLike]]={},
                      inherited_signal_blocks: t.List[SignalBlock]=[],
                      command: Command=None,
-    ) -> AsyncChildProcess:
+    ) -> AsyncChildPid:
         """Replace the running executable in this thread with another.
 
         self.exec is probably preferable; it takes a nice Command object which
@@ -491,7 +491,7 @@ class ChildThread(Thread):
 
     async def exec(self, command: Command,
                    inherited_signal_blocks: t.List[SignalBlock]=[],
-    ) -> AsyncChildProcess:
+    ) -> AsyncChildPid:
         """Replace the running executable in this thread with what's specified in `command`
 
         See self.execve's docstring for an explanation of inherited_signal_blocks.

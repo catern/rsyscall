@@ -18,14 +18,14 @@ import typing as t
 logger = logging.getLogger(__name__)
 
 @dataclass
-class Process:
+class Pid:
     """A reference to an arbitrary process on the system, not necessarily our child.
 
     This is essentially the equivalent of an arbitrary pid. It's not safe to signal
     arbitrary pids, because a process exit + pid wrap can cause you to signal some other
     unexpected process.
 
-    It's only safe to signal child processes, using the ChildProcess class.  But since
+    It's only safe to signal child processes, using the ChildPid class.  But since
     it's common to want to signal arbitrary pids even despite the danger, we provide this
     convenient class to do so.
 
@@ -55,7 +55,7 @@ class Process:
         name = type(self).__name__
         return f"{name}({self.near}, parent={self.task})"
 
-class ChildProcess(Process):
+class ChildPid(Pid):
     """A process that is our child, which we can monitor with waitid and safely signal.
 
     Because a child process's pid will not be reused until we wait on its zombie, we can
@@ -77,7 +77,7 @@ class ChildProcess(Process):
     def mark_dead(self, state: ChildState) -> None:
         self.death_state = state
 
-    def did_exec(self, command: t.Optional[Command]) -> ChildProcess:
+    def did_exec(self, command: t.Optional[Command]) -> ChildPid:
         self.command = command
         return self
 
@@ -114,7 +114,7 @@ class ChildProcess(Process):
         with self.borrow():
             return await super().getpgid()
 
-    async def setpgid(self, pgid: t.Optional[ChildProcess]) -> None:
+    async def setpgid(self, pgid: t.Optional[ChildPid]) -> None:
         # the ownership model of process groups is such that the only way that
         # it's safe to use setpgid on a child process is if we're setpgid-ing to
         # the process group of another child process.
@@ -168,7 +168,7 @@ class ChildProcess(Process):
             raise Exception("expected a state change, but siginfo buf didn't contain one")
         return state
 
-class ThreadProcess(ChildProcess):
+class ThreadPid(ChildPid):
     """A child process with some additional stuff, just useful for resource tracking for threads.
 
     We need to free the resources used by our child processes when they die. This class
@@ -200,32 +200,32 @@ class ThreadProcess(ChildProcess):
         self.free_everything()
         return super().mark_dead(event)
 
-    def did_exec(self, command: t.Optional[Command]) -> ChildProcess:
+    def did_exec(self, command: t.Optional[Command]) -> ChildPid:
         self.free_everything()
         return super().did_exec(command)
 
     def __repr__(self) -> str:
         name = type(self).__name__
         if self.command or self.death_state:
-            # pretend to be a ChildProcess if we've exec'd or died
-            name = 'ChildProcess'
+            # pretend to be a ChildPid if we've exec'd or died
+            name = 'ChildPid'
         return f"{name}({self.near}, parent={self.task})"
 
-class ProcessTask(rsyscall.far.Task):
+class PidTask(rsyscall.far.Task):
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
-                 process: t.Union[rsyscall.near.Pid, Process],
+                 process: t.Union[rsyscall.near.Pid, Pid],
                  fd_table: rsyscall.far.FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  pidns: rsyscall.far.PidNamespace,
     ) -> None:
-        if isinstance(process, Process):
+        if isinstance(process, Pid):
             near_process = process.near
             self.process = process
             self.parent_task: t.Optional[rsyscall.far.Task] = process.task
         else:
             near_process = process
-            self.process = Process(self, process)
+            self.process = Pid(self, process)
             self.parent_task = None
         super().__init__(sysif, near_process, fd_table, address_space, pidns)
 
@@ -237,7 +237,7 @@ class ProcessTask(rsyscall.far.Task):
                     ptid: t.Optional[Pointer],
                     ctid: t.Optional[Pointer[FutexNode]],
                     # this points to anything, it depends on the thread implementation
-                    newtls: t.Optional[Pointer]) -> ThreadProcess:
+                    newtls: t.Optional[Pointer]) -> ThreadPid:
         clone_parent = bool(flags & CLONE.PARENT)
         if clone_parent:
             if self.parent_task is None:
@@ -266,7 +266,7 @@ class ProcessTask(rsyscall.far.Task):
         # TODO the safety of this depends on no-one borrowing/freeing the stack in borrow __aexit__
         # should try to do this a bit more robustly...
         merged_stack = stack_alloc.merge(stack_data)
-        return ThreadProcess(owning_task, process, merged_stack, stack_data.value, ctid, newtls)
+        return ThreadPid(owning_task, process, merged_stack, stack_data.value, ctid, newtls)
 
-    def _make_process(self, pid: int) -> Process:
-        return Process(self, rsyscall.near.Pid(pid))
+    def _make_process(self, pid: int) -> Pid:
+        return Pid(self, rsyscall.near.Pid(pid))

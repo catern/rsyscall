@@ -1,6 +1,6 @@
 """Classes which own resources and provide the main syscall interfaces
 
-We have several resource-owning classes in this module: FileDescriptor, Pointer, Process,
+We have several resource-owning classes in this module: FileDescriptor, Pointer, Pid,
 MemoryMapping, etc.
 
 In the analogy to near and far pointers, they are like a near pointer plus a segment
@@ -29,7 +29,7 @@ import contextlib
 from rsyscall.command import Command
 from rsyscall.handle.fd import FileDescriptorTask, BaseFileDescriptor, FDTable
 from rsyscall.handle.pointer import Pointer, WrittenPointer, ReadablePointer, LinearPointer
-from rsyscall.handle.process import Process, ChildProcess, ThreadProcess, ProcessTask
+from rsyscall.handle.process import Pid, ChildPid, ThreadPid, PidTask
 from rsyscall.near.sysif import UnusableSyscallInterface
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ from rsyscall.sched import Borrowable
 __all__ = [
     "FileDescriptor", "FDTable", "BaseFileDescriptor",
     "Pointer", "WrittenPointer", "ReadablePointer", "LinearPointer",
-    "Process", "ChildProcess", "ThreadProcess",
+    "Pid", "ChildPid", "ThreadPid",
     "Task",
 ]
 
@@ -185,7 +185,7 @@ class Task(
         FileDescriptorTask[FileDescriptor],
         CapabilityTask, PrctlTask, MountTask,
         CredentialsTask,
-        ProcessTask,
+        PidTask,
         SchedTask,
         ResourceTask,
         FutexTask,
@@ -201,7 +201,7 @@ class Task(
 
     """
     def __init__(self,
-                 process: t.Union[rsyscall.near.Pid, Process],
+                 process: t.Union[rsyscall.near.Pid, Pid],
                  fd_table: FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  pidns: rsyscall.far.PidNamespace,
@@ -252,7 +252,7 @@ class Task(
                 self.manipulating_fd_table = False
             self._make_fresh_fd_table()
             self._make_fresh_address_space()
-            if isinstance(self.process, ChildProcess):
+            if isinstance(self.process, ChildPid):
                 self.process.did_exec(command)
         await self.sysif.close_interface()
 
@@ -275,7 +275,7 @@ class Task(
         self.manipulating_fd_table = False
         self._make_fresh_fd_table()
         self._make_fresh_address_space()
-        if isinstance(self.process, ChildProcess):
+        if isinstance(self.process, ChildPid):
             self.process.did_exec(command)
         await self.sysif.close_interface()
 

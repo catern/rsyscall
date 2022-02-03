@@ -63,7 +63,7 @@ along with a limited C API,
 to maximize its usability.
 
 In Python, we treat each syscall as a method on some object,
-such as Thread or FileDescriptor or ChildProcess.
+such as Thread or FileDescriptor or ChildPid.
 We've also used the type annotation features of Python 3.
 This is idiomatic for Python,
 but we'd love to support other languages.

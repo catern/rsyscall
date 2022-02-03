@@ -52,7 +52,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dneio import RequestQueue, reset, Event
 from rsyscall.epoller import Epoller, AsyncFileDescriptor
-from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Pointer, ChildProcess
+from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Pointer, ChildPid
 from rsyscall.memory.ram import RAM
 from rsyscall.near.sysif import SyscallError
 from rsyscall.sched import CLONE
@@ -133,9 +133,9 @@ class AsyncSignalfd:
             self.buf = valid + rest
         self.next_signal.close(final_exn)
 
-class AsyncChildProcess:
+class AsyncChildPid:
     "A child process which can be monitored without blocking the thread"
-    def __init__(self, process: ChildProcess, ram: RAM, sigchld_sigfd: AsyncSignalfd) -> None:
+    def __init__(self, process: ChildPid, ram: RAM, sigchld_sigfd: AsyncSignalfd) -> None:
         self.process = process
         self.ram = ram
         self.sigchld_sigfd = sigchld_sigfd
@@ -233,12 +233,12 @@ class AsyncChildProcess:
             await self.waitpid(W.EXITED)
 
 @dataclass
-class ChildProcessMonitor:
-    """Contains all that is needed to create an AsyncChildProcess from a ChildProcess
+class ChildPidMonitor:
+    """Contains all that is needed to create an AsyncChildPid from a ChildPid
 
-    We also know what arguments to pass to clone so that an AsyncChildProcess may be created.
+    We also know what arguments to pass to clone so that an AsyncChildPid may be created.
 
-    Use ChildProcessMonitor.make to create.
+    Use ChildPidMonitor.make to create.
 
     """
     sigfd: AsyncSignalfd
@@ -249,17 +249,17 @@ class ChildProcessMonitor:
     @staticmethod
     async def make(ram: RAM, task: Task, epoller: Epoller,
                    *, signal_block: SignalBlock=None,
-    ) -> ChildProcessMonitor:
-        """Make a ChildProcessMonitor, possibly blocking signals
+    ) -> ChildPidMonitor:
+        """Make a ChildPidMonitor, possibly blocking signals
 
         If the signals are already blocked, the user can pass in a SignalBlock to
         represent that, and save the need to make the SignalBlock.
 
         """
         sigfd = await AsyncSignalfd.make(ram, task, epoller, Sigset({SIG.CHLD}), signal_block=signal_block)
-        return ChildProcessMonitor(sigfd, ram, task, use_clone_parent=False)
+        return ChildPidMonitor(sigfd, ram, task, use_clone_parent=False)
 
-    def inherit_to_child(self, child_task: Task) -> ChildProcessMonitor:
+    def inherit_to_child(self, child_task: Task) -> ChildPidMonitor:
         """Create a new instance that will clone children from the passed-in task
 
         This requires, and checks, that the passed-in task is a child of the process which
@@ -275,34 +275,34 @@ class ChildProcessMonitor:
         # 2. That means if we use CLONE_PARENT in child_task, the resulting processes will also be
         # child processes of self.sigfd.afd.handle.task.
         # 3. Therefore self.sigfd will be notified if and when those future child processes have some state change.
-        # 4. Therefore we can use self.sigfd to create AsyncChildProcesses for those future child processes.
-        return ChildProcessMonitor(self.sigfd, self.ram, child_task, use_clone_parent=True)
+        # 4. Therefore we can use self.sigfd to create AsyncChildPides for those future child processes.
+        return ChildPidMonitor(self.sigfd, self.ram, child_task, use_clone_parent=True)
 
-    def add_child_process(self, process: ChildProcess) -> AsyncChildProcess:
-        """Create an AsyncChildProcess which monitors the passed-in ChildProcess.
+    def add_child_pid(self, process: ChildPid) -> AsyncChildPid:
+        """Create an AsyncChildPid which monitors the passed-in ChildPid.
 
         We check that the passed-in process is in fact a child of the task associated with
-        this ChildProcessMonitor before returning the AsyncChildProcess; otherwise the
-        AsyncChildProcess wouldn't be woken up at the correct times to read child status
+        this ChildPidMonitor before returning the AsyncChildPid; otherwise the
+        AsyncChildPid wouldn't be woken up at the correct times to read child status
         changes.
 
         """
         if process.task is not self.sigfd.afd.handle.task:
             raise Exception("process", process, "with parent task", process.task,
                             "is not our child; we're", self.sigfd.afd.handle.task)
-        proc = AsyncChildProcess(process, self.ram, self.sigfd)
+        proc = AsyncChildPid(process, self.ram, self.sigfd)
         return proc
 
     async def clone(self, flags: CLONE,
                     child_stack: t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
-                    ctid: t.Optional[Pointer[FutexNode]]=None) -> AsyncChildProcess:
-        """Call `clone` with these arguments and return an AsyncChildProcess monitoring the resulting child
+                    ctid: t.Optional[Pointer[FutexNode]]=None) -> AsyncChildPid:
+        """Call `clone` with these arguments and return an AsyncChildPid monitoring the resulting child
 
-        We'll use CLONE.PARENT if necessary to create a ChildProcess that is monitorable
-        by this ChildProcessMonitor.
+        We'll use CLONE.PARENT if necessary to create a ChildPid that is monitorable
+        by this ChildPidMonitor.
 
         """
         if self.use_clone_parent:
             flags |= CLONE.PARENT
         process = await self.cloning_task.clone(flags|SIG.CHLD, child_stack, None, ctid, None)
-        return self.add_child_process(process)
+        return self.add_child_pid(process)

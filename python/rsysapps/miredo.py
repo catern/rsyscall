@@ -14,7 +14,7 @@ from rsyscall.command import Command
 from rsyscall.handle import FileDescriptor, Path
 from dataclasses import dataclass
 from rsyscall.struct import Int32
-from rsyscall.monitor import AsyncChildProcess
+from rsyscall.monitor import AsyncChildPid
 
 import rsyscall.tasks.local as local
 from rsyscall.sys.capability import CAP, CapHeader, CapData
@@ -56,8 +56,8 @@ class Miredo:
     # So, I'll just use a thread, which I do understand.
     # Hopefully we can get a more lightweight setns-based approach later?
     ns_thread: ChildThread
-    privproc_child: AsyncChildProcess
-    client_child: AsyncChildProcess
+    privproc_child: AsyncChildPid
+    client_child: AsyncChildPid
 
 async def add_to_ambient_caps(thr: Thread, capset: t.Set[CAP]) -> None:
     hdr = await thr.ptr(CapHeader())

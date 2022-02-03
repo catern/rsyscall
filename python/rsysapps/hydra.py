@@ -13,7 +13,7 @@ from rsyscall.thread import Thread, ChildThread
 from rsyscall.handle import FileDescriptor, Path, WrittenPointer, Pointer
 from rsyscall.command import Command
 from rsyscall.memory.ram import RAM
-from rsyscall.monitor import AsyncChildProcess
+from rsyscall.monitor import AsyncChildPid
 from dataclasses import dataclass
 import rsyscall.tasks.local as local
 from rsyscall.mktemp import update_symlink
@@ -246,12 +246,12 @@ async def start_postgres(nursery, thread: Thread, path: Path) -> Postgres:
 
 class NginxChild:
     # can support methods for reloading configuration, etc
-    def __init__(self, child: AsyncChildProcess) -> None:
+    def __init__(self, child: AsyncChildPid) -> None:
         self.child = child
 
 async def exec_nginx(thread: ChildThread, nginx: Command,
                      path: Path, config: FileDescriptor,
-                     listen_fds: t.List[FileDescriptor]) -> AsyncChildProcess:
+                     listen_fds: t.List[FileDescriptor]) -> AsyncChildPid:
     nginx_fds = [fd.maybe_copy(thread.task) for fd in listen_fds]
     config_fd = config.maybe_copy(thread.task)
     await thread.unshare_files()

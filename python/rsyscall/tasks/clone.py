@@ -12,7 +12,7 @@ from rsyscall.handle import Stack, WrittenPointer, Pointer, FutexNode, FileDescr
 from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.memory.allocator import Arena
 from rsyscall.memory.ram import RAM
-from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
+from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.network.connection import Connection
 from rsyscall.struct import Int32
 from rsyscall.tasks.connection import SyscallConnection
@@ -38,8 +38,8 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 async def launch_futex_monitor(ram: RAM,
-                               loader: NativeLoader, monitor: ChildProcessMonitor,
-                               futex_pointer: WrittenPointer[FutexNode]) -> AsyncChildProcess:
+                               loader: NativeLoader, monitor: ChildPidMonitor,
+                               futex_pointer: WrittenPointer[FutexNode]) -> AsyncChildPid:
     """Launch a process to wait on a futex; then we monitor the process to monitor the futex
 
     This process calls futex(futex_pointer, FUTEX_WAIT, futex_pointer.value) and
@@ -80,10 +80,10 @@ async def clone_child_task(
         ram: RAM,
         connection: Connection,
         loader: NativeLoader,
-        monitor: ChildProcessMonitor,
+        monitor: ChildPidMonitor,
         flags: CLONE,
         trampoline_func: t.Callable[[FileDescriptor], Trampoline],
-) -> t.Tuple[AsyncChildProcess, Task]:
+) -> t.Tuple[AsyncChildPid, Task]:
     """Clone a new child process and setup the sysif and task to manage it
 
     We rely on trampoline_func to take a socket and give us a native function call with

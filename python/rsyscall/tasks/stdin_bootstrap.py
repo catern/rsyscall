@@ -18,7 +18,7 @@ from rsyscall.thread import Thread
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.ram import RAM
 from rsyscall.memory.socket_transport import SocketMemoryTransport
-from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
+from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.tasks.connection import SyscallConnection
 import logging
 import rsyscall.far as far
@@ -58,7 +58,7 @@ async def stdin_bootstrap_path_with_nix(thread: Thread) -> Path:
 async def stdin_bootstrap(
         parent: Thread,
         bootstrap_command: Command,
-) -> t.Tuple[AsyncChildProcess, Thread]:
+) -> t.Tuple[AsyncChildPid, Thread]:
     """Create a thread from running an arbitrary command which must run rsyscall-stdin-bootstrap
 
     bootstrap_command can be any arbitrary command, but it must eventually exec
@@ -128,7 +128,7 @@ async def stdin_bootstrap(
                allocator)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     epoller = await Epoller.make_root(ram, base_task)
-    child_monitor = await ChildProcessMonitor.make(ram, base_task, epoller)
+    child_monitor = await ChildPidMonitor.make(ram, base_task, epoller)
     connection = make_connection(base_task, ram,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
     new_parent = Thread(

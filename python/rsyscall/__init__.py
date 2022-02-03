@@ -88,10 +88,10 @@ For convenience,
 `AsyncFileDescriptor` also has `AsyncFileDescriptor.read_some_bytes` and `AsyncFileDescriptor.write_all_bytes`,
 which abstract over memory for simple use cases where efficient buffer management is not necessary.
 
-Likewise, the `AsyncChildProcess` object wraps `rsyscall.handle.ChildProcess`
-to perform non-blocking `AsyncChildProcess.waitpid` operations on child process.
-One will usually never deal with `ChildProcess`,
-because `ChildThread.exec` returns an `AsyncChildProcess`,
+Likewise, the `AsyncChildPid` object wraps `rsyscall.handle.ChildPid`
+to perform non-blocking `AsyncChildPid.waitpid` operations on child process.
+One will usually never deal with `ChildPid`,
+because `ChildThread.exec` returns an `AsyncChildPid`,
 and that is the primary way to obtain child processes.
 
 ## Child processes
@@ -122,7 +122,7 @@ from rsyscall.handle import (
     ReadablePointer, LinearPointer,
 )
 from rsyscall.epoller import AsyncFileDescriptor
-from rsyscall.monitor import AsyncChildProcess
+from rsyscall.monitor import AsyncChildPid
 from rsyscall.struct import Int32, Int64
 from rsyscall.tasks.local import local_thread
 from rsyscall.sys.mman import MemoryMapping
@@ -133,7 +133,7 @@ __all__ = [
     'Task',
     'FileDescriptor',
     'AsyncFileDescriptor',
-    'AsyncChildProcess',
+    'AsyncChildPid',
     'local_thread',
     'Pointer', 'WrittenPointer', 'ReadablePointer', 'LinearPointer',
 ]

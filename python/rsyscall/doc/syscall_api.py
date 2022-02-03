@@ -383,7 +383,7 @@ To summarize, we've added the following additional rules:
 
 ## Additional notes
 ### Everything is garbage collected
-`rsyscall.FileDescriptor`s, `rsyscall.sys.mman.MemoryMapping`s, `rsyscall.handle.ChildProcess`es, and other resources
+`rsyscall.FileDescriptor`s, `rsyscall.sys.mman.MemoryMapping`s, `rsyscall.handle.ChildPid`s, and other resources
 are all allocated through various system calls which return Python objects.
 System calls related to these resources are present as methods on these objects.
 
@@ -392,14 +392,14 @@ For example, when the last reference to a file descriptor goes out of scope, the
 The same applies for memory mappings, child processes, and other objects.
 
 It is also possible to manually close an `rsyscall.FileDescriptor`
-(or unmap an `rsyscall.sys.mman.MemoryMapping`, or kill a `rsyscall.handle.ChildProcess`)
+(or unmap an `rsyscall.sys.mman.MemoryMapping`, or kill a `rsyscall.handle.ChildPid`)
 if you want it to be deterministically closed.
 
 ### syscalls valid on multiple objects
 Some syscalls can operate on multiple kinds of objects;
 for example, `setpriority` can both operate on the current process and other processes.
 In such cases, all the objects which are valid targets for the syscall will have a method for the syscall;
-there's both a `rsyscall.Task.setpriority` and a `rsyscall.handle.Process.setpriority`.
+there's both a `rsyscall.Task.setpriority` and a `rsyscall.handle.Pid.setpriority`.
 
 ### Deviations from Linux headers
 In rare cases, to improve type safety and usability,

@@ -13,7 +13,7 @@ from rsyscall.thread import Thread
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.ram import RAM
 from rsyscall.memory.socket_transport import SocketMemoryTransport
-from rsyscall.monitor import AsyncChildProcess, ChildProcessMonitor
+from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.network.connection import ListeningConnection
 from rsyscall.path import Path
 from rsyscall.sched import CLONE
@@ -148,7 +148,7 @@ class SSHHost:
         self.executables = executables
         self.to_host = to_host
 
-    async def ssh(self, thread: Thread) -> t.Tuple[AsyncChildProcess, Thread]:
+    async def ssh(self, thread: Thread) -> t.Tuple[AsyncChildPid, Thread]:
         # we could get rid of the need to touch the local filesystem by directly
         # speaking the openssh multiplexer protocol. or directly speaking the ssh
         # protocol for that matter.
@@ -210,7 +210,7 @@ async def make_bootstrap_dir(
     await child_process.check()
 
 async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
-                      local_path: Path, remote_path: str) -> AsyncChildProcess:
+                      local_path: Path, remote_path: str) -> AsyncChildPid:
     "Forward Unix socket connections to local_path to the socket at remote_path, over ssh"
     stdout_pipe = await (await thread.task.pipe(
         await thread.ram.malloc(Pipe))).read()
@@ -239,7 +239,7 @@ async def ssh_bootstrap(
         local_socket_path: Path,
         # the directory we're bootstrapping out of
         tmp_path_bytes: bytes,
-) -> t.Tuple[AsyncChildProcess, Thread]:
+) -> t.Tuple[AsyncChildPid, Thread]:
     "Over ssh, run the bootstrap executable, "
     # identify local path
     local_data_addr = await parent.ram.ptr(
@@ -291,7 +291,7 @@ async def ssh_bootstrap(
     # we don't inherit SignalMask; we assume ssh zeroes the sigmask before starting us
     new_ram = RAM(new_base_task, new_transport, new_allocator)
     epoller = await Epoller.make_root(new_ram, new_base_task)
-    child_monitor = await ChildProcessMonitor.make(new_ram, new_base_task, epoller)
+    child_monitor = await ChildPidMonitor.make(new_ram, new_base_task, epoller)
     await handle_listening_fd.fcntl(F.SETFL, O.NONBLOCK)
     connection = ListeningConnection(
         parent.task, parent.ram, parent.epoller,

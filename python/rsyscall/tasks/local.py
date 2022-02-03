@@ -28,7 +28,7 @@ from rsyscall.sys.syscall import SYS
 from rsyscall.network.connection import FDPassConnection
 from rsyscall.environ import Environment
 from rsyscall.loader import NativeLoader
-from rsyscall.monitor import ChildProcessMonitor
+from rsyscall.monitor import ChildPidMonitor
 
 from rsyscall.sys.epoll import EpollFlag
 from rsyscall.epoller import Epoller
@@ -112,7 +112,7 @@ async def _make_local_thread() -> Thread:
         await FDPassConnection.make(task, ram, epoller),
         NativeLoader.make_from_symbols(task, lib),
         epoller,
-        await ChildProcessMonitor.make(ram, task, epoller),
+        await ChildPidMonitor.make(ram, task, epoller),
         Environment.make_from_environ(task, ram, {**os.environ}),
         stdin=task.make_fd_handle(near.FileDescriptor(0)),
         stdout=task.make_fd_handle(near.FileDescriptor(1)),
