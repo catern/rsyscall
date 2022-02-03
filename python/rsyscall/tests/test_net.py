@@ -26,7 +26,7 @@ class Tun:
     sock: FileDescriptor
 
     @classmethod
-    async def make(cls, parent: Thread, addr: ipaddress.IPv4Address, peer: ipaddress.IPv4Address) -> None:
+    async def make(cls, parent: Thread, addr: ipaddress.IPv4Address, peer: ipaddress.IPv4Address) -> 'Tun':
         # put each tun in a separate netns; I tried putting them in
         # the same netns, but got silent packet delivery failures.
         thr = await parent.clone(CLONE.NEWNET|CLONE.FILES)

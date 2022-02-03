@@ -158,7 +158,7 @@ async def _deploy(src: Thread, dest: Thread, path: PackageClosure) -> None:
 
 class PackagePath(Path):
     "A Path with a few helper methods useful for Nix packages"
-    def bin(self, name: str) -> Path:
+    def bin(self, name: str) -> Command:
         return Command(self/"bin"/name, [name], {})
 
 async def deploy(thread: Thread, package: PackageClosure) -> PackagePath:

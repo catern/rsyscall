@@ -12,7 +12,8 @@ async def main() -> None:
     number = await wish(Wish(int, "i wish you would tell me a number!!!"))
     flavor = await wish(Wish(str, "Sorry for being so rude, spirit. Could you tell me your favorite flavor of pie?"))
     pies = [f"A tasty {flavor} pie."]*number
-    await wish(Wish(None, f"Here you go spirit! {number} delicious {flavor} pies! Return when you're done eating them!"))
+    await wish(Wish(type(None),
+                    f"Here you go spirit! {number} delicious {flavor} pies! Return when you're done eating them!"))
     print("Bye spirit! See you later!")
 
 if __name__ == "__main__":
