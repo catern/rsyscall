@@ -15,10 +15,10 @@ class CredentialsTask(rsyscall.far.Task):
     async def getgid(self) -> int:
         return (await _getgid(self.sysif))
 
-    async def getpid(self) -> near.Process:
+    async def getpid(self) -> near.Pid:
         return (await _getpid(self.sysif))
 
-    async def getpgid(self) -> near.ProcessGroup:
+    async def getpgid(self) -> near.Pgid:
         return (await _getpgid(self.sysif, None))
 
     async def setpgid(self, pgid: t.Optional[ChildProcess]=None) -> None:
@@ -44,16 +44,16 @@ async def _getuid(sysif: SyscallInterface) -> int:
 async def _getgid(sysif: SyscallInterface) -> int:
     return (await sysif.syscall(SYS.getgid))
 
-async def _getpid(sysif: SyscallInterface) -> near.Process:
-    return near.Process(await sysif.syscall(SYS.getpid))
+async def _getpid(sysif: SyscallInterface) -> near.Pid:
+    return near.Pid(await sysif.syscall(SYS.getpid))
 
-async def _getpgid(sysif: SyscallInterface, pid: t.Optional[near.Process]) -> near.ProcessGroup:
+async def _getpgid(sysif: SyscallInterface, pid: t.Optional[near.Pid]) -> near.Pgid:
     if pid is None:
         pid = 0 # type: ignore
-    return near.ProcessGroup(await sysif.syscall(SYS.getpgid, pid))
+    return near.Pgid(await sysif.syscall(SYS.getpgid, pid))
 
 async def _setpgid(sysif: SyscallInterface,
-                   pid: t.Optional[near.Process], pgid: t.Optional[near.ProcessGroup]) -> None:
+                   pid: t.Optional[near.Pid], pgid: t.Optional[near.Pgid]) -> None:
     if pid is None:
         pid = 0 # type: ignore
     if pgid is None:

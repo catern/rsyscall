@@ -340,8 +340,8 @@ async def _rt_sigaction(sysif: SyscallInterface, signum: SIG,
         oldact = 0 # type: ignore
     await sysif.syscall(SYS.rt_sigaction, signum, act, oldact, size)
 
-async def _kill(sysif: SyscallInterface, pid: t.Union[near.Process, near.ProcessGroup], sig: SIG) -> None:
-    if isinstance(pid, near.ProcessGroup):
+async def _kill(sysif: SyscallInterface, pid: t.Union[near.Pid, near.Pgid], sig: SIG) -> None:
+    if isinstance(pid, near.Pgid):
         pid = -int(pid) # type: ignore
     await sysif.syscall(SYS.kill, pid, sig)
 

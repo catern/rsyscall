@@ -112,7 +112,7 @@ async def stdin_bootstrap(
     # numbers from.
     # oh hey we can conveniently dump the inode numbers with getdents!
     pidns = parent.task.pidns
-    process = near.Process(pid)
+    process = near.Pid(pid)
     base_task = Task(process, fd_table, address_space, pidns)
     remote_syscall_fd = base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_fd))
     base_task.sysif = SyscallConnection(

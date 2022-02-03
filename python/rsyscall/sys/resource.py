@@ -93,7 +93,7 @@ from rsyscall.near.sysif import SyscallInterface
 from rsyscall.sys.syscall import SYS
 from rsyscall.near.types import (
     Address,
-    Process,
+    Pid,
 )
 
 async def _setpriority(
@@ -108,9 +108,9 @@ async def _setpriority(
     complication that we can pass 0 for the "who" argument to operate on the current process/process
     group/user, as determined by PRIO.
 
-    I considered making the type of "who", t.Union[Process, ProcessGroup, User, PRIO], and removing
+    I considered making the type of "who", t.Union[Pid, Pgid, User, PRIO], and removing
     the "which" argument; passing PRIO would cause setpriority to operate on the current
-    Process/ProcessGroup/User as determined by the PRIO value. That's the same as how our waitid
+    Pid/Pgid/User as determined by the PRIO value. That's the same as how our waitid
     wrapper works, but that usage of PRIO seemed too weird.
 
     """
@@ -125,7 +125,7 @@ async def _getpriority(
 
 async def _prlimit(
         sysif: SyscallInterface,
-        pid: t.Optional[Process],
+        pid: t.Optional[Pid],
         resource: RLIMIT,
         new_limit: t.Optional[Address]=None,
         old_limit: t.Optional[Address]=None,

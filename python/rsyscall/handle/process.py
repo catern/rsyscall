@@ -31,18 +31,18 @@ class Process:
 
     """
     task: rsyscall.far.Task
-    near: rsyscall.near.Process
+    near: rsyscall.near.Pid
 
     async def kill(self, sig: SIG) -> None:
         await _kill(self.task.sysif, self.near, sig)
 
-    def _as_process_group(self) -> rsyscall.near.ProcessGroup:
-        return rsyscall.near.ProcessGroup(self.near.id)
+    def _as_process_group(self) -> rsyscall.near.Pgid:
+        return rsyscall.near.Pgid(self.near.id)
 
     async def killpg(self, sig: SIG) -> None:
         await _kill(self.task.sysif, self._as_process_group(), sig)
 
-    async def getpgid(self) -> rsyscall.near.ProcessGroup:
+    async def getpgid(self) -> rsyscall.near.Pgid:
         return (await _getpgid(self.task.sysif, self.near))
 
     async def setpriority(self, prio: int) -> None:
@@ -63,7 +63,7 @@ class ChildProcess(Process):
     to child processes without the possibility of signaling some other unexpected process.
 
     """
-    def __init__(self, task: rsyscall.far.Task, near: rsyscall.near.Process, alive=True) -> None:
+    def __init__(self, task: rsyscall.far.Task, near: rsyscall.near.Pid, alive=True) -> None:
         self.task = task
         self.near = near
         self.death_state: t.Optional[ChildState] = None
@@ -110,7 +110,7 @@ class ChildProcess(Process):
         with self.borrow():
             await super().killpg(sig)
 
-    async def getpgid(self) -> rsyscall.near.ProcessGroup:
+    async def getpgid(self) -> rsyscall.near.Pgid:
         with self.borrow():
             return await super().getpgid()
 
@@ -175,7 +175,7 @@ class ThreadProcess(ChildProcess):
     makes that more straightforward.
 
     """
-    def __init__(self, task: rsyscall.far.Task, near: rsyscall.near.Process,
+    def __init__(self, task: rsyscall.far.Task, near: rsyscall.near.Pid,
                  used_stack: Pointer[Stack],
                  stack_data: Stack,
                  ctid: t.Optional[Pointer[FutexNode]],
@@ -214,7 +214,7 @@ class ThreadProcess(ChildProcess):
 class ProcessTask(rsyscall.far.Task):
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
-                 process: t.Union[rsyscall.near.Process, Process],
+                 process: t.Union[rsyscall.near.Pid, Process],
                  fd_table: rsyscall.far.FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  pidns: rsyscall.far.PidNamespace,
@@ -269,4 +269,4 @@ class ProcessTask(rsyscall.far.Task):
         return ThreadProcess(owning_task, process, merged_stack, stack_data.value, ctid, newtls)
 
     def _make_process(self, pid: int) -> Process:
-        return Process(self, rsyscall.near.Process(pid))
+        return Process(self, rsyscall.near.Pid(pid))

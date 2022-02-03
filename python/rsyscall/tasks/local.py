@@ -92,7 +92,7 @@ async def _make_local_thread() -> Thread:
     thread.
 
     """
-    process = near.Process(os.getpid())
+    process = near.Pid(os.getpid())
     task = Task(
         process, handle.FDTable(process.id),
         far.AddressSpace(process.id),

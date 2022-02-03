@@ -115,16 +115,16 @@ from rsyscall.near.sysif import SyscallInterface
 from rsyscall.sys.syscall import SYS
 from rsyscall.near.types import (
     Address,
-    Process,
-    ProcessGroup,
+    Pid,
+    Pgid,
 )
 
 async def _waitid(sysif: SyscallInterface,
-                  id: t.Union[Process, ProcessGroup, None], infop: t.Optional[Address], options: int,
+                  id: t.Union[Pid, Pgid, None], infop: t.Optional[Address], options: int,
                   rusage: t.Optional[Address]) -> int:
-    if isinstance(id, Process):
+    if isinstance(id, Pid):
         idtype = IdType.PID
-    elif isinstance(id, ProcessGroup):
+    elif isinstance(id, Pgid):
         idtype = IdType.PGID
     elif id is None:
         idtype = IdType.ALL

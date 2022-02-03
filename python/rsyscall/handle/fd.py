@@ -266,7 +266,7 @@ class FDTable(rsyscall.far.FDTable):
 class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
-                 near_process: rsyscall.near.Process,
+                 near_process: rsyscall.near.Pid,
                  fd_table: FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  pidns: rsyscall.far.PidNamespace,

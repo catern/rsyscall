@@ -14,8 +14,8 @@ __all__  = [
     "WatchDescriptor",
     "Address",
     "MemoryMapping",
-    "Process",
-    "ProcessGroup",
+    "Pid",
+    "Pgid",
 ]
 
 @dataclass(frozen=True)
@@ -144,7 +144,7 @@ class MemoryMapping:
         return str(self)
 
 @dataclass(frozen=True)
-class Process:
+class Pid:
     """The integer identifier for a process taken by many syscalls.
 
     This is a process in a specific pid namespace, but we don't with this object know what
@@ -157,13 +157,13 @@ class Process:
         return self.id
 
     def __str__(self) -> str:
-        return f'Process({self.id})'
+        return f'Pid({self.id})'
 
     def __repr__(self) -> str:
         return str(self)
 
 @dataclass(frozen=True)
-class ProcessGroup:
+class Pgid:
     """The integer identifier for a process group taken by many syscalls.
 
     This is a process group in a specific pid namespace, but we don't with this object

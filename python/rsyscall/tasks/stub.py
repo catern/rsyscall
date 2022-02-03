@@ -150,7 +150,7 @@ async def _setup_stub(
     address_space = far.AddressSpace(pid)
     # we assume pid namespace is shared
     pidns = thread.task.pidns
-    process = near.Process(pid)
+    process = near.Pid(pid)
     # we assume net namespace is shared - that's dubious...
     # we should make it possible to control the namespace sharing more, hmm.
     # TODO maybe the describe should contain the net namespace number? and we can store our own as well?

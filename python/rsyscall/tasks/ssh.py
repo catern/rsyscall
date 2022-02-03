@@ -273,7 +273,7 @@ async def ssh_bootstrap(
     # TODO we should get this from the SSHHost, this is usually going
     # to be common for all connections and we should express that
     new_pid_namespace = far.PidNamespace(new_pid)
-    new_process = near.Process(new_pid)
+    new_process = near.Pid(new_pid)
     new_base_task = Task(
         new_process, handle.FDTable(new_pid), new_address_space,
         new_pid_namespace,

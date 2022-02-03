@@ -28,8 +28,8 @@ from rsyscall.near.types import (
     WatchDescriptor,
     Address,
     MemoryMapping,
-    Process,
-    ProcessGroup,
+    Pid,
+    Pgid,
 )
 # re-exported SyscallInterface
 from rsyscall.near.sysif import SyscallInterface, SyscallHangup
@@ -38,7 +38,7 @@ __all__ = [
     'WatchDescriptor',
     'Address',
     'MemoryMapping',
-    'Process',
-    'ProcessGroup',
+    'Pid',
+    'Pgid',
     'SyscallInterface', 'SyscallHangup',
 ]

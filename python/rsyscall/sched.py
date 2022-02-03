@@ -138,7 +138,7 @@ import rsyscall.near as near
 
 async def _clone(sysif: SyscallInterface, flags: int, child_stack: t.Optional[near.Address],
                 ptid: t.Optional[near.Address], ctid: t.Optional[near.Address],
-                newtls: t.Optional[near.Address]) -> near.Process:
+                newtls: t.Optional[near.Address]) -> near.Pid:
     # We don't use CLONE_THREAD, so we can say without confusion, that clone returns a Process.
     if child_stack is None:
         child_stack = 0 # type: ignore
@@ -148,7 +148,7 @@ async def _clone(sysif: SyscallInterface, flags: int, child_stack: t.Optional[ne
         ctid = 0 # type: ignore
     if newtls is None:
         newtls = 0 # type: ignore
-    return near.Process(await sysif.syscall(SYS.clone, flags, child_stack, ptid, ctid, newtls))
+    return near.Pid(await sysif.syscall(SYS.clone, flags, child_stack, ptid, ctid, newtls))
 
 async def _unshare(sysif: SyscallInterface, flags: CLONE) -> None:
     await sysif.syscall(SYS.unshare, flags)

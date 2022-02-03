@@ -201,14 +201,14 @@ class Task(
 
     """
     def __init__(self,
-                 process: t.Union[rsyscall.near.Process, Process],
+                 process: t.Union[rsyscall.near.Pid, Process],
                  fd_table: FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  pidns: rsyscall.far.PidNamespace,
     ) -> None:
         super().__init__(
             UnusableSyscallInterface(),
-            t.cast(rsyscall.near.Process, process), fd_table, address_space, pidns,
+            t.cast(rsyscall.near.Pid, process), fd_table, address_space, pidns,
         )
 
     def _file_descriptor_constructor(self, fd: rsyscall.near.FileDescriptor) -> FileDescriptor:

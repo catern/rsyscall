@@ -78,7 +78,7 @@ class AddressSpace:
 class PidNamespace:
     """An opaque representation of an existing pid namespace, compared with "is"
 
-    This is the namespace in which a near.Process or near.ProcessGroup is valid. Thread
+    This is the namespace in which a near.Pid or near.Pgid is valid. Thread
     groups and sessions are also relative to a pid namespace, but we don't currently
     represent those.
 
@@ -140,7 +140,7 @@ class Task:
 
     """
     sysif: rsyscall.near.SyscallInterface
-    near_process: rsyscall.near.Process
+    near_process: rsyscall.near.Pid
     fd_table: FDTable
     address_space: AddressSpace
     pidns: PidNamespace
