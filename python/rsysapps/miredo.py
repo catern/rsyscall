@@ -9,7 +9,7 @@ import trio
 import rsyscall.handle as handle
 import rsyscall.near
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.thread import Thread, ChildThread
+from rsyscall.thread import Process, ChildProcess
 from rsyscall.command import Command
 from rsyscall.handle import FileDescriptor, Path
 from dataclasses import dataclass
@@ -55,11 +55,11 @@ class Miredo:
     # I don't get why this is the case, and I'm not sure it can't be worked around.
     # So, I'll just use a thread, which I do understand.
     # Hopefully we can get a more lightweight setns-based approach later?
-    ns_thread: ChildThread
+    ns_thread: ChildProcess
     privproc_child: AsyncChildPid
     client_child: AsyncChildPid
 
-async def add_to_ambient_caps(thr: Thread, capset: t.Set[CAP]) -> None:
+async def add_to_ambient_caps(thr: Process, capset: t.Set[CAP]) -> None:
     hdr = await thr.ptr(CapHeader())
     data_ptr = await thr.task.capget(hdr_ptr, await thr.malloc(CapData))
     data = await data_ptr.read()
@@ -68,7 +68,7 @@ async def add_to_ambient_caps(thr: Thread, capset: t.Set[CAP]) -> None:
     for cap in capset:
         await thr.task.prctl(PR.CAP_AMBIENT, PR_CAP_AMBIENT.RAISE, cap)
 
-async def set_miredo_sockopts(thread: Thread, fd: FileDescriptor) -> None:
+async def set_miredo_sockopts(thread: Process, fd: FileDescriptor) -> None:
     # set a bunch of sockopts
     one = await thread.ram.ptr(Int32(1))
     await fd.setsockopt(SOL.IP, IP.RECVERR, one)
@@ -77,7 +77,7 @@ async def set_miredo_sockopts(thread: Thread, fd: FileDescriptor) -> None:
     # hello fragments my old friend
     await fd.setsockopt(SOL.IP, IP.MTU_DISCOVER, await thread.ram.ptr(Int32(IP.PMTUDISC_DONT)))
 
-async def make_tun(thread: Thread, name: str, reqsock: FileDescriptor) -> t.Tuple[FileDescriptor, int]:
+async def make_tun(thread: Process, name: str, reqsock: FileDescriptor) -> t.Tuple[FileDescriptor, int]:
     # open /dev/net/tun
     tun_fd = await thread.task.open(await thread.ptr(Path("/dev/net/tun")), O.RDWR)
     # register TUN interface name for this /dev/net/tun fd
@@ -88,10 +88,10 @@ async def make_tun(thread: Thread, name: str, reqsock: FileDescriptor) -> t.Tupl
     tun_index = (await ifreq.read()).ifindex
     return tun_fd, tun_index
 
-async def unmount_everything_except(thread: Thread, path: Path) -> None:
+async def unmount_everything_except(thread: Process, path: Path) -> None:
     pass
 
-async def start_miredo_internal(thread: Thread, miredo_exec: MiredoExecutables) -> Miredo:
+async def start_miredo_internal(thread: Process, miredo_exec: MiredoExecutables) -> Miredo:
     ### create socket outside network namespace that Miredo will use for internet access
     inet_sock = await thread.socket(AF.INET, SOCK.DGRAM)
     await inet_sock.bind(await thread.ptr(SockaddrIn(0, 0)))
@@ -138,7 +138,7 @@ async def start_miredo_internal(thread: Thread, miredo_exec: MiredoExecutables) 
     ])
     return Miredo(ns_thread, client_child, privproc_child)
 
-async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Thread) -> Miredo:
+async def start_miredo(nursery, miredo_exec: MiredoExecutables, thread: Process) -> Miredo:
     miredo = await start_miredo_internal(thread, miredo_exec)
     nursery.start_soon(miredo.privproc_child.check)
     nursery.start_soon(miredo.client_child.check)

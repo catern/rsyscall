@@ -7,7 +7,7 @@ import trio
 import rsyscall.handle as handle
 import rsyscall.near
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.thread import Thread
+from rsyscall.thread import Process
 from rsyscall.command import Command
 from rsyscall.handle import FileDescriptor, Path
 from dataclasses import dataclass
@@ -25,7 +25,7 @@ from rsyscall.sched import CLONE
 class Powerdns:
     pass
 
-async def start_powerdns(nursery, parent: Thread, path: Path, zone: dns.zone.Zone,
+async def start_powerdns(nursery, parent: Process, path: Path, zone: dns.zone.Zone,
                                   # tuple is (udpfd, listening tcpfd)
                                   ipv4_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
                                   ipv6_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
@@ -69,7 +69,7 @@ async def start_powerdns(nursery, parent: Thread, path: Path, zone: dns.zone.Zon
     nursery.start_soon(child.check)
     return Powerdns()
 
-async def start_recursor(nursery, parent: Thread, path: Path,
+async def start_recursor(nursery, parent: Process, path: Path,
                                   ipv4_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
                                   ipv6_sockets: t.List[t.Tuple[handle.FileDescriptor, handle.FileDescriptor]],
                                   root_hints: dns.zone.Zone=None) -> Powerdns:

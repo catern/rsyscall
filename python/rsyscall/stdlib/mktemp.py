@@ -1,7 +1,7 @@
 "Functions for making temporary directories."
 import random
 import string
-from rsyscall.thread import Thread
+from rsyscall.thread import Process
 from rsyscall.path import Path
 from rsyscall.handle import WrittenPointer
 import os
@@ -11,7 +11,7 @@ def random_string(k: int=8) -> str:
     "Return a random string - useful for making files that don't conflict with others."
     return ''.join(random.choices(string.ascii_letters + string.digits, k=k))
 
-async def update_symlink(thr: Thread, path: WrittenPointer[Path],
+async def update_symlink(thr: Process, path: WrittenPointer[Path],
                          target: t.Union[str, os.PathLike]) -> WrittenPointer[Path]:
     "Atomically update this path to contain a symlink pointing at this target."
     tmpname = path.value.name + ".updating." + random_string(k=8)
@@ -20,7 +20,7 @@ async def update_symlink(thr: Thread, path: WrittenPointer[Path],
     await thr.task.rename(tmppath, path)
     return path
 
-async def mkdtemp(thr: Thread, prefix: str="mkdtemp") -> 'TemporaryDirectory':
+async def mkdtemp(thr: Process, prefix: str="mkdtemp") -> 'TemporaryDirectory':
     "Make a temporary directory in thr.environ.tmpdir."
     parent = thr.environ.tmpdir
     name = prefix+"."+random_string(k=8)
@@ -29,7 +29,7 @@ async def mkdtemp(thr: Thread, prefix: str="mkdtemp") -> 'TemporaryDirectory':
 
 class TemporaryDirectory(Path):
     "A temporary directory we've created and are responsible for cleaning up."
-    def __init__(self, thr: Thread, parent: Path, name: str) -> None:
+    def __init__(self, thr: Process, parent: Path, name: str) -> None:
         "Don't directly instantiate, use rsyscall.mktemp.mkdtemp to create this class."
         self.thr = thr
         super().__init__(parent, name)

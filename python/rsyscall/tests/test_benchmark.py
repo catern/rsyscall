@@ -1,11 +1,11 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import Thread, Command
+from rsyscall import Process, Command
 from rsyscall.sys.wait import W
 import typing as t
 import cProfile
 import pstats
 
-async def rsys_run(parent: Thread, cmd: Command, count: int) -> None:
+async def rsys_run(parent: Process, cmd: Command, count: int) -> None:
     for _ in range(count):
         thread = await parent.clone()
         child = await thread.exec(cmd)

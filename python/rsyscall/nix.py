@@ -17,7 +17,7 @@ import typing as t
 import os
 import rsyscall.handle as handle
 from rsyscall import local_thread
-from rsyscall.thread import Thread, ChildThread
+from rsyscall.thread import Process, ChildProcess
 from rsyscall.command import Command
 import trio
 import struct
@@ -39,8 +39,8 @@ __all__ = [
     "deploy",
 ]
 
-async def _exec_tar_copy_tree(src: ChildThread, src_paths: t.Sequence[t.Union[str, os.PathLike]], src_fd: FileDescriptor,
-                              dest: ChildThread, dest_path: t.Union[str, os.PathLike], dest_fd: FileDescriptor) -> None:
+async def _exec_tar_copy_tree(src: ChildProcess, src_paths: t.Sequence[t.Union[str, os.PathLike]], src_fd: FileDescriptor,
+                              dest: ChildProcess, dest_path: t.Union[str, os.PathLike], dest_fd: FileDescriptor) -> None:
     "Exec tar to copy files between two paths"
     dest_tar = await dest.environ.which("tar")
     src_tar = await dest.environ.which("tar")
@@ -60,7 +60,7 @@ async def _exec_tar_copy_tree(src: ChildThread, src_paths: t.Sequence[t.Union[st
     await src_child.check()
     await dest_child.check()
 
-async def copy_tree(src: Thread, src_paths: t.Sequence[t.Union[str, os.PathLike]], dest: Thread, dest_path: t.Union[str, os.PathLike]) -> None:
+async def copy_tree(src: Process, src_paths: t.Sequence[t.Union[str, os.PathLike]], dest: Process, dest_path: t.Union[str, os.PathLike]) -> None:
     """Copy all the listed `src_paths` to subdirectories of `dest_path`
 
     Example: if we pass src_paths=['/a/b', 'c'], dest_path='dest',
@@ -72,8 +72,8 @@ async def copy_tree(src: Thread, src_paths: t.Sequence[t.Union[str, os.PathLike]
                               await dest.clone(), dest_path, dest_fd)
 
 async def _exec_nix_store_transfer_db(
-        src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor, closure: t.Sequence[t.Union[str, os.PathLike]],
-        dest: ChildThread, dest_nix_store: Command, dest_fd: FileDescriptor,
+        src: ChildProcess, src_nix_store: Command, src_fd: FileDescriptor, closure: t.Sequence[t.Union[str, os.PathLike]],
+        dest: ChildProcess, dest_nix_store: Command, dest_fd: FileDescriptor,
 ) -> None:
     "Exec nix-store to copy the Nix database for a closure between two stores"
     await dest.task.inherit_fd(dest_fd).dup2(dest.stdin)
@@ -87,8 +87,8 @@ async def _exec_nix_store_transfer_db(
     await dest_child.check()
 
 async def bootstrap_nix_database(
-        src: Thread, src_nix_store: Command, closure: t.Sequence[t.Union[str, os.PathLike]],
-        dest: Thread, dest_nix_store: Command,
+        src: Process, src_nix_store: Command, closure: t.Sequence[t.Union[str, os.PathLike]],
+        dest: Process, dest_nix_store: Command,
 ) -> None:
     "Bootstrap the store used by `dest` with the necessary database entries for `closure`, coming from `src`'s store"
     [(local_fd, dest_fd)] = await dest.open_channels(1)
@@ -97,8 +97,8 @@ async def bootstrap_nix_database(
                                       await dest.clone(), dest_nix_store, dest_fd)
 
 async def enter_nix_container(
-        src: Thread, nix: PackageClosure,
-        dest: Thread, dest_dir: Path,
+        src: Process, nix: PackageClosure,
+        dest: Process, dest_dir: Path,
 ) -> None:
     """Move `dest` into a container in `dest_dir`, deploying Nix inside.
 
@@ -120,7 +120,7 @@ async def enter_nix_container(
     # add nix.path to PATH; TODO add a real API for this
     dest.environ.path.paths.append(Path(nix.path/'bin'))
 
-async def deploy_nix_bin(src: Thread, nix: PackageClosure, dest: Thread) -> None:
+async def deploy_nix_bin(src: Process, nix: PackageClosure, dest: Process) -> None:
     "Deploy the Nix binaries from `store` to /nix through `dest`"
     # copy the binaries over
     await copy_tree(src, nix.closure, dest, Path("/nix"))
@@ -129,9 +129,9 @@ async def deploy_nix_bin(src: Thread, nix: PackageClosure, dest: Thread) -> None
     await bootstrap_nix_database(src, nix_store, nix.closure, dest, nix_store)
 
 async def _exec_nix_store_import_export(
-        src: ChildThread, src_nix_store: Command, src_fd: FileDescriptor,
+        src: ChildProcess, src_nix_store: Command, src_fd: FileDescriptor,
         closure: t.Sequence[t.Union[str, os.PathLike]],
-        dest: ChildThread, dest_nix_store: Command, dest_fd: FileDescriptor,
+        dest: ChildProcess, dest_nix_store: Command, dest_fd: FileDescriptor,
 ) -> None:
     "Exec nix-store to copy a closure of paths between two stores"
     await dest.task.inherit_fd(dest_fd).dup2(dest.stdin)
@@ -144,8 +144,8 @@ async def _exec_nix_store_import_export(
     await src_child.check()
     await dest_child.check()
 
-async def _deploy(src: Thread, dest: Thread, path: PackageClosure) -> None:
-    "Deploy a PackageClosure from the src Thread to the dest Thread"
+async def _deploy(src: Process, dest: Process, path: PackageClosure) -> None:
+    "Deploy a PackageClosure from the src Process to the dest Process"
     [(local_fd, dest_fd)] = await dest.open_channels(1)
     src_fd = local_fd.move(src.task)
     await _exec_nix_store_import_export(
@@ -161,8 +161,8 @@ class PackagePath(Path):
     def bin(self, name: str) -> Command:
         return Command(self/"bin"/name, [name], {})
 
-async def deploy(thread: Thread, package: PackageClosure) -> PackagePath:
-    "Deploy a PackageClosure to the filesystem of this Thread"
+async def deploy(thread: Process, package: PackageClosure) -> PackagePath:
+    "Deploy a PackageClosure to the filesystem of this Process"
     if thread is not local_thread:
         # for remote threads, we need to check if it's actually there,
         # and deploy it if it's not there.

@@ -23,7 +23,7 @@ from rsyscall.linux.fuse import (
 from rsyscall.linux.dirent import DirentList, DT
 from rsyscall.time import Timespec
 from rsyscall.sys.stat import TypeMode, S_IF, Mode
-from rsyscall import Command, WrittenPointer, FileDescriptor, Thread
+from rsyscall import Command, WrittenPointer, FileDescriptor, Process
 from rsyscall.memory.ram import RAM
 from rsyscall.unistd import AT, ArgList
 from rsyscall.tasks.stub import StubServer
@@ -66,12 +66,12 @@ import argparse
 
 class FuseFS:
     @classmethod
-    async def mount(cls, thread: Thread, path: Path) -> FuseFS:
+    async def mount(cls, thread: Process, path: Path) -> FuseFS:
         self = cls()
         await self._mount(thread, path)
         return self
 
-    async def _mount(self, thread: Thread, path: Path) -> None:
+    async def _mount(self, thread: Process, path: Path) -> None:
         # TODO does a pid namespace kill a thread in D-wait?
         # TODO we could make a better API here with the new mount API
         self.path = path
@@ -139,7 +139,7 @@ class FuseFS:
     def __init__(self) -> None:
         pass
 
-async def symsh_main(thread: Thread, command: Command) -> None:
+async def symsh_main(thread: Process, command: Command) -> None:
     async with (await mkdtemp(thread)) as tmpdir:
         thr = await thread.clone(flags=CLONE.NEWUSER|CLONE.NEWNS)
         path = tmpdir/"path"

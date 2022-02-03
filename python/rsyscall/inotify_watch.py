@@ -10,7 +10,7 @@ from rsyscall import Pointer
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.memory.ram import RAM
 from rsyscall.near.types import WatchDescriptor
-from rsyscall.thread import Thread
+from rsyscall.thread import Process
 import enum
 import math
 import rsyscall.handle as handle
@@ -105,7 +105,7 @@ class Inotify:
         reset(self._run())
 
     @staticmethod
-    async def make(thread: Thread) -> Inotify:
+    async def make(thread: Process) -> Inotify:
         "Create an Inotify file descriptor in `thread`."
         asyncfd = await AsyncFileDescriptor.make(
             thread.epoller, thread.ram, await thread.task.inotify_init(InotifyFlag.NONBLOCK))

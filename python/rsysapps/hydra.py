@@ -9,7 +9,7 @@ import os
 import trio
 import typing as t
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.thread import Thread, ChildThread
+from rsyscall.thread import Process, ChildProcess
 from rsyscall.handle import FileDescriptor, Path, WrittenPointer, Pointer
 from rsyscall.command import Command
 from rsyscall.memory.ram import RAM
@@ -89,7 +89,7 @@ class HTTPClient:
         self.cookie: t.Optional[bytes] = None
 
     @staticmethod
-    async def connect_unix(thread: Thread, addr: WrittenPointer[SockaddrUn]) -> HTTPClient:
+    async def connect_unix(thread: Process, addr: WrittenPointer[SockaddrUn]) -> HTTPClient:
         sock = await thread.make_afd(await thread.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         await sock.connect(addr)
         return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
@@ -99,7 +99,7 @@ class HTTPClient:
         ])
 
     @staticmethod
-    async def connect_inet(thread: Thread, addr: SockaddrIn) -> HTTPClient:
+    async def connect_inet(thread: Process, addr: SockaddrIn) -> HTTPClient:
         sock = await thread.make_afd(await thread.socket(AF.INET, SOCK.STREAM|SOCK.NONBLOCK))
         await sock.connect(await thread.ram.ptr(addr))
         return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
@@ -181,7 +181,7 @@ class HTTPClient:
 @dataclass
 class Postgres:
     sockdir: Path
-    thread: Thread
+    thread: Process
     createuser_cmd: Command
     createdb_cmd: Command
 
@@ -200,7 +200,7 @@ async def read_completely(ram: RAM, fd: FileDescriptor) -> bytes:
             return data
         data += await valid.read()
 
-async def start_postgres(nursery, thread: Thread, path: Path) -> Postgres:
+async def start_postgres(nursery, thread: Process, path: Path) -> Postgres:
     initdb = await thread.environ.which("initdb")
     postgres = await thread.environ.which("postgres")
     createuser = await thread.environ.which("createuser")
@@ -249,7 +249,7 @@ class NginxChild:
     def __init__(self, child: AsyncChildPid) -> None:
         self.child = child
 
-async def exec_nginx(thread: ChildThread, nginx: Command,
+async def exec_nginx(thread: ChildProcess, nginx: Command,
                      path: Path, config: FileDescriptor,
                      listen_fds: t.List[FileDescriptor]) -> AsyncChildPid:
     nginx_fds = [fd.maybe_copy(thread.task) for fd in listen_fds]
@@ -265,7 +265,7 @@ async def exec_nginx(thread: ChildThread, nginx: Command,
     return child
 
 async def start_fresh_nginx(
-        nursery, parent: Thread, path: Path, proxy_addr: SockaddrUn
+        nursery, parent: Process, path: Path, proxy_addr: SockaddrUn
 ) -> t.Tuple[SockaddrIn, NginxChild]:
     nginx = await parent.environ.which("nginx")
     thread = await parent.clone(CLONE.NEWUSER|CLONE.NEWPID)
@@ -298,7 +298,7 @@ http {
     nursery.start_soon(child.check)
     return addr, NginxChild(child)
 
-async def start_simple_nginx(nursery, parent: Thread, path: Path, sockpath: Path) -> NginxChild:
+async def start_simple_nginx(nursery, parent: Process, path: Path, sockpath: Path) -> NginxChild:
     nginx = await parent.environ.which("nginx")
     thread = await parent.clone(CLONE.NEWUSER|CLONE.NEWPID)
     config = b"""
@@ -387,7 +387,7 @@ class DaemonStore(Store):
     def uri(self) -> str:
         return "daemon"
 
-async def start_hydra(nursery, thread: Thread, path: Path, dbi: str, store: LocalStore) -> Hydra:
+async def start_hydra(nursery, thread: Process, path: Path, dbi: str, store: LocalStore) -> Hydra:
     # maybe have a version of this function which uses cached path locations?
     # or better yet, compiled in locations?
     hydra_init = await thread.environ.which("hydra-init")

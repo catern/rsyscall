@@ -5,7 +5,7 @@ calls stdin_bootstrap with it; stdin_bootstrap runs the command and returns a th
 created from the eventually-exec'd rsyscall-stdin-bootstrap.
 
 This is useful for sudo and similar programs; we can pass a Command which runs "sudo
-rsyscall-stdin-bootstrap", and thereby get a Thread with different privileges.
+rsyscall-stdin-bootstrap", and thereby get a Process with different privileges.
 
 """
 import typing as t
@@ -14,7 +14,7 @@ from rsyscall.command import Command
 from rsyscall.environ import Environment
 from rsyscall.epoller import Epoller, AsyncReadBuffer
 from rsyscall.handle import WrittenPointer, Task
-from rsyscall.thread import Thread
+from rsyscall.thread import Process
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.ram import RAM
 from rsyscall.memory.socket_transport import SocketMemoryTransport
@@ -43,7 +43,7 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-async def stdin_bootstrap_path_with_nix(thread: Thread) -> Path:
+async def stdin_bootstrap_path_with_nix(thread: Process) -> Path:
     """Get the path to the rsyscall-stdin-bootstrap executable.
 
     We return a Path rather than a Command because the typical usage
@@ -56,9 +56,9 @@ async def stdin_bootstrap_path_with_nix(thread: Thread) -> Path:
     return rsyscall_path/"libexec"/"rsyscall"/"rsyscall-stdin-bootstrap"
 
 async def stdin_bootstrap(
-        parent: Thread,
+        parent: Process,
         bootstrap_command: Command,
-) -> t.Tuple[AsyncChildPid, Thread]:
+) -> t.Tuple[AsyncChildPid, Process]:
     """Create a thread from running an arbitrary command which must run rsyscall-stdin-bootstrap
 
     bootstrap_command can be any arbitrary command, but it must eventually exec
@@ -131,7 +131,7 @@ async def stdin_bootstrap(
     child_monitor = await ChildPidMonitor.make(ram, base_task, epoller)
     connection = make_connection(base_task, ram,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
-    new_parent = Thread(
+    new_parent = Process(
         task=base_task,
         ram=ram,
         connection=connection,

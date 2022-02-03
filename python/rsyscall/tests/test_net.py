@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from rsyscall.tests.trio_test_case import TrioTestCase
-from rsyscall import FileDescriptor, Thread
+from rsyscall import FileDescriptor, Process
 from rsyscall.fcntl import O
 from rsyscall.sys.socket import AF, SOCK, SO, SOL, Sockbuf
 from rsyscall.net.if_ import *
@@ -19,14 +19,14 @@ from rsyscall.struct import Int32
 
 @dataclass
 class Tun:
-    thr: Thread
+    thr: Process
     fd: FileDescriptor
     name: str
     addr: ipaddress.IPv4Address
     sock: FileDescriptor
 
     @classmethod
-    async def make(cls, parent: Thread, addr: ipaddress.IPv4Address, peer: ipaddress.IPv4Address) -> 'Tun':
+    async def make(cls, parent: Process, addr: ipaddress.IPv4Address, peer: ipaddress.IPv4Address) -> 'Tun':
         # put each tun in a separate netns; I tried putting them in
         # the same netns, but got silent packet delivery failures.
         thr = await parent.clone(CLONE.NEWNET|CLONE.FILES)

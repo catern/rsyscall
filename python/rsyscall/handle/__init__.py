@@ -29,7 +29,7 @@ import contextlib
 from rsyscall.command import Command
 from rsyscall.handle.fd import FileDescriptorTask, BaseFileDescriptor, FDTable
 from rsyscall.handle.pointer import Pointer, WrittenPointer, ReadablePointer, LinearPointer
-from rsyscall.handle.process import Pid, ChildPid, ThreadPid, PidTask
+from rsyscall.handle.process import Pid, ChildPid, ProcessPid, PidTask
 from rsyscall.near.sysif import UnusableSyscallInterface
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ from rsyscall.sched import Borrowable
 __all__ = [
     "FileDescriptor", "FDTable", "BaseFileDescriptor",
     "Pointer", "WrittenPointer", "ReadablePointer", "LinearPointer",
-    "Pid", "ChildPid", "ThreadPid",
+    "Pid", "ChildPid", "ProcessPid",
     "Task",
 ]
 
