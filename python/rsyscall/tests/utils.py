@@ -3,14 +3,14 @@ import trio
 from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.unistd import Pipe
 from rsyscall.fcntl import O
-from rsyscall.thread import Thread
+from rsyscall.thread import Process
 
 import logging
 logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.DEBUG)
 
 import unittest
-async def do_async_things(self: unittest.TestCase, epoller: Epoller, thr: Thread, i: int=0,
+async def do_async_things(self: unittest.TestCase, epoller: Epoller, thr: Process, i: int=0,
                           *, task_status=trio.TASK_STATUS_IGNORED) -> None:
     logger.info("Setting up for do_async_things(%d)", i)
     pipe = await (await thr.task.pipe(await thr.ram.malloc(Pipe), O.NONBLOCK)).read()
@@ -36,5 +36,5 @@ async def do_async_things(self: unittest.TestCase, epoller: Epoller, thr: Thread
     await async_pipe_wfd.close()
     logger.info("Done with do_async_things(%d)", i)
 
-async def assert_thread_works(self: unittest.TestCase, thr: Thread) -> None:
+async def assert_thread_works(self: unittest.TestCase, thr: Process) -> None:
     await do_async_things(self, thr.epoller, thr)

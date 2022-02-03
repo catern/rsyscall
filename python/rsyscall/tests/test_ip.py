@@ -2,7 +2,7 @@ from rsyscall.tests.trio_test_case import TrioTestCase
 
 from rsyscall.sys.socket import *
 from rsyscall.netinet.in_ import *
-from rsyscall import Thread, Pointer, FileDescriptor
+from rsyscall import Process, Pointer, FileDescriptor
 import trio
 import unittest
 
@@ -68,7 +68,7 @@ class TestIP(TrioTestCase):
         threads = [await self.thr.clone() for _ in range(10)]
         in_ptrs = [await thr.ptr(data) for thr in threads]
         handles = [thr.task.inherit_fd(orig_in_fd) for thr in threads]
-        async def run_send(thread: Thread, in_ptr: Pointer, fd: FileDescriptor) -> None:
+        async def run_send(thread: Process, in_ptr: Pointer, fd: FileDescriptor) -> None:
             for i in range(count):
                 in_ptr, rest = await fd.write(in_ptr)
                 if rest.size() != 0:

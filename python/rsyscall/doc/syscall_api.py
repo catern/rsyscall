@@ -177,7 +177,7 @@ so it can be used anywhere `rsyscall.sys.socket.Sockaddr` can.
 
 `rsyscall.WrittenPointer[rsyscall.sys.socket.Sockaddr]`
 is an initialized pointer to a `rsyscall.sys.socket.Sockaddr` (or a derived type of `rsyscall.sys.socket.Sockaddr`).
-Initialized pointers can be created by calling `rsyscall.Thread.ptr`,
+Initialized pointers can be created by calling `rsyscall.Process.ptr`,
 passing a value of the appropriate type.
 
 All `rsyscall.Pointer`s in rsyscall know their length,
@@ -216,7 +216,7 @@ To summarize, we've added the following additional rules for this translation:
 - Struct field prefixes are removed.
 - Syscalls which take initialized pointers to memory take rsyscall `rsyscall.WrittenPointer`s of the appropriate type.
 - `rsyscall.WrittenPointer`s can be created by passing a value of the appropriate type,
-  such as Python class representations of structs, to `rsyscall.Thread.ptr`.
+  such as Python class representations of structs, to `rsyscall.Process.ptr`.
 - Pointer length arguments are omitted in rsyscall.
 * Malloc and syscalls which write to memory
 Our next example is the `pipe` system call.
@@ -261,7 +261,7 @@ which will contain the two file descriptors once the `rsyscall.Task.pipe` call i
 wiping out whatever was there before,
 so `pipefd` doesn't need to be initialized with data before it's passed in.
 Therefore, it's a plain `rsyscall.Pointer`, not an `rsyscall.WrittenPointer`,
-and we can allocate it with `rsyscall.Thread.malloc`.
+and we can allocate it with `rsyscall.Process.malloc`.
 
 The `rsyscall.Task.pipe` system call writes to the `pipefd` buffer,
 so the passed-in `rsyscall.Pointer[rsyscall.unistd.Pipe]` is consumed and not usable after the call.
@@ -284,7 +284,7 @@ To summarize, we've added the following additional rules for this translation:
 - The few system calls which take arrays have types defined specifically for them, named after the system call.
 - System calls which write to memory take `rsyscall.Pointer`s of the appropriate type.
 - We can allocate an uninitialized `rsyscall.Pointer`
-  by passing a type and (when appropriate) a size to `rsyscall.Thread.malloc`.
+  by passing a type and (when appropriate) a size to `rsyscall.Process.malloc`.
 - System calls which write to memory consume the `rsyscall.Pointer`s that are passed in,
   and return one or more new `rsyscall.ReadablePointer`s for the readable portion of the passed-in buffers.
 
@@ -333,8 +333,8 @@ Like `rsyscall.FileDescriptor.bind`, since `rsyscall.FileDescriptor.recv` takes 
 it's defined as a method on `rsyscall.FileDescriptor`.
 
 We pass a `rsyscall.Pointer[bytes]` as our buffer.
-We can allocate one of these with `rsyscall.Thread.malloc`.
-We pass an appropriate type and size to allocate to `rsyscall.Thread.malloc`,
+We can allocate one of these with `rsyscall.Process.malloc`.
+We pass an appropriate type and size to allocate to `rsyscall.Process.malloc`,
 and it returns a `rsyscall.Pointer` of that type and with that size.
 
 As mentioned previously, `rsyscall.Pointer`s know their length,

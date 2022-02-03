@@ -31,7 +31,7 @@ from rsyscall.unistd import Pipe, ArgList
 
 logger = logging.getLogger(__name__)
 
-async def write_user_mappings(thr: Thread, uid: int, gid: int,
+async def write_user_mappings(thr: Process, uid: int, gid: int,
                               in_namespace_uid: int=None, in_namespace_gid: int=None) -> None:
     """Set up a new user namespace with single-user {uid,gid}_map
 
@@ -55,7 +55,7 @@ async def write_user_mappings(thr: Thread, uid: int, gid: int,
     await gid_map.write(await thr.ram.ptr(f"{in_namespace_gid} {gid} 1\n".encode()))
     await gid_map.close()
 
-async def do_cloexec_except(thr: Thread, excluded_fds: t.Set[near.FileDescriptor]) -> None:
+async def do_cloexec_except(thr: Process, excluded_fds: t.Set[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
     # it's important to do this so we can't try to inherit the fds that we close here
     thr.task.fd_table.remove_inherited()
@@ -81,7 +81,7 @@ async def do_cloexec_except(thr: Thread, excluded_fds: t.Set[near.FileDescriptor
             buf = valid.merge(rest)
     await dirfd.close()
 
-class Thread:
+class Process:
     "A central class holding everything necessary to work with some thread, along with various helpers"
     def __init__(self,
                  task: Task,
@@ -112,7 +112,7 @@ class Thread:
         self.stderr = stderr
         "The standard error `FileDescriptor` (FD 2)"
 
-    def _init_from(self, thr: Thread) -> None:
+    def _init_from(self, thr: Process) -> None:
         self.task = thr.task
         self.ram = thr.ram
         self.epoller = thr.epoller
@@ -281,7 +281,7 @@ class Thread:
     def inherit_fd(self, fd: FileDescriptor) -> FileDescriptor:
         return self.task.inherit_fd(fd)
 
-    async def clone(self, flags: CLONE=CLONE.NONE, automatically_write_user_mappings: bool=True) -> ChildThread:
+    async def clone(self, flags: CLONE=CLONE.NONE, automatically_write_user_mappings: bool=True) -> ChildProcess:
         """Create a new child thread
 
         manpage: clone(2)
@@ -312,7 +312,7 @@ class Thread:
         else:
             epoller = self.epoller.inherit(ram)
             monitor = self.monitor.inherit_to_child(task)
-        thread = ChildThread(Thread(
+        thread = ChildProcess(Process(
             task, ram,
             self.connection.inherit(task, ram),
             self.loader,
@@ -403,7 +403,7 @@ class Thread:
         Currently we just forward through to exit the task.
 
         I feel suspicious that this method will at some point require more heavy lifting with
-        namespaces and monitored children, so I'm leaving it on Thread to prepare for that
+        namespaces and monitored children, so I'm leaving it on Process to prepare for that
         eventuality.
 
         manpage: exit(2)
@@ -414,9 +414,9 @@ class Thread:
         name = type(self).__name__
         return f'{name}({self.task})'
 
-class ChildThread(Thread):
+class ChildProcess(Process):
     "A thread that we know is also a direct child process of another thread"
-    def __init__(self, thr: Thread, pid: AsyncChildPid) -> None:
+    def __init__(self, thr: Process, pid: AsyncChildPid) -> None:
         super()._init_from(thr)
         self.pid = pid
 

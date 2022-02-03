@@ -168,8 +168,8 @@ class ChildPid(Pid):
             raise Exception("expected a state change, but siginfo buf didn't contain one")
         return state
 
-class ThreadPid(ChildPid):
-    """A child process with some additional stuff, just useful for resource tracking for threads.
+class ProcessPid(ChildPid):
+    """A child process with some additional stuff, just useful for resource tracking for `rsyscall.Process`s.
 
     We need to free the resources used by our child processes when they die. This class
     makes that more straightforward.
@@ -237,7 +237,7 @@ class PidTask(rsyscall.far.Task):
                     ptid: t.Optional[Pointer],
                     ctid: t.Optional[Pointer[FutexNode]],
                     # this points to anything, it depends on the thread implementation
-                    newtls: t.Optional[Pointer]) -> ThreadPid:
+                    newtls: t.Optional[Pointer]) -> ProcessPid:
         clone_parent = bool(flags & CLONE.PARENT)
         if clone_parent:
             if self.parent_task is None:
@@ -266,7 +266,7 @@ class PidTask(rsyscall.far.Task):
         # TODO the safety of this depends on no-one borrowing/freeing the stack in borrow __aexit__
         # should try to do this a bit more robustly...
         merged_stack = stack_alloc.merge(stack_data)
-        return ThreadPid(owning_task, pid, merged_stack, stack_data.value, ctid, newtls)
+        return ProcessPid(owning_task, pid, merged_stack, stack_data.value, ctid, newtls)
 
     def _make_pid(self, pid: int) -> Pid:
         return Pid(self, rsyscall.near.Pid(pid))

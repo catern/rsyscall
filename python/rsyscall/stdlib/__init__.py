@@ -1,6 +1,6 @@
 """`#include <stdlib.h>`
 
-This module contains functionality built on top of `rsyscall.Thread`.
+This module contains functionality built on top of `rsyscall.Process`.
 
 """
 from rsyscall.stdlib.mktemp import mkdtemp

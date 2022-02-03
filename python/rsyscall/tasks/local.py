@@ -6,7 +6,7 @@ start. From this thread, we create all the others.
 """
 from __future__ import annotations
 from dneio.core import TrioSystemWaitReadable, set_trio_system_wait_readable
-from rsyscall.thread import Thread
+from rsyscall.thread import Process
 from rsyscall._raw import ffi, lib # type: ignore
 import trio
 import rsyscall.far as far
@@ -84,7 +84,7 @@ class LocalMemoryTransport(MemoryTransport):
         buf = ffi.buffer(ffi.cast('void*', int(src.near)), src.size())
         return bytes(buf)
 
-async def _make_local_thread() -> Thread:
+async def _make_local_thread() -> Process:
     """Create the local thread, allocating various resources locally.
 
     For the most part, the local thread is like any other thread; it just bootstraps
@@ -107,7 +107,7 @@ async def _make_local_thread() -> Thread:
     trio_system_wait_readable = TrioSystemWaitReadable(epfd.near.number)
     set_trio_system_wait_readable(trio_system_wait_readable)
     epoller = Epoller.make_subsidiary(ram, epfd, trio_system_wait_readable.wait)
-    thread = Thread(
+    thread = Process(
         task, ram,
         await FDPassConnection.make(task, ram, epoller),
         NativeLoader.make_from_symbols(task, lib),
@@ -120,7 +120,7 @@ async def _make_local_thread() -> Thread:
     )
     return thread
 
-async def _initialize() -> Thread:
+async def _initialize() -> Process:
     thr = await _make_local_thread()
     # Wipe out the SIGWINCH handler that the readline module installs.
     # We do this because otherwise this handler will be inherited down to our
@@ -132,5 +132,5 @@ async def _initialize() -> Thread:
     await thr.task.sigaction(SIG.WINCH, await thr.ram.ptr(Sigaction(Sighandler.DFL)), None)
     return thr
 
-local_thread: Thread = trio.run(_initialize)
+local_thread: Process = trio.run(_initialize)
 "The local thread, fully initialized at import time"

@@ -72,12 +72,12 @@ import typing as t
 import rsyscall.near.types as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.thread import Thread
+from rsyscall.thread import Process
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.tasks.clone import clone_child_task
 from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.sched import Stack
-from rsyscall.handle import WrittenPointer, ThreadPid, Pointer, Task, FileDescriptor
+from rsyscall.handle import WrittenPointer, ProcessPid, Pointer, Task, FileDescriptor
 from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.near.sysif import SyscallInterface, SyscallSendError
 from rsyscall.sys.syscall import SYS
@@ -104,7 +104,7 @@ from rsyscall.sys.prctl import PR
 
 __all__ = [
     "clone_persistent",
-    "PersistentThread",
+    "PersistentProcess",
 ]
 
 logger = logging.getLogger(__name__)
@@ -178,8 +178,8 @@ class PersistentSyscallConnection(SyscallInterface):
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def clone_persistent(
-        parent: Thread, path: t.Union[str, os.PathLike],
-) -> PersistentThread:
+        parent: Process, path: t.Union[str, os.PathLike],
+) -> PersistentProcess:
     """Create a new not-yet-persistent thread and return the thread and its tracking object
 
     To make the thread actually persistent, you must call PersistentServer.make_persistent().
@@ -209,7 +209,7 @@ async def clone_persistent(
     signal_block = SignalBlock(task, await ram.ptr(Sigset({SIG.CHLD})))
     # TODO use an inherited signalfd instead
     child_monitor = await ChildPidMonitor.make(ram, task, epoller, signal_block=signal_block)
-    return PersistentThread(Thread(
+    return PersistentProcess(Process(
         task, ram,
         parent.connection.inherit(task, ram),
         parent.loader,
@@ -221,7 +221,7 @@ async def clone_persistent(
         stderr=parent.stderr.for_task(task),
     ), persistent_path=path, persistent_sock=listening_sock_handle)
 
-async def _connect_and_send(self: PersistentThread, thread: Thread, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
+async def _connect_and_send(self: PersistentProcess, thread: Process, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
     """Connect to a persistent thread's socket, send some file descriptors
 
     This isn't actually a generic function; the persistent thread expects exactly three
@@ -252,7 +252,7 @@ async def _connect_and_send(self: PersistentThread, thread: Thread, fds: t.List[
     await sock.close()
     return remote_fds
 
-class PersistentThread(Thread):
+class PersistentProcess(Process):
     """A thread which can live on even if everything else has exited
 
     It's not persistent by default - you need to call make_persistent() first to make that
@@ -267,7 +267,7 @@ class PersistentThread(Thread):
 
     """
     def __init__(self,
-                 thread: Thread,
+                 thread: Process,
                  persistent_path: t.Union[str, os.PathLike],
                  persistent_sock: FileDescriptor,
     ) -> None:
@@ -291,13 +291,13 @@ class PersistentThread(Thread):
         await self.task.setsid()
         await self.task.prctl(PR.SET_PDEATHSIG, 0)
 
-    async def reconnect(self, thread: Thread) -> None:
-        """Using the passed-in thread to establish the connection, reconnect to this PersistentThread
+    async def reconnect(self, thread: Process) -> None:
+        """Using the passed-in thread to establish the connection, reconnect to this PersistentProcess
 
         """
         if not self.prepped_for_reconnect:
             # It does work to reconnect without prep_for_reconnect, except for one nitpick:
-            # If the underlying process for the PersistentThread dies while we're in the
+            # If the underlying process for the PersistentProcess dies while we're in the
             # middle of reconnecting to it, the file descriptors opened by the C code
             # running in the process will leak if the process is in a shared fd table.
             # That's annoying on its own, but also means we won't get an EOF from our

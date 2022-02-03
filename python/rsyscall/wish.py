@@ -12,7 +12,7 @@ Also, for convenience, we re-export `wish.wish` and `wish.Wish`.
 from __future__ import annotations
 from rsyscall.command import Command
 from rsyscall.epoller import AsyncFileDescriptor
-from rsyscall.thread import Thread
+from rsyscall.thread import Process
 from rsyscall.path import Path
 from wish import wish, WishGranter, Wish, my_wish_granter
 import logging
@@ -43,12 +43,12 @@ T = t.TypeVar('T')
 class ConsoleGenie(WishGranter):
     "A WishGranter which satisfies wishes by starting a REPL on stdin/stdout for human intervention"
     @classmethod
-    async def make(self, thread: Thread):
+    async def make(self, thread: Process):
         "Create a ConsoleGenie that will serve using `thread`'s stdin/stdout"
         cat = await thread.environ.which("cat")
         return ConsoleGenie(thread, cat)
 
-    def __init__(self, thread: Thread, cat: Command) -> None:
+    def __init__(self, thread: Process, cat: Command) -> None:
         self.thread = thread
         self.cat = cat
         self.lock = trio.Lock()
@@ -104,11 +104,11 @@ class ConsoleServerGenie(WishGranter):
 
     """
     @classmethod
-    async def make(self, thread: Thread, sockdir: Path):
+    async def make(self, thread: Process, sockdir: Path):
         socat = await thread.environ.which("socat")
         return ConsoleServerGenie(thread, sockdir, socat)
 
-    def __init__(self, thread: Thread, sockdir: Path, socat: Command) -> None:
+    def __init__(self, thread: Process, sockdir: Path, socat: Command) -> None:
         self.thread = thread
         self.sockdir = sockdir
         self.socat = socat

@@ -496,7 +496,7 @@ class AsyncFileDescriptor:
         """Read at most count bytes; possibly less, if we have a partial read.
 
         This allocates on each call. For some applications, you may want to avoid the cost of
-        allocation, by instead allocating a buffer with `Thread.malloc` up front and reusing it
+        allocation, by instead allocating a buffer with `Process.malloc` up front and reusing it
         across multiple calls to `AsyncFileDescriptor.read`.
 
         """

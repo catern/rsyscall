@@ -13,7 +13,7 @@ from rsyscall.sys.mman import MFD
 from rsyscall.sched import CLONE
 
 from rsyscall.handle import FileDescriptor
-from rsyscall.thread import Thread, Command
+from rsyscall.thread import Process, Command
 from rsyscall.command import Command
 from rsyscall.monitor import AsyncChildPid
 from rsyscall.stdlib import mkdtemp
@@ -21,7 +21,7 @@ from rsyscall.stdlib import mkdtemp
 # import logging
 # logging.basicConfig(level=logging.DEBUG)
 
-async def start_cat(thread: Thread, cat: Command,
+async def start_cat(thread: Process, cat: Command,
                     stdin: FileDescriptor, stdout: FileDescriptor) -> AsyncChildPid:
     thread = await thread.clone()
     await thread.task.inherit_fd(stdin).dup2(thread.stdin)
@@ -121,7 +121,7 @@ class TestSSH(TrioTestCase):
         await self.remote.task.sigprocmask((HowSIG.SETMASK,
                                             await self.remote.ram.ptr(Sigset())),
                                            await self.remote.ram.malloc(Sigset))
-        await self.remote.task.read_oldset_and_check()
+        self.remote.task.read_oldset_and_check()
 
     async def test_nix_deploy(self) -> None:
         # make it locally so that it can be cleaned up even when the

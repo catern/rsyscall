@@ -4,13 +4,13 @@ import unittest
 import functools
 import types
 from trio._core._run import Nursery
-from rsyscall import local_thread, Thread
+from rsyscall import local_thread, Process
 import warnings
 
 class TrioTestCase(unittest.TestCase):
     "A trio-enabled variant of unittest.TestCase"
     nursery: Nursery
-    thread: Thread
+    thread: Process
 
     async def asyncSetUp(self) -> None:
         "Asynchronously set up resources for tests in this TestCase"

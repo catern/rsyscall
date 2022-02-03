@@ -5,7 +5,7 @@ import abc
 import trio
 import socket
 from rsyscall.trio_test_case import TrioTestCase
-from rsyscall.thread import Thread
+from rsyscall.thread import Process
 from rsyscall.handle import FileDescriptor, Path
 from rsyscall.command import Command
 from dataclasses import dataclass
@@ -31,7 +31,7 @@ class MailLocation:
 class Maildir(MailLocation):
     path: Path
     @staticmethod
-    async def make(thr: Thread, path: Path) -> Maildir:
+    async def make(thr: Process, path: Path) -> Maildir:
         self = Maildir(path)
         await thr.mkdir(self.path)
         await thr.mkdir(self.new())
@@ -43,7 +43,7 @@ class Maildir(MailLocation):
     def new(self) -> Path:
         return self.path/'new'
 
-async def start_dovecot(nursery, thread: Thread, path: Path,
+async def start_dovecot(nursery, thread: Process, path: Path,
                         lmtp_listener: FileDescriptor, mail: MailLocation) -> Dovecot:
     dovecot = await thread.environ.which("dovecot")
     doveadm = await thread.environ.which("doveadm")
@@ -103,7 +103,7 @@ class Smtpd:
     lmtp_listener: FileDescriptor
     config_file: Path
 
-async def start_smtpd(nursery, thread: Thread, path: Path,
+async def start_smtpd(nursery, thread: Process, path: Path,
                       smtp_listener: FileDescriptor) -> Smtpd:
     smtpd = await thread.environ.which("smtpd")
     smtpd_thread = await thread.clone()

@@ -8,7 +8,7 @@ either with the RSYSCALL_UNIX_STUB_SOCK environment variable set or
 through a wrapper shell script which sets RSYSCALL_UNIX_STUB_SOCK.
 
 rsyscall-unix-stub will connect back to us over the Unix socket, and
-we can call accept() to get a Thread which controls the
+we can call accept() to get a Process which controls the
 rsyscall-unix-stub, along with the command line arguments passed to
 rsyscall-unix-stub, including the executable name.
 
@@ -21,7 +21,7 @@ We can use these stubs to "mock" other programs. For example, we
 could mock sendmail by putting a wrapper shell script named "sendmail"
 on the PATH of some other program; then that program will run the stub
 with stdin pointing to some email message and some command line
-arguments. We call accept() and receive those arguments and a Thread
+arguments. We call accept() and receive those arguments and a Process
 with that stdin, and we can do whatever we want with it.
 
 We can make an analogy to the concept of a callback. In many
@@ -37,7 +37,7 @@ import os
 import rsyscall.near.types as near
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.thread import Thread
+from rsyscall.thread import Process
 from rsyscall.tasks.connection import SyscallConnection
 from rsyscall.loader import NativeLoader
 import trio
@@ -74,10 +74,10 @@ logger = logging.getLogger(__name__)
 class StubServer:
     "A server which can be connected back to by rsyscall-unix-stub."
     listening_sock: AsyncFileDescriptor
-    thread: Thread
+    thread: Process
 
     @classmethod
-    async def listen_on(cls, thread: Thread, path: Path) -> StubServer:
+    async def listen_on(cls, thread: Process, path: Path) -> StubServer:
         "Start listening on the passed-in path for stub connections."
         sockfd = await thread.make_afd(await thread.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         addr = await thread.ram.ptr(await SockaddrUn.from_path(thread, path))
@@ -86,7 +86,7 @@ class StubServer:
         return StubServer(sockfd, thread)
 
     @classmethod
-    async def make(cls, thread: Thread, dir: Path, name: str) -> StubServer:
+    async def make(cls, thread: Process, dir: Path, name: str) -> StubServer:
         "In the passed-in dir, make a listening stub server and an executable to connect to it."
         import rsyscall._nixdeps.librsyscall
         rsyscall_path = await nix.deploy(thread, rsyscall._nixdeps.librsyscall.closure)
@@ -101,7 +101,7 @@ RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
         await thread.spit(dir/name, wrapper, mode=0o755)
         return server
 
-    async def accept(self, thread: Thread=None) -> t.Tuple[t.List[str], Thread]:
+    async def accept(self, thread: Process=None) -> t.Tuple[t.List[str], Process]:
         """Accept new connection and bootstrap over it; returns the stub's argv and the new thread
 
         The optional argument "thread" allows choosing what thread handles the bootstrap;
@@ -116,9 +116,9 @@ RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
         return argv[1:], new_thread
 
 async def _setup_stub(
-        thread: Thread,
+        thread: Process,
         bootstrap_sock: FileDescriptor,
-) -> t.Tuple[t.List[str], Thread]:
+) -> t.Tuple[t.List[str], Process]:
     "Setup a stub thread"
     [(access_syscall_sock, passed_syscall_sock),
      (access_data_sock, passed_data_sock)] = await thread.open_async_channels(2)
@@ -174,7 +174,7 @@ async def _setup_stub(
     child_monitor = await ChildPidMonitor.make(ram, base_task, epoller)
     connection = make_connection(base_task, ram,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
-    new_thread = Thread(
+    new_thread = Process(
         task=base_task,
         ram=ram,
         connection=connection,
