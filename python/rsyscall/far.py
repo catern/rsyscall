@@ -140,7 +140,7 @@ class Task:
 
     """
     sysif: rsyscall.near.SyscallInterface
-    near_process: rsyscall.near.Pid
+    near_pid: rsyscall.near.Pid
     fd_table: FDTable
     address_space: AddressSpace
     pidns: PidNamespace
@@ -157,7 +157,7 @@ class Task:
         return repr(self)
 
     def __repr__(self) -> str:
-        return f"Task({self.near_process})"
+        return f"Task({self.near_pid})"
 
     def __post_init__(self) -> None:
         pass

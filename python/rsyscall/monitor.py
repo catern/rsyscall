@@ -135,36 +135,36 @@ class AsyncSignalfd:
 
 class AsyncChildPid:
     "A child process which can be monitored without blocking the thread"
-    def __init__(self, process: ChildPid, ram: RAM, sigchld_sigfd: AsyncSignalfd) -> None:
-        self.process = process
+    def __init__(self, pid: ChildPid, ram: RAM, sigchld_sigfd: AsyncSignalfd) -> None:
+        self.pid = pid
         self.ram = ram
         self.sigchld_sigfd = sigchld_sigfd
         self.next_sigchld: t.Optional[Event] = None
 
     def __repr__(self) -> str:
         name = type(self).__name__
-        return f'{name}({self.process})'
+        return f'{name}({self.pid})'
 
     async def _waitid_nohang(self) -> t.Optional[ChildState]:
-        if self.process.unread_siginfo:
+        if self.pid.unread_siginfo:
             # if we performed a waitid before, and it contains an event, we don't need to
             # waitid again.
-            result = await self.process.read_siginfo()
+            result = await self.pid.read_siginfo()
             # but if there's no event in this previous waitid, we need to waitid now; if
             # we don't, we might erroneously block waiting for a SIGCHLD that happened
             # between the previous waitid and now, and was consumed at that time.
             if result:
                 return result
         siginfo_buf = await self.ram.malloc(Siginfo)
-        await self.process.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.NOHANG, siginfo_buf)
-        return await self.process.read_siginfo()
+        await self.pid.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.NOHANG, siginfo_buf)
+        return await self.pid.read_siginfo()
 
     async def waitpid(self, options: W) -> ChildState:
         "Wait for a child state change in this child, like waitid(P.PID)"
-        if options & W.EXITED and self.process.death_state:
+        if options & W.EXITED and self.pid.death_state:
             # TODO this is not really the actual behavior of waitpid...
             # if the child is already dead we'd get an ECHLD not the death state change again.
-            return self.process.death_state
+            return self.pid.death_state
         while True:
             # If a previous call has given us a next_sigchld to wait on, then wait we shall.
             if self.next_sigchld:
@@ -203,8 +203,8 @@ class AsyncChildPid:
             await self.kill(SIG.TERM)
             raise
         if not death.clean():
-            if self.process.command:
-                raise CalledProcessError(death, self.process.command)
+            if self.pid.command:
+                raise CalledProcessError(death, self.pid.command)
             else:
                 raise CalledProcessError(death)
             pass
@@ -212,21 +212,21 @@ class AsyncChildPid:
 
     async def kill(self, sig: SIG=SIG.KILL) -> None:
         "Send a signal to this child"
-        if self.process.unread_siginfo:
-            await self.process.read_siginfo()
-        await self.process.kill(sig)
+        if self.pid.unread_siginfo:
+            await self.pid.read_siginfo()
+        await self.pid.kill(sig)
 
     async def killpg(self, sig: SIG=SIG.KILL) -> None:
         "Send a signal to the process group corresponding to this child"
-        if self.process.unread_siginfo:
-            await self.process.read_siginfo()
-        await self.process.killpg(sig)
+        if self.pid.unread_siginfo:
+            await self.pid.read_siginfo()
+        await self.pid.killpg(sig)
 
     async def __aenter__(self) -> None:
         pass
 
     async def __aexit__(self, *args, **kwargs) -> None:
-        if self.process.death_state:
+        if self.pid.death_state:
             pass
         else:
             await self.kill()
@@ -278,7 +278,7 @@ class ChildPidMonitor:
         # 4. Therefore we can use self.sigfd to create AsyncChildPides for those future child processes.
         return ChildPidMonitor(self.sigfd, self.ram, child_task, use_clone_parent=True)
 
-    def add_child_pid(self, process: ChildPid) -> AsyncChildPid:
+    def add_child_pid(self, pid: ChildPid) -> AsyncChildPid:
         """Create an AsyncChildPid which monitors the passed-in ChildPid.
 
         We check that the passed-in process is in fact a child of the task associated with
@@ -287,10 +287,10 @@ class ChildPidMonitor:
         changes.
 
         """
-        if process.task is not self.sigfd.afd.handle.task:
-            raise Exception("process", process, "with parent task", process.task,
+        if pid.task is not self.sigfd.afd.handle.task:
+            raise Exception("pid", pid, "with parent task", pid.task,
                             "is not our child; we're", self.sigfd.afd.handle.task)
-        proc = AsyncChildPid(process, self.ram, self.sigfd)
+        proc = AsyncChildPid(pid, self.ram, self.sigfd)
         return proc
 
     async def clone(self, flags: CLONE,
@@ -304,5 +304,5 @@ class ChildPidMonitor:
         """
         if self.use_clone_parent:
             flags |= CLONE.PARENT
-        process = await self.cloning_task.clone(flags|SIG.CHLD, child_stack, None, ctid, None)
-        return self.add_child_pid(process)
+        pid = await self.cloning_task.clone(flags|SIG.CHLD, child_stack, None, ctid, None)
+        return self.add_child_pid(pid)

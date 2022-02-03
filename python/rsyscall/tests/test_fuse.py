@@ -40,7 +40,7 @@ class TestFUSE(TrioTestCase):
         self.fuse = await FuseFS.mount(self.thr, self.path)
 
     async def asyncTearDown(self) -> None:
-        await self.fuse.thr.process.kill()
+        await self.fuse.thr.pid.kill()
         await self.fuse.cleanup()
         await self.tmpdir.cleanup()
 

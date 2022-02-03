@@ -214,20 +214,20 @@ class ThreadPid(ChildPid):
 class PidTask(rsyscall.far.Task):
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
-                 process: t.Union[rsyscall.near.Pid, Pid],
+                 pid: t.Union[rsyscall.near.Pid, Pid],
                  fd_table: rsyscall.far.FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  pidns: rsyscall.far.PidNamespace,
     ) -> None:
-        if isinstance(process, Pid):
-            near_process = process.near
-            self.process = process
-            self.parent_task: t.Optional[rsyscall.far.Task] = process.task
+        if isinstance(pid, Pid):
+            near_pid = pid.near
+            self.pid = pid
+            self.parent_task: t.Optional[rsyscall.far.Task] = pid.task
         else:
-            near_process = process
-            self.process = Pid(self, process)
+            near_pid = pid
+            self.pid = Pid(self, pid)
             self.parent_task = None
-        super().__init__(sysif, near_process, fd_table, address_space, pidns)
+        super().__init__(sysif, near_pid, fd_table, address_space, pidns)
 
     async def clone(self, flags: CLONE,
                     # these two pointers must be adjacent; the end of the first is the start of the
@@ -260,13 +260,13 @@ class PidTask(rsyscall.far.Task):
             ptid_n = self._borrow_optional(stack, ptid)
             ctid_n = self._borrow_optional(stack, ctid)
             newtls_n = self._borrow_optional(stack, newtls)
-            process = await _clone(self.sysif, flags, stack_data.near, ptid_n,
+            pid = await _clone(self.sysif, flags, stack_data.near, ptid_n,
                                                 ctid_n + ffi.offsetof('struct futex_node', 'futex') if ctid_n else None,
                                                 newtls_n)
         # TODO the safety of this depends on no-one borrowing/freeing the stack in borrow __aexit__
         # should try to do this a bit more robustly...
         merged_stack = stack_alloc.merge(stack_data)
-        return ThreadPid(owning_task, process, merged_stack, stack_data.value, ctid, newtls)
+        return ThreadPid(owning_task, pid, merged_stack, stack_data.value, ctid, newtls)
 
-    def _make_process(self, pid: int) -> Pid:
+    def _make_pid(self, pid: int) -> Pid:
         return Pid(self, rsyscall.near.Pid(pid))

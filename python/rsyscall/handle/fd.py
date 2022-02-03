@@ -266,7 +266,7 @@ class FDTable(rsyscall.far.FDTable):
 class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
-                 near_process: rsyscall.near.Pid,
+                 near_pid: rsyscall.near.Pid,
                  fd_table: FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  pidns: rsyscall.far.PidNamespace,
@@ -275,7 +275,7 @@ class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
             raise Exception("fd_table", fd_table, "needs to be an", FDTable,
                             "to work with a", FileDescriptorTask)
         self.fd_table: FDTable
-        super().__init__(sysif, near_process, fd_table, address_space, pidns)
+        super().__init__(sysif, near_pid, fd_table, address_space, pidns)
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -343,7 +343,7 @@ class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
         This is called by unshare_files, exec, and exit.
 
         """
-        self.fd_table = FDTable(self.near_process.id)
+        self.fd_table = FDTable(self.near_pid.id)
         near_to_handles = self.fd_table.near_to_handles
         for handle in self.fd_handles:
             if handle.near not in near_to_handles:

@@ -30,8 +30,8 @@ class TestFS(TrioTestCase):
         cat = await self.thr.environ.which("cat")
         await thread.task.inherit_fd(source_file).dup2(thread.stdin)
         await thread.task.inherit_fd(dest_file).dup2(thread.stdout)
-        child_process = await thread.exec(cat)
-        await child_process.check()
+        child_pid = await thread.exec(cat)
+        await child_pid.check()
 
         await dest_file.lseek(0, SEEK.SET)
         self.assertEqual(await (await dest_file.read(buf))[0].read(), data)

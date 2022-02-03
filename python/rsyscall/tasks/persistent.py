@@ -197,7 +197,7 @@ async def clone_persistent(
     listening_sock = await parent.task.socket(AF.UNIX, SOCK.STREAM)
     await listening_sock.bind(await parent.ram.ptr(await SockaddrUn.from_path(parent, path)))
     await listening_sock.listen(1)
-    child_process, task = await clone_child_task(
+    child_pid, task = await clone_child_task(
         parent.task, parent.ram, parent.connection, parent.loader, parent.monitor,
         CLONE.FILES|CLONE.FS|CLONE.SIGHAND,
         lambda sock: Trampoline(parent.loader.persistent_server_func, [sock, sock, listening_sock]))

@@ -187,7 +187,7 @@ async def make_bootstrap_dir(
     child = await parent.clone()
     await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
     await child.task.inherit_fd(bootstrap_executable).dup2(child.stdin)
-    child_process = await child.exec(ssh_command.args(ssh_bootstrap_script_contents))
+    child_pid = await child.exec(ssh_command.args(ssh_bootstrap_script_contents))
     await stdout_pipe.write.close()
     # from... local?
     # I guess this throws into sharper relief the distinction between core and module.
@@ -207,7 +207,7 @@ async def make_bootstrap_dir(
     await async_stdout.close()
     logger.debug("socket bootstrap done, got tmp path %s", tmp_path_bytes)
     yield tmp_path_bytes
-    await child_process.check()
+    await child_pid.check()
 
 async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
                       local_path: Path, remote_path: str) -> AsyncChildPid:
@@ -218,7 +218,7 @@ async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
     child = await thread.clone()
     await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
     await child.task.chdir(await thread.ptr(local_path.parent))
-    child_process = await child.exec(ssh_command.local_forward(
+    child_pid = await child.exec(ssh_command.local_forward(
         "./" + local_path.name, remote_path,
     # TODO I optimistically assume that I'll have established a
     # connection through the tunnel before 1 minute has passed;
@@ -229,7 +229,7 @@ async def ssh_forward(thread: Thread, ssh_command: SSHCommand,
     if forwarded != b"forwarded":
         raise Exception("ssh forwarding violated protocol, got instead of forwarded:", forwarded)
     await async_stdout.close()
-    return child_process
+    return child_pid
 
 async def ssh_bootstrap(
         parent: Thread,
@@ -246,11 +246,11 @@ async def ssh_bootstrap(
         await SockaddrUn.from_path(parent, local_socket_path))
     # start port forwarding; we'll just leak this process, no big deal
     # TODO we shouldn't leak processes; we should be GCing processes at some point
-    forward_child_process = await ssh_forward(
+    forward_child_pid = await ssh_forward(
         parent, ssh_command, local_socket_path, (tmp_path_bytes + b"/data").decode())
     # start bootstrap
     bootstrap_thread = await parent.clone()
-    bootstrap_child_process = await bootstrap_thread.exec(ssh_command.args(
+    bootstrap_child_pid = await bootstrap_thread.exec(ssh_command.args(
         "-n", f"cd {tmp_path_bytes.decode()}; exec ./bootstrap rsyscall"
     ))
     # TODO should unlink the bootstrap after I'm done execing.
@@ -273,14 +273,14 @@ async def ssh_bootstrap(
     # TODO we should get this from the SSHHost, this is usually going
     # to be common for all connections and we should express that
     new_pid_namespace = far.PidNamespace(new_pid)
-    new_process = near.Pid(new_pid)
+    new_pid = near.Pid(new_pid)
     new_base_task = Task(
-        new_process, handle.FDTable(new_pid), new_address_space,
+        new_pid, handle.FDTable(new_pid), new_address_space,
         new_pid_namespace,
     )
     handle_remote_syscall_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_sock))
     new_base_task.sysif = SyscallConnection(
-        logger.getChild(str(new_process)),
+        logger.getChild(str(new_pid)),
         async_local_syscall_sock, async_local_syscall_sock,
         handle_remote_syscall_fd, handle_remote_syscall_fd,
     )
@@ -311,7 +311,7 @@ async def ssh_bootstrap(
         stdout=new_base_task.make_fd_handle(near.FileDescriptor(1)),
         stderr=new_base_task.make_fd_handle(near.FileDescriptor(2)),
     )
-    return bootstrap_child_process, new_thread
+    return bootstrap_child_pid, new_thread
 
 @dataclass
 class SSHDExecutables:

@@ -72,7 +72,7 @@ class TestSSH(TrioTestCase):
         await remote_sock.close()
         await cat_side.dup2(thread.stdin)
         await cat_side.dup2(thread.stdout)
-        child_process = await thread.exec(cat)
+        child_pid = await thread.exec(cat)
 
         in_data = await self.thr.ram.ptr(b"hello")
         written, _ = await local_sock.write(in_data)

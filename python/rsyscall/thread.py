@@ -286,7 +286,7 @@ class Thread:
 
         manpage: clone(2)
         """
-        child_process, task = await clone_child_task(
+        child_pid, task = await clone_child_task(
             self.task, self.ram, self.connection, self.loader, self.monitor,
             flags, lambda sock: Trampoline(self.loader.server_func, [sock, sock]))
         ram = RAM(task,
@@ -321,7 +321,7 @@ class Thread:
             stdin=self.stdin.inherit(task),
             stdout=self.stdout.inherit(task),
             stderr=self.stderr.inherit(task),
-        ), child_process)
+        ), child_pid)
         if flags & CLONE.NEWUSER and automatically_write_user_mappings:
             # hack, we should really track the [ug]id ahead of this so we don't have to get it
             # we have to get the [ug]id from the parent because it will fail in the child
@@ -416,9 +416,9 @@ class Thread:
 
 class ChildThread(Thread):
     "A thread that we know is also a direct child process of another thread"
-    def __init__(self, thr: Thread, process: AsyncChildPid) -> None:
+    def __init__(self, thr: Thread, pid: AsyncChildPid) -> None:
         super()._init_from(thr)
-        self.process = process
+        self.pid = pid
 
     async def _execve(self, path: t.Union[str, os.PathLike], argv: t.List[str], envp: t.List[str],
                       command: Command=None,
@@ -434,7 +434,7 @@ class ChildThread(Thread):
                     await sem.ptr(envp_ptrs))
         filename, argv_ptr, envp_ptr = await self.ram.perform_batch(op)
         await self.task.execve(filename, argv_ptr, envp_ptr, command=command)
-        return self.process
+        return self.pid
 
     async def execv(self, path: t.Union[str, os.PathLike],
                     argv: t.Sequence[t.Union[str, os.PathLike]],
@@ -448,7 +448,7 @@ class ChildThread(Thread):
         filename_ptr, argv_ptr = await self.ram.perform_batch(op)
         envp_ptr = await self.environ.as_arglist(self.ram)
         await self.task.execve(filename_ptr, argv_ptr, envp_ptr, command=command)
-        return self.process
+        return self.pid
 
     async def execve(self, path: t.Union[str, os.PathLike],
                      argv: t.Sequence[t.Union[str, os.PathLike]],

@@ -134,7 +134,7 @@ class FileDescriptor(
         which accept paths instead of file descriptors.
 
         """
-        pid = self.task.process.near.id
+        pid = self.task.pid.near.id
         num = self.near.number
         return Path(f"/proc/{pid}/fd/{num}")
 
@@ -201,14 +201,14 @@ class Task(
 
     """
     def __init__(self,
-                 process: t.Union[rsyscall.near.Pid, Pid],
+                 pid: t.Union[rsyscall.near.Pid, Pid],
                  fd_table: FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  pidns: rsyscall.far.PidNamespace,
     ) -> None:
         super().__init__(
             UnusableSyscallInterface(),
-            t.cast(rsyscall.near.Pid, process), fd_table, address_space, pidns,
+            t.cast(rsyscall.near.Pid, pid), fd_table, address_space, pidns,
         )
 
     def _file_descriptor_constructor(self, fd: rsyscall.near.FileDescriptor) -> FileDescriptor:
@@ -216,7 +216,7 @@ class Task(
         return FileDescriptor(self, fd, True)
 
     def _make_fresh_address_space(self) -> None:
-        self.address_space = rsyscall.far.AddressSpace(self.process.near.id)
+        self.address_space = rsyscall.far.AddressSpace(self.pid.near.id)
 
     async def unshare(self, flags: CLONE) -> None:
         if flags & CLONE.FILES:
@@ -252,8 +252,8 @@ class Task(
                 self.manipulating_fd_table = False
             self._make_fresh_fd_table()
             self._make_fresh_address_space()
-            if isinstance(self.process, ChildPid):
-                self.process.did_exec(command)
+            if isinstance(self.pid, ChildPid):
+                self.pid.did_exec(command)
         await self.sysif.close_interface()
 
     async def execve(self, filename: WrittenPointer[t.Union[str, os.PathLike]],
@@ -275,8 +275,8 @@ class Task(
         self.manipulating_fd_table = False
         self._make_fresh_fd_table()
         self._make_fresh_address_space()
-        if isinstance(self.process, ChildPid):
-            self.process.did_exec(command)
+        if isinstance(self.pid, ChildPid):
+            self.pid.did_exec(command)
         await self.sysif.close_interface()
 
     async def exit(self, status: int) -> None:

@@ -85,7 +85,7 @@ class TestClone(TrioTestCase):
         epoller = await Epoller.make_root(self.child.ram, self.child.task)
         sigfd = await AsyncSignalfd.make(self.child.ram, self.child.task, epoller, Sigset({SIG.INT}))
         sigevent = sigfd.next_signal
-        await self.child.process.kill(SIG.INT)
+        await self.child.pid.kill(SIG.INT)
         await sigevent.wait()
 
 class TestCloneUnshareFiles(TrioTestCase):

@@ -79,7 +79,7 @@ async def stdin_bootstrap(
     await child.task.inherit_fd(stdin_pair.second).dup2(child.stdin)
     await stdin_pair.second.close()
     # exec
-    child_process = await child.exec(bootstrap_command)
+    child_pid = await child.exec(bootstrap_command)
     #### set up all the fds we'll want to pass over
     # the basic connections
     [(access_syscall_sock, passed_syscall_sock),
@@ -112,11 +112,11 @@ async def stdin_bootstrap(
     # numbers from.
     # oh hey we can conveniently dump the inode numbers with getdents!
     pidns = parent.task.pidns
-    process = near.Pid(pid)
-    base_task = Task(process, fd_table, address_space, pidns)
+    pid = near.Pid(pid)
+    base_task = Task(pid, fd_table, address_space, pidns)
     remote_syscall_fd = base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_fd))
     base_task.sysif = SyscallConnection(
-        logger.getChild(str(process)),
+        logger.getChild(str(pid)),
         access_syscall_sock, access_syscall_sock,
         remote_syscall_fd, remote_syscall_fd,
     )
@@ -143,4 +143,4 @@ async def stdin_bootstrap(
         stdout=base_task.make_fd_handle(near.FileDescriptor(1)),
         stderr=base_task.make_fd_handle(near.FileDescriptor(2)),
     )
-    return child_process, new_parent
+    return child_pid, new_parent

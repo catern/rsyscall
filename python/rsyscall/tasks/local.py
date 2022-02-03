@@ -92,11 +92,11 @@ async def _make_local_thread() -> Thread:
     thread.
 
     """
-    process = near.Pid(os.getpid())
+    pid = near.Pid(os.getpid())
     task = Task(
-        process, handle.FDTable(process.id),
-        far.AddressSpace(process.id),
-        far.PidNamespace(process.id),
+        pid, handle.FDTable(pid.id),
+        far.AddressSpace(pid.id),
+        far.PidNamespace(pid.id),
     )
     task.sysif = LocalSyscall()
     ram = RAM(task, LocalMemoryTransport(task), memory.AllocatorClient.make_allocator(task))
