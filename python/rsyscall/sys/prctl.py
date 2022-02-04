@@ -53,7 +53,7 @@ class PrctlTask(rsyscall.far.Task):
     async def prctl(self, option: t.Literal[PR.SET_NAME], arg2: WrittenPointer[str]) -> None: ...
 
     async def prctl(self, option: PR, arg2, arg3=0, arg4=0, arg5=0) -> t.Union[int, Pointer, None]:
-        """operations on a process or thread
+        """operations on a process or process
 
         This has overloads for each prctl option, so it's type-safe to use this method.
 

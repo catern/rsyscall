@@ -21,12 +21,12 @@ from rsyscall.stdlib import mkdtemp
 # import logging
 # logging.basicConfig(level=logging.DEBUG)
 
-async def start_cat(thread: Process, cat: Command,
+async def start_cat(process: Process, cat: Command,
                     stdin: FileDescriptor, stdout: FileDescriptor) -> AsyncChildPid:
-    thread = await thread.clone()
-    await thread.task.inherit_fd(stdin).dup2(thread.stdin)
-    await thread.task.inherit_fd(stdout).dup2(thread.stdout)
-    child = await thread.exec(cat)
+    process = await process.clone()
+    await process.task.inherit_fd(stdin).dup2(process.stdin)
+    await process.task.inherit_fd(stdout).dup2(process.stdout)
+    child = await process.exec(cat)
     return child
 
 class TestSSH(TrioTestCase):
@@ -67,12 +67,12 @@ class TestSSH(TrioTestCase):
     async def test_exec_pipe(self) -> None:
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)
         cat = (await deploy(self.thr, rsyscall._nixdeps.coreutils.closure)).bin('cat')
-        thread = await self.remote.clone()
-        cat_side = thread.task.inherit_fd(remote_sock)
+        process = await self.remote.clone()
+        cat_side = process.task.inherit_fd(remote_sock)
         await remote_sock.close()
-        await cat_side.dup2(thread.stdin)
-        await cat_side.dup2(thread.stdout)
-        child_pid = await thread.exec(cat)
+        await cat_side.dup2(process.stdin)
+        await cat_side.dup2(process.stdout)
+        child_pid = await process.exec(cat)
 
         in_data = await self.thr.ram.ptr(b"hello")
         written, _ = await local_sock.write(in_data)
@@ -80,10 +80,10 @@ class TestSSH(TrioTestCase):
         self.assertEqual(in_data.value, await valid.read())
 
     async def test_clone(self) -> None:
-        thread1 = await self.remote.clone()
-        thread2 = await thread1.clone()
-        await thread2.exit(0)
-        await thread1.exit(0)
+        process1 = await self.remote.clone()
+        process2 = await process1.clone()
+        await process2.exit(0)
+        await process1.exit(0)
 
     async def test_nest(self) -> None:
         local_child, remote = await self.host.ssh(self.remote)
@@ -115,9 +115,9 @@ class TestSSH(TrioTestCase):
         self.assertEqual(await read.read(), data)
 
     async def test_sigmask_bug(self) -> None:
-        thread = await self.remote.clone()
+        process = await self.remote.clone()
         await rsyscall.thread.do_cloexec_except(
-            thread, set([fd.near for fd in thread.task.fd_handles]))
+            process, set([fd.near for fd in process.task.fd_handles]))
         await self.remote.task.sigprocmask((HowSIG.SETMASK,
                                             await self.remote.ram.ptr(Sigset())),
                                            await self.remote.ram.malloc(Sigset))

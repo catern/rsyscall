@@ -1,6 +1,6 @@
-"""Make a new thread by calling clone
+"""Make a new process by calling clone
 
-That is to say, make a new thread the normal way.
+That is to say, make a new process the normal way.
 
 """
 from __future__ import annotations
@@ -51,7 +51,7 @@ async def launch_futex_monitor(ram: RAM,
     but it was removed because it was racy.
 
     Something better would be really great - especially because it would allow
-    incorporating pthreads locks and other shared memory concurrency mechanisms
+    incorporating pprocesss locks and other shared memory concurrency mechanisms
     based on futexes, into a normal event loop.
 
     """
@@ -69,7 +69,7 @@ async def launch_futex_monitor(ram: RAM,
     # which indicates the trampoline is done and we can deallocate the stack.
     state = await futex_pid.waitpid(W.EXITED|W.STOPPED)
     if state.state(W.EXITED):
-        raise Exception("thread internal futex-waiting task died unexpectedly", state)
+        raise Exception("process internal futex-waiting task died unexpectedly", state)
     # resume the futex_process so it can start waiting on the futex
     await futex_pid.kill(SIG.CONT)
     # TODO uh we need to actually call something to free the stack
@@ -123,7 +123,7 @@ async def clone_child_task(
         return stack, futex_pointer
     # Create the stack we'll need, and the zero-initialized futex
     stack, futex_pointer = await ram.perform_batch(op, arena)
-    # it's important to start the processes in this order, so that the thread
+    # it's important to start the processes in this order, so that the process
     # process is the first process started; this is relevant in several
     # situations, including unshare(NEWPID) and manipulation of ns_last_pid
     child_pid = await monitor.clone(flags, stack, ctid=futex_pointer)

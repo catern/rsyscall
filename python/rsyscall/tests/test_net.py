@@ -59,11 +59,11 @@ class TestNet(TrioTestCase):
 
     async def test_setns_ownership(self) -> None:
         netnsfd = await self.thr.task.open(await self.thr.ram.ptr("/proc/self/ns/net"), O.RDONLY)
-        thread = await self.thr.clone(CLONE.FILES)
-        await thread.unshare_user()
+        process = await self.thr.clone(CLONE.FILES)
+        await process.unshare_user()
         with self.assertRaises(PermissionError):
             # we can't setns to a namespace that we don't own, which is fairly lame
-            await thread.task.setns(netnsfd, CLONE.NEWNET)
+            await process.task.setns(netnsfd, CLONE.NEWNET)
 
     async def test_ioctl(self) -> None:
         await self.thr.unshare(CLONE.NEWNET)
@@ -122,9 +122,9 @@ class TestNet(TrioTestCase):
         logger.info("%s will connect and %s will accept", conn, acc)
         await acc.sock.listen(1)
         logger.info("Run connect and accept in parallel; this works even though we aren't using AFDs, "
-                    "because the two sockets are in separate threads.")
+                    "because the two sockets are in separate processes.")
         async with trio.open_nursery() as nursery:
-            # TODO this blocks the thread for some reason...
+            # TODO this blocks the process for some reason...
             # nursery.start_soon(socat_proc.check)
             @nursery.start_soon
             async def do_conn():

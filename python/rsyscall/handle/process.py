@@ -169,7 +169,7 @@ class ChildPid(Pid):
         return state
 
 class ProcessPid(ChildPid):
-    """A child process with some additional stuff, just useful for resource tracking for `rsyscall.Process`s.
+    """A child process with some additional stuff, just useful for resource tracking for `rsyscall.thread`s.
 
     We need to free the resources used by our child processes when they die. This class
     makes that more straightforward.
@@ -236,7 +236,7 @@ class PidTask(rsyscall.far.Task):
                     child_stack: t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
                     ptid: t.Optional[Pointer],
                     ctid: t.Optional[Pointer[FutexNode]],
-                    # this points to anything, it depends on the thread implementation
+                    # this points to anything, it depends on the process implementation
                     newtls: t.Optional[Pointer]) -> ProcessPid:
         clone_parent = bool(flags & CLONE.PARENT)
         if clone_parent:

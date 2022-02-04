@@ -105,12 +105,12 @@ class Inotify:
         reset(self._run())
 
     @staticmethod
-    async def make(thread: Process) -> Inotify:
-        "Create an Inotify file descriptor in `thread`."
+    async def make(process: Process) -> Inotify:
+        "Create an Inotify file descriptor in `process`."
         asyncfd = await AsyncFileDescriptor.make(
-            thread.epoller, thread.ram, await thread.task.inotify_init(InotifyFlag.NONBLOCK))
-        buf = await thread.ram.malloc(InotifyEventList, _inotify_read_size)
-        return Inotify(asyncfd, thread.ram, buf)
+            process.epoller, process.ram, await process.task.inotify_init(InotifyFlag.NONBLOCK))
+        buf = await process.ram.malloc(InotifyEventList, _inotify_read_size)
+        return Inotify(asyncfd, process.ram, buf)
 
     async def add(self, path: handle.Path, mask: IN) -> Watch:
         """Start watching a given path for events in the passed mask

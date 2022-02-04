@@ -33,10 +33,10 @@ These are just explanations and motivating use-cases for rsyscall.
    Clearly this is not POSIX, POSIX doesn't explicitly run syscalls in processes,
    and we're using a lot of Linux-specific features.
    Oh well, good riddance, POSIX is garbage anyway!
-** Don't make syscalls in threads, make syscalls *on* threads
- In other threading systems, you call syscalls in threads.
+** Don't make syscalls in processs, make syscalls *on* processes
+ In other systems, you call syscalls in processes.
 
- In rsyscall, you call syscalls *on* threads.
+ In rsyscall, you call syscalls *on* processes.
  Like, as objects.
 ** A model for interaction with Linux that can be implemented by new languages
    It's much better for languages than older models,

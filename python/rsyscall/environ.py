@@ -154,7 +154,7 @@ class Environment:
         """Return a new Environment instance for this Task and RAM.
 
         We share the existing ExecutablePathCache. This centralizes path lookups so that
-        they're shared between all threads.
+        they're shared between all `rsyscall.thread`es.
 
         """
         return Environment(dict(self.data), self.path, self.arglist_ptr)

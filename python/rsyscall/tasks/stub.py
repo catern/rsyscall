@@ -74,65 +74,65 @@ logger = logging.getLogger(__name__)
 class StubServer:
     "A server which can be connected back to by rsyscall-unix-stub."
     listening_sock: AsyncFileDescriptor
-    thread: Process
+    process: Process
 
     @classmethod
-    async def listen_on(cls, thread: Process, path: Path) -> StubServer:
+    async def listen_on(cls, process: Process, path: Path) -> StubServer:
         "Start listening on the passed-in path for stub connections."
-        sockfd = await thread.make_afd(await thread.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
-        addr = await thread.ram.ptr(await SockaddrUn.from_path(thread, path))
+        sockfd = await process.make_afd(await process.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
+        addr = await process.ram.ptr(await SockaddrUn.from_path(process, path))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
-        return StubServer(sockfd, thread)
+        return StubServer(sockfd, process)
 
     @classmethod
-    async def make(cls, thread: Process, dir: Path, name: str) -> StubServer:
+    async def make(cls, process: Process, dir: Path, name: str) -> StubServer:
         "In the passed-in dir, make a listening stub server and an executable to connect to it."
         import rsyscall._nixdeps.librsyscall
-        rsyscall_path = await nix.deploy(thread, rsyscall._nixdeps.librsyscall.closure)
+        rsyscall_path = await nix.deploy(process, rsyscall._nixdeps.librsyscall.closure)
         stub_path = rsyscall_path/"libexec"/"rsyscall"/"rsyscall-unix-stub"
         sock_path = dir/f'{name}.sock'
-        server = await StubServer.listen_on(thread, sock_path)
+        server = await StubServer.listen_on(process, sock_path)
         # there's no POSIX sh way to set $0, so we'll pass $0 as $1, $1 as $2, etc.
         # $0 will be the stub executable, so we'll need to drop $0 in StubServer.
         wrapper = """#!/bin/sh
 RSYSCALL_UNIX_STUB_SOCK_PATH={sock} exec {bin} "$0" "$@"
 """.format(sock=os.fsdecode(sock_path), bin=os.fsdecode(stub_path))
-        await thread.spit(dir/name, wrapper, mode=0o755)
+        await process.spit(dir/name, wrapper, mode=0o755)
         return server
 
-    async def accept(self, thread: Process=None) -> t.Tuple[t.List[str], Process]:
-        """Accept new connection and bootstrap over it; returns the stub's argv and the new thread
+    async def accept(self, process: Process=None) -> t.Tuple[t.List[str], Process]:
+        """Accept new connection and bootstrap over it; returns the stub's argv and the new process
 
-        The optional argument "thread" allows choosing what thread handles the bootstrap;
-        by default we'll use the thread embedded in the StubServer.
+        The optional argument "process" allows choosing what process handles the bootstrap;
+        by default we'll use the process embedded in the StubServer.
 
         """
-        if thread is None:
-            thread = self.thread
+        if process is None:
+            process = self.process
         conn = await self.listening_sock.accept()
-        argv, new_thread = await _setup_stub(thread, conn)
+        argv, new_process = await _setup_stub(process, conn)
         # have to drop first argument, which is the unix_stub executable; see StubServer.make
-        return argv[1:], new_thread
+        return argv[1:], new_process
 
 async def _setup_stub(
-        thread: Process,
+        process: Process,
         bootstrap_sock: FileDescriptor,
 ) -> t.Tuple[t.List[str], Process]:
-    "Setup a stub thread"
+    "Setup a stub process"
     [(access_syscall_sock, passed_syscall_sock),
-     (access_data_sock, passed_data_sock)] = await thread.open_async_channels(2)
+     (access_data_sock, passed_data_sock)] = await process.open_async_channels(2)
     # memfd for setting up the futex
-    futex_memfd = await thread.task.memfd_create(
-        await thread.ram.ptr(Path("child_robust_futex_list")))
+    futex_memfd = await process.task.memfd_create(
+        await process.ram.ptr(Path("child_robust_futex_list")))
     # send the fds to the new process
-    connection_fd, make_connection = await thread.connection.prep_fd_transfer()
+    connection_fd, make_connection = await process.connection.prep_fd_transfer()
     async def sendmsg_op(sem: RAM) -> WrittenPointer[SendMsghdr]:
         iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
         cmsgs = await sem.ptr(CmsgList([CmsgSCMRights([
             passed_syscall_sock, passed_data_sock, futex_memfd, connection_fd])]))
         return await sem.ptr(SendMsghdr(None, iovec, cmsgs))
-    _, [] = await bootstrap_sock.sendmsg(await thread.ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
+    _, [] = await bootstrap_sock.sendmsg(await process.ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
     # close our reference to fds that only the new process needs
     await passed_syscall_sock.invalidate()
     await passed_data_sock.invalidate()
@@ -149,7 +149,7 @@ async def _setup_stub(
     fd_table = handle.FDTable(pid)
     address_space = far.AddressSpace(pid)
     # we assume pid namespace is shared
-    pidns = thread.task.pidns
+    pidns = process.task.pidns
     pid = near.Pid(pid)
     # we assume net namespace is shared - that's dubious...
     # we should make it possible to control the namespace sharing more, hmm.
@@ -174,7 +174,7 @@ async def _setup_stub(
     child_monitor = await ChildPidMonitor.make(ram, base_task, epoller)
     connection = make_connection(base_task, ram,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
-    new_thread = Process(
+    new_process = Process(
         task=base_task,
         ram=ram,
         connection=connection,
@@ -188,4 +188,4 @@ async def _setup_stub(
     )
     #### TODO set up futex I guess
     remote_futex_memfd = near.FileDescriptor(describe_struct.futex_memfd)
-    return argv, new_thread
+    return argv, new_process

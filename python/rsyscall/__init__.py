@@ -14,7 +14,7 @@ rsyscall provides an interface to an ever-growing subset of Linux system calls. 
 The main entry point in rsyscall is the `Process`.
 One `Process` exists for each process in which we can make system calls.
 
-The initial `Process` is `rsyscall.tasks.local.local_thread`, which operates in the Python interpreter process.
+The initial `Process` is `rsyscall.tasks.local.local_process`, which operates in the Python interpreter process.
 New processes are usually created by `Process.clone`, which returns a `ChildProcess`.
 
 A `Process` has a number of other conventional, helpful resources,
@@ -70,7 +70,7 @@ and get a corresponding `AsyncFileDescriptor`.
 The interfaces are identical to `FileDescriptor`;
 the async implementations simply wait for the appropriate epoll event before calling the underlying system call.
 
-Many system calls can't meaningfully be done without blocking the thread,
+Many system calls can't meaningfully be done without blocking the process,
 so use `AsyncFileDescriptor.handle` to access the underlying `FileDescriptor` to make those system calls.
 
 For convenience,
@@ -113,7 +113,7 @@ from rsyscall.handle import (
 from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.monitor import AsyncChildPid
 from rsyscall.struct import Int32, Int64
-from rsyscall.tasks.local import local_thread
+from rsyscall.tasks.local import local_process
 from rsyscall.sys.mman import MemoryMapping
 
 __all__ = [
@@ -123,6 +123,6 @@ __all__ = [
     'FileDescriptor',
     'AsyncFileDescriptor',
     'AsyncChildPid',
-    'local_thread',
+    'local_process',
     'Pointer', 'WrittenPointer', 'ReadablePointer', 'LinearPointer',
 ]

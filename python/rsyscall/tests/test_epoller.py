@@ -40,17 +40,17 @@ class TestEpoller(TrioTestCase):
             for i in range(1, 6):
                 nursery.start_soon(do_async_things, self, self.thr.epoller, self.thr, i)
 
-    async def test_thread_multi(self) -> None:
-        thread = await self.thr.clone()
-        await do_async_things(self, thread.epoller, thread, 0)
+    async def test_process_multi(self) -> None:
+        process = await self.thr.clone()
+        await do_async_things(self, process.epoller, process, 0)
         async with trio.open_nursery() as nursery:
             for i in range(1, 6):
-                nursery.start_soon(do_async_things, self, thread.epoller, thread, i)
+                nursery.start_soon(do_async_things, self, process.epoller, process, i)
 
-    async def test_thread_root_epoller(self) -> None:
-        thread = await self.thr.clone()
-        epoller = await Epoller.make_root(thread.ram, thread.task)
-        await do_async_things(self, epoller, thread)
+    async def test_process_root_epoller(self) -> None:
+        process = await self.thr.clone()
+        epoller = await Epoller.make_root(process.ram, process.task)
+        await do_async_things(self, epoller, process)
 
     async def test_afd_with_handle(self):
         pipe = await self.thr.pipe()
@@ -60,24 +60,24 @@ class TestEpoller(TrioTestCase):
 
     async def test_delayed_eagain(self):
         pipe = await self.thr.pipe()
-        thread = await self.thr.clone()
-        async_pipe_rfd = await thread.make_afd(thread.inherit_fd(pipe.read), set_nonblock=True)
+        process = await self.thr.clone()
+        async_pipe_rfd = await process.make_afd(process.inherit_fd(pipe.read), set_nonblock=True)
         # write in parent, read in child
         input_data = b'hello'
         buf_to_write: Pointer[bytes] = await self.thr.ptr(input_data)
         buf_to_write, _ = await pipe.write.write(buf_to_write)
         self.assertEqual(await async_pipe_rfd.read_some_bytes(), input_data)
-        buf = await thread.malloc(bytes, 4096)
+        buf = await process.malloc(bytes, 4096)
         # set up the EAGAIN to be delayed
         queue: RequestQueue[t.Tuple[Syscall, outcome.Outcome[int]], None] = RequestQueue()
-        old_sysif = thread.task.sysif
-        thread.task.sysif = DelayResultSysif(old_sysif, queue)
+        old_sysif = process.task.sysif
+        process.task.sysif = DelayResultSysif(old_sysif, queue)
         @self.nursery.start_soon
         async def race_eagain():
             # wait for EAGAIN
             (syscall, result), cb = await queue.get_one()
             self.assertIsInstance(result.error, BlockingIOError)
-            thread.task.sysif = old_sysif
+            process.task.sysif = old_sysif
             queue.close(Exception("remaining syscalls?"))
             # write data after the EAGAIN
             await pipe.write.write(buf_to_write)

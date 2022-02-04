@@ -66,28 +66,28 @@ import argparse
 
 class FuseFS:
     @classmethod
-    async def mount(cls, thread: Process, path: Path) -> FuseFS:
+    async def mount(cls, process: Process, path: Path) -> FuseFS:
         self = cls()
-        await self._mount(thread, path)
+        await self._mount(process, path)
         return self
 
-    async def _mount(self, thread: Process, path: Path) -> None:
-        # TODO does a pid namespace kill a thread in D-wait?
+    async def _mount(self, process: Process, path: Path) -> None:
+        # TODO does a pid namespace kill a process in D-wait?
         # TODO we could make a better API here with the new mount API
         self.path = path
         # /dev/fuse doesn't seem to behave nicely when used with EPOLLET, so we'll just do blocking
-        # IO on it in a dedicated thread - we need the dedicated thread anyway (see comment below
+        # IO on it in a dedicated process - we need the dedicated process anyway (see comment below
         # about private fd table) so it's not extra overhead.
-        devfuse = await thread.task.open(await thread.ptr(Path("/dev/fuse")), O.RDWR)
-        self.uid = await thread.task.getuid()
-        self.gid = await thread.task.getgid()
-        self.parent_thread = thread
-        await thread.mount("ignored", self.path, "fuse", MS.NONE,
+        devfuse = await process.task.open(await process.ptr(Path("/dev/fuse")), O.RDWR)
+        self.uid = await process.task.getuid()
+        self.gid = await process.task.getgid()
+        self.parent_process = process
+        await process.mount("ignored", self.path, "fuse", MS.NONE,
                            f"fd={int(devfuse)},rootmode=40777,user_id={self.uid},group_id={self.gid}")
-        # We'll keep devfuse open *only* in the dedicated server thread's private fd table, so that
-        # other threads accessing the filesystem don't deadlock when we abort the FUSE server loop -
+        # We'll keep devfuse open *only* in the dedicated server process's private fd table, so that
+        # other processes accessing the filesystem don't deadlock when we abort the FUSE server loop -
         # instead their syscalls will be aborted with ENOTCONN.
-        self.thr = await thread.clone()
+        self.thr = await process.clone()
         self.devfuse = self.thr.task.inherit_fd(devfuse)
         await devfuse.close()
         # Respond to FUSE init message to sanity-check things are set up right.
@@ -101,8 +101,8 @@ class FuseFS:
             major=init.msg.major, minor=init.msg.minor, max_readahead=init.msg.max_readahead,
             flags=flags,
             max_background=16, congestion_threshold=16, max_write=128, time_gran=128)))
-        # Note that deadlocks are still possible, if the root thread makes blocking calls into the
-        # filesystem. As usual, we should avoid doing work on the root thread, and instead do it in
+        # Note that deadlocks are still possible, if the root process makes blocking calls into the
+        # filesystem. As usual, we should avoid doing work on the root process, and instead do it in
         # children.
 
     async def read(self) -> FuseInList:
@@ -124,10 +124,10 @@ class FuseFS:
         return self
 
     async def cleanup(self) -> None:
-        # umount to kill the fuse loop; it's a bit lazy to save the parent thread to do this, but we
-        # can't do it in self.thr because that thread spends all its time blocked in read.
-        await self.parent_thread.task.umount(await self.parent_thread.ptr(self.path))
-        # and exit the thread - but it might already be dead, so we might fail to exit it, just ignore that.
+        # umount to kill the fuse loop; it's a bit lazy to save the parent process to do this, but we
+        # can't do it in self.thr because that process spends all its time blocked in read.
+        await self.parent_process.task.umount(await self.parent_process.ptr(self.path))
+        # and exit the process - but it might already be dead, so we might fail to exit it, just ignore that.
         try:
             await self.thr.exit(0)
         except SyscallError:
@@ -139,9 +139,9 @@ class FuseFS:
     def __init__(self) -> None:
         pass
 
-async def symsh_main(thread: Process, command: Command) -> None:
-    async with (await mkdtemp(thread)) as tmpdir:
-        thr = await thread.clone(flags=CLONE.NEWUSER|CLONE.NEWNS)
+async def symsh_main(process: Process, command: Command) -> None:
+    async with (await mkdtemp(process)) as tmpdir:
+        thr = await process.clone(flags=CLONE.NEWUSER|CLONE.NEWNS)
         path = tmpdir/"path"
         await thr.mkdir(path)
         async with trio.open_nursery() as nursery:
@@ -156,8 +156,8 @@ async def symsh_main(thread: Process, command: Command) -> None:
 
                 """
                 while True:
-                    args, thread = await stub_server.accept()
-                    buf = await thread.malloc(Stat)
+                    args, process = await stub_server.accept()
+                    buf = await process.malloc(Stat)
                     async def stat(fd: FileDescriptor) -> Stat:
                         nonlocal buf
                         buf = await fd.fstat(buf)
@@ -165,11 +165,11 @@ async def symsh_main(thread: Process, command: Command) -> None:
                     name, *rest = args
                     commands.append(CommandData(
                         args=[Path(name).name, *rest],
-                        stdin=await stat(thread.stdin),
-                        stdout=await stat(thread.stdout),
-                        stderr=await stat(thread.stderr),
+                        stdin=await stat(process.stdin),
+                        stdout=await stat(process.stdout),
+                        stderr=await stat(process.stderr),
                     ))
-                    await thread.exit(0)
+                    await process.exit(0)
             async with (await FuseFS.mount(thr, path)) as fuse:
                 @nursery.start_soon
                 async def open() -> None:
@@ -236,7 +236,7 @@ async def amain(argv: t.List[str]) -> None:
     exec_parser.add_argument(dest='executable')
     
     args = parser.parse_args(argv[1:])
-    from rsyscall import local_thread
+    from rsyscall import local_process
     if args.subcommand == 'example':
         script = """ls; which ls
 stat /
@@ -244,9 +244,9 @@ foo|bar
 """
         print("======================= running script =======================")
         print(script, end='')
-        await symsh_main(local_thread, local_thread.environ.sh.args("-c", script))
+        await symsh_main(local_process, local_process.environ.sh.args("-c", script))
     elif args.subcommand == 'exec':
-        await symsh_main(local_thread, Command(Path(args.executable), [args.executable], {}))
+        await symsh_main(local_process, Command(Path(args.executable), [args.executable], {}))
 
 def main():
     import sys

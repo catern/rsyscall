@@ -1,27 +1,27 @@
-"""Persistent threads, which live on after their parent thread has died, and to which we can reconnect
+"""Persistent processes, which live on after their parent process has died, and to which we can reconnect
 
-These are threads which stick around, holding resources, even if we died or our connection
-to them fails. We can reconnect to the persistent thread and continue to access all the
+These are processes which stick around, holding resources, even if we died or our connection
+to them fails. We can reconnect to the persistent process and continue to access all the
 old resources.
 
-After we disconnect from a persistent thread for whatever reason, it is left in an inert
+After we disconnect from a persistent process for whatever reason, it is left in an inert
 state. It won't make any syscalls until we reconnect to it.
 
 This is useful for fault isolation. To run and monitor long-running processes, we can and
-should ourselves be long-running; but, we might crash at some point. The persistent thread
-provides fault isolation: We may crash, but the thread and all its children will stay
-alive, and we can reconnect to the thread after restarting and resume monitoring the
-long-running processes. The persistent thread provides similar fault isolation for any
-other resource that a thread might hold, such as file descriptors; the persistent thread
+should ourselves be long-running; but, we might crash at some point. The persistent process
+provides fault isolation: We may crash, but the process and all its children will stay
+alive, and we can reconnect to the process after restarting and resume monitoring the
+long-running processes. The persistent process provides similar fault isolation for any
+other resource that a process might hold, such as file descriptors; the persistent process
 will keep file descriptors open even after we die.
 
-The persistent thread doesn't provide any mechanism to recover information about the state
-of the persistent thread, such as what child processes it has and what file descriptors it
+The persistent process doesn't provide any mechanism to recover information about the state
+of the persistent process, such as what child processes it has and what file descriptors it
 has open. Therefore, we should arrange to have other state-persistence mechanism so that
 we can recover our state if we crash. For example, we could maintain an on-disk database
-where we log information about what processes we've started in what persistent threads,
+where we log information about what processes we've started in what persistent processes,
 and what the status of each of those processes is. Then we could recover information about
-the state of the persistent thread from that database, reconnect to the persistent thread,
+the state of the persistent process from that database, reconnect to the persistent process,
 and resume normal operation.
 
 That being said, a caveat: We don't currently have any logic to support recovering
@@ -30,35 +30,35 @@ created, but it would require creating resource handles in a way that is not gua
 be safe. Determining a clean, generic way to persist information about the state of
 resources in a way that can be safely recovered after a crash is an open question.
 
-## `CLONE_THREAD`
+## `CLONE_PROCESS`
 
-The model we currently use for persistent threads is:
+The model we currently use for persistent processes is:
 
-1. Create this can-be-persistent thread
-2. Do a bunch of things in that thread, allocating whatever resources
-3. Call make_persistent to make the thread actually persistent
+1. Create this can-be-persistent process
+2. Do a bunch of things in that process, allocating whatever resources
+3. Call make_persistent to make the process actually persistent
 4. Crash or disconnect, and call reconnect to reconnect.
 
 It would be better for the model to be:
 
-1. Do a bunch of things in whatever thread you like, allocating whatever resources
-2. Create an immediately persistent thread which inherits those resources
+1. Do a bunch of things in whatever process you like, allocating whatever resources
+2. Create an immediately persistent process which inherits those resources
 3. Crash or disconnect, and call reconnect to reconnect.
 
 However, the major obstacle is child processes. Child processes can't be inherited to a
 new child process, much less passed around between unrelated processes like file
 descriptors can.
 
-`CLONE_THREAD` allows creating a new child process which can wait on the child processes of the
-parent; however, `CLONE_THREAD` also does a bunch of other stuff which is undesirable. Among
-other things, `CLONE_THREAD` processes:
-- don't send `SIGCHLD` when exiting, so they can't be waited on without dedicating a thread
+`CLONE_PROCESS` allows creating a new child process which can wait on the child processes of the
+parent; however, `CLONE_PROCESS` also does a bunch of other stuff which is undesirable. Among
+other things, `CLONE_PROCESS` processes:
+- don't send `SIGCHLD` when exiting, so they can't be waited on without dedicating a process
   to monitor them
 - don't leave a zombie when they die
 - block several unshare and setns operations
 - complicate signals and many other system calls
 
-While `CLONE_THREAD` could allow the better model for persistent threads, it comes with a
+While `CLONE_PROCESS` could allow the better model for persistent processes, it comes with a
 host of other disadvantages and complexities, so we're just biting the bullet and
 accepting the worse model.
 
@@ -180,17 +180,17 @@ class PersistentSyscallConnection(SyscallInterface):
 async def clone_persistent(
         parent: Process, path: t.Union[str, os.PathLike],
 ) -> PersistentProcess:
-    """Create a new not-yet-persistent thread and return the thread and its tracking object
+    """Create a new not-yet-persistent process and return the process and its tracking object
 
-    To make the thread actually persistent, you must call PersistentServer.make_persistent().
+    To make the process actually persistent, you must call PersistentServer.make_persistent().
 
     The point of this hoop-jumping is just to prevent unnecessary resource leakage, so you
-    can set up things in a persistent thread and only make it persistent when you're
+    can set up things in a persistent process and only make it persistent when you're
     actually ready.
 
-    A persistent thread is essentially the same as a normal thread, just running a
+    A persistent process is essentially the same as a normal process, just running a
     different function. As such, it starts off sharing its file descriptor table and
-    everything else with its parent thread. It's only when we disconnect and reconnect
+    everything else with its parent process. It's only when we disconnect and reconnect
     that it changes behavior.
 
     """
@@ -221,15 +221,15 @@ async def clone_persistent(
         stderr=parent.stderr.for_task(task),
     ), persistent_path=path, persistent_sock=listening_sock_handle)
 
-async def _connect_and_send(self: PersistentProcess, thread: Process, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
-    """Connect to a persistent thread's socket, send some file descriptors
+async def _connect_and_send(self: PersistentProcess, process: Process, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
+    """Connect to a persistent process's socket, send some file descriptors
 
-    This isn't actually a generic function; the persistent thread expects exactly three
+    This isn't actually a generic function; the persistent process expects exactly three
     file descriptors, and uses them in a special way.
 
     """
-    sock = await thread.make_afd(await thread.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
-    sockaddr_un = await SockaddrUn.from_path(thread, self.persistent_path)
+    sock = await process.make_afd(await process.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
+    sockaddr_un = await SockaddrUn.from_path(process, self.persistent_path)
     async def sendmsg_op(sem: RAM) -> t.Tuple[
             WrittenPointer[SockaddrUn], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
         addr = await sem.ptr(sockaddr_un)
@@ -239,7 +239,7 @@ async def _connect_and_send(self: PersistentProcess, thread: Process, fds: t.Lis
         hdr = await sem.ptr(SendMsghdr(None, iovec, cmsgs))
         response_buf = await sem.ptr(StructList(Int32, [Int32(0)]*len(fds)))
         return addr, count, hdr, response_buf
-    addr, count, hdr, response = await thread.ram.perform_batch(sendmsg_op)
+    addr, count, hdr, response = await process.ram.perform_batch(sendmsg_op)
     data = None
     await sock.connect(addr)
     _, _ = await sock.write(count)
@@ -253,25 +253,25 @@ async def _connect_and_send(self: PersistentProcess, thread: Process, fds: t.Lis
     return remote_fds
 
 class PersistentProcess(Process):
-    """A thread which can live on even if everything else has exited
+    """A process which can live on even if everything else has exited
 
     It's not persistent by default - you need to call make_persistent() first to make that
-    happen. After that, this thread will continue living even if its parent dies or our
+    happen. After that, this process will continue living even if its parent dies or our
     connection to it fails, and you can reconnect to it by calling reconnect(thr), passing
-    the thread you want to initiate the connection from.
+    the process you want to initiate the connection from.
 
-    A great name for this would be "daemon thread", but that's already taken by more
-    conventional thread systems to refer to a much more conventional kind of thread.  I
+    A great name for this would be "daemon process", but that's already taken by more
+    conventional process systems to refer to a much more conventional kind of process.  I
     wistfully recall the name I gave to a previous attempt at making a hosting system for
     long-running tasks: daemon engines. That was a great name.
 
     """
     def __init__(self,
-                 thread: Process,
+                 process: Process,
                  persistent_path: t.Union[str, os.PathLike],
                  persistent_sock: FileDescriptor,
     ) -> None:
-        super()._init_from(thread)
+        super()._init_from(process)
         self.persistent_path = persistent_path
         self.persistent_sock = persistent_sock
         self.prepped_for_reconnect = False
@@ -286,13 +286,13 @@ class PersistentProcess(Process):
         self.prepped_for_reconnect = True
 
     async def make_persistent(self) -> None:
-        "Make this thread actually persistent"
+        "Make this process actually persistent"
         await self.prep_for_reconnect()
         await self.task.setsid()
         await self.task.prctl(PR.SET_PDEATHSIG, 0)
 
-    async def reconnect(self, thread: Process) -> None:
-        """Using the passed-in thread to establish the connection, reconnect to this PersistentProcess
+    async def reconnect(self, process: Process) -> None:
+        """Using the passed-in process to establish the connection, reconnect to this PersistentProcess
 
         """
         if not self.prepped_for_reconnect:
@@ -307,8 +307,8 @@ class PersistentProcess(Process):
         if not isinstance(self.task.sysif, PersistentSyscallConnection):
             raise Exception("self.task.sysif of unexpected type", self.task.sysif)
         await self.task.sysif.shutdown_current_connection()
-        [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await thread.open_async_channels(2)
-        [infd, outfd, remote_data_sock] = await _connect_and_send(self, thread, [syscall_sock, syscall_sock, data_sock])
+        [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await process.open_async_channels(2)
+        [infd, outfd, remote_data_sock] = await _connect_and_send(self, process, [syscall_sock, syscall_sock, data_sock])
         await syscall_sock.close()
         await data_sock.close()
         # Set up the new SyscallConnection

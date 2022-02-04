@@ -43,13 +43,13 @@ T = t.TypeVar('T')
 class ConsoleGenie(WishGranter):
     "A WishGranter which satisfies wishes by starting a REPL on stdin/stdout for human intervention"
     @classmethod
-    async def make(self, thread: Process):
-        "Create a ConsoleGenie that will serve using `thread`'s stdin/stdout"
-        cat = await thread.environ.which("cat")
-        return ConsoleGenie(thread, cat)
+    async def make(self, process: Process):
+        "Create a ConsoleGenie that will serve using `process`'s stdin/stdout"
+        cat = await process.environ.which("cat")
+        return ConsoleGenie(process, cat)
 
-    def __init__(self, thread: Process, cat: Command) -> None:
-        self.thread = thread
+    def __init__(self, process: Process, cat: Command) -> None:
+        self.process = process
         self.cat = cat
         self.lock = trio.Lock()
 
@@ -66,17 +66,17 @@ class ConsoleGenie(WishGranter):
             message = "".join(traceback.format_exception(None, wish, wish.__traceback__))
             wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
 
-            to_term_pipe = await (await self.thread.task.pipe(await self.thread.ram.malloc(Pipe))).read()
-            from_term_pipe = await (await self.thread.task.pipe(await self.thread.ram.malloc(Pipe))).read()
-            async_from_term = await self.thread.make_afd(from_term_pipe.read, set_nonblock=True)
-            async_to_term = await self.thread.make_afd(to_term_pipe.write, set_nonblock=True)
+            to_term_pipe = await (await self.process.task.pipe(await self.process.ram.malloc(Pipe))).read()
+            from_term_pipe = await (await self.process.task.pipe(await self.process.ram.malloc(Pipe))).read()
+            async_from_term = await self.process.make_afd(from_term_pipe.read, set_nonblock=True)
+            async_to_term = await self.process.make_afd(to_term_pipe.write, set_nonblock=True)
             try:
-                cat_stdin_thread = await self.thread.clone()
-                await cat_stdin_thread.task.inherit_fd(to_term_pipe.read).dup2(cat_stdin_thread.stdin)
-                async with await cat_stdin_thread.exec(self.cat):
-                    cat_stdout_thread = await self.thread.clone()
-                    await cat_stdout_thread.task.inherit_fd(from_term_pipe.write).dup2(cat_stdout_thread.stdout)
-                    async with await cat_stdout_thread.exec(self.cat):
+                cat_stdin_process = await self.process.clone()
+                await cat_stdin_process.task.inherit_fd(to_term_pipe.read).dup2(cat_stdin_process.stdin)
+                async with await cat_stdin_process.exec(self.cat):
+                    cat_stdout_process = await self.process.clone()
+                    await cat_stdout_process.task.inherit_fd(from_term_pipe.write).dup2(cat_stdout_process.stdout)
+                    async with await cat_stdout_process.exec(self.cat):
                         ret = await run_repl(async_from_term, async_to_term, {
                             **wisher_frame.f_locals,
                             **wisher_frame.f_globals,
@@ -93,7 +93,7 @@ class ConsoleGenie(WishGranter):
 class ConsoleServerGenie(WishGranter):
     """On wish, listens for connections to a socket in `sockdir`, and serves a REPL to them
 
-    Also, immediately starts socat from `thread` connecting to the socket; that means a
+    Also, immediately starts socat from `process` connecting to the socket; that means a
     REPL is served on stdin/stdout.
 
     The socket names are generated from the function and line number at which wish was
@@ -104,12 +104,12 @@ class ConsoleServerGenie(WishGranter):
 
     """
     @classmethod
-    async def make(self, thread: Process, sockdir: Path):
-        socat = await thread.environ.which("socat")
-        return ConsoleServerGenie(thread, sockdir, socat)
+    async def make(self, process: Process, sockdir: Path):
+        socat = await process.environ.which("socat")
+        return ConsoleServerGenie(process, sockdir, socat)
 
-    def __init__(self, thread: Process, sockdir: Path, socat: Command) -> None:
-        self.thread = thread
+    def __init__(self, process: Process, sockdir: Path, socat: Command) -> None:
+        self.process = process
         self.sockdir = sockdir
         self.socat = socat
         self.name_counts: t.Dict[str, int] = {}
@@ -129,18 +129,18 @@ class ConsoleServerGenie(WishGranter):
         sock_name = self._uniquify_name(f'{wisher_frame.f_code.co_name}-{wisher_frame.f_lineno}')
         sock_path = self.sockdir/sock_name
         cmd = self.socat.args("-", "UNIX-CONNECT:" + os.fsdecode(sock_path))
-        sockfd = await self.thread.make_afd(await self.thread.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
-        await sockfd.bind(await self.thread.ptr(await SockaddrUn.from_path(self.thread, sock_path)))
+        sockfd = await self.process.make_afd(await self.process.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
+        await sockfd.bind(await self.process.ptr(await SockaddrUn.from_path(self.process, sock_path)))
         await sockfd.handle.listen(10)
         async with trio.open_nursery() as nursery:
             @nursery.start_soon
             async def do_socat():
                 while True:
-                    thread = await self.thread.clone()
+                    process = await self.process.clone()
                     try:
-                        child = await thread.exec(cmd)
+                        child = await process.exec(cmd)
                     except:
-                        await thread.exit(0)
+                        await process.exit(0)
                         raise
                     async with child:
                         await child.waitpid(W.EXITED)
@@ -150,7 +150,7 @@ class ConsoleServerGenie(WishGranter):
                 'wisher_frame': wisher_frame,
             }, wish.return_type, message)
             nursery.cancel_scope.cancel()
-        await self.thread.task.unlink(await self.thread.ram.ptr(sock_path))
+        await self.process.task.unlink(await self.process.ram.ptr(sock_path))
         return ret
 
 async def run_repl(infd: AsyncFileDescriptor,
@@ -220,6 +220,6 @@ async def serve_repls(listenfd: AsyncFileDescriptor,
     return retval
 
 def _initialize_module() -> None:
-    from rsyscall import local_thread
-    my_wish_granter.set(trio.run(ConsoleGenie.make, local_thread))
+    from rsyscall import local_process
+    my_wish_granter.set(trio.run(ConsoleGenie.make, local_process))
 _initialize_module()

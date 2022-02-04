@@ -48,7 +48,7 @@ class TestIP(TrioTestCase):
         case of NONBLOCK) sending none of the pointer. This is supported by the manpage, which says:
         "When the message does not fit into the send buffer of the socket, send() normally blocks".
 
-        Unfortunately, it's still not atomic. If multiple threads are sending at once, the data can
+        Unfortunately, it's still not atomic. If multiple processes are sending at once, the data can
         be interleaved.
 
         """
@@ -65,32 +65,32 @@ class TestIP(TrioTestCase):
         data = "".join(str(i) for i in range(8000)).encode()
 
         count = 100
-        threads = [await self.thr.clone() for _ in range(10)]
-        in_ptrs = [await thr.ptr(data) for thr in threads]
-        handles = [thr.task.inherit_fd(orig_in_fd) for thr in threads]
-        async def run_send(thread: Process, in_ptr: Pointer, fd: FileDescriptor) -> None:
+        processes = [await self.thr.clone() for _ in range(10)]
+        in_ptrs = [await thr.ptr(data) for thr in processes]
+        handles = [thr.task.inherit_fd(orig_in_fd) for thr in processes]
+        async def run_send(process: Process, in_ptr: Pointer, fd: FileDescriptor) -> None:
             for i in range(count):
                 in_ptr, rest = await fd.write(in_ptr)
                 if rest.size() != 0:
                     print("failure! rest.size() is", rest.size())
                 self.assertEqual(rest.size(), 0)
-        read_thread = await self.thr.clone()
-        out_buf = await read_thread.malloc(bytes, len(data))
-        out_fd = read_thread.inherit_fd(orig_out_fd)
+        read_process = await self.thr.clone()
+        out_buf = await read_process.malloc(bytes, len(data))
+        out_fd = read_process.inherit_fd(orig_out_fd)
 
         had_interleaving = False
         async with trio.open_nursery() as nursery:
-            for thread, in_ptr, fd in zip(threads, in_ptrs, handles):
-                nursery.start_soon(run_send, thread, in_ptr, fd)
-            for i in range(len(threads) * count):
+            for process, in_ptr, fd in zip(processes, in_ptrs, handles):
+                nursery.start_soon(run_send, process, in_ptr, fd)
+            for i in range(len(processes) * count):
                 out_buf, rest = await out_fd.recv(out_buf, MSG.WAITALL)
                 self.assertEqual(rest.size(), 0)
                 if not had_interleaving:
                     indata = await out_buf.read()
                     if indata != data:
-                        # oops, looks like the data from multiple threads was interleaved
+                        # oops, looks like the data from multiple processes was interleaved
                         had_interleaving = True
-        for thread in threads:
-            await thread.exit(0)
-        await read_thread.exit(0)
+        for process in processes:
+            await process.exit(0)
+        await read_process.exit(0)
         self.assertTrue(had_interleaving)

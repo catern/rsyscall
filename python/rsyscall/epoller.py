@@ -6,7 +6,7 @@ straightforward, but there are a few quirks.
 
 --------------------------------------------------------------------------------
 
-To avoid blocking a thread in a call to epoll_wait when there is more
+To avoid blocking a process in a call to epoll_wait when there is more
 work to be done, there are two options:
 
 1. We can register the epollfd on some higher event loop, and instead
@@ -44,9 +44,9 @@ These two approaches to making an Epoller are implemented in the
 "make_subsidiary" (1) and "make_root" (2) classmethods of Epoller.
 
 We would rather go with 2 - the only one allowed to block in our
-threads should be us. Unfortunately, most event loop libraries don't
+processes should be us. Unfortunately, most event loop libraries don't
 expose a way to function as a subsidiary event loop.  So in the case
-of threads which need to interoperate with another event loop, we are
+of processes which need to interoperate with another event loop, we are
 forced into 1.
 
 In other cases, there is no other event loop, so we must go with 2.
@@ -54,18 +54,18 @@ We must take care to satisfy the requirements of 2: Anything that
 wants to perform work should cause a wakeup on our epollfd.
 
 The only case where we use 1 is when running on the local Python
-thread.  There, we use the trio async library; and trio does not
+process.  There, we use the trio async library; and trio does not
 expose its epollfd such that we could use approach 2. Instead, we call
 trio's wait_readable method on the epollfd instead of blocking in
 epoll_wait.
 
-On every thread other than the local Python thread, we use approach
+On every process other than the local Python process, we use approach
 2. At the moment, the only other source of work that is present in
-every thread is the file descriptor from which the rsyscall server
+every process is the file descriptor from which the rsyscall server
 reads incoming syscalls. So that other syscalls will not be blocked by
 our calls to epoll_wait, we register that file descriptor (exposed in
 SyscallInterface as the "activity fd") on our epollfd. In this way, if
-a new syscall is received in the thread while already in a call to
+a new syscall is received in the process while already in a call to
 epoll_wait, the epoll_wait will wake up so that the rsyscall server
 can read and perform the unrelated syscalls.
 
@@ -111,9 +111,9 @@ class RemovedFromEpollError(Exception):
 class EpollWaiter:
     """The core class which reads events from the epollfd and dispatches them.
 
-    Many threads may have a copy of our epollfd, and register fds on it. To actually wait
+    Many processes may have a copy of our epollfd, and register fds on it. To actually wait
     on this epollfd and pull events from it is the responsibility of this class. By
-    inheriting the epollfd to many threads for registration purposes, but centralizing the
+    inheriting the epollfd to many processes for registration purposes, but centralizing the
     actual epoll_wait calls in this shared class, our usage of epoll becomes more
     efficient.
 
@@ -222,9 +222,9 @@ class Epoller:
         """Make a root epoller, as described in the module docstring.
 
         We take responsibility for blocking to wait for new events for every other
-        component in this thread. We pull the activity_fd from the SyscallInterface and
+        component in this process. We pull the activity_fd from the SyscallInterface and
         register it on our epollfd. The activity_fd is readable whenever some other
-        component in the thread wants to work on the thread.
+        component in the process wants to work on the process.
 
         """
         epfd = await task.epoll_create()
@@ -358,11 +358,11 @@ class EpolledFileDescriptor:
         The reason we need this somewhat complicated edifice is because our calls to
         epoll_wait are not synchronized with our system calls on individual file
         descriptors; calls to epoll_wait and fd system calls can happen in different
-        threads and can be arbitrarily reordered relative to each other.
+        processes and can be arbitrarily reordered relative to each other.
 
         Note, however, that system calls made from an individual `AsyncFileDescriptor`
         instance *are* synchronized relative to each other; those system calls are made in
-        a single thread, so the system calls return in order thanks to `dneio`. This
+        a single process, so the system calls return in order thanks to `dneio`. This
         allows us to safely immediately call `FDStatus.negedge`/`FDStatus.posedge` after a
         system call.
 
@@ -404,7 +404,7 @@ class FDStatus:
     epoll seems to not send us a posedge if we could already know that the file descriptor
     is readable. So, for example, if we directly read an fd and we haven't already gotten
     a posedge for it, and we get a full buffer of data, then we won't get a posedge for it
-    from epoll. This would cause various problems, including deadlocks if multiple threads
+    from epoll. This would cause various problems, including deadlocks if multiple processes
     were trying to read from the fd and one was blocked in epoll_wait, waiting for the
     posedge.
 
@@ -422,7 +422,7 @@ class FDStatus:
         self.mask &= ~event
 
 class AsyncFileDescriptor:
-    """A file descriptor on which IO can be performed without blocking the thread.
+    """A file descriptor on which IO can be performed without blocking the process.
 
     Also comes with helpful methods `AsyncFileDescriptor.write_all_bytes` and
     `AsyncFileDescriptor.read_some_bytes` to abstract over memory allocation.
@@ -475,7 +475,7 @@ class AsyncFileDescriptor:
         await self.epolled.wait_for(EPOLL.RDHUP|EPOLL.HUP)
 
     async def read(self, ptr: Pointer) -> t.Tuple[Pointer, Pointer]:
-        "Call `FileDescriptor.read` without blocking the thread."
+        "Call `FileDescriptor.read` without blocking the process."
         while True:
             await self.epolled.wait_for(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
             current_events = self.epolled.get_current_events(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
@@ -505,7 +505,7 @@ class AsyncFileDescriptor:
         return await valid.read()
 
     async def write(self, buf: Pointer) -> t.Tuple[Pointer, Pointer]:
-        """Call `FileDescriptor.write` without blocking the thread.
+        """Call `FileDescriptor.write` without blocking the process.
 
         Note that this doesn't retry partial writes, which are always a possibility, so you should
         make sure to do that yourself, or use `AsyncFileDescriptor.write_all`.
@@ -558,7 +558,7 @@ class AsyncFileDescriptor:
 
     async def accept(self, flags: SOCK=SOCK.NONE, addr: t.Optional[WrittenPointer[Sockbuf[T_sockaddr]]]=None
     ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_sockaddr]]]]:
-        "Call accept without blocking the thread."
+        "Call accept without blocking the process."
         while True:
             await self.epolled.wait_for(EPOLL.IN|EPOLL.HUP|EPOLL.ERR)
             current_events = self.epolled.get_current_events(EPOLL.IN|EPOLL.HUP|EPOLL.ERR)
@@ -586,11 +586,11 @@ class AsyncFileDescriptor:
         return fd, addr
 
     async def bind(self, addr: WrittenPointer[Sockaddr]) -> None:
-        "Call bind; bind already doesn't block the thread."
+        "Call bind; bind already doesn't block the process."
         await self.handle.bind(addr)
 
     async def connect(self, addr: WrittenPointer[Sockaddr]) -> None:
-        "Call connect without blocking the thread."
+        "Call connect without blocking the process."
         try:
             # Note that an unconnected socket, at least with AF.INET SOCK.STREAM,
             # will have EPOLL.OUT|EPOLL.HUP set when added to epoll, before calling connect.
@@ -732,7 +732,7 @@ class AsyncReadBuffer:
         """Read a size-prefixed array of size-prefixed bytestrings, with each bytestring containing '=', into a dict.
 
         This is the format we expect for envp, which is written to us on startup by
-        non-child threads.
+        non-child processes.
 
         We assume that the environment is correctly formed; that is, each element contains
         '='.  If that's not true, we'll throw an exception.  But it would be quite unusual

@@ -4,7 +4,7 @@ from rsyscall.unistd import Pipe
 from rsyscall.fcntl import O
 
 from rsyscall.sched import CLONE
-from rsyscall.tests.utils import assert_thread_works
+from rsyscall.tests.utils import assert_process_works
 
 class TestPidns(TrioTestCase):
     async def asyncSetUp(self) -> None:

@@ -5,7 +5,7 @@ derivations; setuptools will write out the paths and closures of the
 Nix derivations we depend on.
 
 We can use those dependencies by importing the `closure` module variables,
-PackageClosure instances, which are independent of any specific thread.  To
+PackageClosure instances, which are independent of any specific process.  To
 turn a PackageClosure into a usable path, we can pass it to `deploy`,
 which checks if the path is already deployed in that specific store,
 and returns the path if so. If the path isn't deployed already,
@@ -16,7 +16,7 @@ from __future__ import annotations
 import typing as t
 import os
 import rsyscall.handle as handle
-from rsyscall import local_thread
+from rsyscall import local_process
 from rsyscall.thread import Process, ChildProcess
 from rsyscall.command import Command
 import trio
@@ -103,7 +103,7 @@ async def enter_nix_container(
     """Move `dest` into a container in `dest_dir`, deploying Nix inside.
 
     We can then use `deploy` to deploy other things into this container,
-    which we can use from the `dest` thread or any of its children.
+    which we can use from the `dest` process or any of its children.
 
     """
     # we want to use our own container Nix store, not the global one on the system
@@ -161,15 +161,15 @@ class PackagePath(Path):
     def bin(self, name: str) -> Command:
         return Command(self/"bin"/name, [name], {})
 
-async def deploy(thread: Process, package: PackageClosure) -> PackagePath:
+async def deploy(process: Process, package: PackageClosure) -> PackagePath:
     "Deploy a PackageClosure to the filesystem of this Process"
-    if thread is not local_thread:
-        # for remote threads, we need to check if it's actually there,
+    if process is not local_process:
+        # for remote processes, we need to check if it's actually there,
         # and deploy it if it's not there.
         # TODO we should really make and return a Nix GC root, too...
-        ptr = await thread.ptr(package.path)
+        ptr = await process.ptr(package.path)
         try:
-            await thread.task.access(ptr, OK.R)
+            await process.task.access(ptr, OK.R)
         except (PermissionError, FileNotFoundError):
-            await _deploy(local_thread, thread, package)
+            await _deploy(local_process, process, package)
     return PackagePath(package.path)

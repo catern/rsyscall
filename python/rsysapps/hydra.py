@@ -89,8 +89,8 @@ class HTTPClient:
         self.cookie: t.Optional[bytes] = None
 
     @staticmethod
-    async def connect_unix(thread: Process, addr: WrittenPointer[SockaddrUn]) -> HTTPClient:
-        sock = await thread.make_afd(await thread.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
+    async def connect_unix(process: Process, addr: WrittenPointer[SockaddrUn]) -> HTTPClient:
+        sock = await process.make_afd(await process.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
         await sock.connect(addr)
         return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
             ("Host", "localhost"),
@@ -99,9 +99,9 @@ class HTTPClient:
         ])
 
     @staticmethod
-    async def connect_inet(thread: Process, addr: SockaddrIn) -> HTTPClient:
-        sock = await thread.make_afd(await thread.socket(AF.INET, SOCK.STREAM|SOCK.NONBLOCK))
-        await sock.connect(await thread.ram.ptr(addr))
+    async def connect_inet(process: Process, addr: SockaddrIn) -> HTTPClient:
+        sock = await process.make_afd(await process.socket(AF.INET, SOCK.STREAM|SOCK.NONBLOCK))
+        await sock.connect(await process.ram.ptr(addr))
         return HTTPClient(sock.read_some_bytes, sock.write_all_bytes, [
             ("Host", "localhost"),
             ("Accept", "application/json"),
@@ -181,15 +181,15 @@ class HTTPClient:
 @dataclass
 class Postgres:
     sockdir: Path
-    thread: Process
+    process: Process
     createuser_cmd: Command
     createdb_cmd: Command
 
     async def createuser(self, name: str) -> None:
-        await self.thread.run(self.createuser_cmd.args("--host", self.sockdir, "--no-password", name))
+        await self.process.run(self.createuser_cmd.args("--host", self.sockdir, "--no-password", name))
 
     async def createdb(self, name: str, owner: str) -> None:
-        await self.thread.run(self.createdb_cmd.args("--host", self.sockdir, "--owner", owner, name))
+        await self.process.run(self.createdb_cmd.args("--host", self.sockdir, "--owner", owner, name))
 
 async def read_completely(ram: RAM, fd: FileDescriptor) -> bytes:
     data = b''
@@ -200,16 +200,16 @@ async def read_completely(ram: RAM, fd: FileDescriptor) -> bytes:
             return data
         data += await valid.read()
 
-async def start_postgres(nursery, thread: Process, path: Path) -> Postgres:
-    initdb = await thread.environ.which("initdb")
-    postgres = await thread.environ.which("postgres")
-    createuser = await thread.environ.which("createuser")
-    createdb = await thread.environ.which("createdb")
+async def start_postgres(nursery, process: Process, path: Path) -> Postgres:
+    initdb = await process.environ.which("initdb")
+    postgres = await process.environ.which("postgres")
+    createuser = await process.environ.which("createuser")
+    createdb = await process.environ.which("createdb")
 
     data = path/"data"
-    await thread.run(initdb.args("--pgdata", data, "--nosync", "--no-locale", "--auth=trust"))
+    await process.run(initdb.args("--pgdata", data, "--nosync", "--no-locale", "--auth=trust"))
     sockdir = path/"sock"
-    await thread.mkdir(sockdir)
+    await process.mkdir(sockdir)
     config = {
         # connection
         "listen_addresses": "''",
@@ -219,20 +219,20 @@ async def start_postgres(nursery, thread: Process, path: Path) -> Postgres:
         "synchronous_commit": "off",
         "full_page_writes": "off",
     }
-    await thread.spit(data/"postgresql.auto.conf", "\n".join([f"{key} = {value}" for key, value in config.items()]))
-    inty = await Inotify.make(thread)
+    await process.spit(data/"postgresql.auto.conf", "\n".join([f"{key} = {value}" for key, value in config.items()]))
+    inty = await Inotify.make(process)
     watch = await inty.add(data, IN.CLOSE_WRITE)
 
-    await nursery.start(thread.run, postgres.args('-D', data))
+    await nursery.start(process.run, postgres.args('-D', data))
     # pg_ctl uses the pid file to determine when postgres is up, so we do the same.
     pid_file_name = "postmaster.pid"
     pid_file = None
-    name = await thread.ram.ptr(data/pid_file_name)
+    name = await process.ram.ptr(data/pid_file_name)
     while True:
         await watch.wait_until_event(IN.CLOSE_WRITE, pid_file_name)
         if pid_file is None:
-            pid_file = await thread.task.open(name, O.RDONLY)
-        pid_file_data = await read_completely(thread.ram, pid_file)
+            pid_file = await process.task.open(name, O.RDONLY)
+        pid_file_data = await read_completely(process.ram, pid_file)
         try:
             # the postmaster status is on line 7
             # would be nice to get that from LOCK_FILE_LINE_PM_STATUS in pidfile.h
@@ -242,25 +242,25 @@ async def start_postgres(nursery, thread: Process, path: Path) -> Postgres:
         if b"ready" in pm_status:
             break
     await inty.close()
-    return Postgres(sockdir, thread, createuser, createdb)
+    return Postgres(sockdir, process, createuser, createdb)
 
 class NginxChild:
     # can support methods for reloading configuration, etc
     def __init__(self, child: AsyncChildPid) -> None:
         self.child = child
 
-async def exec_nginx(thread: ChildProcess, nginx: Command,
+async def exec_nginx(process: ChildProcess, nginx: Command,
                      path: Path, config: FileDescriptor,
                      listen_fds: t.List[FileDescriptor]) -> AsyncChildPid:
-    nginx_fds = [fd.maybe_copy(thread.task) for fd in listen_fds]
-    config_fd = config.maybe_copy(thread.task)
-    await thread.unshare_files()
+    nginx_fds = [fd.maybe_copy(process.task) for fd in listen_fds]
+    config_fd = config.maybe_copy(process.task)
+    await process.unshare_files()
     if nginx_fds:
         nginx_var = ";".join([str(await fd.as_argument()) for fd in nginx_fds]) + ';'
     else:
         nginx_var = ""
-    await thread.mkdir(path/"logs")
-    child = await thread.exec(
+    await process.mkdir(path/"logs")
+    child = await process.exec(
         nginx.env(NGINX=nginx_var).args("-p", path, "-c", f"/proc/self/fd/{await config_fd.as_argument()}"))
     return child
 
@@ -268,12 +268,12 @@ async def start_fresh_nginx(
         nursery, parent: Process, path: Path, proxy_addr: SockaddrUn
 ) -> t.Tuple[SockaddrIn, NginxChild]:
     nginx = await parent.environ.which("nginx")
-    thread = await parent.clone(CLONE.NEWUSER|CLONE.NEWPID)
-    sock = await thread.task.socket(AF.INET, SOCK.STREAM)
-    zero_addr = await thread.ram.ptr(SockaddrIn(0, 0x7F_00_00_01))
+    process = await parent.clone(CLONE.NEWUSER|CLONE.NEWPID)
+    sock = await process.task.socket(AF.INET, SOCK.STREAM)
+    zero_addr = await process.ram.ptr(SockaddrIn(0, 0x7F_00_00_01))
     await sock.bind(zero_addr)
     addr = await (await (await sock.getsockname(
-        await thread.ram.ptr(Sockbuf(zero_addr)))).read()).buf.read()
+        await process.ram.ptr(Sockbuf(zero_addr)))).read()).buf.read()
     config = b"""
 error_log stderr error;
 daemon off;
@@ -289,18 +289,18 @@ http {
 }
 """ % (addr.port, proxy_addr.path)
     await sock.listen(10)
-    config_fd = await thread.task.open(await thread.ram.ptr(path/"nginx.conf"),
+    config_fd = await process.task.open(await process.ram.ptr(path/"nginx.conf"),
                                        O.RDWR|O.CREAT)
-    remaining: Pointer = await thread.ram.ptr(config)
+    remaining: Pointer = await process.ram.ptr(config)
     while remaining.size() > 0:
         _, remaining = await config_fd.write(remaining)
-    child = await exec_nginx(thread, nginx, path, config_fd, [sock])
+    child = await exec_nginx(process, nginx, path, config_fd, [sock])
     nursery.start_soon(child.check)
     return addr, NginxChild(child)
 
 async def start_simple_nginx(nursery, parent: Process, path: Path, sockpath: Path) -> NginxChild:
     nginx = await parent.environ.which("nginx")
-    thread = await parent.clone(CLONE.NEWUSER|CLONE.NEWPID)
+    process = await parent.clone(CLONE.NEWUSER|CLONE.NEWPID)
     config = b"""
 error_log stderr error;
 daemon off;
@@ -315,15 +315,15 @@ http {
   }
 }
 """ % os.fsencode(sockpath)
-    sock = await thread.task.socket(AF.INET, SOCK.STREAM)
-    await sock.bind(await thread.ram.ptr(SockaddrIn(3000, 0x7F_00_00_01)))
+    sock = await process.task.socket(AF.INET, SOCK.STREAM)
+    await sock.bind(await process.ram.ptr(SockaddrIn(3000, 0x7F_00_00_01)))
     await sock.listen(10)
-    config_fd = await thread.task.open(await thread.ram.ptr(path/"nginx.conf"),
+    config_fd = await process.task.open(await process.ram.ptr(path/"nginx.conf"),
                                        O.RDWR|O.CREAT)
-    remaining: Pointer = await thread.ram.ptr(config)
+    remaining: Pointer = await process.ram.ptr(config)
     while remaining.size() > 0:
         _, remaining = await config_fd.write(remaining)
-    child = await exec_nginx(thread, nginx, path, config_fd, [sock])
+    child = await exec_nginx(process, nginx, path, config_fd, [sock])
     nursery.start_soon(child.check)
     return NginxChild(child)
 
@@ -387,17 +387,17 @@ class DaemonStore(Store):
     def uri(self) -> str:
         return "daemon"
 
-async def start_hydra(nursery, thread: Process, path: Path, dbi: str, store: LocalStore) -> Hydra:
+async def start_hydra(nursery, process: Process, path: Path, dbi: str, store: LocalStore) -> Hydra:
     # maybe have a version of this function which uses cached path locations?
     # or better yet, compiled in locations?
-    hydra_init = await thread.environ.which("hydra-init")
-    hydra_create_user = await thread.environ.which("hydra-create-user")
-    hydra_server = await thread.environ.which("hydra-server")
-    hydra_evaluator = await thread.environ.which("hydra-evaluator")
-    hydra_queue_runner = await thread.environ.which("hydra-queue-runner")
+    hydra_init = await process.environ.which("hydra-init")
+    hydra_create_user = await process.environ.which("hydra-create-user")
+    hydra_server = await process.environ.which("hydra-server")
+    hydra_evaluator = await process.environ.which("hydra-evaluator")
+    hydra_queue_runner = await process.environ.which("hydra-queue-runner")
 
-    await thread.run(hydra_init.env(HYDRA_DBI=dbi, HYDRA_DATA=path))
-    await thread.run(hydra_create_user.args(
+    await process.run(hydra_init.env(HYDRA_DBI=dbi, HYDRA_DATA=path))
+    await process.run(hydra_create_user.args(
         "sbaugh",
         "--full-name", "Spencer Baugh",
         "--email-address", "sbaugh@localhost",
@@ -407,7 +407,7 @@ async def start_hydra(nursery, thread: Process, path: Path, dbi: str, store: Loc
 
     # create config files
     config = {"email_notification": "1"}
-    config_path = await thread.spit(path/"hydra.conf", "\n".join([f"{key} = {value}" for key, value in config.items()]))
+    config_path = await process.spit(path/"hydra.conf", "\n".join([f"{key} = {value}" for key, value in config.items()]))
     hydra_env: t.Mapping[str, t.Union[str, bytes, os.PathLike]] = {
         'HYDRA_DBI': dbi,
         'HYDRA_DATA': path,
@@ -416,20 +416,20 @@ async def start_hydra(nursery, thread: Process, path: Path, dbi: str, store: Loc
         'NIX_STATE_DIR': store.state_dir(),
     }
     # start server
-    server_thread = await thread.clone()
-    await server_thread.unshare_files()
-    sock = await server_thread.task.socket(AF.UNIX, SOCK.STREAM)
-    addr = await server_thread.ram.ptr(
-        await SockaddrUn.from_path(server_thread, path/"hydra_server.sock"))
+    server_process = await process.clone()
+    await server_process.unshare_files()
+    sock = await server_process.task.socket(AF.UNIX, SOCK.STREAM)
+    addr = await server_process.ram.ptr(
+        await SockaddrUn.from_path(server_process, path/"hydra_server.sock"))
     await sock.bind(addr)
     await sock.listen(10)
     ssport = os.fsdecode(addr.value.path)+"="+str(int(sock.near))
-    server_child = await server_thread.exec(hydra_server.env(
+    server_child = await server_process.exec(hydra_server.env(
         **hydra_env, SERVER_STARTER_PORT=ssport))
     nursery.start_soon(server_child.check)
     # start evaluator, queue runner
-    await nursery.start(thread.run, hydra_evaluator.env(**hydra_env))
-    await nursery.start(thread.run, hydra_queue_runner.env(**hydra_env))
+    await nursery.start(process.run, hydra_evaluator.env(**hydra_env))
+    await nursery.start(process.run, hydra_queue_runner.env(**hydra_env))
     return Hydra(addr)
 
 class Jobset:
@@ -497,23 +497,23 @@ class HydraClient:
 
 class TestHydra(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thread = local.thread
-        self.tmpdir = await self.thread.mkdtemp("test_hydra")
+        self.process = local.process
+        self.tmpdir = await self.process.mkdtemp("test_hydra")
         self.path = self.tmpdir.path
-        await update_symlink(self.thread, await self.thread.ram.ptr(self.tmpdir.parent/"test_hydra.current"), self.path)
+        await update_symlink(self.process, await self.process.ram.ptr(self.tmpdir.parent/"test_hydra.current"), self.path)
 
-        self.postgres = await start_postgres(self.nursery, self.thread, await self.thread.mkdir(self.path/"postgres"))
+        self.postgres = await start_postgres(self.nursery, self.process, await self.process.mkdir(self.path/"postgres"))
         await self.postgres.createuser("hydra")
         await self.postgres.createdb("hydra", owner="hydra")
 
-        stubbin = await self.thread.mkdir(self.path/"stubbin")
-        self.sendmail_stub = await StubServer.make(self.thread, local_store, stubbin, "sendmail")
-        self.thread.environ['PATH'] = os.fsdecode(stubbin) + ':' + self.thread.environ['PATH']
+        stubbin = await self.process.mkdir(self.path/"stubbin")
+        self.sendmail_stub = await StubServer.make(self.process, local_store, stubbin, "sendmail")
+        self.process.environ['PATH'] = os.fsdecode(stubbin) + ':' + self.process.environ['PATH']
         # start server
-        # TODO I suppose this pidns thread is just going to be GC'd away... gotta make sure that works fine.
-        pidns_thread = await self.thread.clone(CLONE.NEWUSER|CLONE.NEWPID)
+        # TODO I suppose this pidns process is just going to be GC'd away... gotta make sure that works fine.
+        pidns_process = await self.process.clone(CLONE.NEWUSER|CLONE.NEWPID)
         self.hydra = await start_hydra(
-            self.nursery, pidns_thread, await self.thread.mkdir(self.path/"hydra"),
+            self.nursery, pidns_process, await self.process.mkdir(self.path/"hydra"),
             "dbi:Pg:dbname=hydra;host=" + os.fsdecode(self.postgres.sockdir) + ";user=hydra;",
             DirectStore(store=self.path/"nix"/"store", state=self.path/"nix"/"state"),
         )
@@ -524,9 +524,9 @@ class TestHydra(TrioTestCase):
     async def create_and_validate_job(self, client: HydraClient) -> None:
         project = await client.make_project('neato', "A neat project")
         job_name = "jobbymcjobface"
-        jobset_dir = await self.thread.mkdir(self.path/"jobset")
+        jobset_dir = await self.process.mkdir(self.path/"jobset")
         jobset_path = "trivial.nix"
-        await self.thread.spit(jobset_dir/jobset_path, """{ string }:
+        await self.process.spit(jobset_dir/jobset_path, """{ string }:
 { """ + job_name + """ = builtins.derivation {
     name = "trivial";
     system = "x86_64-linux";
@@ -550,13 +550,13 @@ class TestHydra(TrioTestCase):
         self.assertEqual(job_name, message['X-Hydra-Job'])
 
     async def test_hydra(self) -> None:
-        client = await HydraClient.login(await HTTPClient.connect_unix(self.thread, self.hydra.addr))
+        client = await HydraClient.login(await HTTPClient.connect_unix(self.process, self.hydra.addr))
         await self.create_and_validate_job(client)
 
     async def test_proxy(self) -> None:
-        addr, _ = await start_fresh_nginx(self.nursery, self.thread, await self.thread.mkdir(self.path/"nginx"),
+        addr, _ = await start_fresh_nginx(self.nursery, self.process, await self.process.mkdir(self.path/"nginx"),
                                           self.hydra.addr.value)
-        client = await HydraClient.login(await HTTPClient.connect_inet(self.thread, addr))
+        client = await HydraClient.login(await HTTPClient.connect_inet(self.process, addr))
         await self.create_and_validate_job(client)
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
-"""The local thread, based on the local Python interpreter thread.
+"""The local process, based on the local Python interpreter process.
 
-The local thread is the thread that every rsyscall program has available from the
-start. From this thread, we create all the others.
+The local process is the process that every rsyscall program has available from the
+start. From this process, we create all the others.
 
 """
 from __future__ import annotations
@@ -36,11 +36,11 @@ from rsyscall.epoller import Epoller
 logger = logging.getLogger(__name__)
 
 async def _direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0):
-    "Make a syscall directly in the current thread."
+    "Make a syscall directly in the current process."
     return lib.rsyscall_raw_syscall(arg1, arg2, arg3, arg4, arg5, arg6, number)
 
 class LocalSyscall(SyscallInterface):
-    "Makes syscalls in the local, Python interpreter thread."
+    "Makes syscalls in the local, Python interpreter process."
     def __init__(self) -> None:
         self.logger = logger
 
@@ -84,12 +84,12 @@ class LocalMemoryTransport(MemoryTransport):
         buf = ffi.buffer(ffi.cast('void*', int(src.near)), src.size())
         return bytes(buf)
 
-async def _make_local_thread() -> Process:
-    """Create the local thread, allocating various resources locally.
+async def _make_local_process() -> Process:
+    """Create the local process, allocating various resources locally.
 
-    For the most part, the local thread is like any other thread; it just bootstraps
+    For the most part, the local process is like any other process; it just bootstraps
     differently, and uses syscall and memory interfaces which are specialized to the local
-    thread.
+    process.
 
     """
     pid = near.Pid(os.getpid())
@@ -107,7 +107,7 @@ async def _make_local_thread() -> Process:
     trio_system_wait_readable = TrioSystemWaitReadable(epfd.near.number)
     set_trio_system_wait_readable(trio_system_wait_readable)
     epoller = Epoller.make_subsidiary(ram, epfd, trio_system_wait_readable.wait)
-    thread = Process(
+    process = Process(
         task, ram,
         await FDPassConnection.make(task, ram, epoller),
         NativeLoader.make_from_symbols(task, lib),
@@ -118,10 +118,10 @@ async def _make_local_thread() -> Process:
         stdout=task.make_fd_handle(near.FileDescriptor(1)),
         stderr=task.make_fd_handle(near.FileDescriptor(2)),
     )
-    return thread
+    return process
 
 async def _initialize() -> Process:
-    thr = await _make_local_thread()
+    thr = await _make_local_process()
     # Wipe out the SIGWINCH handler that the readline module installs.
     # We do this because otherwise this handler will be inherited down to our
     # children, where it will segfault on run due to the environment being
@@ -132,5 +132,5 @@ async def _initialize() -> Process:
     await thr.task.sigaction(SIG.WINCH, await thr.ram.ptr(Sigaction(Sighandler.DFL)), None)
     return thr
 
-local_thread: Process = trio.run(_initialize)
-"The local thread, fully initialized at import time"
+local_process: Process = trio.run(_initialize)
+"The local process, fully initialized at import time"

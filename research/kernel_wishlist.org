@@ -11,8 +11,8 @@
 
    Things which don't work:
    - ptrace doesn't work because ptrace sucks and break gdb/strace.
-   - Passing down one end of a cloexec pipe doesn't work because if we're a CLONE_FILES thread calling exec,
-     the end will still be open in other threads.
+   - Passing down one end of a cloexec pipe doesn't work because if we're a CLONE_FILES process calling exec,
+     the end will still be open in other processes.
    - Various privileged interfaces don't work because they're privileged.
    - vfork is interestingly close but ultimately doesn't work since it's not actually parallel;
      I investigated it in https://github.com/catern/sfork

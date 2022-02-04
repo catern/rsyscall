@@ -36,5 +36,5 @@ async def do_async_things(self: unittest.TestCase, epoller: Epoller, thr: Proces
     await async_pipe_wfd.close()
     logger.info("Done with do_async_things(%d)", i)
 
-async def assert_thread_works(self: unittest.TestCase, thr: Process) -> None:
+async def assert_process_works(self: unittest.TestCase, thr: Process) -> None:
     await do_async_things(self, thr.epoller, thr)

@@ -1,7 +1,7 @@
-"""A thread on a remote host, bootstrapped over ssh
+"""A process on a remote host, bootstrapped over ssh
 
-Note that all thread types can be launched through any other thread type,
-including through an ssh thread.
+Note that all process types can be launched through any other process type,
+including through an ssh process.
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -86,7 +86,7 @@ class SSHDCommand(Command):
 
 @dataclass
 class SSHExecutables:
-    """A standalone representation of the executables needed to create an SSH thread
+    """A standalone representation of the executables needed to create an SSH process
 
     This is not really a user-facing class, it exists just to promote modularity. With
     this class, our functions need only take an object of this type, rather than look up
@@ -98,11 +98,11 @@ class SSHExecutables:
     bootstrap_path: Path
 
     @classmethod
-    async def with_nix(cls, thread: Process) -> SSHExecutables:
+    async def with_nix(cls, process: Process) -> SSHExecutables:
         import rsyscall._nixdeps.openssh
         import rsyscall._nixdeps.librsyscall
-        ssh_path = await nix.deploy(thread, rsyscall._nixdeps.openssh.closure)
-        rsyscall_path = await nix.deploy(thread, rsyscall._nixdeps.librsyscall.closure)
+        ssh_path = await nix.deploy(process, rsyscall._nixdeps.openssh.closure)
+        rsyscall_path = await nix.deploy(process, rsyscall._nixdeps.librsyscall.closure)
         base_ssh = SSHCommand.make(ssh_path/"bin"/"ssh")
         bootstrap_path = rsyscall_path/"libexec"/"rsyscall"/"rsyscall-bootstrap"
         return SSHExecutables(base_ssh, bootstrap_path)
@@ -148,7 +148,7 @@ class SSHHost:
         self.executables = executables
         self.to_host = to_host
 
-    async def ssh(self, thread: Process) -> t.Tuple[AsyncChildPid, Process]:
+    async def ssh(self, process: Process) -> t.Tuple[AsyncChildPid, Process]:
         # we could get rid of the need to touch the local filesystem by directly
         # speaking the openssh multiplexer protocol. or directly speaking the ssh
         # protocol for that matter.
@@ -159,10 +159,10 @@ class SSHHost:
         hostname = os.fsdecode(ssh_to_host.arguments[-1])
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (hostname+random_suffix+".sock")
-        local_socket_path = thread.environ.tmpdir/name
-        fd = await thread.task.open(await thread.ram.ptr(self.executables.bootstrap_path), O.RDONLY)
-        async with make_bootstrap_dir(thread, ssh_to_host, fd) as tmp_path_bytes:
-            return await ssh_bootstrap(thread, ssh_to_host, local_socket_path, tmp_path_bytes)
+        local_socket_path = process.environ.tmpdir/name
+        fd = await process.task.open(await process.ram.ptr(self.executables.bootstrap_path), O.RDONLY)
+        async with make_bootstrap_dir(process, ssh_to_host, fd) as tmp_path_bytes:
+            return await ssh_bootstrap(process, ssh_to_host, local_socket_path, tmp_path_bytes)
 
 @contextlib.asynccontextmanager
 async def make_bootstrap_dir(
@@ -209,15 +209,15 @@ async def make_bootstrap_dir(
     yield tmp_path_bytes
     await child_pid.check()
 
-async def ssh_forward(thread: Process, ssh_command: SSHCommand,
+async def ssh_forward(process: Process, ssh_command: SSHCommand,
                       local_path: Path, remote_path: str) -> AsyncChildPid:
     "Forward Unix socket connections to local_path to the socket at remote_path, over ssh"
-    stdout_pipe = await (await thread.task.pipe(
-        await thread.ram.malloc(Pipe))).read()
-    async_stdout = await thread.make_afd(stdout_pipe.read, set_nonblock=True)
-    child = await thread.clone()
+    stdout_pipe = await (await process.task.pipe(
+        await process.ram.malloc(Pipe))).read()
+    async_stdout = await process.make_afd(stdout_pipe.read, set_nonblock=True)
+    child = await process.clone()
     await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
-    await child.task.chdir(await thread.ptr(local_path.parent))
+    await child.task.chdir(await process.ptr(local_path.parent))
     child_pid = await child.exec(ssh_command.local_forward(
         "./" + local_path.name, remote_path,
     # TODO I optimistically assume that I'll have established a
@@ -249,8 +249,8 @@ async def ssh_bootstrap(
     forward_child_pid = await ssh_forward(
         parent, ssh_command, local_socket_path, (tmp_path_bytes + b"/data").decode())
     # start bootstrap
-    bootstrap_thread = await parent.clone()
-    bootstrap_child_pid = await bootstrap_thread.exec(ssh_command.args(
+    bootstrap_process = await parent.clone()
+    bootstrap_child_pid = await bootstrap_process.exec(ssh_command.args(
         "-n", f"cd {tmp_path_bytes.decode()}; exec ./bootstrap rsyscall"
     ))
     # TODO should unlink the bootstrap after I'm done execing.
@@ -299,7 +299,7 @@ async def ssh_bootstrap(
         new_base_task, new_ram,
         await AsyncFileDescriptor.make(epoller, new_ram, handle_listening_fd),
     )
-    new_thread = Process(
+    new_process = Process(
         task=new_base_task,
         ram=new_ram,
         connection=connection,
@@ -311,7 +311,7 @@ async def ssh_bootstrap(
         stdout=new_base_task.make_fd_handle(near.FileDescriptor(1)),
         stderr=new_base_task.make_fd_handle(near.FileDescriptor(2)),
     )
-    return bootstrap_child_pid, new_thread
+    return bootstrap_child_pid, new_process
 
 @dataclass
 class SSHDExecutables:
@@ -324,27 +324,27 @@ class SSHDExecutables:
     sshd: SSHDCommand
 
     @classmethod
-    async def with_nix(cls, thread: Process) -> SSHDExecutables:
+    async def with_nix(cls, process: Process) -> SSHDExecutables:
         import rsyscall._nixdeps.openssh
-        ssh_path = await nix.deploy(thread, rsyscall._nixdeps.openssh.closure)
+        ssh_path = await nix.deploy(process, rsyscall._nixdeps.openssh.closure)
         ssh_keygen = ssh_path.bin('ssh-keygen')
         sshd = SSHDCommand.make(ssh_path/"bin"/"sshd")
         return SSHDExecutables(ssh_keygen, sshd)
 
-async def make_local_ssh_from_executables(thread: Process,
+async def make_local_ssh_from_executables(process: Process,
                                           executables: SSHExecutables, sshd_executables: SSHDExecutables) -> SSHHost:
     "Make an SSHHost which just sshs to localhost; useful for testing"
     ssh_keygen = sshd_executables.ssh_keygen
     sshd = sshd_executables.sshd
 
     keygen_command = ssh_keygen.args('-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key')
-    keygen_thread = await thread.clone()
+    keygen_process = await process.clone()
     # ugh, we have to make a directory because ssh-keygen really wants to output to a directory
-    async with (await mkdtemp(thread)) as tmpdir:
-        await keygen_thread.task.chdir(await keygen_thread.ram.ptr(tmpdir))
-        await (await keygen_thread.exec(keygen_command)).waitpid(W.EXITED)
-        privkey_file = await thread.task.open(await thread.ram.ptr(tmpdir/'key'), O.RDONLY)
-        pubkey_file = await thread.task.open(await thread.ram.ptr(tmpdir/'key.pub'), O.RDONLY)
+    async with (await mkdtemp(process)) as tmpdir:
+        await keygen_process.task.chdir(await keygen_process.ram.ptr(tmpdir))
+        await (await keygen_process.exec(keygen_command)).waitpid(W.EXITED)
+        privkey_file = await process.task.open(await process.ram.ptr(tmpdir/'key'), O.RDONLY)
+        pubkey_file = await process.task.open(await process.ram.ptr(tmpdir/'key.pub'), O.RDONLY)
     def to_host(ssh: SSHCommand, privkey_file=privkey_file, pubkey_file=pubkey_file) -> SSHCommand:
         privkey = privkey_file.as_proc_path()
         pubkey = pubkey_file.as_proc_path()
@@ -374,13 +374,13 @@ async def make_local_ssh_from_executables(thread: Process,
     return executables.host(to_host)
 
 # Helpers
-async def make_ssh_host(thread: Process, to_host: t.Callable[[SSHCommand], SSHCommand]) -> SSHHost:
-    ssh = await SSHExecutables.with_nix(thread)
+async def make_ssh_host(process: Process, to_host: t.Callable[[SSHCommand], SSHCommand]) -> SSHHost:
+    ssh = await SSHExecutables.with_nix(process)
     return ssh.host(to_host)
 
-async def make_local_ssh(thread: Process) -> SSHHost:
+async def make_local_ssh(process: Process) -> SSHHost:
     "Look up the ssh executables and return an SSHHost which sshs to localhost; useful for testing"
-    ssh = await SSHExecutables.with_nix(thread)
-    sshd = await SSHDExecutables.with_nix(thread)
-    return (await make_local_ssh_from_executables(thread, ssh, sshd))
+    ssh = await SSHExecutables.with_nix(process)
+    sshd = await SSHDExecutables.with_nix(process)
+    return (await make_local_ssh_from_executables(process, ssh, sshd))
 
