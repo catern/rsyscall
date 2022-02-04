@@ -20,7 +20,7 @@ can be reused; so you must synchronize against anything that wants to operate on
 child pids, to prevent pid wrap races.
 
 P.ALL is especially bad when considering the possibility of new children
-appearing.  If we call clone in two threads while a third calls waitid, and one
+appearing.  If we call clone in two processes while a third calls waitid, and one
 of the created child processes dies immediately, there is no way to prevent a
 race where waitid gets the death state change before the second clone completes,
 the pid wraps, the same pid is returned for the second clone, and we don't know
@@ -37,15 +37,15 @@ checks the result, instead of having to wait on some central coordinator to call
 waitid(P.ALL) and send back the state changes.
 
 We also employ another trick: We use CLONE.PARENT to centralize child
-monitoring.  When thread A creates child thread B, we want thread B to be able
+monitoring.  When process A creates child process B, we want process B to be able
 to later create children of its own, e.g. process C.  Normally, we would create
-a new signalfd in thread B so that it can monitor its children. Instead, when
-thread B clones a new child process C, we use CLONE.PARENT so that thread A
-becomes the parent of new child process C, then we monitor process C from thread
-A instead of thread B.  This lowers the original creation cost of thread B
+a new signalfd in process B so that it can monitor its children. Instead, when
+process B clones a new child process C, we use CLONE.PARENT so that process A
+becomes the parent of new child process C, then we monitor process C from process
+A instead of process B.  This lowers the original creation cost of process B
 (since we don't have to make a new AsyncSignalfd, which would necessitate a new
 epoller - see the docstring for AsyncSignalfd) and also improves the efficiency
-of child monitoring through centralization into thread A.
+of child monitoring through centralization into process A.
 
 """
 from __future__ import annotations
@@ -134,7 +134,7 @@ class AsyncSignalfd:
         self.next_signal.close(final_exn)
 
 class AsyncChildPid:
-    "A child process which can be monitored without blocking the thread"
+    "A child process which can be monitored without blocking the process"
     def __init__(self, pid: ChildPid, ram: RAM, sigchld_sigfd: AsyncSignalfd) -> None:
         self.pid = pid
         self.ram = ram

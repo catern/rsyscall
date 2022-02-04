@@ -1,4 +1,4 @@
-"""Functions and classes for a connection between two threads, with which we can open channels for data transfer
+"""Functions and classes for a connection between two processes, with which we can open channels for data transfer
 """
 from __future__ import annotations
 from dneio import make_n_in_parallel
@@ -14,14 +14,14 @@ from rsyscall.sys.uio import IovecList
 from rsyscall.fcntl import F, O
 
 class Connection:
-    """A connection between two threads through which more bidirectional channels can be opened
+    """A connection between two processes through which more bidirectional channels can be opened
 
-    You could think of this as a pre-established route between two threads; or a cable
+    You could think of this as a pre-established route between two processes; or a cable
     between them; these are connections which can be multiplexed over to create multiple
     bidirectional channels for data transfer.
 
     This is not necessarily a connection in the style of TCP as such; it merely represents
-    that there is a way to open channels between two threads, not that there is any active
+    that there is a way to open channels between two processes, not that there is any active
     transfer between them at the moment. TCP doesn't support opening new channels, so
     merely having an open TCP connection isn't enough to implement this interface. On the
     other hand, SCTP and QUIC do support opening new channels, so a SCTP or QUIC
@@ -34,12 +34,12 @@ class Connection:
         pass
 
     async def open_channel(self) -> t.Tuple[FileDescriptor, FileDescriptor]:
-        """Open a bidirectional channel between the two threads inside this connection
+        """Open a bidirectional channel between the two processes inside this connection
 
         The left side of a channel is the "local" side, and the right side is the "remote"
         side. Accesses to the local side are typically more efficient than accesses to the
         right side. Typically, in fact, the left side of the channel is in the local
-        thread, although this is not required to be true.
+        process, although this is not required to be true.
 
         """
         [pair] = await self.open_channels(1)
@@ -59,10 +59,10 @@ class Connection:
         channel. This provides an efficient way to transfer data between Python and things
         which operate on file descriptors, such as subprocesses.
 
-        This is how we establish all our syscall or data connections for new threads;
+        This is how we establish all our syscall or data connections for new processes;
         open_async_channel returns the most direct path possible, so we know that when
-        we're sending syscalls to a thread, that data is being efficiently transferred; in
-        most cases, directly between the local thread and the syscall server.
+        we're sending syscalls to a process, that data is being efficiently transferred; in
+        most cases, directly between the local process and the syscall server.
 
         """
         [pair] = await self.open_async_channels(1)
@@ -92,9 +92,9 @@ class Connection:
         pass
 
 class FDPassConnection(Connection):
-    """A socketpair between two threads over which we can pass fds to establish new channels
+    """A socketpair between two processes over which we can pass fds to establish new channels
 
-    If the two threads are in the same fd table, then we'll skip using SCM_RIGHTS to pass
+    If the two processes are in the same fd table, then we'll skip using SCM_RIGHTS to pass
     the new socketpairs around and instead just change the fd owner.
 
     See Connnection for more details on this interface.

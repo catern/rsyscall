@@ -72,7 +72,7 @@ def from_uint32s(one: int, two: int) -> t.Set[CAP]:
 
 @dataclass
 class CapHeader(Struct):
-    # if 0, defaults to calling thread; note that this is a task id, not a thread group id.
+    # if 0, defaults to calling process; note that this is a task id, not a process group id.
     pid: int = 0
 
     def to_bytes(self) -> bytes:

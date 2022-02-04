@@ -18,34 +18,34 @@ class TestStub(TrioTestCase):
         # so it can be run from the shell in test_read_stdin
         self.stub_name = "dummy_stub"
         self.server = await StubServer.make(self.thr, self.tmpdir, self.stub_name)
-        self.exec_thread = await self.thr.clone()
+        self.exec_process = await self.thr.clone()
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()
 
     async def test_exit(self) -> None:
         command = Command(self.tmpdir/self.stub_name, [self.stub_name], {})
-        child = await self.exec_thread.exec(command)
+        child = await self.exec_process.exec(command)
         self.nursery.start_soon(child.check)
-        argv, new_thread = await self.server.accept()
-        await new_thread.exit(0)
+        argv, new_process = await self.server.accept()
+        await new_process.exit(0)
 
     async def test_async(self) -> None:
         command = Command(self.tmpdir/self.stub_name, [self.stub_name], {})
-        child = await self.exec_thread.exec(command)
+        child = await self.exec_process.exec(command)
         self.nursery.start_soon(child.check)
-        argv, new_thread = await self.server.accept()
-        await do_async_things(self, new_thread.epoller, new_thread)
+        argv, new_process = await self.server.accept()
+        await do_async_things(self, new_process.epoller, new_process)
 
     async def test_read_stdin(self) -> None:
         data_in = "hello"
-        command = self.exec_thread.environ.sh.args(
+        command = self.exec_process.environ.sh.args(
             "-c", f"printf {data_in} | {self.stub_name}"
         ).env(PATH=os.fsdecode(self.tmpdir))
-        child = await self.exec_thread.exec(command)
+        child = await self.exec_process.exec(command)
         self.nursery.start_soon(child.check)
-        argv, new_thread = await self.server.accept()
-        valid, _ = await new_thread.stdin.read(
-            await new_thread.ram.malloc(bytes, len(data_in)))
+        argv, new_process = await self.server.accept()
+        valid, _ = await new_process.stdin.read(
+            await new_process.ram.malloc(bytes, len(data_in)))
         self.assertEqual(data_in, (await valid.read()).decode())
     

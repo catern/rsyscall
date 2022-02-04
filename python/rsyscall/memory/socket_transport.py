@@ -1,8 +1,8 @@
 """Memory transport to a remote address space based on reading/writing file descriptors.
 
 We need to be able to read and write to the address spaces of our
-threads. We start with the ability to read and write to the address
-space of the local thread; we need to bootstrap that into an ability
+processes. We start with the ability to read and write to the address
+space of the local process; we need to bootstrap that into an ability
 to read and write to other address spaces.
 
 We could have taken a dependency on some means of RDMA, or used

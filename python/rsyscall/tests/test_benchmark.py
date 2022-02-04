@@ -7,8 +7,8 @@ import pstats
 
 async def rsys_run(parent: Process, cmd: Command, count: int) -> None:
     for _ in range(count):
-        thread = await parent.clone()
-        child = await thread.exec(cmd)
+        process = await parent.clone()
+        child = await process.exec(cmd)
         await child.waitpid(W.EXITED)
 
 class TestBenchmark(TrioTestCase):

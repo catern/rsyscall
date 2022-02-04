@@ -116,7 +116,7 @@ class BaseFileDescriptor:
         the FileDescriptor, passing the other task from which we want to access the file.
         This will return another FileDescriptor referencing that file.  This will only work if
         the two tasks are in the same file descriptor table; that is typically the case for
-        most scenarios and most kinds of threads. .
+        most scenarios and most kinds of processes. .
 
         """
         self._validate()
@@ -396,7 +396,7 @@ class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
         # The right way to close those unwanted fds is to, after the unshare, temporarily unset
         # CLOEXEC on the fds that we want to preserve, then close all CLOEXEC fds.  But
         # unfortunately there's no cheap way to close all CLOEXC fds.
-        # So, instead, we just let the unwanted fds leak into the new table.  Almost all threads that call
+        # So, instead, we just let the unwanted fds leak into the new table.  Almost all processes that call
         # unshare_files will call exec soon after, which will handle closing all CLOEXEC fds for us,
         # and so the leaked unwanted fds will be closed.
         # Concretely, we'll only create handles in the new table for the fds that this task owns, so

@@ -1,7 +1,7 @@
-"""A thread-creating stub which can be exec'd by other programs which pass down stdin
+"""A process-creating stub which can be exec'd by other programs which pass down stdin
 
 The user creates an arbitrary Command which eventually execs rsyscall-stdin-bootstrap, and
-calls stdin_bootstrap with it; stdin_bootstrap runs the command and returns a thread
+calls stdin_bootstrap with it; stdin_bootstrap runs the command and returns a process
 created from the eventually-exec'd rsyscall-stdin-bootstrap.
 
 This is useful for sudo and similar programs; we can pass a Command which runs "sudo
@@ -43,7 +43,7 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-async def stdin_bootstrap_path_with_nix(thread: Process) -> Path:
+async def stdin_bootstrap_path_with_nix(process: Process) -> Path:
     """Get the path to the rsyscall-stdin-bootstrap executable.
 
     We return a Path rather than a Command because the typical usage
@@ -52,21 +52,21 @@ async def stdin_bootstrap_path_with_nix(thread: Process) -> Path:
 
     """
     import rsyscall._nixdeps.librsyscall
-    rsyscall_path = await nix.deploy(thread, rsyscall._nixdeps.librsyscall.closure)
+    rsyscall_path = await nix.deploy(process, rsyscall._nixdeps.librsyscall.closure)
     return rsyscall_path/"libexec"/"rsyscall"/"rsyscall-stdin-bootstrap"
 
 async def stdin_bootstrap(
         parent: Process,
         bootstrap_command: Command,
 ) -> t.Tuple[AsyncChildPid, Process]:
-    """Create a thread from running an arbitrary command which must run rsyscall-stdin-bootstrap
+    """Create a process from running an arbitrary command which must run rsyscall-stdin-bootstrap
 
     bootstrap_command can be any arbitrary command, but it must eventually exec
     rsyscall-stdin-bootstrap, and pass down stdin when it does.
 
     We'll clone and exec bootstrap_command, passing down a socketpair for stdin, and try to
     bootstrap over the other end of the socketpair. Once rsyscall-stdin-bootstrap starts,
-    it will respond to our bootstrap and we'll create a new thread.
+    it will respond to our bootstrap and we'll create a new process.
 
     """
     #### clone and exec into the bootstrap command

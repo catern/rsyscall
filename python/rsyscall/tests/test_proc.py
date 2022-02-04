@@ -7,7 +7,7 @@ from rsyscall.sys.wait import W, Siginfo
 
 from rsyscall.sched import CLONE
 from rsyscall.handle import Pid
-from rsyscall.tests.utils import assert_thread_works
+from rsyscall.tests.utils import assert_process_works
 from rsyscall.signal import SIG
 
 class TestProc(TrioTestCase):

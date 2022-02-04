@@ -3,6 +3,6 @@
 * rsyscall decouples language concurrency and kernel parallelism
 You can be explicitly parallel without being concurrent.
 
-Also, you can send your syscalls to another process to execute them while your main thread continues running,
+Also, you can send your syscalls to another process to execute them while your main process continues running,
 reducing the locality hit of entering the kernel, ala FlexSC.
 

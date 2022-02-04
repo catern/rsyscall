@@ -1,4 +1,4 @@
-"Central thread class, with helper methods to ease a number of common tasks"
+"Central process class, with helper methods to ease a number of common tasks"
 from __future__ import annotations
 from dataclasses import dataclass
 from rsyscall.command import Command
@@ -82,7 +82,7 @@ async def do_cloexec_except(thr: Process, excluded_fds: t.Set[near.FileDescripto
     await dirfd.close()
 
 class Process:
-    "A central class holding everything necessary to work with some thread, along with various helpers"
+    "A central class holding everything necessary to work with some process, along with various helpers"
     def __init__(self,
                  task: Task,
                  ram: RAM,
@@ -100,11 +100,11 @@ class Process:
         self.ram = ram
         self.epoller = epoller
         self.connection = connection
-        "This thread's `rsyscall.network.connection.Connection`"
+        "This process's `rsyscall.network.connection.Connection`"
         self.loader = loader
         self.monitor = child_monitor
         self.environ = environ
-        "This thread's `rsyscall.environ.Environment`"
+        "This process's `rsyscall.environ.Environment`"
         self.stdin = stdin
         "The standard input `FileDescriptor` (FD 0)"
         self.stdout = stdout
@@ -282,7 +282,7 @@ class Process:
         return self.task.inherit_fd(fd)
 
     async def clone(self, flags: CLONE=CLONE.NONE, automatically_write_user_mappings: bool=True) -> ChildProcess:
-        """Create a new child thread
+        """Create a new child process
 
         manpage: clone(2)
         """
@@ -312,7 +312,7 @@ class Process:
         else:
             epoller = self.epoller.inherit(ram)
             monitor = self.monitor.inherit_to_child(task)
-        thread = ChildProcess(Process(
+        process = ChildProcess(Process(
             task, ram,
             self.connection.inherit(task, ram),
             self.loader,
@@ -327,8 +327,8 @@ class Process:
             # we have to get the [ug]id from the parent because it will fail in the child
             uid = await self.task.getuid()
             gid = await self.task.getgid()
-            await write_user_mappings(thread, uid, gid)
-        return thread
+            await write_user_mappings(process, uid, gid)
+        return process
 
     async def run(self, command: Command, check=True,
                   *, task_status=trio.TASK_STATUS_IGNORED) -> ChildState:
@@ -337,8 +337,8 @@ class Process:
         If check is False, we won't throw if the end state is unclean.
 
         """
-        thread = await self.clone()
-        child = await thread.exec(command)
+        process = await self.clone()
+        child = await process.exec(command)
         task_status.started(child)
         if check:
             return await child.check()
@@ -398,7 +398,7 @@ class Process:
                                   in_namespace_uid=in_namespace_uid, in_namespace_gid=in_namespace_gid)
 
     async def exit(self, status: int=0) -> None:
-        """Exit this thread
+        """Exit this process
 
         Currently we just forward through to exit the task.
 
@@ -415,7 +415,7 @@ class Process:
         return f'{name}({self.task})'
 
 class ChildProcess(Process):
-    "A thread that we know is also a direct child process of another thread"
+    "A process that we know is also a direct child process of another process"
     def __init__(self, thr: Process, pid: AsyncChildPid) -> None:
         super()._init_from(thr)
         self.pid = pid
@@ -440,7 +440,7 @@ class ChildProcess(Process):
                     argv: t.Sequence[t.Union[str, os.PathLike]],
                     command: Command=None,
     ) -> AsyncChildPid:
-        """Replace the running executable in this thread with another; see execve.
+        """Replace the running executable in this process with another; see execve.
         """
         async def op(sem: RAM) -> t.Tuple[WrittenPointer[t.Union[str, os.PathLike]], WrittenPointer[ArgList]]:
             argv_ptrs = ArgList([await sem.ptr(arg) for arg in argv])
@@ -456,7 +456,7 @@ class ChildProcess(Process):
                      inherited_signal_blocks: t.List[SignalBlock]=[],
                      command: Command=None,
     ) -> AsyncChildPid:
-        """Replace the running executable in this thread with another.
+        """Replace the running executable in this process with another.
 
         self.exec is probably preferable; it takes a nice Command object which
         is easier to work with.
@@ -492,7 +492,7 @@ class ChildProcess(Process):
     async def exec(self, command: Command,
                    inherited_signal_blocks: t.List[SignalBlock]=[],
     ) -> AsyncChildPid:
-        """Replace the running executable in this thread with what's specified in `command`
+        """Replace the running executable in this process with what's specified in `command`
 
         See self.execve's docstring for an explanation of inherited_signal_blocks.
 

@@ -104,7 +104,7 @@ class SyscallInterface:
 
     @abc.abstractmethod
     def get_activity_fd(self) -> t.Optional[handle.FileDescriptor]:
-        """When this file descriptor is readable, it means other things want to run on this thread.
+        """When this file descriptor is readable, it means other things want to run on this process.
 
         Users of the SyscallInterface should ensure that when they block, they are
         monitoring this fd as well.

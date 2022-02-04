@@ -4,13 +4,13 @@ import unittest
 import functools
 import types
 from trio._core._run import Nursery
-from rsyscall import local_thread, Process
+from rsyscall import local_process, Process
 import warnings
 
 class TrioTestCase(unittest.TestCase):
     "A trio-enabled variant of unittest.TestCase"
     nursery: Nursery
-    thread: Process
+    process: Process
 
     async def asyncSetUp(self) -> None:
         "Asynchronously set up resources for tests in this TestCase"
@@ -27,7 +27,7 @@ class TrioTestCase(unittest.TestCase):
             with warnings.catch_warnings(record=True) as recorded_warnings:
                 async with trio.open_nursery() as nursery:
                     self.nursery = nursery
-                    self.thr = local_thread
+                    self.thr = local_process
                     await self.asyncSetUp()
                     try:
                         await test(self)

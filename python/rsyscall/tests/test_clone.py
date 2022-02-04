@@ -17,8 +17,8 @@ class TestClone(TrioTestCase):
         await self.child.exit(0)
 
     async def test_nest_exit(self) -> None:
-        thread = await self.child.clone(CLONE.FILES)
-        await thread.exit(0)
+        process = await self.child.clone(CLONE.FILES)
+        await process.exit(0)
 
     async def test_nest_multiple(self) -> None:
         for i in range(5):
@@ -47,18 +47,18 @@ class TestClone(TrioTestCase):
         await do_async_things(self, epoller, self.child)
 
     async def test_nest_async(self) -> None:
-        thread = await self.child.clone(CLONE.FILES)
-        epoller = await Epoller.make_root(thread.ram, thread.task)
-        await do_async_things(self, epoller, thread)
-        await thread.exit(0)
+        process = await self.child.clone(CLONE.FILES)
+        epoller = await Epoller.make_root(process.ram, process.task)
+        await do_async_things(self, epoller, process)
+        await process.exit(0)
 
     async def test_unshare_async(self) -> None:
         await self.child.unshare(CLONE.FILES)
-        thread = await self.child.clone(CLONE.FILES)
-        epoller = await Epoller.make_root(thread.ram, thread.task)
-        await thread.unshare(CLONE.FILES)
-        await do_async_things(self, epoller, thread)
-        await thread.exit(0)
+        process = await self.child.clone(CLONE.FILES)
+        epoller = await Epoller.make_root(process.ram, process.task)
+        await process.unshare(CLONE.FILES)
+        await do_async_things(self, epoller, process)
+        await process.exit(0)
 
     async def test_exec(self) -> None:
         child = await self.child.exec(self.child.environ.sh.args('-c', 'false'))
@@ -96,7 +96,7 @@ class TestCloneUnshareFiles(TrioTestCase):
         await self.child.exit(0)
 
     async def test_nest_async(self) -> None:
-        thread = await self.child.clone()
-        epoller = await Epoller.make_root(thread.ram, thread.task)
-        await do_async_things(self, epoller, thread)
-        await thread.exit(0)
+        process = await self.child.clone()
+        epoller = await Epoller.make_root(process.ram, process.task)
+        await do_async_things(self, epoller, process)
+        await process.exit(0)
