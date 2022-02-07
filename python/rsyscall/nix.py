@@ -123,14 +123,6 @@ async def enter_nix_container(
     # add nix.path to PATH; TODO add a real API for this
     dest.environ.path.paths.append(Path(nix.path/'bin'))
 
-async def deploy_nix_bin(src: Process, nix: PackageClosure, dest: Process) -> None:
-    "Deploy the Nix binaries from `store` to /nix through `dest`"
-    # copy the binaries over
-    await copy_tree(src, nix.closure, dest, Path("/nix"))
-    # init the database
-    nix_store = Command(nix.path/'bin/nix-store', ['nix-store'], {})
-    await bootstrap_nix_database(src, nix_store, nix.closure, dest, nix_store)
-
 async def _exec_nix_store_import_export(
         src: ChildProcess, src_nix_store: Command, src_fd: FileDescriptor,
         closure: t.Sequence[t.Union[str, os.PathLike]],
