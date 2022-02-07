@@ -29,6 +29,7 @@ buildPythonPackage {
   '';
   nativeBuildInputs = [
     pkg-config
+    ipython
     (pdoc3.overridePythonAttrs (_: { doCheck = false; }))
   ];
   buildInputs = [
