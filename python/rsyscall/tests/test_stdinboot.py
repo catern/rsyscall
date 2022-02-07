@@ -28,6 +28,6 @@ class TestStdinboot(TrioTestCase):
 
     async def test_nest_multiple(self) -> None:
         for i in range(5):
-            child = await self.remote.clone()
+            child = await self.remote.fork()
             await do_async_things(self, child.epoller, child)
             await child.exit(0)

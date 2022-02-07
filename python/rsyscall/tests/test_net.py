@@ -113,7 +113,7 @@ class TestNet(TrioTestCase):
 
         logger.info("Use socat to connect the two tuns bidirectionally")
         socat = await self.thr.environ.which('socat')
-        socat_thr = await self.thr.clone()
+        socat_thr = await self.thr.fork()
         await socat_thr.inherit_fd(left.fd).dup2(socat_thr.stdin)
         await socat_thr.inherit_fd(right.fd).dup2(socat_thr.stdout)
         socat_proc = await socat_thr.exec(socat.args('STDIN', 'STDOUT'))

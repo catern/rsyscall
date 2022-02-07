@@ -87,7 +87,7 @@ class FuseFS:
         # We'll keep devfuse open *only* in the dedicated server process's private fd table, so that
         # other processes accessing the filesystem don't deadlock when we abort the FUSE server loop -
         # instead their syscalls will be aborted with ENOTCONN.
-        self.thr = await process.clone()
+        self.thr = await process.fork()
         self.devfuse = self.thr.task.inherit_fd(devfuse)
         await devfuse.close()
         # Respond to FUSE init message to sanity-check things are set up right.

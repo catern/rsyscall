@@ -330,6 +330,14 @@ class Process:
             await write_user_mappings(process, uid, gid)
         return process
 
+    async def fork(self) -> ChildProcess:
+        """Create a new child process
+
+        This is actually implemented as `Thread.clone` with no
+        arguments. We need the stack-switching ability that clone has.
+        """
+        return await self.clone()
+
     async def run(self, command: Command, check=True,
                   *, task_status=trio.TASK_STATUS_IGNORED) -> ChildState:
         """Run the passed command to completion and return its end state, throwing if unclean
@@ -337,7 +345,7 @@ class Process:
         If check is False, we won't throw if the end state is unclean.
 
         """
-        process = await self.clone()
+        process = await self.fork()
         child = await process.exec(command)
         task_status.started(child)
         if check:

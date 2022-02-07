@@ -22469,7 +22469,7 @@ Either way, thanks for working on Project Loom!
    ok I just went with __fspath__
 
 ** TODO re-add fork method, maybe?
-   now that thread.clone() actually is the same as fork (except for CLONE_VM, but that's minor),
+   now that thread.fork() actually is the same as fork (except for CLONE_VM, but that's minor),
    it's not quite so weird to call it thread.fork()...
    eh, let's stick with clone, fork is more confusing, probably
 ** DONE fix rsyscall_exec

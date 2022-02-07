@@ -71,10 +71,10 @@ class ConsoleGenie(WishGranter):
             async_from_term = await self.process.make_afd(from_term_pipe.read, set_nonblock=True)
             async_to_term = await self.process.make_afd(to_term_pipe.write, set_nonblock=True)
             try:
-                cat_stdin_process = await self.process.clone()
+                cat_stdin_process = await self.process.fork()
                 await cat_stdin_process.task.inherit_fd(to_term_pipe.read).dup2(cat_stdin_process.stdin)
                 async with await cat_stdin_process.exec(self.cat):
-                    cat_stdout_process = await self.process.clone()
+                    cat_stdout_process = await self.process.fork()
                     await cat_stdout_process.task.inherit_fd(from_term_pipe.write).dup2(cat_stdout_process.stdout)
                     async with await cat_stdout_process.exec(self.cat):
                         ret = await run_repl(async_from_term, async_to_term, {
@@ -136,7 +136,7 @@ class ConsoleServerGenie(WishGranter):
             @nursery.start_soon
             async def do_socat():
                 while True:
-                    process = await self.process.clone()
+                    process = await self.process.fork()
                     try:
                         child = await process.exec(cmd)
                     except:

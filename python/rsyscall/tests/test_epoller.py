@@ -41,14 +41,14 @@ class TestEpoller(TrioTestCase):
                 nursery.start_soon(do_async_things, self, self.thr.epoller, self.thr, i)
 
     async def test_process_multi(self) -> None:
-        process = await self.thr.clone()
+        process = await self.thr.fork()
         await do_async_things(self, process.epoller, process, 0)
         async with trio.open_nursery() as nursery:
             for i in range(1, 6):
                 nursery.start_soon(do_async_things, self, process.epoller, process, i)
 
     async def test_process_root_epoller(self) -> None:
-        process = await self.thr.clone()
+        process = await self.thr.fork()
         epoller = await Epoller.make_root(process.ram, process.task)
         await do_async_things(self, epoller, process)
 
@@ -60,7 +60,7 @@ class TestEpoller(TrioTestCase):
 
     async def test_delayed_eagain(self):
         pipe = await self.thr.pipe()
-        process = await self.thr.clone()
+        process = await self.thr.fork()
         async_pipe_rfd = await process.make_afd(process.inherit_fd(pipe.read), set_nonblock=True)
         # write in parent, read in child
         input_data = b'hello'

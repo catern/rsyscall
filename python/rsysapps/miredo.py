@@ -109,7 +109,7 @@ async def start_miredo_internal(process: Process, miredo_exec: MiredoExecutables
     privproc_pair = await ns_process.socketpair(AF.UNIX, SOCK.STREAM)
     ### start up privileged process which manipulates the network setup in the namespace
     # privproc_process is cloned from ns_process, which was also created through clone; this nesting is fully supported
-    privproc_process = await ns_process.clone()
+    privproc_process = await ns_process.fork()
     # preserve NET_ADMIN capability over exec so that privproc can manipulate the TUN interface
     # helper function used because manipulating Linux ambient capabilities is fairly verbose
     await add_to_ambient_caps(privproc_process, {CAP.NET_ADMIN})
@@ -169,7 +169,7 @@ class TestMiredo(TrioTestCase):
         # TODO lol actually parse this, don't just read and throw it away
         await self.netsock.read(await self.miredo.ns_process.ram.malloc(bytes, 4096))
         print("b2", time.time())
-        process = await self.miredo.ns_process.clone()
+        process = await self.miredo.ns_process.fork()
         print("c", time.time())
         # bash = await rsc.which(self.process, "bash")
         # await (await process.exec(bash)).check()

@@ -22,7 +22,7 @@ class TestClone(TrioTestCase):
 
     async def test_nest_multiple(self) -> None:
         for i in range(5):
-            child = await self.child.clone()
+            child = await self.child.fork()
             await do_async_things(self, child.epoller, child)
             await child.exit(0)
 
@@ -35,7 +35,7 @@ class TestClone(TrioTestCase):
         block forever.
 
         """
-        thr2 = await self.thr.clone()
+        thr2 = await self.thr.fork()
         cmd = self.child.environ.sh.args('-c', 'true')
         child1 = await self.child.exec(cmd)
         child2 = await thr2.exec(cmd)
@@ -71,8 +71,8 @@ class TestClone(TrioTestCase):
         self.nursery.start_soon(child.check)
 
     async def test_nest_exec(self) -> None:
-        child = await self.child.clone()
-        grandchild = await child.clone()
+        child = await self.child.fork()
+        grandchild = await child.fork()
         cmd = self.child.environ.sh.args('-c', 'true')
         await (await child.exec(cmd)).check()
         await (await grandchild.exec(cmd)).check()
@@ -90,13 +90,13 @@ class TestClone(TrioTestCase):
 
 class TestCloneUnshareFiles(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.child = await self.thr.clone()
+        self.child = await self.thr.fork()
 
     async def asyncTearDown(self) -> None:
         await self.child.exit(0)
 
     async def test_nest_async(self) -> None:
-        process = await self.child.clone()
+        process = await self.child.fork()
         epoller = await Epoller.make_root(process.ram, process.task)
         await do_async_things(self, epoller, process)
         await process.exit(0)

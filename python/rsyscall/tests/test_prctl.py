@@ -5,7 +5,7 @@ logger = logging.getLogger(__name__)
 
 class TestUser(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = await self.thr.clone()
+        self.thr = await self.thr.fork()
 
     async def asyncTearDown(self) -> None:
         await self.thr.exit(0)

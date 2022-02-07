@@ -83,12 +83,12 @@ passdb {
 
     config_path = await process.spit(path/"dovecot.conf", config)
     # start dovecot
-    dovecot_process = await process.clone()
+    dovecot_process = await process.fork()
     dovecot_child = await dovecot_process.exec(dovecot.args('-F', '-c', config_path))
     nursery.start_soon(dovecot_child.check)
 
     # start lmtp server
-    lmtp_process = await process.clone()
+    lmtp_process = await process.fork()
     lmtp_listener = lmtp_listener.move(lmtp_process.task)
     await lmtp_process.unshare_files(going_to_exec=True)
     await lmtp_process.stdin.replace_with(lmtp_listener)
@@ -106,7 +106,7 @@ class Smtpd:
 async def start_smtpd(nursery, process: Process, path: Path,
                       smtp_listener: FileDescriptor) -> Smtpd:
     smtpd = await process.environ.which("smtpd")
-    smtpd_process = await process.clone()
+    smtpd_process = await process.fork()
     smtp_listener = smtp_listener.move(smtpd_process.task)
     await smtpd_process.unshare_files()
 
@@ -175,7 +175,7 @@ class TestMail(TrioTestCase):
         await self.tmpdir.cleanup()
 
     async def send_email(self, from_: str, to: str, subject: str, msg: str) -> None:
-        process = await self.process.clone()
+        process = await self.process.fork()
         await process.unshare_files()
         fd = await process.task.memfd_create(await process.ram.ptr(Path('message')))
         msg = f'From: {from_}\nSubject: {subject}\nTo: {to}\n\n' + msg

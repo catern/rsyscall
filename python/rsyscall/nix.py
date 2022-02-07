@@ -68,8 +68,8 @@ async def copy_tree(src: Process, src_paths: t.Sequence[t.Union[str, os.PathLike
     """
     [(local_fd, dest_fd)] = await dest.connection.open_channels(1)
     src_fd = local_fd.move(src.task)
-    await _exec_tar_copy_tree(await src.clone(), src_paths, src_fd,
-                              await dest.clone(), dest_path, dest_fd)
+    await _exec_tar_copy_tree(await src.fork(), src_paths, src_fd,
+                              await dest.fork(), dest_path, dest_fd)
 
 async def _exec_nix_store_transfer_db(
         src: ChildProcess, src_nix_store: Command, src_fd: FileDescriptor, closure: t.Sequence[t.Union[str, os.PathLike]],
@@ -93,8 +93,8 @@ async def bootstrap_nix_database(
     "Bootstrap the store used by `dest` with the necessary database entries for `closure`, coming from `src`'s store"
     [(local_fd, dest_fd)] = await dest.open_channels(1)
     src_fd = local_fd.move(src.task)
-    await _exec_nix_store_transfer_db(await src.clone(), src_nix_store, src_fd, closure,
-                                      await dest.clone(), dest_nix_store, dest_fd)
+    await _exec_nix_store_transfer_db(await src.fork(), src_nix_store, src_fd, closure,
+                                      await dest.fork(), dest_nix_store, dest_fd)
 
 async def enter_nix_container(
         src: Process, nix: PackageClosure,
@@ -149,10 +149,10 @@ async def _deploy(src: Process, dest: Process, path: PackageClosure) -> None:
     [(local_fd, dest_fd)] = await dest.open_channels(1)
     src_fd = local_fd.move(src.task)
     await _exec_nix_store_import_export(
-        await src.clone(),
+        await src.fork(),
         await src.environ.which('nix-store'),
         src_fd, path.closure,
-        await dest.clone(),
+        await dest.fork(),
         await dest.environ.which('nix-store'),
         dest_fd)
 

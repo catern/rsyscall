@@ -74,7 +74,7 @@ async def stdin_bootstrap(
     stdin_pair = await (await parent.task.socketpair(
         AF.UNIX, SOCK.STREAM, 0, await parent.ram.malloc(Socketpair))).read()
     parent_sock = stdin_pair.first
-    child = await parent.clone()
+    child = await parent.fork()
     # set up stdin with socketpair
     await child.task.inherit_fd(stdin_pair.second).dup2(child.stdin)
     await stdin_pair.second.close()

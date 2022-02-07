@@ -9,7 +9,7 @@ class TestCat(TrioTestCase):
         self.cat = await self.thr.environ.which("cat")
         self.pipe_in = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()
         self.pipe_out = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()
-        process = await self.thr.clone()
+        process = await self.thr.fork()
         await process.task.inherit_fd(self.pipe_in.read).dup2(process.stdin)
         await process.task.inherit_fd(self.pipe_out.write).dup2(process.stdout)
         self.child = await process.exec(self.cat)

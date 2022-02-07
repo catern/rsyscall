@@ -26,7 +26,7 @@ class TestFS(TrioTestCase):
         await source_file.lseek(0, SEEK.SET)
         dest_file = await self.thr.task.open(await self.thr.ram.ptr(self.tmpdir/"dest"), O.RDWR|O.CREAT)
 
-        process = await self.thr.clone()
+        process = await self.thr.fork()
         cat = await self.thr.environ.which("cat")
         await process.task.inherit_fd(source_file).dup2(process.stdin)
         await process.task.inherit_fd(dest_file).dup2(process.stdout)

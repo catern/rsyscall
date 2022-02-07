@@ -65,7 +65,7 @@ class TestIP(TrioTestCase):
         data = "".join(str(i) for i in range(8000)).encode()
 
         count = 100
-        processes = [await self.thr.clone() for _ in range(10)]
+        processes = [await self.thr.fork() for _ in range(10)]
         in_ptrs = [await thr.ptr(data) for thr in processes]
         handles = [thr.task.inherit_fd(orig_in_fd) for thr in processes]
         async def run_send(process: Process, in_ptr: Pointer, fd: FileDescriptor) -> None:
@@ -74,7 +74,7 @@ class TestIP(TrioTestCase):
                 if rest.size() != 0:
                     print("failure! rest.size() is", rest.size())
                 self.assertEqual(rest.size(), 0)
-        read_process = await self.thr.clone()
+        read_process = await self.thr.fork()
         out_buf = await read_process.malloc(bytes, len(data))
         out_fd = read_process.inherit_fd(orig_out_fd)
 

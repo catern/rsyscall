@@ -14,7 +14,7 @@ class TestPidns(TrioTestCase):
         cat = await self.thr.environ.which('cat')
         pair = await (await self.thr.task.socketpair(
             AF.UNIX, SOCK.STREAM, 0, await self.thr.ram.malloc(Socketpair))).read()
-        child = await self.init.clone()
+        child = await self.init.fork()
         child_side = child.task.inherit_fd(pair.first)
         # close in parent so we'll get EOF on other side when cat dies
         await pair.first.close()
@@ -28,7 +28,7 @@ class TestPidns(TrioTestCase):
 
     async def test_sleep(self) -> None:
         pipe = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()
-        child = await self.init.clone()
+        child = await self.init.fork()
         child_fd = child.task.inherit_fd(pipe.write)
         await pipe.write.close()
         await child_fd.disable_cloexec()

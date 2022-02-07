@@ -12,7 +12,7 @@ from rsyscall.sched import CLONE
 
 class TestMisc(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = await self.thr.clone()
+        self.thr = await self.thr.fork()
 
     async def asyncTearDown(self) -> None:
         await self.thr.exit(0)

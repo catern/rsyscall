@@ -416,7 +416,7 @@ async def start_hydra(nursery, process: Process, path: Path, dbi: str, store: Lo
         'NIX_STATE_DIR': store.state_dir(),
     }
     # start server
-    server_process = await process.clone()
+    server_process = await process.fork()
     await server_process.unshare_files()
     sock = await server_process.task.socket(AF.UNIX, SOCK.STREAM)
     addr = await server_process.ram.ptr(

@@ -57,7 +57,7 @@ In [1]: %autoawait trio
 
 In [2]: import rsyscall
 
-In [3]: t = await rsyscall.local_process.clone()
+In [3]: t = await rsyscall.local_process.fork()
 
 In [4]: await t.stdout.write(await t.ptr("Hello world!\n"))
 Hello world!

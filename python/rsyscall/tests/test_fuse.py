@@ -34,7 +34,7 @@ class TestFUSE(TrioTestCase):
     async def asyncSetUp(self) -> None:
         self.tmpdir = await mkdtemp(self.thr)
         self.thr = await self.thr.clone(CLONE.NEWUSER|CLONE.NEWNS)
-        self.child = await self.thr.clone()
+        self.child = await self.thr.fork()
         self.path = self.tmpdir/"path"
         await self.thr.mkdir(self.path)
         self.fuse = await FuseFS.mount(self.thr, self.path)

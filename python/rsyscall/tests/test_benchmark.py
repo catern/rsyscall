@@ -7,7 +7,7 @@ import pstats
 
 async def rsys_run(parent: Process, cmd: Command, count: int) -> None:
     for _ in range(count):
-        process = await parent.clone()
+        process = await parent.fork()
         child = await process.exec(cmd)
         await child.waitpid(W.EXITED)
 

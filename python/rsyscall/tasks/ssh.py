@@ -184,7 +184,7 @@ async def make_bootstrap_dir(
     stdout_pipe = await (await parent.task.pipe(
         await parent.ram.malloc(Pipe))).read()
     async_stdout = await parent.make_afd(stdout_pipe.read, set_nonblock=True)
-    child = await parent.clone()
+    child = await parent.fork()
     await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
     await child.task.inherit_fd(bootstrap_executable).dup2(child.stdin)
     child_pid = await child.exec(ssh_command.args(ssh_bootstrap_script_contents))
@@ -215,7 +215,7 @@ async def ssh_forward(process: Process, ssh_command: SSHCommand,
     stdout_pipe = await (await process.task.pipe(
         await process.ram.malloc(Pipe))).read()
     async_stdout = await process.make_afd(stdout_pipe.read, set_nonblock=True)
-    child = await process.clone()
+    child = await process.fork()
     await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
     await child.task.chdir(await process.ptr(local_path.parent))
     child_pid = await child.exec(ssh_command.local_forward(
@@ -249,7 +249,7 @@ async def ssh_bootstrap(
     forward_child_pid = await ssh_forward(
         parent, ssh_command, local_socket_path, (tmp_path_bytes + b"/data").decode())
     # start bootstrap
-    bootstrap_process = await parent.clone()
+    bootstrap_process = await parent.fork()
     bootstrap_child_pid = await bootstrap_process.exec(ssh_command.args(
         "-n", f"cd {tmp_path_bytes.decode()}; exec ./bootstrap rsyscall"
     ))
@@ -338,7 +338,7 @@ async def make_local_ssh_from_executables(process: Process,
     sshd = sshd_executables.sshd
 
     keygen_command = ssh_keygen.args('-b', '1024', '-q', '-N', '', '-C', '', '-f', 'key')
-    keygen_process = await process.clone()
+    keygen_process = await process.fork()
     # ugh, we have to make a directory because ssh-keygen really wants to output to a directory
     async with (await mkdtemp(process)) as tmpdir:
         await keygen_process.task.chdir(await keygen_process.ram.ptr(tmpdir))

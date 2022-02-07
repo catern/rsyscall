@@ -18,7 +18,7 @@ class TestStub(TrioTestCase):
         # so it can be run from the shell in test_read_stdin
         self.stub_name = "dummy_stub"
         self.server = await StubServer.make(self.thr, self.tmpdir, self.stub_name)
-        self.exec_process = await self.thr.clone()
+        self.exec_process = await self.thr.fork()
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()

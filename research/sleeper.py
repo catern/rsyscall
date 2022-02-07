@@ -5,7 +5,7 @@ async def main():
     sleep_inf = (await local_process.environ.which("sleep")).args("inf")
     for i in range(100):
         print("doing true", i)
-        procs = [await (await local_process.clone()).exec(sleep_inf) for _ in range(500)]
+        procs = [await (await local_process.fork()).exec(sleep_inf) for _ in range(500)]
         await local_process.run(true)
         for proc in procs:
             await proc.kill()
