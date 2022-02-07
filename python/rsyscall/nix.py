@@ -55,7 +55,8 @@ async def _exec_tar_copy_tree(src: ChildProcess, src_paths: t.Sequence[t.Union[s
     src_child = await src.exec(src_tar.args(
         "--create", "--to-stdout", "--hard-dereference",
         "--owner=0", "--group=0", "--mode=u+rw,uga+r",
-        *src_paths,
+        # suppress a tar warning about trying to compress an absolute path
+        "--directory=/", *[Path(src_path).relative_to("/") for src_path in src_paths],
     ))
     await src_child.check()
     await dest_child.check()
@@ -63,8 +64,10 @@ async def _exec_tar_copy_tree(src: ChildProcess, src_paths: t.Sequence[t.Union[s
 async def copy_tree(src: Process, src_paths: t.Sequence[t.Union[str, os.PathLike]], dest: Process, dest_path: t.Union[str, os.PathLike]) -> None:
     """Copy all the listed `src_paths` to subdirectories of `dest_path`
 
-    Example: if we pass src_paths=['/a/b', 'c'], dest_path='dest',
-    then paths ['dest/b', 'dest/c'] will be created.
+    Example: if we pass src_paths=['/a/b', '/c'], dest_path='dest',
+    then paths ['dest/a/b', 'dest/c'] will be created.
+
+    Requires all the paths to be absolute, because that was easier with tar.
     """
     [(local_fd, dest_fd)] = await dest.connection.open_channels(1)
     src_fd = local_fd.move(src.task)
