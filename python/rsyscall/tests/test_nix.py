@@ -24,3 +24,5 @@ class TestNix(TrioTestCase):
         self.thr.environ['NIX_REMOTE'] = 'daemon'
         true = (await deploy(self.thr, rsyscall._nixdeps.coreutils.closure)).bin('true')
         await self.thr.run(true)
+        await nd_child.kill()
+        await nd_child.wait()
