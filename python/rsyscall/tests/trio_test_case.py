@@ -6,7 +6,6 @@ import functools
 import sys
 import types
 import warnings
-from trio._core._run import Nursery
 from rsyscall import local_process, Process
 
 @contextlib.contextmanager
@@ -22,7 +21,7 @@ def raise_unraisables():
 
 class TrioTestCase(unittest.TestCase):
     "A trio-enabled variant of unittest.TestCase"
-    nursery: Nursery
+    nursery: trio.Nursery
     process: Process
 
     async def asyncSetUp(self) -> None:
