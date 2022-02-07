@@ -7,8 +7,8 @@ from rsyscall.stdlib import mkdtemp
 
 class TestInotify(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.tmpdir = await mkdtemp(self.thr)
-        self.ify = await Inotify.make(self.thr)
+        self.tmpdir = await mkdtemp(self.process)
+        self.ify = await Inotify.make(self.process)
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()
@@ -16,7 +16,7 @@ class TestInotify(TrioTestCase):
     async def test_create(self) -> None:
         watch = await self.ify.add(self.tmpdir, IN.CREATE)
         name = "foo"
-        fd = await self.thr.task.open(await self.thr.ram.ptr(self.tmpdir/name), O.CREAT|O.EXCL)
+        fd = await self.process.task.open(await self.process.ram.ptr(self.tmpdir/name), O.CREAT|O.EXCL)
         event = await watch.wait_until_event(IN.CREATE, name)
         self.assertEqual(event.name, name)
         self.assertEqual(event.mask, IN.CREATE)

@@ -23,9 +23,9 @@ class TrioTestCase(unittest.TestCase):
         test = getattr(type(self), methodName)
         @functools.wraps(test)
         async def test_with_setup() -> None:
+            self.process = local_process
             async with trio.open_nursery() as nursery:
                 self.nursery = nursery
-                self.thr = local_process
                 await self.asyncSetUp()
                 try:
                     await test(self)

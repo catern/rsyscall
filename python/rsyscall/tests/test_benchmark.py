@@ -15,14 +15,14 @@ class TestBenchmark(TrioTestCase):
     async def test_bench(self):
         "Run a simple clone and exec case inside cProfile (without asserting the results)"
 
-        await self.thr.environ.as_arglist(self.thr.ram)
-        cmd = (await self.thr.environ.which("echo")).args("-n")
+        await self.process.environ.as_arglist(self.process.ram)
+        cmd = (await self.process.environ.which("echo")).args("-n")
         pr = cProfile.Profile()
         warm_up_runs = 1
         real_runs = 1
-        await rsys_run(self.thr, cmd, warm_up_runs)
+        await rsys_run(self.process, cmd, warm_up_runs)
         pr.enable()
-        await rsys_run(self.thr, cmd, real_runs)
+        await rsys_run(self.process, cmd, real_runs)
         pr.disable()
         # pr.print_stats(sort='cumtime')
         # ps = pstats.Stats(pr).strip_dirs().sort_stats('cumulative')

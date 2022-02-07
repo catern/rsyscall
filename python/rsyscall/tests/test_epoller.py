@@ -32,39 +32,39 @@ class DelayResultSysif(SyscallInterface):
 
 class TestEpoller(TrioTestCase):
     async def test_local(self) -> None:
-        await do_async_things(self, self.thr.epoller, self.thr)
+        await do_async_things(self, self.process.epoller, self.process)
 
     async def test_multi(self) -> None:
-        await do_async_things(self, self.thr.epoller, self.thr, 0)
+        await do_async_things(self, self.process.epoller, self.process, 0)
         async with trio.open_nursery() as nursery:
             for i in range(1, 6):
-                nursery.start_soon(do_async_things, self, self.thr.epoller, self.thr, i)
+                nursery.start_soon(do_async_things, self, self.process.epoller, self.process, i)
 
     async def test_process_multi(self) -> None:
-        process = await self.thr.fork()
+        process = await self.process.fork()
         await do_async_things(self, process.epoller, process, 0)
         async with trio.open_nursery() as nursery:
             for i in range(1, 6):
                 nursery.start_soon(do_async_things, self, process.epoller, process, i)
 
     async def test_process_root_epoller(self) -> None:
-        process = await self.thr.fork()
+        process = await self.process.fork()
         epoller = await Epoller.make_root(process.ram, process.task)
         await do_async_things(self, epoller, process)
 
     async def test_afd_with_handle(self):
-        pipe = await self.thr.pipe()
-        afd = await self.thr.make_afd(pipe.write, set_nonblock=True)
+        pipe = await self.process.pipe()
+        afd = await self.process.make_afd(pipe.write, set_nonblock=True)
         new_afd = afd.with_handle(pipe.write)
         await new_afd.write_all_bytes(b'foo')
 
     async def test_delayed_eagain(self):
-        pipe = await self.thr.pipe()
-        process = await self.thr.fork()
+        pipe = await self.process.pipe()
+        process = await self.process.fork()
         async_pipe_rfd = await process.make_afd(process.inherit_fd(pipe.read), set_nonblock=True)
         # write in parent, read in child
         input_data = b'hello'
-        buf_to_write: Pointer[bytes] = await self.thr.ptr(input_data)
+        buf_to_write: Pointer[bytes] = await self.process.ptr(input_data)
         buf_to_write, _ = await pipe.write.write(buf_to_write)
         self.assertEqual(await async_pipe_rfd.read_some_bytes(), input_data)
         buf = await process.malloc(bytes, 4096)
@@ -89,9 +89,9 @@ class TestEpoller(TrioTestCase):
 
     async def test_wrong_op_on_pipe(self):
         "Reading or writing to the wrong side of a pipe fails immediately with an error"
-        pipe = await self.thr.pipe()
-        async_pipe_wfd = await self.thr.make_afd(pipe.write, set_nonblock=True)
-        async_pipe_rfd = await self.thr.make_afd(pipe.read, set_nonblock=True)
+        pipe = await self.process.pipe()
+        async_pipe_wfd = await self.process.make_afd(pipe.write, set_nonblock=True)
+        async_pipe_rfd = await self.process.make_afd(pipe.read, set_nonblock=True)
         # we actually are defined to get EBADF in this case, which is
         # a bit of a worrying error, but whatever
         with self.assertRaises(OSError) as cm:

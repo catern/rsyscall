@@ -13,12 +13,12 @@ import os
 
 class TestStub(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.tmpdir = await mkdtemp(self.thr, "test_stub")
+        self.tmpdir = await mkdtemp(self.process, "test_stub")
         # make sure that this name doesn't collide with shell builtins
         # so it can be run from the shell in test_read_stdin
         self.stub_name = "dummy_stub"
-        self.server = await StubServer.make(self.thr, self.tmpdir, self.stub_name)
-        self.exec_process = await self.thr.fork()
+        self.server = await StubServer.make(self.process, self.tmpdir, self.stub_name)
+        self.exec_process = await self.process.fork()
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()

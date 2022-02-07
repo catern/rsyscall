@@ -32,15 +32,15 @@ import unittest
 
 class TestFUSE(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.tmpdir = await mkdtemp(self.thr)
-        self.thr = await self.thr.clone(CLONE.NEWUSER|CLONE.NEWNS)
-        self.child = await self.thr.fork()
+        self.tmpdir = await mkdtemp(self.process)
+        self.process = await self.process.clone(CLONE.NEWUSER|CLONE.NEWNS)
+        self.child = await self.process.fork()
         self.path = self.tmpdir/"path"
-        await self.thr.mkdir(self.path)
-        self.fuse = await FuseFS.mount(self.thr, self.path)
+        await self.process.mkdir(self.path)
+        self.fuse = await FuseFS.mount(self.process, self.path)
 
     async def asyncTearDown(self) -> None:
-        await self.fuse.thr.pid.kill()
+        await self.fuse.process.pid.kill()
         await self.fuse.cleanup()
         await self.tmpdir.cleanup()
 
@@ -122,8 +122,8 @@ class TestFUSE(TrioTestCase):
     async def test_symlink(self) -> None:
         @self.nursery.start_soon
         async def open() -> None:
-            async with (await self.child.task.open(await self.thr.ptr(self.path/"foo"), O.RDONLY)) as foo:
-                data, _ = await foo.read(await self.thr.malloc(bytes, 4096))
+            async with (await self.child.task.open(await self.process.ptr(self.path/"foo"), O.RDONLY)) as foo:
+                data, _ = await foo.read(await self.process.malloc(bytes, 4096))
         await self.fuse.write((await self.assertRead(FuseGetattrOp)).respond(FuseAttrOut(
             attr_valid=Timespec(10000, 0),
             attr=FuseAttr(

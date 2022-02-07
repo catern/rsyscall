@@ -8,14 +8,14 @@ import unittest
 
 class TestChroot(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.tmpdir = await mkdtemp(self.thr)
-        self.thr = await self.thr.clone(CLONE.NEWUSER|CLONE.NEWNS)
+        self.tmpdir = await mkdtemp(self.process)
+        self.process = await self.process.clone(CLONE.NEWUSER|CLONE.NEWNS)
 
     async def asyncTearDown(self) -> None:
         await self.tmpdir.cleanup()
 
     async def test_basic(self) -> None:
-        await self.thr.mkdir(self.tmpdir/"proc")
-        await self.thr.mount("/proc", self.tmpdir/"proc", "", MS.BIND, "")
-        await self.thr.task.chroot(await self.thr.ptr(self.tmpdir))
-        await self.thr.task.open(await self.thr.ptr("/proc/self"), O.RDONLY)
+        await self.process.mkdir(self.tmpdir/"proc")
+        await self.process.mount("/proc", self.tmpdir/"proc", "", MS.BIND, "")
+        await self.process.task.chroot(await self.process.ptr(self.tmpdir))
+        await self.process.task.open(await self.process.ptr("/proc/self"), O.RDONLY)

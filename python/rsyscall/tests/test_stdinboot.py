@@ -8,9 +8,9 @@ from rsyscall.command import Command
 
 class TestStdinboot(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        path = await stdin_bootstrap_path_with_nix(self.thr)
+        path = await stdin_bootstrap_path_with_nix(self.process)
         self.command = Command(path, ['rsyscall-stdin-bootstrap'], {})
-        self.local_child, self.remote = await stdin_bootstrap(self.thr, self.command)
+        self.local_child, self.remote = await stdin_bootstrap(self.process, self.command)
 
     async def asyncTearDown(self) -> None:
         await self.local_child.kill()

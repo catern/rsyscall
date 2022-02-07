@@ -11,7 +11,7 @@ from rsyscall.sys.wait import CalledProcessError
 
 class TestClone(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.child = await self.thr.clone(CLONE.FILES)
+        self.child = await self.process.clone(CLONE.FILES)
 
     async def test_exit(self) -> None:
         await self.child.exit(0)
@@ -35,7 +35,7 @@ class TestClone(TrioTestCase):
         block forever.
 
         """
-        thr2 = await self.thr.fork()
+        thr2 = await self.process.fork()
         cmd = self.child.environ.sh.args('-c', 'true')
         child1 = await self.child.exec(cmd)
         child2 = await thr2.exec(cmd)
@@ -90,7 +90,7 @@ class TestClone(TrioTestCase):
 
 class TestCloneUnshareFiles(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.child = await self.thr.fork()
+        self.child = await self.process.fork()
 
     async def asyncTearDown(self) -> None:
         await self.child.exit(0)

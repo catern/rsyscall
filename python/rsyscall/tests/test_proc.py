@@ -12,7 +12,7 @@ from rsyscall.signal import SIG
 
 class TestProc(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.init = await self.thr.clone(CLONE.NEWUSER|CLONE.NEWPID)
+        self.init = await self.process.clone(CLONE.NEWUSER|CLONE.NEWPID)
         # set up proc
 
     async def test_pgid(self) -> None:

@@ -87,11 +87,11 @@ class FuseFS:
         # We'll keep devfuse open *only* in the dedicated server process's private fd table, so that
         # other processes accessing the filesystem don't deadlock when we abort the FUSE server loop -
         # instead their syscalls will be aborted with ENOTCONN.
-        self.thr = await process.fork()
-        self.devfuse = self.thr.task.inherit_fd(devfuse)
+        self.process = await process.fork()
+        self.devfuse = self.process.task.inherit_fd(devfuse)
         await devfuse.close()
         # Respond to FUSE init message to sanity-check things are set up right.
-        self.buf = await self.thr.malloc(FuseInList, FUSE_MIN_READ_BUFFER)
+        self.buf = await self.process.malloc(FuseInList, FUSE_MIN_READ_BUFFER)
         [init] = await self.read()
         if not isinstance(init, FuseInitOp):
             raise Exception("oops, got non-init as first message", init)
@@ -115,7 +115,7 @@ class FuseFS:
 
     async def write(self, out: FuseOut) -> None:
         logger.debug("writing out FUSE response: %s", out)
-        ptr = await self.thr.ptr(out)
+        ptr = await self.process.ptr(out)
         written, unwritten = await self.devfuse.write(ptr)
         if unwritten.size() != 0:
             raise Exception("/dev/fuse is not supposed to ever do partial writes, but I got one somehow on", ptr)
@@ -125,11 +125,11 @@ class FuseFS:
 
     async def cleanup(self) -> None:
         # umount to kill the fuse loop; it's a bit lazy to save the parent process to do this, but we
-        # can't do it in self.thr because that process spends all its time blocked in read.
+        # can't do it in self.process because that process spends all its time blocked in read.
         await self.parent_process.task.umount(await self.parent_process.ptr(self.path))
         # and exit the process - but it might already be dead, so we might fail to exit it, just ignore that.
         try:
-            await self.thr.exit(0)
+            await self.process.exit(0)
         except SyscallError:
             pass
 

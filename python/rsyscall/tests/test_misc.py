@@ -12,18 +12,18 @@ from rsyscall.sched import CLONE
 
 class TestMisc(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.thr = await self.thr.fork()
+        self.process = await self.process.fork()
 
     async def asyncTearDown(self) -> None:
-        await self.thr.exit(0)
+        await self.process.exit(0)
 
     async def test_do_cloexec_except(self) -> None:
-        pipe = await (await self.thr.task.pipe(await self.thr.ram.malloc(Pipe))).read()
-        close_set = set([fd.near for fd in self.thr.task.fd_handles])
+        pipe = await (await self.process.task.pipe(await self.process.ram.malloc(Pipe))).read()
+        close_set = set([fd.near for fd in self.process.task.fd_handles])
         close_set.remove(pipe.read.near)
-        await do_cloexec_except(self.thr, close_set)
+        await do_cloexec_except(self.process, close_set)
 
-        data = await self.thr.ram.ptr(b"foo")
+        data = await self.process.ram.ptr(b"foo")
         with self.assertRaises(OSError):
             # this side was closed due to being cloexec
             await pipe.read.read(data)

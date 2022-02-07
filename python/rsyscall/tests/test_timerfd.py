@@ -3,12 +3,12 @@ from rsyscall.sys.timerfd import *
 
 class TestTimerfd(TrioTestCase):
     async def asyncSetUp(self) -> None:
-        self.fd = await self.thr.task.timerfd_create(CLOCK.REALTIME)
+        self.fd = await self.process.task.timerfd_create(CLOCK.REALTIME)
 
     async def asyncTearDown(self) -> None:
         await self.fd.close()
 
     async def test(self) -> None:
         await self.fd.timerfd_settime(
-            TFD_TIMER.NONE, await self.thr.ram.ptr(Itimerspec(Timespec(0, 0), Timespec(0, 1))))
-        await self.fd.timerfd_gettime(await self.thr.ram.malloc(Itimerspec))
+            TFD_TIMER.NONE, await self.process.ram.ptr(Itimerspec(Timespec(0, 0), Timespec(0, 1))))
+        await self.fd.timerfd_gettime(await self.process.ram.malloc(Itimerspec))

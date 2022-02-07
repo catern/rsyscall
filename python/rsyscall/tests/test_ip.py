@@ -8,37 +8,37 @@ import unittest
 
 class TestIP(TrioTestCase):
     async def test_stream_listen(self) -> None:
-        sockfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
-        addr = await self.thr.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
+        sockfd = await self.process.task.socket(AF.INET, SOCK.STREAM)
+        addr = await self.process.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
         await sockfd.listen(10)
 
-        real_addr = await self.thr.ram.ptr(addr)
-        clientfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
+        real_addr = await self.process.ram.ptr(addr)
+        clientfd = await self.process.task.socket(AF.INET, SOCK.STREAM)
         await clientfd.connect(real_addr)
         connfd = await sockfd.accept()
 
-        in_data = await self.thr.ram.ptr(b"hello")
+        in_data = await self.process.ram.ptr(b"hello")
         written, _ = await clientfd.write(in_data)
         valid, _ = await connfd.read(written)
         self.assertEqual(in_data.value, await valid.read())
 
     async def test_dgram_connect(self) -> None:
-        sockfd = await self.thr.task.socket(AF.INET, SOCK.DGRAM)
-        addr = await self.thr.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
+        sockfd = await self.process.task.socket(AF.INET, SOCK.DGRAM)
+        addr = await self.process.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
 
-        real_addr = await self.thr.ram.ptr(addr)
-        clientfd = await self.thr.task.socket(AF.INET, SOCK.DGRAM)
+        real_addr = await self.process.ram.ptr(addr)
+        clientfd = await self.process.task.socket(AF.INET, SOCK.DGRAM)
         await clientfd.connect(real_addr)
 
-        in_data = await self.thr.ram.ptr(b"hello")
+        in_data = await self.process.ram.ptr(b"hello")
         written, _ = await clientfd.write(in_data)
         valid, _ = await sockfd.read(written)
         self.assertEqual(in_data.value, await valid.read())
 
     async def test_write_to_unconnected(self) -> None:
-        sockfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
+        sockfd = await self.process.task.socket(AF.INET, SOCK.STREAM)
         with self.assertRaises(BrokenPipeError):
-            await sockfd.write(await self.thr.ram.ptr(b"hello"))
+            await sockfd.write(await self.process.ram.ptr(b"hello"))
 
     @unittest.skip("This test is slow and non-deterministic")
     async def test_send_is_not_atomic(self) -> None:
@@ -52,12 +52,12 @@ class TestIP(TrioTestCase):
         be interleaved.
 
         """
-        sockfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
-        addr = await self.thr.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
+        sockfd = await self.process.task.socket(AF.INET, SOCK.STREAM)
+        addr = await self.process.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
         await sockfd.listen(10)
 
-        real_addr = await self.thr.ram.ptr(addr)
-        clientfd = await self.thr.task.socket(AF.INET, SOCK.STREAM)
+        real_addr = await self.process.ram.ptr(addr)
+        clientfd = await self.process.task.socket(AF.INET, SOCK.STREAM)
         await clientfd.connect(real_addr)
         connfd = await sockfd.accept()
         orig_in_fd = clientfd
@@ -65,7 +65,7 @@ class TestIP(TrioTestCase):
         data = "".join(str(i) for i in range(8000)).encode()
 
         count = 100
-        processes = [await self.thr.fork() for _ in range(10)]
+        processes = [await self.process.fork() for _ in range(10)]
         in_ptrs = [await thr.ptr(data) for thr in processes]
         handles = [thr.task.inherit_fd(orig_in_fd) for thr in processes]
         async def run_send(process: Process, in_ptr: Pointer, fd: FileDescriptor) -> None:
@@ -74,7 +74,7 @@ class TestIP(TrioTestCase):
                 if rest.size() != 0:
                     print("failure! rest.size() is", rest.size())
                 self.assertEqual(rest.size(), 0)
-        read_process = await self.thr.fork()
+        read_process = await self.process.fork()
         out_buf = await read_process.malloc(bytes, len(data))
         out_fd = read_process.inherit_fd(orig_out_fd)
 
