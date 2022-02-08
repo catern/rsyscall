@@ -1,7 +1,8 @@
 from __future__ import annotations
+from rsyscall import AsyncChildPid, Process
 from rsyscall.tests.trio_test_case import TrioTestCase
 from rsyscall.tasks.persistent import *
-from rsyscall.tasks.ssh import make_local_ssh
+from rsyscall.tasks.ssh import make_local_ssh, SSHHost
 from rsyscall.near.sysif import SyscallHangup
 from rsyscall.tests.utils import assert_process_works
 from rsyscall.sched import CLONE
@@ -10,6 +11,19 @@ from rsyscall.stdlib import mkdtemp
 import unittest
 
 class TestPersistent(TrioTestCase):
+    host: SSHHost
+    local_child: AsyncChildPid
+    remote: Process
+
+    @classmethod
+    async def asyncSetUpClass(cls) -> None:
+        cls.host = await make_local_ssh(cls.process)
+        cls.local_child, cls.remote = await cls.host.ssh(cls.process)
+
+    @classmethod
+    async def asyncTearDownClass(cls) -> None:
+        await cls.local_child.kill()
+
     async def asyncSetUp(self) -> None:
         self.tmpdir = await mkdtemp(self.process, "test_stub")
         self.sock_path = self.tmpdir/"persist.sock"
@@ -48,21 +62,17 @@ class TestPersistent(TrioTestCase):
         await process.exit(0)
 
     async def test_ssh_same(self) -> None:
-        host = await make_local_ssh(self.process)
-        local_child, remote_process = await host.ssh(self.process)
-        per_thr = await clone_persistent(remote_process, self.sock_path)
-        await per_thr.reconnect(remote_process)
+        per_thr = await clone_persistent(self.remote, self.sock_path)
+        await per_thr.reconnect(self.remote)
         await assert_process_works(self, per_thr)
         await per_thr.exit(0)
 
     async def test_ssh_new(self) -> None:
         "Start the persistent process from one ssh process, then reconnect to it from a new ssh process."
-        host = await make_local_ssh(self.process)
-        local_child, remote_process = await host.ssh(self.process)
-        per_thr = await clone_persistent(remote_process, self.sock_path)
+        per_thr = await clone_persistent(self.remote, self.sock_path)
 
-        local_child, remote_process = await host.ssh(self.process)
-        await per_thr.reconnect(remote_process)
+        local_child, new_remote = await self.host.ssh(self.process)
+        await per_thr.reconnect(new_remote)
         await assert_process_works(self, per_thr)
 
         await per_thr.exit(0)

@@ -4,19 +4,23 @@ from rsyscall.tests.trio_test_case import TrioTestCase
 from rsyscall.tasks.stdin_bootstrap import *
 
 from rsyscall.tests.utils import do_async_things
-from rsyscall.command import Command
+from rsyscall import Command, AsyncChildPid, Process
 
 class TestStdinboot(TrioTestCase):
-    async def asyncSetUp(self) -> None:
-        path = await stdin_bootstrap_path_with_nix(self.process)
-        self.command = Command(path, ['rsyscall-stdin-bootstrap'], {})
-        self.local_child, self.remote = await stdin_bootstrap(self.process, self.command)
+    command: Command
+    local_child: AsyncChildPid
+    remote: Process
 
-    async def asyncTearDown(self) -> None:
-        await self.local_child.kill()
+    @classmethod
+    async def asyncSetUpClass(cls) -> None:
+        path = await stdin_bootstrap_path_with_nix(cls.process)
+        cls.command = Command(path, ['rsyscall-stdin-bootstrap'], {})
+        cls.local_child, cls.remote = await stdin_bootstrap(cls.process, cls.command)
 
-    async def test_exit(self) -> None:
-        await self.remote.exit(0)
+    @classmethod
+    async def asyncTearDownClass(cls) -> None:
+        await cls.remote.exit(0)
+        await cls.local_child.wait()
 
     async def test_async(self) -> None:
         await do_async_things(self, self.remote.epoller, self.remote)

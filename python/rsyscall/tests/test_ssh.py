@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from rsyscall import AsyncChildPid, Process
 from rsyscall.tests.trio_test_case import TrioTestCase
 import rsyscall.thread
 from rsyscall.nix import enter_nix_container, deploy
@@ -30,12 +31,18 @@ async def start_cat(process: Process, cat: Command,
     return child
 
 class TestSSH(TrioTestCase):
-    async def asyncSetUp(self) -> None:
-        self.host = await make_local_ssh(self.process)
-        self.local_child, self.remote = await self.host.ssh(self.process)
+    host: SSHHost
+    local_child: AsyncChildPid
+    remote: Process
 
-    async def asyncTearDown(self) -> None:
-        await self.local_child.kill()
+    @classmethod
+    async def asyncSetUpClass(cls) -> None:
+        cls.host = await make_local_ssh(cls.process)
+        cls.local_child, cls.remote = await cls.host.ssh(cls.process)
+
+    @classmethod
+    async def asyncTearDownClass(cls) -> None:
+        await cls.local_child.kill()
 
     async def test_read(self) -> None:
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)

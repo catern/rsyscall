@@ -22,7 +22,7 @@ def raise_unraisables():
 class TrioTestCase(unittest.TestCase):
     "A trio-enabled variant of unittest.TestCase"
     nursery: trio.Nursery
-    process: Process
+    process: Process = local_process
 
     async def asyncSetUp(self) -> None:
         "Asynchronously set up resources for tests in this TestCase"
@@ -32,11 +32,28 @@ class TrioTestCase(unittest.TestCase):
         "Asynchronously clean up resources for tests in this TestCase"
         pass
 
+    @classmethod
+    async def asyncSetUpClass(cls) -> None:
+        "Asynchronously set up class-level resources for tests in this TestCase"
+        pass
+
+    @classmethod
+    async def asyncTearDownClass(cls) -> None:
+        "Asynchronously clean up class-level resources for tests in this TestCase"
+        pass
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        trio.run(cls.asyncSetUpClass)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        trio.run(cls.asyncTearDownClass)
+
     def __init__(self, methodName='runTest') -> None:
         test = getattr(type(self), methodName)
         @functools.wraps(test)
         async def test_with_setup() -> None:
-            self.process = local_process
             async with trio.open_nursery() as nursery:
                 self.nursery = nursery
                 await self.asyncSetUp()
