@@ -129,5 +129,5 @@ class TestSSH(TrioTestCase):
         tmpdir = await mkdtemp(self.process)
         async with tmpdir:
             await enter_nix_container(self.process, rsyscall._nixdeps.nix.closure, self.remote, tmpdir)
-            hello = (await deploy(self.remote, rsyscall._nixdeps.coreutils.closure)).bin('echo').args('hello world')
-            await self.remote.run(hello)
+            true = (await deploy(self.remote, rsyscall._nixdeps.coreutils.closure)).bin('true')
+            await self.remote.run(true)
