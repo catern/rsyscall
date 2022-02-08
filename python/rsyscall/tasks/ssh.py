@@ -351,7 +351,7 @@ async def make_local_ssh_from_executables(process: Process,
         sshd_command = sshd.args(
             '-i', '-e', '-f', '/dev/null',
         ).sshd_options({
-            'LogLevel': 'INFO',
+            'LogLevel': 'ERROR',
             'HostKey': privkey,
             'AuthorizedKeysFile': pubkey,
             'StrictModes': 'no',
@@ -361,7 +361,7 @@ async def make_local_ssh_from_executables(process: Process,
         ssh_command = ssh.args(
             '-F', '/dev/null',
         ).ssh_options({
-            'LogLevel': 'INFO',
+            'LogLevel': 'ERROR',
             'IdentityFile': privkey,
             'BatchMode': 'yes',
             'StrictHostKeyChecking': 'no',
