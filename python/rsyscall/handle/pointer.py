@@ -224,6 +224,8 @@ class Pointer(t.Generic[T]):
 
         Used by write_to_end; mostly only useful for preparing stacks.
 
+        The right pointer will be at least `size` big, but may be larger as required for alignment.
+
         """
         extra_to_remove = (int(self.near) + size) % alignment
         return self.split(self.size() - size - extra_to_remove)
@@ -235,9 +237,13 @@ class Pointer(t.Generic[T]):
         stacks. Would be nice to figure out either a more generic way to prep stacks, or to figure
         out more things that write_to_end could be used for.
 
+        Note that if `self` is not already aligned according to the passed alignment, the end of
+        `value` will not necessarily be at the end of `self`; there may be some extra unwritten
+        buffer space past the end of the WrittenPointer.
         """
         value_bytes = self.serializer.to_bytes(value)
         rest, write_buf = self.split_from_end(len(value_bytes), alignment)
+        write_buf, leftover_alignment_buffer = write_buf.split(len(value_bytes))
         written = await write_buf.write(value)
         return rest, written
 
