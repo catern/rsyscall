@@ -357,7 +357,6 @@ async def make_local_ssh_from_executables(process: Process,
             'StrictModes': 'no',
             'PrintLastLog': 'no',
             'PrintMotd': 'no',
-            'UsePrivilegeSeparation': 'no',
         })
         ssh_command = ssh.args(
             '-F', '/dev/null',
