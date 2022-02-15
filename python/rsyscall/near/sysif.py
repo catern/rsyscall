@@ -75,11 +75,8 @@ class SyscallInterface:
         That syscall results can be dropped safely, or that they cannot be dropped?
         Most syscalls are side-effectful: even a simple read usually consumes data in a
         side-effectful matter, and others allocate resources which might be leaked, or can
-        cause state changes. Thus, "weakening" (droppability) is not generally true for
+        cause state changes. Thus, "contraction" (droppability) is not generally true for
         syscall results: syscall results cannot, in most cases, be safely ignored.
-
-        For callers who want to preserve the ability for their coroutine to be cancelled
-        even while waiting for a syscall response, the `submit_syscall` API can be used.
 
         Note that this Python-level cancellation protection has nothing to do with
         actually interrupting a syscall. That ability is still preserved with this
