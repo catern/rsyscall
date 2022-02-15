@@ -89,17 +89,44 @@ class Event:
 @dataclass
 class Future(t.Generic[T]):
     _result: t.Optional[Outcome[T]] = None
-    _result_cb: t.Optional[Continuation[T]] = None
+    _result_cb: t.Optional[Continuation[Optional[T]]] = None
+    _exc_cb: t.Optional[Continuation[Optional[BaseException]]] = None
 
     @staticmethod
-    def start(func: t.Callable[[], t.Awaitable[T]]) -> Future[T]:
+    def start(stack: AsyncExitStack, func: t.Callable[[], t.Awaitable[T]]) -> Future[T]:
+        """Run this function and capture its value; if it throws, AsyncExitStack will throw too.
+
+        We block the exit of the AsyncExitStack until the function has completed.  Once
+        the function completes, if it threw an exception, we rethrow that exception out of
+        the AsyncExitStack.  In this way, an error can't be unintentionally ignored,
+        although the return value can be.
+
+        If there's an exception already in flight at the time of exit, we don't rethrow.
+        We just want to raise some error, not ensure that complete error information is
+        available.  Besides, that exception might be our own, from someone calling get().
+
+        """
         self = Future[T]()
+        @stack.push_async_exit
+        async def raise_if_error(current_exc, *args):
+            if current_exc:
+                # if there's already an exception being raised, don't do anything
+                return
+            def get_exc(cb: Continuation[Optional[BaseException]]) -> None:
+                if self._result:
+                    cb(value.error if isinstance(self._result, outcome.Error) else None)
+                self._exc_cb = cb
+            my_exc = await shift(get_exc)
+            if my_exc:
+                raise my_exc
         @functools.wraps(func)
         async def wrapper() -> None:
             result = await outcome.acapture(func)
             self._result = result
             if self._result_cb:
                 self._result_cb.resume(result)
+            if self._exc_cb:
+                self._exc_cb(value.error if isinstance(self._result, outcome.Error) else None)
         reset(wrapper())
         return self
 
