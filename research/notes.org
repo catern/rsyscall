@@ -31189,7 +31189,904 @@ okay takebacksies, I changed it
 I mean, hm. hMM mm.
 
 I guess it's not that bad to do that, fine, fine.
-** TODO issue: Process conflicts with other "processes"
+** DONE issue: Process conflicts with other "processes"
 maybe I'll say rprocess at some point?
 
 hmmmmmm
+* miscellaneous bugs
+** DONE unaligned write_to_end
+okay...
+
+so the issue is that the... futex needs to be written to an aligned place.
+
+right now we're just... putting it on the stack.
+
+but the stack isn't necessarily aligned...
+
+so...
+
+oh but we can actually...
+
+no wait, does the trampoline need to be aligned actually?
+
+okaaaaaaaaaay fiiiine i seeeeeeeeeee
+
+we need 16-byte alignment for the stack, hmm....
+courtesy of intel. hm...
+
+okay wait so the stack itself does not need to be aligned!
+
+we just need to align *the data placed on it*
+
+oh wait okay everything is working right.
+
+I'm just failing because the write buf is a different size
+* TODO convert to sending instruction streams
+at last!
+
+it's wise to do this before the unix game;
+it will improve my user experience.
+** initial thoughts
+no need for linking anymore
+
+executable stack or separate buffer?
+
+defined that my instructions are in memory, so I can send memory buffer constants as well?
+
+maybe I just send arbitrary instructions?
+
+maybe I can use this to send memory as well?
+
+actually, are instructions aligned?
+
+maybe I can just read a fixed-size jump to jump to whatever specialized routine
+
+make a syscall... to read big memory from the pipe... ummm....
+
+well I chose not to do that before...
+** writing instructions
+actually, learning about x86 seems like a huge hassle.
+
+I should really just... figure out how to do it in C.
+
+and compile that C and send the instructions over.
+
+PIC code... yeah... sure...
+
+I JIT locally, send the instructions over, and execute them.
+
+basically yeah I use a JIT, which should have the right API...
+** more thoughts
+Hmm JIT compilation is slow, we don't want to do it on every single invocation... Hmm....
+
+We would I guess like to cache the compilation .... But if we're baking the parameters in, we can't... Let's test the compilation speed I guess....
+
+Maybe we can use pypy...?
+
+An assembly DSL is a hassle... And not very portable... So we want something different...
+
+Okay, this is kind of like what people make custom protocols for. Except we disdain that.
+
+Mobile code all the way
+
+So can we do something like the, download custom protocol client thing?
+
+https://developers.redhat.com/blog/2020/01/20/mir-a-lightweight-jit-compiler-project#the_current_state_of_the_mir_project kind of interesting...
+
+Maybe I jit a function then manually call it?
+
+Basically replace system calls with  function calls?
+
+But that kind of defeats the point?
+
+The "functions you call execute instructions and mutate the registers" API is appealing
+
+Maybe I can restrict to just having a stack allocation API at first? With a nice awesome context manager. .
+
+Yeah just extend the rsyscall protocol with that ...
+
+Actually it's not just stack allocation, it's also writing the data into the stack in one round trip 
+
+(Returning data in one round trip would be nice too)
+
+Okay but at least the writing data part... Let's see
+
+I guess the real issue here is writing without a roundtrip. That's the real costly part. Hm.
+
+I could imagine having my memory allocator baked in, and my memory transport too.
+
+Just, the costly thing, is the roundtrip for writing...
+
+Actually also for reading for that matter; getsockname... Well actually we could pipeline the getsockname and read, I suppose...
+
+I mean, we just want a version of read which blocks for all data! Is that so much to ask
+** just pipelining better?
+wait uh actually...
+
+oh, yeah, okay, so.
+
+writing the data to memory in one guaranteed atomic block,
+can be implemented with recv(MSG.WAITALL)
+(at least for my stuff)
+
+reading the data from memory on the other hand,
+WAITALL does not work.
+there's no atomic send...
+
+well we don't need atomic send, we just need... blocking send...
+actually isn't that how it works by default? hm...
+
+okay, so,
+
+if I just bundled my allocator in,
+and bundled memory writing in,
+I could be fine...
+
+i mean, i haven't had a ton of benefits from reusing memory...
+
+or from pipelining things together - but I guess I want to retain that capability, hmm...
+** shower thoughts
+*** type-safe promise pipelining
+I just need to operate inside the "promise monad",
+more specifically I need to have a "batch" function,
+and pass an implementation of the syscalls which, returns pointers which are actually promises
+
+and have some appropriate type in those promises so they can't be used with anything but the implementation I passed
+(i.e. the batch function needs to be polymorphic in the type of the syscall implementation or something)
+*** using the stack is just baking in memory allocation
+why should I be able to rely on having a stack allocated?
+i shouldn't!
+
+so I might as well rely on my own memory allocator.
+and memory transport.
+*** pipelining
+okay yeah. it's just a matter of better pipelining.
+
+for the write side (that is, pipelining .ptr() or .write() calls),
+I just allocate a buffer up front,
+then pipeline the write and syscall.
+
+for the read side, I again allocate a buffer up front (obviously),
+and pipeline the syscall and the read.
+
+I can do this because on the write side (recv) I have MSG.WAITALL
+
+and on the read side, I can retry as much as I want.
+
+ummm I haven't supported partial reads and writes yet on socket_transport...
+
+does this matter, though?
+
+oh yeah okay it's actually easy to handle,
+I just need to dispatch the appropriate partial read on the other side.
+um...
+
+no wait that will cause me to fail hardcore lol... hm...
+
+okaaaaaaay... so...
+
+the write on the data transport,
+is not serialized with the...
+
+syscall...
+
+okay.
+so that's a problem, I suppose.
+
+but also a problem is just... we can't send the syscall until...
+we've written all the data on the memory transport.
+
+that should be easy to resolve though... hopefully...
+(um, should it be? maybe if we were using the same socketpair for data and syscalls...)
+
+right so...
+we do that full write
+(possibly partial, in fact)
+
+and if it's partial we...
+send the partial recv...
+then try again to write. in parallel, I guess.
+
+then once we've done the full write,
+we... can actually send the final recv,
+and any syscalls depending on this write can proceed.
+
+so how do we express that?
+
+this doesn't even really depend on using the same socketpair for data and syscalls...
+we'd...
+well if we were, how could we resolve this?
+I guess what we'd be doing is first send the recv for the whole thing...
+
+and then we write the data.
+
+anyway, so um, let's assume that SMT is used by only one task
+
+okay so yeah I really want, like,
+a write which returns immediately rather than waiting for the last recv to complete. hm.
+
+which is similar to having an explicit promise, hmm mmmmm
+
+also, it's like... i have a chain of operations i want to do,
+each of which needs to be synchronously triggered from the previous.
+
+and once i *start* the last one...
+i can also start the next one which depends on my chain being complete?
+because of sequencing?
+*** thought before sleep
+but yeah, the "send raw instructions" idea is just a hack to achieve this
+
+just complicating and uglifying my interface for this purpose
+
+instead I should just support proper pipelining, then I don't need to add that feature.
+
+just gotta think about how...
+*** thoughts after sleep
+so, so, so.
+the obvious easy way would be to just insert some kind of... callback...
+
+such that... well, just such that *something* happened after we started the last recv
+
+so, the sequencing behavior of "reset" on some coroutine is fine if we want to sequence after the first async action it takes,
+but what if it does some preparatory thing first? hm.
+
+well okay actually uh.
+I guess I don't have any uses of reset for sequencing yet...
+hmm... or concurrency, of course...
+
+I guess I could use Future.start
+
+i mean yeah that's just converting it into a promise, innit
+
+but under the hood, we need a guarantee that... they're sequenced relative to each other...
+
+we could return something from the shift, so it comes out of the reset...
+
+what's the broader thing I want to do?
+again, just pipeline things: have thing B depend on thing A.
+
+and, okay, I don't need to actually pass a promise between A and B because I have pre-allocated buffers.
+but I do need to have some *sequencing* between A and B.
+
+so maybe if I return some thing up, and it representing "wait until B has been submitted",
+then I launch A with that?
+ehhhh no....
+
+okay. ok!
+so actually, the thing is this:
+I want to run the task, forwarding up its shifts,
+until it hits the point where it's actually starting the relevant operation.
+
+*then* I want to detach and continue on for myself.
+
+so maybe *inside* write, I... manually handle forwarding the shifts,
+and then once I'm actually in the real operation,
+then I have that shift be, returning, "Sequenced" or something like that.
+
+OK now that seems plausible.
+
+quite unintuitive, maybe?
+
+so what I could do, I guess, is... inside write(),
+I put some wrapper around the final recv,
+which just replaces the first shift value with Sequenced...
+and then otherwise does a... reset...
+um. wait. uh...
+what I'd like, I guess, is... the equivalent of "yield from"...
+
+so the wrapper will do... one reset...
+oh, actually, yeah...
+no wait, no, it won't do one reset...
+
+um, ok.. it will do something, to say "this is the sequence point",
+and then, there will be some outer wrapper which I wrap around *write*,
+which waits on it until it reaches the sequence point, then runs it in the background
+
+oh hey, is this like trio's task_status? with started?
+where I have some coroutine which... I want to run in the background...
+but I want to wait until it reaches some sequence point...
+
+yeah... yeah.....
+
+and heck maybe it even returns a value...
+
+okay, so i got rid of task_status in favor of start_foo functions.
+could I do the same here?
+
+nnno...
+
+i got rid of the submit_syscall thing.
+
+the startup point is *inside* the syscall function.
+so we need something fancier...
+
+so... there's some implicit "i'm started" thing which is returned up.
+
+and someone calling me can wait for that.
+
+you could imagine that all the syscalls return this Sequenced thing...
+but we need to *stop* it from propagating up when it's not actually the start signal.
+hmm.......
+
+right, we do like it propagating up the stack, so that... um... well, so that a syscall-wrapping-function gets it for free...
+
+well so then it suggests that we'll need wrappers around all the non-final parts of the write...
+
+even though the startup point is inside the syscall function,
+we could still use task_status.started.
+we'd just pass it down the stack and it would be called when we're ready.
+
+and that nicely lets us choose when we call it.
+
+would that work for me?
+would a function call like that let me stop waiting for something?
+*** post-shower thoughts
+no a function call wouldn't work (i think)
+
+aha! there are many startup points, task_status is deficient anyway
+
+we can just always have syscalls send up e.g. SyscallStarted etc,
+and in write, we'll transform one of those into WriteStarted
+(which I guess should be a subclass of SyscallStarted?)
+
+and we can just open-code the translation:
+in write: a while loop that waits for a SyscallStarted and turns it into WriteStarted then just runs the rest to completion,
+
+in the caller of write: a while loop that waits for a WriteStarted and then runs the rest in the background
+
+okay, okay, then the only remaining trick is... figuring out how to actually write these loops.
+because I'm not sure how to invoke shift etc to make things block right...
+
+yes, yes: started is the answer type. yes!
+
+right because if i'm some handler, and I'm running some thing B,
+and i'm blocking the other thing B which started it,
+I need the thing B to shift up to me with some answer type to tell me when actually it should start running "in the background"/concurrently with A,
+so that then I start running both A and B
+
+ok, cool, cool.
+
+yeah so again, now just have to figure out how to actually implement this.
+*** thoughts again
+so the one who invokes the continuation...
+is the one who gets the answer value
+
+normally it's fine that the continuation is passed to shift...
+because it's packaged up into a value and returned...
+and we can intercept that however we like...
+
+but with python, we can imperatively pass the continuation to someone else,
+then return None...
+
+so we would prefer...
+well, either:
+- a cont primitive which just has the continuation available at the handler scope, and the user code just returns a result which is an action spec
+- some way to change out what continuation is passed to the shift handler...
+
+the former is more effect-handler-y, sure.
+
+but it's also so annoying:
+the fact that shift is just a magic way to block on any callback-taking API, is really nice.
+
+And we like the ability to just do the thing that we want to do, semi-directly...
+
+OK so what if we just have some kind of reset which...
+is async...
+
+and which just...
+
+when it receives a "Shift" yielded up to it,
+it shifts into it.
+then resumes the continuation with whatever value it got...?
+
+wait, argh. argh.
+
+that won't work because... if we've passed our own continuation to the handler,
+then we can't return the value from the handler. hmm.
+
+feels like a familiar problem, I think I've dealt with this before, lol
+
+okay so... maybe...
+
+maybe we do pass the other continuation, but...
+wrap it somehow? at the end?
+*** post
+> i'm troubled by my continuation API
+> https://github.com/catern/rsyscall/blob/master/python/dneio/__init__.py is really quite amazing and beautiful
+> https://github.com/catern/rsyscall/blob/master/python/dneio/__init__.py#L7-L24 specifically
+> very amazing and good!
+> but, hm, it's troubling, because then file.read_cb is what's invoking the callback...
+> and thus, therefore, it's what gets the answer type from the continuation!
+> in general, if I care about the return values from the function passed to shift (e.g. file.read_cb itself), I don't know how to get it...
+> tricky, tricky...
+
+yes that's a good summary:
+how do I get the return values from the function passed to shift?
+that's exactly what I want.
+
+so... I guess an async driver/reset thing will be necessary:
+something which steps along with the inner stack at each step...
+
+and gets the return values of the shift-func...
+
+maybe we...
+
+get both the return value of the shfit-func, and something else to wait on? hmm... yes... sure...
+
+and then... that thing we wait on gives us the next return value and thing to wait on, obviously...
+
+so the nice thing is...
+
+if we actually were passing in the callback at the reset level...
+we'd be able to
+
+choose whether the rest of the program wants to block, or just the sub-stack.
+
+but wait! we do have exactly that behavior!
+
+with yield! hm! hm!M!MM!MMMM!
+
+so... if we get the function passed up...
+
+then we just decide... um...
+whether to pass in our continuation or the sub-continuation... umm..
+
+no wait uhh...
+I don't think that works?
+
+wait maybe from the handler... I can return a thing which... points to the next thing?
+so then the first reset gives me a thing...?
+to wait on, maybe? or just some... thing...
+
+maybe... it's some kind of thing to wait for the result of the continuation?
+
+oh uh...
+right, maybe we wrap a thing around the continuation,
+which is...
+a future for the return value?
+
+and in that way we make sure it doesn't return a value that we then need to discard in our, um, other place!
+
+wait, wait, okay! and maybe that includes exceptions!
+
+and maybe the person who does the reset keeps monitoring these!
+
+and this is how we get exceptions propagating in the right place!
+
+oh and... we can wrap... the functions...
+
+so we don't have to do this future forwarding thing everywhere.
+we just wrap the shift-argument in something which intercepts the whatever and returns a future,
+so read_cb can just return None without worrying
+
+no, wait, that doesn't work, because we want specific return values in read_cb or in syscall initiation callbacks or whatever
+
+the relationship to exception-propagation is interesting, I bet I need to solve that together with this...
+
+so thinking about that...
+I guess with exceptions, we don't want them propagating into the event loop, we want to redirect them somewhere else: obviously
+
+yeah okay so also this is a matter of wrapping them to get the return value
+
+which is needed for futures too I guess
+
+yeah so getting the answer value and getting the return type... both of those are the same thing... right? kinda...
+well not really... I mean, they're distinguishable in Python at least, easily...
+so I can make them different if I like...
+
+but exceptions can happen at any time, so I need some kinda wrapper, for sure...
+
+heck... StopIteration is an exception, even...
+
+oh also interesting is: can we make this interoperate with trio tasks?
+
+ok so my existing future works... reasonably... er... I guess?
+oh yeah and it catches the exceptions too. hmm....
+
+oh yeah I could just do a yield interception thing here and send a stream of those somewhere. that would be pretty easy
+um will that even work lol
+
+aha yes. I have this wrapper function (like wrapper in Future.start), which does the yield interception, and sends it on a queue,
+and that just keeps running even after we stop caring about it.
+
+okay so that's a *basic* way to do that.
+we should code that up just to see how it works.
+
+the reason that works is because the wrapper can do a shift to suspend itself,
+and that's not a problem.
+
+okaaaaaaaaaaaayyyyyyyyy....
+
+some kind of reset where I decide how to invoke the handler seems in order...
+
+which, again, we have with yield, so...
+maybe if we could... make some yield wrapper which handles the annoying bits.
+
+wait okay this doesn't make any sense though
+
+i guess the "return a thing from the cb register function" approach is necessary...
+
+it's awkward though
+
+oh right, if I... was a handler and I got data + continuation back when something did an effect...
+
+and I sent that continuation to someone else so that I wasn't the handler for it anymore
+(which is what we do)
+
+then, why should I expect to get its return value? interesting...
+
+the explicit started function call is retained the whole time...
+
+what if I need multi-prompt to do this!!!
+maybe multi-prompt is the key!!
+
+well... i'd want to be yielding to the innermost prompt, but only sometimes,
+which is what I can already do
+
+okay so maybe I should be explicitly capabilit-passing, that's nice and typed after all...
+but what would that look like...
+
+wait so... reset means we can't get the result anymore...
+but i guess futures fix that..
+
+so um, we'd start the final write with a future?
+and then wait for the result?
+
+oh and translating the started thing...
+
+um, no, if we had explicit capability passing we would call it as normal,
+just passing a wrapper function, or something,
+around the write_started function, which is passed down as the syscall_started function
+
+what if i just made a dynamically scoped function like that?
+
+okay, sure, but then how would I stop the waiting?
+
+the nice thing about the answer type is that it is returned *once we've stopped waiting*
+
+i guess i can just have an Event that i set, and wait on that in the main coroutine which launched the other as a Future
+
+but that is gross, obviously...
+
+okay so... "started up" as an effect... yielding the started thingy, as an effect...
+i mean, i don't even really like effects! i prefer... resume another continuation... that's your "effect"...
+
+well i guess from that standpoint, the event is fine....
+
+we resume the continuation that's passed down...
+
+yeah, hm, that's interesting.
+i mean, basically my current approach is undelimited, right?
+in.. some sense.
+because... the return value from the function passed to callcc goes nowhere
+
+well okay no they actually are delimited, obviously.
+
+but still, maybe using the answer type is unnecessary... maybe I prefer the explicitly passed stack/continuation that you invoke
+
+that's tempting, quite tempting...
+
+it's pretty straightforward as an implementation... assuming we can do dynscope.
+oh, but if we do this, we should think also about how the... concurrency/nursery/whatever stuff will work with dneio
+
+if it can handle both... that's great!
+
+so i guess we'd... bind this dynvar around the last write,
+and then inside the syscall server, we'd set it to None then invoke it
+
+except, of course, who knows if dynvars even work...
+(they don't)
+
+but maybe we can get them to work, hm m m m.....
+
+or maybe I should actually follow my supposed principles, and pass them as an explicit argument.
+
+how would that work?
+I guess all the single-syscall helpers would take a continuation for when the syscall had started?
+
+and then, in write, we'd also have a continuation for, like, when the write has happened?
+
+kind of annoying to have a continuation for when the syscall has started, when "reset" works just fine for that...
+
+um. can I just do that, actually?
+
+oh, yeah, i can't just do that for write, right...
+
+oh! but!
+I can use that to avoid adding this as an explicit argument everywhere! yeah, that will be... nice, I guess.
+
+so just write has a "started" argument. all the syscall wrappers implicitly do it.
+kinda hacky for the syscall, but fine.
+
+okay. this feels good, actually.
+being able to avoid modifying the actual syscall wrappers is nice.
+
+it makes this more modular...
+*** TODO actually try out this started argument thing
+basically... there's a continuation which is an optional argument...
+and if it's passed, we invoke it after starting the last write with reset.
+
+eh, let's just pass down the argument into the syscall interface, that simplifies things
+
+so then outside write...
+we need some kind of invocation where we...
+
+well, we just need to shift into it, basically.
+
+so...
+
+await shift(lambda cont: Future.start(write(ptr, data, submitted=cont)))
+
+basically?
+
+oh, except we actually want that Future. um...
+
+oh, no, wait, actually we don't care about that future.
+
+we don't... actually care about the result.
+
+so:
+await shift(lambda cont: reset(write(ptr, data, submitted=cont)))
+
+um, maybe.
+
+it would be nice to have an actual thing which catches the thrown exceptions.
+a nursery-style abstraction, but with dneio...
+
+anyway, assuming we have that, this is basically the approach.
+
+that's basically all of it...
+right?
+
+await shift(lambda cont: reset(write(ptr, data, submitted_cb=cont)))
+await fd.bind(ptr)
+
+yeah..
+
+maybe I should say "run" rather than reset, in the nursery thing, as a *slight* concession to understandability
+
+await shift(lambda cont: run(write(ptr, data, submitted_cb=cont)))
+await fd.bind(ptr)
+
+seems nice
+
+or start, really
+since it's not running.
+yeah let's go with start.
+
+await shift(lambda cont: start(write(ptr, data, submitted_cb=cont)))
+await fd.bind(ptr)
+
+good good.
+now we just need the nursery-style abstraction
+
+which, I guess, will have a list of results, maybe?
+*** TODO make a dneio nursery-style abstraction
+to catch exceptions
+
+i *could* call it nursery. or I could call it "eventloop" or something.
+I guess it all depends on what exactly it turns out to be...
+
+so it'll be a contextmanager...
+and when we open it, we have some list...
+
+and we can start things in it...
+and the start function... does something.
+
+and then, at the end, we want to wait for all of them to be done.
+
+more specifically, *any* of them to be done, right?
+so that exceptions can cancel the rest.
+
+I guess... we can... have a continuation in there (or a future, really),
+where we put the exceptions or whatever.
+
+um, or... I guess we just have some list of outcomes or None...
+
+and then we have a continuation which we just poke if it's there,
+and otherwise not.
+just like Future, really...
+
+and do we support cancellation somehow?
+no, lol.
+
+i mean, so in these other instances... (e.g. epoller)
+when there's something blocked, and we fail in an operation, we send it an exception.
+can we do that here?
+
+oh yeah that's right uh.
+coroutines already have a close() I guess...
+
+anyway so to cancel these things would require deregistering them from the handlers which is not feasible.
+
+and anyway we can't cancel syscalls so I reject the thought, basically.
+
+so... when we throw out, we basically...
+just skip the aexit.
+**** shower thoughts
+okay. didn't make much progress...
+
+basically it's a matter of linearity/relevance/no support for contraction
+
+if we had relevant types, we could just use futures and it would be fine.
+
+but contextmanagers are how python implements relevance.
+
+it's actually kind of awkward: it means you can't return something that has a coroutine inside!
+which stinks.
+
+yeah.. if you could return such a thing...
+you'd want relevance to enforce that we grab its exception...
+
+except, when it terminates, we want (or, at least trio wants) the exception to be sent immediately...
+
+so it's not just relevance, I guess?
+
+it's relevance + cancellation support?
+but we don't have cancellation support
+
+yeah the cancellation is not important or wanted.
+
+getting the exception at the end of your program is fine...
+
+if you want it earlier, set up some explicit cancellation.
+
+okay so... maybe... actually...
+
+we just... enter a contextmanager when we create the future?
+
+basically, we do an async with on the Future, so that if it dies, we get the result? um...
+
+that's an interesting idea, but...
+
+okay so I guess that would be kind of like using an ExitStack to handle checking for all the exceptions.
+
+the ExitStack is how we handle the exceptions...
+
+and what we pass down to everything, to allow the futures to be registered.
+
+hm, interesting, interesting.
+
+so... maybe a Future.start which is actually a contextmanager?
+and we make multiple of them by just doing stack.enter_context?
+
+ah but what if we get the result from something and... we've already retrieved the exception?
+
+maybe... the future should only allow getting the exception from the contextmanager?
+
+could Nursery could be built instead out of AsyncExitStack + a trio.start_soon function which returns a contextmanager?
+(ignoring how that would change the cancellation semantics)
+
+wait, uh, how would that change the cancellation semantics?
+I guess...
+there's no support in AES/trio.start_soon for... cancelling something...
+I guess it's just a matter of...
+maybe making a cancel scope and having tasks inside it implicitly cancel that scope?
+
+anyway, idc about trio (since they don't care about me)
+
+so...
+a simple start function which returns a contextmanager...
+and the contextmanager yields some mutable thing...
+and when the contextmanager has aexited, the mutable thing is set to contain the return value...
+
+that seems pretty simple?
+
+ugh annoying: the entry is sync, but the exit is async.
+which is not an api that asyncexitstack supports, annoyingly
+
+ummmm let's see....
+
+await shift(lambda cont: start(write(ptr, data, submitted_cb=cont)))
+
+so... i could do...
+
+await shift(lambda cont: Future.start(stack, write(ptr, data, submitted_cb=cont)))
+
+or, well, what I want to do is:
+
+await shift(lambda cont: stack.enter_async_context(Future.start(write(ptr, data, submitted_cb=cont))))
+
+but that won't work...
+
+I *guess* I could take a hard dep on the stack, actually;
+that might not be so bad...
+
+yeah I guess it would make make_n_in_parallel nicer heh, and that's the only place I'm using it...
+
+okay yeah so, basically, if an exception is being thrown up, I don't wait (in aexit)
+
+right, that way I can avoid the annoying double-throw thing.
+**** more work
+wait, okay.
+do we even need this?
+
+I mean, *we* are careful to not discard return values.
+and make_n_in_parallel already has behavior which matches the return stack thing.
+
+and, we aren't going to do any kind of cancellation.
+
+so, it's useless!
+
+so we'll just be careful and retrieve the Future result at the end. ezpz.
+
+so it's really:
+
+#+begin_src python
+write_fut = await shift(lambda cont: Future.start(write(ptr, data, submitted_cb=cont)))
+await fd.bind(ptr)
+await write_fut.get()
+#+end_src
+
+await ptr.write(data)
+await fd.bind(ptr)
+
+
+oh, argh, but. I also want to retrieve the Future. hm.
+was that the entire point in the first place? lol
+
+okaaaaaaaaaaaay.
+also, when I do a write...
+I steal the buffer so it's no longer valid.....
+cool... cool... cool.......
+
+aha, easily fixed!
+
+I'll just have the submitted_cb return the WrittenPointer!
+**** rethinking
+okay, what if I just have write/ptr return WrittenPointer after submission and before the actual write,
+*all the time*?
+
+there's two issues there:
+1. writes can fail
+2. writes can be used in other tasks
+
+but, I could reasonably disallow sharing pointers between tasks.
+if I can figure out how to make writes not fail...
+
+then I can just have writes be lazy automatically.
+
+yeah. yeah that seems even better still.
+
+so how do I prevent writes from ever failing?
+i guess what I want is, if a write fails, we kill everything later that happened in the pipeline.
+i.e. we just abort the task
+
+sigsegv, y'know.
+**** shower thoughts
+okay!
+
+some thoughts:
+
+making memory single-task-only is definitely good:
+that removes the need for locking around pointer usage!
+shared memory is unlikely to actually be useful, and if it is, it can be added back later carefully, with some kind of "move pointer between tasks" serialization barrier
+
+the worry about write failing, I'll just forget about, it's not a big deal
+or, rather, I'll defer solving it to later, but use it now, ha ha.
+
+I can make everything lazy e.g. getsockname
+it can return a pointer which you read if you want to get the value back into python
+then everything will just be promises implicitly
+I could even do this with fds, if i wanted to predict fd numbers and disallow fd table sharing
+
+the lazy write could also remove the need for the memory operation batching interface, too.
+
+yes, this is good
+*** TODO should exceptions from shift functions be thrown back into the coroutine?
+maybe, maybe, yeah...
+
+eh... no... maybe not...
+*** TODO do the pipelining on the read side
+that should be easier and maybe helps see what's needed.
+*** TODO write a test to make sure that SMT works with concurrent usage from multiple tasks
+(um i'm confused how this writing in SocketMemoryTransport works)
+okay so wait, what's happening here is...
+we have multiple syscalls being issued concurrently *in the same task*
+they aren't in parallel. so there's no problem of actual hard interleaving.
+
+but wait, um.
+aren't the recvs... possibly in different tasks?
+so they'll... interleave?
+
+they're not sequenced against each other, is the thing...
