@@ -89,7 +89,7 @@ from rsyscall.near.sysif import SyscallError
 from rsyscall.memory.ram import RAM
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 from dataclasses import dataclass
-from rsyscall.struct import Int32, T_fixed_size
+from rsyscall.struct import Int32, T_fixed_size, HasSerializer
 from rsyscall.sys.syscall import SYS
 from rsyscall.sys.socket import SOCK, SOL, SO, Sockaddr, SockaddrStorage, T_sockaddr, Sockbuf
 from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EPOLL_CTL, EpollFlag
@@ -538,7 +538,7 @@ class AsyncFileDescriptor:
         while to_write.size() > 0:
             written, to_write = await self.write(to_write)
 
-    async def write_all_bytes(self, buf: bytes) -> None:
+    async def write_all_bytes(self, buf: t.Union[bytes, HasSerializer]) -> None:
         """Write all these bytes to the fd, retrying on partial writes until complete.
 
         This allocates and performs a store to memory on each call. This is inefficient if you
