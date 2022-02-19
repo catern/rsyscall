@@ -32073,6 +32073,149 @@ I could even do this with fds, if i wanted to predict fd numbers and disallow fd
 the lazy write could also remove the need for the memory operation batching interface, too.
 
 yes, this is good
+*** TODO make pointers task-specific
+okaaay...
+tricky...
+we allocate the environment memory and share it between tasks in as_arglist
+
+it's immutable memory so...
+technically we should be able to share it.......
+
+maybe we do need the locking thing, and we just lock it with *a specific task*?
+
+so when a task is using it...
+no other task can be?
+
+well that doesn't help here, we want the arglist_ptr to be shared!
+
+well let's first just try reallocating every time and see what happens next
+
+okay now we're...
+oh, we're failing because of erroneous allocation. hah!
+
+hm. it's kind of annoying though... oh wait no it's fine to allocate "in the child";
+it will still use the most local/efficient memory transport
+
+okay, more allocations in the parent that are reused in the child. hm.
+
+so if we had some kind of support for constant, read-only allocations, we'd be good...
+
+oh, but we'd have to change things anyway.
+because, what I'm doing now:
+
+whatever = parent.ptr(...)
+child.syscall(whatever)
+
+would be unsafe if ptr/writing was lazy!
+
+so maybe we need some kind of const_ptr thing which allows it to be shared...
+
+but that's complex and requires us to keep track of what things read and write,
+so let's just make them task-specific for now.
+
+okay let's try that.
+
+okay, some issues with... RAM? we aren't inheriting the transport? um.... hmm....
+
+okay so this is unfortunate hmm... we aren't actually doing reads/writes in the child task...
+
+oh, is this just to avoid making a new connection for each task? yes, I think it is.
+
+screw that! we need a connection for each task, and let's make one!
+
+right, a new data pipe for each task. without that, we have some really complicated inter-task dependencies which,
+I don't think are necessary lol.
+ultimately we could just put the data on the syscall pipe
+
+(but that's also kind of scary so we don't)
+(but we could, we really could, at least as long as we think recv WAITALL can't ever fail,
+which is something we need to guarantee anyway)
+**** shower thoughts
+okay actually maybe I should just go ahead and do memory accesses with the syscall pipe
+
+have the single class implement both SyscallInterface and MemoryTransport, easy peasy.
+
+or, no, actually just add it to SysacllInterface
+
+there's one reason not to do that:
+so we can use direct reads/writes to mutate memory for tasks in the same address space
+(or so we can use process_vm_readv/writev for tasks on the same kernel)
+
+but, if we did that, we'd be violating our sequencing guarantees!
+we'd be doing concurrent access to memory which would allow things to be corrupted
+
+so, even though it's less efficient to do everything through the single pipe interface,
+it makes sequencing much easier which makes it viable to make memory writing lazy
+
+heck could we even make memory writing lazy without this? not afaict.
+well not safely anyway.
+
+so I'll just add it to SyscallInterface,
+instead of doing these other changes...
+*** TODO move memory read/write into SI and use the syscall pipe
+s e r i a l i z a t i o n
+
+hmmmmm i haven't persuaded myself yet that this is a good idea
+
+i mean, aren't i sacrificing what i've worked hard to guarantee?
+and, all the efficiency benefits of directly serialized writes!
+
+I wonder, can I serialize local writes against same address space syscalls somehow?
+**** more thoughts
+Maybe if there was an in kernel memcpy?
+I could write some other buffer in the parent then do the actual copy in the other task. Hmmm
+
+Yeah and that's what we're relying on anyway, running in the same address space as the python interpreter
+
+In kernel memcpy...
+
+Well obviously I can make two calls to put it into a pipe and take it back out....
+
+Okay what if I didn't even use memcpy for local pointers?
+
+What if instead I just had a way to make a pointer out of a Python object?
+
+Well... That would be a headache, because I would need some interface for pointer, maybe...
+
+But it could be the same as const pointer kinda since there are the same restrictions....
+
+Right cffi pointers... Actually that would be interesting...
+
+I even have an allocation interface...
+
+I don't even need to disallow writing, do I?
+
+But then partial freeing won't work...
+
+Using a different memory allocator for local stuff is...
+Worryingly complicating things.
+Increasing the amount of difference between local and remote...
+
+For that matter so is using local memcpy. Actually by that argument, let's just use pipe based writing...
+
+Yeah it's faster in the remote case so let's do it locally too
+
+The only trick would be some kind of memcpy syscall, but we'd want to make that in the syscall interface anyway.
+Not in a separate transport interface. Because it would still be serialized.
+
+Yeah so we can always add direct memcpy back later, with some trick.
+
+Heck maybe the same-kernel interface can also have other optimizations too!
+We can use process vm readv and some shared memory buffer and so on.
+
+Yeah okay good good.
+
+We'll leave making local memory operations more efficient for a later time, where we'll also make the change for local syscalls.
+
+sounds good.
+**** okay, now to actually do it
+so... we'll add the thing to syscallinterface and... gradually switch to using that?
+
+right, we'll add it to the syscaller, then replace usage of transport in RAM with it in a few places, then some more...
+**** de-batch syscallconnection
+the batching is going to make life hard
+
+we can just write one at a time, that's fine, with lazy ptr writes it won't be costly
 *** TODO should exceptions from shift functions be thrown back into the coroutine?
 maybe, maybe, yeah...
 
