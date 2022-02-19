@@ -137,33 +137,17 @@ class SyscallConnection(SyscallInterface):
 
     async def _run_requests(self) -> None:
         while True:
-            # wait until we have a batch to do, received from self.pending_requests
-            requests = await self.request_queue.get_many()
-            self.logger.debug("_run_requests: get_many: %s", requests)
-            # write remaining_reqs to memory
-            ptr: Pointer[StructList] = await self.tofd.ram.ptr(
-                StructList(RsyscallSyscall, [syscall for syscall, coro in requests]))
-            self.logger.debug("_run_requests: performed ptr for: %s", requests)
-            ptr_to_write, reqs_to_write = ptr, requests
-            # TODO write requests to tofd in parallel with receiving more
-            # requests from the channel and writing them to memory
+            syscall, coro = await self.request_queue.get_one()
+            self.logger.debug("_run_requests: get_one: %s", syscall)
             try:
-                while ptr_to_write.size() > 0:
-                    _, ptr_to_write = await self.tofd.write(ptr_to_write)
-                    # TODO mark the requests as complete incrementally,
-                    # so if we do have a partial write,
-                    # we don't block earlier requests on later ones.
+                await self.tofd.write_all_bytes(syscall)
             except OSError as syscall_error:
                 exn = SyscallSendError()
                 exn.__cause__ = syscall_error
-                # TODO not necessarily all of the syscalls have failed...
-                # some maybe have been actually written, if we had a partial write
-                for syscall, cb in reqs_to_write:
-                    cb.throw(exn)
+                coro.throw(exn)
             else:
-                for syscall, coro in reqs_to_write:
-                    self.logger.debug("forward_request: %s", syscall)
-                    self.response_queue.request_cb(syscall, coro)
+                self.logger.debug("forward_request: %s", syscall)
+                self.response_queue.request_cb(syscall, coro)
 
     async def _run_responses(self) -> None:
         buffer = AsyncReadBuffer(self.fromfd)
