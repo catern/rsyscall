@@ -39,7 +39,7 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-SendType = t.TypeVar('SendType')
+SendType = t.TypeVar('SendType', contravariant=True)
 ReturnType = t.TypeVar('ReturnType')
 AnswerType = t.TypeVar('AnswerType')
 YieldType = t.TypeVar('YieldType')
