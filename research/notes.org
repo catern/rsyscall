@@ -32205,17 +32205,83 @@ We can use process vm readv and some shared memory buffer and so on.
 
 Yeah okay good good.
 
-We'll leave making local memory operations more efficient for a later time, where we'll also make the change for local syscalls.
+We'll leave making local memory operations more efficient for a later time,
+where we'll also make the change for local syscalls.
 
 sounds good.
 **** okay, now to actually do it
 so... we'll add the thing to syscallinterface and... gradually switch to using that?
 
 right, we'll add it to the syscaller, then replace usage of transport in RAM with it in a few places, then some more...
-**** de-batch syscallconnection
+**** DONE de-batch syscallconnection
 the batching is going to make life hard
 
 we can just write one at a time, that's fine, with lazy ptr writes it won't be costly
+**** DONE actual implementation of write
+aha, it's easy:
+we can just call a regular syscall function, starting it with reset/Future.start,
+and that will get sequenced,
+and then we can do a write_to_syscall_pipe thingy,
+which will be sequenced immediately after!
+
+so:
+
+reset(self.server_infd.recv(ptr))
+self.write_to_pipe(data)
+
+ezpz!
+
+wow it... works?
+**** TODO implement read
+and... then once I have them both... I can swap out the transport?
+
+actually, let's just do writes first...
+**** TODO okay, there's some hang
+ARGH
+it's not working
+
+okay okay
+
+we have to check to see if this is real or not
+
+okay I found the blocking error, it's just an exception
+**** make this exception actually raise properly
+it is horrible that this just blocks forever
+
+okay let's punt on that for a bit
+**** TODO work out the insane ordering stuff in persistent syscall connection
+shouldn't this just be... handling each request as it comes in, itself?
+
+instead of... this crazy list thing?
+
+if it just handles ordering itself, then... we should maintain order?
+
+oh, hey! also, having this new_conn_cbs.append thing breaks the invariant of!
+that...
+we've submitted the syscall when we return?
+
+no, I guess it doesn't break that, because it doesn't break the sequencing...
+
+okay yeah actually I think something which just guards the conn would be good;
+that would allow access to the conn to block...
+
+alternatively, maybe we could replace the conn with something that blocks??
+instead of None??
+
+then what do we do on syscallsenderror? i guess we loop around...
+
+and we're the first to hit the... blocking fake conn?
+
+so yeah, two possibilities so far:
+1. block on access to the conn
+2. swap out the conn with a blocking stub version while it's not there
+
+yeah but the question is, how do we replace the blocking stub with the real thing later?
+
+we need to do this same kind of, submit all our requests and check there are no new requests, etc,
+as we currently do with the new_conn_cbs list.
+
+so I think just guarding access to the conn with a shift would... be pretty clean and good.
 *** TODO should exceptions from shift functions be thrown back into the coroutine?
 maybe, maybe, yeah...
 
