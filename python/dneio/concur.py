@@ -92,15 +92,17 @@ class Future(t.Generic[T]):
     _result_cb: t.Optional[Continuation[T]] = None
 
     @staticmethod
-    def start(func: t.Callable[[], t.Awaitable[T]]) -> Future[T]:
+    def start(coro: t.Awaitable[T]) -> Future[T]:
         self = Future[T]()
-        @functools.wraps(func)
         async def wrapper() -> None:
-            result = await outcome.acapture(func)
+            result = await outcome.acapture(lambda: coro)
             self._result = result
             if self._result_cb:
                 self._result_cb.resume(result)
-        reset(wrapper())
+        wrapper_coro = wrapper()
+        wrapper_coro.__name__ = getattr(coro, "__name__", "wrapper")
+        wrapper_coro.__qualname__ = getattr(coro, "__qualname__", "wrapper")
+        reset(wrapper_coro)
         return self
 
     def get_cb(self, cb: Continuation[T]) -> None:
@@ -117,9 +119,9 @@ class Future(t.Generic[T]):
 async def make_n_in_parallel(make: t.Callable[[], t.Awaitable[T]], count: int) -> t.List[T]:
     "Call `make` n times in parallel, and return all the results."
     return [await fut.get() for fut in
-            [Future.start(make) for _ in range(count)]]
+            [Future.start(make()) for _ in range(count)]]
 
 async def run_all(callables: t.List[t.Callable[[], t.Awaitable[T]]]) -> t.List[T]:
     "Call all the functions passed to it, and return all the results."
     return [await fut.get() for fut in
-            [Future.start(func) for func in callables]]
+            [Future.start(func()) for func in callables]]
