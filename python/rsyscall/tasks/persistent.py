@@ -73,7 +73,7 @@ pidfds, which hasn't yet been added.
 
 """
 from __future__ import annotations
-from dneio import Continuation, shift
+from dneio import Continuation, shift, RequestQueue, reset
 import typing as t
 import rsyscall.near.types as near
 import rsyscall.far as far
@@ -115,72 +115,94 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class Get:
+    pass
+
+@dataclass
+class Broken:
+    conn: SyscallConnection
+
+@dataclass
+class New:
+    conn: SyscallConnection
+
 class PersistentSyscallConnection(SyscallInterface):
     def __init__(self, conn: SyscallConnection) -> None:
-        self.conn: t.Optional[SyscallConnection] = conn
-        self._activity_fd_conn: t.Optional[SyscallConnection] = conn
-        self.logger = self.conn.logger
-        self._new_conn_cbs: t.List[Continuation[SyscallConnection]] = []
-        self._break_exc: t.Optional[SyscallSendError] = None
-        self._break_cb: t.Optional[Continuation[SyscallSendError]] = None
+        self._conn: t.Optional[SyscallConnection] = conn
+        self.logger = self._conn.logger
+        self.conn_queue: RequestQueue[t.Union[Get, Broken, New], t.Union[SyscallConnection, None]]  = RequestQueue()
+        reset(self._run_conn_queue())
 
-    def wait_for_break_cb(self, cb: Continuation[SyscallSendError]) -> None:
-        self._break_cb = cb
-
-    async def wait_for_break(self) -> SyscallSendError:
-        assert self._break_cb is None
-        if self._break_exc:
-            exc = self._break_exc
-            self._break_exc = None
-            return exc
-        else:
-            return await shift(self.wait_for_break_cb)
-
-    def set_new_conn(self, conn: SyscallConnection) -> None:
-        # to preserve the global relative ordering of syscalls,
-        # we don't set self.conn again until syscalls stop appearing on self._new_conn_cbs
-        # but we have to set activity_fd_conn because some callback might use get_activity_fd
-        self._activity_fd_conn = conn
-        while self._new_conn_cbs:
-            cbs = self._new_conn_cbs
-            self._new_conn_cbs = []
-            for cb in cbs:
-                cb.send(conn)
-        self.conn = conn
+    async def set_new_conn(self, conn: SyscallConnection) -> None:
+        await self.conn_queue.request(New(conn))
 
     async def shutdown_current_connection(self) -> None:
         # Shut down write end of the current connection; any currently running or pending
         # syscalls (such as epoll_wait) will be able to finish and receive their response,
         # after which the syscall server will close its end of the current connection and
         # start listening for a new connection.
-        if self.conn:
-            await self.conn.fd.handle.shutdown(SHUT.WR)
+        # We don't need to bother sequencing this with _run_conn_queue; it will be treated like the
+        # connection spontaneously failing, which is something we want to be able to tolerate.
+        if self._conn:
+            await self._conn.fd.handle.shutdown(SHUT.WR)
 
     async def close_interface(self) -> None:
-        if self.conn:
-            await self.conn.close_interface()
+        if self._conn:
+            await self._conn.close_interface()
 
     def get_activity_fd(self) -> FileDescriptor:
-        if self._activity_fd_conn:
-            return self._activity_fd_conn.get_activity_fd()
+        if self._conn:
+            return self._conn.get_activity_fd()
         raise Exception("can't get activity fd while disconnected")
+
+    async def _run_conn_queue(self) -> None:
+        while True:
+            req, coro = await self.conn_queue.get_one()
+            if isinstance(req, Get):
+                coro.send(self._conn)
+            elif isinstance(req, Broken):
+                coro.send(None)
+                if req.conn is self._conn:
+                    # the current connection is broken
+                    self._conn = None
+                    # accumulate get requests until we get a new working connection
+                    blocked_gets = []
+                    while True:
+                        req, coro = await self.conn_queue.get_one()
+                        if isinstance(req, Get):
+                            blocked_gets.append(coro)
+                        elif isinstance(req, Broken):
+                            # we will likely get multiple Broken requests when a connection breaks,
+                            # from multiple syscalls. just ignore them.
+                            coro.send(None)
+                        else:
+                            assert isinstance(req, New)
+                            # it's important to set this here since some coro might use get_activity_fd.
+                            self._conn = req.conn
+                            coro.send(None)
+                            # resume all the blocked get requests in the same order they were submitted;
+                            # this preserves the sequencing of these syscalls, as required by SyscallInterface
+                            for coro in blocked_gets:
+                                coro.send(self._conn)
+                            break
+                else:
+                    # just ignore a Broken notification for anything but the current connection,
+                    # the sender will just retry and get the current connection
+                    pass
+            else:
+                assert isinstance(req, New)
+                self._conn = req.conn
+                coro.send(None)
 
     async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         while True:
-            if self.conn is None:
-                conn = await shift(self._new_conn_cbs.append)
-            else:
-                conn = self.conn
+            conn = await self.conn_queue.request(Get())
+            assert conn is not None
             try:
                 return await conn.syscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
             except SyscallSendError as exc:
-                if self.conn is conn:
-                    self.conn = None
-                    self._activity_fd_conn = None
-                    if self._break_cb:
-                        self._break_cb.send(exc)
-                    else:
-                        self._break_exc = exc
+                await self.conn_queue.request(Broken(conn))
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def clone_persistent(
@@ -324,7 +346,7 @@ class PersistentProcess(Process):
             access_syscall_sock,
             serverfd,
         )
-        self.task.sysif.set_new_conn(conn)
+        await self.task.sysif.set_new_conn(conn)
         # Fix up RAM with new transport
         # TODO technically this could still be in the same address space - that's the case in our tests.
         # we should figure out a way to use a LocalMemoryTransport here so it can copy efficiently
