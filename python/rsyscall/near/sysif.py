@@ -126,7 +126,7 @@ class Syscall:
         args = [self.arg1, self.arg2, self.arg3, self.arg4, self.arg5, self.arg6]
         while args and args[-1] == 0:
             args.pop()
-        return f"{self.number}({','.join(map(str, args))})"
+        return f"{self.number!s}({','.join(map(str, args))})"
 
     def __repr__(self) -> str:
         return str(self)
