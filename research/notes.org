@@ -32299,3 +32299,142 @@ aren't the recvs... possibly in different tasks?
 so they'll... interleave?
 
 they're not sequenced against each other, is the thing...
+* TODO tune allocator to be much better
+I guess a simple bump allocator is good...
+
+but we want to be able to compact memory...
+
+oh can we use that trick in that paper?
+
+oh!
+also, let's try stack allocation! duh!
+I think a great deal of our allocations follow stack discipline.
+that should be an easy win.
+
+yyyyeaaahhhh
+
+okay but we need to find a good API for stack-discipline memory...
+or...
+or maybe we can just make it work by default?
+
+like, if you follow a stack discipline, you get efficient allocation for free? hm...
+
+like... let's see...
+
+we maintain a bump pointer...
+
+and we increment and decrement it on allocation and freeing...
+
+i don't think __del__ works that way tho...
+
+okay. what if we just...
+hmmm
+
+interesting, mesh uses a single large file for the heap, interesting
+
+okay so they use a SIGSEGV handler to block writes while the remapping is happening... interesting...
+
+we could just SIGSTOP the thread or something... well no because we need to syscall to move memory around...
+
+the sigsegv handler is interesting...
+
+i guess that would work with syscalls...
+
+compacting by moving memory to the *same offset* is really quite interesting.
+
+there's... no need to... have...
+two allocations be moved to the same page?
+no I guess we do need to just merge pages wholesale.
+otherwise the other things in the page will move...
+
+stack discipline is probably going to be our best bet... but...
+I guess most allocators don't actually have that!
+they rely on nursery arenas etc...
+
+heck let's just try an actually naive one where we never return freed memory.
+
+or, never compact anything... or never try to reuse old memory...
+
+that would cause lots of mmaps though...
+
+is there some way I can use a... sigsegv handler...
+to avoid the pain of locking pointers...
+
+wow i can't believe my memory allocator is so important!! fml!!
+
+okay so let's think about stack allocation. I *could* have an explicit stack discipline thing.
+
+and use that myself internally.
+
+and not bother forcing users to use it...
+
+honestly, let's just do that?
+
+I guess the issue is, how do I ensure that I don't leak those stack allocated pointers?
+
+well my pointers have explicit validity so it's safe, just a lil inconvenient...
+
+also, we can't, like, just,
+have getsockname return an allocated pointer;
+we need to do the read...
+
+urgh, I *could* just write a traditional good memory allocator SIGH
+
+oh hm actually... can we do mmaps lazily?
+well, not by passing 0...
+but...
+
+or wait, why don't we just mmap a big thing up front and use that?
+we can grow it later if necessary
+
+it won't actually allocate memory
+
+or, hm.
+
+maybe i could allocate each thing in a separate page,
+*in my big space*.
+
+like mmap 2**32 pages or something, then just put each thing in a separate page,
+and munmap it (lazily) when we free the thing.
+
+okay... that could be good.
+
+one issue is things which cross pages but those should be fine.
+
+yeah so this egregiously wastes memory but that's fine
+
+and we'll just ignore errors from munmap I guess? like we do from close? eh... meh.. no we'll throw them.
+
+should I change the allocator to not be shared between tasks?
+
+it... wouldn't be that costly...
+since we wouldn't often be calling mmap...
+
+and it would reduce wasted memory and fragmentation...
+
+since we'd... just... deallocate stuff?
+
+actually, mostly the things that live a long time are big, so actually we don't have too much wasted memory here.
+
+what we do have a lot of is, munmap calls... which is kinda noisy...
+but it might be fine?
+okay let's just do it
+** shower thoughts
+allocate multiple things in a page/mapping
+
+munmap the page when everything is gone from it
+
+if something doesn't fit in a single page, move to the next page and make a single larger mapping for it
+
+don't allow merging allocations across mappings/pages
+
+have logic like:
+
+start_idx = align(start_idx, alignment)
+if start_idx > end_idx:
+  start_idx = new_page
+allocations.append(allocate(start_idx, min(requested_size, remaining_size)))
+while sum(alloc.size for alloc in allocations) < requested_size:
+  allocations.append(new_page.allocate())
+
+note that this doesn't do the "move to the next page" part
