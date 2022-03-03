@@ -16,7 +16,7 @@ from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.handle import Pointer, FileDescriptor
 from rsyscall.near.sysif import SyscallHangup, SyscallSendError, SyscallInterface, Syscall, raise_if_error
 from rsyscall.struct import Struct, StructList
-from rsyscall.sys.socket import SHUT
+from rsyscall.sys.socket import SHUT, MSG
 from rsyscall.sys.syscall import SYS
 import logging
 import trio
@@ -138,7 +138,7 @@ class SyscallConnection(SyscallInterface):
             syscall, coro = await self.request_queue.get_one()
             self.logger.debug("_run_requests: get_one: %s", syscall)
             try:
-                await self.fd.write_all_bytes(syscall)
+                await self.fd.send_all_bytes(syscall, MSG.NOSIGNAL)
             except Exception as syscall_error:
                 exn = SyscallSendError()
                 exn.__cause__ = syscall_error

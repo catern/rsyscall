@@ -92,7 +92,7 @@ from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 from dataclasses import dataclass
 from rsyscall.struct import Int32, T_fixed_size, HasSerializer
 from rsyscall.sys.syscall import SYS
-from rsyscall.sys.socket import SOCK, SOL, SO, Sockaddr, SockaddrStorage, T_sockaddr, Sockbuf
+from rsyscall.sys.socket import SOCK, SOL, SO, Sockaddr, SockaddrStorage, T_sockaddr, Sockbuf, MSG
 from rsyscall.sys.epoll import EpollEvent, EpollEventList, EPOLL, EPOLL_CTL, EpollFlag
 from rsyscall.fcntl import O, F
 
@@ -578,6 +578,43 @@ class AsyncFileDescriptor:
         """
         ptr = await self.ram.ptr(buf)
         await self.write_all(ptr)
+
+    async def send(self, buf: Pointer, flags: MSG) -> t.Tuple[Pointer, Pointer]:
+        """Call `FileDescriptor.send` without blocking the process.
+
+        See `AsyncFileDescriptor.write`.
+
+        """
+        while True:
+            try:
+                async with self.epolled.wait_for_and_discard_after(EPOLL.OUT|EPOLL.ERR):
+                    return await self.handle.send(buf, flags)
+            except OSError as e:
+                if e.errno == errno.EAGAIN:
+                    self.epolled.status.negedge(EPOLL.OUT|EPOLL.ERR)
+                else:
+                    self.epolled.status.posedge(EPOLL.ERR)
+                    raise
+            else:
+                self.epolled.status.posedge(EPOLL.OUT)
+
+    async def send_all(self, to_write: Pointer, flags: MSG) -> None:
+        """Write all of this pointer to the fd, retrying on partial writes until complete.
+
+        See `AsyncFileDescriptor.write_all` and `AsyncFileDescriptor.send`.
+
+        """
+        while to_write.size() > 0:
+            written, to_write = await self.send(to_write, flags)
+
+    async def send_all_bytes(self, buf: t.Union[bytes, HasSerializer], flags: MSG) -> None:
+        """Write all these bytes to the fd, retrying on partial writes until complete.
+
+        See `AsyncFileDescriptor.write_all_bytes` and `AsyncFileDescriptor.send`.
+
+        """
+        ptr = await self.ram.ptr(buf)
+        await self.send_all(ptr, flags)
 
     @t.overload
     async def accept(self, flags: SOCK=SOCK.NONE) -> FileDescriptor: ...
