@@ -154,7 +154,7 @@ class PersistentSyscallConnection(SyscallInterface):
         # after which the syscall server will close its end of the current connection and
         # start listening for a new connection.
         if self.conn:
-            await self.conn.tofd.handle.shutdown(SHUT.WR)
+            await self.conn.fd.handle.shutdown(SHUT.WR)
 
     async def close_interface(self) -> None:
         if self.conn:
@@ -227,13 +227,14 @@ async def clone_persistent(
         stderr=parent.stderr.for_task(task),
     ), persistent_path=path, persistent_sock=listening_sock_handle)
 
-async def _connect_and_send(self: PersistentProcess, process: Process, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
+async def _connect_and_send(
+        self: PersistentProcess, process: Process,
+        syscall_sock: FileDescriptor, data_sock: FileDescriptor,
+) -> t.Tuple[FileDescriptor, FileDescriptor]:
     """Connect to a persistent process's socket, send some file descriptors
 
-    This isn't actually a generic function; the persistent process expects exactly three
-    file descriptors, and uses them in a special way.
-
     """
+    fds = [syscall_sock, data_sock]
     sock = await process.make_afd(await process.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
     sockaddr_un = await SockaddrUn.from_path(process, self.persistent_path)
     async def sendmsg_op(sem: RAM) -> t.Tuple[
@@ -253,10 +254,10 @@ async def _connect_and_send(self: PersistentProcess, process: Process, fds: t.Li
     while response.size() > 0:
         valid, response = await sock.read(response)
         data += valid
-    remote_fds = [self.task.make_fd_handle(near.FileDescriptor(int(i)))
+    remote_syscall_sock, remote_data_sock = [self.task.make_fd_handle(near.FileDescriptor(int(i)))
                   for i in ((await data.read()).elems if data else [])]
     await sock.close()
-    return remote_fds
+    return remote_syscall_sock, remote_data_sock
 
 class PersistentProcess(Process):
     """A process which can live on even if everything else has exited
@@ -314,14 +315,14 @@ class PersistentProcess(Process):
             raise Exception("self.task.sysif of unexpected type", self.task.sysif)
         await self.task.sysif.shutdown_current_connection()
         [(access_syscall_sock, syscall_sock), (access_data_sock, data_sock)] = await process.open_async_channels(2)
-        [infd, outfd, remote_data_sock] = await _connect_and_send(self, process, [syscall_sock, syscall_sock, data_sock])
+        serverfd, remote_data_sock = await _connect_and_send(self, process, syscall_sock, data_sock)
         await syscall_sock.close()
         await data_sock.close()
         # Set up the new SyscallConnection
         conn = SyscallConnection(
             self.task.sysif.logger,
-            access_syscall_sock, access_syscall_sock,
-            infd, outfd,
+            access_syscall_sock,
+            serverfd,
         )
         self.task.sysif.set_new_conn(conn)
         # Fix up RAM with new transport

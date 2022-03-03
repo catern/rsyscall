@@ -165,7 +165,7 @@ async def clone_child_task(
     # but also the futex process.
     child_task.sysif = SyscallConnection(
         logger.getChild(str(child_pid.pid.near)),
-        access_sock, access_sock,
-        remote_sock_handle, remote_sock_handle,
+        access_sock,
+        remote_sock_handle,
     )
     return child_pid, child_task

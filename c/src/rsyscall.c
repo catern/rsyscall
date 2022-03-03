@@ -168,8 +168,8 @@ int rsyscall_persistent_server(int infd, int outfd, const int listensock)
 	if (write(connsock, fds, sizeof(fds)) != sizeof(fds)) err(1, "write(connsock)");
 	// close now-useless connsock
 	if (close(connsock) < 0) err(1, "close(connsock=%d)", connsock);
-        // the first two fds we received are our infd and outfd.
+        // the first fd we received is the fd to serve on
 	infd = fds[0];
-	outfd = fds[1];
+	outfd = fds[0];
     }
 }

@@ -70,21 +70,20 @@ class SyscallConnection(SyscallInterface):
     "A connection to some rsyscall server where we can make syscalls"
     def __init__(self,
                  logger: logging.Logger,
-                 tofd: AsyncFileDescriptor,
-                 fromfd: AsyncFileDescriptor,
-                 server_infd: FileDescriptor,
-                 server_outfd: FileDescriptor,
+                 fd: AsyncFileDescriptor,
+                 server_fd: FileDescriptor,
     ) -> None:
         self.logger = logger
-        self.tofd = tofd
-        self.fromfd = fromfd
-        self.server_infd = server_infd
-        self.server_outfd = server_outfd
+        self.fd = fd
+        self.server_fd = server_fd
         self.valid: t.Optional[Pointer[bytes]] = None
         self.request_queue = RequestQueue[RsyscallSyscall, int]()
         reset(self._run_requests())
         self.response_queue = RequestQueue[RsyscallSyscall, int]()
         reset(self._run_responses())
+
+    def __str__(self) -> str:
+        return f"SyscallConnection({self.fd.handle}, server={self.server_fd})"
 
     def get_activity_fd(self) -> FileDescriptor:
         """Return an fd which is readable when there's other syscalls waiting to be done
@@ -93,17 +92,16 @@ class SyscallConnection(SyscallInterface):
         syscalls, and when this fd is readable, it means there's syscalls to be read.
 
         """
-        return self.server_infd
+        return self.server_fd
 
     async def close_interface(self) -> None:
         """Close this SyscallConnection; pending requests will throw SyscallHangup
 
-        We don't close server_infd and server_outfd, because we don't have any way to close
-        them; they were handles that used this syscall interface, so now they're broken.
+        We don't close server_fd, because we don't have any way to close it;
+        it was a handle that used this syscall interface, so now it's broken.
 
         """
-        await self.tofd.handle.shutdown(SHUT.RDWR)
-        await self.fromfd.handle.shutdown(SHUT.RDWR)
+        await self.fd.handle.shutdown(SHUT.RDWR)
 
     async def syscall(self, number: SYS, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0) -> int:
         syscall = RsyscallSyscall(number, arg1, arg2, arg3, arg4, arg5, arg6)
@@ -140,7 +138,7 @@ class SyscallConnection(SyscallInterface):
             syscall, coro = await self.request_queue.get_one()
             self.logger.debug("_run_requests: get_one: %s", syscall)
             try:
-                await self.tofd.write_all_bytes(syscall)
+                await self.fd.write_all_bytes(syscall)
             except Exception as syscall_error:
                 exn = SyscallSendError()
                 exn.__cause__ = syscall_error
@@ -150,10 +148,10 @@ class SyscallConnection(SyscallInterface):
                 self.response_queue.request_cb(syscall, coro)
 
     async def _run_responses(self) -> None:
-        buffer = AsyncReadBuffer(self.fromfd)
+        buffer = AsyncReadBuffer(self.fd)
         while True:
             syscall, cb = await self.response_queue.get_one()
-            self.logger.debug("going to read_result for syscall: %s %s", syscall, self.fromfd.handle.near)
+            self.logger.debug("going to read_result for syscall: %s %s", syscall, self.fd.handle.near)
             try:
                 value = (await buffer.read_struct(SyscallResponse)).value
             except Exception as exn:

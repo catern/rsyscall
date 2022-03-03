@@ -159,8 +159,8 @@ async def _setup_stub(
     remote_syscall_fd = base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_fd))
     base_task.sysif = SyscallConnection(
         logger.getChild(str(pid)),
-        access_syscall_sock, access_syscall_sock,
-        remote_syscall_fd, remote_syscall_fd,
+        access_syscall_sock,
+        remote_syscall_fd,
     )
     allocator = memory.AllocatorClient.make_allocator(base_task)
     base_task.sigmask = Sigset({SIG(bit) for bit in rsyscall.struct.bits(describe_struct.sigmask)})

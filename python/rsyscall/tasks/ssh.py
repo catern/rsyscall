@@ -281,8 +281,8 @@ async def ssh_bootstrap(
     handle_remote_syscall_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_sock))
     new_base_task.sysif = SyscallConnection(
         logger.getChild(str(new_pid)),
-        async_local_syscall_sock, async_local_syscall_sock,
-        handle_remote_syscall_fd, handle_remote_syscall_fd,
+        async_local_syscall_sock,
+        handle_remote_syscall_fd,
     )
     handle_remote_data_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_sock))
     handle_listening_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.listening_sock))
