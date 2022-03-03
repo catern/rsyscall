@@ -291,7 +291,7 @@ class EpolledFileDescriptor:
         reset(self._run())
 
     def __str__(self) -> str:
-        return f"EpolledFileDescriptor({self.fd.near}, {self.number}, {self.status})"
+        return f"EpolledFileDescriptor({self.fd}, {self.number}, {self.status})"
 
     async def modify(self, events: EPOLL) -> None:
         "Change the EPOLL flags that this fd is registered with."
@@ -457,6 +457,9 @@ class AsyncFileDescriptor:
 
     def __str__(self) -> str:
         return f"AsyncFileDescriptor({self.epolled})"
+
+    def __repr__(self) -> str:
+        return str(self)
 
     async def make_new_afd(self, fd: FileDescriptor) -> AsyncFileDescriptor:
         """Use the Epoller and RAM in this AsyncFD to make a new `AsyncFileDescriptor` for `fd`
@@ -693,7 +696,7 @@ class AsyncReadBuffer:
         try:
             data = await self.read_length(size, remove=remove)
         except EOFError as e:
-            e.args = ("got EOF while expecting to read a", name, "of size", size)
+            e.args = ("got EOF while expecting to read a", name, "of size", size, "from", self.fd.handle)
             raise
         nameptr = name + '*'
         dest = self.ffi.new(nameptr)
@@ -708,7 +711,7 @@ class AsyncReadBuffer:
         try:
             data = await self.read_length(size)
         except EOFError as e:
-            e.args = ("got EOF while expecting to read a", cls, "of size", size)
+            e.args = ("got EOF while expecting to read a", cls, "of size", size, "from", self.fd.handle)
             raise
         return cls.get_serializer(self.fd.handle.task).from_bytes(data)
 
