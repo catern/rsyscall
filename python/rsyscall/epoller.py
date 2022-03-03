@@ -81,6 +81,7 @@ from __future__ import annotations
 from dneio import RequestQueue, Continuation, reset
 from rsyscall._raw import ffi # type: ignore
 import collections
+import contextlib
 import errno
 import os
 import math
@@ -381,6 +382,33 @@ class EpolledFileDescriptor:
         "Get the current set of events from epoll_wait for these flags, for use with consume."
         return {flag: self.total_events[flag] for flag in flags}
 
+    @contextlib.contextmanager
+    def get_and_discard_after(self, flags: EPOLL) -> t.Iterator[None]:
+        current_events = self.get_current_events(flags)
+        try:
+            yield
+        finally:
+            self.consume(current_events)
+
+    def wait_for_and_discard_after(self, flags: EPOLL) -> t.AsyncContextManager[None]:
+        # unfortunately trio breaks async generators so we can't just write this
+        # contextmanager as an async generator with contextlib.asynccontextmanager
+        return WaitForAndDiscardEpollEvent(self, flags, None)
+
+@dataclass
+class WaitForAndDiscardEpollEvent:
+    epolled: EpolledFileDescriptor
+    flags: EPOLL
+    current_events: t.Optional[t.Dict[EPOLL, int]]
+
+    async def __aenter__(self) -> None:
+        await self.epolled.wait_for(self.flags)
+        self.current_events = self.epolled.get_current_events(self.flags)
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        assert self.current_events
+        self.epolled.consume(self.current_events)
+
 @dataclass
 class FDStatus:
     """Tracks the IO status of a file as an EPOLL mask.
@@ -484,19 +512,16 @@ class AsyncFileDescriptor:
     async def read(self, ptr: Pointer) -> t.Tuple[Pointer, Pointer]:
         "Call `FileDescriptor.read` without blocking the process."
         while True:
-            await self.epolled.wait_for(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
-            current_events = self.epolled.get_current_events(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
             try:
-                return (await self.handle.read(ptr))
+                async with self.epolled.wait_for_and_discard_after(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR):
+                    return (await self.handle.read(ptr))
             except OSError as e:
-                self.epolled.consume(current_events)
                 if e.errno == errno.EAGAIN:
                     self.epolled.status.negedge(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP|EPOLL.ERR)
                 else:
                     self.epolled.status.posedge(EPOLL.ERR)
                     raise
             else:
-                self.epolled.consume(current_events)
                 self.epolled.status.posedge(EPOLL.IN|EPOLL.RDHUP|EPOLL.HUP)
 
     async def read_some_bytes(self, count: int=4096) -> bytes:
@@ -519,19 +544,16 @@ class AsyncFileDescriptor:
 
         """
         while True:
-            await self.epolled.wait_for(EPOLL.OUT|EPOLL.ERR)
-            current_events = self.epolled.get_current_events(EPOLL.OUT|EPOLL.ERR)
             try:
-                return await self.handle.write(buf)
+                async with self.epolled.wait_for_and_discard_after(EPOLL.OUT|EPOLL.ERR):
+                    return await self.handle.write(buf)
             except OSError as e:
-                self.epolled.consume(current_events)
                 if e.errno == errno.EAGAIN:
                     self.epolled.status.negedge(EPOLL.OUT|EPOLL.ERR)
                 else:
                     self.epolled.status.posedge(EPOLL.ERR)
                     raise
             else:
-                self.epolled.consume(current_events)
                 self.epolled.status.posedge(EPOLL.OUT)
 
     async def write_all(self, to_write: Pointer) -> None:
@@ -567,22 +589,19 @@ class AsyncFileDescriptor:
     ) -> t.Union[FileDescriptor, t.Tuple[FileDescriptor, WrittenPointer[Sockbuf[T_sockaddr]]]]:
         "Call accept without blocking the process."
         while True:
-            await self.epolled.wait_for(EPOLL.IN|EPOLL.HUP|EPOLL.ERR)
-            current_events = self.epolled.get_current_events(EPOLL.IN|EPOLL.HUP|EPOLL.ERR)
             try:
-                if addr is None:
-                    return (await self.handle.accept(flags))
-                else:
-                    return (await self.handle.accept(flags, addr))
+                async with self.epolled.wait_for_and_discard_after(EPOLL.IN|EPOLL.HUP|EPOLL.ERR):
+                    if addr is None:
+                        return (await self.handle.accept(flags))
+                    else:
+                        return (await self.handle.accept(flags, addr))
             except OSError as e:
-                self.epolled.consume(current_events)
                 if e.errno == errno.EAGAIN:
                     self.epolled.status.negedge(EPOLL.IN|EPOLL.HUP|EPOLL.ERR)
                 else:
                     self.epolled.status.posedge(EPOLL.HUP|EPOLL.ERR)
                     raise
             else:
-                self.epolled.consume(current_events)
                 self.epolled.status.posedge(EPOLL.IN)
 
     async def accept_addr(self, flags: SOCK=SOCK.NONE) -> t.Tuple[FileDescriptor, Sockaddr]:
@@ -601,18 +620,16 @@ class AsyncFileDescriptor:
         try:
             # Note that an unconnected socket, at least with AF.INET SOCK.STREAM,
             # will have EPOLL.OUT|EPOLL.HUP set when added to epoll, before calling connect.
-            current_events = self.epolled.get_current_events(EPOLL.OUT)
-            await self.handle.connect(addr)
+            # So there's no point in waiting.
+            with self.epolled.get_and_discard_after(EPOLL.OUT):
+                await self.handle.connect(addr)
         except OSError as e:
-            self.epolled.consume(current_events)
             self.epolled.status.negedge(EPOLL.OUT)
             if e.errno == errno.EINPROGRESS:
-                await self.epolled.wait_for(EPOLL.OUT)
-                current_events = self.epolled.get_current_events(EPOLL.OUT)
                 sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(Int32)))
-                retbuf = await self.handle.getsockopt(SOL.SOCKET, SO.ERROR, sockbuf)
+                async with self.epolled.wait_for_and_discard_after(EPOLL.OUT):
+                    retbuf = await self.handle.getsockopt(SOL.SOCKET, SO.ERROR, sockbuf)
                 err = await (await retbuf.read()).buf.read()
-                self.epolled.consume(current_events)
                 if err == 0:
                     self.epolled.status.posedge(EPOLL.OUT)
                 else:
@@ -627,7 +644,6 @@ class AsyncFileDescriptor:
             else:
                 raise
         else:
-            self.epolled.consume(current_events)
             self.epolled.status.posedge(EPOLL.OUT)
 
     def with_handle(self, fd: FileDescriptor) -> AsyncFileDescriptor:
