@@ -7,6 +7,12 @@ old resources.
 After we disconnect from a persistent process for whatever reason, it is left in an inert
 state. It won't make any syscalls until we reconnect to it.
 
+Any syscalls made while disconnected are blocked until we actually reconnect, at which point they're all sent.
+`SyscallSendError` will never be thrown to user code by a persistent process; instead, the syscall will simply block.
+However, `SyscallHangup` can be thrown, if the connection to a persistent process breaks while a syscall is in progress.
+User code should retry after `SyscallHangup`;
+we can't internally retry since we don't know if that's safe for a given syscall.
+
 This is useful for fault isolation. To run and monitor long-running processes, we can and
 should ourselves be long-running; but, we might crash at some point. The persistent process
 provides fault isolation: We may crash, but the process and all its children will stay

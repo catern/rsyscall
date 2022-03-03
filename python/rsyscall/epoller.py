@@ -85,7 +85,7 @@ import errno
 import os
 import math
 import typing as t
-from rsyscall.near.sysif import SyscallError
+from rsyscall.near.sysif import SyscallHangup
 from rsyscall.memory.ram import RAM
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 from dataclasses import dataclass
@@ -187,6 +187,10 @@ class EpollWaiter:
             try:
                 valid_events_buf, rest = await self.epfd.epoll_wait(input_buf, self.timeout)
                 received_events = await valid_events_buf.read()
+            except SyscallHangup:
+                # retry the epoll_wait to support rsyscall.tasks.persistent, as documented there;
+                # for non-persistent tasks this will just fail with a SyscallSendError next time around.
+                continue
             except Exception as wait_error:
                 final_exn = wait_error
                 break
