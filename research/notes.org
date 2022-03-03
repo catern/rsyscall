@@ -32438,3 +32438,173 @@ while sum(alloc.size for alloc in allocations) < requested_size:
   allocations.append(new_page.allocate())
 
 note that this doesn't do the "move to the next page" part
+** failures
+okay so it seems to *mostly* work (or at least pass tests)
+
+but there's some weird corruption...
+
+in the env vars with stdinboot, it looks like the env vars we're getting from the stdin_bootstrap message...
+are already corrupted
+
+so... that points to maybe... we corrupted them earlier?
+oh, maybe when we initialized envp????
+
+yes yes... maybe there's something buggy when we allocated envp...
+
+aha yes yes... reading it back, there's something overwriting...
+
+ahhhhhh I was only incrementing by 1 page each time in the allocator, not the number of pages I actually allocated!! duh!!!
+
+fixed!
+** next failure
+okay so
+
+test_make_persistent (test_persistent.TestPersistent)
+
+seems to be failing if we've run many other tests before...
+
+hmm and it's the only one failing, if I comment it out, it's fine. sketchy! interesting!
+
+(on the plus side this allocator seems to speed up my tests by around .5 sec, awesome!)
+(well some of that could be commenting out test_make_persistent...)
+
+okay. let's track it down.
+
+uhh hmmm it was passing before when just TestPersistent was running, I think, but now it's failing...
+
+nice, it's failing when run on its own!
+
+okay it's nondet, that's it.
+
+okay found one bug with alignment (we weren't actually doing it lol) but that didn't help...
+
+I think this might be unrelated...
+
+looks like maybe an issue with... the epoller sending a syscall and the connection breaking and getting eof back?
+
+isn't... that something... that could happen?
+
+should I... retry it?
+
+i guess um... this indicates... what? that it didn't happen?
+
+okay... so we couldn't write the result because we got an EPIPE...
+let's see...
+
+that would be because... we did SHUT.RDWR...
+ummm... presumably because we called close_interface? but why did we do that lol...
+
+okay no, it's happening in shutdown_access_sock_on_futex_process_exit
+
+which... argh...
+i'm not sure why that is firing...
+
+oh oh what if it's...
+something related to the pages not being shared?
+
+zzzz
+maybe
+
+but also why is it nondeterministic? that's quite weird
+
+ok it always fails if we add a sleep. fine, I guess it's just based on ordering...
+
+okay so why is the futex exiting, that's the question we need to trace
+
+okay sigh it's not deterministic with the sleep under strace
+
+okay wait so...
+
+the futex process is maybe just being killed by the SIGKILL?
+which is causing us to shutdown the connection?
+
+rrrrrrrrrrrrrrrrright........................
+
+what should we do in make_persistent about the lingering futex process monitoring us?
+
+okay that's beside the point!
+we need to retry in Epoller!
+*** DONE make a note in persistent about needing to retry after SyscallHangups
+for syscalls/functions which can be safely retried
+** next failure
+ummm okay this seems related
+
+TestSSH.test_nest is failing for much the same reason...
+
+with a SyscallHangup which I assume is happening for the same reason
+
+ugh and I can't get it to fail under strace
+
+also this isn't a freakin.... persistent task! what's going on!
+
+so... I don't understand the call trace here exactly...
+
+
+ohhhh!
+interesting
+
+we're getting killed by sigpipe!
+presumably when writing to the killed sysif.
+
+how do we disable sigpipe again...?
+
+do we want it sometimes?
+
+okay so this is a literal pipe I guess?
+
+nnooo i think it's a socket, there's just some coincidental fd numbers for a pipe
+
+okay and so I think the SIGPIPE handler is reset by ssh...
+which is why we're getting this failure...
+
+okay and we don't really want to set that back since we'd have to reset it on exec...
+
+eh well we maybe could but it seems obviously better to just pass MSG_NOSIGNAL
+
+urgh... um... urgh...
+
+SIGPIPE is garbage anyway isn't it...?
+
+okay so we can't set the handler to sigign...
+
+we could ignore it with sigprocmask maybe...
+
+bah. we should just support send.
+
+ARGH
+
+okay
+
+we can't do send NOSIGNAL on pipes. argh.
+ok.
+argh.
+
+how have I been avoiding sigpipe all this time?
+oh... I've probably be passing down SIGIGN for it to all my child processes because I'm not resetting it like Python is...
+
+hmm.....................
+
+so i'm only hitting it here because of ssh
+
+okay so I need a universal solution
+rather than relying on python's stuff
+which maybe we should reset anyway?
+or... argh... if Python relies on that in other libraries...
+
+we really need to reset the handler when execing, I guess?
+
+or we can just say "screw SIGPIPE"...
+
+i guess | head is really useful and we'll broken without that...
+
+yeah so I mean,
+https://stevereads.com/2015/09/25/python-sigpipe/
+is confused why python is like that
+
+so maybe we should say "yay sigpipe"?
+
+maybe we shouldn't be using pipes...?
+since they can't be MSG.NOSIGNAL'd...
+
+yes okay. we'll convert everything (or at least SyscallConnection) to use socketpairs
+then use MSG.NOSIGNAL
