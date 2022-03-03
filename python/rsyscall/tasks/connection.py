@@ -141,7 +141,7 @@ class SyscallConnection(SyscallInterface):
             self.logger.debug("_run_requests: get_one: %s", syscall)
             try:
                 await self.tofd.write_all_bytes(syscall)
-            except OSError as syscall_error:
+            except Exception as syscall_error:
                 exn = SyscallSendError()
                 exn.__cause__ = syscall_error
                 coro.throw(exn)
