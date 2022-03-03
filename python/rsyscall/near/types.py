@@ -8,6 +8,7 @@ with segmented memory. They are valid only within a specific segment
 
 from __future__ import annotations
 from dataclasses import dataclass
+import typing as t
 
 __all__  = [
     "FileDescriptor",
@@ -133,6 +134,38 @@ class MemoryMapping:
     def as_address(self) -> Address:
         "Return the starting address of this memory mapping."
         return Address(self.address)
+
+    def __getitem__(self, key: t.Union[slice, int]) -> MemoryMapping:
+        """Extract a sub-mapping (a page or range of pages) from this memory mapping
+
+        Every part of a memory mapping is itself a memory mapping.
+        """
+        if isinstance(key, slice):
+            if key.step:
+                raise ValueError("can't slice a memory mapping with a step")
+            new = MemoryMapping(
+                self.address + self.page_size * key.start,
+                (key.stop - key.start) * self.page_size,
+                self.page_size,
+            )
+        else:
+            assert isinstance(key, int)
+            new = MemoryMapping(
+                self.address + self.page_size * key,
+                self.page_size,
+                self.page_size,
+            )
+        if new.length > self.length:
+            raise ValueError
+        if new.address < self.address:
+            raise ValueError
+        if new.address > self.address + self.length:
+            raise ValueError
+        return new
+
+    @property
+    def pages(self) -> int:
+        return self.length // self.page_size
 
     def __str__(self) -> str:
         if self.page_size == 4096:

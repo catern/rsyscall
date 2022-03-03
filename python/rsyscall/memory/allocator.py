@@ -137,30 +137,31 @@ class AllocatorInterface:
 
 @dataclass(eq=False)
 class Arena(AllocatorInterface):
-    "A single memory mapping and allocations within it."
+    """A single memory mapping and allocations within it.
+
+    This is a simple bump allocator.
+
+    """
     mapping: MemoryMapping
     allocations: t.List[Allocation]
 
     def __init__(self, mapping: MemoryMapping) -> None:
         self.mapping = mapping
         self.allocations: t.List[Allocation] = []
+        self.alloc_ptr = 0
 
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, Allocation]:
         return self.mapping, self.allocate(size, alignment)
 
     def allocate(self, size: int, alignment: int) -> Allocation:
-        newstart = 0
-        for i, alloc in enumerate(self.allocations):
-            if (newstart+size) <= alloc.start:
-                newalloc = Allocation(self, newstart, newstart+size)
-                self.allocations.insert(i, newalloc)
-                return newalloc
-            newstart = align(alloc.end, alignment)
-        if (newstart+size) <= self.mapping.near.length:
-            newalloc = Allocation(self, newstart, newstart+size)
-            self.allocations.append(newalloc)
-            return newalloc
-        raise OutOfSpaceError()
+        start_ptr = align(self.alloc_ptr, alignment)
+        end_ptr = start_ptr + size
+        if end_ptr > self.mapping.near.length:
+            raise OutOfSpaceError()
+        alloc = Allocation(self, start_ptr, end_ptr)
+        self.allocations.append(alloc)
+        self.alloc_ptr = end_ptr
+        return alloc
 
     async def close(self) -> None:
         if self.allocations:
@@ -176,6 +177,10 @@ class Arena(AllocatorInterface):
 
     def __repr__(self) -> str:
         return str(self)
+
+def ceildiv(x: int, y: int) -> int:
+    "How many ys are needed to cover all of x?"
+    return x // y + int(bool(x % y))
 
 def align(num: int, alignment: int) -> int:
     """Return the lowest value greater than `num` that is cleanly divisible by `alignment`.
@@ -193,72 +198,57 @@ def align(num: int, alignment: int) -> int:
     else:
         return num
 
-class UnlimitedAllocator:
-    """An allocator which just calls `mmap` to request more memory when it runs out.
+class BumpAllocator(AllocatorInterface):
+    """An infinite bump allocator relying on virtual memory
+
+    This allocator is a simple bump allocator, indefinitely incrementing our allocation pointer as
+    new allocation requests come in.  We just keep incrementing indefinitely through virtual memory,
+    allocating new memory as we go.  To avoid inefficient memory usage, when all the allocations in
+    a page have been freed, we unmap that page to return it to the OS.  This has various nice
+    attributes, and given our allocation patterns, puts reasonable bounds on fragmentation.
+
+    Missing features:
+
+    - To be robust we should handle exhausting virtual address space by wrapping around; when we do
+      that we'll need to skip over allocated pages.
+
+    - Currently we don't actually unmap pages when their last allocation is removed.
+
+    - Currently we don't actually allocate new memory once we run out.
 
     """
     def __init__(self, task: Task) -> None:
         self.task = task
-        self.lock = trio.Lock()
-        self.arenas: t.List[Arena] = []
-        self.queue = RequestQueue[t.List[t.Tuple[int, int]], t.Sequence[t.Tuple[MemoryMapping, Allocation]]]()
-        reset(self._run())
+        self.full_mapping: t.Optional[MemoryMapping] = None
+        self.alloc_index = 0
+        self.cur_arena: Arena
 
-    async def _run(self) -> None:
-        "Try to allocate all these requests; if we run out of space, make one big mmap call for the rest."
-        # TODO we should coalesce together multiple pending mallocs waiting on the lock
-        while True:
-            sizes, cb = await self.queue.get_one()
-            cb.resume(await outcome.acapture(self._bulk_malloc, sizes))
-
-    async def _bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, Allocation]]:
-        "Try to allocate all these requests; if we run out of space, make one big mmap call for the rest."
-        allocations: t.List[t.Tuple[MemoryMapping, Allocation]] = []
-        size_index = 0
-        for arena in self.arenas:
-            size, alignment = sizes[size_index]
-            if alignment > 4096:
-                raise Exception("can't handle alignments of more than 4096 bytes", alignment)
-            try:
-                allocations.append((arena.mapping, arena.allocate(size, alignment)))
-            except OutOfSpaceError:
-                pass
-            else:
-                size_index += 1
-                if size_index == len(sizes):
-                    # we finished all the allocations, stop allocating
-                    break
-        if size_index != len(sizes):
-            # we hit the end of the arena and now need to allocate more for the remaining sizes:
-            rest_sizes = sizes[size_index:]
-            # let's do it in bulk:
-            # TODO this usage of align() overestimates how much memory we need;
-            # it's not a big deal though, because most things have alignment=1
-            remaining_size = sum([align(size, alignment) for size, alignment in rest_sizes])
-            mapping = await self.task.mmap(align(remaining_size, 4096), PROT.READ|PROT.WRITE, MAP.SHARED)
-            arena = Arena(mapping)
-            self.arenas.append(arena)
-            for size, alignment in rest_sizes:
-                if alignment > 4096:
-                    raise Exception("can't handle alignments of more than 4096 bytes", alignment)
-                try:
-                    allocations.append((arena.mapping, arena.allocate(size, alignment)))
-                except OutOfSpaceError:
-                    raise Exception("some kind of internal error caused a freshly created memory arena",
-                                    " to return null for an allocation, size", size, "alignment", alignment)
-        return allocations
-
-    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, Allocation]]:
-        return await self.queue.request(sizes)
+    async def get_next_arena(self, pages: int) -> Arena:
+        if self.full_mapping is None:
+            self.full_mapping = await self.task.mmap(2**32, PROT.READ|PROT.WRITE, MAP.SHARED)
+        if self.alloc_index + pages > self.full_mapping.near.pages:
+            # unfortunately we'll need a lock or something here, to avoid multiple attempts to
+            # allocate more memory, which will uglify this...
+            raise NotImplementedError("we allocated 4 GB of data and I neglected to implement allocating more")
+        arena = Arena(MemoryMapping(
+            self.task, self.full_mapping.near[self.alloc_index:self.alloc_index+pages],
+            self.full_mapping.file))
+        self.alloc_index += pages
+        return arena
 
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, Allocation]:
-        [ret] = await self.bulk_malloc([(size, alignment)])
-        return ret
-
-    async def close(self) -> None:
-        "Unmap all the mappings owned by this Allocator."
-        for arena in self.arenas:
-            await arena.close()
+        if self.full_mapping is None:
+            self.cur_arena = await self.get_next_arena(1)
+            assert self.full_mapping is not None
+        if alignment > self.full_mapping.near.page_size:
+            raise Exception("can't handle alignment", alignment, "more than max alignment", self.full_mapping.near.page_size)
+        try:
+            return self.cur_arena.mapping, self.cur_arena.allocate(size, alignment)
+        except OutOfSpaceError as e:
+            # get a new arena with enough pages to fit this;
+            # we don't need to bother with alignment since it will be guaranteed to be page-aligned
+            self.cur_arena = await self.get_next_arena(ceildiv(size, self.full_mapping.near.page_size))
+            return self.cur_arena.mapping, self.cur_arena.allocate(size, alignment)
 
 class AllocatorClient(AllocatorInterface):
     """A task-specific allocator, to protect us from getting memory back for the wrong address space.
@@ -270,7 +260,7 @@ class AllocatorClient(AllocatorInterface):
     correct.
 
     """
-    def __init__(self, task: Task, shared_allocator: UnlimitedAllocator) -> None:
+    def __init__(self, task: Task, shared_allocator: BumpAllocator) -> None:
         self.task = task
         self.shared_allocator = shared_allocator
         if self.task.address_space != self.shared_allocator.task.address_space:
@@ -279,7 +269,7 @@ class AllocatorClient(AllocatorInterface):
 
     @staticmethod
     def make_allocator(task: Task) -> AllocatorClient:
-        return AllocatorClient(task, UnlimitedAllocator(task))
+        return AllocatorClient(task, BumpAllocator(task))
 
     def inherit(self, task: Task) -> AllocatorClient:
         return AllocatorClient(task, self.shared_allocator)
