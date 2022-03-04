@@ -7,7 +7,7 @@ import logging
 import contextlib
 from rsyscall.struct import Serializer
 from rsyscall.memory.allocation_interface import AllocationInterface, UseAfterFreeError
-from rsyscall.memory.transport import MemoryGateway
+from rsyscall.memory.transport import MemoryTransport
 from rsyscall.sys.mman import MemoryMapping
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class Pointer(t.Generic[T]):
     """
     __slots__ = ('mapping', 'transport', 'serializer', 'allocation', 'valid', 'typ')
     mapping: MemoryMapping
-    transport: MemoryGateway
+    transport: MemoryTransport
     serializer: Serializer[T]
     allocation: AllocationInterface
     typ: t.Type[T]
@@ -61,7 +61,7 @@ class Pointer(t.Generic[T]):
 
     def __init__(self,
                  mapping: MemoryMapping,
-                 transport: MemoryGateway,
+                 transport: MemoryTransport,
                  serializer: Serializer[T],
                  allocation: AllocationInterface,
                  typ: t.Type[T],
@@ -379,7 +379,7 @@ class LinearPointer(ReadablePointer[T]):
 
     def __init__(self,
                  mapping: MemoryMapping,
-                 transport: MemoryGateway,
+                 transport: MemoryTransport,
                  serializer: Serializer[T],
                  allocation: AllocationInterface,
                  typ: t.Type[T],
@@ -443,7 +443,7 @@ class WrittenPointer(Pointer[T_co]):
     __slots__ = ('value')
     def __init__(self,
                  mapping: MemoryMapping,
-                 transport: MemoryGateway,
+                 transport: MemoryTransport,
                  value: T_co,
                  serializer: Serializer[T_co],
                  allocation: AllocationInterface,

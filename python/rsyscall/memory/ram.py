@@ -2,7 +2,7 @@
 from __future__ import annotations
 from dneio import run_all
 from rsyscall.handle import Task, Pointer, WrittenPointer
-from rsyscall.memory.transport import MemoryTransport, MemoryGateway
+from rsyscall.memory.transport import MemoryTransport
 from rsyscall.memory.allocation_interface import AllocationInterface
 from rsyscall.memory.allocator import AllocatorInterface
 from rsyscall.struct import FixedSize, T_fixed_size, HasSerializer, T_has_serializer, FixedSerializer, T_fixed_serializer, Serializer, PathLikeSerializer, T_pathlike, StrSerializer
