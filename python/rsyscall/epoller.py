@@ -560,8 +560,6 @@ class AsyncFileDescriptor:
         """Write all of this pointer to the fd, retrying on partial writes until complete.
 
         You might want to not use this, if you want to react to a partial write in some special way.
-        For example, `rsyscall.memory.socket_transport.SocketMemoryTransport` starts a `recv`
-        immediately after a partial write, before retrying the write, for increased parallelism.
 
         """
         while to_write.size() > 0:

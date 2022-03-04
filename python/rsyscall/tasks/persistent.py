@@ -84,7 +84,6 @@ from rsyscall.tasks.clone import clone_child_task
 from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.sched import Stack
 from rsyscall.handle import WrittenPointer, ProcessPid, Pointer, Task, FileDescriptor
-from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.memory.span import to_span
 from rsyscall.memory.transport import TaskTransport
 from rsyscall.near.sysif import SyscallInterface, SyscallSendError

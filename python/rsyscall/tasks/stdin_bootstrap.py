@@ -17,7 +17,6 @@ from rsyscall.handle import WrittenPointer, Task
 from rsyscall.thread import Process
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.ram import RAM
-from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.memory.transport import TaskTransport
 from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.tasks.connection import SyscallConnection

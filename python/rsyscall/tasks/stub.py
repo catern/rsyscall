@@ -49,7 +49,6 @@ import rsyscall.nix as nix
 from rsyscall.epoller import Epoller, AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.monitor import ChildPidMonitor
 from rsyscall.command import Command
-from rsyscall.memory.socket_transport import SocketMemoryTransport
 from rsyscall.memory.transport import TaskTransport
 
 import rsyscall.struct
