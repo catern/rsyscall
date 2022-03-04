@@ -39,9 +39,10 @@ async def _direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0
     "Make a syscall directly in the current process."
     return lib.rsyscall_raw_syscall(arg1, arg2, arg3, arg4, arg5, arg6, number)
 
-class LocalSyscall(SyscallInterface):
+class LocalSyscall(SyscallInterface, MemoryTransport):
     "Makes syscalls in the local, Python interpreter process."
-    def __init__(self) -> None:
+    def __init__(self, local_task: Task) -> None:
+        self.local_task = local_task
         self.logger = logger
 
     def get_activity_fd(self) -> None:
@@ -64,14 +65,6 @@ class LocalSyscall(SyscallInterface):
             raise
         self.logger.debug("%s -> %s", number, result)
         return result
-
-class LocalMemoryTransport(MemoryTransport):
-    "This is a memory transport that only works on local pointers."
-    def __init__(self, local_task: Task) -> None:
-        self.local_task = local_task
-
-    def inherit(self, task: Task) -> LocalMemoryTransport:
-        return self
 
     async def write(self, dest: Pointer, data: bytes) -> None:
         if dest.mapping.task.address_space != self.local_task.address_space:
@@ -98,8 +91,8 @@ async def _make_local_process() -> Process:
         far.AddressSpace(pid.id),
         far.PidNamespace(pid.id),
     )
-    task.sysif = LocalSyscall()
-    ram = RAM(task, LocalMemoryTransport(task), memory.AllocatorClient.make_allocator(task))
+    task.sysif = LocalSyscall(task)
+    ram = RAM(task, task.sysif, memory.AllocatorClient.make_allocator(task))
     epfd = await task.epoll_create()
     async def wait_readable():
         logger.debug("wait_readable(%s)", epfd.near.number)

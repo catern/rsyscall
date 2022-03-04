@@ -48,8 +48,8 @@ which return `Pointer`s.
 `Process` performs memory allocation and access using internal instances of
 `rsyscall.memory.allocator.AllocatorInterface` and `rsyscall.memory.transport.MemoryTransport`.
 The main allocator is `rsyscall.memory.allocator.BumpAllocator`,
-and the main memory transports are `rsyscall.tasks.local.LocalMemoryTransport`
-and `rsyscall.memory.socket_transport.SocketMemoryTransport`.
+and the main memory transports are `rsyscall.tasks.local.LocalSyscall`
+and `rsyscall.tasks.connection.SyscallConnection`.
 
 ## Non-blocking operations
 
