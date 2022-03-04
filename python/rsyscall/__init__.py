@@ -31,7 +31,7 @@ which hold a reference to `Task`.
 
 Read `rsyscall.doc.syscall_api` for an overview of the layout of the system call API.
 
-`Task` makes syscalls using an internal instance of `rsyscall.near.sysif.SyscallInterface`.
+`Task` makes syscalls and acesses memory using an internal instance of `rsyscall.near.sysif.SyscallInterface`.
 The main implementations are `rsyscall.tasks.local.LocalSyscall` and `rsyscall.tasks.connection.SyscallConnection`.
 
 The distinction between `Process` and `Task` is that `Task` provides only the bare minimum functionality guaranteed by Linux;

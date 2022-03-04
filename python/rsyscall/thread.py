@@ -8,6 +8,7 @@ from rsyscall.handle import FileDescriptor, WrittenPointer, Pointer, Task
 from rsyscall.handle.fd import _close
 from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.memory.ram import RAM
+from rsyscall.memory.transport import TaskTransport
 from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.network.connection import Connection
 from rsyscall.path import Path
@@ -290,14 +291,7 @@ class Process:
             self.task, self.ram, self.connection, self.loader, self.monitor,
             flags, lambda sock: Trampoline(self.loader.server_func, [sock, sock]))
         ram = RAM(task,
-                  # We don't inherit the transport because it leads to a deadlock:
-                  # If when a child task calls transport.read, it performs a syscall in the child task,
-                  # then the parent task will need to call waitid to monitor the child task during the syscall,
-                  # which will in turn need to also call transport.read.
-                  # But the child is already using the transport and holding the lock,
-                  # so the parent will block forever on taking the lock,
-                  # and child's read syscall will never complete.
-                  self.ram.transport,
+                  TaskTransport(task),
                   self.ram.allocator.inherit(task),
         )
         if flags & CLONE.NEWPID:

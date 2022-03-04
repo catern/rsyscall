@@ -13,6 +13,7 @@ from rsyscall.thread import Process
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.ram import RAM
 from rsyscall.memory.socket_transport import SocketMemoryTransport
+from rsyscall.memory.transport import TaskTransport
 from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.network.connection import ListeningConnection
 from rsyscall.path import Path
@@ -289,7 +290,7 @@ async def ssh_bootstrap(
     new_allocator = memory.AllocatorClient.make_allocator(new_base_task)
     new_transport = SocketMemoryTransport(async_local_data_sock, handle_remote_data_fd)
     # we don't inherit SignalMask; we assume ssh zeroes the sigmask before starting us
-    new_ram = RAM(new_base_task, new_transport, new_allocator)
+    new_ram = RAM(new_base_task, TaskTransport(new_base_task), new_allocator)
     epoller = await Epoller.make_root(new_ram, new_base_task)
     child_monitor = await ChildPidMonitor.make(new_ram, new_base_task, epoller)
     await handle_listening_fd.fcntl(F.SETFL, O.NONBLOCK)

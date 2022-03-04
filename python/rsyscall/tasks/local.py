@@ -20,7 +20,7 @@ import typing as t
 from dataclasses import dataclass
 import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM
-from rsyscall.memory.transport import MemoryTransport
+from rsyscall.memory.transport import TaskTransport
 from rsyscall.handle import Pointer, Task
 from rsyscall.signal import SIG, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
@@ -39,7 +39,7 @@ async def _direct_syscall(number, arg1=0, arg2=0, arg3=0, arg4=0, arg5=0, arg6=0
     "Make a syscall directly in the current process."
     return lib.rsyscall_raw_syscall(arg1, arg2, arg3, arg4, arg5, arg6, number)
 
-class LocalSyscall(SyscallInterface, MemoryTransport):
+class LocalSyscall(SyscallInterface):
     "Makes syscalls in the local, Python interpreter process."
     def __init__(self, local_task: Task) -> None:
         self.local_task = local_task
@@ -92,7 +92,7 @@ async def _make_local_process() -> Process:
         far.PidNamespace(pid.id),
     )
     task.sysif = LocalSyscall(task)
-    ram = RAM(task, task.sysif, memory.AllocatorClient.make_allocator(task))
+    ram = RAM(task, TaskTransport(task), memory.AllocatorClient.make_allocator(task))
     epfd = await task.epoll_create()
     async def wait_readable():
         logger.debug("wait_readable(%s)", epfd.near.number)

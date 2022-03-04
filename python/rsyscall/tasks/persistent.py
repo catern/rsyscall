@@ -73,7 +73,7 @@ pidfds, which hasn't yet been added.
 
 """
 from __future__ import annotations
-from dneio import Continuation, shift, RequestQueue, reset
+from dneio import Continuation, shift, RequestQueue, reset, Future
 import typing as t
 import rsyscall.near.types as near
 import rsyscall.far as far
@@ -85,6 +85,8 @@ from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.sched import Stack
 from rsyscall.handle import WrittenPointer, ProcessPid, Pointer, Task, FileDescriptor
 from rsyscall.memory.socket_transport import SocketMemoryTransport
+from rsyscall.memory.span import to_span
+from rsyscall.memory.transport import TaskTransport
 from rsyscall.near.sysif import SyscallInterface, SyscallSendError
 from rsyscall.sys.syscall import SYS
 
@@ -204,6 +206,61 @@ class PersistentSyscallConnection(SyscallInterface):
             except SyscallSendError as exc:
                 await self.conn_queue.request(Broken(conn))
 
+    async def write_to_fd(self, data: bytes) -> None:
+        while True:
+            conn = await self.conn_queue.request(Get())
+            assert conn is not None
+            try:
+                return await conn.write_to_fd(data)
+            except SyscallSendError as exc:
+                await self.conn_queue.request(Broken(conn))
+
+    async def write(self, dest: Pointer, data: bytes) -> None:
+        if dest.size() != len(data):
+            raise Exception("mismatched pointer size", dest.size(), "and data size", len(data))
+        while True:
+            conn = await self.conn_queue.request(Get())
+            assert conn is not None
+            try:
+                recv_fut = Future.start(conn.infallible_recv(to_span(dest)))
+                await self.write_to_fd(data)
+                return await recv_fut.get()
+            except SyscallSendError as exc:
+                await self.conn_queue.request(Broken(conn))
+
+    async def read_from_fd(self, count: int) -> bytes:
+        while True:
+            conn = await self.conn_queue.request(Get())
+            assert conn is not None
+            try:
+                return await conn.read_from_fd(count)
+            except SyscallSendError as exc:
+                await self.conn_queue.request(Broken(conn))
+
+    async def read(self, src: Pointer) -> bytes:
+        while True:
+            conn = await self.conn_queue.request(Get())
+            assert conn is not None
+            try:
+                # these two operations have to be working on the same conn, or things will be deeply wrong.
+                # thankfully, they're both issued and sequenced with conn_queue.request right next to each other,
+                # so they can't get different conns.
+                # note also that we can't just call conn.read_from_fd directly,
+                # because conn.infallible_send goes through Task.sysif which is the PersistentSyscallConnection,
+                # so the two operations would be sequenced differently from each other
+                read_fut = Future.start(self.read_from_fd(src.size()))
+                await conn.infallible_send(src)
+                return await read_fut.get()
+            except BrokenPipeError:
+                # infallible_send might actually fail with EPIPE due to being called on the old broken conn,
+                # but going through the new working conn.
+                # it also might fail due to the connection just plain dying.
+                # in either case, the connection is now broken.
+                # also, in either case, we know that if read_fut.get() would have failed with a SyscallSendError,
+                # then infallible_send would fail with BrokenPipeError.
+                # so we only need to catch BrokenPipeError.
+                await self.conn_queue.request(Broken(conn))
+
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def clone_persistent(
         parent: Process, path: t.Union[str, os.PathLike],
@@ -230,7 +287,7 @@ async def clone_persistent(
         CLONE.FILES|CLONE.FS|CLONE.SIGHAND,
         lambda sock: Trampoline(parent.loader.persistent_server_func, [sock, sock, listening_sock]))
     listening_sock_handle = listening_sock.move(task)
-    ram = RAM(task, parent.ram.transport, parent.ram.allocator.inherit(task))
+    ram = RAM(task, TaskTransport(task), parent.ram.allocator.inherit(task))
 
     ## create the new persistent task
     epoller = await Epoller.make_root(ram, task)
@@ -306,8 +363,6 @@ class PersistentProcess(Process):
         self.prepped_for_reconnect = False
 
     async def prep_for_reconnect(self) -> None:
-        # TODO hmm should we switch the transport?
-        # i guess we aren't actually doing anything but rearranging the file descriptors
         await self.unshare_files(going_to_exec=False)
         if not isinstance(self.task.sysif, SyscallConnection):
             raise Exception("self.task.sysif of unexpected type", self.task.sysif)
@@ -347,11 +402,5 @@ class PersistentProcess(Process):
             serverfd,
         )
         await self.task.sysif.set_new_conn(conn)
-        # Fix up RAM with new transport
-        # TODO technically this could still be in the same address space - that's the case in our tests.
-        # we should figure out a way to use a LocalMemoryTransport here so it can copy efficiently
-        transport = SocketMemoryTransport(access_data_sock, remote_data_sock)
-        self.ram.transport = transport
-        self.transport = transport
         # close remote fds we don't have handles to; this includes the old interface fds.
         await self.task.run_fd_table_gc()

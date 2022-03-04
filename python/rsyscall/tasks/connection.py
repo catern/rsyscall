@@ -11,9 +11,10 @@ out all at once.
 """
 from rsyscall._raw import ffi # type: ignore
 from dataclasses import dataclass
-from dneio import RequestQueue, reset, is_running_directly_under_trio
+from dneio import RequestQueue, reset, is_running_directly_under_trio, Future
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.handle import Pointer, FileDescriptor
+from rsyscall.memory.span import to_span
 from rsyscall.near.sysif import SyscallHangup, SyscallSendError, SyscallInterface, Syscall, raise_if_error
 from rsyscall.struct import Struct, StructList
 from rsyscall.sys.socket import SHUT, MSG
@@ -49,6 +50,14 @@ class RsyscallSyscall(Struct, Syscall):
         return ffi.sizeof('struct rsyscall_syscall')
 
 @dataclass
+class Write:
+    data: bytes
+
+@dataclass
+class Read:
+    count: int
+
+@dataclass
 class SyscallResponse(Struct):
     "The struct representing a syscall response"
     value: int
@@ -77,9 +86,9 @@ class SyscallConnection(SyscallInterface):
         self.fd = fd
         self.server_fd = server_fd
         self.valid: t.Optional[Pointer[bytes]] = None
-        self.request_queue = RequestQueue[RsyscallSyscall, int]()
+        self.request_queue = RequestQueue[t.Union[RsyscallSyscall, Write, Read], t.Union[int, bytes, None]]()
         reset(self._run_requests())
-        self.response_queue = RequestQueue[RsyscallSyscall, int]()
+        self.response_queue = RequestQueue[t.Union[RsyscallSyscall, Read], t.Union[int, bytes]]()
         reset(self._run_responses())
 
     def __str__(self) -> str:
@@ -129,34 +138,110 @@ class SyscallConnection(SyscallInterface):
         if is_running_directly_under_trio():
             with trio.CancelScope(shield=True):
                 # hmm this cancel scope shields the entire thing. unfortunate...
-                return await self.request_queue.request(syscall)
+                return t.cast(int, await self.request_queue.request(syscall))
         else:
-            return await self.request_queue.request(syscall)
+            return t.cast(int, await self.request_queue.request(syscall))
+
+    async def write_to_fd(self, data: bytes) -> None:
+        req = Write(data)
+        if is_running_directly_under_trio():
+            with trio.CancelScope(shield=True):
+                # hmm this cancel scope shields the entire thing. unfortunate...
+                await self.request_queue.request(req)
+        else:
+            await self.request_queue.request(req)
+
+    async def infallible_recv(self, dest: Pointer) -> None:
+        received, remaining = await self.server_fd.recv(dest, MSG.WAITALL)
+        if remaining.size() != 0:
+            raise RuntimeError("somehow got a partial recv with MSG.WAITALL, the syscall server will now be broken")
+
+    async def write(self, dest: Pointer, data: bytes) -> None:
+        if dest.size() != len(data):
+            raise Exception("mismatched pointer size", dest.size(), "and data size", len(data))
+        self.logger.debug("writing to %s, num bytes: %s", dest, len(data))
+        recv_fut = Future.start(self.infallible_recv(to_span(dest)))
+        await self.write_to_fd(data)
+        await recv_fut.get()
+
+    async def read_from_fd(self, count: int) -> bytes:
+        req = Read(count)
+        if is_running_directly_under_trio():
+            with trio.CancelScope(shield=True):
+                # hmm this cancel scope shields the entire thing. unfortunate...
+                return t.cast(bytes, await self.request_queue.request(req))
+        else:
+            return t.cast(bytes, await self.request_queue.request(req))
+
+    async def infallible_send(self, src: Pointer) -> None:
+        sent, remaining = await self.server_fd.send(to_span(src), MSG.NONE)
+        if remaining.size() != 0:
+            raise RuntimeError("somehow got a partial send, the syscall server will now be broken")
+
+    async def read(self, src: Pointer) -> bytes:
+        self.logger.debug("reading from %s", src)
+        read_fut = Future.start(self.read_from_fd(src.size()))
+        await self.infallible_send(src)
+        return await read_fut.get()
 
     async def _run_requests(self) -> None:
         while True:
-            syscall, coro = await self.request_queue.get_one()
-            self.logger.debug("_run_requests: get_one: %s", syscall)
-            try:
-                await self.fd.send_all_bytes(syscall, MSG.NOSIGNAL)
-            except Exception as syscall_error:
-                exn = SyscallSendError()
-                exn.__cause__ = syscall_error
-                coro.throw(exn)
+            req, coro = await self.request_queue.get_one()
+            self.logger.debug("_run_requests: get_one: %s", req)
+            if isinstance(req, RsyscallSyscall):
+                syscall = req
+                try:
+                    await self.fd.send_all_bytes(syscall, MSG.NOSIGNAL)
+                except Exception as syscall_error:
+                    exn = SyscallSendError()
+                    exn.__cause__ = syscall_error
+                    coro.throw(exn)
+                else:
+                    self.logger.debug("forward_request: %s", syscall)
+                    self.response_queue.request_cb(syscall, coro)
+            elif isinstance(req, Write):
+                write = req
+                try:
+                    await self.fd.send_all_bytes(write.data, MSG.NOSIGNAL)
+                except Exception as syscall_error:
+                    exn = SyscallSendError()
+                    exn.__cause__ = syscall_error
+                    coro.throw(exn)
+                else:
+                    # once we've written the data, our job is done
+                    coro.send(None)
+            elif isinstance(req, Read):
+                read = req
+                # forward this read right on to the read coroutine
+                self.response_queue.request_cb(read, coro)
             else:
-                self.logger.debug("forward_request: %s", syscall)
-                self.response_queue.request_cb(syscall, coro)
+                raise RuntimeError("invalid request", req)
 
     async def _run_responses(self) -> None:
         buffer = AsyncReadBuffer(self.fd)
         while True:
-            syscall, cb = await self.response_queue.get_one()
-            self.logger.debug("going to read_result for syscall: %s %s", syscall, self.fd.handle.near)
-            try:
-                value = (await buffer.read_struct(SyscallResponse)).value
-            except Exception as exn:
-                hangup_exn = SyscallHangup()
-                hangup_exn.__cause__ = exn
-                cb.throw(hangup_exn)
+            req, cb = await self.response_queue.get_one()
+            if isinstance(req, RsyscallSyscall):
+                syscall = req
+                self.logger.debug("going to read_result for syscall: %s %s", syscall, self.fd.handle.near)
+                try:
+                    value = (await buffer.read_struct(SyscallResponse)).value
+                except Exception as exn:
+                    hangup_exn = SyscallHangup()
+                    hangup_exn.__cause__ = exn
+                    cb.throw(hangup_exn)
+                else:
+                    cb.send(value)
+            elif isinstance(req, Read):
+                read = req
+                self.logger.debug("going to read_length for data read of size %s", read.count)
+                try:
+                    data = await buffer.read_length(read.count)
+                except Exception as exn:
+                    hangup_exn = SyscallHangup()
+                    hangup_exn.__cause__ = exn
+                    cb.throw(hangup_exn)
+                else:
+                    cb.send(data)
             else:
-                cb.send(value)
+                raise RuntimeError("invalid request", req)
