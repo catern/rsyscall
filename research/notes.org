@@ -32282,6 +32282,75 @@ we need to do this same kind of, submit all our requests and check there are no 
 as we currently do with the new_conn_cbs list.
 
 so I think just guarding access to the conn with a shift would... be pretty clean and good.
+**** TODO making a new envp each time is slow af
+hmm
+
+also, we need to make sure pointers aren't accessed from other tasks
+
+okay...
+
+so what would be great is if we had pointers for all the env vars and we could reuse them - obviously
+
+but the issue is that... right now pointers are single task only, right?
+
+so how do we convert a pointer to a different task?
+the pointer could have a write on it in-progress...
+
+we need some... proof verifying the pointer has been written strictly.
+
+okay, that's pretty easy!
+we'll just pair a pointer with a proof it's been written,
+which lets us convert it into another task.
+
+then we can just save the envp and use it repeatedly.
+
+how do we get that proof? i guess we could in theory just, like, getpid...
+
+oh maybe we should have a write function which waits? sure...
+
+nah let's just getpid
+
+oh or maybe we can have something which... is like an sfence?
+
+like... it just is inserted into the sequence but does nothing? yes that would work, right right.
+
+so we'll do that...
+
+and we'll have some function which..
+
+makes a pointer...
+
+in another task...
+
+wait but what if I write to that from one task?
+
+that should invalidate the pointers in the other task...
+
+maybe we can just have a "strict" mode for a pointer where it checks address space instead?
+
+yes, that's simple.
+
+then we can just have a strict=True argument to Pointer.write!
+
+okay, easy, easy
+
+urgh. what if I have an ArgList...
+which contains pointers...
+in different address spaces?
+
+what protection do I have against that exactly?
+
+nothing lol
+
+well that's fine for now
+
+so how do we add this incrementally?
+
+i guess we just... add pointers-are-only-in-one-task,
+and add this cross-task pointer in the same commit,
+and have as_arglist create those. sure, seems good.
+
+HAH wrong we DO prevent cross-address-space envp screwups, checking at exec time!
 *** TODO should exceptions from shift functions be thrown back into the coroutine?
 maybe, maybe, yeah...
 
@@ -32299,7 +32368,7 @@ aren't the recvs... possibly in different tasks?
 so they'll... interleave?
 
 they're not sequenced against each other, is the thing...
-* TODO tune allocator to be much better
+* DONE tune allocator to be much better
 I guess a simple bump allocator is good...
 
 but we want to be able to compact memory...
