@@ -130,8 +130,8 @@ class TestNet(TrioTestCase):
             async def do_conn():
                 await conn.sock.connect(await conn.process.ptr(SockaddrIn(1234, acc.addr)))
             accepted_conn = await acc.sock.accept()
-        await conn.sock.write(await self.process.ptr(b'hello world'))
-        await accepted_conn.read(await self.process.malloc(bytes, 4096))
+        await conn.sock.write(await conn.process.ptr(b'hello world'))
+        await accepted_conn.read(await acc.process.malloc(bytes, 4096))
 
 class TestNetLocalPort(TrioTestCase):
     async def asyncSetUp(self) -> None:

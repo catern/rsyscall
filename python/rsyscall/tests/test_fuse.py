@@ -122,8 +122,8 @@ class TestFUSE(TrioTestCase):
     async def test_symlink(self) -> None:
         @self.nursery.start_soon
         async def open() -> None:
-            async with (await self.child.task.open(await self.process.ptr(self.path/"foo"), O.RDONLY)) as foo:
-                data, _ = await foo.read(await self.process.malloc(bytes, 4096))
+            async with (await self.child.task.open(await self.child.ptr(self.path/"foo"), O.RDONLY)) as foo:
+                data, _ = await foo.read(await self.child.malloc(bytes, 4096))
         await self.fuse.write((await self.assertRead(FuseGetattrOp)).respond(FuseAttrOut(
             attr_valid=Timespec(10000, 0),
             attr=FuseAttr(

@@ -51,13 +51,15 @@ class Pointer(t.Generic[T]):
     See also the inheriting class WrittenPointer
 
     """
-    __slots__ = ('mapping', 'transport', 'serializer', 'allocation', 'valid', 'typ')
+    __slots__ = ('mapping', 'transport', 'serializer', 'allocation', 'valid', 'typ', 'shared')
     mapping: MemoryMapping
     transport: MemoryTransport
     serializer: Serializer[T]
     allocation: AllocationInterface
     typ: t.Type[T]
     valid: bool
+    "Can this pointer be safely used from multiple processes which are in the same address space?"
+    shared: bool
 
     def __init__(self,
                  mapping: MemoryMapping,
@@ -65,6 +67,7 @@ class Pointer(t.Generic[T]):
                  serializer: Serializer[T],
                  allocation: AllocationInterface,
                  typ: t.Type[T],
+                 shared: bool=False,
     ) -> None:
         self.mapping = mapping
         self.transport = transport
@@ -72,9 +75,12 @@ class Pointer(t.Generic[T]):
         self.allocation = allocation
         self.typ = typ
         self.valid = True
+        self.shared = shared
 
     async def write(self, value: T) -> WrittenPointer[T]:
-        "Write this value to this pointer, consuming it and returning a new WrittenPointer"
+        """Write this value to this pointer, consuming it and returning a new `WrittenPointer`
+
+        """
         self._validate()
         value_bytes = self.serializer.to_bytes(value)
         if len(value_bytes) > self.size():
@@ -171,8 +177,12 @@ class Pointer(t.Generic[T]):
             ) from e
 
     def check_address_space(self, task: rsyscall.far.Task) -> None:
-        if task.address_space != self.mapping.task.address_space:
-            raise rsyscall.far.AddressSpaceMismatchError(task.address_space, self.mapping.task.address_space)
+        if self.shared:
+            if task.address_space != self.mapping.task.address_space:
+                raise rsyscall.far.AddressSpaceMismatchError(task.address_space, self.mapping.task.address_space)
+        else:
+            if task != self.mapping.task:
+                raise rsyscall.far.AddressSpaceMismatchError(task, self.mapping.task)
 
     @contextlib.contextmanager
     def borrow(self, task: rsyscall.far.Task) -> t.Iterator[rsyscall.near.Address]:
@@ -448,8 +458,9 @@ class WrittenPointer(Pointer[T_co]):
                  serializer: Serializer[T_co],
                  allocation: AllocationInterface,
                  typ: t.Type[T_co],
+                 shared: bool=False
     ) -> None:
-        super().__init__(mapping, transport, serializer, allocation, typ)
+        super().__init__(mapping, transport, serializer, allocation, typ, shared=shared)
         self.value = value
 
     def __repr__(self) -> str:
@@ -460,6 +471,11 @@ class WrittenPointer(Pointer[T_co]):
         except UseAfterFreeError:
             return f"{name}[{typname}](valid={self.valid}, {self.mapping}, {self.allocation}, {self.value})"
 
+    def _shared(self) -> WrittenPointer[T_co]:
+        self._validate()
+        self.valid = False
+        return type(self)(self.mapping, self.transport, self.value, self.serializer, self.allocation, self.typ, shared=True)
+
     def _with_mapping(self, mapping: MemoryMapping) -> WrittenPointer:
         if type(self) is not WrittenPointer:
             raise Exception("subclasses of WrittenPointer must override _with_mapping")
@@ -469,3 +485,12 @@ class WrittenPointer(Pointer[T_co]):
         self._validate()
         self.valid = False
         return type(self)(mapping, self.transport, self.value, self.serializer, self.allocation, self.typ)
+
+async def share_pointers(ptrs: list[WrittenPointer]) -> list[WrittenPointer]:
+    """Promote these `WrittenPointer`s to shared status so that they can be shared between tasks.
+
+    A batch interface is more efficient than doing them individually, requiring only one round-trip
+    instead of many.
+
+    """
+    return [ptr._shared() for ptr in ptrs]

@@ -13,7 +13,7 @@ class TestFS(TrioTestCase):
         for _ in range(5):
             child = await self.process.clone(CLONE.FILES)
             for _ in range(50):
-                await child.task.open(devnull, O.RDONLY)
+                await child.task.open(await child.ptr("/dev/null"), O.RDONLY)
         gc.collect()
         await self.process.task.run_fd_table_gc()
         last = int(await self.process.task.open(devnull, O.RDONLY))

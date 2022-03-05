@@ -217,7 +217,7 @@ async def ssh_forward(process: Process, ssh_command: SSHCommand,
     async_stdout = await process.make_afd(stdout_pipe.read, set_nonblock=True)
     child = await process.fork()
     await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
-    await child.task.chdir(await process.ptr(local_path.parent))
+    await child.task.chdir(await child.ptr(local_path.parent))
     child_pid = await child.exec(ssh_command.local_forward(
         "./" + local_path.name, remote_path,
     # TODO I optimistically assume that I'll have established a

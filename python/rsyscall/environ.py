@@ -12,6 +12,7 @@ from __future__ import annotations
 from dneio import run_all
 from rsyscall.command import Command
 from rsyscall.handle import Task, FileDescriptor, WrittenPointer
+from rsyscall.handle.pointer import share_pointers
 from rsyscall.memory.ram import RAM
 from rsyscall.path import Path
 from rsyscall.unistd import ArgList
@@ -162,9 +163,15 @@ class Environment:
     async def as_arglist(self, ram: RAM) -> WrittenPointer[ArgList]:
         if self.arglist_ptr is None:
             envp = ['='.join([key, value]) for key, value in self.data.items()]
-            async def op(sem: RAM) -> WrittenPointer[ArgList]:
-                envp_ptrs = ArgList([await sem.ptr(arg) for arg in envp])
-                return await sem.ptr(envp_ptrs)
-            ptr: WrittenPointer[ArgList] = await ram.perform_batch(op)
+            async def op(sem: RAM) -> tuple[WrittenPointer[ArgList], list[WrittenPointer[str]]]:
+                envp_ptrs = [await sem.ptr(arg) for arg in envp]
+                ptr = await sem.ptr(ArgList(envp_ptrs))
+                return ptr, envp_ptrs
+            ptr, envp_ptrs = await ram.perform_batch(op)
+            ptr, *envp_ptrs = await share_pointers([ptr, *envp_ptrs])
+            # we could just do two calls to share_pointers (one before ram.ptr), but that adds a little latency,
+            # so instead we do this horrible abstraction-break
+            # TODO think about how to do this safely and abstractly
+            ptr.value = ArgList(envp_ptrs)
             self.arglist_ptr = ptr
         return self.arglist_ptr
