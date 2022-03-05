@@ -16,7 +16,6 @@ import typing as t
 
 __all__ = [
     "RAM",
-    "perform_batch",
 ]
 
 class BytesSerializer(Serializer[bytes]):
@@ -131,18 +130,6 @@ class RAM:
         else:
             raise Exception("don't know how to serialize data passed to ptr", data)
 
-    async def perform_batch(self, op: t.Callable[[RAM], t.Awaitable[T]],
-                                  allocator: AllocatorInterface=None,
-    ) -> T:
-        """Batches together memory operations performed by a callable.
-        
-        See the free function of the same name for more documentation.
-
-        """
-        if allocator is None:
-            allocator = self.allocator
-        return await perform_batch(self.task, self.transport, allocator, op)
-
     async def malloc_serializer(
             self, serializer: Serializer[T], size: int, typ: t.Type[T],
     ) -> Pointer[T]:
@@ -164,128 +151,3 @@ class RAM:
         except:
             ptr.free()
             raise
-
-class NullAllocation(AllocationInterface):
-    "An fake allocation for a null pointer."
-    def __init__(self, n: int) -> None:
-        self.n = n
-
-    def offset(self) -> int:
-        return 0
-
-    def size(self) -> int:
-        return self.n
-
-    def split(self, size: int) -> t.Tuple[AllocationInterface, AllocationInterface]:
-        return NullAllocation(self.size() - size), NullAllocation(size)
-
-    def merge(self, other: AllocationInterface) -> AllocationInterface:
-        raise Exception("can't merge")
-
-    def free(self) -> None:
-        pass
-
-class LaterAllocator(AllocatorInterface):
-    "An allocator which stores allocation requests and returns null pointers."
-    def __init__(self) -> None:
-        self.allocations: t.List[t.Tuple[int, int]] = []
-
-    async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, AllocationInterface]:
-        self.allocations.append((size, alignment))
-        return (
-            MemoryMapping(t.cast(Task, None), near.MemoryMapping(0, size, 4096), far.File()),
-            NullAllocation(size),
-        )
-
-class NoopTransport(MemoryTransport):
-    "A memory transport which doesn't do anything."
-    async def read(self, src: Pointer) -> bytes:
-        raise Exception("shouldn't try to read")
-    async def write(self, dest: Pointer, data: bytes) -> None:
-        pass
-    def inherit(self, task: Task) -> NoopTransport:
-        raise Exception("shouldn't try to inherit")
-
-class PrefilledAllocator(AllocatorInterface):
-    "An allocator which has been prefilled with allocations for an exact sequence of calls to malloc."
-    def __init__(self, allocations: t.Sequence[t.Tuple[MemoryMapping, AllocationInterface]]) -> None:
-        self.allocations = list(allocations)
-
-    async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, AllocationInterface]:
-        mapping, allocation = self.allocations.pop(0)
-        if allocation.size() != size:
-            raise Exception("batch operation seems to be non-deterministic, ",
-                            "allocating different sizes/in different order on second run")
-        return mapping, allocation
-
-class BatchWriteSemantics(RAM):
-    "A variant of RAM which stores writes to pointers so they can be performed later."
-    def __init__(self, 
-                 task: Task,
-                 transport: MemoryTransport,
-                 allocator: AllocatorInterface,
-    ) -> None:
-        self.task = task
-        self.transport = transport
-        self.allocator = allocator
-        self.writes: t.List[t.Tuple[Pointer, bytes]] = []
-
-    async def _write_to_pointer(self, ptr: Pointer[T], data: T, data_bytes: bytes) -> WrittenPointer[T]:
-        wptr = ptr._wrote(data)
-        self.writes.append((wptr, data_bytes))
-        return wptr
-
-async def perform_batch(
-        task: Task,
-        transport: MemoryTransport,
-        allocator: AllocatorInterface,
-        batch: t.Callable[[RAM], t.Awaitable[T]],
-) -> T:
-    """Batches together memory operations performed by a callable.
-
-    To use, first define a callable which takes a RAM, and produces
-    some result using only the methods of the passed-in RAM. There are
-    several requirements on this callable, described below. Pass that
-    callable to this function, and we'll magically batch its
-    operations together and return what it returns.
-
-    Requirements on the callable:
-    - Do not have any side-effects other than calling methods on the
-      passed-in RAM.
-    - Do not branch based on the numeric values of pointers; indeed,
-      better that you just don't branch at all.
-
-    Concretely, we'll call the callable twice. Once with a RAM which
-    no-ops all the allocations and writes, so that we can know the
-    size of all the requested allocations. Then we'll batch-allocate
-    all that memory, and call the callable again with a RAM which just
-    returns those batch allocations, and no-ops any writes. After that
-    second call completes, we batch-perform all the writes, and return
-    the result of that second call from this function.
-    
-    This is useful, among other cases, when performing a lot of memory
-    allocation and writes in anticipation of one or more syscalls
-    which will read values from that memory. For example, we can batch
-    together writing the argv and envp arguments to execve, along with
-    all the pointers referenced by them. This is much more efficient.
-
-    This technique is inspired by tagless final style. Unfortunately
-    we can't really implement that in Python, so an interface is all
-    we've got.
-
-    We had a more explicit style before, where you explicitly listed
-    the sizes of the allocations you wanted, but it was far less
-    ergonomic and less robust. This style is nominally less efficient
-    in CPU time, but it improves robustness by making it not possible
-    to mess up in calculating the size you want to allocate.
-
-    """
-    later_allocator = LaterAllocator()
-    await batch(RAM(task, NoopTransport(), later_allocator))
-    allocations = [await allocator.malloc(*alloc) for alloc in later_allocator.allocations]
-    sem = BatchWriteSemantics(task, transport, PrefilledAllocator(allocations))
-    ret = await batch(sem)
-
-    for dest, data in sem.writes:
-        await transport.write(dest, data)
-    return ret

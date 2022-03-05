@@ -163,11 +163,8 @@ class Environment:
     async def as_arglist(self, ram: RAM) -> WrittenPointer[ArgList]:
         if self.arglist_ptr is None:
             envp = ['='.join([key, value]) for key, value in self.data.items()]
-            async def op(sem: RAM) -> tuple[WrittenPointer[ArgList], list[WrittenPointer[str]]]:
-                envp_ptrs = [await sem.ptr(arg) for arg in envp]
-                ptr = await sem.ptr(ArgList(envp_ptrs))
-                return ptr, envp_ptrs
-            ptr, envp_ptrs = await ram.perform_batch(op)
+            envp_ptrs = [await ram.ptr(arg) for arg in envp]
+            ptr = await ram.ptr(ArgList(envp_ptrs))
             ptr, *envp_ptrs = await share_pointers([ptr, *envp_ptrs])
             # we could just do two calls to share_pointers (one before ram.ptr), but that adds a little latency,
             # so instead we do this horrible abstraction-break

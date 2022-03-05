@@ -86,12 +86,10 @@ async def stdin_bootstrap(
      (access_data_sock, passed_data_sock)] = await parent.open_async_channels(2)
     # send the fds to the new process
     connection_fd, make_connection = await parent.connection.prep_fd_transfer()
-    async def sendmsg_op(sem: RAM) -> WrittenPointer[SendMsghdr]:
-        iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
-        cmsgs = await sem.ptr(CmsgList([CmsgSCMRights([
-            passed_syscall_sock, passed_data_sock, connection_fd])]))
-        return await sem.ptr(SendMsghdr(None, iovec, cmsgs))
-    _, [] = await parent_sock.sendmsg(await parent.ram.perform_batch(sendmsg_op), SendmsgFlags.NONE)
+    iovec = await parent.ptr(IovecList([await parent.malloc(bytes, 1)]))
+    cmsgs = await parent.ptr(CmsgList([CmsgSCMRights([
+        passed_syscall_sock, passed_data_sock, connection_fd])]))
+    _, [] = await parent_sock.sendmsg(await parent.ptr(SendMsghdr(None, iovec, cmsgs)), SendmsgFlags.NONE)
     # close our reference to fds that only the new process needs
     await passed_syscall_sock.close()
     await passed_data_sock.close()

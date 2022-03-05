@@ -322,16 +322,12 @@ async def _connect_and_send(
     fds = [syscall_sock, data_sock]
     sock = await process.make_afd(await process.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
     sockaddr_un = await SockaddrUn.from_path(process, self.persistent_path)
-    async def sendmsg_op(sem: RAM) -> t.Tuple[
-            WrittenPointer[SockaddrUn], WrittenPointer[Int32], WrittenPointer[SendMsghdr], Pointer[StructList[Int32]]]:
-        addr = await sem.ptr(sockaddr_un)
-        count = await sem.ptr(Int32(len(fds)))
-        iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
-        cmsgs = await sem.ptr(CmsgList([CmsgSCMRights(fds)]))
-        hdr = await sem.ptr(SendMsghdr(None, iovec, cmsgs))
-        response_buf = await sem.ptr(StructList(Int32, [Int32(0)]*len(fds)))
-        return addr, count, hdr, response_buf
-    addr, count, hdr, response = await process.ram.perform_batch(sendmsg_op)
+    addr = await process.ptr(sockaddr_un)
+    count = await process.ptr(Int32(len(fds)))
+    iovec = await process.ptr(IovecList([await process.malloc(bytes, 1)]))
+    cmsgs = await process.ptr(CmsgList([CmsgSCMRights(fds)]))
+    hdr = await process.ptr(SendMsghdr(None, iovec, cmsgs))
+    response: Pointer = await process.ptr(StructList(Int32, [Int32(0)]*len(fds)))
     data = None
     await sock.connect(addr)
     _, _ = await sock.write(count)

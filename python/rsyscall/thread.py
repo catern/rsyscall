@@ -255,17 +255,8 @@ class Process:
                     filesystemtype: str, mountflags: MS,
                     data: str) -> None:
         "Call mount with these args"
-        async def op(sem: RAM) -> t.Tuple[
-                WrittenPointer[t.Union[str, os.PathLike]], WrittenPointer[t.Union[str, os.PathLike]],
-                WrittenPointer[str], WrittenPointer[str]]:
-            return (
-                await sem.ptr(source),
-                await sem.ptr(target),
-                await sem.ptr(filesystemtype),
-                await sem.ptr(data),
-            )
-        source_ptr, target_ptr, filesystemtype_ptr, data_ptr = await self.ram.perform_batch(op)
-        await self.task.mount(source_ptr, target_ptr, filesystemtype_ptr, mountflags, data_ptr)
+        await self.task.mount(await self.ptr(source), await self.ptr(target), await self.ptr(filesystemtype),
+                              mountflags, await self.ptr(data))
 
     async def socket(self, domain: AF, type: SOCK, protocol: int=0) -> FileDescriptor:
         return await self.task.socket(domain, type, protocol)
@@ -426,15 +417,9 @@ class ChildProcess(Process):
                       command: Command=None,
     ) -> AsyncChildPid:
         "Call execve, abstracting over memory; self.{exec,execve} are probably preferable"
-        async def op(sem: RAM) -> t.Tuple[WrittenPointer[t.Union[str, os.PathLike]],
-                                          WrittenPointer[ArgList],
-                                          WrittenPointer[ArgList]]:
-            argv_ptrs = ArgList([await sem.ptr(arg) for arg in argv])
-            envp_ptrs = ArgList([await sem.ptr(arg) for arg in envp])
-            return (await sem.ptr(path),
-                    await sem.ptr(argv_ptrs),
-                    await sem.ptr(envp_ptrs))
-        filename, argv_ptr, envp_ptr = await self.ram.perform_batch(op)
+        filename = await self.ptr(path)
+        argv_ptr = await self.ptr(ArgList([await self.ptr(arg) for arg in argv]))
+        envp_ptr = await self.ptr(ArgList([await self.ptr(arg) for arg in envp]))
         await self.task.execve(filename, argv_ptr, envp_ptr, command=command)
         return self.pid
 
@@ -444,10 +429,8 @@ class ChildProcess(Process):
     ) -> AsyncChildPid:
         """Replace the running executable in this process with another; see execve.
         """
-        async def op(sem: RAM) -> t.Tuple[WrittenPointer[t.Union[str, os.PathLike]], WrittenPointer[ArgList]]:
-            argv_ptrs = ArgList([await sem.ptr(arg) for arg in argv])
-            return (await sem.ptr(path), await sem.ptr(argv_ptrs))
-        filename_ptr, argv_ptr = await self.ram.perform_batch(op)
+        filename_ptr = await self.ptr(path)
+        argv_ptr = await self.ptr(ArgList([await self.ptr(arg) for arg in argv]))
         envp_ptr = await self.environ.as_arglist(self.ram)
         await self.task.execve(filename_ptr, argv_ptr, envp_ptr, command=command)
         return self.pid

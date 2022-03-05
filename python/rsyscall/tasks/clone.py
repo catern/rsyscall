@@ -55,15 +55,12 @@ async def launch_futex_monitor(ram: RAM,
     based on futexes, into a normal event loop.
 
     """
-    async def op(sem: RAM) -> t.Tuple[Pointer[Stack], WrittenPointer[Stack]]:
-        stack_value = loader.make_trampoline_stack(Trampoline(
-            loader.futex_helper_func, [
-                int(futex_pointer.near + ffi.offsetof('struct futex_node', 'futex')),
-                futex_pointer.value.futex]))
-        stack_buf = await sem.malloc(Stack, 4096)
-        stack = await stack_buf.write_to_end(stack_value, alignment=16)
-        return stack
-    stack = await ram.perform_batch(op)
+    stack_value = loader.make_trampoline_stack(Trampoline(
+        loader.futex_helper_func, [
+            int(futex_pointer.near + ffi.offsetof('struct futex_node', 'futex')),
+            futex_pointer.value.futex]))
+    stack_buf = await ram.malloc(Stack, 4096)
+    stack = await stack_buf.write_to_end(stack_value, alignment=16)
     futex_pid = await monitor.clone(CLONE.VM|CLONE.FILES, stack)
     # wait for futex helper to SIGSTOP itself,
     # which indicates the trampoline is done and we can deallocate the stack.
@@ -114,15 +111,11 @@ async def clone_child_task(
     # allocating with our normal allocator; all our memory is already MAP.SHARED, I think.
     # We should resolve this so we can use the normal allocator.
     arena = Arena(await task.mmap(4096*2, PROT.READ|PROT.WRITE, MAP.SHARED))
-    async def op(sem: RAM) -> t.Tuple[t.Tuple[Pointer[Stack], WrittenPointer[Stack]],
-                                                       WrittenPointer[FutexNode]]:
-        stack_value = loader.make_trampoline_stack(trampoline)
-        stack_buf = await sem.malloc(Stack, 4096)
-        stack = await stack_buf.write_to_end(stack_value, alignment=16)
-        futex_pointer = await sem.ptr(FutexNode(None, Int32(1)))
-        return stack, futex_pointer
     # Create the stack we'll need, and the zero-initialized futex
-    stack, futex_pointer = await ram.perform_batch(op, arena)
+    stack_value = loader.make_trampoline_stack(trampoline)
+    stack_buf = await ram.malloc(Stack, 4096)
+    stack = await stack_buf.write_to_end(stack_value, alignment=16)
+    futex_pointer = await ram.ptr(FutexNode(None, Int32(1)))
     # it's important to start the processes in this order, so that the process
     # process is the first process started; this is relevant in several
     # situations, including unshare(NEWPID) and manipulation of ns_last_pid

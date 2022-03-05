@@ -119,16 +119,12 @@ class FDPassConnection(Connection):
         "Move the passed-in file descriptors from self.access_task to self.task"
         if self.access_task.fd_table == self.task.fd_table:
             return [fd.move(self.task) for fd in fds]
-        async def sendmsg_op(sem: RAM) -> WrittenPointer[SendMsghdr]:
-            iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
-            cmsgs = await sem.ptr(CmsgList([CmsgSCMRights([fd for fd in fds])]))
-            return await sem.ptr(SendMsghdr(None, iovec, cmsgs))
-        _, [] = await self.access_fd.sendmsg(await self.access_ram.perform_batch(sendmsg_op))
-        async def recvmsg_op(sem: RAM) -> WrittenPointer[RecvMsghdr]:
-            iovec = await sem.ptr(IovecList([await sem.malloc(bytes, 1)]))
-            cmsgs = await sem.ptr(CmsgList([CmsgSCMRights([fd for fd in fds])]))
-            return await sem.ptr(RecvMsghdr(None, iovec, cmsgs))
-        _, [], hdr = await self.fd.recvmsg(await self.ram.perform_batch(recvmsg_op))
+        iovec = await self.access_ram.ptr(IovecList([await self.access_ram.malloc(bytes, 1)]))
+        cmsgs = await self.access_ram.ptr(CmsgList([CmsgSCMRights([fd for fd in fds])]))
+        _, [] = await self.access_fd.sendmsg(await self.access_ram.ptr(SendMsghdr(None, iovec, cmsgs)))
+        iovec = await self.ram.ptr(IovecList([await self.ram.malloc(bytes, 1)]))
+        cmsgs = await self.ram.ptr(CmsgList([CmsgSCMRights([fd for fd in fds])]))
+        _, [], hdr = await self.fd.recvmsg(await self.ram.ptr(RecvMsghdr(None, iovec, cmsgs)))
         cmsgs_ptr = (await hdr.read()).control
         if cmsgs_ptr is None:
             raise Exception("cmsgs field of header is, impossibly, None")

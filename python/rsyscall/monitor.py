@@ -98,9 +98,7 @@ class AsyncSignalfd:
         if task is not epoller.epoll_waiter.epfd.task:
             raise Exception("signalfd task and epoll_waiter task must be the same")
         if signal_block is None:
-            async def op(sem: RAM) -> t.Tuple[WrittenPointer[Sigset], Pointer[Sigset]]:
-                return await sem.ptr(mask), await sem.malloc(Sigset)
-            sigset_ptr, oldset_ptr = await ram.perform_batch(op)
+            sigset_ptr, oldset_ptr = await ram.ptr(mask), await ram.malloc(Sigset)
             signal_block = await task.sigmask_block(sigset_ptr, oldset_ptr)
             await task.read_oldset_and_check()
         else:
