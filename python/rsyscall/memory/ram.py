@@ -282,10 +282,10 @@ async def perform_batch(
     """
     later_allocator = LaterAllocator()
     await batch(RAM(task, NoopTransport(), later_allocator))
-    allocations = await allocator.bulk_malloc(later_allocator.allocations)
+    allocations = [await allocator.malloc(*alloc) for alloc in later_allocator.allocations]
     sem = BatchWriteSemantics(task, transport, PrefilledAllocator(allocations))
     ret = await batch(sem)
 
-    await run_all([functools.partial(transport.write, dest, data)
-                   for dest, data in sem.writes])
+    for dest, data in sem.writes:
+        await transport.write(dest, data)
     return ret
