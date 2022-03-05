@@ -58,6 +58,10 @@ class Read:
     count: int
 
 @dataclass
+class Barrier:
+    pass
+
+@dataclass
 class SyscallResponse(Struct):
     "The struct representing a syscall response"
     value: int
@@ -160,9 +164,8 @@ class SyscallConnection(SyscallInterface):
         if dest.size() != len(data):
             raise Exception("mismatched pointer size", dest.size(), "and data size", len(data))
         self.logger.debug("writing to %s, num bytes: %s", dest, len(data))
-        recv_fut = Future.start(self.infallible_recv(to_span(dest)))
+        reset(self.infallible_recv(to_span(dest)))
         await self.write_to_fd(data)
-        await recv_fut.get()
 
     async def read_from_fd(self, count: int) -> bytes:
         req = Read(count)
@@ -183,6 +186,9 @@ class SyscallConnection(SyscallInterface):
         read_fut = Future.start(self.read_from_fd(src.size()))
         await self.infallible_send(src)
         return await read_fut.get()
+
+    async def barrier(self) -> None:
+        await self.request_queue.request(Barrier())
 
     async def _run_requests(self) -> None:
         while True:
@@ -214,6 +220,8 @@ class SyscallConnection(SyscallInterface):
                 read = req
                 # forward this read right on to the read coroutine
                 self.response_queue.request_cb(read, coro)
+            elif isinstance(req, Barrier):
+                self.response_queue.request_cb(req, coro)
             else:
                 raise RuntimeError("invalid request", req)
 
@@ -243,5 +251,9 @@ class SyscallConnection(SyscallInterface):
                     cb.throw(hangup_exn)
                 else:
                     cb.send(data)
+            elif isinstance(req, Barrier):
+                # We don't do anything - we just make sure this barrier is
+                # sequenced relative to all other operations.
+                cb.send(None)
             else:
                 raise RuntimeError("invalid request", req)

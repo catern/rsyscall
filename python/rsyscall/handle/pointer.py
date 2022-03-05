@@ -493,4 +493,12 @@ async def share_pointers(ptrs: list[WrittenPointer]) -> list[WrittenPointer]:
     instead of many.
 
     """
+    if not ptrs:
+        return []
+    # validate these pointers are all in a single task
+    task = ptrs[0].mapping.task
+    for ptr in ptrs:
+        ptr.check_address_space(task)
+    # and issue a barrier in that task to ensure all writes have completed
+    await task.sysif.barrier()
     return [ptr._shared() for ptr in ptrs]
