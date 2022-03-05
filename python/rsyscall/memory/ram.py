@@ -2,7 +2,6 @@
 from __future__ import annotations
 from dneio import run_all
 from rsyscall.handle import Task, Pointer, WrittenPointer
-from rsyscall.memory.transport import MemoryTransport
 from rsyscall.memory.allocation_interface import AllocationInterface
 from rsyscall.memory.allocator import AllocatorInterface
 from rsyscall.struct import FixedSize, T_fixed_size, HasSerializer, T_has_serializer, FixedSerializer, T_fixed_serializer, Serializer, PathLikeSerializer, T_pathlike, StrSerializer
@@ -36,11 +35,9 @@ class RAM:
     """
     def __init__(self, 
                  task: Task,
-                 transport: MemoryTransport,
                  allocator: AllocatorInterface,
     ) -> None:
         self.task = task
-        self.transport = transport
         self.allocator = allocator
 
     @t.overload
@@ -140,7 +137,7 @@ class RAM:
         """
         mapping, allocation = await self.allocator.malloc(size, alignment=1)
         try:
-            return Pointer(mapping, self.transport, serializer, allocation, typ)
+            return Pointer(mapping, serializer, allocation, typ)
         except:
             allocation.free()
             raise

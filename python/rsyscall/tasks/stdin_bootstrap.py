@@ -17,7 +17,6 @@ from rsyscall.handle import WrittenPointer, Task
 from rsyscall.thread import Process
 from rsyscall.loader import NativeLoader
 from rsyscall.memory.ram import RAM
-from rsyscall.memory.transport import TaskTransport
 from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.tasks.connection import SyscallConnection
 import logging
@@ -121,7 +120,6 @@ async def stdin_bootstrap(
     allocator = memory.AllocatorClient.make_allocator(base_task)
     # we assume our SignalMask is zero'd before being started, so we don't inherit it
     ram = RAM(base_task,
-              TaskTransport(base_task),
                allocator)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     epoller = await Epoller.make_root(ram, base_task)

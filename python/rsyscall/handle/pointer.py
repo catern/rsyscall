@@ -7,7 +7,6 @@ import logging
 import contextlib
 from rsyscall.struct import Serializer
 from rsyscall.memory.allocation_interface import AllocationInterface, UseAfterFreeError
-from rsyscall.memory.transport import MemoryTransport
 from rsyscall.sys.mman import MemoryMapping
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,7 @@ class Pointer(t.Generic[T]):
     of the wrong type. At runtime, the type is reified as a serializer, which allows us to translate
     a value of the type to and from bytes.
 
-    We also hold a transport which will allow us to read and write the memory we own. Combined with
+    The memory mapping is a handle, and contains a `Task` which lets us access it. Combined with
     the serializer, this allows us to write and read values of the appropriate type to and from
     memory using the Pointer.write and Pointer.read methods.
 
@@ -51,9 +50,8 @@ class Pointer(t.Generic[T]):
     See also the inheriting class WrittenPointer
 
     """
-    __slots__ = ('mapping', 'transport', 'serializer', 'allocation', 'valid', 'typ', 'shared')
+    __slots__ = ('mapping', 'serializer', 'allocation', 'valid', 'typ', 'shared')
     mapping: MemoryMapping
-    transport: MemoryTransport
     serializer: Serializer[T]
     allocation: AllocationInterface
     typ: t.Type[T]
@@ -63,14 +61,12 @@ class Pointer(t.Generic[T]):
 
     def __init__(self,
                  mapping: MemoryMapping,
-                 transport: MemoryTransport,
                  serializer: Serializer[T],
                  allocation: AllocationInterface,
                  typ: t.Type[T],
                  shared: bool=False,
     ) -> None:
         self.mapping = mapping
-        self.transport = transport
         self.serializer = serializer
         self.allocation = allocation
         self.typ = typ
@@ -86,13 +82,13 @@ class Pointer(t.Generic[T]):
         if len(value_bytes) > self.size():
             raise Exception("value_bytes is too long", len(value_bytes),
                             "for this typed pointer of size", self.size())
-        await self.transport.write(self, value_bytes)
+        await self.mapping.task.sysif.write(self, value_bytes)
         return self._wrote(value)
 
     async def read(self) -> T:
         "Read the value pointed to by this pointer"
         self._validate()
-        value = await self.transport.read(self)
+        value = await self.mapping.task.sysif.read(self)
         return self.serializer.from_bytes(value)
 
     def size(self) -> int:
@@ -280,10 +276,10 @@ class Pointer(t.Generic[T]):
         # right here, we just linearly move the pointer to a new mapping
         self._validate()
         self.valid = False
-        return type(self)(mapping, self.transport, self.serializer, self.allocation, self.typ)
+        return type(self)(mapping, self.serializer, self.allocation, self.typ)
 
     def _with_alloc(self, allocation: AllocationInterface) -> Pointer:
-        return Pointer(self.mapping, self.transport, self.serializer, allocation, self.typ)
+        return Pointer(self.mapping, self.serializer, allocation, self.typ)
 
     def _reinterpret(self, serializer: Serializer[U], typ: t.Type[U]) -> Pointer[U]:
         # TODO how can we check to make sure we don't reinterpret in wacky ways?
@@ -291,12 +287,12 @@ class Pointer(t.Generic[T]):
         # so maybe it's a method on the Serializer? cast_to(Type)?
         self._validate()
         self.valid = False
-        return Pointer(self.mapping, self.transport, serializer, self.allocation, typ)
+        return Pointer(self.mapping, serializer, self.allocation, typ)
 
     def _readable(self) -> ReadablePointer[T]:
         self._validate()
         self.valid = False
-        return ReadablePointer(self.mapping, self.transport, self.serializer, self.allocation, self.typ)
+        return ReadablePointer(self.mapping, self.serializer, self.allocation, self.typ)
 
     def readable_split(self, size: int) -> t.Tuple[ReadablePointer[T], Pointer]:
         left, right = self.split(size)
@@ -305,7 +301,7 @@ class Pointer(t.Generic[T]):
     def _linearize(self) -> LinearPointer[T]:
         self._validate()
         self.valid = False
-        return LinearPointer(self.mapping, self.transport, self.serializer, self.allocation, self.typ)
+        return LinearPointer(self.mapping, self.serializer, self.allocation, self.typ)
 
     def unsafe(self) -> ReadablePointer[T]:
         "Get a ReadablePointer from this pointer, even though it might not be initialized"
@@ -315,7 +311,7 @@ class Pointer(t.Generic[T]):
         "Assert we wrote this value to this pointer, and return the appropriate new WrittenPointer"
         self._validate()
         self.valid = False
-        return WrittenPointer(self.mapping, self.transport, value, self.serializer, self.allocation, self.typ)
+        return WrittenPointer(self.mapping, value, self.serializer, self.allocation, self.typ)
 
 class ReadablePointer(Pointer[T]):
     """A Pointer that is safely readable
@@ -348,7 +344,7 @@ class ReadablePointer(Pointer[T]):
             raise Exception("can only move pointer between two mappings of the same file")
         self._validate()
         self.valid = False
-        return type(self)(mapping, self.transport, self.serializer, self.allocation, self.typ)
+        return type(self)(mapping, self.serializer, self.allocation, self.typ)
 
 class LinearPointer(ReadablePointer[T]):
     """A Pointer that must be read, once
@@ -389,12 +385,11 @@ class LinearPointer(ReadablePointer[T]):
 
     def __init__(self,
                  mapping: MemoryMapping,
-                 transport: MemoryTransport,
                  serializer: Serializer[T],
                  allocation: AllocationInterface,
                  typ: t.Type[T],
     ) -> None:
-        super().__init__(mapping, transport, serializer, allocation, typ)
+        super().__init__(mapping, serializer, allocation, typ)
         self.been_read = False
 
     async def read(self) -> T:
@@ -408,7 +403,7 @@ class LinearPointer(ReadablePointer[T]):
         "Read the value, and return the now-inert buffer left over as a Pointer."
         ret = await self.read()
         self.valid = False
-        new_ptr = Pointer(self.mapping, self.transport, self.serializer, self.allocation, self.typ)
+        new_ptr = Pointer(self.mapping, self.serializer, self.allocation, self.typ)
         return ret, new_ptr
 
     def __del__(self) -> None:
@@ -424,7 +419,7 @@ class LinearPointer(ReadablePointer[T]):
             raise Exception("can only move pointer between two mappings of the same file")
         self._validate()
         self.valid = False
-        return type(self)(mapping, self.transport, self.serializer, self.allocation, self.typ)
+        return type(self)(mapping, self.serializer, self.allocation, self.typ)
 
 class WrittenPointer(Pointer[T_co]):
     """A Pointer with some known value written to it
@@ -453,14 +448,13 @@ class WrittenPointer(Pointer[T_co]):
     __slots__ = ('value')
     def __init__(self,
                  mapping: MemoryMapping,
-                 transport: MemoryTransport,
                  value: T_co,
                  serializer: Serializer[T_co],
                  allocation: AllocationInterface,
                  typ: t.Type[T_co],
                  shared: bool=False
     ) -> None:
-        super().__init__(mapping, transport, serializer, allocation, typ, shared=shared)
+        super().__init__(mapping, serializer, allocation, typ, shared=shared)
         self.value = value
 
     def __repr__(self) -> str:
@@ -474,7 +468,7 @@ class WrittenPointer(Pointer[T_co]):
     def _shared(self) -> WrittenPointer[T_co]:
         self._validate()
         self.valid = False
-        return type(self)(self.mapping, self.transport, self.value, self.serializer, self.allocation, self.typ, shared=True)
+        return type(self)(self.mapping, self.value, self.serializer, self.allocation, self.typ, shared=True)
 
     def _with_mapping(self, mapping: MemoryMapping) -> WrittenPointer:
         if type(self) is not WrittenPointer:
@@ -484,7 +478,7 @@ class WrittenPointer(Pointer[T_co]):
         # see notes in Pointer._with_mapping
         self._validate()
         self.valid = False
-        return type(self)(mapping, self.transport, self.value, self.serializer, self.allocation, self.typ)
+        return type(self)(mapping, self.value, self.serializer, self.allocation, self.typ)
 
 async def share_pointers(ptrs: list[WrittenPointer]) -> list[WrittenPointer]:
     """Promote these `WrittenPointer`s to shared status so that they can be shared between tasks.

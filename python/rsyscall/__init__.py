@@ -37,7 +37,7 @@ The main implementations are `rsyscall.tasks.local.LocalSyscall` and `rsyscall.t
 The distinction between `Process` and `Task` is that `Task` provides only the bare minimum functionality guaranteed by Linux;
 for example, it is not guaranteed that stdin/stdout/stderr actually exist, and `Task` does not assume they do.
 
-## Memory allocation and access
+## Memory allocation
 
 Because a process may be in a separate address space,
 memory allocation, and access by reading and writing, are explicit.
@@ -45,11 +45,9 @@ This is primarily done through the methods `Process.ptr` and `Process.malloc`,
 which return `Pointer`s.
 `Pointer`s are garbage collected, so memory freeing is automatic.
 
-`Process` performs memory allocation and access using internal instances of
-`rsyscall.memory.allocator.AllocatorInterface` and `rsyscall.memory.transport.MemoryTransport`.
-The main allocator is `rsyscall.memory.allocator.BumpAllocator`,
-and the main memory transports are `rsyscall.tasks.local.LocalSyscall`
-and `rsyscall.tasks.connection.SyscallConnection`.
+`Process` performs memory allocation using an internal instance of
+`rsyscall.memory.allocator.AllocatorInterface`.
+The main allocator is `rsyscall.memory.allocator.BumpAllocator`.
 
 ## Non-blocking operations
 

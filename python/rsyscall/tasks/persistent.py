@@ -85,7 +85,6 @@ from rsyscall.loader import NativeLoader, Trampoline
 from rsyscall.sched import Stack
 from rsyscall.handle import WrittenPointer, ProcessPid, Pointer, Task, FileDescriptor
 from rsyscall.memory.span import to_span
-from rsyscall.memory.transport import TaskTransport
 from rsyscall.near.sysif import SyscallInterface, SyscallSendError
 from rsyscall.sys.syscall import SYS
 from rsyscall.unistd.credentials import _getpid
@@ -293,7 +292,7 @@ async def clone_persistent(
         CLONE.FILES|CLONE.FS|CLONE.SIGHAND,
         lambda sock: Trampoline(parent.loader.persistent_server_func, [sock, sock, listening_sock]))
     listening_sock_handle = listening_sock.move(task)
-    ram = RAM(task, TaskTransport(task), parent.ram.allocator.inherit(task))
+    ram = RAM(task, parent.ram.allocator.inherit(task))
 
     ## create the new persistent task
     epoller = await Epoller.make_root(ram, task)

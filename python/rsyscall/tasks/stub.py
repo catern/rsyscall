@@ -49,7 +49,6 @@ import rsyscall.nix as nix
 from rsyscall.epoller import Epoller, AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.monitor import ChildPidMonitor
 from rsyscall.command import Command
-from rsyscall.memory.transport import TaskTransport
 
 import rsyscall.struct
 from rsyscall.environ import Environment
@@ -163,7 +162,6 @@ async def _setup_stub(
     allocator = memory.AllocatorClient.make_allocator(base_task)
     base_task.sigmask = Sigset({SIG(bit) for bit in rsyscall.struct.bits(describe_struct.sigmask)})
     ram = RAM(base_task,
-              TaskTransport(base_task),
               allocator)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     # I guess I need to write out the set too in describe

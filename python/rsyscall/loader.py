@@ -16,7 +16,6 @@ from rsyscall.handle import (
 )
 from rsyscall.sys.mman import MemoryMapping
 from rsyscall.memory.allocation_interface import AllocationInterface
-from rsyscall.memory.transport import MemoryTransport
 import rsyscall.near.types as near
 import rsyscall.far as far
 from rsyscall.struct import Serializer
@@ -95,12 +94,6 @@ class StaticAllocation(AllocationInterface):
     def free(self) -> None:
         pass
 
-class NullTransport(MemoryTransport):
-    async def read(self, src: Pointer) -> bytes:
-        raise Exception("shouldn't try to read")
-    async def write(self, dest: Pointer, data: bytes) -> None:
-        raise Exception("shouldn't try to write")
-
 class NativeFunctionSerializer(Serializer[NativeFunction]):
     "Serializes NativeFunctions by throw exceptions if you call to_bytes/from_bytes :)"
     pass
@@ -131,7 +124,7 @@ class NativeLoader:
             # TODO we're just making up a memory mapping that this pointer is inside;
             # we should figure out the actual mapping, and the size for that matter.
             mapping = MemoryMapping(task, near.MemoryMapping(pointer_int, 0, 1), far.File())
-            return Pointer(mapping, NullTransport(), NativeFunctionSerializer(), StaticAllocation(), NativeFunction)
+            return Pointer(mapping, NativeFunctionSerializer(), StaticAllocation(), NativeFunction)
         return NativeLoader(
             server_func=to_handle(symbols.rsyscall_server),
             persistent_server_func=to_handle(symbols.rsyscall_persistent_server),

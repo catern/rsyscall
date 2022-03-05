@@ -20,7 +20,6 @@ import typing as t
 from dataclasses import dataclass
 import rsyscall.memory.allocator as memory
 from rsyscall.memory.ram import RAM
-from rsyscall.memory.transport import TaskTransport
 from rsyscall.handle import Pointer, Task
 from rsyscall.signal import SIG, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
@@ -96,7 +95,7 @@ async def _make_local_process() -> Process:
         far.PidNamespace(pid.id),
     )
     task.sysif = LocalSyscall(task)
-    ram = RAM(task, TaskTransport(task), memory.AllocatorClient.make_allocator(task))
+    ram = RAM(task, memory.AllocatorClient.make_allocator(task))
     epfd = await task.epoll_create()
     async def wait_readable():
         logger.debug("wait_readable(%s)", epfd.near.number)

@@ -56,7 +56,6 @@ def to_span(ptr: Pointer) -> Pointer:
     "Wraps the pointer's allocation in SpanAllocation so it can be split freely"
     return Pointer(
         ptr.mapping,
-        ptr.transport,
         ptr.serializer,
         SpanAllocation(ptr.allocation, 0, ptr.allocation.size()),
         ptr.typ)

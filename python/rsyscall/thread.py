@@ -8,7 +8,6 @@ from rsyscall.handle import FileDescriptor, WrittenPointer, Pointer, Task
 from rsyscall.handle.fd import _close
 from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.memory.ram import RAM
-from rsyscall.memory.transport import TaskTransport
 from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.network.connection import Connection
 from rsyscall.path import Path
@@ -282,7 +281,6 @@ class Process:
             self.task, self.ram, self.connection, self.loader, self.monitor,
             flags, lambda sock: Trampoline(self.loader.server_func, [sock, sock]))
         ram = RAM(task,
-                  TaskTransport(task),
                   self.ram.allocator.inherit(task),
         )
         if flags & CLONE.NEWPID:
