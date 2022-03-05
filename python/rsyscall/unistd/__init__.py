@@ -47,6 +47,7 @@ class ArgList(t.List[WrittenPointer[t.Union[str, os.PathLike]]], FixedSerializer
 import struct
 class ArgListSerializer(Serializer[T_arglist]):
     def to_bytes(self, arglist: T_arglist) -> bytes:
+        # We don't validate here that all the pointers are in the same address space; we do that at execve time.
         ret = b""
         for ptr in arglist:
             ret += struct.Struct("Q").pack(int(ptr.near))

@@ -264,8 +264,10 @@ class Task(
         filename.check_address_space(self)
         argv.check_address_space(self)
         envp.check_address_space(self)
-        for arg in [*argv.value, *envp.value]:
+        for arg in argv.value:
             arg.check_address_space(self)
+        for env in envp.value:
+            env.check_address_space(self)
         self.manipulating_fd_table = True
         try:
             await _execve(self.sysif, filename.near, argv.near, envp.near)
