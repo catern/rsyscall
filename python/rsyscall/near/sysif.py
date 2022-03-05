@@ -100,7 +100,29 @@ class SyscallInterface:
 
     @abc.abstractmethod
     async def write(self, dest: handle.Pointer, data: bytes) -> None:
-        "Write this bytestring to the memory pointed to by this Pointer."
+        """Write this bytestring to the memory pointed to by this Pointer.
+
+        These write operations are pipelined to avoid round-trip latency hits.  Once this method
+        returns, the write is guaranteed to be performed before any other operations performed
+        through this SyscallInterface (syscalls or memory reads).  But that guarantee doesn't apply
+        for operations through other SyscallInterfaces.
+
+        """
+        pass
+
+    @abc.abstractmethod
+    async def barrier(self) -> None:
+        """Guarantee that all previously initiated operations have completed
+
+        This is like a conventional memory barrier.  This is useful because our writes are
+        pipelined, but sometimes we want to actually wait for them to be completed, such that the
+        written data is now visible to other tasks in memory.
+
+        (One could imagine returning an explicit "promise" object from `SyscallInterface.write`, but
+        that would be somewhat painful boilerplate, especially because writing to memory doesn't
+        actually return anything)
+
+        """
         pass
 
     # non-syscall operations which we haven't figured out how to get rid of yet
@@ -195,6 +217,9 @@ class UnusableSyscallInterface(SyscallInterface):
         raise SyscallSendError("can't send syscalls through this sysif")
 
     async def write(self, dest: handle.Pointer, data: bytes) -> None:
+        raise SyscallSendError("can't send syscalls through this sysif")
+
+    async def barrier(self) -> None:
         raise SyscallSendError("can't send syscalls through this sysif")
 
     async def close_interface(self) -> None:

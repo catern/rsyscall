@@ -88,6 +88,7 @@ from rsyscall.memory.span import to_span
 from rsyscall.memory.transport import TaskTransport
 from rsyscall.near.sysif import SyscallInterface, SyscallSendError
 from rsyscall.sys.syscall import SYS
+from rsyscall.unistd.credentials import _getpid
 
 import trio
 import struct
@@ -259,6 +260,12 @@ class PersistentSyscallConnection(SyscallInterface):
                 # then infallible_send would fail with BrokenPipeError.
                 # so we only need to catch BrokenPipeError.
                 await self.conn_queue.request(Broken(conn))
+
+    async def barrier(self) -> None:
+        # barrier is tricky with `PersistentSyscallConnection` since we want it to fail if it's being
+        # performed on a `SyscallConnection` which has broken.
+        # we can achieve that by just issuing a getpid instead; a bit lazy but it works.
+        await _getpid(self)
 
 # this should be a method, I guess, on something which points to the persistent stuff resource.
 async def clone_persistent(

@@ -77,6 +77,10 @@ class LocalSyscall(SyscallInterface):
         buf = ffi.buffer(ffi.cast('void*', int(src.near)), src.size())
         return bytes(buf)
 
+    async def barrier(self) -> None:
+        # when all writes are performed immediately, barrier is a no-op!
+        pass
+
 async def _make_local_process() -> Process:
     """Create the local process, allocating various resources locally.
 
