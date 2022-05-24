@@ -1174,6 +1174,7 @@ struct sockaddr_nl {
 // mmap stuff
 #define SYS_mmap ...
 #define SYS_munmap ...
+#define SYS_madvise ...
 #define SYS_memfd_create ...
 
 // memfd stuff, from sys/mman.h and linux/memfd.h
@@ -1194,6 +1195,27 @@ struct sockaddr_nl {
 #define MAP_POPULATE ...
 #define MAP_GROWSDOWN ...
 #define MAP_STACK ...
+
+#define MADV_NORMAL ... // No further special treatment.
+#define MADV_RANDOM ... // Expect random page references.
+#define MADV_SEQUENTIAL ... // Expect sequential page references.
+#define MADV_WILLNEED ... // Will need these pages.
+#define MADV_DONTNEED ... // Don't need these pages.
+#define MADV_FREE ... // Free pages only if memory pressure.
+#define MADV_REMOVE ... // Remove these pages and resources.
+#define MADV_DONTFORK ... // Do not inherit across fork.
+#define MADV_DOFORK ... // Do inherit across fork.
+#define MADV_MERGEABLE ... // KSM may merge identical pages.
+#define MADV_UNMERGEABLE ... // KSM may not merge identical pages.
+#define MADV_HUGEPAGE ... // Worth backing with hugepages.
+#define MADV_NOHUGEPAGE ... // Not worth backing with hugepages.
+#define MADV_DONTDUMP ... // Explicity exclude from the core dump, overrides the coredump filter bits.
+#define MADV_DODUMP ... // Clear the MADV_DONTDUMP flag.
+#define MADV_WIPEONFORK ... // Zero memory on fork, child only.
+#define MADV_KEEPONFORK ... // Undo MADV_WIPEONFORK.
+#define MADV_COLD ... // Deactivate these pages.
+#define MADV_PAGEOUT ... // Reclaim these pages.
+#define MADV_HWPOISON ... // Poison a page for testing.
 
 void *memcpy(void *dest, const void *src, size_t n);
 // we need these as function pointers, we aren't calling them from Python

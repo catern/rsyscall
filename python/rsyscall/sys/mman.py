@@ -25,6 +25,28 @@ class MAP(enum.IntFlag):
     ANONYMOUS = lib.MAP_ANONYMOUS
     POPULATE = lib.MAP_POPULATE
 
+class MADV(enum.IntFlag):
+    NORMAL = lib.MADV_NORMAL # No further special treatment.
+    RANDOM = lib.MADV_RANDOM # Expect random page references.
+    SEQUENTIAL = lib.MADV_SEQUENTIAL # Expect sequential page references.
+    WILLNEED = lib.MADV_WILLNEED # Will need these pages.
+    DONTNEED = lib.MADV_DONTNEED # Don't need these pages.
+    FREE = lib.MADV_FREE # Free pages only if memory pressure.
+    REMOVE = lib.MADV_REMOVE # Remove these pages and resources.
+    DONTFORK = lib.MADV_DONTFORK # Do not inherit across fork.
+    DOFORK = lib.MADV_DOFORK # Do inherit across fork.
+    MERGEABLE = lib.MADV_MERGEABLE # KSM may merge identical pages.
+    UNMERGEABLE = lib.MADV_UNMERGEABLE # KSM may not merge identical pages.
+    HUGEPAGE = lib.MADV_HUGEPAGE # Worth backing with hugepages.
+    NOHUGEPAGE = lib.MADV_NOHUGEPAGE # Not worth backing with hugepages.
+    DONTDUMP = lib.MADV_DONTDUMP # Explicity exclude from the core dump, overrides the coredump filter bits.
+    DODUMP = lib.MADV_DODUMP # Clear the MADV_DONTDUMP flag.
+    WIPEONFORK = lib.MADV_WIPEONFORK # Zero memory on fork, child only.
+    KEEPONFORK = lib.MADV_KEEPONFORK # Undo MADV_WIPEONFORK.
+    COLD = lib.MADV_COLD # Deactivate these pages.
+    PAGEOUT = lib.MADV_PAGEOUT # Reclaim these pages.
+    HWPOISON = lib.MADV_HWPOISON # Poison a page for testing.
+
 #### Classes ####
 from dataclasses import dataclass
 import rsyscall.far
@@ -41,6 +63,9 @@ class MemoryMapping:
 
     async def munmap(self) -> None:
         await _munmap(self.task.sysif, self.near)
+
+    async def madvise(self, advice: MADV) -> None:
+        await _madvise(self.task.sysif, self.near, advice)
 
     def for_task(self, task: MemoryMappingTask) -> MemoryMapping:
         if task.address_space != self.task.address_space:
@@ -100,3 +125,6 @@ async def _mmap(sysif: SyscallInterface, length: int, prot: PROT, flags: MAP,
 
 async def _munmap(sysif: SyscallInterface, mapping: near.MemoryMapping) -> None:
     await sysif.syscall(SYS.munmap, mapping.address, mapping.length)
+
+async def _madvise(sysif: SyscallInterface, mapping: near.MemoryMapping, advice: MADV) -> None:
+    await sysif.syscall(SYS.madvise, mapping.address, mapping.length, advice)

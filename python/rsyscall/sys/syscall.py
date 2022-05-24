@@ -51,6 +51,7 @@ class SYS(enum.IntEnum):
     lseek = lib.SYS_lseek
     memfd_create = lib.SYS_memfd_create
     mkdirat = lib.SYS_mkdirat
+    madvise = lib.SYS_madvise
     mmap = lib.SYS_mmap
     mount = lib.SYS_mount
     munmap = lib.SYS_munmap
