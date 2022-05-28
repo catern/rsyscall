@@ -281,8 +281,8 @@ def shift(func: t.Callable[[Continuation[SendType]], AnswerType]) -> t.Generator
     AnsweringContinuation[AnswerType, SendType, ReturnType]
 
     """
-    ensure_system_trio_task_running()
     if _under_coro_runner == Runner.TRIO:
+        ensure_system_trio_task_running()
         trio_cont = TrioContinuation[SendType](
             trio.lowlevel.current_task(), False, None,
             on_stack=True,
@@ -334,6 +334,8 @@ class TrioSystemWaitReadable:
     def ensure_running(self) -> None:
         if not self._run_running:
             self._run_running = True
+            # oremanj suggests:
+            # trio.lowlevel.current_trio_token().run_sync_soon(trio.lowlevel.spawn_system_task, ...)
             trio.lowlevel.spawn_system_task(self.run)
 
     def wait_cb(self, cb: Continuation[None]) -> None:
